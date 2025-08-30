@@ -1,0 +1,105 @@
+.dashboard-mvp-flow .react-flow {
+  --xy-node-background-color: transparent;
+  --xy-node-border-color: transparent;
+  --xy-node-box-shadow: none;
+  --xy-node-border-radius: 0;
+  --xy-edge-stroke-selected: var(--primary);
+  --xy-connectionline-stroke: var(--primary);
+  --xy-handle-background-color: var(--primary);
+  --xy-background-pattern-color: oklch(1 0 0 / 4%);
+}
+
+.dashboard-mvp-flow .react-flow__nodesselection,
+.dashboard-mvp-flow .react-flow__nodesselection-rect {
+  background: transparent !important;
+  border: none !important;
+  pointer-events: none !important;
+}
+
+.dashboard-mvp-flow .react-flow__pane {
+  cursor: default;
+}
+
+.dashboard-mvp-flow .react-flow__node {
+  padding: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.dashboard-mvp-flow .react-flow__handle {
+  border-radius: 999px;
+  transition: transform 120ms ease;
+}
+
+.dashboard-mvp-flow .react-flow__handle:hover {
+  transform: scale(1.2);
+}
+
+.dashboard-mvp-flow .react-flow__edge-path {
+  stroke-width: 2;
+}
+
+.dashboard-mvp-flow .react-flow__edge.selected .react-flow__edge-path {
+  stroke-width: 3;
+}
+
+.dashboard-mvp-flow .react-flow__attribution {
+  display: none;
+}
+
+.dashboard-mvp-flow .inline-handle.react-flow__handle {
+  position: relative !important;
+  top: auto !important;
+  right: auto !important;
+  left: auto !important;
+  transform: none !important;
+  width: 10px !important;
+  height: 10px !important;
+}
+
+.dashboard-mvp-flow .react-flow__node-terminal,
+.dashboard-mvp-flow .react-flow__node-file-manager {
+  height: 100%;
+}
+
+.dashboard-mvp-flow .react-flow__node-section,
+.dashboard-mvp-flow .react-flow__node-domain {
+  z-index: -1 !important;
+  height: 100%;
+}
+
+.window-node-open {
+  animation: window-open 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.window-node-close {
+  animation: window-close 0.2s ease-in forwards;
+}
+
+@keyframes window-open {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes window-close {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+}

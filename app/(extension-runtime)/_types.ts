@@ -1,0 +1,135 @@
+// Shared types for the extension system. Safe to import from both server and
+// client — contains no runtime imports of Node-only or React APIs.
+
+/** Generic node data — all node data objects extend this. */
+export type NodeData = Record<string, unknown>;
+
+/** A resolved context flowing through a connected edge. */
+export interface ResolvedContext<V = unknown> {
+  sourceNodeId: string;
+  sourceHandleId: string;
+  type: string;
+  value: V;
+}
+
+export interface ExtensionHandle {
+  id: string;
+  contextType: string;
+  role: 'source' | 'target';
+  label?: string;
+}
+
+export interface ExtensionContextType {
+  id: string;
+  label: string;
+  color: string;
+  description?: string;
+}
+
+export interface NodeAction {
+  id: string;
+  label: string;
+  description?: string;
+  icon?: string;
+  inputSchema?: Record<string, unknown>;
+}
+
+export interface NodeMetadata {
+  typeId: string;
+  name: string;
+  category?: string;
+  description?: string;
+  icon?: string;
+  accent?: string;
+  handles?: ExtensionHandle[];
+  actions?: NodeAction[];
+  defaultData?: Record<string, unknown>;
+}
+
+export interface ExtensionExports {
+  server?: string;
+  client?: string;
+}
+
+// extension.json — authored on disk. Minimal: identity + deps + optional
+// static node metadata for lazy palette discovery. Runtime behavior comes
+// from the compiled client bundle.
+export interface ExtensionManifest {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  extensionDependencies?: string[];
+  nodes?: NodeMetadata[];
+  contexts?: ExtensionContextType[];
+  main?: string;
+  exports?: ExtensionExports;
+  activationEvents?: string[];
+}
+
+export interface ExtensionRecord {
+  manifest: ExtensionManifest;
+  sourceDir: string;
+  distDir: string;
+  updatedAt: number;
+}
+
+export interface ExposeOutputFn {
+  (handleId: string, nodeData: Record<string, unknown>, typeId: string): unknown;
+}
+
+export interface ConnectedSource {
+  nodeId: string;
+  handleId: string;
+  type?: string;
+  data: Record<string, unknown>;
+}
+
+export interface ResolvedInput<T = unknown> {
+  sourceNodeId: string;
+  sourceHandleId: string;
+  contextType: string;
+  value: T;
+}
+
+export interface NodeActionCtxNode {
+  id: string;
+  type?: string;
+  position: { x: number; y: number };
+  data: Record<string, unknown>;
+}
+
+export interface NodeActionCtx {
+  nodeId: string;
+  typeId: string;
+  data: Record<string, unknown>;
+  params: Record<string, unknown>;
+  input<T = unknown>(handleId: string): T | undefined;
+  inputSource<T = unknown>(handleId: string): ResolvedInput<T> | undefined;
+  connectedSources(handleId: string): ConnectedSource[];
+  containingNodes(typeId?: string): NodeActionCtxNode[];
+}
+
+export interface NodeActionDescriptor {
+  nodeId: string;
+  typeId: string;
+  extensionId: string;
+  actionId: string;
+  label: string;
+  description?: string;
+}
+
+export interface CompileError {
+  file: string;
+  line?: number;
+  column?: number;
+  message: string;
+}
+
+export interface BuildResult {
+  success: boolean;
+  errors: CompileError[];
+  warnings: CompileError[];
+  clientHash: string;
+  serverHash: string;
+}

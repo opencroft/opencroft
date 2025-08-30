@@ -1,0 +1,6 @@
+{
+  "id": "builtin/lucky",
+  "name": "Lucky",
+  "version": "1.0.0",
+  "description": "Demo extension that adds a Lucky command-bar mode (Ctrl+L) for picking a random node"
+}

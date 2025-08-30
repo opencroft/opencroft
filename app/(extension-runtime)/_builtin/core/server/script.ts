@@ -1,0 +1,119 @@
+import { type TerminalContext, terminalRun } from './terminal';
+
+export interface ScriptRunParams {
+  script: string;
+  language: 'bash' | 'python' | 'node';
+  context: TerminalContext;
+}
+
+export interface ScriptResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+const LANG_CMD: Record<string, string> = {
+  bash: 'bash',
+  python: 'python3',
+  node: 'node',
+};
+
+export async function runScript(params: ScriptRunParams): Promise<ScriptResult> {
+  const { script, language, context } = params;
+  try {
+    const stdout = await terminalRun(context, [LANG_CMD[language], '-c', script]);
+    return { stdout, stderr: '', exitCode: 0 };
+  } catch (err) {
+    const msg = (err as Error).message || String(err);
+    return { stdout: '', stderr: msg, exitCode: 1 };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Handler execution — ExecutionContext<HTTPRequest> -> HTTPResponse
+// ═══════════════════════════════════════════════════════════════════
+
+export interface HandlerRunParams {
+  script: string;
+  language: 'python' | 'node';
+  context: TerminalContext;
+  event: unknown;
+}
+
+export interface HandlerResult {
+  status?: number;
+  headers?: Record<string, string>;
+  body?: unknown;
+  error?: string;
+}
+
+function pythonHandlerBootstrap(): string {
+  return `
+import json, sys
+_event = json.loads(sys.argv[1])
+_result = handler(_event)
+if not isinstance(_result, dict):
+    _result = {"body": _result}
+print(json.dumps(_result))
+sys.exit(0)
+`;
+}
+
+function nodeHandlerBootstrap(): string {
+  return `
+const _event = JSON.parse(process.argv[2]);
+Promise.resolve(typeof handler === 'function' ? handler(_event) : undefined)
+  .then(function(_result) {
+    if (_result === null || _result === undefined) _result = {};
+    if (typeof _result !== 'object' || Array.isArray(_result)) _result = { body: _result };
+    console.log(JSON.stringify(_result));
+    process.exit(0);
+  })
+  .catch(function(_e) {
+    console.error(_e.message || String(_e));
+    process.exit(1);
+  });
+`;
+}
+
+export async function runHandler(params: HandlerRunParams): Promise<HandlerResult> {
+  const { script, language, context, event } = params;
+  const eventJson = JSON.stringify(event);
+
+  // Escape single quotes in event JSON for shell safety
+  const safeEvent = eventJson.replace(/'/g, "'\\''");
+
+  try {
+    let fullScript: string;
+    if (language === 'python') {
+      fullScript = script + pythonHandlerBootstrap();
+      const stdout = await terminalRun(context, [
+        'python3', '-c', fullScript, safeEvent,
+      ]);
+      const parsed = JSON.parse(stdout.trim());
+      return {
+        status: parsed.status ?? 200,
+        headers: parsed.headers,
+        body: parsed.body,
+      };
+    }
+
+    if (language === 'node') {
+      fullScript = script + nodeHandlerBootstrap();
+      const stdout = await terminalRun(context, [
+        'node', '-e', fullScript, safeEvent,
+      ]);
+      const parsed = JSON.parse(stdout.trim());
+      return {
+        status: parsed.status ?? 200,
+        headers: parsed.headers,
+        body: parsed.body,
+      };
+    }
+
+    return { status: 500, body: { error: `Unsupported language: ${language}` } };
+  } catch (err) {
+    const msg = (err as Error).message || String(err);
+    return { status: 500, error: msg };
+  }
+}

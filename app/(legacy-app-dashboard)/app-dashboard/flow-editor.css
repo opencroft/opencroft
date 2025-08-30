@@ -1,0 +1,44 @@
+.react-flow {
+  --xy-node-background-color: transparent;
+  --xy-node-border-color: transparent;
+  --xy-node-box-shadow: none;
+  --xy-node-border-radius: 0;
+  --xy-edge-stroke-selected: var(--primary);
+  --xy-connectionline-stroke: var(--primary);
+  --xy-handle-background-color: var(--primary);
+  --xy-background-pattern-color: oklch(1 0 0 / 4%);
+}
+
+.react-flow__nodesselection-rect {
+  background: transparent !important;
+  border: none !important;
+}
+
+.react-flow__node-section,
+.react-flow__node-domain {
+  z-index: -1 !important;
+}
+
+.react-flow__node-window {
+  height: 100%;
+}
+
+.react-flow__node {
+  padding: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.inline-handle.react-flow__handle {
+  position: relative !important;
+  top: auto !important;
+  right: auto !important;
+  left: auto !important;
+  transform: none !important;
+  width: 10px !important;
+  height: 10px !important;
+}

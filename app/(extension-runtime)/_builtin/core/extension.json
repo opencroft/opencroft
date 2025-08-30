@@ -1,0 +1,176 @@
+{
+  "id": "builtin/core",
+  "name": "Core",
+  "version": "1.2.0",
+  "description": "Core node catalog — infrastructure + storage + windows + scripts + api routes",
+  "nodes": [
+    {
+      "typeId": "localhost",
+      "name": "Localhost",
+      "category": "Infrastructure",
+      "icon": "Monitor",
+      "handles": [
+        { "id": "ssh-out", "contextType": "terminal-context", "role": "source", "label": "Terminal" },
+        { "id": "fs-out", "contextType": "filesystem-target", "role": "source", "label": "Files" }
+      ]
+    },
+    {
+      "typeId": "wsl",
+      "name": "WSL",
+      "category": "Infrastructure",
+      "icon": "SquareTerminal",
+      "handles": [
+        { "id": "ssh-out", "contextType": "terminal-context", "role": "source", "label": "Terminal" },
+        { "id": "fs-out", "contextType": "filesystem-target", "role": "source", "label": "Files" }
+      ]
+    },
+    {
+      "typeId": "server",
+      "name": "Server",
+      "category": "Infrastructure",
+      "icon": "Server",
+      "handles": [
+        { "id": "ssh-out", "contextType": "terminal-context", "role": "source", "label": "Terminal" },
+        { "id": "fs-out", "contextType": "filesystem-target", "role": "source", "label": "Files" }
+      ]
+    },
+    { "typeId": "core-key-store", "name": "Key Store", "category": "Storage", "icon": "KeyRound" },
+    { "typeId": "core-secrets-store", "name": "Secrets Store", "category": "Storage", "icon": "ShieldCheck" },
+    {
+      "typeId": "terminal",
+      "name": "Terminal Window",
+      "category": "Windows",
+      "icon": "TerminalSquare",
+      "handles": [
+        { "id": "ssh-in", "contextType": "terminal-context", "role": "target", "label": "Terminal" }
+      ]
+    },
+    {
+      "typeId": "file-manager",
+      "name": "File Manager Window",
+      "category": "Windows",
+      "icon": "FolderOpen",
+      "handles": [
+        { "id": "fs-in", "contextType": "filesystem-target", "role": "target", "label": "Files" }
+      ]
+    },
+    {
+      "typeId": "script-bash",
+      "name": "Bash Script",
+      "category": "Scripts",
+      "icon": "TerminalSquare",
+      "handles": [
+        { "id": "ctx-in", "contextType": "terminal-context", "role": "target", "label": "Target" }
+      ],
+      "actions": [
+        { "id": "run", "label": "Run", "icon": "Play", "description": "Execute the script in the connected terminal context (or local if none)." }
+      ]
+    },
+    {
+      "typeId": "script-python",
+      "name": "Python Script",
+      "category": "Scripts",
+      "icon": "Code",
+      "handles": [
+        { "id": "ctx-in", "contextType": "terminal-context", "role": "target", "label": "Target" },
+        { "id": "exec-in", "contextType": "execution-context", "role": "target", "label": "Handler" }
+      ],
+      "actions": [
+        { "id": "run", "label": "Run", "icon": "Play", "description": "Execute the script in the connected terminal context (or local if none)." }
+      ]
+    },
+    {
+      "typeId": "script-node",
+      "name": "Node.js Script",
+      "category": "Scripts",
+      "icon": "Braces",
+      "handles": [
+        { "id": "ctx-in", "contextType": "terminal-context", "role": "target", "label": "Target" },
+        { "id": "exec-in", "contextType": "execution-context", "role": "target", "label": "Handler" }
+      ],
+      "actions": [
+        { "id": "run", "label": "Run", "icon": "Play", "description": "Execute the script in the connected terminal context (or local if none)." }
+      ]
+    },
+    {
+      "typeId": "docker",
+      "name": "Docker",
+      "category": "Infrastructure",
+      "icon": "Container",
+      "handles": [
+        { "id": "ctx-in", "contextType": "terminal-context", "role": "target", "label": "Host" },
+        { "id": "context-in", "contextType": "terminal-context", "role": "target", "label": "Context" },
+        { "id": "docker-out", "contextType": "docker-context", "role": "source", "label": "Docker" }
+      ]
+    },
+    {
+      "typeId": "volume",
+      "name": "Volume",
+      "category": "Applications",
+      "icon": "HardDrive",
+      "handles": [
+        { "id": "vol-out", "contextType": "volume-mount", "role": "source", "label": "Volume" }
+      ]
+    },
+    {
+      "typeId": "network",
+      "name": "Network",
+      "category": "Applications",
+      "icon": "Network"
+    },
+    {
+      "typeId": "git-workspace",
+      "name": "Git Workspace",
+      "category": "Infrastructure",
+      "icon": "GitBranch",
+      "handles": [
+        { "id": "ctx-in", "contextType": "terminal-context", "role": "target", "label": "Terminal" }
+      ]
+    },
+    {
+      "typeId": "application",
+      "name": "Application",
+      "category": "Applications",
+      "icon": "AppWindow",
+      "handles": [
+        { "id": "docker-in", "contextType": "docker-context", "role": "target", "label": "Docker" },
+        { "id": "volumes-in", "contextType": "volume-mount", "role": "target", "label": "Volumes" }
+      ],
+      "actions": [
+        { "id": "start", "label": "Start", "icon": "Play", "description": "Bring the service up via docker compose." },
+        { "id": "stop", "label": "Stop", "icon": "Square", "description": "Stop the service and remove its container from the compose project." },
+        { "id": "restart", "label": "Restart", "icon": "RotateCw", "description": "Restart the service in place." }
+      ]
+    },
+    {
+      "typeId": "api-route",
+      "name": "API Route",
+      "category": "Integration",
+      "icon": "Route",
+      "handles": [
+        { "id": "exec-out", "contextType": "execution-context", "role": "source", "label": "Handler" }
+      ]
+    },
+    {
+      "typeId": "event",
+      "name": "Event",
+      "category": "Integration",
+      "icon": "AlarmClock",
+      "handles": [
+        { "id": "exec-out", "contextType": "execution-context", "role": "source", "label": "Handler" }
+      ],
+      "actions": [
+        { "id": "run", "label": "Run", "icon": "Play", "description": "Fire the connected handler immediately." }
+      ]
+    },
+    { "typeId": "section", "name": "Section", "category": "Organization", "icon": "Boxes" },
+    { "typeId": "domain", "name": "Domain", "category": "Organization", "icon": "Globe" }
+  ],
+  "contexts": [
+    { "id": "terminal-context", "label": "Terminal Context", "color": "oklch(0.7 0.18 300)", "description": "Terminal execution context (local, WSL, or SSH)" },
+    { "id": "filesystem-target", "label": "Filesystem Target", "color": "oklch(0.7 0.17 140)" },
+    { "id": "execution-context", "label": "Execution Context", "color": "oklch(0.72 0.17 30)", "description": "Async execution context for request/response handlers" },
+    { "id": "docker-context", "label": "Docker Context", "color": "oklch(0.75 0.14 240)" },
+    { "id": "volume-mount", "label": "Volume Mount", "color": "oklch(0.7 0.15 50)" }
+  ]
+}

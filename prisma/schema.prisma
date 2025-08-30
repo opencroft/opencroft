@@ -1,0 +1,57 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Setting {
+  id        String   @id
+  data      String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Secret {
+  id        String   @id @default(cuid())
+  storeId   String
+  key       String
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([storeId, key])
+  @@index([storeId])
+}
+
+model AppLink {
+  id    String @id @default(cuid())
+  title String
+  url   String
+  order Int    @default(0)
+}
+
+model Space {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  data      String   @default("{\"nodes\":[],\"edges\":[]}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model McpAuditLog {
+  id         String   @id @default(cuid())
+  tool       String
+  args       String   @default("{}")
+  result     String?
+  error      String?
+  status     String   @default("auto-approved")
+  durationMs Int
+  createdAt  DateTime @default(now())
+
+  @@index([tool])
+  @@index([status])
+  @@index([createdAt])
+}

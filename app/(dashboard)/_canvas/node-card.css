@@ -1,0 +1,12 @@
+.node-card-dot {
+  animation: dot-travel 4s linear infinite;
+}
+
+@keyframes dot-travel {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -100;
+  }
+}
