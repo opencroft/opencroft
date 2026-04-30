@@ -3,7 +3,7 @@
 import { resolveGraphContexts } from '@/app/(extension-runtime)/_server/graph-context-resolver';
 import { type GraphSnapshot } from '@/app/(extension-runtime)/_server/host';
 import { slugify, uniqueSlug } from '@/app/(space)/server/slug';
-import { getSpacesRegistry } from '@/app/(space)/server/store';
+import { getSpacesRegistry, type SpaceRuntime } from '@/app/(space)/server/store';
 import {
   DEFAULT_SPACE_SLUG,
   type GraphData,
@@ -15,6 +15,17 @@ async function registry() {
   const r = getSpacesRegistry();
   await r.ensureLoaded();
   return r;
+}
+
+function toSummary(runtime: SpaceRuntime): SpaceSummary {
+  return {
+    id: runtime.id,
+    slug: runtime.slug,
+    name: runtime.name,
+    pinned: runtime.pinned,
+    createdAt: runtime.createdAt.toISOString(),
+    updatedAt: runtime.updatedAt.toISOString(),
+  };
 }
 
 async function resolveGraph(graph: GraphData): Promise<GraphData> {
@@ -55,13 +66,7 @@ export async function createSpace(name: string): Promise<SpaceSummary> {
   const existing = new Set(r.list().map((s) => s.slug));
   const slug = uniqueSlug(slugify(trimmed), existing);
   const runtime = await r.create(trimmed, slug, { nodes: [], edges: [] });
-  return {
-    id: runtime.id,
-    slug: runtime.slug,
-    name: runtime.name,
-    createdAt: runtime.createdAt.toISOString(),
-    updatedAt: runtime.updatedAt.toISOString(),
-  };
+  return toSummary(runtime);
 }
 
 export async function renameSpace(slug: string, name: string): Promise<SpaceSummary | null> {
@@ -70,13 +75,7 @@ export async function renameSpace(slug: string, name: string): Promise<SpaceSumm
   if (!runtime) {
     return null;
   }
-  return {
-    id: runtime.id,
-    slug: runtime.slug,
-    name: runtime.name,
-    createdAt: runtime.createdAt.toISOString(),
-    updatedAt: runtime.updatedAt.toISOString(),
-  };
+  return toSummary(runtime);
 }
 
 export async function deleteSpace(slug: string): Promise<boolean> {
@@ -85,6 +84,15 @@ export async function deleteSpace(slug: string): Promise<boolean> {
     return false;
   }
   return r.remove(slug);
+}
+
+export async function setSpacePinned(slug: string, pinned: boolean): Promise<SpaceSummary | null> {
+  const r = await registry();
+  const runtime = await r.setPinned(slug, pinned);
+  if (!runtime) {
+    return null;
+  }
+  return toSummary(runtime);
 }
 
 export async function exportSpace(slug: string): Promise<SpaceExport | null> {
@@ -111,13 +119,7 @@ export async function importSpace(payload: SpaceExport): Promise<SpaceSummary> {
     edges: Array.isArray(payload.graph?.edges) ? payload.graph.edges : [],
   };
   const runtime = await r.create(payload.name || 'Imported', slug, graph);
-  return {
-    id: runtime.id,
-    slug: runtime.slug,
-    name: runtime.name,
-    createdAt: runtime.createdAt.toISOString(),
-    updatedAt: runtime.updatedAt.toISOString(),
-  };
+  return toSummary(runtime);
 }
 
 export async function getActiveSpaceSlug(): Promise<string> {
@@ -144,11 +146,5 @@ export async function findSpaceByNode(nodeId: string): Promise<SpaceSummary | nu
   if (!space) {
     return null;
   }
-  return {
-    id: space.id,
-    slug: space.slug,
-    name: space.name,
-    createdAt: space.createdAt.toISOString(),
-    updatedAt: space.updatedAt.toISOString(),
-  };
+  return toSummary(space);
 }
