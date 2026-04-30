@@ -18,10 +18,16 @@ const LANG_CMD: Record<string, string> = {
   node: 'node',
 };
 
+const LANG_FLAG: Record<string, string> = {
+  bash: '-c',
+  python: '-c',
+  node: '-e',
+};
+
 export async function runScript(params: ScriptRunParams): Promise<ScriptResult> {
   const { script, language, context } = params;
   try {
-    const stdout = await terminalRun(context, [LANG_CMD[language], '-c', script]);
+    const stdout = await terminalRun(context, [LANG_CMD[language], LANG_FLAG[language], script]);
     return { stdout, stderr: '', exitCode: 0 };
   } catch (err) {
     const msg = (err as Error).message || String(err);
