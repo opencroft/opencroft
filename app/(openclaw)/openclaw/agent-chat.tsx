@@ -1,10 +1,11 @@
 'use client';
 
-import { ChevronRight, SendIcon, Sparkles } from 'lucide-react';
+import { ChevronRight, SendIcon, Shield, ShieldCheck, Sparkles } from 'lucide-react';
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+import { getAutoApprove, setAutoApprove } from '@/app/(approvals)/actions';
 import { CommandBarMenuItem } from '@/app/(dashboard)/_canvas/command-bar';
 import { useOverlayBar, useOverlayMenu } from '@/app/(dashboard)/_canvas/overlay-context';
 import {
@@ -159,10 +160,17 @@ export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlu
   const [text, setText] = useState('');
   const [commands, setCommands] = useState<OpenclawCommand[]>([]);
   const [highlight, setHighlight] = useState(0);
+  const [autoApprove, setAutoApproveState] = useState(false);
 
   useEffect(() => {
     listCommands().then(setCommands);
+    getAutoApprove().then(setAutoApproveState);
   }, []);
+
+  const toggleAutoApprove = async () => {
+    const next = await setAutoApprove(!autoApprove);
+    setAutoApproveState(next);
+  };
 
   const matches = useMemo(() => findMatches(text, commands), [text, commands]);
 
@@ -286,6 +294,21 @@ export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlu
         variant='ghost'
         className='h-7 w-7 shrink-0 mt-0.5'
         onMouseDown={(e) => e.preventDefault()}
+        onClick={toggleAutoApprove}
+        title={autoApprove ? 'Auto-approve ON — all MCP tool calls approved automatically' : 'Auto-approve OFF — MCP tool calls require approval'}
+      >
+        {autoApprove ? (
+          <ShieldCheck className='h-4 w-4 text-primary' />
+        ) : (
+          <Shield className='h-4 w-4 text-muted-foreground' />
+        )}
+      </Button>
+      <Button
+        type='button'
+        size='icon'
+        variant='ghost'
+        className='h-7 w-7 shrink-0 mt-0.5'
+        onMouseDown={(e) => e.preventDefault()}
         onClick={submit}
         disabled={!text.trim() || session.sending}
       >
@@ -293,7 +316,7 @@ export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlu
       </Button>
     </>
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [text, session.sending, inputPlaceholder, autoFocus]);
+  ), [text, session.sending, inputPlaceholder, autoFocus, autoApprove]);
 
   useOverlayMenu(menuNode);
   useOverlayBar(barNode);
