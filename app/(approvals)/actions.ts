@@ -14,3 +14,12 @@ export async function approveRequest(id: string): Promise<boolean> {
 export async function rejectRequest(id: string, reason: string): Promise<boolean> {
   return approvalStore.reject(id, reason.trim());
 }
+
+export async function getAutoApprove(): Promise<boolean> {
+  return approvalStore.getAutoApprove();
+}
+
+export async function setAutoApprove(value: boolean): Promise<boolean> {
+  approvalStore.setAutoApprove(value);
+  return approvalStore.getAutoApprove();
+}

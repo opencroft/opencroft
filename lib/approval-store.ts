@@ -14,8 +14,12 @@ interface PendingEntry {
 
 class ApprovalStore {
   private pending = new Map<string, PendingEntry>();
+  private autoApprove = false;
 
   add(request: PendingApproval): Promise<void> {
+    if (this.autoApprove) {
+      return Promise.resolve();
+    }
     return new Promise((resolve, reject) => {
       this.pending.set(request.id, { request, resolve, reject });
       toastStore.broadcast({
@@ -24,6 +28,20 @@ class ApprovalStore {
         spaceId: request.spaceId,
       });
     });
+  }
+
+  getAutoApprove(): boolean {
+    return this.autoApprove;
+  }
+
+  setAutoApprove(value: boolean): void {
+    this.autoApprove = value;
+    if (!value) {
+      return;
+    }
+    for (const entry of Array.from(this.pending.values())) {
+      this.approve(entry.request.id);
+    }
   }
 
   approve(id: string): boolean {
@@ -70,7 +88,7 @@ class ApprovalStore {
 }
 
 const g = globalThis as Record<string, unknown>;
-if (!g.__APPROVAL_STORE__) {
-  g.__APPROVAL_STORE__ = new ApprovalStore();
+if (!g.__APPROVAL_STORE_V2__) {
+  g.__APPROVAL_STORE_V2__ = new ApprovalStore();
 }
-export const approvalStore = g.__APPROVAL_STORE__ as ApprovalStore;
+export const approvalStore = g.__APPROVAL_STORE_V2__ as ApprovalStore;
