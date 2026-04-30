@@ -1,7 +1,7 @@
 'use client';
 
 import { Check, Crosshair, ShieldQuestion, X } from 'lucide-react';
-import { type KeyboardEvent, useMemo, useState, useTransition } from 'react';
+import { type KeyboardEvent, useCallback, useMemo, useState, useTransition } from 'react';
 
 import '@/app/(approvals)/_components/builtin-views';
 import { resolveApprovalView } from '@/app/(approvals)/_components/approval-views';
@@ -19,23 +19,23 @@ export function ApprovalBar({ request }: { request: PendingApproval }) {
   const ViewComponent = view.body;
   const focusNodeId = view.getNodeId?.(request.args);
 
-  const close = () => sseEventsStore.setSelectedApproval(null);
+  const close = useCallback(() => sseEventsStore.setSelectedApproval(null), []);
 
-  const onApprove = () => {
+  const onApprove = useCallback(() => {
     startTransition(async () => {
       await approveRequest(request.id);
       close();
     });
-  };
+  }, [request.id, close]);
 
-  const onReject = (withReason: string) => {
+  const onReject = useCallback((withReason: string) => {
     startTransition(async () => {
       await rejectRequest(request.id, withReason);
       close();
     });
-  };
+  }, [request.id, close]);
 
-  const onInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+  const onInputKeyDown = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {
       event.preventDefault();
       onReject(reason.trim());
@@ -45,7 +45,7 @@ export function ApprovalBar({ request }: { request: PendingApproval }) {
       event.preventDefault();
       close();
     }
-  };
+  }, [reason, onReject, close]);
 
   const menuNode = useMemo(() => (
     <>
