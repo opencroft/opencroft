@@ -7,6 +7,7 @@ export interface SpaceSummary {
   id: string;
   slug: string;
   name: string;
+  pinned: boolean;
   createdAt: string;
   updatedAt: string;
 }

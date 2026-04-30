@@ -13,6 +13,7 @@ interface SpaceRuntime {
   slug: string;
   name: string;
   graph: GraphData;
+  pinned: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -52,6 +53,7 @@ class SpacesRegistry {
         slug: row.slug,
         name: row.name,
         graph: parseGraph(row.data),
+        pinned: row.pinned,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       };
@@ -92,6 +94,7 @@ class SpacesRegistry {
       slug: row.slug,
       name: row.name,
       graph,
+      pinned: row.pinned,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -107,6 +110,7 @@ class SpacesRegistry {
         id: s.id,
         slug: s.slug,
         name: s.name,
+        pinned: s.pinned,
         createdAt: s.createdAt.toISOString(),
         updatedAt: s.updatedAt.toISOString(),
       }));
@@ -139,6 +143,21 @@ class SpacesRegistry {
 
   async create(name: string, slug: string, graph: GraphData): Promise<SpaceRuntime> {
     return this.createInternal(name, slug, graph);
+  }
+
+  async setPinned(slug: string, pinned: boolean): Promise<SpaceRuntime | null> {
+    const id = this.bySlug.get(slug);
+    if (!id) {
+      return null;
+    }
+    const runtime = this.spaces.get(id)!;
+    const row = await prisma.space.update({
+      where: { id },
+      data: { pinned },
+    });
+    runtime.pinned = row.pinned;
+    runtime.updatedAt = row.updatedAt;
+    return runtime;
   }
 
   async rename(slug: string, name: string): Promise<SpaceRuntime | null> {
