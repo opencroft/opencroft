@@ -22,6 +22,7 @@ import {
   SidebarRail,
   SidebarTrigger,
 } from '@/components/ui/sidebar';
+import { DevBuildBadge } from '@/app/components/dev-build-badge';
 
 function AppSidebar() {
   const pathname = usePathname() ?? '';
@@ -95,6 +96,7 @@ function AppSidebar() {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
+        <DevBuildBadge />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
