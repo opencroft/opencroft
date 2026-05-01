@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { invokeExtensionAction } from '@/app/(extension-runtime)/_server/actions';
+import { getStream } from '@/app/(extension-runtime)/_server/stream';
 import { getSpacesRegistry } from '@/app/(space)/server/store';
 
 // ═══════════════════════════════════════════════════════════════════
@@ -56,6 +57,7 @@ interface HandlerResult {
   headers?: Record<string, string>;
   body?: unknown;
   error?: string;
+  logs?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -90,11 +92,6 @@ export async function handleRequest(
       }
 
       const nodePath = (node.data.path as string) ?? '/';
-      const nodeMethods = (node.data.methods as string[]) ?? ['GET'];
-
-      if (!nodeMethods.includes(method)) {
-        continue;
-      }
 
       const result = matchPath(nodePath, requestPath);
       if (result.matched) {
@@ -111,9 +108,15 @@ export async function handleRequest(
   }
 
   if (!matchedRouteNode || !matchedSpaceSlug) {
+    return NextResponse.json({ error: 'Not Found' }, { status: 404 });
+  }
+
+  const rawMethods = matchedRouteNode.data.methods ?? matchedRouteNode.data.method ?? ['GET'];
+  const allowedMethods = (Array.isArray(rawMethods) ? rawMethods : [rawMethods]) as string[];
+  if (!allowedMethods.includes(method)) {
     return NextResponse.json(
-      { error: 'No matching route', path: requestPath, method },
-      { status: 404 },
+      { error: 'Method Not Allowed' },
+      { status: 405, headers: { Allow: allowedMethods.join(', ') } },
     );
   }
 
@@ -151,34 +154,10 @@ export async function handleRequest(
     );
   }
 
-  // Resolve TerminalContext from the handler node's ctx-in connection
-  let terminalContext: Record<string, unknown> = { type: 'local' };
-  const ctxEdge = (space.graph.edges as unknown as GraphEdge[]).find(
-    (e) => e.target === handlerNode.id && e.targetHandle === 'ctx-in',
-  );
-
-  if (ctxEdge) {
-    const ctxSourceNode = (space.graph.nodes as unknown as GraphNode[]).find(
-      (n) => n.id === ctxEdge.source,
-    );
-    if (ctxSourceNode) {
-      // Build terminal context from source node data
-      if (ctxSourceNode.type === 'localhost') {
-        terminalContext = { type: 'local' };
-      } else if (ctxSourceNode.type === 'wsl') {
-        terminalContext = { type: 'wsl', distro: ctxSourceNode.data.distro ?? 'Ubuntu' };
-      } else if (ctxSourceNode.type === 'server') {
-        terminalContext = {
-          type: 'ssh',
-          host: ctxSourceNode.data.address,
-          port: ctxSourceNode.data.port ?? 22,
-          username: ctxSourceNode.data.username ?? 'root',
-          password: ctxSourceNode.data.password,
-          keyPath: ctxSourceNode.data.keyPath,
-        };
-      }
-    }
-  }
+  const resolvedContexts = handlerNode.data.__resolvedContexts as
+    | Record<string, { value?: Record<string, unknown> }>
+    | undefined;
+  const terminalContext = resolvedContexts?.['ctx-in']?.value ?? { type: 'local' };
 
   // Build request event
   let body: unknown = undefined;
@@ -213,6 +192,12 @@ export async function handleRequest(
         event,
       },
     ]) as HandlerResult;
+
+    const stream = getStream<{ text: string; final: boolean }>(matchedSpaceSlug, handlerNode.id, 'stdout-out');
+    if (result.logs) {
+      stream.broadcast({ text: result.logs, final: false });
+    }
+    stream.broadcast({ text: '', final: true });
 
     if (result.error) {
       return NextResponse.json(
