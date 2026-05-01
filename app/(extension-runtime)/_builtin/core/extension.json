@@ -134,7 +134,8 @@
       "icon": "AppWindow",
       "handles": [
         { "id": "docker-in", "contextType": "docker-context", "role": "target", "label": "Docker" },
-        { "id": "volumes-in", "contextType": "volume-mount", "role": "target", "label": "Volumes" }
+        { "id": "volumes-in", "contextType": "volume-mount", "role": "target", "label": "Volumes" },
+        { "id": "inst-", "contextType": "terminal-context", "role": "source", "label": "Terminal", "dynamic": true }
       ],
       "actions": [
         { "id": "start", "label": "Start", "icon": "Play", "description": "Bring the service up via docker compose." },

@@ -267,15 +267,14 @@ export default defineExtension({
         if (!handleId.startsWith('inst-')) {
           return undefined;
         }
-        const containerId = handleId.slice(5);
+        const containerId = handleId.slice('inst-'.length);
         const d = data as { __resolvedContexts?: Record<string, { value: Record<string, unknown> }> };
-        const ctx = d.__resolvedContexts?.['docker-in']?.value ?? { type: 'local' };
-        const ctxName = ctx.contextName as string | undefined;
-        const execArgs = [...(ctxName ? ['--context', ctxName] : []), 'exec', '-it', containerId, 'bash'];
-        if (ctx.type === 'ssh') {
-          return { type: 'ssh', host: ctx.host, port: ctx.port, username: ctx.username, password: ctx.password, keyPath: ctx.keyPath, command: `docker ${execArgs.join(' ')}` };
+        const docker = d.__resolvedContexts?.['docker-in']?.value;
+        if (!docker) {
+          return undefined;
         }
-        return { type: 'wsl', distro: ctx.distro, command: 'docker', args: execArgs };
+        const { contextName, ...via } = docker as { contextName?: string } & Record<string, unknown>;
+        return { type: 'docker-exec', via, contextName, containerId };
       },
     },
     {

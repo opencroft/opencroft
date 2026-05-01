@@ -23,7 +23,7 @@ const CLOSE_ANIMATION_MS = 200;
 // Handle definitions
 // ═════════════════════════════════════════════════════════════════════
 
-export type HandleDef = { id: string; contextType: string; role: 'source' | 'target'; label?: string };
+export type HandleDef = { id: string; contextType: string; role: 'source' | 'target'; label?: string; dynamic?: boolean };
 
 export const TERMINAL_SOURCE: HandleDef[] = [
   { id: 'ssh-out', contextType: 'terminal-context', role: 'source', label: 'Terminal' },
@@ -61,6 +61,7 @@ export const DOCKER_HANDLES: HandleDef[] = [
 export const APP_HANDLES: HandleDef[] = [
   { id: 'docker-in', contextType: 'docker-context', role: 'target', label: 'Docker' },
   { id: 'volumes-in', contextType: 'volume-mount', role: 'target', label: 'Volumes' },
+  { id: 'inst-', contextType: 'terminal-context', role: 'source', label: 'Terminal', dynamic: true },
 ];
 
 export const VOLUME_HANDLES: HandleDef[] = [

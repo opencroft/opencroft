@@ -31,6 +31,9 @@ export interface TerminalContext {
   username?: string;
   password?: string;
   keyPath?: string;
+  via?: TerminalContext;
+  contextName?: string;
+  containerId?: string;
   [key: string]: unknown;
 }
 
@@ -43,7 +46,16 @@ function shellJoin(args: string[]): string {
   }).join(' ');
 }
 
+function dockerExecPrefix(ctx: TerminalContext): string[] {
+  const ctxArgs = ctx.contextName ? ['--context', ctx.contextName] : [];
+  return ['docker', ...ctxArgs, 'exec', '-i', ctx.containerId ?? ''];
+}
+
 export async function terminalRun(ctx: TerminalContext, args: string[]): Promise<string> {
+  if (ctx.type === 'docker-exec' && ctx.via) {
+    return terminalRun(ctx.via, [...dockerExecPrefix(ctx), 'sh', '-c', shellJoin(args)]);
+  }
+
   if (ctx.type === 'ssh') {
     return sshExec({
       address: ctx.host as string,
@@ -63,6 +75,10 @@ export async function terminalRun(ctx: TerminalContext, args: string[]): Promise
 }
 
 export async function terminalExec(ctx: TerminalContext, command: string): Promise<string> {
+  if (ctx.type === 'docker-exec' && ctx.via) {
+    return terminalExec(ctx.via, `${shellJoin(dockerExecPrefix(ctx))} sh -c ${shellJoin([command])}`);
+  }
+
   if (ctx.type === 'ssh') {
     return sshExec({
       address: ctx.host as string,

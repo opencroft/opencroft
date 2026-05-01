@@ -4,7 +4,7 @@ import { useNodes, useEdges } from '@xyflow/react';
 import { useMemo } from 'react';
 
 import { extensionRegistry } from '@/app/(extension-runtime)/_client/registry';
-import { type ResolvedContext } from '@/app/(extension-runtime)/_types';
+import { findExtensionHandle, type ResolvedContext } from '@/app/(extension-runtime)/_types';
 
 export function useNodeContext<V = unknown>(
   nodeId: string,
@@ -28,7 +28,7 @@ export function useNodeContext<V = unknown>(
     if (!resolved?.exposeOutput) {
       return null;
     }
-    const handleDef = resolved.handles.find((h) => h.id === sourceHandleId);
+    const handleDef = findExtensionHandle(resolved.handles, sourceHandleId, 'source');
     if (!handleDef) {
       return null;
     }

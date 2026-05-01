@@ -1,7 +1,7 @@
 import { listExtensionManifests } from '@/app/(extension-runtime)/_server/actions';
 import { type GraphSnapshot, type GraphNodeRecord } from '@/app/(extension-runtime)/_server/host';
 import { getExtensionModule } from '@/app/(extension-runtime)/_server/loader';
-import { type ExtensionManifest } from '@/app/(extension-runtime)/_types';
+import { findExtensionHandle, type ExtensionHandle } from '@/app/(extension-runtime)/_types';
 
 interface ResolvedContextEntry {
   sourceNodeId: string;
@@ -19,29 +19,13 @@ const CONTEXT_KEY = '__resolvedContexts';
  */
 export async function resolveGraphContexts(graph: GraphSnapshot): Promise<GraphSnapshot> {
   const manifests = await listExtensionManifests();
-  const manifestByTypeId = new Map<string, ExtensionManifest>();
-
+  const nodeTypeToExtension = new Map<string, { extensionId: string; handles: ExtensionHandle[] }>();
   for (const m of manifests) {
-    if (m.nodes) {
-      for (const node of m.nodes) {
-        manifestByTypeId.set(node.typeId, m);
-      }
+    if (!m.nodes) {
+      continue;
     }
-  }
-
-  // Build a map: extensionId → { handleId → contextType } from manifests
-  const nodeTypeToExtension = new Map<string, { extensionId: string; handles: Map<string, string> }>();
-  for (const m of manifests) {
-    if (m.nodes) {
-      for (const node of m.nodes) {
-        const handleMap = new Map<string, string>();
-        if (node.handles) {
-          for (const h of node.handles) {
-            handleMap.set(h.id, h.contextType);
-          }
-        }
-        nodeTypeToExtension.set(node.typeId, { extensionId: m.id, handles: handleMap });
-      }
+    for (const node of m.nodes) {
+      nodeTypeToExtension.set(node.typeId, { extensionId: m.id, handles: node.handles ?? [] });
     }
   }
 
@@ -66,10 +50,11 @@ export async function resolveGraphContexts(graph: GraphSnapshot): Promise<GraphS
       continue;
     }
 
-    const contextType = extInfo.handles.get(edge.sourceHandle);
-    if (!contextType) {
+    const sourceHandle = findExtensionHandle(extInfo.handles, edge.sourceHandle, 'source');
+    if (!sourceHandle) {
       continue;
     }
+    const contextType = sourceHandle.contextType;
 
     try {
       const mod = await getExtensionModule(extInfo.extensionId);
