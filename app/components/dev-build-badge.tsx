@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+
 import { SidebarMenu, SidebarMenuItem } from '@/components/ui/sidebar';
 
 interface BuildInfo {
@@ -31,7 +32,9 @@ export function DevBuildBadge() {
     info.commit !== 'unknown' ? info.commit.slice(0, 7) : null,
   ].filter(Boolean).join('@');
 
-  if (!label) return null;
+  if (!label) {
+    return null;
+  }
 
   return (
     <SidebarMenu>

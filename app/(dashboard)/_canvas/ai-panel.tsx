@@ -9,7 +9,7 @@ import { useOverlayContent } from '@/app/(dashboard)/_canvas/overlay-context';
 import { deleteSession, loadOpenclaw, type OpenclawAgent } from '@/app/(openclaw)/openclaw/actions';
 import { AgentChat, AgentChatInput, useAgentSession } from '@/app/(openclaw)/openclaw/agent-chat';
 import { slug } from '@/app/(server)/server/types';
-import { type AgentNodeRef, type AgentJobRef, type AgentInstructionRef, listAgentNodes } from '@/app/(space)/server/agents';
+import { type AgentNodeRef, type AgentJobRef, listAgentNodes } from '@/app/(space)/server/agents';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 

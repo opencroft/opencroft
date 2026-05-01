@@ -1,12 +1,15 @@
-import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
+
+import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
 let cached: { branch: string; commit: string } | null = null;
 
 function getBuildInfo() {
-  if (cached) return cached;
+  if (cached) {
+    return cached;
+  }
   let branch = process.env.OPENCROFT_BRANCH || 'unknown';
   let commit = process.env.OPENCROFT_COMMIT || 'unknown';
 
