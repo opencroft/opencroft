@@ -51,7 +51,10 @@ export interface HandlerResult {
   headers?: Record<string, string>;
   body?: unknown;
   error?: string;
+  logs?: string;
 }
+
+const RESULT_MARKER = '__OPENCROFT_HANDLER_RESULT__';
 
 function pythonHandlerBootstrap(eventB64: string): string {
   return `
@@ -60,7 +63,7 @@ _event = json.loads(base64.b64decode('${eventB64}').decode('utf-8'))
 _result = handler(_event)
 if not isinstance(_result, dict):
     _result = {"body": _result}
-print(json.dumps(_result))
+print('${RESULT_MARKER}' + json.dumps(_result))
 sys.exit(0)
 `;
 }
@@ -72,7 +75,7 @@ Promise.resolve(typeof handler === 'function' ? handler(_event) : undefined)
   .then(function(_result) {
     if (_result === null || _result === undefined) _result = {};
     if (typeof _result !== 'object' || Array.isArray(_result)) _result = { body: _result };
-    console.log(JSON.stringify(_result));
+    console.log('${RESULT_MARKER}' + JSON.stringify(_result));
     process.exit(0);
   })
   .catch(function(_e) {
@@ -82,35 +85,49 @@ Promise.resolve(typeof handler === 'function' ? handler(_event) : undefined)
 `;
 }
 
+interface SplitOutput {
+  result: string;
+  logs: string;
+}
+
+function splitStdout(stdout: string): SplitOutput {
+  const idx = stdout.lastIndexOf(RESULT_MARKER);
+  if (idx < 0) {
+    throw new Error('Handler did not produce a result');
+  }
+  const before = stdout.slice(0, idx);
+  const tail = stdout.slice(idx + RESULT_MARKER.length);
+  const newline = tail.indexOf('\n');
+  const result = newline < 0 ? tail : tail.slice(0, newline);
+  const after = newline < 0 ? '' : tail.slice(newline + 1);
+  return { result, logs: before + after };
+}
+
 export async function runHandler(params: HandlerRunParams): Promise<HandlerResult> {
   const { script, language, context, event } = params;
   const eventB64 = Buffer.from(JSON.stringify(event), 'utf-8').toString('base64');
 
   try {
     let fullScript: string;
+    let stdout: string;
     if (language === 'python') {
       fullScript = script + pythonHandlerBootstrap(eventB64);
-      const stdout = await terminalRun(context, ['python', '-c', fullScript]);
-      const parsed = JSON.parse(stdout.trim());
-      return {
-        status: parsed.status ?? 200,
-        headers: parsed.headers,
-        body: parsed.body,
-      };
-    }
-
-    if (language === 'node') {
+      stdout = await terminalRun(context, ['python', '-c', fullScript]);
+    } else if (language === 'node') {
       fullScript = script + nodeHandlerBootstrap(eventB64);
-      const stdout = await terminalRun(context, ['node', '-e', fullScript]);
-      const parsed = JSON.parse(stdout.trim());
-      return {
-        status: parsed.status ?? 200,
-        headers: parsed.headers,
-        body: parsed.body,
-      };
+      stdout = await terminalRun(context, ['node', '-e', fullScript]);
+    } else {
+      return { status: 500, body: { error: `Unsupported language: ${language}` } };
     }
 
-    return { status: 500, body: { error: `Unsupported language: ${language}` } };
+    const { result, logs } = splitStdout(stdout);
+    const parsed = JSON.parse(result);
+    return {
+      status: parsed.status ?? 200,
+      headers: parsed.headers,
+      body: parsed.body,
+      logs,
+    };
   } catch (err) {
     const msg = (err as Error).message || String(err);
     return { status: 500, error: msg };
