@@ -4,7 +4,7 @@ import { AppLink } from '@prisma/client';
 import { BookOpen, ChevronRight, ExternalLink, Globe, MessageSquare, Network, SettingsIcon } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 
 import { getAppLinks } from '@/app/(applink)/applinks/actions';
 import { type ChatEntry, listAllChats } from '@/app/(openclaw)/openclaw/actions';
@@ -220,7 +220,9 @@ export function AppShell({ pinnedSpaces, children }: Props) {
   return (
     <TitlebarProvider>
       <SidebarProvider>
-        <AppSidebar pinnedSpaces={pinnedSpaces} />
+        <Suspense fallback={null}>
+          <AppSidebar pinnedSpaces={pinnedSpaces} />
+        </Suspense>
         <main className='flex flex-col w-full h-screen'>
           {children}
         </main>
