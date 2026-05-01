@@ -185,7 +185,7 @@ export const toolDefinitions = [
   },
   {
     name: 'update_nodes',
-    description: "Update one or more nodes' data and/or position. Data merge is shallow — included keys replace the existing value entirely.",
+    description: "Update nodes' data and/or position (shallow merge). For long or multi-line string fields, prefer write_node_property / edit_node_property.",
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -205,6 +205,36 @@ export const toolDefinitions = [
         ...SPACE_PARAM,
       },
       required: ['updates'],
+    },
+  },
+  {
+    name: 'write_node_property',
+    description: 'Overwrite a string property on a node by dot path (e.g. "script"). Preferred over update_nodes for multi-line strings.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        nodeId: { type: 'string', description: 'The unique node ID' },
+        path: { type: 'string', description: 'Dot path within node.data, e.g. "script".' },
+        value: { type: 'string', description: 'New string value.' },
+        ...SPACE_PARAM,
+      },
+      required: ['nodeId', 'path', 'value'],
+    },
+  },
+  {
+    name: 'edit_node_property',
+    description: 'Replace an exact string inside a node\'s string property at a dot path. Preferred over update_nodes for targeted edits in multi-line strings. Fails if oldString is not unique unless replaceAll is true.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        nodeId: { type: 'string', description: 'The unique node ID' },
+        path: { type: 'string', description: 'Dot path within node.data, e.g. "script".' },
+        oldString: { type: 'string', description: 'The exact text to replace.' },
+        newString: { type: 'string', description: 'The text to replace with.' },
+        replaceAll: { type: 'boolean', description: 'Replace every occurrence (default false).' },
+        ...SPACE_PARAM,
+      },
+      required: ['nodeId', 'path', 'oldString', 'newString'],
     },
   },
   {
@@ -787,6 +817,32 @@ function walkLeaves(value: unknown, path: string, out: Map<string, string>): voi
   out.set(path, String(value));
 }
 
+function getByPath(obj: Record<string, unknown>, path: string): unknown {
+  const parts = path.split('.');
+  let cur: unknown = obj;
+  for (const p of parts) {
+    if (cur === null || typeof cur !== 'object') {
+      return undefined;
+    }
+    cur = (cur as Record<string, unknown>)[p];
+  }
+  return cur;
+}
+
+function setByPath(obj: Record<string, unknown>, path: string, value: unknown): void {
+  const parts = path.split('.');
+  let cur: Record<string, unknown> = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const key = parts[i];
+    const next = cur[key];
+    if (next === null || typeof next !== 'object') {
+      cur[key] = {};
+    }
+    cur = cur[key] as Record<string, unknown>;
+  }
+  cur[parts[parts.length - 1]] = value;
+}
+
 function requireArray<T = unknown>(value: unknown, name: string): T[] {
   if (!Array.isArray(value) || value.length === 0) {
     fail(-32602, `Missing required param: ${name} (non-empty array)`);
@@ -1158,6 +1214,71 @@ function buildHandlers(): Record<string, ToolHandler> {
       broadcastGraphUpdated(slug);
       return textResult(JSON.stringify(updated, null, 2));
     }, { view: 'update_nodes' }),
+
+    // ── write_node_property ─────────────────────────────────────────
+    write_node_property: withApprovalRequired(async (args) => {
+      const nodeId = args.nodeId as string | undefined;
+      const propPath = args.path as string | undefined;
+      const value = args.value as string | undefined;
+      if (!nodeId || !propPath || value === undefined) {
+        fail(-32602, 'Missing required params: nodeId, path, value');
+      }
+      const slug = await resolveSpace(args);
+      const graph = await loadOrFail(slug);
+      const node = graph.nodes.find((n) => (n as { id: string }).id === nodeId) as GraphNode | undefined;
+      if (!node) {
+        fail(-32602, `Node not found: ${nodeId}`);
+      }
+      if (!node.data) {
+        node.data = {};
+      }
+      setByPath(node.data, propPath, value);
+      await saveSpaceGraph(slug, graph);
+      broadcastGraphUpdated(slug);
+      return textResult(`Property ${propPath} on ${nodeId} written.`);
+    }, { view: 'write_node_property' }),
+
+    // ── edit_node_property ──────────────────────────────────────────
+    edit_node_property: withApprovalRequired(async (args) => {
+      const nodeId = args.nodeId as string | undefined;
+      const propPath = args.path as string | undefined;
+      const oldString = args.oldString as string | undefined;
+      const newString = args.newString as string | undefined;
+      if (!nodeId || !propPath || oldString === undefined || newString === undefined) {
+        fail(-32602, 'Missing required params: nodeId, path, oldString, newString');
+      }
+      if (oldString === newString) {
+        fail(-32602, 'oldString and newString must differ');
+      }
+      const replaceAll = Boolean(args.replaceAll);
+      const slug = await resolveSpace(args);
+      const graph = await loadOrFail(slug);
+      const node = graph.nodes.find((n) => (n as { id: string }).id === nodeId) as GraphNode | undefined;
+      if (!node) {
+        fail(-32602, `Node not found: ${nodeId}`);
+      }
+      const current = getByPath(node.data ?? {}, propPath);
+      if (typeof current !== 'string') {
+        fail(-32602, `Property ${propPath} is not a string`);
+      }
+      const occurrences = current.split(oldString).length - 1;
+      if (occurrences === 0) {
+        fail(-32602, 'oldString not found in property');
+      }
+      if (occurrences > 1 && !replaceAll) {
+        fail(-32602, `oldString is not unique (${occurrences} matches). Set replaceAll=true or provide more context.`);
+      }
+      const updated = replaceAll
+        ? current.split(oldString).join(newString)
+        : current.replace(oldString, newString);
+      if (!node.data) {
+        node.data = {};
+      }
+      setByPath(node.data, propPath, updated);
+      await saveSpaceGraph(slug, graph);
+      broadcastGraphUpdated(slug);
+      return textResult(`Property ${propPath} on ${nodeId} updated.`);
+    }, { view: 'edit_node_property' }),
 
     // ── delete_nodes ────────────────────────────────────────────────
     delete_nodes: withApprovalRequired(async (args) => {

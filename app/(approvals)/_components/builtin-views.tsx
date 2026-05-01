@@ -151,6 +151,96 @@ function RemoteEditView({ request }: ApprovalViewProps) {
   );
 }
 
+function getByPath(obj: Record<string, unknown>, path: string): unknown {
+  const parts = path.split('.');
+  let cur: unknown = obj;
+  for (const p of parts) {
+    if (cur === null || typeof cur !== 'object') {
+      return undefined;
+    }
+    cur = (cur as Record<string, unknown>)[p];
+  }
+  return cur;
+}
+
+function NodePropertyDiff({ nodeId, path, current, next }: { nodeId: string; path: string; current: string; next: string }) {
+  const { getNode } = useReactFlow();
+  const node = getNode(nodeId) as { data?: { name?: string } } | undefined;
+  const name = node?.data?.name ?? nodeId;
+  return (
+    <div className='p-4'>
+      <NodeCard className='w-full'>
+        <div className='px-3 py-2 space-y-2'>
+          <div className='font-mono text-xs'>
+            {name} <span className='text-muted-foreground'>({nodeId})</span> · {path}
+          </div>
+          <NodeDiffEditor current={current} next={next} />
+        </div>
+      </NodeCard>
+    </div>
+  );
+}
+
+function WriteNodePropertyView({ request }: ApprovalViewProps) {
+  const nodeId = request.args.nodeId as string | undefined;
+  const propPath = request.args.path as string | undefined;
+  const value = (request.args.value as string | undefined) ?? '';
+  const { getNode } = useReactFlow();
+  const node = nodeId ? getNode(nodeId) as { data?: Record<string, unknown> } | undefined : undefined;
+  const currentRaw = node && propPath ? getByPath(node.data ?? {}, propPath) : undefined;
+  const current = typeof currentRaw === 'string' ? currentRaw : '';
+
+  const diffNode = useMemo(() => {
+    if (!nodeId || !propPath) {
+      return null;
+    }
+    return <NodePropertyDiff nodeId={nodeId} path={propPath} current={current} next={value} />;
+  }, [nodeId, propPath, current, value]);
+
+  useOverlayContent(diffNode);
+
+  return (
+    <div className='space-y-3 px-3 py-2'>
+      {nodeId && <NodeRow nodeId={nodeId} />}
+      {propPath && <FieldRow label='Path' value={propPath} />}
+    </div>
+  );
+}
+
+function EditNodePropertyView({ request }: ApprovalViewProps) {
+  const nodeId = request.args.nodeId as string | undefined;
+  const propPath = request.args.path as string | undefined;
+  const oldString = (request.args.oldString as string | undefined) ?? '';
+  const newString = (request.args.newString as string | undefined) ?? '';
+  const replaceAll = Boolean(request.args.replaceAll);
+  const { getNode } = useReactFlow();
+  const node = nodeId ? getNode(nodeId) as { data?: Record<string, unknown> } | undefined : undefined;
+  const currentRaw = node && propPath ? getByPath(node.data ?? {}, propPath) : undefined;
+  const current = typeof currentRaw === 'string' ? currentRaw : '';
+
+  const diffNode = useMemo(() => {
+    if (!nodeId || !propPath) {
+      return null;
+    }
+    const next = replaceAll
+      ? current.split(oldString).join(newString)
+      : current.replace(oldString, newString);
+    return <NodePropertyDiff nodeId={nodeId} path={propPath} current={current} next={next} />;
+  }, [nodeId, propPath, current, oldString, newString, replaceAll]);
+
+  useOverlayContent(diffNode);
+
+  return (
+    <div className='space-y-3 px-3 py-2'>
+      {nodeId && <NodeRow nodeId={nodeId} />}
+      {propPath && <FieldRow label='Path' value={propPath} />}
+      <FieldRow label='Old' value={oldString} />
+      <FieldRow label='New' value={newString} />
+      {replaceAll && <div className='text-xs text-muted-foreground'>Replace all occurrences</div>}
+    </div>
+  );
+}
+
 function RemoteExecView({ request }: ApprovalViewProps) {
   const target = request.args.target as string | undefined;
   const command = request.args.command as string | undefined;
@@ -305,4 +395,14 @@ registerApprovalView('call', {
 
 registerApprovalView('update_nodes', {
   body: UpdateNodesView,
+});
+
+registerApprovalView('write_node_property', {
+  body: WriteNodePropertyView,
+  getNodeId: (args) => args.nodeId as string | undefined,
+});
+
+registerApprovalView('edit_node_property', {
+  body: EditNodePropertyView,
+  getNodeId: (args) => args.nodeId as string | undefined,
 });
