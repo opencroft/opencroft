@@ -1,7 +1,13 @@
 'use server';
 
+import { remoteExec, resolveTerminalContext, shellQuote } from '@/app/(mcp)/api/mcp/tools';
 import { approvalStore } from '@/lib/approval-store';
 import type { PendingApproval } from '@/lib/sse-events';
+
+export async function readRemoteFile(target: string, space: string | undefined, path: string): Promise<string> {
+  const { ctx } = await resolveTerminalContext({ target, space });
+  return remoteExec(ctx, `cat ${shellQuote(path)}`);
+}
 
 export async function listPendingApprovals(spaceId?: string): Promise<PendingApproval[]> {
   return approvalStore.list(spaceId);

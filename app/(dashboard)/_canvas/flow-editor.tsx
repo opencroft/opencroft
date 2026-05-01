@@ -24,6 +24,7 @@ import { useTheme } from 'next-themes';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import { ApprovalList } from '@/app/(approvals)/_components/approval-list';
 import { type CommandNodeEntry } from '@/app/(dashboard)/_canvas/canvas-command-bar';
 import { CanvasOverlay } from '@/app/(dashboard)/_canvas/canvas-overlay';
 import { CommentNode } from '@/app/(dashboard)/_canvas/comment-node';
@@ -663,6 +664,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
             selectedNodeId={selected?.id ?? null}
             onFocusNode={focusNode}
           />
+          <ApprovalList spaceId={slug} />
         </div>
         {!inspectorExpanded && (
           <div

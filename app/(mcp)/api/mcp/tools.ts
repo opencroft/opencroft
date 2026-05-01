@@ -798,7 +798,7 @@ function requireArray<T = unknown>(value: unknown, name: string): T[] {
 
 const CORE_EXTENSION_ID = 'builtin/core';
 
-async function resolveTerminalContext(
+export async function resolveTerminalContext(
   args: Record<string, unknown>,
 ): Promise<{ ctx: Record<string, unknown>; slug: string }> {
   const target = args.target as string | undefined;
@@ -842,7 +842,7 @@ async function resolveTerminalContext(
   return { ctx: ctx as Record<string, unknown>, slug };
 }
 
-async function remoteExec(
+export async function remoteExec(
   ctx: Record<string, unknown>,
   command: string,
 ): Promise<string> {
@@ -854,7 +854,7 @@ async function remoteExec(
   return execFn(ctx, command) as Promise<string>;
 }
 
-function shellQuote(s: string): string {
+export function shellQuote(s: string): string {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
@@ -1556,7 +1556,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       const heredoc = `cat > ${shellQuote(filePath)} << 'OPENCROFTEOF'\n${trimmed}\nOPENCROFTEOF`;
       await remoteExec(ctx, heredoc);
       return textResult(`The file ${filePath} has been written.`);
-    }),
+    }, { view: 'remote_write' }),
 
     // ── edit (remote) ────────────────────────────────────────────────
     remote_edit: withApprovalRequired(async (args) => {
@@ -1589,7 +1589,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       const heredoc = `cat > ${shellQuote(filePath)} << 'OPENCROFTEOF'\n${trimmed}\nOPENCROFTEOF`;
       await remoteExec(ctx, heredoc);
       return textResult(`The file ${filePath} has been updated successfully.`);
-    }),
+    }, { view: 'remote_edit' }),
 
     // ── exec (remote) ────────────────────────────────────────────────
     remote_exec: withApprovalRequired(async (args) => {

@@ -2,15 +2,16 @@
 
 import { useReactFlow } from '@xyflow/react';
 import { GitCompare } from 'lucide-react';
-import { useContext, useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import {
   ApprovalViewProps,
   registerApprovalView,
 } from '@/app/(approvals)/_components/approval-views';
 import { NodeDiffEditor } from '@/app/(approvals)/_components/node-diff-editor';
-import { CanvasContentContext } from '@/app/(dashboard)/_canvas/canvas-content-context';
+import { readRemoteFile } from '@/app/(approvals)/actions';
 import { NodeCard } from '@/app/(dashboard)/_canvas/node-card';
+import { useOverlayContent } from '@/app/(dashboard)/_canvas/overlay-context';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -33,6 +34,123 @@ function NodeRow({ nodeId }: { nodeId: string }) {
   return <FieldRow label='Node' value={value} />;
 }
 
+function TargetRow({ target }: { target: string }) {
+  const { getNode } = useReactFlow();
+  const [nodeId, handleId] = target.split('/');
+  const node = getNode(nodeId) as { data?: { name?: string } } | undefined;
+  const name = node?.data?.name;
+  const label = name ? `${name} (${nodeId})` : nodeId;
+  const value = handleId ? `${label} / ${handleId}` : label;
+  return <FieldRow label='Target' value={value} />;
+}
+
+function useRemoteFileContent(target: string | undefined, space: string | undefined, path: string | undefined, requestId: string) {
+  const [content, setContent] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!target || !path) {
+      return;
+    }
+    let cancelled = false;
+    setContent(null);
+    setError(null);
+    readRemoteFile(target, space, path).then((value) => {
+      if (!cancelled) {
+        setContent(value);
+      }
+    }).catch((err: Error) => {
+      if (!cancelled) {
+        setError(err.message);
+        setContent('');
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [target, space, path, requestId]);
+
+  return { content, error };
+}
+
+function RemoteWriteView({ request }: ApprovalViewProps) {
+  const target = request.args.target as string | undefined;
+  const space = request.args.space as string | undefined;
+  const filePath = request.args.path as string | undefined;
+  const newContent = (request.args.content as string | undefined) ?? '';
+  const { content, error } = useRemoteFileContent(target, space, filePath, request.id);
+
+  const diffNode = useMemo(() => {
+    if (content === null) {
+      return null;
+    }
+    return (
+      <div className='p-4'>
+        <NodeCard className='w-full'>
+          <div className='px-3 py-2 space-y-2'>
+            <div className='font-mono text-xs'>{filePath}</div>
+            <NodeDiffEditor current={content} next={newContent} />
+          </div>
+        </NodeCard>
+      </div>
+    );
+  }, [content, newContent, filePath]);
+
+  useOverlayContent(diffNode);
+
+  return (
+    <div className='space-y-3 px-3 py-2'>
+      {target && <TargetRow target={target} />}
+      {filePath && <FieldRow label='Path' value={filePath} />}
+      {error && <FieldRow label='Note' value={`Could not read existing file: ${error}`} />}
+      {content === null && <div className='text-xs text-muted-foreground'>Loading current content…</div>}
+    </div>
+  );
+}
+
+function RemoteEditView({ request }: ApprovalViewProps) {
+  const target = request.args.target as string | undefined;
+  const space = request.args.space as string | undefined;
+  const filePath = request.args.path as string | undefined;
+  const oldString = (request.args.oldString as string | undefined) ?? '';
+  const newString = (request.args.newString as string | undefined) ?? '';
+  const replaceAll = Boolean(request.args.replaceAll);
+  const { content, error } = useRemoteFileContent(target, space, filePath, request.id);
+
+  const diffNode = useMemo(() => {
+    if (content === null) {
+      return null;
+    }
+    const next = replaceAll
+      ? content.split(oldString).join(newString)
+      : content.replace(oldString, newString);
+    return (
+      <div className='p-4'>
+        <NodeCard className='w-full'>
+          <div className='px-3 py-2 space-y-2'>
+            <div className='font-mono text-xs'>{filePath}</div>
+            <NodeDiffEditor current={content} next={next} />
+          </div>
+        </NodeCard>
+      </div>
+    );
+  }, [content, oldString, newString, replaceAll, filePath]);
+
+  useOverlayContent(diffNode);
+
+  return (
+    <div className='space-y-3 px-3 py-2'>
+      {target && <TargetRow target={target} />}
+      {filePath && <FieldRow label='Path' value={filePath} />}
+      <FieldRow label='Old' value={oldString} />
+      <FieldRow label='New' value={newString} />
+      {replaceAll && <div className='text-xs text-muted-foreground'>Replace all occurrences</div>}
+      {error && <FieldRow label='Note' value={`Could not read existing file: ${error}`} />}
+      {content === null && <div className='text-xs text-muted-foreground'>Loading current content…</div>}
+    </div>
+  );
+}
+
 function RemoteExecView({ request }: ApprovalViewProps) {
   const target = request.args.target as string | undefined;
   const command = request.args.command as string | undefined;
@@ -41,8 +159,8 @@ function RemoteExecView({ request }: ApprovalViewProps) {
 
   return (
     <div className='space-y-3 px-3 py-2'>
+      {target && <TargetRow target={target} />}
       {description && <FieldRow label='Description' value={description} />}
-      {target && <FieldRow label='Target' value={target} />}
       {command && <FieldRow label='Command' value={command} />}
       {secrets && secrets.length > 0 && <FieldRow label='Secrets' value={secrets.join(', ')} />}
     </div>
@@ -110,28 +228,23 @@ function NodeDiff({ update }: { update: NodeUpdate }) {
 function UpdateNodesView({ request }: ApprovalViewProps) {
   const updates = (request.args.updates ?? []) as NodeUpdate[];
   const { getNode } = useReactFlow();
-  const setCanvasContent = useContext(CanvasContentContext);
   const [openId, setOpenId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!openId) {
-      setCanvasContent(null);
-      return;
+  const openUpdate = openId ? updates.find((u) => u.nodeId === openId) ?? null : null;
+  const diffNode = useMemo(() => {
+    if (!openUpdate) {
+      return null;
     }
-    const update = updates.find((u) => u.nodeId === openId);
-    if (!update) {
-      setCanvasContent(null);
-      return;
-    }
-    setCanvasContent(
+    return (
       <div className='p-4'>
         <NodeCard className='w-full'>
-          <NodeDiff update={update} />
+          <NodeDiff update={openUpdate} />
         </NodeCard>
-      </div>,
+      </div>
     );
-    return () => setCanvasContent(null);
-  }, [openId, updates, setCanvasContent]);
+  }, [openUpdate]);
+
+  useOverlayContent(diffNode);
 
   useEffect(() => {
     setOpenId(null);
@@ -172,6 +285,16 @@ function UpdateNodesView({ request }: ApprovalViewProps) {
 
 registerApprovalView('remote_exec', {
   body: RemoteExecView,
+  getNodeId: (args) => (args.target as string | undefined)?.split('/')[0],
+});
+
+registerApprovalView('remote_write', {
+  body: RemoteWriteView,
+  getNodeId: (args) => (args.target as string | undefined)?.split('/')[0],
+});
+
+registerApprovalView('remote_edit', {
+  body: RemoteEditView,
   getNodeId: (args) => (args.target as string | undefined)?.split('/')[0],
 });
 
