@@ -4,6 +4,8 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { toast } from 'sonner';
 
+import { emitNodeDataUpdate } from '@/app/(dashboard)/_canvas/node-data-events';
+import { broadcast as streamBroadcast, getStream } from '@/app/(extension-runtime)/_client/stream';
 import { useSSEEventsDispatch } from '@/app/(sse)/stores/sse-events-store';
 import type { SSEEvent } from '@/lib/sse-events';
 
@@ -36,6 +38,14 @@ export function useSSE() {
 
         if (data.type === 'open_space') {
           router.push(`/space/${data.slug}`);
+        }
+
+        if (data.type === 'stream_chunk') {
+          streamBroadcast(getStream(data.nodeId, data.handleId), data.chunk);
+        }
+
+        if (data.type === 'node_data_updated') {
+          emitNodeDataUpdate(data.nodeId, data.data);
         }
 
         dispatch(data);

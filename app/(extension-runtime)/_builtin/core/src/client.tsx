@@ -8,7 +8,7 @@ import { SecretsStoreNode, SecretsStoreInspector } from './nodes/secrets-store';
 import { TerminalWindowNode, TerminalWindowInspector } from './nodes/terminal';
 import { FileManagerWindowNode, FileManagerWindowInspector } from './nodes/file-manager';
 import { SectionNode, DomainNode, SectionInspector, randomSectionColor } from './nodes/section';
-import { makeBashNode, makePythonNode, makeNodeJsNode } from './nodes/script';
+import { makeBashNode, makePythonNode, makeNodeJsNode, scriptExposeOutput } from './nodes/script';
 import { DockerNode, DockerInspector, DockerInventoryTab, DockerData } from './nodes/docker';
 import { ApplicationNode, ApplicationInspector, ApplicationLogsTab, ApplicationTerminalTab } from './nodes/application';
 import { VolumeNode, VolumeInspector, VolumeData } from './nodes/volume';
@@ -24,7 +24,7 @@ import { AsrNode, AsrInspector, ASR_HANDLES, asrExposeOutput } from './nodes/asr
 import { TextGenerationNode, TextGenerationInspector, TEXT_GENERATION_HANDLES, textGenerationExposeOutput } from './nodes/text-generation';
 import { TextToSpeechNode, TextToSpeechInspector, TEXT_TO_SPEECH_HANDLES, textToSpeechExposeOutput } from './nodes/text-to-speech';
 import { SpeakerNode, SpeakerInspector, SPEAKER_HANDLES } from './nodes/speaker';
-import { LogNode, LogInspector, LOG_HANDLES } from './nodes/log';
+import { LogNode, LogInspector, LogOutputTab, LOG_HANDLES } from './nodes/log';
 import { ApiRouteNode, ApiRouteInspector, API_ROUTE_HANDLES, apiRouteExposeOutput } from './nodes/api-route';
 import { EventNode, EventInspector, EVENT_HANDLES, eventExposeOutput } from './nodes/event';
 import { GitWorkspaceNode, GitWorkspaceInspector } from './nodes/git-workspace';
@@ -185,7 +185,9 @@ export default defineExtension({
       inspector: makeBashNode().inspector as unknown as never,
       inspectorTabs: [
         { id: 'editor', label: 'Editor', icon: 'Code', fullHeight: true, component: makeBashNode().editorTab as unknown as never },
+        { id: 'output', label: 'Output', icon: 'ScrollText', fullHeight: true, component: makeBashNode().outputTab as unknown as never },
       ],
+      exposeOutput: scriptExposeOutput as unknown as never,
     },
     {
       typeId: 'script-python',
@@ -199,7 +201,9 @@ export default defineExtension({
       inspector: makePythonNode().inspector as unknown as never,
       inspectorTabs: [
         { id: 'editor', label: 'Editor', icon: 'Code', fullHeight: true, component: makePythonNode().editorTab as unknown as never },
+        { id: 'output', label: 'Output', icon: 'ScrollText', fullHeight: true, component: makePythonNode().outputTab as unknown as never },
       ],
+      exposeOutput: scriptExposeOutput as unknown as never,
     },
     {
       typeId: 'script-node',
@@ -213,7 +217,9 @@ export default defineExtension({
       inspector: makeNodeJsNode().inspector as unknown as never,
       inspectorTabs: [
         { id: 'editor', label: 'Editor', icon: 'Code', fullHeight: true, component: makeNodeJsNode().editorTab as unknown as never },
+        { id: 'output', label: 'Output', icon: 'ScrollText', fullHeight: true, component: makeNodeJsNode().outputTab as unknown as never },
       ],
+      exposeOutput: scriptExposeOutput as unknown as never,
     },
     {
       typeId: 'docker',
@@ -487,9 +493,12 @@ export default defineExtension({
       icon: 'ScrollText',
       accent: 'oklch(0.72 0.15 160)',
       handles: LOG_HANDLES as unknown as never[],
-      defaultData: { max: 500 },
+      defaultData: { max: 500, entries: [] },
       component: LogNode as unknown as never,
       inspector: LogInspector as unknown as never,
+      inspectorTabs: [
+        { id: 'output', label: 'Output', icon: 'ScrollText', fullHeight: true, component: LogOutputTab as unknown as never },
+      ],
     },
     {
       typeId: 'api-route',

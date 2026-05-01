@@ -24,6 +24,11 @@ export interface DockerContainerSnapshot {
   running: boolean;
 }
 
+export interface StreamChunkPayload {
+  text: string;
+  final: boolean;
+}
+
 export type SSEEvent = BaseEvent & (
   | { type: 'toast'; message: string; toastType: 'info' | 'success' | 'warning' | 'error' }
   | { type: 'focus_node'; nodeId: string; panToNode?: boolean }
@@ -37,6 +42,8 @@ export type SSEEvent = BaseEvent & (
   | { type: 'approval_pending'; request: PendingApproval }
   | { type: 'approval_resolved'; id: string }
   | { type: 'docker_ps_updated'; dockerNodeId: string; containers: DockerContainerSnapshot[] }
+  | { type: 'stream_chunk'; nodeId: string; handleId: string; chunk: StreamChunkPayload }
+  | { type: 'node_data_updated'; nodeId: string; data: Record<string, unknown> }
 );
 
 /** Comment anchored to a node, as stored on the client side. One per node. */

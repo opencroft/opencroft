@@ -2,12 +2,16 @@ import {
   React,
   NodeFrame,
   InputHandle,
+  OutputHandle,
   dispatch,
+  getStream,
   icons,
+  inspectorIntent,
   toast,
   useNodeContext,
   useReactFlow,
-  createPortal,
+  type Stream,
+  type TextChunk,
 } from '@ext/host';
 import {
   Button,
@@ -17,17 +21,13 @@ import { oneDark } from '@codemirror/theme-one-dark';
 import { javascript } from '@codemirror/lang-javascript';
 import { python } from '@codemirror/lang-python';
 
-const { useCallback, useEffect, useState } = React;
+import { setScriptResult, useScriptResult, type ScriptResult } from './script-output-store';
+
+const { useCallback } = React;
 
 export interface ScriptData {
   script: string;
   language: 'bash' | 'python' | 'node';
-}
-
-interface ScriptResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
 }
 
 interface TerminalContext {
@@ -52,93 +52,6 @@ function langExtension(language: ScriptData['language']) {
 }
 
 // ═════════════════════════════════════════════════════════════════════
-// Fullscreen CodeMirror overlay
-// ═════════════════════════════════════════════════════════════════════
-
-function CodeOverlay({
-  title,
-  value,
-  language,
-  readOnly,
-  accent,
-  onSave,
-  onClose,
-}: {
-  title: string;
-  value: string;
-  language: ScriptData['language'];
-  readOnly?: boolean;
-  accent: string;
-  onSave?: (value: string) => void;
-  onClose: () => void;
-}) {
-  const [draft, setDraft] = useState(value);
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-      if (e.key === 's' && (e.ctrlKey || e.metaKey) && !readOnly) {
-        e.preventDefault();
-        onSave?.(draft);
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [draft, readOnly, onSave, onClose]);
-
-  const extensions = readOnly ? [] : langExtension(language);
-
-  return createPortal(
-    <div
-      className='fixed inset-0 z-[9999] flex flex-col bg-background/95 backdrop-blur-sm'
-      onClick={(e) => {
-        if (e.target === e.currentTarget) {
-          onClose();
-        }
-      }}
-    >
-      <div className='flex items-center gap-2 px-4 py-2 border-b'>
-        <div className='h-2 w-2 rounded-full' style={{ backgroundColor: accent }} />
-        <span className='text-sm font-medium flex-1'>{title}</span>
-        {!readOnly ? (
-          <Button
-            size='sm'
-            className='h-7 text-xs'
-            onClick={() => onSave?.(draft)}
-          >
-            <icons.Save className='h-3 w-3 mr-1' />
-            Save
-          </Button>
-        ) : null}
-        <Button variant='ghost' size='icon' className='h-7 w-7' onClick={onClose}>
-          <icons.X className='h-4 w-4' />
-        </Button>
-      </div>
-      <div className='flex-1 min-h-0 overflow-hidden'>
-        <CodeMirror
-          value={draft}
-          height='100%'
-          theme={oneDark}
-          extensions={extensions}
-          editable={!readOnly}
-          onChange={setDraft}
-          autoFocus
-          basicSetup={{
-            lineNumbers: true,
-            foldGutter: true,
-            highlightActiveLine: !readOnly,
-            tabSize: 2,
-          }}
-        />
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
-// ═════════════════════════════════════════════════════════════════════
 // Script node
 // ═════════════════════════════════════════════════════════════════════
 
@@ -148,22 +61,29 @@ function ScriptNode({
   const lang = LANG_CONFIG[data.language];
   const ctx = useNodeContext<TerminalContext>(id, 'ctx-in');
   const { setNodes } = useReactFlow();
-  const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<ScriptResult | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [logsOpen, setLogsOpen] = useState(false);
+  const result = useScriptResult(id);
+  const [running, setRunning] = React.useState(false);
 
   const errors = (data as ScriptData & { __errors?: string[] }).__errors;
+
+  const focus = useCallback(() => {
+    setNodes((nds: { id: string }[]) => nds.map((n) => ({ ...n, selected: n.id === id })));
+  }, [id, setNodes]);
+
+  const openTab = useCallback((tab: string) => {
+    focus();
+    inspectorIntent.open(id, tab);
+  }, [id, focus]);
 
   const run = useCallback(async () => {
     if (!data.script.trim()) {
       return;
     }
     setRunning(true);
-    setResult(null);
+    setScriptResult(id, null);
     try {
       const res = await dispatch(id, 'run') as ScriptResult;
-      setResult(res);
+      setScriptResult(id, res);
     } catch (err) {
       toast.error(`Script failed: ${String(err)}`);
     } finally {
@@ -171,96 +91,69 @@ function ScriptNode({
     }
   }, [id, data.script]);
 
-  const logText = result
-    ? (result.stdout || '') + (result.stderr ? `\n--- stderr ---\n${result.stderr}` : '') + `\n--- exit ${result.exitCode} ---`
-    : '';
-
   const supportsExec = data.language === 'python' || data.language === 'node';
 
   return (
-    <>
-      <NodeFrame
-        icon={lang.icon}
-        title={lang.label}
-        subtitle={ctx?.value ? `on ${ctx.value.type}` : 'local'}
-        selected={selected ?? false}
-        loading={running}
-        errors={errors}
-        input={supportsExec
-          ? <InputHandle type='execution-context' id='exec-in' />
-          : <InputHandle type='terminal-context' id='ctx-in' />
-        }
-        extra={
-          <div className='flex items-center gap-1'>
-            <Button
-              variant='ghost'
-              size='sm'
-              className='nodrag nopan h-5 text-[10px] px-1.5'
-              onClick={() => setEditorOpen(true)}
-            >
-              <icons.Pencil className='h-2.5 w-2.5 shrink-0' />
-            </Button>
-            <Button
-              variant='ghost'
-              size='sm'
-              className='nodrag nopan h-5 text-[10px] px-1.5'
-              onClick={run}
-              disabled={running || !data.script.trim()}
-            >
-              <icons.Play className='h-2.5 w-2.5 shrink-0' />
-            </Button>
+    <NodeFrame
+      icon={lang.icon}
+      title={lang.label}
+      subtitle={ctx?.value ? `on ${ctx.value.type}` : 'local'}
+      selected={selected ?? false}
+      loading={running}
+      errors={errors}
+      input={supportsExec
+        ? <InputHandle type='execution-context' id='exec-in' />
+        : <InputHandle type='terminal-context' id='ctx-in' />
+      }
+      extra={
+        <div className='flex items-center gap-1'>
+          <Button
+            variant='ghost'
+            size='sm'
+            className='nodrag nopan h-5 text-[10px] px-1.5'
+            onClick={() => openTab('editor')}
+          >
+            <icons.Pencil className='h-2.5 w-2.5 shrink-0' />
+          </Button>
+          <Button
+            variant='ghost'
+            size='sm'
+            className='nodrag nopan h-5 text-[10px] px-1.5'
+            onClick={run}
+            disabled={running || !data.script.trim()}
+          >
+            <icons.Play className='h-2.5 w-2.5 shrink-0' />
+          </Button>
+        </div>
+      }
+    >
+      <div className='flex gap-3'>
+        <div className='flex flex-col gap-1.5 shrink-0'>
+          {supportsExec ? (
+            <InputHandle type='terminal-context' id='ctx-in'>
+              <span className='text-[10px] text-muted-foreground'>Target</span>
+            </InputHandle>
+          ) : null}
+        </div>
+        <div className='flex flex-col gap-1 flex-1 min-w-0 items-end'>
+          <OutputHandle type='text-stream' id='stdout-out'>
             {result ? (
-              <>
-                <span className={`text-[10px] ${result.exitCode === 0 ? 'text-green-500' : 'text-red-500'}`}>
-                  exit {result.exitCode}
-                </span>
-                <Button
-                  variant='ghost'
-                  size='sm'
-                  className='nodrag nopan h-5 text-[10px] px-1.5'
-                  onClick={() => setLogsOpen(true)}
-                >
-                  <icons.ScrollText className='h-2.5 w-2.5 shrink-0' />
-                </Button>
-              </>
-            ) : null}
-          </div>
-        }
-      >
-        {supportsExec && (
-          <InputHandle type='terminal-context' id='ctx-in'>
-            <span className='text-[10px] text-muted-foreground'>Target</span>
-          </InputHandle>
-        )}
-      </NodeFrame>
-
-      {editorOpen ? (
-        <CodeOverlay
-          title={`${lang.label} Script`}
-          value={data.script}
-          language={data.language}
-          accent={lang.accent}
-          onSave={(v) => {
-            setNodes((nds: { id: string; data: Record<string, unknown> }[]) => nds.map((n) => (
-              n.id === id ? { ...n, data: { ...n.data, script: v } } : n
-            )));
-            setEditorOpen(false);
-          }}
-          onClose={() => setEditorOpen(false)}
-        />
-      ) : null}
-
-      {logsOpen ? (
-        <CodeOverlay
-          title={`${lang.label} — Output`}
-          value={logText}
-          language={data.language}
-          readOnly
-          accent={result?.exitCode === 0 ? 'oklch(0.65 0.2 150)' : 'oklch(0.65 0.2 25)'}
-          onClose={() => setLogsOpen(false)}
-        />
-      ) : null}
-    </>
+              <Button
+                variant='ghost'
+                size='sm'
+                className='nodrag nopan h-5 text-[10px] px-1.5'
+                onClick={() => openTab('output')}
+              >
+                <icons.ScrollText className='h-2.5 w-2.5 shrink-0' />
+                <span>Output</span>
+              </Button>
+            ) : (
+              <span className='text-[10px] text-muted-foreground'>Output</span>
+            )}
+          </OutputHandle>
+        </div>
+      </div>
+    </NodeFrame>
   );
 }
 
@@ -297,14 +190,49 @@ export function ScriptCodeEditorTab({
   );
 }
 
+export function ScriptOutputTab({
+  nodeId,
+}: { nodeId: string; data: ScriptData; updateData: (p: Partial<ScriptData>) => void }) {
+  const result = useScriptResult(nodeId);
+  if (!result) {
+    return (
+      <div className='p-3 text-xs text-muted-foreground italic'>
+        Run the script to see output here.
+      </div>
+    );
+  }
+  return (
+    <div className='h-full w-full bg-black p-2 overflow-auto'>
+      <pre className='font-mono text-[11px] text-[#cccccc] whitespace-pre-wrap'>
+        {result.stdout}
+      </pre>
+      {result.stderr ? (
+        <pre className='font-mono text-[11px] text-red-400 whitespace-pre-wrap mt-2'>
+          {result.stderr}
+        </pre>
+      ) : null}
+      <div className={`font-mono text-[11px] mt-2 ${result.exitCode === 0 ? 'text-green-400' : 'text-red-400'}`}>
+        --- exit {result.exitCode} ---
+      </div>
+    </div>
+  );
+}
+
 export function makeBashNode() {
-  return { component: ScriptNode, inspector: ScriptInspector, editorTab: ScriptCodeEditorTab };
+  return { component: ScriptNode, inspector: ScriptInspector, editorTab: ScriptCodeEditorTab, outputTab: ScriptOutputTab };
 }
 
 export function makePythonNode() {
-  return { component: ScriptNode, inspector: ScriptInspector, editorTab: ScriptCodeEditorTab };
+  return { component: ScriptNode, inspector: ScriptInspector, editorTab: ScriptCodeEditorTab, outputTab: ScriptOutputTab };
 }
 
 export function makeNodeJsNode() {
-  return { component: ScriptNode, inspector: ScriptInspector, editorTab: ScriptCodeEditorTab };
+  return { component: ScriptNode, inspector: ScriptInspector, editorTab: ScriptCodeEditorTab, outputTab: ScriptOutputTab };
+}
+
+export function scriptExposeOutput(handleId: string, _data: unknown, _typeId: string, nodeId: string): Stream<TextChunk> | undefined {
+  if (handleId === 'stdout-out') {
+    return getStream<TextChunk>(nodeId, 'stdout-out');
+  }
+  return undefined;
 }
