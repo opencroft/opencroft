@@ -1,5 +1,6 @@
 'use client';
 
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import * as React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -29,6 +30,10 @@ export function CanvasOverlay({ nodes, spaceName, selectedNodeId, onFocusNode }:
   const [agentId, setAgentId] = useState<string | null>(null);
   const [focusTick, setFocusTick] = useState(0);
   const initialized = useRef(false);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const chatParam = searchParams?.get('chat') ?? null;
 
   const extensionModes = useMemo(() => extensionRegistry.allCommandModes(), []);
 
@@ -49,6 +54,13 @@ export function CanvasOverlay({ nodes, spaceName, selectedNodeId, onFocusNode }:
     setCommandFocused(true);
     setFocusTick((t) => t + 1);
   }, []);
+
+  useEffect(() => {
+    if (!chatParam) {
+      return;
+    }
+    activateMode('ai');
+  }, [chatParam, activateMode]);
 
   useEffect(() => {
     function onKey(event: globalThis.KeyboardEvent) {
@@ -99,18 +111,22 @@ export function CanvasOverlay({ nodes, spaceName, selectedNodeId, onFocusNode }:
     if (active instanceof HTMLElement) {
       active.blur();
     }
-  }, []);
+
+    if (chatParam && pathname) {
+      router.replace(pathname);
+    }
+  }, [chatParam, pathname, router]);
 
   const onOverlayMouseDown = useCallback(() => {
     dismiss();
-  }, []);
+  }, [dismiss]);
 
   const onOverlayKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
       event.stopPropagation();
       dismiss();
     }
-  }, [slots]);
+  }, [dismiss]);
 
   const stopOverlayClose = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     event.stopPropagation();

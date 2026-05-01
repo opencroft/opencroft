@@ -3,6 +3,7 @@
 import { gateway, GatewayNotConfiguredError, PairingPendingError } from '@/app/(openclaw)/_server/gateway-client';
 import { RawChatMessage } from '@/app/(openclaw)/openclaw/messages';
 import { getSetting } from '@/app/(settings)/server/actions';
+import { listAgentNodes } from '@/app/(space)/server/agents';
 
 export interface OpenclawSession {
   key: string;
@@ -112,6 +113,44 @@ async function loadAgent(entry: AgentEntry): Promise<OpenclawAgent> {
 
 export async function deleteSession(key: string): Promise<void> {
   await gateway().call('sessions.delete', { key });
+}
+
+export interface ChatEntry {
+  key: string;
+  agentName: string;
+  agentAvatar?: string;
+  title?: string;
+  lastMessage?: string;
+  updatedAt: number;
+}
+
+export async function listAllChats(): Promise<ChatEntry[]> {
+  const [state, agentNodes] = await Promise.all([loadOpenclaw(), listAgentNodes()]);
+  if (state.status !== 'ok') {
+    return [];
+  }
+  const avatarByName = new Map<string, string>();
+  for (const node of agentNodes) {
+    if (node.avatar) {
+      avatarByName.set(node.name.trim().toLowerCase(), node.avatar);
+    }
+  }
+  const out: ChatEntry[] = [];
+  for (const agent of state.agents) {
+    const avatar = avatarByName.get(agent.name.trim().toLowerCase());
+    for (const s of agent.sessions) {
+      out.push({
+        key: s.key,
+        agentName: agent.name,
+        agentAvatar: avatar,
+        title: s.title,
+        lastMessage: s.lastMessage,
+        updatedAt: s.updatedAt,
+      });
+    }
+  }
+  out.sort((a, b) => b.updatedAt - a.updatedAt);
+  return out;
 }
 
 export async function loadSession(key: string): Promise<RawChatMessage[]> {
