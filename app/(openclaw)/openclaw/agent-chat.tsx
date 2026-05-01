@@ -1,7 +1,7 @@
 'use client';
 
 import { ChevronRight, SendIcon, Shield, ShieldCheck, Sparkles } from 'lucide-react';
-import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -107,40 +107,70 @@ export function useAgentSession(sessionKey: string, transformOutgoing?: (text: s
 
 interface AgentChatProps {
   session: AgentSession;
-  className?: string;
   emptyText?: string;
   agentAvatar?: string;
   agentName?: string;
 }
 
-export function AgentChat({ session, className, emptyText, agentAvatar, agentName }: AgentChatProps) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const displayName = agentName ?? session.botName;
+const SCROLL_BOTTOM_THRESHOLD = 32;
+
+function useStickToBottom(resetKey: string) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const nearBottom = useRef(true);
 
   useEffect(() => {
-    const el = scrollRef.current;
-    if (el) {
-      el.scrollTop = el.scrollHeight;
+    const root = rootRef.current;
+    const viewport = root?.closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null;
+    if (!root || !viewport) {
+      return;
     }
-  }, [session.messages, session.waiting]);
+    const onScroll = () => {
+      nearBottom.current = viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - SCROLL_BOTTOM_THRESHOLD;
+    };
+    viewport.addEventListener('scroll', onScroll);
+    const observer = new ResizeObserver(() => {
+      if (nearBottom.current) {
+        viewport.scrollTop = viewport.scrollHeight;
+      }
+    });
+    observer.observe(root);
+    return () => {
+      viewport.removeEventListener('scroll', onScroll);
+      observer.disconnect();
+    };
+  }, []);
 
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    const viewport = root?.closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null;
+    if (!viewport) {
+      return;
+    }
+    nearBottom.current = true;
+    viewport.scrollTop = viewport.scrollHeight;
+  }, [resetKey]);
+
+  return rootRef;
+}
+
+export function AgentChat({ session, emptyText, agentAvatar, agentName }: AgentChatProps) {
+  const displayName = agentName ?? session.botName;
   const blocks = useMemo(() => buildBlocks(session.messages), [session.messages]);
+  const rootRef = useStickToBottom(session.sessionKey);
 
   return (
-    <div ref={scrollRef} className={cn('overflow-y-auto', className)}>
-      <Flex justify='end' className='min-h-full min-w-0 gap-3 px-4 py-4'>
-        {session.loading ? (
-          <div className='text-sm text-muted-foreground'>loading…</div>
-        ) : session.messages.length === 0 ? (
-          <div className='text-sm text-muted-foreground'>{emptyText ?? 'no messages yet'}</div>
-        ) : (
-          blocks.map((b, i) => b.kind === 'user'
-            ? <UserMessage key={i} text={b.text} />
-            : <Chain key={i} items={b.items} botName={displayName} agentAvatar={agentAvatar} />)
-        )}
-        {session.waiting && <ThinkingIndicator botName={displayName} agentAvatar={agentAvatar} />}
-      </Flex>
-    </div>
+    <Flex ref={rootRef} justify='end' className='min-h-full min-w-0 gap-3 px-4 py-4'>
+      {session.loading ? (
+        <div className='text-sm text-muted-foreground'>loading…</div>
+      ) : session.messages.length === 0 ? (
+        <div className='text-sm text-muted-foreground'>{emptyText ?? 'no messages yet'}</div>
+      ) : (
+        blocks.map((b, i) => b.kind === 'user'
+          ? <UserMessage key={i} text={b.text} />
+          : <Chain key={i} items={b.items} botName={displayName} agentAvatar={agentAvatar} />)
+      )}
+      {session.waiting && <ThinkingIndicator botName={displayName} agentAvatar={agentAvatar} />}
+    </Flex>
   );
 }
 
