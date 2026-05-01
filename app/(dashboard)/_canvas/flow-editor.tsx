@@ -33,12 +33,10 @@ import '@/app/(dashboard)/_canvas/flow-editor.css';
 import { InspectorContext, useInspectorState } from '@/app/(dashboard)/_canvas/inspector-context';
 import { subscribeNodeDataUpdates } from '@/app/(dashboard)/_canvas/node-data-events';
 import { NodeInspector } from '@/app/(dashboard)/_canvas/node-inspector';
-import { NodePalette } from '@/app/(dashboard)/_canvas/node-palette';
 import { buildNodeTypes } from '@/app/(dashboard)/_canvas/node-wrapper';
 import { useClipboard } from '@/app/(dashboard)/_canvas/use-clipboard';
 import { useGraphEvents } from '@/app/(dashboard)/_canvas/use-graph-events';
 import { installExtensionApi } from '@/app/(dashboard)/extension-system/extension-api';
-import { ExtensionEditor } from '@/app/(extension-editor)/_components/extension-editor';
 import { loadAllExtensions } from '@/app/(extension-runtime)/_client/loader';
 import { extensionRegistry } from '@/app/(extension-runtime)/_client/registry';
 import { findExtensionHandle } from '@/app/(extension-runtime)/_types';
@@ -47,8 +45,6 @@ import { useSSEEvents, useSSEEventsDispatch } from '@/app/(sse)/stores/sse-event
 import { Spinner } from '@/components/ui/spinner';
 
 installExtensionApi();
-
-type ViewMode = 'graph' | 'editor';
 
 interface PendingConnection {
   fromNodeId: string;
@@ -111,8 +107,6 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [loaded, setLoaded] = useState(false);
   const [extensionsVersion, setExtensionsVersion] = useState(0);
-  const [viewMode, setViewMode] = useState<ViewMode>('graph');
-  const [editorInitialId, setEditorInitialId] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [inspectorWidth, setInspectorWidth] = useState(420);
   const [resizing, setResizing] = useState(false);
@@ -456,10 +450,6 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     scheduleSave(nextNodes, nextEdges);
   }, [nodes, edges, setNodes, setEdges, scheduleSave, addNodeAt]);
 
-  const handlePaletteAdd = useCallback((typeId: string) => {
-    addNodeAt(typeId, { x: 100 + Math.random() * 200, y: 100 + Math.random() * 200 });
-  }, [addNodeAt]);
-
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
@@ -569,18 +559,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     ));
   }, [allNodes, menu]);
 
-  const openEditor = useCallback((extensionId: string | null) => {
-    setEditorInitialId(extensionId);
-    setMenu(null);
-    setViewMode('editor');
-  }, []);
-
-  const closeEditor = useCallback(() => {
-    setViewMode('graph');
-  }, []);
-
-  const handleExtensionRegistered = useCallback(() => {
-    setExtensionsVersion((v) => v + 1);
+  const openEditor = useCallback((_extensionId: string | null) => {
+    // Navigate to /extensions page
+    window.location.href = '/extensions';
   }, []);
 
   const colorMode = resolvedTheme === 'dark' ? 'dark' : 'light';
@@ -594,25 +575,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     );
   }
 
-  if (viewMode === 'editor') {
-    return (
-      <ExtensionEditor
-        initialExtensionId={editorInitialId}
-        onBack={closeEditor}
-        onExtensionChanged={handleExtensionRegistered}
-      />
-    );
-  }
-
   return (
     <InspectorContext.Provider value={{ setNode: inspector.setNode }}>
       <div className="flex h-full w-full">
-        <NodePalette
-          extensions={allNodes}
-          onAdd={handlePaletteAdd}
-          onNewExtension={() => openEditor(null)}
-          onEditExtension={openEditor}
-        />
         <div className="flex-1 relative min-w-0">
           <div
             className="dashboard-mvp-flow absolute inset-0"
@@ -689,12 +654,14 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
             node={selected}
             expanded={inspectorExpanded}
             extensions={allNodes}
+            graphNodes={nodes}
             override={inspector.inspectorNode}
             updateNodeData={updateNodeData}
             onDeselect={deselect}
             onEditExtension={openEditor}
             onNewExtension={() => openEditor(null)}
             onExpandedChange={setInspectorExpanded}
+            onFocusNode={focusNode}
           />
         </div>
       </div>

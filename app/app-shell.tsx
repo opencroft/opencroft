@@ -1,7 +1,7 @@
 'use client';
 
 import { AppLink } from '@prisma/client';
-import { BookOpen, ChevronRight, ExternalLink, Globe, MessageSquare, Network, SettingsIcon } from 'lucide-react';
+import { BookOpen, ChevronRight, ExternalLink, Globe, MessageSquare, Network, Puzzle, SettingsIcon } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
@@ -199,6 +199,16 @@ function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
             </SidebarMenu>
           </SidebarGroup>
         )}
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild tooltip='Extensions' isActive={pathname.startsWith('/extensions')}>
+              <Link href='/extensions'>
+                <Puzzle />
+                <span>Extensions</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild tooltip='Settings' isActive={pathname.startsWith('/settings')}>
