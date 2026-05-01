@@ -164,12 +164,25 @@ export function AiPanel({ agentId, spaceName, selectedNodeId, focused, onFocusCh
 
   const showChat = focused && !slashOpen;
 
+  const activeAgent = useMemo(() => {
+    const local = sessions.find((s) => s.key === activeSessionKey);
+    if (local) {
+      return agents.find((a) => a.nodeId === local.agentNodeId);
+    }
+    const parts = activeSessionKey.split(':');
+    if (parts.length < 3 || parts[0] !== 'agent') {
+      return undefined;
+    }
+    const agentSlug = parts[1].trim().toLowerCase();
+    return agents.find((a) => slug(a.name) === agentSlug);
+  }, [sessions, agents, activeSessionKey]);
+
   const contentNode = useMemo(() => {
     if (!showChat) {
       return null;
     }
-    return <AgentChat session={session} />;
-  }, [showChat, session]);
+    return <AgentChat session={session} agentAvatar={activeAgent?.avatar} agentName={activeAgent?.name} />;
+  }, [showChat, session, activeAgent]);
 
   const inspectorNode = useMemo(() => {
     if (!showChat) {
@@ -412,7 +425,11 @@ function AgentRow({ agent, expanded, sessions, externalAgent, activeSessionKey, 
   return (
     <div className='flex flex-col'>
       <SidebarItem
-        icon={<User className='size-4 shrink-0' />}
+        icon={agent.avatar ? (
+          <img src={agent.avatar} alt='' className='size-4 shrink-0 rounded-full object-cover' />
+        ) : (
+          <User className='size-4 shrink-0' />
+        )}
         label={agent.name}
         subtitle={agent.spaceName}
         active={false}
