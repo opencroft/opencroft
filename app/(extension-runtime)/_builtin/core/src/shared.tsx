@@ -40,16 +40,19 @@ export const FS_TARGET_CONSUMER: HandleDef[] = [
 
 export const SCRIPT_CONSUMER: HandleDef[] = [
   { id: 'ctx-in', contextType: 'terminal-context', role: 'target', label: 'Target' },
+  { id: 'stdout-out', contextType: 'text-stream', role: 'source', label: 'Output' },
 ];
 
 export const SCRIPT_CONSUMER_PYTHON: HandleDef[] = [
   { id: 'ctx-in', contextType: 'terminal-context', role: 'target', label: 'Target' },
   { id: 'exec-in', contextType: 'execution-context', role: 'target', label: 'Handler' },
+  { id: 'stdout-out', contextType: 'text-stream', role: 'source', label: 'Output' },
 ];
 
 export const SCRIPT_CONSUMER_NODEJS: HandleDef[] = [
   { id: 'ctx-in', contextType: 'terminal-context', role: 'target', label: 'Target' },
   { id: 'exec-in', contextType: 'execution-context', role: 'target', label: 'Handler' },
+  { id: 'stdout-out', contextType: 'text-stream', role: 'source', label: 'Output' },
 ];
 
 export const DOCKER_HANDLES: HandleDef[] = [

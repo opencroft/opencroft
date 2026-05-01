@@ -3,12 +3,14 @@
 import { resolveGraphContexts } from '@/app/(extension-runtime)/_server/graph-context-resolver';
 import { type GraphSnapshot } from '@/app/(extension-runtime)/_server/host';
 import { loadAllManifests, getExtensionModule } from '@/app/(extension-runtime)/_server/loader';
+import { getStream } from '@/app/(extension-runtime)/_server/stream';
 import {
   type ConnectedSource,
   type NodeActionCtx,
   type NodeActionCtxNode,
   type NodeActionDescriptor,
   type ResolvedInput,
+  type Stream,
 } from '@/app/(extension-runtime)/_types';
 import { getSpacesRegistry } from '@/app/(space)/server/store';
 import { type GraphData } from '@/app/(space)/server/types';
@@ -82,6 +84,7 @@ function buildCtx(
   graph: GraphData,
   node: GraphNodeLike,
   params: Record<string, unknown>,
+  spaceId: string,
 ): NodeActionCtx {
   const data = node.data ?? {};
   const resolved = (data['__resolvedContexts'] as Record<string, ResolvedHandle> | undefined) ?? {};
@@ -150,6 +153,10 @@ function buildCtx(
       }));
   };
 
+  const output = <T,>(handleId: string): Stream<T> => {
+    return getStream<T>(spaceId, node.id, handleId);
+  };
+
   return {
     nodeId: node.id,
     typeId: node.type ?? '',
@@ -159,6 +166,7 @@ function buildCtx(
     inputSource,
     connectedSources,
     containingNodes,
+    output,
   };
 }
 
@@ -228,7 +236,7 @@ export async function dispatchNodeAction(
   if (!handler) {
     throw new Error(`Extension ${owning.id} has no nodeAction "${typeId}.${actionId}"`);
   }
-  const ctx = buildCtx(found.graph, found.node, params);
+  const ctx = buildCtx(found.graph, found.node, params, found.slug);
   await persistErrors(found, []);
   try {
     const result = await handler(ctx);

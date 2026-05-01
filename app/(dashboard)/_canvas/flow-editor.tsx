@@ -30,6 +30,7 @@ import { CommentNode } from '@/app/(dashboard)/_canvas/comment-node';
 import { FlowContextMenu } from '@/app/(dashboard)/_canvas/flow-context-menu';
 import '@/app/(dashboard)/_canvas/flow-editor.css';
 import { InspectorContext, useInspectorState } from '@/app/(dashboard)/_canvas/inspector-context';
+import { subscribeNodeDataUpdates } from '@/app/(dashboard)/_canvas/node-data-events';
 import { NodeInspector } from '@/app/(dashboard)/_canvas/node-inspector';
 import { NodePalette } from '@/app/(dashboard)/_canvas/node-palette';
 import { buildNodeTypes } from '@/app/(dashboard)/_canvas/node-wrapper';
@@ -214,6 +215,12 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       debouncedSave(n, e);
     }
   }, [loaded, debouncedSave]);
+
+  useEffect(() => {
+    return subscribeNodeDataUpdates((nodeId, data) => {
+      setNodes((nds) => nds.map((n) => (n.id === nodeId ? { ...n, data } : n)));
+    });
+  }, [setNodes]);
 
   useClipboard({ nodes, edges, setNodes, setEdges, onChange: scheduleSave });
 

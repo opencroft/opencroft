@@ -118,6 +118,12 @@ export interface NodeActionCtxNode {
   data: Record<string, unknown>;
 }
 
+/** Streaming primitive — same shape as the client `Stream<T>` so server-side action handlers can be migrated from the browser without changing call sites. */
+export interface Stream<T> {
+  subscribe(fn: (chunk: T) => void): () => void;
+  broadcast(chunk: T): void;
+}
+
 export interface NodeActionCtx {
   nodeId: string;
   typeId: string;
@@ -127,6 +133,7 @@ export interface NodeActionCtx {
   inputSource<T = unknown>(handleId: string): ResolvedInput<T> | undefined;
   connectedSources(handleId: string): ConnectedSource[];
   containingNodes(typeId?: string): NodeActionCtxNode[];
+  output<T = unknown>(handleId: string): Stream<T>;
 }
 
 export interface NodeActionDescriptor {

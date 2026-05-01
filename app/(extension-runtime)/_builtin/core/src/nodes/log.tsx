@@ -3,30 +3,23 @@ import {
   NodeFrame,
   InputHandle,
   icons,
-  subscribe,
-  useNodeContext,
-  type Stream,
-  type TextChunk,
+  inspectorIntent,
+  useReactFlow,
 } from '@ext/host';
 import {
   Button,
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  ScrollArea,
 } from '@ext/ui';
 
-const { useCallback, useEffect, useMemo, useRef, useState } = React;
+const { useCallback, useEffect, useRef } = React;
 
-interface LogEntry {
-  id: number;
+export interface LogEntry {
   at: number;
   text: string;
 }
 
 export interface LogData {
   max: number;
+  entries: LogEntry[];
 }
 
 const DEFAULT_MAX = 500;
@@ -38,69 +31,19 @@ function formatTime(ms: number): string {
 }
 
 export function LogNode({ id, data, selected }: { id: string; data: LogData; selected?: boolean }) {
-  const inbound = useNodeContext<Stream<TextChunk>>(id, 'text-in');
-  const [entries, setEntries] = useState<LogEntry[]>([]);
-  const [open, setOpen] = useState(false);
-  const bufferRef = useRef('');
-  const seqRef = useRef(0);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const max = data.max && data.max > 0 ? data.max : DEFAULT_MAX;
+  const { setNodes } = useReactFlow();
+  const entries = data.entries ?? [];
 
-  useEffect(() => {
-    const stream = inbound?.value;
-    if (!stream) {
-      return;
-    }
-    return subscribe(stream, (chunk: TextChunk) => {
-      bufferRef.current += chunk.text;
-      if (!chunk.final) {
-        return;
-      }
-      const text = bufferRef.current.trim();
-      bufferRef.current = '';
-      if (!text) {
-        return;
-      }
-      seqRef.current += 1;
-      const entry: LogEntry = { id: seqRef.current, at: Date.now(), text };
-      setEntries((prev: LogEntry[]) => {
-        const next = prev.length >= max ? prev.slice(prev.length - max + 1) : prev.slice();
-        next.push(entry);
-        return next;
-      });
-    });
-  }, [inbound?.value, max]);
+  const focus = useCallback(() => {
+    setNodes((nds: { id: string }[]) => nds.map((n) => ({ ...n, selected: n.id === id })));
+  }, [id, setNodes]);
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const el = scrollRef.current;
-    if (el) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [open, entries]);
+  const openOutput = useCallback(() => {
+    focus();
+    inspectorIntent.open(id, 'output');
+  }, [id, focus]);
 
-  const latest = entries[entries.length - 1];
-  const subtitle = !inbound ? 'No input' : `${entries.length} entries`;
-
-  const clear = useCallback(() => {
-    setEntries([]);
-    bufferRef.current = '';
-  }, []);
-
-  const copy = useCallback(() => {
-    const text = entries.map((e) => `[${formatTime(e.at)}] ${e.text}`).join('\n');
-    navigator.clipboard.writeText(text).catch(() => {});
-  }, [entries]);
-
-  const preview = useMemo(() => {
-    if (!latest) {
-      return inbound ? 'Waiting for input…' : '';
-    }
-    const text = latest.text.replace(/\s+/g, ' ');
-    return text.length > 60 ? `${text.slice(0, 60)}…` : text;
-  }, [latest, inbound]);
+  const subtitle = `${entries.length} entries`;
 
   return (
     <NodeFrame
@@ -110,54 +53,18 @@ export function LogNode({ id, data, selected }: { id: string; data: LogData; sel
       selected={selected ?? false}
       input={<InputHandle type='text-stream' id='text-in' />}
       extra={
-        <div className='nodrag nopan flex items-center gap-1'>
-          {preview && (
-            <span className='text-[10px] font-mono text-muted-foreground truncate max-w-[220px]'>
-              {preview}
-            </span>
-          )}
-          <Button
-            variant='ghost'
-            size='icon'
-            className='h-7 w-7 shrink-0'
-            onClick={() => setOpen(true)}
-            disabled={entries.length === 0}
-            title='Open log'
-          >
-            <icons.Maximize2 className='h-3 w-3' />
-          </Button>
-        </div>
+        <Button
+          variant='ghost'
+          size='sm'
+          className='nodrag nopan h-5 text-[10px] px-1.5'
+          onClick={openOutput}
+          disabled={entries.length === 0}
+        >
+          <icons.ScrollText className='h-2.5 w-2.5 shrink-0' />
+          <span>Output</span>
+        </Button>
       }
-    >
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className='max-w-2xl'>
-          <DialogHeader>
-            <DialogTitle>Log ({entries.length})</DialogTitle>
-          </DialogHeader>
-          <ScrollArea className='h-[420px] rounded border bg-muted/20 p-2'>
-            <div ref={scrollRef} className='font-mono text-xs whitespace-pre-wrap break-words flex flex-col gap-1'>
-              {entries.map((e: LogEntry) => (
-                <div key={e.id}>
-                  <span className='text-muted-foreground'>[{formatTime(e.at)}]</span>{' '}
-                  <span>{e.text}</span>
-                </div>
-              ))}
-              {entries.length === 0 && (
-                <div className='text-muted-foreground italic'>Empty</div>
-              )}
-            </div>
-          </ScrollArea>
-          <div className='flex items-center gap-2 justify-end'>
-            <Button variant='ghost' size='sm' onClick={copy}>
-              <icons.Copy className='h-3 w-3 mr-1' /> Copy
-            </Button>
-            <Button variant='ghost' size='sm' onClick={clear}>
-              <icons.Trash2 className='h-3 w-3 mr-1' /> Clear
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </NodeFrame>
+    />
   );
 }
 
@@ -174,6 +81,50 @@ export function LogInspector({ data, updateData }: { nodeId: string; data: LogDa
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ max: Number(e.target.value) || DEFAULT_MAX })}
         />
       </label>
+    </div>
+  );
+}
+
+export function LogOutputTab({ data, updateData }: { nodeId: string; data: LogData; updateData: (p: Partial<LogData>) => void }) {
+  const entries = data.entries ?? [];
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [entries]);
+
+  const copy = useCallback(() => {
+    const text = entries.map((e) => `[${formatTime(e.at)}] ${e.text}`).join('\n');
+    navigator.clipboard.writeText(text).catch(() => {});
+  }, [entries]);
+
+  const clear = useCallback(() => {
+    updateData({ entries: [] });
+  }, [updateData]);
+
+  return (
+    <div className='flex flex-col h-full w-full'>
+      <div ref={scrollRef} className='flex-1 min-h-0 bg-black p-2 overflow-auto'>
+        <div className='font-mono text-[11px] text-[#cccccc] flex flex-col gap-1'>
+          {entries.map((e: LogEntry, i: number) => (
+            <div key={`${e.at}-${i}`} className='whitespace-pre-wrap break-words'>
+              <span className='text-muted-foreground'>[{formatTime(e.at)}]</span>{' '}
+              <span>{e.text}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className='flex items-center gap-2 justify-end p-2 border-t bg-background'>
+        <Button variant='ghost' size='sm' onClick={copy} disabled={entries.length === 0}>
+          <icons.Copy className='h-3 w-3 mr-1' /> Copy
+        </Button>
+        <Button variant='ghost' size='sm' onClick={clear} disabled={entries.length === 0}>
+          <icons.Trash2 className='h-3 w-3 mr-1' /> Clear
+        </Button>
+      </div>
     </div>
   );
 }

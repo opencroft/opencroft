@@ -4,6 +4,11 @@ import { dockerUp, dockerStopService, dockerRestartService, type DockerUpParams 
 import { fireEvent } from './event';
 import { runScript, type ScriptResult } from './script';
 
+interface Stream<T> {
+  subscribe(fn: (chunk: T) => void): () => void;
+  broadcast(chunk: T): void;
+}
+
 interface ActionCtx {
   nodeId: string;
   typeId: string;
@@ -13,6 +18,7 @@ interface ActionCtx {
   inputSource<T = unknown>(handleId: string): { sourceNodeId: string; sourceHandleId: string; contextType: string; value: T } | undefined;
   connectedSources(handleId: string): { nodeId: string; handleId: string; type?: string; data: Record<string, unknown> }[];
   containingNodes(typeId?: string): { id: string; type?: string; position: { x: number; y: number }; data: Record<string, unknown> }[];
+  output<T = unknown>(handleId: string): Stream<T>;
 }
 
 interface VolumeData {
@@ -218,13 +224,27 @@ async function applicationRestart(ctx: ActionCtx): Promise<void> {
   });
 }
 
+interface TextChunk {
+  text: string;
+  final: boolean;
+}
+
 async function scriptRun(ctx: ActionCtx): Promise<ScriptResult> {
   const data = ctx.data as ScriptData;
   if (!data.script?.trim()) {
     throw new Error('Script is empty');
   }
   const context = ctx.input<TerminalContext>('ctx-in') ?? { type: 'local' };
-  return runScript({ script: data.script, language: data.language, context });
+  const stream = ctx.output<TextChunk>('stdout-out');
+  const result = await runScript({ script: data.script, language: data.language, context });
+  if (result.stdout) {
+    stream.broadcast({ text: result.stdout, final: false });
+  }
+  if (result.stderr) {
+    stream.broadcast({ text: `\n--- stderr ---\n${result.stderr}`, final: false });
+  }
+  stream.broadcast({ text: '', final: true });
+  return result;
 }
 
 async function eventRun(ctx: ActionCtx): Promise<unknown> {
