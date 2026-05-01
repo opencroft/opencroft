@@ -53,10 +53,10 @@ export interface HandlerResult {
   error?: string;
 }
 
-function pythonHandlerBootstrap(): string {
+function pythonHandlerBootstrap(eventB64: string): string {
   return `
 import json, sys, base64
-_event = json.loads(base64.b64decode(sys.argv[1]).decode('utf-8'))
+_event = json.loads(base64.b64decode('${eventB64}').decode('utf-8'))
 _result = handler(_event)
 if not isinstance(_result, dict):
     _result = {"body": _result}
@@ -65,9 +65,9 @@ sys.exit(0)
 `;
 }
 
-function nodeHandlerBootstrap(): string {
+function nodeHandlerBootstrap(eventB64: string): string {
   return `
-const _event = JSON.parse(Buffer.from(process.argv[2], 'base64').toString('utf-8'));
+const _event = JSON.parse(Buffer.from('${eventB64}', 'base64').toString('utf-8'));
 Promise.resolve(typeof handler === 'function' ? handler(_event) : undefined)
   .then(function(_result) {
     if (_result === null || _result === undefined) _result = {};
@@ -84,15 +84,13 @@ Promise.resolve(typeof handler === 'function' ? handler(_event) : undefined)
 
 export async function runHandler(params: HandlerRunParams): Promise<HandlerResult> {
   const { script, language, context, event } = params;
-  const eventArg = Buffer.from(JSON.stringify(event), 'utf-8').toString('base64');
+  const eventB64 = Buffer.from(JSON.stringify(event), 'utf-8').toString('base64');
 
   try {
     let fullScript: string;
     if (language === 'python') {
-      fullScript = script + pythonHandlerBootstrap();
-      const stdout = await terminalRun(context, [
-        'python', '-c', fullScript, eventArg,
-      ]);
+      fullScript = script + pythonHandlerBootstrap(eventB64);
+      const stdout = await terminalRun(context, ['python', '-c', fullScript]);
       const parsed = JSON.parse(stdout.trim());
       return {
         status: parsed.status ?? 200,
@@ -102,10 +100,8 @@ export async function runHandler(params: HandlerRunParams): Promise<HandlerResul
     }
 
     if (language === 'node') {
-      fullScript = script + nodeHandlerBootstrap();
-      const stdout = await terminalRun(context, [
-        'node', '-e', fullScript, eventArg,
-      ]);
+      fullScript = script + nodeHandlerBootstrap(eventB64);
+      const stdout = await terminalRun(context, ['node', '-e', fullScript]);
       const parsed = JSON.parse(stdout.trim());
       return {
         status: parsed.status ?? 200,
