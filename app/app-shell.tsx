@@ -4,11 +4,12 @@ import { AppLink } from '@prisma/client';
 import { BookOpen, ChevronRight, ExternalLink, Globe, MessageSquare, Network, Puzzle, SettingsIcon } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 
 import { getAppLinks } from '@/app/(applink)/applinks/actions';
 import { type ChatEntry, listAllChats } from '@/app/(openclaw)/openclaw/actions';
 import type { SpaceSummary } from '@/app/(space)/server/types';
+import { DevBuildBadge } from '@/app/components/dev-build-badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { TitlebarProvider } from '@/components/ui/layout/titlebar';
 import {
@@ -43,7 +44,6 @@ function shortChatLabel(chat: ChatEntry): string {
   return parts[parts.length - 1] || chat.key;
 }
 
-import { DevBuildBadge } from '@/app/components/dev-build-badge';
 
 function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
   const pathname = usePathname() ?? '';
@@ -230,7 +230,9 @@ export function AppShell({ pinnedSpaces, children }: Props) {
   return (
     <TitlebarProvider>
       <SidebarProvider>
-        <AppSidebar pinnedSpaces={pinnedSpaces} />
+        <Suspense fallback={null}>
+          <AppSidebar pinnedSpaces={pinnedSpaces} />
+        </Suspense>
         <main className='flex flex-col w-full h-screen'>
           {children}
         </main>

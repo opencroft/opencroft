@@ -2,7 +2,6 @@
 
 import Link from 'next/link';
 
-import { ApprovalList } from '@/app/(approvals)/_components/approval-list';
 import { FlowEditor } from '@/app/(dashboard)/_canvas/flow-editor';
 import type { SpaceSummary } from '@/app/(space)/server/types';
 
@@ -24,7 +23,6 @@ export function SpaceCanvas({ slug, spaces }: Props) {
           {spaceName}
         </Link>
       </div>
-      <ApprovalList spaceId={slug} />
     </div>
   );
 }

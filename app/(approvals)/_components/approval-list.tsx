@@ -23,7 +23,7 @@ export function ApprovalList({ spaceId }: { spaceId?: string }) {
   }
 
   return (
-    <div className='pointer-events-none absolute right-0 top-0 z-10 p-3'>
+    <div className='pointer-events-none absolute right-0 bottom-0 z-10 p-3'>
       <div className='pointer-events-auto flex flex-col items-end gap-1.5'>
         {requests.map((request) => {
           const active = request.id === selectedApprovalId;
