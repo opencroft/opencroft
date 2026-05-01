@@ -1,12 +1,13 @@
 'use client';
 
 import { AppLink } from '@prisma/client';
-import { BookOpen, ChevronRight, ExternalLink, Globe, Network, SettingsIcon } from 'lucide-react';
+import { BookOpen, ChevronRight, ExternalLink, Globe, MessageSquare, Network, SettingsIcon } from 'lucide-react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
 import { getAppLinks } from '@/app/(applink)/applinks/actions';
+import { type ChatEntry, listAllChats } from '@/app/(openclaw)/openclaw/actions';
 import type { SpaceSummary } from '@/app/(space)/server/types';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { TitlebarProvider } from '@/components/ui/layout/titlebar';
@@ -34,13 +35,34 @@ interface Props {
   children: React.ReactNode;
 }
 
+function shortChatLabel(chat: ChatEntry): string {
+  if (chat.title) {
+    return chat.title;
+  }
+  const parts = chat.key.split(':');
+  return parts[parts.length - 1] || chat.key;
+}
+
 function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
   const pathname = usePathname() ?? '';
+  const searchParams = useSearchParams();
+  const activeChatKey = searchParams?.get('chat') ?? null;
   const [appLinks, setAppLinks] = useState<AppLink[]>([]);
+  const [chats, setChats] = useState<ChatEntry[]>([]);
+  const inSpace = pathname.startsWith('/space/');
+  const currentSpaceSlug = inSpace ? pathname.split('/')[2] : '';
 
   useEffect(() => {
     getAppLinks().then(setAppLinks);
   }, []);
+
+  useEffect(() => {
+    if (!inSpace) {
+      setChats([]);
+      return;
+    }
+    listAllChats().then(setChats).catch(() => setChats([]));
+  }, [inSpace, pathname]);
 
   return (
     <Sidebar collapsible='icon'>
@@ -91,6 +113,54 @@ function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
             </Collapsible>
           </SidebarMenu>
         </SidebarGroup>
+        {inSpace && (
+          <SidebarGroup>
+            <SidebarMenu>
+              <Collapsible defaultOpen className='group/collapsible'>
+                <SidebarMenuItem>
+                  <SidebarMenuButton tooltip='Chats'>
+                    <MessageSquare />
+                    <span>Chats</span>
+                  </SidebarMenuButton>
+                  {chats.length > 0 && (
+                    <>
+                      <CollapsibleTrigger asChild>
+                        <SidebarMenuAction>
+                          <ChevronRight className='transition-transform group-data-[state=open]/collapsible:rotate-90' />
+                        </SidebarMenuAction>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <SidebarMenuSub>
+                          {chats.map(chat => (
+                            <SidebarMenuSubItem key={chat.key}>
+                              <SidebarMenuSubButton
+                                asChild
+                                isActive={activeChatKey === chat.key}
+                              >
+                                <Link href={`/space/${currentSpaceSlug}?chat=${encodeURIComponent(chat.key)}`}>
+                                  {chat.agentAvatar ? (
+                                    <img
+                                      src={chat.agentAvatar}
+                                      alt=''
+                                      className='size-4 shrink-0 rounded-full object-cover'
+                                    />
+                                  ) : (
+                                    <MessageSquare className='size-4 shrink-0' />
+                                  )}
+                                  <span>{shortChatLabel(chat)}</span>
+                                </Link>
+                              </SidebarMenuSubButton>
+                            </SidebarMenuSubItem>
+                          ))}
+                        </SidebarMenuSub>
+                      </CollapsibleContent>
+                    </>
+                  )}
+                </SidebarMenuItem>
+              </Collapsible>
+            </SidebarMenu>
+          </SidebarGroup>
+        )}
         <SidebarGroup>
           <SidebarMenu>
             <SidebarMenuItem>

@@ -1,6 +1,7 @@
 'use client';
 
 import { Briefcase, ChevronRight, MessageSquare, Trash2, User } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useInspector } from '@/app/(dashboard)/_canvas/inspector-context';
@@ -72,10 +73,19 @@ export function AiPanel({ agentId, spaceName, selectedNodeId, focused, onFocusCh
   const [externalAgents, setExternalAgents] = useState<OpenclawAgent[]>([]);
   const [sessions, setSessions] = useState<SessionEntry[]>([]);
   const [activeSessionKey, setActiveSessionKey] = useState<string>(`agent:${agentId}:dashboard`);
+  const searchParams = useSearchParams();
+  const chatParam = searchParams?.get('chat') ?? null;
 
   useEffect(() => {
     setSessions(loadStoredSessions());
   }, []);
+
+  useEffect(() => {
+    if (!chatParam) {
+      return;
+    }
+    setActiveSessionKey(chatParam);
+  }, [chatParam]);
 
   const transformOutgoing = useCallback((text: string, isFirstMessage: boolean) => {
     if (text.trim().startsWith('/')) {
