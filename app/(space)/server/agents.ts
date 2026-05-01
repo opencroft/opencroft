@@ -9,6 +9,12 @@ export interface AgentJobRef {
   workingDirectory: string;
 }
 
+export interface AgentInstructionRef {
+  nodeId: string;
+  name: string;
+  instruction: string;
+}
+
 export interface AgentNodeRef {
   nodeId: string;
   name: string;
@@ -16,12 +22,19 @@ export interface AgentNodeRef {
   spaceSlug: string;
   spaceName: string;
   jobs: AgentJobRef[];
+  instructions: AgentInstructionRef[];
 }
 
 interface NodeShape {
   id?: string;
   type?: string;
-  data?: { name?: string; avatar?: string; context?: string; workingDirectory?: string };
+  data?: {
+    name?: string;
+    avatar?: string;
+    context?: string;
+    workingDirectory?: string;
+    instruction?: string;
+  };
 }
 
 interface EdgeShape {
@@ -43,28 +56,44 @@ export async function listAgentNodes(): Promise<AgentNodeRef[]> {
     const nodes = space.graph.nodes as NodeShape[];
     const edges = space.graph.edges as EdgeShape[];
     const jobsByAgent = new Map<string, AgentJobRef[]>();
+    const instructionsByAgent = new Map<string, AgentInstructionRef[]>();
     const jobsById = new Map<string, NodeShape>();
+    const instructionsById = new Map<string, NodeShape>();
     for (const node of nodes) {
       if (node.type === 'agent-job' && node.id) {
         jobsById.set(node.id, node);
+      }
+      if (node.type === 'agent-instruction' && node.id) {
+        instructionsById.set(node.id, node);
       }
     }
     for (const edge of edges) {
       if (!edge.source || !edge.target) {
         continue;
       }
+      // Jobs connected to agent via agent-in handle
       const job = jobsById.get(edge.source);
-      if (!job) {
-        continue;
+      if (job) {
+        const list = jobsByAgent.get(edge.target) ?? [];
+        list.push({
+          nodeId: edge.source,
+          name: job.data?.name?.trim() || 'Job',
+          context: job.data?.context ?? '',
+          workingDirectory: job.data?.workingDirectory ?? '',
+        });
+        jobsByAgent.set(edge.target, list);
       }
-      const list = jobsByAgent.get(edge.target) ?? [];
-      list.push({
-        nodeId: edge.source,
-        name: job.data?.name?.trim() || 'Job',
-        context: job.data?.context ?? '',
-        workingDirectory: job.data?.workingDirectory ?? '',
-      });
-      jobsByAgent.set(edge.target, list);
+      // Instructions connected to agent via instructions-in handle
+      const instr = instructionsById.get(edge.source);
+      if (instr) {
+        const list = instructionsByAgent.get(edge.target) ?? [];
+        list.push({
+          nodeId: edge.source,
+          name: instr.data?.name?.trim() || 'Instruction',
+          instruction: instr.data?.instruction ?? '',
+        });
+        instructionsByAgent.set(edge.target, list);
+      }
     }
     for (const node of nodes) {
       if (node.type !== 'agent' || !node.id) {
@@ -77,6 +106,7 @@ export async function listAgentNodes(): Promise<AgentNodeRef[]> {
         spaceSlug: space.slug,
         spaceName: space.name,
         jobs: jobsByAgent.get(node.id) ?? [],
+        instructions: instructionsByAgent.get(node.id) ?? [],
       });
     }
   }

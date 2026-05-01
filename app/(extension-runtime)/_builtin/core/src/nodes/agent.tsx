@@ -33,8 +33,16 @@ export function AgentNode({
       icon={icons.User}
       title={data.name || 'Agent'}
       selected={selected ?? false}
-      input={<InputHandle type='agent-job' id='agent-in' />}
-    />
+    >
+      <div className='flex flex-col gap-1.5'>
+        <InputHandle type='agent-instruction' id='instructions-in'>
+          <span className='text-[10px] text-muted-foreground'>Instructions</span>
+        </InputHandle>
+        <InputHandle type='agent-job' id='agent-in'>
+          <span className='text-[10px] text-muted-foreground'>Jobs</span>
+        </InputHandle>
+      </div>
+    </NodeFrame>
   );
 }
 

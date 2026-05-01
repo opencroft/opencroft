@@ -1,5 +1,5 @@
 import { defineExtension } from '@ext/host';
-import { TERMINAL_SOURCE, TERMINAL_CONSUMER, FS_TARGET_CONSUMER, SCRIPT_CONSUMER, SCRIPT_CONSUMER_PYTHON, SCRIPT_CONSUMER_NODEJS, DOCKER_HANDLES, APP_HANDLES, VOLUME_HANDLES, GIT_WORKSPACE_HANDLES, AGENT_HANDLES, AGENT_JOB_HANDLES } from './shared';
+import { TERMINAL_SOURCE, TERMINAL_CONSUMER, FS_TARGET_CONSUMER, SCRIPT_CONSUMER, SCRIPT_CONSUMER_PYTHON, SCRIPT_CONSUMER_NODEJS, DOCKER_HANDLES, APP_HANDLES, VOLUME_HANDLES, GIT_WORKSPACE_HANDLES, AGENT_HANDLES, AGENT_JOB_HANDLES, AGENT_INSTRUCTION_HANDLES } from './shared';
 import { LocalhostNode, LocalhostInspector, LocalhostTerminalTab, LocalhostFilesTab } from './nodes/localhost';
 import { WslNode, WslInspector, WslData, WslTerminalTab, WslFilesTab } from './nodes/wsl';
 import { ServerNode, ServerInspector, ServerTerminalTab, ServerFilesTab, ServerData } from './nodes/server';
@@ -30,6 +30,7 @@ import { EventNode, EventInspector, EVENT_HANDLES, eventExposeOutput } from './n
 import { GitWorkspaceNode, GitWorkspaceInspector } from './nodes/git-workspace';
 import { AgentNode, AgentInspector } from './nodes/agent';
 import { AgentJobNode, AgentJobInspector } from './nodes/agent-job';
+import { AgentInstructionNode, AgentInstructionInspector } from './nodes/agent-instruction';
 
 export default defineExtension({
   manifest: {
@@ -47,6 +48,7 @@ export default defineExtension({
     { id: 'audio-stream', label: 'Audio Stream', color: 'oklch(0.72 0.18 320)' },
     { id: 'execution-context', label: 'Execution Context', color: 'oklch(0.7 0.18 30)' },
     { id: 'agent-job', label: 'Agent Job', color: 'oklch(0.7 0.17 60)' },
+    { id: 'agent-instruction', label: 'Agent Instruction', color: 'oklch(0.72 0.16 180)' },
   ],
   nodes: [
     {
@@ -325,6 +327,17 @@ export default defineExtension({
       defaultData: { name: '', context: '' },
       component: AgentJobNode as unknown as never,
       inspector: AgentJobInspector as unknown as never,
+    },
+    {
+      typeId: 'agent-instruction',
+      name: 'Agent Instruction',
+      category: 'AI',
+      icon: 'BookOpen',
+      accent: 'oklch(0.72 0.16 180)',
+      handles: AGENT_INSTRUCTION_HANDLES as unknown as never[],
+      defaultData: { name: '', instruction: '' },
+      component: AgentInstructionNode as unknown as never,
+      inspector: AgentInstructionInspector as unknown as never,
     },
     {
       typeId: 'openai-client',

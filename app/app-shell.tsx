@@ -43,6 +43,8 @@ function shortChatLabel(chat: ChatEntry): string {
   return parts[parts.length - 1] || chat.key;
 }
 
+import { DevBuildBadge } from '@/app/components/dev-build-badge';
+
 function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
   const pathname = usePathname() ?? '';
   const searchParams = useSearchParams();
@@ -207,6 +209,7 @@ function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
+        <DevBuildBadge />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

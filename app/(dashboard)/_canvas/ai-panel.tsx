@@ -9,7 +9,7 @@ import { useOverlayContent } from '@/app/(dashboard)/_canvas/overlay-context';
 import { deleteSession, loadOpenclaw, type OpenclawAgent } from '@/app/(openclaw)/openclaw/actions';
 import { AgentChat, AgentChatInput, useAgentSession } from '@/app/(openclaw)/openclaw/agent-chat';
 import { slug } from '@/app/(server)/server/types';
-import { type AgentNodeRef, type AgentJobRef, listAgentNodes } from '@/app/(space)/server/agents';
+import { type AgentNodeRef, type AgentJobRef, type AgentInstructionRef, listAgentNodes } from '@/app/(space)/server/agents';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 
@@ -44,20 +44,20 @@ function loadStoredSessions(): SessionEntry[] {
   return Array.isArray(parsed) ? parsed : [];
 }
 
-function resolveJobForSession(sessionKey: string, sessions: SessionEntry[], agents: AgentNodeRef[]): AgentJobRef | null {
+function resolveJobForSession(sessionKey: string, sessions: SessionEntry[], agents: AgentNodeRef[]): { job: AgentJobRef | null; agent: AgentNodeRef | null } {
   const local = sessions.find((s) => s.key === sessionKey);
   if (local) {
     const agent = agents.find((a) => a.nodeId === local.agentNodeId);
-    return agent?.jobs.find((j) => j.nodeId === local.jobNodeId) ?? null;
+    return { job: agent?.jobs.find((j) => j.nodeId === local.jobNodeId) ?? null, agent: agent ?? null };
   }
   const parts = sessionKey.split(':');
   if (parts.length < 3 || parts[0] !== 'agent') {
-    return null;
+    return { job: null, agent: null };
   }
   const agentSlug = parts[1].trim().toLowerCase();
   const jobSlug = parts.slice(2).join(':').trim().toLowerCase();
   const agent = agents.find((a) => slug(a.name) === agentSlug);
-  return agent?.jobs.find((j) => slug(j.name) === jobSlug) ?? null;
+  return { job: agent?.jobs.find((j) => slug(j.name) === jobSlug) ?? null, agent: agent ?? null };
 }
 
 function persistSessions(list: SessionEntry[]) {
@@ -95,12 +95,22 @@ export function AiPanel({ agentId, spaceName, selectedNodeId, focused, onFocusCh
     if (!isFirstMessage) {
       return `${system}\n${text}`;
     }
-    const job = resolveJobForSession(activeSessionKey, sessions, agents);
+    const { job, agent } = resolveJobForSession(activeSessionKey, sessions, agents);
     const ctx = job?.context.trim();
-    if (!ctx) {
+    if (!ctx && !agent?.instructions.length) {
       return `${system}\n${text}`;
     }
-    return `${system}\n<opencroft-task>${ctx}</opencroft-task>\n${text}`;
+    let prefix = system;
+    if (ctx) {
+      prefix += `\n<opencroft-task>${ctx}</opencroft-task>`;
+    }
+    for (const instr of agent?.instructions ?? []) {
+      const trimmed = instr.instruction.trim();
+      if (trimmed) {
+        prefix += `\n<opencroft-instruction>${trimmed}</opencroft-instruction>`;
+      }
+    }
+    return `${prefix}\n${text}`;
   }, [spaceName, selectedNodeId, activeSessionKey, sessions, agents]);
 
   const session = useAgentSession(activeSessionKey, transformOutgoing);
