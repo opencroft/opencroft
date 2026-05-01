@@ -69,9 +69,29 @@ function buildConnectMessage(
   return { type: 'local', payload: { ...connection.config, cols, rows } };
 }
 
+function flattenDockerExec(value: Record<string, unknown>): TerminalConnection {
+  const via = (value.via as Record<string, unknown> | undefined) ?? { type: 'local' };
+  const contextName = value.contextName as string | undefined;
+  const containerId = value.containerId as string;
+  const ctxArgs = contextName ? ['--context', contextName] : [];
+  const execArgs = [...ctxArgs, 'exec', '-it', containerId, 'bash'];
+  if (via.type === 'ssh') {
+    const { type: _t, ...config } = via;
+    return { type: 'ssh', config: { ...config, command: `docker ${execArgs.join(' ')}` } };
+  }
+  if (via.type === 'wsl') {
+    const { type: _t, ...config } = via;
+    return { type: 'wsl', config: { ...config, command: 'docker', args: execArgs } };
+  }
+  return { type: 'local', config: { command: 'docker', args: execArgs } };
+}
+
 function connectionFromContext(value: Record<string, unknown> | undefined): TerminalConnection | null {
   if (!value) {
     return null;
+  }
+  if (value.type === 'docker-exec') {
+    return flattenDockerExec(value);
   }
   const { type, ...config } = value;
   return { type: (type as TerminalConnection['type']) ?? 'local', config };

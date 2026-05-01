@@ -17,6 +17,25 @@ export interface ExtensionHandle {
   contextType: string;
   role: 'source' | 'target';
   label?: string;
+  /** When true, `id` is treated as a prefix matching dynamically-rendered handle ids (e.g. per-instance outputs). */
+  dynamic?: boolean;
+}
+
+/** Resolve a runtime handle id against a node's static handle declarations, supporting prefix-matched dynamic handles. */
+export function findExtensionHandle(
+  handles: ExtensionHandle[],
+  handleId: string,
+  role: 'source' | 'target',
+): ExtensionHandle | undefined {
+  return handles.find((h) => {
+    if (h.role !== role) {
+      return false;
+    }
+    if (h.dynamic) {
+      return handleId.startsWith(h.id);
+    }
+    return h.id === handleId;
+  });
 }
 
 export interface ExtensionContextType {

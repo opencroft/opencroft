@@ -1,7 +1,7 @@
 import { type Edge, type Node } from '@xyflow/react';
 
 import { extensionRegistry } from '@/app/(extension-runtime)/_client/registry';
-import { type ResolvedContext } from '@/app/(extension-runtime)/_types';
+import { findExtensionHandle, type ResolvedContext } from '@/app/(extension-runtime)/_types';
 
 export interface GraphSnapshot {
   nodes: Node[];
@@ -35,7 +35,7 @@ export function resolveHandleContext(
     return null;
   }
 
-  const handleDef = resolved.handles.find((h) => h.id === sourceHandleId);
+  const handleDef = findExtensionHandle(resolved.handles, sourceHandleId, 'source');
   if (!handleDef) {
     return null;
   }

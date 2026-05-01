@@ -430,8 +430,24 @@ export const exposeOutput = (
       return undefined;
     }
     const resolved = nodeData['__resolvedContexts'] as Record<string, { value?: Record<string, unknown> }> | undefined;
-    const upstream = resolved?.['ctx-in']?.value ?? { type: 'local' };
-    return { ...upstream, contextName: (nodeData.contextName as string) || '' };
+    const target = resolved?.['context-in']?.value;
+    const exec = resolved?.['ctx-in']?.value ?? { type: 'local' };
+    const base = target ?? exec;
+    return { ...base, contextName: (nodeData.contextName as string) || '' };
+  }
+
+  if (typeId === 'application') {
+    if (!handleId.startsWith('inst-')) {
+      return undefined;
+    }
+    const containerId = handleId.slice('inst-'.length);
+    const resolved = nodeData['__resolvedContexts'] as Record<string, { value?: Record<string, unknown> }> | undefined;
+    const docker = resolved?.['docker-in']?.value;
+    if (!docker) {
+      return undefined;
+    }
+    const { contextName, ...via } = docker as { contextName?: string } & Record<string, unknown>;
+    return { type: 'docker-exec', via, contextName, containerId };
   }
 
   if (typeId === 'volume') {

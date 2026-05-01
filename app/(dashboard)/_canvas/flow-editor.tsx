@@ -39,6 +39,7 @@ import { installExtensionApi } from '@/app/(dashboard)/extension-system/extensio
 import { ExtensionEditor } from '@/app/(extension-editor)/_components/extension-editor';
 import { loadAllExtensions } from '@/app/(extension-runtime)/_client/loader';
 import { extensionRegistry } from '@/app/(extension-runtime)/_client/registry';
+import { findExtensionHandle } from '@/app/(extension-runtime)/_types';
 import { fetchSpaceGraph, saveSpaceGraph } from '@/app/(space)/space/_components/space-client';
 import { useSSEEvents, useSSEEventsDispatch } from '@/app/(sse)/stores/sse-events-store';
 import { Spinner } from '@/components/ui/spinner';
@@ -339,6 +340,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     if (!conn.source || !conn.target || conn.source === conn.target) {
       return false;
     }
+    if (!conn.sourceHandle || !conn.targetHandle) {
+      return false;
+    }
     const src = nodes.find((n) => n.id === conn.source);
     const tgt = nodes.find((n) => n.id === conn.target);
     if (!src?.type || !tgt?.type) {
@@ -349,8 +353,8 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     if (!srcResolved || !tgtResolved) {
       return false;
     }
-    const srcHandle = srcResolved.handles.find((h) => h.id === conn.sourceHandle && h.role === 'source');
-    const tgtHandle = tgtResolved.handles.find((h) => h.id === conn.targetHandle && h.role === 'target');
+    const srcHandle = findExtensionHandle(srcResolved.handles, conn.sourceHandle, 'source');
+    const tgtHandle = findExtensionHandle(tgtResolved.handles, conn.targetHandle, 'target');
     if (!srcHandle || !tgtHandle) {
       return false;
     }
@@ -369,7 +373,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     return edges.map((edge) => {
       const tgt = nodes.find((n) => n.id === edge.target);
       const tgtResolved = tgt?.type ? extensionRegistry.resolveNode(tgt.type) : undefined;
-      const tgtHandle = tgtResolved?.handles.find((h) => h.id === edge.targetHandle && h.role === 'target');
+      const tgtHandle = tgtResolved && edge.targetHandle
+        ? findExtensionHandle(tgtResolved.handles, edge.targetHandle, 'target')
+        : undefined;
       const ctxType = tgtHandle?.contextType
         ? extensionRegistry.getContextType(tgtHandle.contextType)
         : undefined;
@@ -508,7 +514,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       return;
     }
     const resolved = extensionRegistry.resolveNode(fromNode.type);
-    const handle = resolved?.handles.find((h) => h.id === fromHandle.id && h.role === fromHandle.type);
+    const handle = resolved
+      ? findExtensionHandle(resolved.handles, fromHandle.id, fromHandle.type)
+      : undefined;
     if (!handle) {
       return;
     }
