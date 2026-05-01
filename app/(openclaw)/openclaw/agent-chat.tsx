@@ -18,9 +18,9 @@ import {
   messageId,
   normalizeHistory,
   OpenclawMessage,
-  OpenclawPart,
   RawChatMessage,
 } from '@/app/(openclaw)/openclaw/messages';
+import { Chained, ChainDot, type ChainDotVariant } from '@/components/experimental/chain';
 import { Button } from '@/components/ui/button';
 import { TypingDots } from '@/components/ui/chat/typing-dots';
 import { Flex } from '@/components/ui/layout/flex';
@@ -109,10 +109,13 @@ interface AgentChatProps {
   session: AgentSession;
   className?: string;
   emptyText?: string;
+  agentAvatar?: string;
+  agentName?: string;
 }
 
-export function AgentChat({ session, className, emptyText }: AgentChatProps) {
+export function AgentChat({ session, className, emptyText, agentAvatar, agentName }: AgentChatProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const displayName = agentName ?? session.botName;
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -120,6 +123,8 @@ export function AgentChat({ session, className, emptyText }: AgentChatProps) {
       el.scrollTop = el.scrollHeight;
     }
   }, [session.messages, session.waiting]);
+
+  const blocks = useMemo(() => buildBlocks(session.messages), [session.messages]);
 
   return (
     <div ref={scrollRef} className={cn('overflow-y-auto', className)}>
@@ -129,18 +134,150 @@ export function AgentChat({ session, className, emptyText }: AgentChatProps) {
         ) : session.messages.length === 0 ? (
           <div className='text-sm text-muted-foreground'>{emptyText ?? 'no messages yet'}</div>
         ) : (
-          session.messages.map((m, i) => <MessageRow key={i} message={m} botName={session.botName} />)
+          blocks.map((b, i) => b.kind === 'user'
+            ? <UserMessage key={i} text={b.text} />
+            : <Chain key={i} items={b.items} botName={displayName} agentAvatar={agentAvatar} />)
         )}
-        {session.waiting && <ThinkingIndicator botName={session.botName} />}
+        {session.waiting && <ThinkingIndicator botName={displayName} agentAvatar={agentAvatar} />}
       </Flex>
     </div>
   );
 }
 
-export function ThinkingIndicator({ botName }: { botName: string }) {
+type ChainItem =
+  | { kind: 'assistant-text'; text: string }
+  | { kind: 'tool'; name: string; args: unknown; result?: { text: string; isError?: boolean } };
+
+type Block =
+  | { kind: 'user'; text: string }
+  | { kind: 'chain'; items: ChainItem[] };
+
+function buildBlocks(messages: OpenclawMessage[]): Block[] {
+  const blocks: Block[] = [];
+  let chain: ChainItem[] = [];
+  const flush = () => {
+    if (chain.length === 0) {
+      return;
+    }
+    blocks.push({ kind: 'chain', items: chain });
+    chain = [];
+  };
+  for (const m of messages) {
+    if (m.role === 'user') {
+      flush();
+      for (const p of m.parts) {
+        if (p.type !== 'text') {
+          continue;
+        }
+        const v = stripOpencroftTags(p.text || '');
+        if (!v.trim()) {
+          continue;
+        }
+        blocks.push({ kind: 'user', text: v });
+      }
+      continue;
+    }
+    for (const p of m.parts) {
+      if (p.type === 'text') {
+        const v = stripOpencroftTags(p.text || '…');
+        if (!v.trim()) {
+          continue;
+        }
+        chain.push({ kind: 'assistant-text', text: v });
+      } else {
+        chain.push({ kind: 'tool', name: p.name, args: p.args, result: p.result });
+      }
+    }
+  }
+  flush();
+  return blocks;
+}
+
+function UserMessage({ text }: { text: string }) {
+  return (
+    <Flex className='gap-1.5 rounded-md bg-muted border-1 p-2'>
+      <div className='prose-chat'>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      </div>
+    </Flex>
+  );
+}
+
+function toolDotVariant(item: ChainItem): ChainDotVariant {
+  if (item.kind !== 'tool' || !item.result) {
+    return 'default';
+  }
+  return item.result.isError ? 'destructive' : 'success';
+}
+
+type ChainEntry = { kind: 'header' } | { kind: 'item'; item: ChainItem };
+
+function withHeader(items: ChainItem[]): ChainEntry[] {
+  const entries: ChainEntry[] = items.map((item) => ({ kind: 'item', item }));
+  if (items[0]?.kind === 'tool') {
+    entries.unshift({ kind: 'header' });
+  }
+  return entries;
+}
+
+function Chain({ items, botName, agentAvatar }: { items: ChainItem[]; botName: string; agentAvatar?: string }) {
+  const entries = withHeader(items);
+  return (
+    <Flex>
+      {entries.map((entry, i) => {
+        const isFirst = i === 0;
+        const isLast = i === entries.length - 1;
+        const hasAvatar = isFirst && !!agentAvatar;
+        const marker = hasAvatar
+          ? <img src={agentAvatar} alt='' className='size-8 rounded-full object-cover' />
+          : <ChainDot variant={entry.kind === 'item' ? toolDotVariant(entry.item) : 'default'} />;
+        return (
+          <Chained
+            key={i}
+            marker={marker}
+            lineAbove={!isFirst}
+            lineBelow={!isLast}
+            align={hasAvatar ? 'start' : 'center'}
+          >
+            {renderEntry(entry, isFirst ? botName : undefined)}
+          </Chained>
+        );
+      })}
+    </Flex>
+  );
+}
+
+function renderEntry(entry: ChainEntry, botName?: string) {
+  if (entry.kind === 'header') {
+    return <AssistantText text='' botName={botName} />;
+  }
+  const { item } = entry;
+  if (item.kind === 'assistant-text') {
+    return <AssistantText text={item.text} botName={botName} />;
+  }
+  return <ToolBlock name={item.name} args={item.args} result={item.result} />;
+}
+
+function AssistantText({ text, botName }: { text: string; botName?: string }) {
+  return (
+    <Flex className='min-w-0 gap-1'>
+      {botName ? <div className='text-xs font-medium text-foreground'>{botName}</div> : null}
+      {text ? (
+        <div className='prose-chat'>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+        </div>
+      ) : null}
+    </Flex>
+  );
+}
+
+export function ThinkingIndicator({ botName, agentAvatar }: { botName: string; agentAvatar?: string }) {
   return (
     <Flex row align='center' className='gap-2 text-xs text-muted-foreground'>
-      <span className='uppercase tracking-wide'>{botName}</span>
+      {agentAvatar ? (
+        <img src={agentAvatar} alt='' className='size-8 shrink-0 rounded-full object-cover' />
+      ) : null}
+      <span>{botName}</span>
       <span>is thinking</span>
       <TypingDots variant='primary' size='sm' />
     </Flex>
@@ -332,41 +469,6 @@ function findMatches(text: string, commands: OpenclawCommand[]): OpenclawCommand
   return commands
     .filter((c) => c.textAliases.some((a) => a.toLowerCase().startsWith(trimmed)))
     .slice(0, 10);
-}
-
-export function MessageRow({ message, botName }: { message: OpenclawMessage; botName: string }) {
-  return (
-    <Flex className='min-w-0 gap-2'>
-      {message.parts.map((part, i) => (
-        <PartBlock key={i} role={message.role} part={part} botName={botName} />
-      ))}
-    </Flex>
-  );
-}
-
-function PartBlock({ role, part, botName }: {
-  role: 'user' | 'assistant';
-  part: OpenclawPart;
-  botName: string;
-}) {
-  if (part.type === 'text') {
-    const bg = role === 'user' ? 'bg-muted border-1' : 'bg-transparent';
-    const visible = stripOpencroftTags(part.text || '…');
-    if (!visible.trim()) {
-      return null;
-    }
-    return (
-      <Flex className={cn('gap-1.5 rounded-md p-2', bg)}>
-        {role === 'assistant' && (
-          <div className='text-[10px] uppercase tracking-wide text-muted-foreground'>{botName}</div>
-        )}
-        <div className='prose-chat'>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{visible}</ReactMarkdown>
-        </div>
-      </Flex>
-    );
-  }
-  return <ToolBlock name={part.name} args={part.args} result={part.result} />;
 }
 
 function ToolBlock({ name, args, result }: {

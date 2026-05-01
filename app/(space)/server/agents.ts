@@ -18,6 +18,7 @@ export interface AgentInstructionRef {
 export interface AgentNodeRef {
   nodeId: string;
   name: string;
+  avatar?: string;
   spaceSlug: string;
   spaceName: string;
   jobs: AgentJobRef[];
@@ -29,6 +30,7 @@ interface NodeShape {
   type?: string;
   data?: {
     name?: string;
+    avatar?: string;
     context?: string;
     workingDirectory?: string;
     instruction?: string;
@@ -100,6 +102,7 @@ export async function listAgentNodes(): Promise<AgentNodeRef[]> {
       out.push({
         nodeId: node.id,
         name: node.data?.name?.trim() || 'Agent',
+        avatar: node.data?.avatar,
         spaceSlug: space.slug,
         spaceName: space.name,
         jobs: jobsByAgent.get(node.id) ?? [],
