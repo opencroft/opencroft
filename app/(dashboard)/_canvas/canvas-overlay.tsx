@@ -13,7 +13,7 @@ import { SearchFindBar } from '@/app/(dashboard)/_canvas/search-find-bar';
 import { extensionRegistry } from '@/app/(extension-runtime)/_client/registry';
 import { loadAiSettings } from '@/app/(settings)/settings/ai/actions';
 import { useSSEEvents } from '@/app/(sse)/stores/sse-events-store';
-import { ChatArea, ChatBar, ChatContent } from '@/components/experimental/chat';
+import { ChatArea, ChatBar, ChatContent, ChatHeader } from '@/components/experimental/chat';
 import { Flex } from '@/components/ui/layout/flex';
 import { cn } from '@/lib/utils';
 
@@ -208,10 +208,13 @@ export function CanvasOverlay({ nodes, spaceName, selectedNodeId, onFocusNode }:
           )}
         />
         <ChatArea>
+          <ChatHeader fade={!!slots.content} onMouseDown={stopOverlayClose}>
+            {slots.header}
+          </ChatHeader>
           <ChatContent
             compact
             className={cn(
-              'bg-background rounded-xl mt-1',
+              'bg-background rounded-xl',
               'transition-opacity duration-200',
               slots.content ? 'opacity-100' : 'opacity-0',
             )}

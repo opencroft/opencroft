@@ -5,7 +5,7 @@ import { ReactNode, useState } from "react";
 
 import { StickySection } from "@/components/experimental/sticky-section";
 import { Flex, type FlexProps } from "@/components/ui/layout/flex";
-import { ScrollArea } from "@/components/ui/layout/scroll-area";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 export interface ChatAreaProps {
@@ -16,11 +16,17 @@ export interface ChatAreaProps {
 
 export function ChatArea({ fromEnd, children, className }: ChatAreaProps) {
   return (
-    <Flex expanded justify='end' className={className}>
-      <ScrollArea className='min-h-0'>
-        {children}
-      </ScrollArea>
-    </Flex>
+    <ScrollArea
+      className={cn(
+        'flex-1',
+        '[&_[data-radix-scroll-area-viewport]>div]:!flex',
+        '[&_[data-radix-scroll-area-viewport]>div]:!flex-col',
+        '[&_[data-radix-scroll-area-viewport]>div]:!min-h-full',
+        className
+      )}
+    >
+      {children}
+    </ScrollArea>
   );
 }
 
@@ -29,15 +35,38 @@ export interface ChatContentProps extends FlexProps {
 }
 
 export function ChatContent({ compact, className, children, ...props }: ChatContentProps) {
-  return <Flex withSpacing {...props} className={cn(
-    compact && 'w-full max-w-6xl mx-auto',
-    className
-  )}>{children}</Flex>;
+  return (
+    <Flex expanded justify='end'>
+      <Flex withSpacing {...props} className={cn(
+        compact && 'w-full max-w-6xl mx-auto',
+        className
+      )}>{children}</Flex>
+    </Flex>
+  );
+}
+
+export interface ChatHeaderProps extends FlexProps {
+  compact?: boolean
+  fade?: boolean
+}
+
+export function ChatHeader({ compact, fade, className, children, ...props }: ChatBarProps) {
+  return (
+    <StickySection side='top' fade={fade}>
+      <Flex withGaps withPadding {...props} className={cn(
+        compact && 'max-w-3xl mx-auto',
+        'w-full',
+        className
+      )}>
+        {children}
+      </Flex>
+    </StickySection>
+  );
 }
 
 export interface ChatBarProps extends FlexProps {
-  compact: boolean
-  fade: boolean
+  compact?: boolean
+  fade?: boolean
 }
 
 export function ChatBar({ compact, fade, className, children, ...props }: ChatBarProps) {
