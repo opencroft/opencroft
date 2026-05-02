@@ -147,6 +147,15 @@
       ]
     },
     {
+      "typeId": "send-message",
+      "name": "Send Message",
+      "category": "Integration",
+      "icon": "Send",
+      "handles": [
+        { "id": "text-in", "contextType": "text-stream", "role": "target", "label": "Text" }
+      ]
+    },
+    {
       "typeId": "api-route",
       "name": "API Route",
       "category": "Integration",
