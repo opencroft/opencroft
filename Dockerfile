@@ -6,12 +6,12 @@ WORKDIR /app
 
 COPY package.json package-lock.json ./
 COPY scripts ./scripts
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 COPY . .
 RUN npx prisma generate
 RUN mkdir -p data && npx prisma db push
-RUN npm run build
+RUN --mount=type=cache,target=/app/.next/cache npm run build
 RUN node scripts/collect-extension-deps.mjs extension-deps
 
 # --- Runtime ---
