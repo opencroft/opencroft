@@ -71,6 +71,7 @@ class StreamImpl<T> implements Stream<T> {
         this.accBuffer = '';
         if (text) {
           void persistToDownstreamLogs(this.spaceId, this.nodeId, this.handleId, text);
+          void persistToDownstreamSendMessages(this.spaceId, this.nodeId, this.handleId, text);
         }
       }
     }
@@ -145,6 +146,49 @@ async function persistToDownstreamLogs(
         : [...prevEntries, entry];
       return { ...prev, entries: nextEntries };
     });
+  }
+}
+
+async function persistToDownstreamSendMessages(
+  spaceId: string | undefined,
+  sourceNodeId: string,
+  sourceHandleId: string,
+  text: string,
+): Promise<void> {
+  if (!spaceId) {
+    return;
+  }
+  const r = getSpacesRegistry();
+  await r.ensureLoaded();
+  const space = r.getBySlug(spaceId);
+  if (!space) {
+    return;
+  }
+  const edges = space.graph.edges as unknown as GraphEdgeLike[];
+  const nodes = space.graph.nodes as unknown as GraphNodeLike[];
+  for (const edge of edges) {
+    if (edge.source !== sourceNodeId || edge.sourceHandle !== sourceHandleId) {
+      continue;
+    }
+    const target = nodes.find((n) => n.id === edge.target);
+    if (target?.type !== 'send-message') {
+      continue;
+    }
+    const sessionKey = target.data?.['sessionKey'] as string | undefined;
+    if (!sessionKey?.trim()) {
+      continue;
+    }
+    try {
+      const { gateway } = await import('@/app/(openclaw)/_server/gateway-client');
+      await gateway().call('chat.send', {
+        sessionKey: sessionKey.trim(),
+        message: text,
+        idempotencyKey: crypto.randomUUID(),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[send-message] Failed to send to session ${sessionKey}:`, msg);
+    }
   }
 }
 

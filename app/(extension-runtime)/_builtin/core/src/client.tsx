@@ -25,6 +25,7 @@ import { TextGenerationNode, TextGenerationInspector, TEXT_GENERATION_HANDLES, t
 import { TextToSpeechNode, TextToSpeechInspector, TEXT_TO_SPEECH_HANDLES, textToSpeechExposeOutput } from './nodes/text-to-speech';
 import { SpeakerNode, SpeakerInspector, SPEAKER_HANDLES } from './nodes/speaker';
 import { LogNode, LogInspector, LogOutputTab, LOG_HANDLES } from './nodes/log';
+import { SendMessageNode, SendMessageInspector, SEND_MESSAGE_HANDLES } from './nodes/send-message';
 import { ApiRouteNode, ApiRouteInspector, API_ROUTE_HANDLES, apiRouteExposeOutput } from './nodes/api-route';
 import { EventNode, EventInspector, EVENT_HANDLES, eventExposeOutput } from './nodes/event';
 import { GitWorkspaceNode, GitWorkspaceInspector } from './nodes/git-workspace';
@@ -512,6 +513,17 @@ export default defineExtension({
       inspectorTabs: [
         { id: 'output', label: 'Output', icon: 'ScrollText', fullHeight: true, component: LogOutputTab as unknown as never },
       ],
+    },
+    {
+      typeId: 'send-message',
+      name: 'Send Message',
+      category: 'Integration',
+      icon: 'Send',
+      accent: 'oklch(0.72 0.17 200)',
+      handles: SEND_MESSAGE_HANDLES as unknown as never[],
+      defaultData: { sessionKey: '' },
+      component: SendMessageNode as unknown as never,
+      inspector: SendMessageInspector as unknown as never,
     },
     {
       typeId: 'api-route',
