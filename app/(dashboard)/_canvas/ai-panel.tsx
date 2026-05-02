@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useInspector } from '@/app/(dashboard)/_canvas/inspector-context';
+import { NodeCard } from '@/app/(dashboard)/_canvas/node-card';
 import { useOverlayContent, useOverlayHeader } from '@/app/(dashboard)/_canvas/overlay-context';
 import { deleteSession, loadOpenclaw, type OpenclawAgent } from '@/app/(openclaw)/openclaw/actions';
 import { AgentChat, AgentChatInput, useAgentSession } from '@/app/(openclaw)/openclaw/agent-chat';
@@ -252,14 +253,16 @@ export function AiPanel({ agentId, spaceName, selectedNodeId, focused, onFocusCh
       return null;
     }
     return (
-      <SessionHeader
-        agent={activeAgent}
-        sessions={headerSessions}
-        activeSessionKey={activeSessionKey}
-        onSelectSession={setActiveSessionKey}
-        onCreateSession={createSession}
-        onDeleteSession={removeSession}
-      />
+      <NodeCard selected className='pointer-events-auto px-2 py-1.5'>
+        <SessionHeader
+          agent={activeAgent}
+          sessions={headerSessions}
+          activeSessionKey={activeSessionKey}
+          onSelectSession={setActiveSessionKey}
+          onCreateSession={createSession}
+          onDeleteSession={removeSession}
+        />
+      </NodeCard>
     );
   }, [showChat, activeAgent, headerSessions, activeSessionKey, createSession, removeSession]);
 
