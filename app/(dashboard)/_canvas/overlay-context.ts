@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-type Slot = 'content' | 'menu' | 'bar';
+type Slot = 'header' | 'content' | 'menu' | 'bar';
 
 interface OverlayContextValue {
   setSlot: (slot: Slot, node: ReactNode | null) => void;
@@ -23,6 +23,10 @@ function useOverlaySlot(slot: Slot, node: ReactNode | null): void {
   useLayoutEffect(() => () => setSlot(slot, null), [slot, setSlot]);
 }
 
+export function useOverlayHeader(node: ReactNode | null) {
+  useOverlaySlot('header', node);
+}
+
 export function useOverlayContent(node: ReactNode | null) {
   useOverlaySlot('content', node);
 }
@@ -36,6 +40,7 @@ export function useOverlayBar(node: ReactNode | null) {
 }
 
 export interface OverlaySlots {
+  header: ReactNode | null;
   content: ReactNode | null;
   menu: ReactNode | null;
   bar: ReactNode | null;
@@ -44,12 +49,17 @@ export interface OverlaySlots {
 }
 
 export function useOverlayState(): OverlaySlots {
+  const [header, setHeader] = useState<ReactNode | null>(null);
   const [content, setContent] = useState<ReactNode | null>(null);
   const [menu, setMenu] = useState<ReactNode | null>(null);
   const [bar, setBar] = useState<ReactNode | null>(null);
   const containerRef = useRef<HTMLElement | null>(null);
 
   const setSlot = useCallback((slot: Slot, node: ReactNode | null) => {
+    if (slot === 'header') {
+      setHeader(node);
+      return;
+    }
     if (slot === 'content') {
       setContent(node);
       return;
@@ -61,7 +71,7 @@ export function useOverlayState(): OverlaySlots {
     setBar(node);
   }, []);
 
-  return { content, menu, bar, setSlot, containerRef };
+  return { header, content, menu, bar, setSlot, containerRef };
 }
 
 export function useOverlayClose(active: boolean, onClose: () => void) {
