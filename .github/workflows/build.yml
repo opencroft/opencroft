@@ -4,7 +4,8 @@ on:
   push:
     branches:
       - main
-      - dev
+  schedule:
+    - cron: '0 3 * * *'
   workflow_dispatch:
 
 env:
@@ -106,10 +107,10 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
-            type=sha,prefix=,format=long,enable=${{ github.ref == 'refs/heads/main' }}
-            type=sha,prefix=dev-,format=long,enable=${{ github.ref == 'refs/heads/dev' }}
+            type=raw,value=dev,enable=${{ github.event_name != 'schedule' }}
+            type=sha,prefix=dev-,format=short,enable=${{ github.event_name != 'schedule' }}
+            type=raw,value=nightly,enable=${{ github.event_name == 'schedule' }}
+            type=raw,value=nightly-{{date 'YYYY.MM.DD'}},enable=${{ github.event_name == 'schedule' }}
 
       - name: Create manifest list and push
         working-directory: /tmp/digests

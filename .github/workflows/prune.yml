@@ -1,0 +1,42 @@
+name: Prune old container versions
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  packages: write
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune dev SHA tags older than 24h
+        uses: snok/container-retention-policy@v3
+        with:
+          account: ${{ github.repository_owner }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          image-names: opencroft-dev
+          image-tags: dev-*
+          cut-off: 1d
+          tag-selection: tagged
+
+      - name: Prune nightly date tags older than 14 days
+        uses: snok/container-retention-policy@v3
+        with:
+          account: ${{ github.repository_owner }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          image-names: opencroft-dev
+          image-tags: nightly-*
+          cut-off: 2w
+          tag-selection: tagged
+
+      - name: Prune untagged versions older than 24h
+        uses: snok/container-retention-policy@v3
+        with:
+          account: ${{ github.repository_owner }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          image-names: opencroft-dev
+          cut-off: 1d
+          tag-selection: untagged
