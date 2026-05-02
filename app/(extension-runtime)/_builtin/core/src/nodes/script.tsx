@@ -176,6 +176,7 @@ export function ScriptCodeEditorTab({
       <CodeMirror
         value={data.script ?? ''}
         height='100%'
+        className='h-full [&_.cm-editor]:h-full [&_.cm-scroller]:overflow-auto'
         theme={oneDark}
         extensions={langExtension(data.language)}
         onChange={(v: string) => updateData({ script: v })}
