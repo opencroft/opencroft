@@ -29,7 +29,7 @@ import { SendMessageNode, SendMessageInspector, SEND_MESSAGE_HANDLES } from './n
 import { ApiRouteNode, ApiRouteInspector, API_ROUTE_HANDLES, apiRouteExposeOutput } from './nodes/api-route';
 import { EventNode, EventInspector, EVENT_HANDLES, eventExposeOutput } from './nodes/event';
 import { GitWorkspaceNode, GitWorkspaceInspector } from './nodes/git-workspace';
-import { AgentNode, AgentInspector } from './nodes/agent';
+import { AgentNode, AgentInspector, AgentOpenClawTab } from './nodes/agent';
 import { AgentJobNode, AgentJobInspector } from './nodes/agent-job';
 import { AgentInstructionNode, AgentInstructionInspector } from './nodes/agent-instruction';
 
@@ -317,6 +317,9 @@ export default defineExtension({
       defaultData: { name: '' },
       component: AgentNode as unknown as never,
       inspector: AgentInspector as unknown as never,
+      inspectorTabs: [
+        { id: 'openclaw', label: 'OpenClaw', icon: 'Globe', fullHeight: true, component: AgentOpenClawTab as unknown as never },
+      ],
     },
     {
       typeId: 'agent-job',
