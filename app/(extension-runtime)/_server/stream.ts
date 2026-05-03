@@ -149,6 +149,28 @@ async function persistToDownstreamLogs(
   }
 }
 
+interface ParsedMessage {
+  session: string;
+  message: string;
+}
+
+function tryParseJsonMessage(text: string): ParsedMessage | null {
+  try {
+    const parsed = JSON.parse(text);
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      typeof parsed.session === 'string' && parsed.session.trim() &&
+      typeof parsed.message === 'string'
+    ) {
+      return { session: parsed.session.trim(), message: parsed.message };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function persistToDownstreamSendMessages(
   spaceId: string | undefined,
   sourceNodeId: string,
@@ -174,15 +196,30 @@ async function persistToDownstreamSendMessages(
     if (target?.type !== 'send-message') {
       continue;
     }
-    const sessionKey = target.data?.['sessionKey'] as string | undefined;
-    if (!sessionKey?.trim()) {
-      continue;
+
+    // Try to parse input as JSON with { session, message }
+    const parsed = tryParseJsonMessage(text);
+    let sessionKey: string;
+    let message: string;
+
+    if (parsed) {
+      sessionKey = parsed.session;
+      message = parsed.message;
+    } else {
+      // Fallback: use configured sessionKey + full buffer as message
+      const configuredKey = target.data?.['sessionKey'] as string | undefined;
+      if (!configuredKey?.trim()) {
+        continue;
+      }
+      sessionKey = configuredKey.trim();
+      message = text;
     }
+
     try {
       const { gateway } = await import('@/app/(openclaw)/_server/gateway-client');
       await gateway().call('chat.send', {
-        sessionKey: sessionKey.trim(),
-        message: text,
+        sessionKey,
+        message,
         idempotencyKey: crypto.randomUUID(),
       });
     } catch (err) {

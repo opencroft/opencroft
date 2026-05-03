@@ -3,7 +3,8 @@
 import { type Node } from '@xyflow/react';
 import * as lucideIcons from 'lucide-react';
 import { Box, GripVertical, List, Maximize2, Minimize2, Pencil, X } from 'lucide-react';
-import { type DragEvent, type ReactNode, useEffect, useState } from 'react';
+import { type DragEvent, type ReactNode, useCallback, useEffect, useState } from 'react';
+import { toast } from 'sonner';
 
 import { useInspectorIntent } from '@/app/(dashboard)/_canvas/inspector-intent';
 import { extensionRegistry, type ResolvedNode } from '@/app/(extension-runtime)/_client/registry';
@@ -56,6 +57,15 @@ export function NodeInspector({
 }: NodeInspectorProps) {
   const [activeTab, setActiveTab] = useState<string>('details');
   const intent = useInspectorIntent(node?.id ?? '');
+
+  const copyNodeId = useCallback(() => {
+    if (!node) {
+      return;
+    }
+    navigator.clipboard.writeText(node.id).then(() => {
+      toast.success('Copied to clipboard', { description: node.id, duration: 2000 });
+    });
+  }, [node?.id]);
 
   useEffect(() => {
     if (intent.tab) {
@@ -144,7 +154,17 @@ export function NodeInspector({
     <Flex expanded className="w-full h-full bg-card">
       <Flex row align="center" withPadding className="gap-2 p-3">
         <Icon className="size-4 shrink-0" style={{ color: resolved.accent }} />
-        <span className="text-sm font-semibold flex-1 truncate">{resolved.name}</span>
+        <div className="flex-1 min-w-0">
+          <span className="text-sm font-semibold truncate block">{resolved.name}</span>
+          <button
+            type="button"
+            className="text-[10px] text-muted-foreground hover:text-foreground transition-colors truncate block text-left w-full cursor-pointer font-mono"
+            onClick={copyNodeId}
+            title="Click to copy node ID"
+          >
+            {node.id}
+          </button>
+        </div>
         {isLocal && (
           <Button
             variant="ghost"

@@ -23,6 +23,7 @@ const eslintConfig = [
       "websocket/**",
       "app/(extension-runtime)/_builtin/**",
       "data/extensions/**",
+      "public/vad/**",
     ],
   },
   {
