@@ -338,16 +338,13 @@ interface OpenclawConnectionState {
 
 async function getOpenclawConnection(): Promise<OpenclawConnectionState> {
   try {
-    const { gateway, GatewayNotConfiguredError } = await import('@/app/(openclaw)/_server/gateway-client');
-    const { getSetting } = await import('@/app/(settings)/server/actions');
-    const row = await getSetting<{ gatewayUrl?: string; gatewayToken?: string }>('ai-settings');
+    const row = await host.settings.get<{ gatewayUrl?: string; gatewayToken?: string }>('ai-settings');
     const url = row?.data?.gatewayUrl?.trim() || process.env.OPENCLAW_GATEWAY_URL;
     const token = row?.data?.gatewayToken?.trim() || process.env.OPENCLAW_GATEWAY_TOKEN;
     if (!url || !token) {
       return { connected: false, reason: 'Gateway not configured' };
     }
-    // Quick connectivity check via agents.list
-    await gateway().call('agents.list', {});
+    await host.openclaw.call('agents.list', {});
     return { connected: true };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -360,8 +357,7 @@ async function lookupOpenclawAgent(agentName: string): Promise<OpenclawAgentLook
     return { exists: false };
   }
   try {
-    const { gateway } = await import('@/app/(openclaw)/_server/gateway-client');
-    const list = await gateway().call<{ agents?: OpenclawAgentEntry[]; items?: OpenclawAgentEntry[] }>('agents.list', {});
+    const list = await host.openclaw.call<{ agents?: OpenclawAgentEntry[]; items?: OpenclawAgentEntry[] }>('agents.list', {});
     const entries = list.agents ?? list.items ?? [];
     const normalizedName = agentName.trim().toLowerCase();
     const found = entries.find((a) => (a.name ?? a.id).trim().toLowerCase() === normalizedName);
@@ -381,9 +377,8 @@ async function lookupOpenclawAgent(agentName: string): Promise<OpenclawAgentLook
 }
 
 async function createOpenclawAgent(agentName: string, workspace?: string): Promise<OpenclawAgentInfo> {
-  const { gateway } = await import('@/app/(openclaw)/_server/gateway-client');
   const resolvedWorkspace = workspace?.trim() || `~/.openclaw/workspace-${agentName}`;
-  const result = await gateway().call<{ id?: string; name?: string }>('agents.create', {
+  const result = await host.openclaw.call<{ id?: string; name?: string }>('agents.create', {
     name: agentName,
     workspace: resolvedWorkspace,
   });
@@ -398,8 +393,7 @@ async function createOpenclawAgent(agentName: string, workspace?: string): Promi
 
 async function listOpenclawExternalAgents(excludeNames: string[]): Promise<OpenclawAgentInfo[]> {
   try {
-    const { gateway } = await import('@/app/(openclaw)/_server/gateway-client');
-    const list = await gateway().call<{ agents?: OpenclawAgentEntry[]; items?: OpenclawAgentEntry[] }>('agents.list', {});
+    const list = await host.openclaw.call<{ agents?: OpenclawAgentEntry[]; items?: OpenclawAgentEntry[] }>('agents.list', {});
     const entries = list.agents ?? list.items ?? [];
     const excludeSet = new Set(excludeNames.map((n) => n.trim().toLowerCase()));
     return entries

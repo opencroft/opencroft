@@ -4,6 +4,7 @@ import { promises as fsPromises } from 'node:fs';
 import nodeOs from 'node:os';
 import nodePath from 'node:path';
 
+import { gateway } from '@/app/(openclaw)/_server/gateway-client';
 import { getSetting, setSetting } from '@/app/(settings)/server/actions';
 import { getSpacesRegistry } from '@/app/(space)/server/store';
 import { type GraphData } from '@/app/(space)/server/types';
@@ -217,6 +218,16 @@ function storageApi(extensionId: string): ExtensionStorageApi {
   };
 }
 
+export interface OpenclawApi {
+  call<T = unknown>(method: string, params?: object): Promise<T>;
+}
+
+const openclawApi: OpenclawApi = {
+  call<T = unknown>(method: string, params: object = {}): Promise<T> {
+    return gateway().call<T>(method, params);
+  },
+};
+
 export interface ExtensionHost {
   extensionId: string;
   fs: typeof fsPromises;
@@ -230,6 +241,7 @@ export interface ExtensionHost {
   settings: { get: typeof getSetting; set: typeof setSetting };
   graph: HostGraphApi;
   storage: ExtensionStorageApi;
+  openclaw: OpenclawApi;
 }
 
 export function createHost(extensionId: string): ExtensionHost {
@@ -246,5 +258,6 @@ export function createHost(extensionId: string): ExtensionHost {
     settings: { get: getSetting, set: setSetting },
     graph: graphApi,
     storage: storageApi(extensionId),
+    openclaw: openclawApi,
   };
 }
