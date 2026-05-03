@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronRight, SendIcon, Shield, ShieldCheck, Sparkles } from 'lucide-react';
+import { ChevronRight, Loader2, Maximize2, Minimize2, SendIcon, Shield, ShieldCheck, Sparkles } from 'lucide-react';
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -48,7 +48,26 @@ export function useAgentSession(sessionKey: string, transformOutgoing?: (text: s
     setWaiting(false);
     let active = true;
     const seen = new Set<string>();
-    const refresh = async () => {
+    const isAgentRunning = (rows: RawChatMessage[]): boolean => {
+      // Check if the last assistant message has toolCalls without results
+      const toolCallIds = new Set<string>();
+      const resultIds = new Set<string>();
+      let hasAssistant = false;
+      for (const row of rows) {
+        if (row.role === 'assistant' || row.role === 'tool') hasAssistant = true;
+        const parts = Array.isArray(row.content) ? row.content : [];
+        for (const p of parts) {
+          if (p.type === 'toolCall' && p.id) toolCallIds.add(p.id);
+        }
+        if (row.role === 'toolResult' && row.toolCallId) resultIds.add(row.toolCallId);
+      }
+      if (!hasAssistant) return false;
+      for (const id of toolCallIds) {
+        if (!resultIds.has(id)) return true;
+      }
+      return false;
+    };
+    const refresh = async (resetWaiting = true) => {
       const rows = await loadSession(sessionKey);
       if (!active) {
         return;
@@ -62,7 +81,10 @@ export function useAgentSession(sessionKey: string, transformOutgoing?: (text: s
       }
       setRaw(rows);
       setLoading(false);
-      setWaiting(false);
+      if (resetWaiting) {
+        // Don't reset waiting if agent is still running
+        setWaiting(isAgentRunning(rows));
+      }
     };
     refresh();
     const es = new EventSource(`/api/openclaw/sessions/${encodeURIComponent(sessionKey)}/stream`);
@@ -74,12 +96,21 @@ export function useAgentSession(sessionKey: string, transformOutgoing?: (text: s
       }
       seen.add(id);
       setRaw((prev) => [...prev, msg]);
-      if (msg.role !== 'user') {
-        setWaiting(false);
+    });
+    es.addEventListener('tool', (e) => {
+      const payload = JSON.parse(e.data) as {
+        data?: { phase?: string; toolCallId?: string; name?: string; result?: unknown };
+        sessionKey?: string;
+      };
+      if (payload.data?.phase === 'result') {
+        // Tool completed — refresh full history to pick up toolResult (don't reset waiting)
+        refresh(false);
       }
     });
-    es.addEventListener('changed', () => {
-      refresh();
+    es.addEventListener('changed', (e) => {
+      const data = JSON.parse(e.data);
+      // Only reset waiting when the run ends
+      refresh(data.phase === 'end');
     });
     return () => {
       active = false;
@@ -157,6 +188,10 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName }: AgentC
   const displayName = agentName ?? session.botName;
   const blocks = useMemo(() => buildBlocks(session.messages), [session.messages]);
   const rootRef = useStickToBottom(session.sessionKey);
+  const chainCollapsedRef = useRef(true);
+  const onChainCollapseChange = useCallback((collapsed: boolean) => {
+    chainCollapsedRef.current = collapsed;
+  }, []);
 
   return (
     <Flex ref={rootRef} justify='end' className='min-h-full min-w-0 gap-3 px-4 py-4'>
@@ -167,9 +202,9 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName }: AgentC
       ) : (
         blocks.map((b, i) => b.kind === 'user'
           ? <UserMessage key={i} text={b.text} />
-          : <Chain key={i} items={b.items} botName={displayName} agentAvatar={agentAvatar} />)
+          : <Chain key={i} items={b.items} botName={displayName} agentAvatar={agentAvatar} defaultCollapsed={chainCollapsedRef.current} onCollapseChange={onChainCollapseChange} />)
       )}
-      {session.waiting && <ThinkingIndicator botName={displayName} agentAvatar={agentAvatar} />}
+      {session.waiting && <ThinkingIndicator botName={displayName} />}
     </Flex>
   );
 }
@@ -250,10 +285,99 @@ function withHeader(items: ChainItem[]): ChainEntry[] {
   return entries;
 }
 
-function Chain({ items, botName, agentAvatar }: { items: ChainItem[]; botName: string; agentAvatar?: string }) {
+function Chain({ items, botName, agentAvatar, defaultCollapsed, onCollapseChange }: { items: ChainItem[]; botName: string; agentAvatar?: string; defaultCollapsed?: boolean; onCollapseChange?: (collapsed: boolean) => void }) {
+  const [collapsed, setCollapsed] = useState(defaultCollapsed ?? false);
   const entries = withHeader(items);
+  const toggle =
+    items.length > 1 ? (
+      <ChainToggleButton collapsed={collapsed} onToggle={() => {
+        const next = !collapsed;
+        setCollapsed(next);
+        onCollapseChange?.(next);
+      }} />
+    ) : null;
+
+  // When collapsed, combine last text + last tool call (if tool comes AFTER text)
+  if (collapsed) {
+    // Find the last assistant-text entry
+    let lastTextEntry: ChainEntry | null = null;
+    let lastTextIdx = -1;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      if (e.kind === 'item' && e.item.kind === 'assistant-text' && e.item.text.trim()) {
+        lastTextEntry = e;
+        lastTextIdx = i;
+        break;
+      }
+    }
+
+    // Find the last tool entry that comes AFTER the last text
+    let lastToolAfterText: ChainItem | null = null;
+    if (lastTextIdx >= 0) {
+      for (let i = entries.length - 1; i > lastTextIdx; i--) {
+        const e = entries[i];
+        if (e.kind === 'item' && e.item.kind === 'tool') {
+          lastToolAfterText = e.item;
+          break;
+        }
+      }
+    }
+
+    const hasAvatar = !!agentAvatar;
+    const marker = hasAvatar
+      ? <img src={agentAvatar} alt='' className='size-8 rounded-full object-cover' />
+      : <ChainDot />;
+
+    return (
+      <Flex className='min-w-0 w-full'>
+        <Chained
+          marker={marker}
+          lineAbove={false}
+          lineBelow={false}
+          align={hasAvatar ? 'start' : 'center'}
+        >
+          <Flex className='min-w-0 w-full gap-1'>
+            <Flex row className='items-center justify-between w-full'>
+              <div className='text-xs font-medium text-foreground'>{botName}</div>
+              {toggle}
+            </Flex>
+            {/* Text — no animation, stable */}
+            {lastTextEntry && lastTextEntry.kind === 'item' && lastTextEntry.item.kind === 'assistant-text' && lastTextEntry.item.text.trim() && (
+              <div className='prose-chat'>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{lastTextEntry.item.text}</ReactMarkdown>
+              </div>
+            )}
+            {/* Tool call — animate on changes */}
+            {lastToolAfterText && (
+              <div key={lastToolAfterText.toolCallId}>
+                <ToolBlock name={lastToolAfterText.name} args={lastToolAfterText.args} result={lastToolAfterText.result} />
+              </div>
+            )}
+            {/* If no text entry found, show the very last entry */}
+            {!lastTextEntry && (() => {
+              const last = entries[entries.length - 1];
+              if (last?.kind === 'item') {
+                if (last.item.kind === 'tool') {
+                  return <ToolBlock name={last.item.name} args={last.item.args} result={last.item.result} />;
+                }
+                if (last.item.kind === 'assistant-text') {
+                  return last.item.text.trim() ? (
+                    <div className='prose-chat'>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{last.item.text}</ReactMarkdown>
+                    </div>
+                  ) : null;
+                }
+              }
+              return null;
+            })()}
+          </Flex>
+        </Chained>
+      </Flex>
+    );
+  }
+
   return (
-    <Flex>
+    <Flex className='min-w-0 w-full relative'>
       {entries.map((entry, i) => {
         const isFirst = i === 0;
         const isLast = i === entries.length - 1;
@@ -269,7 +393,7 @@ function Chain({ items, botName, agentAvatar }: { items: ChainItem[]; botName: s
             lineBelow={!isLast}
             align={hasAvatar ? 'start' : 'center'}
           >
-            {renderEntry(entry, isFirst ? botName : undefined)}
+            {renderEntry(entry, isFirst ? botName : undefined, isFirst ? toggle : undefined)}
           </Chained>
         );
       })}
@@ -277,21 +401,43 @@ function Chain({ items, botName, agentAvatar }: { items: ChainItem[]; botName: s
   );
 }
 
-function renderEntry(entry: ChainEntry, botName?: string) {
+function ChainToggleButton({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  const Icon = collapsed ? Maximize2 : Minimize2;
+  return (
+    <button
+      type='button'
+      onClick={onToggle}
+      className={cn(
+        'shrink-0 size-6 inline-flex items-center justify-center rounded-md transition-colors',
+        collapsed
+          ? 'text-muted-foreground hover:text-foreground hover:bg-accent'
+          : 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+      )}
+      title={collapsed ? 'Show chain' : 'Collapse chain'}
+    >
+      <Icon className='size-3.5' />
+    </button>
+  );
+}
+
+function renderEntry(entry: ChainEntry, botName?: string, toggle?: React.ReactNode) {
   if (entry.kind === 'header') {
-    return <AssistantText text='' botName={botName} />;
+    return <AssistantText text='' botName={botName} toggle={toggle} />;
   }
   const { item } = entry;
   if (item.kind === 'assistant-text') {
-    return <AssistantText text={item.text} botName={botName} />;
+    return <AssistantText text={item.text} botName={botName} toggle={toggle} />;
   }
   return <ToolBlock name={item.name} args={item.args} result={item.result} />;
 }
 
-function AssistantText({ text, botName }: { text: string; botName?: string }) {
+function AssistantText({ text, botName, toggle }: { text: string; botName?: string; toggle?: React.ReactNode }) {
   return (
-    <Flex className='min-w-0 gap-1'>
-      {botName ? <div className='text-xs font-medium text-foreground'>{botName}</div> : null}
+    <Flex className='min-w-0 w-full gap-1'>
+      <Flex row className='items-center justify-between w-full'>
+        {botName ? <div className='text-xs font-medium text-foreground'>{botName}</div> : null}
+        {toggle}
+      </Flex>
       {text ? (
         <div className='prose-chat'>
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
@@ -301,15 +447,75 @@ function AssistantText({ text, botName }: { text: string; botName?: string }) {
   );
 }
 
-export function ThinkingIndicator({ botName, agentAvatar }: { botName: string; agentAvatar?: string }) {
+const THINKING_PHRASES = [
+  'Analyzing...',
+  'Architecting...',
+  'Brewing...',
+  'Casting...',
+  'Consulting...',
+  'Cooking...',
+  'Crunching...',
+  'Doing the THING...',
+  'Figuring...',
+  'Masterminding...',
+  'Orchestrating...',
+  'Pondering...',
+  'Processing...',
+  'Slacking...',
+  'Snoozing...',
+  'Sorcering...',
+  'Thinking...',
+  'Vibing...',
+  'Witching...',
+  'Working...',
+] as const;
+
+export function ThinkingIndicator({ botName }: { botName: string }) {
+  const [phrase, setPhrase] = useState(() => THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)]);
+  const prevPhrase = useRef(phrase);
+  const [visible, setVisible] = useState(0);
+
+  // Cycle phrases
+  useEffect(() => {
+    const interval = setInterval(() => {
+      let next: string;
+      do {
+        next = THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)];
+      } while (next === phrase && next.length === phrase.length && THINKING_PHRASES.length > 1);
+      prevPhrase.current = phrase;
+      setPhrase(next);
+      setVisible(0);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [phrase]);
+
+  const maxLen = Math.max(phrase.length, prevPhrase.current.length);
+
+  // Typewriter effect
+  useEffect(() => {
+    let i = 0;
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled) return;
+      i++;
+      if (i <= maxLen) {
+        setVisible(i);
+        setTimeout(tick, 20 + Math.random() * 60);
+      }
+    };
+    setTimeout(tick, 300);
+    return () => { cancelled = true; };
+  }, [phrase]);
+
+  // Compose display: new text overwrites old character by character
+  const paddedNew = phrase.padEnd(maxLen);
+  const paddedOld = prevPhrase.current.padEnd(maxLen);
+  const display = paddedNew.slice(0, visible) + paddedOld.slice(visible);
+
   return (
-    <Flex row align='center' className='gap-2 text-xs text-muted-foreground'>
-      {agentAvatar ? (
-        <img src={agentAvatar} alt='' className='size-8 shrink-0 rounded-full object-cover' />
-      ) : null}
-      <span>{botName}</span>
-      <span>is thinking</span>
+    <Flex row align='center' className='gap-2 text-xs text-muted-foreground font-mono'>
       <TypingDots variant='primary' size='sm' />
+      <span>{display.trimEnd()}</span>
     </Flex>
   );
 }
@@ -520,7 +726,7 @@ function ToolBlock({ name, args, result }: {
         {previewArg(name, args) && (
           <span className='font-mono text-muted-foreground'>{previewArg(name, args)}</span>
         )}
-        {!result && <span className='text-muted-foreground shrink-0'>running…</span>}
+        {!result && !open && <Loader2 className='size-3 shrink-0 animate-spin text-muted-foreground' />}
         {isError && <span className='text-destructive shrink-0'>error</span>}
       </button>
       {open && (
@@ -533,13 +739,23 @@ function ToolBlock({ name, args, result }: {
               {JSON.stringify(args, null, 2)}
             </pre>
           </ToolRow>
-          {result && (
+          {result ? (
             <>
               <div className='border-t' />
               <ToolRow label='output'>
                 <pre className='overflow-y-auto whitespace-pre-wrap break-all text-[11px] text-muted-foreground'>
                   {result.text}
                 </pre>
+              </ToolRow>
+            </>
+          ) : (
+            <>
+              <div className='border-t' />
+              <ToolRow label='output'>
+                <Flex row align='center' className='gap-1.5 text-muted-foreground'>
+                  <Loader2 className='size-3 animate-spin' />
+                  <span>running…</span>
+                </Flex>
               </ToolRow>
             </>
           )}
@@ -552,7 +768,7 @@ function ToolBlock({ name, args, result }: {
 function ToolRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <Flex row className='gap-3 px-3 py-2'>
-      <div className='w-14 shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground pt-0.5'>
+      <div className='w-10 shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground pt-0.5'>
         {label}
       </div>
       <div className='flex-1 min-w-0'>{children}</div>

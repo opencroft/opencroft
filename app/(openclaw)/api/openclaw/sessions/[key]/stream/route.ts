@@ -35,6 +35,13 @@ export async function GET(request: Request, { params }: RouteParams) {
         }
         send('message', evt.message);
       });
+      const offTool = gateway().on('session.tool', (payload) => {
+        const evt = payload as KeyedPayload;
+        if (evt?.sessionKey !== sessionKey) {
+          return;
+        }
+        send('tool', evt);
+      });
       const offChanged = gateway().on('sessions.changed', (payload) => {
         const evt = payload as KeyedPayload;
         if (evt?.sessionKey !== sessionKey) {
@@ -47,6 +54,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       });
       const off = () => {
         offMsg();
+        offTool();
         offChanged();
       };
 

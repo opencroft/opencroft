@@ -307,6 +307,116 @@ async function secretsStoreDeleteOrphan(id: string): Promise<void> {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// OpenClaw agent integration
+// ═══════════════════════════════════════════════════════════════════
+
+interface OpenclawAgentEntry {
+  id: string;
+  name?: string;
+  isDefault?: boolean;
+  workspace?: string;
+}
+
+interface OpenclawAgentInfo {
+  agentId: string;
+  name: string;
+  isDefault: boolean;
+  workspace?: string;
+  exists: true;
+}
+
+interface OpenclawAgentNotFound {
+  exists: false;
+}
+
+type OpenclawAgentLookup = OpenclawAgentInfo | OpenclawAgentNotFound;
+
+interface OpenclawConnectionState {
+  connected: boolean;
+  reason?: string;
+}
+
+async function getOpenclawConnection(): Promise<OpenclawConnectionState> {
+  try {
+    const { gateway, GatewayNotConfiguredError } = await import('@/app/(openclaw)/_server/gateway-client');
+    const { getSetting } = await import('@/app/(settings)/server/actions');
+    const row = await getSetting<{ gatewayUrl?: string; gatewayToken?: string }>('ai-settings');
+    const url = row?.data?.gatewayUrl?.trim() || process.env.OPENCLAW_GATEWAY_URL;
+    const token = row?.data?.gatewayToken?.trim() || process.env.OPENCLAW_GATEWAY_TOKEN;
+    if (!url || !token) {
+      return { connected: false, reason: 'Gateway not configured' };
+    }
+    // Quick connectivity check via agents.list
+    await gateway().call('agents.list', {});
+    return { connected: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { connected: false, reason: msg };
+  }
+}
+
+async function lookupOpenclawAgent(agentName: string): Promise<OpenclawAgentLookup> {
+  if (!agentName.trim()) {
+    return { exists: false };
+  }
+  try {
+    const { gateway } = await import('@/app/(openclaw)/_server/gateway-client');
+    const list = await gateway().call<{ agents?: OpenclawAgentEntry[]; items?: OpenclawAgentEntry[] }>('agents.list', {});
+    const entries = list.agents ?? list.items ?? [];
+    const normalizedName = agentName.trim().toLowerCase();
+    const found = entries.find((a) => (a.name ?? a.id).trim().toLowerCase() === normalizedName);
+    if (!found) {
+      return { exists: false };
+    }
+    return {
+      exists: true,
+      agentId: found.id,
+      name: found.name ?? found.id,
+      isDefault: Boolean(found.isDefault),
+      workspace: found.workspace,
+    };
+  } catch {
+    return { exists: false };
+  }
+}
+
+async function createOpenclawAgent(agentName: string, workspace?: string): Promise<OpenclawAgentInfo> {
+  const { gateway } = await import('@/app/(openclaw)/_server/gateway-client');
+  const resolvedWorkspace = workspace?.trim() || `~/.openclaw/workspace-${agentName}`;
+  const result = await gateway().call<{ id?: string; name?: string }>('agents.create', {
+    name: agentName,
+    workspace: resolvedWorkspace,
+  });
+  return {
+    exists: true,
+    agentId: result.id ?? agentName,
+    name: result.name ?? agentName,
+    isDefault: false,
+    workspace: resolvedWorkspace,
+  };
+}
+
+async function listOpenclawExternalAgents(excludeNames: string[]): Promise<OpenclawAgentInfo[]> {
+  try {
+    const { gateway } = await import('@/app/(openclaw)/_server/gateway-client');
+    const list = await gateway().call<{ agents?: OpenclawAgentEntry[]; items?: OpenclawAgentEntry[] }>('agents.list', {});
+    const entries = list.agents ?? list.items ?? [];
+    const excludeSet = new Set(excludeNames.map((n) => n.trim().toLowerCase()));
+    return entries
+      .filter((a) => !excludeSet.has((a.name ?? a.id).trim().toLowerCase()))
+      .map((a) => ({
+        agentId: a.id,
+        name: a.name ?? a.id,
+        isDefault: Boolean(a.isDefault),
+        workspace: a.workspace,
+        exists: true as const,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Server stats
 // ═══════════════════════════════════════════════════════════════════
 
@@ -378,6 +488,10 @@ export const actions = {
   'openai.chat': (params: OpenAIChatParams) => openaiChat(params),
   'git.listRepos': (params: GitListReposParams) => gitListRepos(params),
   'git.clone': (params: GitCloneParams) => gitClone(params),
+  'agent.getOpenclawConnection': () => getOpenclawConnection(),
+  'agent.lookupOpenclaw': (name: string) => lookupOpenclawAgent(name),
+  'agent.createOpenclaw': (name: string, workspace?: string) => createOpenclawAgent(name, workspace),
+  'agent.listOpenclawExternal': (excludeNames: string[]) => listOpenclawExternalAgents(excludeNames),
 };
 
 // ═══════════════════════════════════════════════════════════════════
