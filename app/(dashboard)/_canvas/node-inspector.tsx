@@ -59,7 +59,9 @@ export function NodeInspector({
   const intent = useInspectorIntent(node?.id ?? '');
 
   const copyNodeId = useCallback(() => {
-    if (!node) return;
+    if (!node) {
+      return;
+    }
     navigator.clipboard.writeText(node.id).then(() => {
       toast.success('Copied to clipboard', { description: node.id, duration: 2000 });
     });
