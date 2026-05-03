@@ -54,16 +54,26 @@ export function useAgentSession(sessionKey: string, transformOutgoing?: (text: s
       const resultIds = new Set<string>();
       let hasAssistant = false;
       for (const row of rows) {
-        if (row.role === 'assistant' || row.role === 'tool') hasAssistant = true;
+        if (row.role === 'assistant' || row.role === 'tool') {
+          hasAssistant = true;
+        }
         const parts = Array.isArray(row.content) ? row.content : [];
         for (const p of parts) {
-          if (p.type === 'toolCall' && p.id) toolCallIds.add(p.id);
+          if (p.type === 'toolCall' && p.id) {
+            toolCallIds.add(p.id);
+          }
         }
-        if (row.role === 'toolResult' && row.toolCallId) resultIds.add(row.toolCallId);
+        if (row.role === 'toolResult' && row.toolCallId) {
+          resultIds.add(row.toolCallId);
+        }
       }
-      if (!hasAssistant) return false;
+      if (!hasAssistant) {
+        return false;
+      }
       for (const id of toolCallIds) {
-        if (!resultIds.has(id)) return true;
+        if (!resultIds.has(id)) {
+          return true;
+        }
       }
       return false;
     };
@@ -496,7 +506,9 @@ export function ThinkingIndicator({ botName }: { botName: string }) {
     let i = 0;
     let cancelled = false;
     const tick = () => {
-      if (cancelled) return;
+      if (cancelled) {
+        return;
+      }
       i++;
       if (i <= maxLen) {
         setVisible(i);
@@ -504,7 +516,9 @@ export function ThinkingIndicator({ botName }: { botName: string }) {
       }
     };
     setTimeout(tick, 300);
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [phrase]);
 
   // Compose display: new text overwrites old character by character
