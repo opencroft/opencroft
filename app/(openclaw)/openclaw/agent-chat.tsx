@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronRight, Loader2, Maximize2, Minimize2, SendIcon, Shield, ShieldCheck, Sparkles } from 'lucide-react';
+import { ChevronRight, Loader2, Maximize2, Minimize2, SendIcon, ShieldCheck, ShieldCog, Sparkles } from 'lucide-react';
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -682,12 +682,12 @@ export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlu
         className='h-7 w-7 shrink-0 mt-0.5'
         onMouseDown={(e) => e.preventDefault()}
         onClick={toggleAutoApprove}
-        title={autoApprove ? 'Auto-approve ON — all MCP tool calls approved automatically' : 'Auto-approve OFF — MCP tool calls require approval'}
+        title={autoApprove ? 'Auto-approve ON — all MCP tool calls approved automatically (click to require approval)' : 'Auto-approve OFF — MCP tool calls require approval (click to auto-approve)'}
       >
         {autoApprove ? (
-          <ShieldCheck className='h-4 w-4 text-primary' />
+          <ShieldCog className='h-4 w-4 text-amber-500' />
         ) : (
-          <Shield className='h-4 w-4 text-muted-foreground' />
+          <ShieldCheck className='h-4 w-4 text-primary' />
         )}
       </Button>
       <Button
