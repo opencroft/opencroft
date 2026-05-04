@@ -12,14 +12,6 @@ import { slug } from '@/app/(server)/server/types';
 import { type AgentNodeRef, type AgentJobRef, listAgentNodes } from '@/app/(space)/server/agents';
 import { Button } from '@/components/ui/button';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import {
   Command,
   CommandEmpty,
   CommandGroup,
@@ -28,6 +20,14 @@ import {
   CommandList,
   CommandSeparator,
 } from '@/components/ui/command';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 
@@ -303,7 +303,7 @@ export function AiPanel({ agentId, spaceName, selectedNodeId, focused, onFocusCh
     return <AgentChat session={session} agentAvatar={activeAgent?.avatar} agentName={activeAgent?.name} />;
   }, [showChat, session, activeAgent]);
 
-// AgentInspector removed — inspector stays unchanged when AI overlay opens
+  // AgentInspector removed — inspector stays unchanged when AI overlay opens
 
   useOverlayHeader(headerNode);
   useOverlayContent(contentNode);
@@ -319,12 +319,10 @@ export function AiPanel({ agentId, spaceName, selectedNodeId, focused, onFocusCh
 }
 
 
-
 function shortSessionKey(key: string): string {
   const parts = key.split(':');
   return parts[parts.length - 1] ?? key;
 }
-
 
 
 interface SessionItem {
@@ -390,9 +388,6 @@ function parseOpenclawSessionKey(key: string): { agentName: string; jobName: str
   }
   return { agentName: parts[1], jobName: parts.slice(2).join(':') };
 }
-
-
-
 
 
 interface SessionHeaderProps {
