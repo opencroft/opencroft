@@ -666,10 +666,10 @@ function SessionHeader({ agent, sessions, activeSessionKey, onSelectSession, onC
               }
             }}
             className={cn(
-              'group shrink-0 inline-flex items-center gap-1.5 h-7 rounded-md border pl-2 pr-1 text-xs cursor-pointer transition-colors outline-hidden',
+              'group shrink-0 inline-flex items-center gap-1.5 h-7 rounded-md pl-2 pr-1 text-xs cursor-pointer transition-colors outline-hidden',
               s.key === activeSessionKey
-                ? 'bg-background border-input text-foreground shadow-sm'
-                : 'bg-background border-input text-muted-foreground',
+                ? 'bg-background/50 text-foreground'
+                : 'bg-accent text-accent-foreground',
             )}
           >
             <MessageSquare className='size-3.5 shrink-0' />
