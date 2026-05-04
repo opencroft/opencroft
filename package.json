@@ -17,7 +17,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1017.0",
     "@aws-sdk/lib-storage": "^3.1017.0",
-    "@base-ui/react": "^1.1.0",
+    "@base-ui/react": "^1.4.1",
     "@codemirror/lang-javascript": "^6.2.5",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/lang-python": "^6.2.1",
@@ -85,13 +85,13 @@
     "pathlib-js": "^1.5.0",
     "radix-ui": "^1.4.3",
     "react": "^19.1.0",
-    "react-day-picker": "^9.13.1",
+    "react-day-picker": "^9.14.0",
     "react-dom": "19.1.0",
-    "react-hook-form": "^7.71.1",
+    "react-hook-form": "^7.75.0",
     "react-markdown": "^10.1.0",
-    "react-resizable-panels": "^4.6.2",
+    "react-resizable-panels": "^4.11.0",
     "reactflow": "^11.11.4",
-    "recharts": "^2.15.4",
+    "recharts": "^3.8.0",
     "remark-gfm": "^4.0.1",
     "sharp": "^0.34.3",
     "sonner": "^2.0.7",
@@ -100,7 +100,7 @@
     "tiptap-markdown": "^0.9.0",
     "vaul": "^1.1.2",
     "ws": "^8.20.0",
-    "zod": "^4.3.6"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

@@ -20,6 +20,7 @@ const eslintConfig = [
       "build/**",
       "next-env.d.ts",
       "components/ui/**",
+      "hooks/use-mobile.ts",
       "websocket/**",
       "app/(extension-runtime)/_builtin/**",
       "data/extensions/**",
