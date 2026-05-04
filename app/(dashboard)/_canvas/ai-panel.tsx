@@ -294,7 +294,7 @@ export function AiPanel({ agentId, spaceName, selectedNodeId, focused, onFocusCh
         />
       </NodeCard>
     );
-  }, [showChat, activeAgent, agents, unmatchedExternalAgents, headerSessions, activeSessionKey, createSession, removeSession]);
+  }, [showChat, activeAgent, agents, unmatchedExternalAgents, headerSessions, activeSessionKey, createSession, removeSession, selectAgent, selectExternalAgent]);
 
   const contentNode = useMemo(() => {
     if (!showChat) {
@@ -302,8 +302,6 @@ export function AiPanel({ agentId, spaceName, selectedNodeId, focused, onFocusCh
     }
     return <AgentChat session={session} agentAvatar={activeAgent?.avatar} agentName={activeAgent?.name} />;
   }, [showChat, session, activeAgent]);
-
-  // AgentInspector removed — inspector stays unchanged when AI overlay opens
 
   useOverlayHeader(headerNode);
   useOverlayContent(contentNode);
@@ -318,12 +316,10 @@ export function AiPanel({ agentId, spaceName, selectedNodeId, focused, onFocusCh
   );
 }
 
-
 function shortSessionKey(key: string): string {
   const parts = key.split(':');
   return parts[parts.length - 1] ?? key;
 }
-
 
 interface SessionItem {
   key: string;
@@ -388,7 +384,6 @@ function parseOpenclawSessionKey(key: string): { agentName: string; jobName: str
   }
   return { agentName: parts[1], jobName: parts.slice(2).join(':') };
 }
-
 
 interface SessionHeaderProps {
   agent: AgentNodeRef;
