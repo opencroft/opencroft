@@ -1,10 +1,9 @@
 'use client';
 
-import { Briefcase, ChevronRight, MessageSquare, Plus, Trash2, User, X } from 'lucide-react';
+import { Briefcase, Check, MessageSquare, Plus, User, X } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { useInspector } from '@/app/(dashboard)/_canvas/inspector-context';
 import { NodeCard } from '@/app/(dashboard)/_canvas/node-card';
 import { useOverlayContent, useOverlayHeader } from '@/app/(dashboard)/_canvas/overlay-context';
 import { deleteSession, loadOpenclaw, type OpenclawAgent } from '@/app/(openclaw)/openclaw/actions';
@@ -13,6 +12,15 @@ import { slug } from '@/app/(server)/server/types';
 import { type AgentNodeRef, type AgentJobRef, listAgentNodes } from '@/app/(space)/server/agents';
 import { Button } from '@/components/ui/button';
 import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+} from '@/components/ui/command';
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -20,7 +28,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Separator } from '@/components/ui/separator';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 
 interface AiPanelProps {
@@ -195,6 +203,24 @@ export function AiPanel({ agentId, spaceName, selectedNodeId, focused, onFocusCh
     setActiveSessionKey(key);
   }, []);
 
+  const selectAgent = useCallback((agentNode: AgentNodeRef) => {
+    // If the agent has jobs, create a session with the first job; otherwise fall back to the dashboard key
+    if (agentNode.jobs.length > 0) {
+      createSession(agentNode, agentNode.jobs[0]);
+    } else {
+      setActiveSessionKey(`agent:${slug(agentNode.name)}:dashboard`);
+    }
+  }, [createSession]);
+
+  const selectExternalAgent = useCallback((extAgent: OpenclawAgent) => {
+    // Switch to the first session of the external agent, or keep the key pattern
+    if (extAgent.sessions.length > 0) {
+      setActiveSessionKey(extAgent.sessions[0].key);
+    } else {
+      setActiveSessionKey(`agent:${extAgent.name}:dashboard`);
+    }
+  }, []);
+
   const showChat = focused && !slashOpen;
 
   const activeAgent = useMemo(() => {
@@ -256,15 +282,19 @@ export function AiPanel({ agentId, spaceName, selectedNodeId, focused, onFocusCh
       <NodeCard selected className='pointer-events-auto px-2 py-1.5'>
         <SessionHeader
           agent={activeAgent}
+          allAgents={agents}
+          externalAgents={unmatchedExternalAgents}
           sessions={headerSessions}
           activeSessionKey={activeSessionKey}
           onSelectSession={setActiveSessionKey}
           onCreateSession={createSession}
           onDeleteSession={removeSession}
+          onSelectAgent={selectAgent}
+          onSelectExternalAgent={selectExternalAgent}
         />
       </NodeCard>
     );
-  }, [showChat, activeAgent, headerSessions, activeSessionKey, createSession, removeSession]);
+  }, [showChat, activeAgent, agents, unmatchedExternalAgents, headerSessions, activeSessionKey, createSession, removeSession, selectAgent, selectExternalAgent]);
 
   const contentNode = useMemo(() => {
     if (!showChat) {
@@ -273,27 +303,8 @@ export function AiPanel({ agentId, spaceName, selectedNodeId, focused, onFocusCh
     return <AgentChat session={session} agentAvatar={activeAgent?.avatar} agentName={activeAgent?.name} />;
   }, [showChat, session, activeAgent]);
 
-  const inspectorNode = useMemo(() => {
-    if (!showChat) {
-      return null;
-    }
-    return (
-      <AgentInspector
-        agents={agents}
-        externalByName={externalByName}
-        externalAgents={unmatchedExternalAgents}
-        sessions={sessions}
-        activeSessionKey={activeSessionKey}
-        onCreateSession={createSession}
-        onSelectSession={setActiveSessionKey}
-        onDeleteSession={removeSession}
-      />
-    );
-  }, [showChat, agents, externalByName, unmatchedExternalAgents, sessions, activeSessionKey, createSession, removeSession]);
-
   useOverlayHeader(headerNode);
   useOverlayContent(contentNode);
-  useInspector(inspectorNode);
 
   return (
     <AgentChatInput
@@ -305,145 +316,9 @@ export function AiPanel({ agentId, spaceName, selectedNodeId, focused, onFocusCh
   );
 }
 
-interface AgentInspectorProps {
-  agents: AgentNodeRef[];
-  externalByName: Map<string, OpenclawAgent>;
-  externalAgents: OpenclawAgent[];
-  sessions: SessionEntry[];
-  activeSessionKey: string;
-  onCreateSession: (agent: AgentNodeRef, job: AgentJobRef) => void;
-  onSelectSession: (key: string) => void;
-  onDeleteSession: (key: string) => void;
-}
-
-function AgentInspector({ agents, externalByName, externalAgents, sessions, activeSessionKey, onCreateSession, onSelectSession, onDeleteSession }: AgentInspectorProps) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-
-  const toggle = (key: string) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-      return next;
-    });
-  };
-
-  return (
-    <div className='flex flex-col h-full'>
-      <div className='flex items-center gap-2 p-3'>
-        <span className='text-sm font-semibold flex-1 truncate'>Agents</span>
-      </div>
-      <Separator />
-      <div className='flex-1 min-h-0 overflow-y-auto flex flex-col gap-0.5 p-2'>
-        {agents.length === 0 ? (
-          <div className='px-2 py-1.5 text-xs text-muted-foreground italic'>No agents</div>
-        ) : (
-          agents.map((agent) => {
-            const key = `${agent.spaceSlug}:${agent.nodeId}`;
-            const isOpen = !collapsed.has(key);
-            const agentSessions = sessions.filter((s) => s.agentNodeId === agent.nodeId);
-            const matchedExternal = externalByName.get(agent.name.trim().toLowerCase()) ?? null;
-            return (
-              <AgentRow
-                key={key}
-                agent={agent}
-                expanded={isOpen}
-                sessions={agentSessions}
-                externalAgent={matchedExternal}
-                activeSessionKey={activeSessionKey}
-                onToggle={() => toggle(key)}
-                onCreateSession={onCreateSession}
-                onSelectSession={onSelectSession}
-                onDeleteSession={onDeleteSession}
-              />
-            );
-          })
-        )}
-        {externalAgents.length > 0 ? (
-          <>
-            <div className='px-2 pt-3 pb-1 text-[10px] uppercase tracking-wide text-muted-foreground'>OpenClaw</div>
-            {externalAgents.map((agent) => {
-              const key = `external:${agent.agentId}`;
-              return (
-                <ExternalAgentRow
-                  key={key}
-                  agent={agent}
-                  expanded={!collapsed.has(key)}
-                  activeSessionKey={activeSessionKey}
-                  onToggle={() => toggle(key)}
-                  onSelectSession={onSelectSession}
-                  onDeleteSession={onDeleteSession}
-                />
-              );
-            })}
-          </>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-interface ExternalAgentRowProps {
-  agent: OpenclawAgent;
-  expanded: boolean;
-  activeSessionKey: string;
-  onToggle: () => void;
-  onSelectSession: (key: string) => void;
-  onDeleteSession: (key: string) => void;
-}
-
-function ExternalAgentRow({ agent, expanded, activeSessionKey, onToggle, onSelectSession, onDeleteSession }: ExternalAgentRowProps) {
-  return (
-    <div className='flex flex-col'>
-      <SidebarItem
-        icon={<User className='size-4 shrink-0' />}
-        label={agent.name}
-        subtitle={agent.isDefault ? 'default' : undefined}
-        active={false}
-        onClick={onToggle}
-        chevron={<ChevronRight className={cn('size-3 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-90')} />}
-      />
-      {expanded ? (
-        <div className='flex flex-col gap-0.5 pl-4 py-1'>
-          {agent.sessions.length === 0 ? (
-            <div className='px-2 py-1 text-xs text-muted-foreground italic'>No sessions</div>
-          ) : (
-            agent.sessions.map((s) => (
-              <SidebarItem
-                key={s.key}
-                icon={<MessageSquare className='size-3.5 shrink-0' />}
-                label={s.title ?? shortSessionKey(s.key)}
-                subtitle={s.lastMessage ?? undefined}
-                active={s.key === activeSessionKey}
-                onClick={() => onSelectSession(s.key)}
-                onDelete={() => onDeleteSession(s.key)}
-              />
-            ))
-          )}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function shortSessionKey(key: string): string {
   const parts = key.split(':');
   return parts[parts.length - 1] ?? key;
-}
-
-interface AgentRowProps {
-  agent: AgentNodeRef;
-  expanded: boolean;
-  sessions: SessionEntry[];
-  externalAgent: OpenclawAgent | null;
-  activeSessionKey: string;
-  onToggle: () => void;
-  onCreateSession: (agent: AgentNodeRef, job: AgentJobRef) => void;
-  onSelectSession: (key: string) => void;
-  onDeleteSession: (key: string) => void;
 }
 
 interface SessionItem {
@@ -510,148 +385,55 @@ function parseOpenclawSessionKey(key: string): { agentName: string; jobName: str
   return { agentName: parts[1], jobName: parts.slice(2).join(':') };
 }
 
-function AgentRow({ agent, expanded, sessions, externalAgent, activeSessionKey, onToggle, onCreateSession, onSelectSession, onDeleteSession }: AgentRowProps) {
-  const groups = buildSessionGroups(agent, sessions, externalAgent);
-  return (
-    <div className='flex flex-col'>
-      <SidebarItem
-        icon={agent.avatar ? (
-          <img src={agent.avatar} alt='' className='size-4 shrink-0 rounded-full object-cover' />
-        ) : (
-          <User className='size-4 shrink-0' />
-        )}
-        label={agent.name}
-        subtitle={agent.spaceName}
-        active={false}
-        onClick={onToggle}
-        chevron={<ChevronRight className={cn('size-3 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-90')} />}
-      />
-      {expanded ? (
-        <div className='flex flex-col gap-0.5 pl-4 py-1'>
-          {agent.jobs.length === 0 ? (
-            <div className='px-2 py-1 text-xs text-muted-foreground italic'>No jobs connected</div>
-          ) : (
-            agent.jobs.map((job) => {
-              const jobSessions = groups.byJob.get(job.nodeId) ?? [];
-              return (
-                <div key={job.nodeId} className='flex flex-col gap-0.5'>
-                  <SidebarItem
-                    icon={<Briefcase className='size-3.5 shrink-0' />}
-                    label={job.name}
-                    active={false}
-                    onClick={() => onCreateSession(agent, job)}
-                  />
-                  {jobSessions.length > 0 ? (
-                    <div className='flex flex-col gap-0.5 pl-4'>
-                      {jobSessions.map((s) => (
-                        <SidebarItem
-                          key={s.key}
-                          icon={<MessageSquare className='size-3.5 shrink-0' />}
-                          label={s.label}
-                          subtitle={s.subtitle}
-                          active={s.key === activeSessionKey}
-                          onClick={() => onSelectSession(s.key)}
-                          onDelete={() => onDeleteSession(s.key)}
-                        />
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })
-          )}
-          {groups.pet.length > 0 ? (
-            <>
-              <div className='px-2 pt-2 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground'>Pet Project</div>
-              {groups.pet.map((s) => (
-                <SidebarItem
-                  key={s.key}
-                  icon={<MessageSquare className='size-3.5 shrink-0' />}
-                  label={s.label}
-                  subtitle={s.subtitle}
-                  active={s.key === activeSessionKey}
-                  onClick={() => onSelectSession(s.key)}
-                  onDelete={() => onDeleteSession(s.key)}
-                />
-              ))}
-            </>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-interface SidebarItemProps {
-  icon: React.ReactNode;
-  label: string;
-  subtitle?: string;
-  active: boolean;
-  chevron?: React.ReactNode;
-  onClick: () => void;
-  onDelete?: () => void;
-}
-
-function SidebarItem({ icon, label, subtitle, active, chevron, onClick, onDelete }: SidebarItemProps) {
-  return (
-    <div
-      role='button'
-      tabIndex={0}
-      onClick={onClick}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onClick();
-        }
-      }}
-      className={cn(
-        'group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-hidden transition-colors cursor-pointer',
-        'hover:bg-accent hover:text-accent-foreground',
-        active && 'bg-accent text-accent-foreground font-medium',
-      )}
-    >
-      {icon}
-      <span className='flex-1 min-w-0 truncate'>{label}</span>
-      {subtitle ? (
-        <span className='text-[10px] font-mono text-muted-foreground truncate max-w-24'>{subtitle}</span>
-      ) : null}
-      {onDelete ? (
-        <button
-          type='button'
-          onClick={(e) => {
-            e.stopPropagation(); onDelete();
-          }}
-          className='opacity-0 group-hover:opacity-100 hover:text-destructive transition-opacity'
-          aria-label='Delete session'
-        >
-          <Trash2 className='size-3.5 shrink-0' />
-        </button>
-      ) : null}
-      {chevron}
-    </div>
-  );
-}
-
 interface SessionHeaderProps {
   agent: AgentNodeRef;
+  allAgents: AgentNodeRef[];
+  externalAgents: OpenclawAgent[];
   sessions: SessionItem[];
   activeSessionKey: string;
   onSelectSession: (key: string) => void;
   onCreateSession: (agent: AgentNodeRef, job: AgentJobRef) => void;
   onDeleteSession: (key: string) => void;
+  onSelectAgent: (agent: AgentNodeRef) => void;
+  onSelectExternalAgent: (agent: OpenclawAgent) => void;
 }
 
-function SessionHeader({ agent, sessions, activeSessionKey, onSelectSession, onCreateSession, onDeleteSession }: SessionHeaderProps) {
+function SessionHeader({ agent, allAgents, externalAgents, sessions, activeSessionKey, onSelectSession, onCreateSession, onDeleteSession, onSelectAgent, onSelectExternalAgent }: SessionHeaderProps) {
+  const [agentPickerOpen, setAgentPickerOpen] = useState(false);
+
   return (
     <div className='flex w-full items-center gap-2'>
-      <div className='flex items-center gap-2 shrink-0'>
-        {agent.avatar ? (
-          <img src={agent.avatar} alt='' className='size-5 shrink-0 rounded-full object-cover' />
-        ) : (
-          <User className='size-5 shrink-0' />
-        )}
-        <span className='text-sm font-semibold truncate max-w-40'>{agent.name}</span>
-      </div>
+      <Popover open={agentPickerOpen} onOpenChange={setAgentPickerOpen}>
+        <PopoverTrigger asChild>
+          <button
+            type='button'
+            className='flex items-center gap-2 shrink-0 rounded-md px-1 py-0.5 hover:bg-accent/50 transition-colors cursor-pointer'
+            aria-label='Select agent'
+          >
+            {agent.avatar ? (
+              <img src={agent.avatar} alt='' className='size-5 shrink-0 rounded-full object-cover' />
+            ) : (
+              <User className='size-5 shrink-0' />
+            )}
+            <span className='text-sm font-semibold truncate max-w-40'>{agent.name}</span>
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align='start' className='w-[260px] p-0'>
+          <AgentSelector
+            agents={allAgents}
+            externalAgents={externalAgents}
+            activeAgentId={agent.nodeId}
+            onSelect={(a) => {
+              onSelectAgent(a);
+              setAgentPickerOpen(false);
+            }}
+            onSelectExternal={(a) => {
+              onSelectExternalAgent(a);
+              setAgentPickerOpen(false);
+            }}
+          />
+        </PopoverContent>
+      </Popover>
       <div className='flex-1 min-w-0 flex items-center gap-1 overflow-x-auto overflow-y-hidden whitespace-nowrap'>
         {sessions.map((s) => (
           <div
@@ -666,10 +448,10 @@ function SessionHeader({ agent, sessions, activeSessionKey, onSelectSession, onC
               }
             }}
             className={cn(
-              'group shrink-0 inline-flex items-center gap-1.5 h-7 rounded-md border pl-2 pr-1 text-xs cursor-pointer transition-colors outline-hidden',
+              'group shrink-0 inline-flex items-center gap-1.5 h-7 rounded-md pl-2 pr-1 text-xs cursor-pointer transition-colors outline-hidden',
               s.key === activeSessionKey
-                ? 'bg-background border-input text-foreground shadow-sm'
-                : 'bg-transparent border-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                ? 'bg-background/50 text-foreground'
+                : 'bg-accent text-accent-foreground',
             )}
           >
             <MessageSquare className='size-3.5 shrink-0' />
@@ -680,7 +462,7 @@ function SessionHeader({ agent, sessions, activeSessionKey, onSelectSession, onC
                 e.stopPropagation();
                 onDeleteSession(s.key);
               }}
-              className='size-4 inline-flex items-center justify-center rounded-sm opacity-0 group-hover:opacity-100 hover:bg-muted hover:text-destructive transition-opacity'
+              className='size-4 inline-flex items-center justify-center rounded-sm hover:bg-muted hover:text-destructive'
               aria-label='Delete session'
             >
               <X className='size-3' />
@@ -710,5 +492,77 @@ function SessionHeader({ agent, sessions, activeSessionKey, onSelectSession, onC
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
+  );
+}
+
+interface AgentSelectorProps {
+  agents: AgentNodeRef[];
+  externalAgents: OpenclawAgent[];
+  activeAgentId: string;
+  onSelect: (agent: AgentNodeRef) => void;
+  onSelectExternal: (agent: OpenclawAgent) => void;
+}
+
+function AgentSelector({ agents, externalAgents, activeAgentId, onSelect, onSelectExternal }: AgentSelectorProps) {
+  const localGrouped = useMemo(() => {
+    const map = new Map<string, AgentNodeRef[]>();
+    for (const agent of agents) {
+      const key = agent.spaceName;
+      const list = map.get(key) ?? [];
+      list.push(agent);
+      map.set(key, list);
+    }
+    return map;
+  }, [agents]);
+
+  return (
+    <Command>
+      <CommandInput placeholder='Find agent…' autoFocus />
+      <CommandList>
+        <CommandEmpty>No agents found.</CommandEmpty>
+        {Array.from(localGrouped.entries()).map(([spaceName, items]) => (
+          <CommandGroup key={spaceName} heading={spaceName}>
+            {items.map((agent) => {
+              const isActive = agent.nodeId === activeAgentId;
+              return (
+                <CommandItem
+                  key={agent.nodeId}
+                  value={`${spaceName} ${agent.name}`}
+                  onSelect={() => onSelect(agent)}
+                >
+                  {agent.avatar ? (
+                    <img src={agent.avatar} alt='' className='size-4 shrink-0 rounded-full object-cover' />
+                  ) : (
+                    <User className='size-4 shrink-0' />
+                  )}
+                  <span className='truncate'>{agent.name}</span>
+                  {isActive && <Check className='size-3.5 shrink-0 ml-auto text-primary' />}
+                </CommandItem>
+              );
+            })}
+          </CommandGroup>
+        ))}
+        {externalAgents.length > 0 && (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading='OpenClaw'>
+              {externalAgents.map((agent) => (
+                <CommandItem
+                  key={agent.agentId}
+                  value={`OpenClaw ${agent.name}`}
+                  onSelect={() => onSelectExternal(agent)}
+                >
+                  <User className='size-4 shrink-0' />
+                  <span className='truncate'>{agent.name}</span>
+                  {agent.isDefault && (
+                    <span className='ml-auto text-[10px] uppercase tracking-wide text-muted-foreground'>default</span>
+                  )}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </>
+        )}
+      </CommandList>
+    </Command>
   );
 }
