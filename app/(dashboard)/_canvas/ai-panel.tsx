@@ -669,7 +669,7 @@ function SessionHeader({ agent, sessions, activeSessionKey, onSelectSession, onC
               'group shrink-0 inline-flex items-center gap-1.5 h-7 rounded-md border pl-2 pr-1 text-xs cursor-pointer transition-colors outline-hidden',
               s.key === activeSessionKey
                 ? 'bg-background border-input text-foreground shadow-sm'
-                : 'bg-transparent border-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                : 'bg-background border-input text-muted-foreground',
             )}
           >
             <MessageSquare className='size-3.5 shrink-0' />
@@ -680,7 +680,7 @@ function SessionHeader({ agent, sessions, activeSessionKey, onSelectSession, onC
                 e.stopPropagation();
                 onDeleteSession(s.key);
               }}
-              className='size-4 inline-flex items-center justify-center rounded-sm opacity-0 group-hover:opacity-100 hover:bg-muted hover:text-destructive transition-opacity'
+              className='size-4 inline-flex items-center justify-center rounded-sm hover:bg-muted hover:text-destructive'
               aria-label='Delete session'
             >
               <X className='size-3' />
