@@ -10,6 +10,7 @@ import {
   docsLog as docsLogAction,
   docsShow as docsShowAction,
   docsPublish as docsPublishAction,
+  docsDiscardFile as docsDiscardFileAction,
   type DocsStatusResult,
   type DocsLogEntry,
 } from './docs-git';
@@ -296,6 +297,10 @@ export const nodeActions = {
     publish: async (ctx: ActionCtx) => {
       const message = ctx.params.message as string;
       return docsPublishAction(ctx.nodeId, message);
+    },
+    discardFile: async (ctx: ActionCtx) => {
+      const filePath = ctx.params.filePath as string;
+      return docsDiscardFileAction(ctx.nodeId, filePath);
     },
   },
 };

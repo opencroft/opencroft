@@ -5,6 +5,7 @@ import path from 'path';
 
 import { type Anchor, appendComment, type Comment, createComment, findThreadRoot, readComments } from '@/app/(docs)/docs/_server/comments';
 import { getDocsRootSync, invalidateDocsRootCache } from '@/app/(docs)/docs/_server/docs-root';
+import { getExtensionModule } from '@/app/(extension-runtime)/_server/loader';
 import { gateway } from '@/app/(openclaw)/_server/gateway-client';
 import { toastStore } from '@/lib/toast-store';
 
@@ -52,6 +53,12 @@ export async function enterEditMode(filePath: string): Promise<string> {
 export async function saveEditDraft(filePath: string, content: string): Promise<void> {
   const resolved = resolveSafe(filePath);
   await fs.writeFile(`${resolved}.edit`, content, 'utf-8');
+}
+
+/** Save content directly to the file (git mode — no .edit copy). */
+export async function saveDocDirectly(filePath: string, content: string): Promise<void> {
+  const resolved = resolveSafe(filePath);
+  await fs.writeFile(resolved, content, 'utf-8');
 }
 
 export async function publishEditDraft(filePath: string): Promise<string> {
@@ -114,6 +121,87 @@ export async function deleteDoc(filePath: string): Promise<void> {
   }
   await fs.unlink(resolved);
   await removeEmptyDirs(path.dirname(resolved));
+}
+
+// ── Git-aware docs API ──────────────────────────────────────────────────
+
+async function findDocNodeId(): Promise<string | null> {
+  try {
+    const mod = await getExtensionModule('builtin/core');
+    const fn = mod.actions?.['docs.findDocNodeId'];
+    if (!fn) return null;
+    return (await fn()) as string | null;
+  } catch {
+    return null;
+  }
+}
+
+async function callDocsAction(action: string, params: Record<string, unknown>) {
+  const mod = await getExtensionModule('builtin/core');
+  const fn = mod.actions?.[action];
+  if (!fn) throw new Error(`Action ${action} not found`);
+  return fn(params);
+}
+
+export interface GitDocsStatus {
+  available: boolean;
+  nodeId?: string;
+  status?: 'idle' | 'cloned' | 'syncing' | 'error';
+  changedFiles?: number;
+}
+
+export async function getGitDocsStatus(): Promise<GitDocsStatus> {
+  const nodeId = await findDocNodeId();
+  if (!nodeId) return { available: false };
+  try {
+    const result = await callDocsAction('docs.status', { nodeId });
+    return { available: true, nodeId, ...(result as Record<string, unknown>) };
+  } catch {
+    return { available: false };
+  }
+}
+
+export async function getGitFileLog(filePath: string, count = 20): Promise<Array<{ sha: string; message: string; author: string; date: string }>> {
+  const nodeId = await findDocNodeId();
+  if (!nodeId) return [];
+  try {
+    return (await callDocsAction('docs.log', { nodeId, filePath, count })) as Array<{ sha: string; message: string; author: string; date: string }>;
+  } catch {
+    return [];
+  }
+}
+
+export async function getGitFileAtRef(filePath: string, ref: string): Promise<string | null> {
+  const nodeId = await findDocNodeId();
+  if (!nodeId) return null;
+  try {
+    return (await callDocsAction('docs.show', { nodeId, filePath, ref })) as string | null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getGitChangedFiles(): Promise<string[]> {
+  const nodeId = await findDocNodeId();
+  if (!nodeId) return [];
+  try {
+    const files = await callDocsAction('docs.changedFiles', { nodeId });
+    return (files as { path: string }[]).map(f => f.path);
+  } catch {
+    return [];
+  }
+}
+
+export async function gitPublishDocs(message: string): Promise<{ sha: string; message: string }> {
+  const nodeId = await findDocNodeId();
+  if (!nodeId) throw new Error('No documentation node found');
+  return (await callDocsAction('docs.publish', { nodeId, message })) as { sha: string; message: string };
+}
+
+export async function gitDiscardFile(filePath: string): Promise<void> {
+  const nodeId = await findDocNodeId();
+  if (!nodeId) throw new Error('No documentation node found');
+  await callDocsAction('docs.discardFile', { nodeId, filePath });
 }
 
 // ── Comments ─────────────────────────────────────────────────────────────

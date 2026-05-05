@@ -288,3 +288,24 @@ export async function findActiveDocsRoot(): Promise<string | null> {
     return null;
   }
 }
+
+/** Discard changes for a file, reverting to the last committed version. */
+export async function docsDiscardFile(nodeId: string, filePath: string): Promise<void> {
+  const repoDir = docsCacheDir(nodeId);
+  const cloned = await isCloned(repoDir);
+  if (!cloned) {
+    throw new Error('Repository is not cloned');
+  }
+  await host.execFile('git', ['-c', 'safe.directory=*', '-C', repoDir, 'checkout', '--', filePath]);
+}
+
+/** Find the first documentation node ID on the graph. */
+export async function findDocNodeId(): Promise<string | null> {
+  try {
+    const nodes = await host.graph.listNodesByType('documentation');
+    if (!nodes || nodes.length === 0) return null;
+    return nodes[0].id;
+  } catch {
+    return null;
+  }
+}
