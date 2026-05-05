@@ -49,7 +49,7 @@ export function CanvasOverlay({ nodes, spaceName, selectedNodeId, onFocusNode }:
         }
       }
     });
-    fetch('/canvas/api/yolo').then(r => r.json()).then(({ enabled }) => setYoloMode(enabled)).catch(() => {});
+    fetch('/api/yolo').then(r => r.json()).then(({ enabled }) => setYoloMode(enabled)).catch(() => {});
   }, []);
 
   const activateMode = useCallback((next: CommandMode) => {
