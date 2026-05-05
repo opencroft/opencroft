@@ -8,13 +8,23 @@ import {
   icons,
   inspectorIntent,
   toast,
+  useGraphNodes,
   useNodeContext,
   useReactFlow,
   type Stream,
   type TextChunk,
 } from '@ext/host';
 import {
+  Badge,
   Button,
+  Input,
+  Label,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Textarea,
 } from '@ext/ui';
 import CodeMirror from '@uiw/react-codemirror';
 import { oneDark } from '@codemirror/theme-one-dark';
@@ -28,6 +38,8 @@ const { useCallback } = React;
 export interface ScriptData {
   script: string;
   language: 'bash' | 'python' | 'node';
+  env: string;
+  secrets: string;
 }
 
 interface TerminalContext {
@@ -157,13 +169,128 @@ function ScriptNode({
   );
 }
 
+// ═════════════════════════════════════════════════════════════════════
+// SecretsPicker — reused from Application inspector
+// ═════════════════════════════════════════════════════════════════════
+
+interface SecretsStoreNodeData {
+  secretKeys?: string[];
+}
+
+function SecretsPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const nodes = useGraphNodes();
+
+  const availableKeys = React.useMemo(() => {
+    const keys = new Set<string>();
+    for (const n of nodes as { type?: string; data?: SecretsStoreNodeData }[]) {
+      if (n.type !== 'core-secrets-store') continue;
+      for (const key of n.data?.secretKeys ?? []) {
+        keys.add(key);
+      }
+    }
+    return [...keys].sort();
+  }, [nodes]);
+
+  const selected = React.useMemo(
+    () => value.split('\n').map((s) => s.trim()).filter(Boolean),
+    [value],
+  );
+
+  const remaining = React.useMemo(
+    () => availableKeys.filter((k) => !selected.includes(k)),
+    [availableKeys, selected],
+  );
+
+  const remove = React.useCallback((name: string) => {
+    onChange(selected.filter((s) => s !== name).join('\n'));
+  }, [onChange, selected]);
+
+  const add = React.useCallback((name: string) => {
+    if (!name || selected.includes(name)) return;
+    onChange([...selected, name].join('\n'));
+  }, [onChange, selected]);
+
+  const stale = selected.filter((s) => !availableKeys.includes(s));
+
+  return (
+    <div className='flex flex-col gap-1.5'>
+      {selected.length > 0 ? (
+        <div className='flex flex-wrap gap-1'>
+          {selected.map((name) => {
+            const missing = stale.includes(name);
+            return (
+              <Badge
+                key={name}
+                variant={missing ? 'destructive' : 'secondary'}
+                className='gap-1 font-mono text-[10px] pr-1'
+                title={missing ? 'Not found in any Secrets Store' : ''}
+              >
+                <span>{name}</span>
+                <button type='button' onClick={() => remove(name)} className='hover:opacity-70'>
+                  <icons.X className='h-3 w-3' />
+                </button>
+              </Badge>
+            );
+          })}
+        </div>
+      ) : null}
+      {remaining.length > 0 ? (
+        <Select value='' onValueChange={(v: string) => add(v)}>
+          <SelectTrigger className='h-7 text-xs'>
+            <SelectValue placeholder='Add secret…' />
+          </SelectTrigger>
+          <SelectContent>
+            {remaining.map((k) => (
+              <SelectItem key={k} value={k} className='font-mono text-xs'>
+                {k}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : availableKeys.length === 0 ? (
+        <p className='text-[10px] text-muted-foreground italic'>
+          No Secrets Stores in this graph. Add a Secrets Store node and define keys to pick from.
+        </p>
+      ) : (
+        <p className='text-[10px] text-muted-foreground italic'>
+          All available secrets ({availableKeys.length}) selected.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function ScriptInspector({
-  data,
+  data, updateData,
 }: { nodeId: string; data: ScriptData; updateData: (p: Partial<ScriptData>) => void }) {
   return (
-    <div className='flex flex-col gap-1 text-xs text-muted-foreground'>
-      <span>Language: {LANG_CONFIG[data.language].label}</span>
-      <span className='italic'>Open the Editor tab to edit code.</span>
+    <div className='flex flex-col gap-3'>
+      <div className='flex flex-col gap-1 text-xs text-muted-foreground'>
+        <span>Language: {LANG_CONFIG[data.language].label}</span>
+        <span className='italic'>Open the Editor tab to edit code.</span>
+      </div>
+      <div className='flex flex-col gap-1'>
+        <Label>Environment (one per line, KEY=VALUE)</Label>
+        <Textarea
+          value={data.env ?? ''}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateData({ env: e.target.value })}
+          placeholder={'NODE_ENV=production\nDEBUG=false'}
+          className='font-mono text-xs min-h-[60px]'
+        />
+      </div>
+      <div className='flex flex-col gap-1'>
+        <Label>Secrets</Label>
+        <SecretsPicker
+          value={data.secrets ?? ''}
+          onChange={(next: string) => updateData({ secrets: next })}
+        />
+      </div>
     </div>
   );
 }

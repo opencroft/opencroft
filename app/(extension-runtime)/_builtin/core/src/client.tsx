@@ -185,7 +185,7 @@ export default defineExtension({
       icon: 'TerminalSquare',
       accent: 'oklch(0.7 0.18 60)',
       handles: SCRIPT_CONSUMER as unknown as never[],
-      defaultData: { script: '', language: 'bash' },
+      defaultData: { script: '', language: 'bash', env: '', secrets: '' },
       component: makeBashNode().component as unknown as never,
       inspector: makeBashNode().inspector as unknown as never,
       inspectorTabs: [
@@ -201,7 +201,7 @@ export default defineExtension({
       icon: 'Code',
       accent: 'oklch(0.6 0.18 260)',
       handles: SCRIPT_CONSUMER_PYTHON as unknown as never[],
-      defaultData: { script: '', language: 'python' },
+      defaultData: { script: '', language: 'python', env: '', secrets: '' },
       component: makePythonNode().component as unknown as never,
       inspector: makePythonNode().inspector as unknown as never,
       inspectorTabs: [
@@ -217,7 +217,7 @@ export default defineExtension({
       icon: 'Braces',
       accent: 'oklch(0.65 0.2 150)',
       handles: SCRIPT_CONSUMER_NODEJS as unknown as never[],
-      defaultData: { script: '', language: 'node' },
+      defaultData: { script: '', language: 'node', env: '', secrets: '' },
       component: makeNodeJsNode().component as unknown as never,
       inspector: makeNodeJsNode().inspector as unknown as never,
       inspectorTabs: [

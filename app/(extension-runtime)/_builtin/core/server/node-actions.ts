@@ -87,6 +87,8 @@ interface AppData {
 interface ScriptData {
   script: string;
   language: 'bash' | 'python' | 'node';
+  env?: string;
+  secrets?: string;
 }
 
 interface TerminalContext {
@@ -246,8 +248,36 @@ async function scriptRun(ctx: ActionCtx): Promise<ScriptResult> {
     throw new Error('Script is empty');
   }
   const context = ctx.input<TerminalContext>('ctx-in') ?? { type: 'local' };
+
+  // Resolve secrets
+  const secretNames = (data.secrets ?? '').split('\n').map((s: string) => s.trim()).filter(Boolean);
+  const secretEnv: Record<string, string> = {};
+  if (secretNames.length > 0) {
+    for (const name of secretNames) {
+      const row = await host.prisma.secret.findFirst({
+        where: { key: name },
+        orderBy: { createdAt: 'asc' },
+      }) as SecretRow | null;
+      if (!row) {
+        throw new Error(`Secret "${name}" not found in any Secrets Store`);
+      }
+      secretEnv[name] = host.crypto.decrypt(row.value);
+    }
+  }
+
+  // Merge env lines with secrets
+  const envLines = (data.env ?? '').split('\n').map((s: string) => s.trim()).filter(Boolean);
+  const env: Record<string, string> = {};
+  for (const line of envLines) {
+    const eq = line.indexOf('=');
+    if (eq > 0) {
+      env[line.slice(0, eq).trim()] = line.slice(eq + 1);
+    }
+  }
+  Object.assign(env, secretEnv);
+
   const stream = ctx.output<TextChunk>('stdout-out');
-  const result = await runScript({ script: data.script, language: data.language, context });
+  const result = await runScript({ script: data.script, language: data.language, context, env });
   if (result.stdout) {
     stream.broadcast({ text: result.stdout, final: false });
   }

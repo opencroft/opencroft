@@ -4,6 +4,7 @@ export interface ScriptRunParams {
   script: string;
   language: 'bash' | 'python' | 'node';
   context: TerminalContext;
+  env?: Record<string, string>;
 }
 
 export interface ScriptResult {
@@ -25,9 +26,9 @@ const LANG_FLAG: Record<string, string> = {
 };
 
 export async function runScript(params: ScriptRunParams): Promise<ScriptResult> {
-  const { script, language, context } = params;
+  const { script, language, context, env } = params;
   try {
-    const stdout = await terminalRun(context, [LANG_CMD[language], LANG_FLAG[language], script]);
+    const stdout = await terminalRun(context, [LANG_CMD[language], LANG_FLAG[language], script], env);
     return { stdout, stderr: '', exitCode: 0 };
   } catch (err) {
     const msg = (err as Error).message || String(err);
