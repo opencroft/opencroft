@@ -693,7 +693,7 @@ export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlu
         }
       >
         {yoloMode ? (
-          <ShieldAlert className='h-4 w-4 text-red-500' />
+          <ShieldAlert className='h-4 w-4 text-red-500 animate-pulse' />
         ) : autoApprove ? (
           <ShieldCog className='h-4 w-4 text-amber-500' />
         ) : (
