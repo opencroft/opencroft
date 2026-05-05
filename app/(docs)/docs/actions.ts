@@ -4,17 +4,21 @@ import fs from 'fs/promises';
 import path from 'path';
 
 import { type Anchor, appendComment, type Comment, createComment, findThreadRoot, readComments } from '@/app/(docs)/docs/_server/comments';
+import { getDocsRootSync, invalidateDocsRootCache } from '@/app/(docs)/docs/_server/docs-root';
 import { gateway } from '@/app/(openclaw)/_server/gateway-client';
 import { toastStore } from '@/lib/toast-store';
 
-const DOCS_ROOT = process.env.OPENCROFT_DOCS_ROOT ?? path.join(process.cwd(), 'app', 'docs');
+function docsRoot(): string {
+  return getDocsRootSync();
+}
 
 function resolveSafe(filePath: string): string {
   if (!filePath.endsWith('.md')) {
     throw new Error('Only .md files are editable');
   }
-  const resolved = path.resolve(DOCS_ROOT, filePath);
-  if (!resolved.startsWith(DOCS_ROOT)) {
+  const root = docsRoot();
+  const resolved = path.resolve(root, filePath);
+  if (!resolved.startsWith(root)) {
     throw new Error('Access denied');
   }
   return resolved;
@@ -74,8 +78,9 @@ function normalizeNewPath(input: string): string {
 
 export async function createDoc(inputPath: string): Promise<string> {
   const relative = normalizeNewPath(inputPath);
-  const resolved = path.resolve(DOCS_ROOT, relative);
-  if (!resolved.startsWith(DOCS_ROOT)) {
+  const root = docsRoot();
+  const resolved = path.resolve(root, relative);
+  if (!resolved.startsWith(root)) {
     throw new Error('Access denied');
   }
   if (await exists(resolved)) {
@@ -88,7 +93,8 @@ export async function createDoc(inputPath: string): Promise<string> {
 }
 
 async function removeEmptyDirs(dir: string): Promise<void> {
-  while (dir.length > DOCS_ROOT.length && dir.startsWith(DOCS_ROOT)) {
+  const root = docsRoot();
+  while (dir.length > root.length && dir.startsWith(root)) {
     const entries = await fs.readdir(dir);
     if (entries.length > 0) {
       return;

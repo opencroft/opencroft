@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 
-const DOCS_ROOT = process.env.OPENCROFT_DOCS_ROOT ?? path.join(process.cwd(), 'app', 'docs');
+import { getDocsRootSync } from './docs-root';
 
 export interface Anchor {
   quote: string;
@@ -27,8 +27,9 @@ function resolveCommentsPath(docPath: string): string {
   if (!docPath.endsWith('.md')) {
     throw new Error('Only .md files have comments');
   }
-  const resolved = path.resolve(DOCS_ROOT, docPath);
-  if (!resolved.startsWith(DOCS_ROOT)) {
+  const root = getDocsRootSync();
+  const resolved = path.resolve(root, docPath);
+  if (!resolved.startsWith(root)) {
     throw new Error('Access denied');
   }
   return `${resolved}.comments`;

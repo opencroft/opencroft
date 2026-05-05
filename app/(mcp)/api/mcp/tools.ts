@@ -12,6 +12,7 @@ import path from 'path';
 
 import { ApprovalRejectedError, awaitApproval, getApprovalMeta, withApprovalRequired } from '@/app/(approvals)/_server/with-approval';
 import { appendComment, createComment, readComments } from '@/app/(docs)/docs/_server/comments';
+import { getDocsRoot } from '@/app/(docs)/docs/_server/docs-root';
 import {
   compileLocalExtension,
   createLocalExtension,
@@ -497,6 +498,17 @@ export const toolDefinitions = [
       required: ['docPath', 'commentId', 'message'],
     },
   },
+  {
+    name: 'doc_publish',
+    description: 'Commit and push all documentation changes to the git repository. Requires a Documentation node on the graph.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        message: { type: 'string', description: 'Git commit message.' },
+      },
+      required: ['message'],
+    },
+  },
 
   // ── Remote File & Exec Ops ──────────────────────────────────────────
   {
@@ -947,14 +959,13 @@ function catN(content: string): string {
 
 // ── Doc helpers ─────────────────────────────────────────────────────────
 
-const DOCS_ROOT = process.env.OPENCROFT_DOCS_ROOT ?? path.join(process.cwd(), 'app', 'docs');
-
-function resolveDocPath(relative: string): string {
+async function resolveDocPath(relative: string): Promise<string> {
   if (!relative.endsWith('.md')) {
     fail(-32602, 'Doc path must end with .md');
   }
-  const resolved = path.resolve(DOCS_ROOT, relative);
-  if (!resolved.startsWith(DOCS_ROOT)) {
+  const root = await getDocsRoot();
+  const resolved = path.resolve(root, relative);
+  if (!resolved.startsWith(root)) {
     fail(-32602, 'Access denied');
   }
   return resolved;
@@ -986,6 +997,23 @@ function searchLines(content: string, regex: RegExp): { line: number; text: stri
     }
   }
   return matches;
+}
+
+/** Best-effort git-add a file after doc_write/doc_edit if docs are backed by a Documentation node. */
+async function docsGitAdd(relativePath: string): Promise<void> {
+  try {
+    const slug = await getActiveSpaceSlug();
+    const graph = await loadSpaceGraph(slug);
+    if (!graph) return;
+    const docNode = graph.nodes.find((n) => (n as { type?: string }).type === 'documentation');
+    if (!docNode) return;
+    const mod = await getExtensionModule('builtin/core');
+    const addFn = mod.actions?.['docs.addFile'];
+    if (!addFn) return;
+    await addFn(docNode.id, relativePath);
+  } catch {
+    // best-effort — do not block doc operations if git-add fails
+  }
 }
 
 function buildHandlers(): Record<string, ToolHandler> {
@@ -1556,7 +1584,8 @@ function buildHandlers(): Record<string, ToolHandler> {
         fail(-32602, `Invalid regex: ${pattern}`);
       }
       const files: string[] = [];
-      await walkMarkdown(DOCS_ROOT, files);
+      const _docsRoot = await getDocsRoot();
+      await walkMarkdown(_docsRoot, files);
       const results: { path: string; matches: { line: number; text: string }[] }[] = [];
       let total = 0;
       for (const file of files) {
@@ -1571,7 +1600,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         const slice = matches.slice(0, maxResults - total);
         total += slice.length;
         results.push({
-          path: path.relative(DOCS_ROOT, file).replace(/\\/g, '/'),
+          path: path.relative(_docsRoot, file).replace(/\\/g, '/'),
           matches: slice,
         });
       }
@@ -1584,7 +1613,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!relative) {
         fail(-32602, 'Missing required param: path');
       }
-      const resolved = resolveDocPath(relative);
+      const resolved = await resolveDocPath(relative);
       try {
         const content = await fs.readFile(resolved, 'utf-8');
         return textResult(content);
@@ -1605,7 +1634,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         fail(-32602, 'oldString and newString must differ');
       }
       const replaceAll = Boolean(args.replaceAll);
-      const resolved = resolveDocPath(relative);
+      const resolved = await resolveDocPath(relative);
       let content: string;
       try {
         content = await fs.readFile(resolved, 'utf-8');
@@ -1621,6 +1650,8 @@ function buildHandlers(): Record<string, ToolHandler> {
       }
       const next = replaceAll ? content.split(oldString).join(newString) : content.replace(oldString, newString);
       await fs.writeFile(resolved, next, 'utf-8');
+      // git add if docs are backed by a Documentation node
+      await docsGitAdd(relative);
       return textResult(`Replaced ${replaceAll ? occurrences : 1} occurrence(s) in ${relative}.`);
     },
 
@@ -1631,9 +1662,11 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!relative || content === undefined) {
         fail(-32602, 'Missing required params: path, content');
       }
-      const resolved = resolveDocPath(relative);
+      const resolved = await resolveDocPath(relative);
       await fs.mkdir(path.dirname(resolved), { recursive: true });
       await fs.writeFile(resolved, content, 'utf-8');
+      // git add if docs are backed by a Documentation node
+      await docsGitAdd(relative);
       return textResult(`Wrote ${content.length} bytes to ${relative}.`);
     },
 
@@ -1646,12 +1679,36 @@ function buildHandlers(): Record<string, ToolHandler> {
         fail(-32602, 'Missing required params: docPath, commentId, message');
       }
       const author = (args.author as string | undefined) ?? 'agent';
-      resolveDocPath(docPath);
+      await resolveDocPath(docPath);
       const existing = await readComments(docPath);
       const reply = createComment(author, message);
       await appendComment(docPath, reply, commentId);
       toastStore.broadcast({ type: 'doc_comments_updated', docPath });
       return textResult(JSON.stringify({ replyId: reply.id, parentId: commentId, threads: existing.length }, null, 2));
+    },
+
+    // ── doc_publish ─────────────────────────────────────────────────
+    doc_publish: async (args) => {
+      const message = args.message as string | undefined;
+      if (!message) {
+        fail(-32602, 'Missing required param: message');
+      }
+      const slug = await getActiveSpaceSlug();
+      const graph = await loadSpaceGraph(slug);
+      if (!graph) {
+        fail(-32602, 'No active space found.');
+      }
+      const docNode = graph.nodes.find((n) => (n as { type?: string }).type === 'documentation');
+      if (!docNode) {
+        fail(-32602, 'No Documentation node found on the graph. Add a Documentation node and clone a repository first.');
+      }
+      const mod = await getExtensionModule('builtin/core');
+      const publishFn = mod.actions?.['docs.publish'];
+      if (!publishFn) {
+        fail(-32602, 'docs.publish action not found in builtin/core extension.');
+      }
+      const result = await publishFn(docNode.id, message);
+      return textResult(JSON.stringify({ nodeId: docNode.id, ...result as object }, null, 2));
     },
 
     // ── read (remote) ────────────────────────────────────────────────

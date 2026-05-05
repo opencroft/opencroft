@@ -24,6 +24,20 @@ import {
   type GitListReposParams, gitListRepos,
   type GitCloneParams, gitClone,
 } from './git';
+import {
+  docsStatus as docsStatusAction,
+  docsClone,
+  docsPull,
+  docsChangedFiles,
+  docsLog,
+  docsShow,
+  docsPublish,
+  docsAddFile,
+  findActiveDocsRoot,
+  type DocsStatusResult,
+  type DocsChangedFile,
+  type DocsLogEntry,
+} from './docs-git';
 import { nodeActions } from './node-actions';
 
 export { nodeActions };
@@ -482,6 +496,15 @@ export const actions = {
   'openai.chat': (params: OpenAIChatParams) => openaiChat(params),
   'git.listRepos': (params: GitListReposParams) => gitListRepos(params),
   'git.clone': (params: GitCloneParams) => gitClone(params),
+  'docs.status': (params: { nodeId: string }) => docsStatusAction(params.nodeId),
+  'docs.clone': (params: { nodeId: string }) => docsClone(params.nodeId),
+  'docs.pull': (params: { nodeId: string }) => docsPull(params.nodeId),
+  'docs.changedFiles': (params: { nodeId: string }) => docsChangedFiles(params.nodeId),
+  'docs.log': (params: { nodeId: string; filePath?: string; count?: number }) => docsLog(params.nodeId, params.filePath, params.count),
+  'docs.show': (params: { nodeId: string; filePath: string; ref?: string }) => docsShow(params.nodeId, params.filePath, params.ref),
+  'docs.publish': (params: { nodeId: string; message: string }) => docsPublish(params.nodeId, params.message),
+  'docs.addFile': (params: { nodeId: string; filePath: string }) => docsAddFile(params.nodeId, params.filePath),
+  'docs.findActiveDocsRoot': () => findActiveDocsRoot(),
   'agent.getOpenclawConnection': () => getOpenclawConnection(),
   'agent.lookupOpenclaw': (name: string) => lookupOpenclawAgent(name),
   'agent.createOpenclaw': (name: string, workspace?: string) => createOpenclawAgent(name, workspace),

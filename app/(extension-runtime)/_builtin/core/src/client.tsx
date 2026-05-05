@@ -29,6 +29,7 @@ import { SendMessageNode, SendMessageInspector, SEND_MESSAGE_HANDLES } from './n
 import { ApiRouteNode, ApiRouteInspector, API_ROUTE_HANDLES, apiRouteExposeOutput } from './nodes/api-route';
 import { EventNode, EventInspector, EVENT_HANDLES, eventExposeOutput } from './nodes/event';
 import { GitWorkspaceNode, GitWorkspaceInspector } from './nodes/git-workspace';
+import { DocumentationNode, DocumentationDetailsTab, DocumentationKeysTab } from './nodes/documentation';
 import { AgentNode, AgentInspector, AgentOpenClawTab } from './nodes/agent';
 import { AgentJobNode, AgentJobInspector } from './nodes/agent-job';
 import { AgentInstructionNode, AgentInstructionInspector } from './nodes/agent-instruction';
@@ -568,6 +569,20 @@ export default defineExtension({
       defaultData: { folder: '' },
       component: GitWorkspaceNode as unknown as never,
       inspector: GitWorkspaceInspector as unknown as never,
+    },
+    {
+      typeId: 'documentation',
+      name: 'Documentation',
+      category: 'Storage',
+      icon: 'BookOpen',
+      accent: 'oklch(0.7 0.17 180)',
+      handles: [],
+      defaultData: { repoUrl: '', branch: 'main', secretId: null },
+      component: DocumentationNode as unknown as never,
+      inspector: DocumentationDetailsTab as unknown as never,
+      inspectorTabs: [
+        { id: 'keys', label: 'Keys', icon: 'KeyRound', component: DocumentationKeysTab as unknown as never },
+      ],
     },
     {
       typeId: 'network',

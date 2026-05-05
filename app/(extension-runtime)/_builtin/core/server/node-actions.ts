@@ -3,6 +3,16 @@ import host from '@ext/host';
 import { dockerUp, dockerStopService, dockerRestartService, type DockerUpParams } from './docker';
 import { fireEvent } from './event';
 import { runScript, type ScriptResult } from './script';
+import {
+  docsStatus as docsStatusAction,
+  docsClone as docsCloneAction,
+  docsPull as docsPullAction,
+  docsLog as docsLogAction,
+  docsShow as docsShowAction,
+  docsPublish as docsPublishAction,
+  type DocsStatusResult,
+  type DocsLogEntry,
+} from './docs-git';
 
 interface Stream<T> {
   subscribe(fn: (chunk: T) => void): () => void;
@@ -268,5 +278,24 @@ export const nodeActions = {
   },
   event: {
     run: eventRun,
+  },
+  documentation: {
+    clone: async (ctx: ActionCtx) => docsCloneAction(ctx.nodeId),
+    pull: async (ctx: ActionCtx) => docsPullAction(ctx.nodeId),
+    status: async (ctx: ActionCtx): Promise<DocsStatusResult> => docsStatusAction(ctx.nodeId),
+    log: async (ctx: ActionCtx): Promise<DocsLogEntry[]> => {
+      const filePath = (ctx.params.filePath as string) || undefined;
+      const count = (ctx.params.count as number) || undefined;
+      return docsLogAction(ctx.nodeId, filePath, count);
+    },
+    show: async (ctx: ActionCtx): Promise<string> => {
+      const filePath = ctx.params.filePath as string;
+      const ref = (ctx.params.ref as string) || undefined;
+      return docsShowAction(ctx.nodeId, filePath, ref);
+    },
+    publish: async (ctx: ActionCtx) => {
+      const message = ctx.params.message as string;
+      return docsPublishAction(ctx.nodeId, message);
+    },
   },
 };

@@ -3,7 +3,7 @@ import path from 'path';
 
 import { NextResponse } from 'next/server';
 
-const DOCS_ROOT = process.env.OPENCROFT_DOCS_ROOT ?? path.join(process.cwd(), 'app', 'docs');
+import { getDocsRootSync } from '@/app/(docs)/docs/_server/docs-root';
 
 interface DocEntry {
   name: string;
@@ -13,12 +13,14 @@ interface DocEntry {
 }
 
 function isPathSafe(filePath: string): boolean {
-  const resolved = path.resolve(DOCS_ROOT, filePath);
-  return resolved.startsWith(DOCS_ROOT);
+  const root = getDocsRootSync();
+  const resolved = path.resolve(root, filePath);
+  return resolved.startsWith(root);
 }
 
 async function readDirRecursive(dirPath: string): Promise<DocEntry[]> {
-  const resolved = path.resolve(DOCS_ROOT, dirPath);
+  const root = getDocsRootSync();
+  const resolved = path.resolve(root, dirPath);
   try {
     const entries = await fs.readdir(resolved, { withFileTypes: true });
     const results: DocEntry[] = [];
@@ -33,7 +35,7 @@ async function readDirRecursive(dirPath: string): Promise<DocEntry[]> {
     });
     for (const entry of sorted) {
       const fullPath = path.join(resolved, entry.name);
-      const relativePath = path.relative(DOCS_ROOT, fullPath);
+      const relativePath = path.relative(root, fullPath);
       if (entry.isDirectory()) {
         if (entry.name.startsWith('.')) {
           continue;
@@ -55,13 +57,14 @@ async function readDirRecursive(dirPath: string): Promise<DocEntry[]> {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const filePath = searchParams.get('file');
+  const root = getDocsRootSync();
 
   if (filePath) {
     if (!isPathSafe(filePath) || !filePath.endsWith('.md')) {
       return NextResponse.json({ error: 'Access denied' }, { status: 403 });
     }
     try {
-      const content = await fs.readFile(path.resolve(DOCS_ROOT, filePath), 'utf-8');
+      const content = await fs.readFile(path.resolve(root, filePath), 'utf-8');
       return NextResponse.json({ content, name: path.basename(filePath) });
     } catch {
       return NextResponse.json({ error: 'File not found' }, { status: 404 });
