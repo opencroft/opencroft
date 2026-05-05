@@ -23,6 +23,7 @@ import {
   updateLocalExtension,
 } from '@/app/(extension-editor)/_actions/local-extensions-actions';
 import { getExtensionModule, loadAllManifests } from '@/app/(extension-runtime)/_server/loader';
+import { invokeExtensionAction } from '@/app/(extension-runtime)/_server/actions';
 import { dispatchNodeAction, listNodeActions } from '@/app/(extension-runtime)/_server/node-actions';
 import type { ExtensionHandle } from '@/app/(extension-runtime)/_types';
 import { recordAudit } from '@/app/(mcp)/api/mcp/audit';
@@ -37,6 +38,7 @@ import {
   saveSpaceGraph,
 } from '@/app/(space)/server/actions';
 import type { GraphData } from '@/app/(space)/server/types';
+import { getSpacesRegistry } from '@/app/(space)/server/store';
 import { toastStore } from '@/lib/toast-store';
 import { decrypt } from '@/server/crypto';
 import { prisma } from '@/server/prisma';
@@ -619,6 +621,159 @@ export const toolDefinitions = [
     },
   },
 ];
+
+// ── Agent Tool: dynamic graph-defined tools ───────────────────────────
+
+interface AgentToolNodeData {
+  name: string;
+  description: string;
+  inputSchema: string;
+  requireApproval: boolean;
+}
+
+export async function getAgentToolDefinitions() {
+  const defs: { name: string; description: string; inputSchema: Record<string, unknown> }[] = [];
+
+  // Collect all existing static tool names to avoid collisions
+  const staticNames = new Set(toolDefinitions.map((t) => t.name));
+
+  try {
+    const registry = getSpacesRegistry();
+    await registry.ensureLoaded();
+
+    for (const space of registry.list()) {
+      const runtime = registry.getBySlug(space.slug);
+      if (!runtime) continue;
+
+      const nodes = runtime.graph.nodes as unknown as GraphNode[];
+      for (const node of nodes) {
+        if (node.type !== 'agent-tool') continue;
+
+        const d = (node.data ?? {}) as unknown as AgentToolNodeData;
+        const toolName = d.name?.trim();
+        if (!toolName) continue;
+
+        const prefixedName = `agent_${toolName}`;
+        if (staticNames.has(prefixedName)) continue; // static tools win
+        if (defs.some((x) => x.name === prefixedName)) continue; // first space wins
+
+        let inputSchema: Record<string, unknown> = { type: 'object', properties: {} };
+        try {
+          inputSchema = JSON.parse(d.inputSchema || '{}');
+        } catch {
+          // skip invalid JSON schema
+        }
+
+        defs.push({
+          name: prefixedName,
+          description: d.description || `Agent tool: ${toolName}`,
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              ...(inputSchema.properties as Record<string, unknown> ?? {}),
+            },
+          },
+        });
+      }
+    }
+  } catch {
+    // If spaces can't load, just return empty
+  }
+
+  return defs;
+}
+
+/**
+ * Execute an agent-tool node's connected handler script.
+ * Returns the handler result or throws on error.
+ */
+interface AgentToolExecResult {
+  result: Record<string, unknown>;
+  requiredApproval: boolean;
+}
+
+export async function executeAgentTool(
+  toolName: string,
+  args: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  // Strip 'agent_' prefix to get the raw tool name
+  const rawName = toolName.startsWith('agent_') ? toolName.slice(6) : toolName;
+
+  const registry = getSpacesRegistry();
+  await registry.ensureLoaded();
+
+  // Find the agent-tool node across all spaces
+  for (const space of registry.list()) {
+    const runtime = registry.getBySlug(space.slug);
+    if (!runtime) continue;
+
+    const nodes = runtime.graph.nodes as unknown as GraphNode[];
+    const edges = runtime.graph.edges as unknown as StoredEdge[];
+
+    const toolNode = nodes.find(
+      (n) => n.type === 'agent-tool' && ((n.data ?? {}) as Record<string, unknown>).name === rawName,
+    );
+    if (!toolNode) continue;
+
+    // Check requireApproval
+    const d = (toolNode.data ?? {}) as unknown as AgentToolNodeData;
+    const requiredApproval = d.requireApproval && !isYoloMode();
+    if (requiredApproval) {
+      await awaitApproval({ tool: toolName, args, view: 'default', signal });
+    }
+
+    // Find connected handler via exec-out edge
+    const handlerEdge = edges.find(
+      (e) => e.source === toolNode.id && e.sourceHandle === 'exec-out',
+    );
+    if (!handlerEdge) {
+      return { result: textResult(`Agent tool "${rawName}" has no connected handler script.`), requiredApproval: false };
+    }
+
+    const handlerNode = nodes.find((n) => n.id === handlerEdge.target);
+    if (!handlerNode) {
+      return { result: textResult(`Agent tool "${rawName}": handler node not found.`), requiredApproval: false };
+    }
+
+    const language = (handlerNode.data as Record<string, unknown>)?.language as string | undefined;
+    if (language !== 'python' && language !== 'node') {
+      return { result: textResult(
+        `Agent tool "${rawName}": handler must be Python or Node.js script, got ${language ?? 'none'}.`,
+      ), requiredApproval: false };
+    }
+
+    const resolvedContexts = (handlerNode.data as Record<string, unknown>)?.__resolvedContexts as
+      | Record<string, { value?: Record<string, unknown> }>
+      | undefined;
+    const terminalContext = resolvedContexts?.['ctx-in']?.value ?? { type: 'local' };
+
+    // Build event for the handler
+    const event = { params: args, context: { toolName: rawName } };
+
+    // Execute handler
+    const result = await invokeExtensionAction('builtin/core', 'handler.run', [
+      {
+        script: ((handlerNode.data as Record<string, unknown>)?.script as string) ?? '',
+        language,
+        context: terminalContext,
+        event,
+      },
+    ]) as { status?: number; headers?: Record<string, string>; body?: unknown; error?: string; logs?: string };
+
+    if (result.error) {
+      return { result: textResult(`Agent tool "${rawName}" error: ${result.error}`), requiredApproval };
+    }
+
+    if (typeof result.body === 'object' && result.body !== null) {
+      return { result: textResult(JSON.stringify(result.body)), requiredApproval };
+    }
+
+    return { result: textResult(String(result.body ?? '')), requiredApproval };
+  }
+
+  throw { code: -32601, message: `Agent tool not found: ${toolName}` };
+}
 
 // ── Tool handler registry ──────────────────────────────────────────────
 
@@ -1821,12 +1976,25 @@ export async function handleToolCall(
   args: Record<string, unknown>,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
+  const start = Date.now();
   const handler = handlers[name];
   if (!handler) {
+    // Check if it's an agent_* tool (graph-defined)
+    if (name.startsWith('agent_')) {
+      const execResult = await executeAgentTool(name, args, signal);
+      const agentResult = execResult.result;
+      await recordAudit({
+        tool: name,
+        args,
+        result: agentResult as Record<string, unknown>,
+        status: execResult.requiredApproval ? 'approved' : 'auto-approved',
+        durationMs: Date.now() - start,
+      });
+      return agentResult as Record<string, unknown>;
+    }
     throw { code: -32601, message: `Unknown tool: ${name}` };
   }
   const meta = getApprovalMeta(handler);
-  const start = Date.now();
   const yolo = isYoloMode();
   try {
     if (meta && !yolo) {

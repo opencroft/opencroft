@@ -31,6 +31,7 @@ import { EventNode, EventInspector, EVENT_HANDLES, eventExposeOutput } from './n
 import { GitWorkspaceNode, GitWorkspaceInspector } from './nodes/git-workspace';
 import { DocumentationNode, DocumentationDetailsTab, DocumentationKeysTab } from './nodes/documentation';
 import { AgentNode, AgentInspector, AgentOpenClawTab } from './nodes/agent';
+import { AgentToolNode, AgentToolInspector, AGENT_TOOL_HANDLES, agentToolExposeOutput } from './nodes/agent-tool';
 import { AgentJobNode, AgentJobInspector } from './nodes/agent-job';
 import { AgentInstructionNode, AgentInstructionInspector } from './nodes/agent-instruction';
 
@@ -540,6 +541,18 @@ export default defineExtension({
       component: ApiRouteNode as unknown as never,
       inspector: ApiRouteInspector as unknown as never,
       exposeOutput: apiRouteExposeOutput as unknown as never,
+    },
+    {
+      typeId: 'agent-tool',
+      name: 'Agent Tool',
+      category: 'Integration',
+      icon: 'Wrench',
+      accent: 'oklch(0.65 0.15 250)',
+      handles: AGENT_TOOL_HANDLES as unknown as never[],
+      defaultData: { name: '', description: '', inputSchema: '{"type":"object","properties":{}}', requireApproval: true },
+      component: AgentToolNode as unknown as never,
+      inspector: AgentToolInspector as unknown as never,
+      exposeOutput: agentToolExposeOutput as unknown as never,
     },
     {
       typeId: 'event',
