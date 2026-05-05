@@ -526,7 +526,7 @@ export default defineExtension({
       icon: 'Send',
       accent: 'oklch(0.75 0.17 100)',
       handles: SEND_MESSAGE_HANDLES as unknown as never[],
-      defaultData: { sessionKey: '' },
+      defaultData: {},
       component: SendMessageNode as unknown as never,
       inspector: SendMessageInspector as unknown as never,
     },
