@@ -11,6 +11,7 @@ import fs from 'fs/promises';
 import path from 'path';
 
 import { ApprovalRejectedError, awaitApproval, getApprovalMeta, withApprovalRequired } from '@/app/(approvals)/_server/with-approval';
+import { isYoloMode } from '@/app/(mcp)/api/mcp/yolo';
 import { appendComment, createComment, readComments } from '@/app/(docs)/docs/_server/comments';
 import { getDocsRoot } from '@/app/(docs)/docs/_server/docs-root';
 import {
@@ -1826,8 +1827,9 @@ export async function handleToolCall(
   }
   const meta = getApprovalMeta(handler);
   const start = Date.now();
+  const yolo = isYoloMode();
   try {
-    if (meta) {
+    if (meta && !yolo) {
       await awaitApproval({ tool: name, args, view: meta.view, signal });
     }
     const result = await handler(args);
@@ -1835,7 +1837,7 @@ export async function handleToolCall(
       tool: name,
       args,
       result,
-      status: meta ? 'approved' : 'auto-approved',
+      status: yolo && meta ? 'auto-approved' : (meta ? 'approved' : 'auto-approved'),
       durationMs: Date.now() - start,
     });
     return result;

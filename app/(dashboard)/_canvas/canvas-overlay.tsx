@@ -16,6 +16,7 @@ import { useSSEEvents } from '@/app/(sse)/stores/sse-events-store';
 import { ChatArea, ChatBar, ChatContent, ChatHeader } from '@/components/experimental/chat';
 import { Flex } from '@/components/ui/layout/flex';
 import { cn } from '@/lib/utils';
+import { ShieldAlert } from 'lucide-react';
 
 interface CanvasOverlayProps {
   nodes: CommandNodeEntry[];
@@ -28,6 +29,7 @@ export function CanvasOverlay({ nodes, spaceName, selectedNodeId, onFocusNode }:
   const [commandFocused, setCommandFocused] = useState(false);
   const [mode, setMode] = useState<CommandMode>('ai');
   const [agentId, setAgentId] = useState<string | null>(null);
+  const [yoloMode, setYoloMode] = useState(false);
   const [focusTick, setFocusTick] = useState(0);
   const initialized = useRef(false);
   const searchParams = useSearchParams();
@@ -47,6 +49,7 @@ export function CanvasOverlay({ nodes, spaceName, selectedNodeId, onFocusNode }:
         }
       }
     });
+    fetch('/canvas/api/yolo').then(r => r.json()).then(({ enabled }) => setYoloMode(enabled)).catch(() => {});
   }, []);
 
   const activateMode = useCallback((next: CommandMode) => {
@@ -222,6 +225,11 @@ export function CanvasOverlay({ nodes, spaceName, selectedNodeId, onFocusNode }:
             {slots.content}
           </ChatContent>
           <ChatBar compact fade={!!slots.content} onMouseDown={stopOverlayClose}>
+            {yoloMode && (
+              <div className='flex items-center justify-center pointer-events-none'>
+                <ShieldAlert className='size-4 text-red-500 animate-pulse' />
+              </div>
+            )}
             {slots.menu && <CommandBarMenu>{slots.menu}</CommandBarMenu>}
             {slots.bar && <CommandBar>{slots.bar}</CommandBar>}
           </ChatBar>
