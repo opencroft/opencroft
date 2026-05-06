@@ -11,9 +11,9 @@ import fs from 'fs/promises';
 import path from 'path';
 
 import { ApprovalRejectedError, awaitApproval, getApprovalMeta, withApprovalRequired } from '@/app/(approvals)/_server/with-approval';
-import { isYoloMode } from '@/app/(mcp)/api/mcp/yolo';
 import { appendComment, createComment, readComments } from '@/app/(docs)/docs/_server/comments';
 import { getDocsRoot } from '@/app/(docs)/docs/_server/docs-root';
+import { searchDocsAtRoot } from '@/app/(docs)/docs/_server/search';
 import { getGitFileAtRef } from '@/app/(docs)/docs/actions';
 import {
   compileLocalExtension,
@@ -23,11 +23,12 @@ import {
   listLocalExtensions,
   updateLocalExtension,
 } from '@/app/(extension-editor)/_actions/local-extensions-actions';
-import { getExtensionModule, loadAllManifests } from '@/app/(extension-runtime)/_server/loader';
 import { invokeExtensionAction } from '@/app/(extension-runtime)/_server/actions';
+import { getExtensionModule, loadAllManifests } from '@/app/(extension-runtime)/_server/loader';
 import { dispatchNodeAction, listNodeActions } from '@/app/(extension-runtime)/_server/node-actions';
 import type { ExtensionHandle } from '@/app/(extension-runtime)/_types';
 import { recordAudit } from '@/app/(mcp)/api/mcp/audit';
+import { isYoloMode } from '@/app/(mcp)/api/mcp/yolo';
 import {
   createSpace,
   deleteSpace,
@@ -38,8 +39,8 @@ import {
   renameSpace,
   saveSpaceGraph,
 } from '@/app/(space)/server/actions';
-import type { GraphData } from '@/app/(space)/server/types';
 import { getSpacesRegistry } from '@/app/(space)/server/store';
+import type { GraphData } from '@/app/(space)/server/types';
 import { toastStore } from '@/lib/toast-store';
 import { decrypt } from '@/server/crypto';
 import { prisma } from '@/server/prisma';
@@ -663,19 +664,29 @@ export async function getAgentToolDefinitions() {
 
     for (const space of registry.list()) {
       const runtime = registry.getBySlug(space.slug);
-      if (!runtime) continue;
+      if (!runtime) {
+        continue;
+      }
 
       const nodes = runtime.graph.nodes as unknown as GraphNode[];
       for (const node of nodes) {
-        if (node.type !== 'agent-tool') continue;
+        if (node.type !== 'agent-tool') {
+          continue;
+        }
 
         const d = (node.data ?? {}) as unknown as AgentToolNodeData;
         const toolName = d.name?.trim();
-        if (!toolName) continue;
+        if (!toolName) {
+          continue;
+        }
 
         const prefixedName = `agent_${toolName}`;
-        if (staticNames.has(prefixedName)) continue; // static tools win
-        if (defs.some((x) => x.name === prefixedName)) continue; // first space wins
+        if (staticNames.has(prefixedName)) {
+          continue;
+        } // static tools win
+        if (defs.some((x) => x.name === prefixedName)) {
+          continue;
+        } // first space wins
 
         let inputSchema: Record<string, unknown> = { type: 'object', properties: {} };
         try {
@@ -726,7 +737,9 @@ export async function executeAgentTool(
   // Find the agent-tool node across all spaces
   for (const space of registry.list()) {
     const runtime = registry.getBySlug(space.slug);
-    if (!runtime) continue;
+    if (!runtime) {
+      continue;
+    }
 
     const nodes = runtime.graph.nodes as unknown as GraphNode[];
     const edges = runtime.graph.edges as unknown as StoredEdge[];
@@ -734,7 +747,9 @@ export async function executeAgentTool(
     const toolNode = nodes.find(
       (n) => n.type === 'agent-tool' && ((n.data ?? {}) as Record<string, unknown>).name === rawName,
     );
-    if (!toolNode) continue;
+    if (!toolNode) {
+      continue;
+    }
 
     // Check requireApproval
     const d = (toolNode.data ?? {}) as unknown as AgentToolNodeData;
@@ -1165,142 +1180,28 @@ async function findDocNodeIdForNamespace(namespace: string): Promise<string | nu
   try {
     const mod = await getExtensionModule('builtin/core');
     const fn = mod.actions?.['docs.findDocNodeId'];
-    if (!fn) return null;
+    if (!fn) {
+      return null;
+    }
     return (await fn({ namespace })) as string | null;
   } catch {
     return null;
   }
 }
 
-async function runGitGrep(root: string, pattern: string): Promise<string> {
-  const { execFile } = await import('node:child_process');
-  const { promisify } = await import('node:util');
-  const exec = promisify(execFile);
-  try {
-    const r = await exec(
-      'git',
-      ['-c', 'safe.directory=*', '-C', root, 'grep', '-n', '-i', '-E', '--', pattern, 'HEAD', '--', '*.md'],
-      { maxBuffer: 10 * 1024 * 1024 },
-    );
-    return r.stdout;
-  } catch (err) {
-    const e = err as { code?: number; stdout?: string };
-    // git grep exits 1 when no matches found — treat as empty result
-    if (e.code === 1) {
-      return e.stdout ?? '';
-    }
-    throw err;
-  }
-}
-
-interface DocSearchMatch {
-  line: number;
-  text: string;
-  heading: string | null;
-}
-
-interface DocSearchResult {
-  path: string;
-  title: string | null;
-  matches: DocSearchMatch[];
-}
-
-interface RawMatch {
-  line: number;
-  text: string;
-}
-
-function parseGitGrep(stdout: string, maxResults: number): Map<string, RawMatch[]> {
-  const byFile = new Map<string, RawMatch[]>();
-  let total = 0;
-  for (const line of stdout.split('\n')) {
-    if (!line) {
-      continue;
-    }
-    // Format: HEAD:<path>:<lineno>:<text>
-    const m = line.match(/^[^:]+:([^:]+):(\d+):(.*)$/);
-    if (!m) {
-      continue;
-    }
-    if (total >= maxResults) {
-      break;
-    }
-    const file = m[1];
-    let arr = byFile.get(file);
-    if (!arr) {
-      arr = [];
-      byFile.set(file, arr);
-    }
-    arr.push({ line: Number(m[2]), text: m[3] });
-    total += 1;
-  }
-  return byFile;
-}
-
-async function runGitShow(root: string, filePath: string): Promise<string> {
-  const { execFile } = await import('node:child_process');
-  const { promisify } = await import('node:util');
-  const exec = promisify(execFile);
-  try {
-    const r = await exec(
-      'git',
-      ['-c', 'safe.directory=*', '-C', root, 'show', `HEAD:${filePath}`],
-      { maxBuffer: 10 * 1024 * 1024 },
-    );
-    return r.stdout;
-  } catch {
-    return '';
-  }
-}
-
-const HEADING_RE = /^(#{1,6})\s+(.+?)\s*$/;
-
-function extractTitle(lines: string[]): string | null {
-  for (const line of lines) {
-    const m = line.match(/^#\s+(.+?)\s*$/);
-    if (m) {
-      return m[1];
-    }
-  }
-  return null;
-}
-
-function nearestHeading(lines: string[], lineNo: number): string | null {
-  // Walk backward from `lineNo - 1` (0-indexed) — skip the matched line itself
-  // unless it's the heading.
-  for (let i = lineNo - 1; i >= 0; i--) {
-    const m = lines[i]?.match(HEADING_RE);
-    if (m) {
-      return m[2];
-    }
-  }
-  return null;
-}
-
-async function enrichResults(root: string, byFile: Map<string, RawMatch[]>): Promise<DocSearchResult[]> {
-  const out: DocSearchResult[] = [];
-  for (const [file, raw] of byFile) {
-    const content = await runGitShow(root, file);
-    const lines = content.split('\n');
-    const title = extractTitle(lines);
-    const matches: DocSearchMatch[] = raw.map(r => ({
-      line: r.line,
-      text: r.text,
-      heading: nearestHeading(lines, r.line),
-    }));
-    out.push({ path: file, title, matches });
-  }
-  return out;
-}
 
 /** Best-effort git-add for the matching namespace's Documentation node. */
 async function docsGitAdd(namespace: string, relativePath: string): Promise<void> {
   try {
     const nodeId = await findDocNodeIdForNamespace(namespace);
-    if (!nodeId) return;
+    if (!nodeId) {
+      return;
+    }
     const mod = await getExtensionModule('builtin/core');
     const addFn = mod.actions?.['docs.addFile'];
-    if (!addFn) return;
+    if (!addFn) {
+      return;
+    }
     await addFn({ nodeId, filePath: relativePath });
   } catch {
     // best-effort — do not block doc operations if git-add fails
@@ -1889,9 +1790,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!root) {
         return textResult('[]');
       }
-      const stdout = await runGitGrep(root, pattern);
-      const byFile = parseGitGrep(stdout, maxResults);
-      const enriched = await enrichResults(root, byFile);
+      const enriched = await searchDocsAtRoot(root, pattern, maxResults);
       return textResult(JSON.stringify(enriched, null, 2));
     },
 

@@ -5,6 +5,7 @@ import path from 'path';
 
 import { type Anchor, appendComment, type Comment, createComment, findThreadRoot, readComments } from '@/app/(docs)/docs/_server/comments';
 import { getDocsRoot } from '@/app/(docs)/docs/_server/docs-root';
+import { searchDocsAtRoot, type DocSearchResult } from '@/app/(docs)/docs/_server/search';
 import { getExtensionModule } from '@/app/(extension-runtime)/_server/loader';
 import { gateway } from '@/app/(openclaw)/_server/gateway-client';
 import { toastStore } from '@/lib/toast-store';
@@ -99,6 +100,16 @@ export async function listDocNamespaces(): Promise<DocNamespace[]> {
   } catch {
     return [];
   }
+}
+
+export type { DocSearchResult } from '@/app/(docs)/docs/_server/search';
+
+export async function searchDocs(namespace: string, pattern: string, maxResults: number = 50): Promise<DocSearchResult[]> {
+  const root = await getDocsRoot(namespace);
+  if (!root) {
+    return [];
+  }
+  return searchDocsAtRoot(root, pattern, maxResults);
 }
 
 export async function deleteDoc(namespace: string, filePath: string): Promise<void> {

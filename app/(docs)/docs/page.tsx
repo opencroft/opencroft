@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronDown, Loader2, Menu, Pencil, Plus, Trash2, X, FileText, History, ArrowLeft } from 'lucide-react';
+import { ChevronDown, Loader2, Menu, Pencil, Plus, Search, Trash2, X, FileText, History, ArrowLeft } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -8,7 +8,7 @@ import remarkGfm from 'remark-gfm';
 
 import { DocCommentsOverlay } from '@/app/(docs)/docs/_components/doc-comments';
 import { DocEditor } from '@/app/(docs)/docs/_components/doc-editor';
-import { createDoc, deleteDoc, getGitFileLog, getGitFileAtRef, getGitChangedFiles, readDocWorking } from '@/app/(docs)/docs/actions';
+import { type DocSearchResult, createDoc, deleteDoc, getGitFileLog, getGitFileAtRef, getGitChangedFiles, readDocWorking, searchDocs } from '@/app/(docs)/docs/actions';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -222,6 +222,54 @@ function SidebarNav({ entries, selectedPath, onSelect, expandedPaths, onToggle, 
   );
 }
 
+// ─── Search Results ─────────────────────────────────────────────────────────
+
+function DocSearchResultsList({
+  results, loading, onSelect,
+}: { results: DocSearchResult[]; loading: boolean; onSelect: (path: string) => void }) {
+  if (loading && results.length === 0) {
+    return (
+      <div className="flex items-center justify-center py-6">
+        <Loader2 className="size-4 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+  if (results.length === 0) {
+    return <p className="px-4 py-3 text-xs text-muted-foreground">No matches.</p>;
+  }
+  return (
+    <ul className="m-0 list-none px-1 py-1">
+      {results.map(r => (
+        <li key={r.path} className="mb-1">
+          <button
+            onClick={() => onSelect(r.path)}
+            className="w-full text-left rounded-sm px-2 py-1.5 hover:bg-accent/50 transition-colors"
+          >
+            <div className="flex items-center gap-1.5 text-sm font-medium">
+              <FileText className="size-3.5 shrink-0 opacity-50" />
+              <span className="truncate">{r.title ?? r.path.replace(/\.md$/, '')}</span>
+            </div>
+            {r.matches.slice(0, 3).map((m, i) => (
+              <div key={i} className="mt-0.5 ml-5 text-[10px] text-muted-foreground truncate">
+                {m.heading ? <span className="font-medium">{m.heading}</span> : null}
+                {m.heading ? ' · ' : null}
+                <span className="opacity-60">L{m.line}</span>
+                {' '}
+                <span>{m.text.trim().slice(0, 80)}</span>
+              </div>
+            ))}
+            {r.matches.length > 3 ? (
+              <div className="mt-0.5 ml-5 text-[10px] text-muted-foreground italic">
+                +{r.matches.length - 3} more
+              </div>
+            ) : null}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 // ─── TOC List (hierarchical with left border indicator) ─────────────────────
 
 function TocList({ items, onActiveChange }: { items: TocItem[]; onActiveChange: (id: string) => void }) {
@@ -401,6 +449,9 @@ export default function DocsPage() {
 
   const [showUnpublishedOnly, setShowUnpublishedOnly] = useState(false);
   const [gitChangedFiles, setGitChangedFiles] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<DocSearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
   const [rightTab, setRightTab] = useState<'toc' | 'history'>('toc');
   const [fileLog, setFileLog] = useState<LogEntry[]>([]);
   const [viewingRef, setViewingRef] = useState<string | null>(null);
@@ -538,6 +589,37 @@ export default function DocsPage() {
     setViewingRef(null);
     setRefContent(null);
   }, []);
+
+  // ── Doc search (debounced) ────────────────────────────────────────────────
+  useEffect(() => {
+    if (!namespace || !searchQuery.trim()) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+    let cancelled = false;
+    setSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const r = await searchDocs(namespace, searchQuery.trim());
+        if (!cancelled) {
+          setSearchResults(r);
+        }
+      } catch {
+        if (!cancelled) {
+          setSearchResults([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setSearching(false);
+        }
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [namespace, searchQuery]);
 
   const toggleUnpublished = useCallback(async () => {
     if (showUnpublishedOnly) {
@@ -862,7 +944,18 @@ export default function DocsPage() {
   );
 
   // ── Sidebar nav element (shared between desktop & mobile) ─────────────────
-  const sidebarNav = (
+  const handleSearchSelect = useCallback((path: string) => {
+    setSelectedPath(path);
+    setSearchQuery('');
+  }, [setSelectedPath]);
+
+  const sidebarNav = searchQuery.trim() ? (
+    <DocSearchResultsList
+      results={searchResults}
+      loading={searching}
+      onSelect={handleSearchSelect}
+    />
+  ) : (
     <SidebarNav
       entries={filteredTree}
       changedFiles={gitChangedFiles}
@@ -875,32 +968,57 @@ export default function DocsPage() {
   );
 
   const sidebarHeader = (
-    <>
-      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Documentation</span>
-      <div className="ml-auto flex items-center gap-1">
-        <Button
-          size="icon-xs"
-          variant={showUnpublishedOnly ? 'default' : 'ghost'}
-          onClick={toggleUnpublished}
-          title="Show unpublished changes only"
-          aria-label="Toggle unpublished changes"
-          className={showUnpublishedOnly ? '' : 'text-muted-foreground'}
-        >
-          <Pencil className="size-3" />
-        </Button>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          onClick={() => {
-            setCreateError(null); setCreatePath(''); setCreateOpen(true);
-          }}
-          title="New document"
-          aria-label="New document"
-        >
-          <Plus />
-        </Button>
+    <div className="flex flex-col gap-2 w-full">
+      <div className="flex items-center">
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Documentation</span>
+        <div className="ml-auto flex items-center gap-1">
+          <Button
+            size="icon-xs"
+            variant={showUnpublishedOnly ? 'default' : 'ghost'}
+            onClick={toggleUnpublished}
+            title="Show unpublished changes only"
+            aria-label="Toggle unpublished changes"
+            className={showUnpublishedOnly ? '' : 'text-muted-foreground'}
+          >
+            <Pencil className="size-3" />
+          </Button>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            onClick={() => {
+              setCreateError(null); setCreatePath(''); setCreateOpen(true);
+            }}
+            title="New document"
+            aria-label="New document"
+          >
+            <Plus />
+          </Button>
+        </div>
       </div>
-    </>
+      <div className="relative">
+        <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
+        <Input
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          placeholder="Search docs…"
+          className="h-7 pl-7 pr-7 text-xs"
+          onKeyDown={e => {
+            if (e.key === 'Escape') {
+              setSearchQuery('');
+            }
+          }}
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery('')}
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 inline-flex size-4 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+            aria-label="Clear search"
+          >
+            <X className="size-3" />
+          </button>
+        )}
+      </div>
+    </div>
   );
 
   return (
