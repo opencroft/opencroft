@@ -9,7 +9,7 @@ import {
   docsPull as docsPullAction,
   docsLog as docsLogAction,
   docsShow as docsShowAction,
-  docsPublish as docsPublishAction,
+  docsPublishFile as docsPublishAction,
   docsDiscardFile as docsDiscardFileAction,
   type DocsStatusResult,
   type DocsLogEntry,
@@ -325,8 +325,9 @@ export const nodeActions = {
       return docsShowAction(ctx.nodeId, filePath, ref);
     },
     publish: async (ctx: ActionCtx) => {
+      const filePath = ctx.params.filePath as string;
       const message = ctx.params.message as string;
-      return docsPublishAction(ctx.nodeId, message);
+      return docsPublishAction(ctx.nodeId, filePath, message);
     },
     discardFile: async (ctx: ActionCtx) => {
       const filePath = ctx.params.filePath as string;
