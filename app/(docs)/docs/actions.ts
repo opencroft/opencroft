@@ -172,12 +172,12 @@ export async function getGitChangedFiles(namespace: string): Promise<string[]> {
   }
 }
 
-export async function gitPublishDocs(namespace: string, message: string): Promise<{ sha: string; message: string }> {
+export async function gitPublishDocs(namespace: string, filePath: string, message: string): Promise<{ sha: string; message: string }> {
   const nodeId = await findDocNodeId(namespace);
   if (!nodeId) {
     throw new Error(`No documentation node found for namespace "${namespace}"`);
   }
-  return (await callDocsAction('docs.publish', { nodeId, message })) as { sha: string; message: string };
+  return (await callDocsAction('docs.publish', { nodeId, filePath, message })) as { sha: string; message: string };
 }
 
 export async function gitDiscardFile(namespace: string, filePath: string): Promise<void> {

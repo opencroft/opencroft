@@ -250,7 +250,17 @@ export async function docsShow(nodeId: string, filePath: string, ref?: string): 
   return gitExec(repoDir, 'show', `${gitRef}:${filePath}`);
 }
 
-export async function docsPublish(nodeId: string, message: string): Promise<{ sha: string; message: string }> {
+/**
+ * Commit and push a single file. Uses `git commit -- <path>` (the
+ * --only form) so other staged changes in the index are not pulled
+ * into this commit. The file is staged first to handle the
+ * untracked-new-file case.
+ */
+export async function docsPublishFile(
+  nodeId: string,
+  filePath: string,
+  message: string,
+): Promise<{ sha: string; message: string }> {
   const repoDir = await docsCacheDir(nodeId);
   const data = await getNodeData(nodeId);
   const cloned = await isCloned(repoDir);
@@ -260,28 +270,21 @@ export async function docsPublish(nodeId: string, message: string): Promise<{ sh
 
   const secrets = await resolveSecrets(data.secretId);
 
-  // Configure git user
   const gitUser = secrets.username || 'OpenCroft';
   await gitExec(repoDir, 'config', 'user.name', gitUser);
   await gitExec(repoDir, 'config', 'user.email', `${gitUser}@opencroft.local`);
 
-  // Set remote URL with auth for push
   if (data.repoUrl && (secrets.username || secrets.token)) {
     const authUrl = buildAuthUrl(data.repoUrl, secrets.username, secrets.token);
     await gitExec(repoDir, 'remote', 'set-url', 'origin', authUrl);
   }
 
-  // Stage all changes
-  await gitExec(repoDir, 'add', '-A');
+  await gitExec(repoDir, 'add', '--', filePath);
+  await gitExec(repoDir, 'commit', '-m', message, '--', filePath);
 
-  // Commit
-  await gitExec(repoDir, 'commit', '-m', message);
-
-  // Push
   const branch = data.branch || 'main';
   await gitExec(repoDir, 'push', 'origin', branch);
 
-  // Get commit SHA
   const sha = (await gitExec(repoDir, 'rev-parse', 'HEAD')).trim();
 
   return { sha, message };

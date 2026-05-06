@@ -103,7 +103,7 @@ export function DocEditor({ namespace, filePath, initialContent, onPublish, onDi
     // Save working tree (already auto-staged by docs.addFile), commit + push
     await saveDocDirectly(namespace, filePath, readMarkdown(editor));
     const msg = commitMsg.trim() || `Update ${filePath}`;
-    await gitPublishDocs(namespace, msg);
+    await gitPublishDocs(namespace, filePath, msg);
     setCommitMsg('');
     setBusy(false);
     onPublish(readMarkdown(editor));

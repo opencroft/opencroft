@@ -519,14 +519,15 @@ export const toolDefinitions = [
   },
   {
     name: 'doc_publish',
-    description: 'Commit and push pending changes in a documentation namespace.',
+    description: 'Commit and push a single file in a documentation namespace. Other staged changes are not pulled into the commit.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         namespace: { type: 'string', description: 'Documentation namespace (slug).' },
+        path: { type: 'string', description: 'Relative path of the file to commit.' },
         message: { type: 'string', description: 'Git commit message.' },
       },
-      required: ['namespace', 'message'],
+      required: ['namespace', 'path', 'message'],
     },
   },
 
@@ -1925,9 +1926,10 @@ function buildHandlers(): Record<string, ToolHandler> {
     // ── doc_publish ─────────────────────────────────────────────────
     doc_publish: async (args) => {
       const namespace = args.namespace as string | undefined;
+      const filePath = args.path as string | undefined;
       const message = args.message as string | undefined;
-      if (!namespace || !message) {
-        fail(-32602, 'Missing required params: namespace, message');
+      if (!namespace || !filePath || !message) {
+        fail(-32602, 'Missing required params: namespace, path, message');
       }
       const nodeId = await findDocNodeIdForNamespace(namespace);
       if (!nodeId) {
@@ -1938,8 +1940,8 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!publishFn) {
         fail(-32602, 'docs.publish action not found in builtin/core extension.');
       }
-      const result = await publishFn({ nodeId, message });
-      return textResult(JSON.stringify({ nodeId, namespace, ...result as object }, null, 2));
+      const result = await publishFn({ nodeId, filePath, message });
+      return textResult(JSON.stringify({ nodeId, namespace, path: filePath, ...result as object }, null, 2));
     },
 
     // ── read (remote) ────────────────────────────────────────────────
