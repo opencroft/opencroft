@@ -102,8 +102,6 @@ export async function listDocNamespaces(): Promise<DocNamespace[]> {
   }
 }
 
-export type { DocSearchResult } from '@/app/(docs)/docs/_server/search';
-
 export async function searchDocs(namespace: string, pattern: string, maxResults: number = 50): Promise<DocSearchResult[]> {
   const root = await getDocsRoot(namespace);
   if (!root) {

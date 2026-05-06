@@ -8,7 +8,8 @@ import remarkGfm from 'remark-gfm';
 
 import { DocCommentsOverlay } from '@/app/(docs)/docs/_components/doc-comments';
 import { DocEditor } from '@/app/(docs)/docs/_components/doc-editor';
-import { type DocSearchResult, createDoc, deleteDoc, getGitFileLog, getGitFileAtRef, getGitChangedFiles, readDocWorking, searchDocs } from '@/app/(docs)/docs/actions';
+import type { DocSearchResult } from '@/app/(docs)/docs/_server/search';
+import { createDoc, deleteDoc, getGitFileLog, getGitFileAtRef, getGitChangedFiles, readDocWorking, searchDocs } from '@/app/(docs)/docs/actions';
 import {
   AlertDialog,
   AlertDialogAction,
