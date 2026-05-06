@@ -786,6 +786,30 @@ export async function executeAgentTool(
     // Build event for the handler
     const event = { params: args, context: { toolName: rawName } };
 
+    // Resolve env: parse data.env (KEY=value lines) + decrypt data.secrets (key names)
+    const handlerData = (handlerNode.data ?? {}) as Record<string, unknown>;
+    const env: Record<string, string> = {};
+    const envLines = ((handlerData.env as string | undefined) ?? '')
+      .split('\n').map((s) => s.trim()).filter(Boolean);
+    for (const line of envLines) {
+      const eq = line.indexOf('=');
+      if (eq > 0) {
+        env[line.slice(0, eq).trim()] = line.slice(eq + 1);
+      }
+    }
+    const secretNames = ((handlerData.secrets as string | undefined) ?? '')
+      .split('\n').map((s) => s.trim()).filter(Boolean);
+    for (const name of secretNames) {
+      const row = await prisma.secret.findFirst({
+        where: { key: name },
+        orderBy: { updatedAt: 'desc' },
+      });
+      if (!row) {
+        return { result: textResult(`Agent tool "${rawName}" error: secret "${name}" not found in any Secrets Store.`), requiredApproval };
+      }
+      env[name] = decrypt(row.value);
+    }
+
     // Execute handler
     const result = await invokeExtensionAction('builtin/core', 'handler.run', [
       {
@@ -793,6 +817,7 @@ export async function executeAgentTool(
         language,
         context: terminalContext,
         event,
+        env,
       },
     ]) as { status?: number; headers?: Record<string, string>; body?: unknown; error?: string; logs?: string };
 
