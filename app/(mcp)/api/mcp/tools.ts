@@ -680,11 +680,10 @@ export async function getAgentToolDefinitions() {
           continue;
         }
 
-        const prefixedName = `agent_${toolName}`;
-        if (staticNames.has(prefixedName)) {
+        if (staticNames.has(toolName)) {
           continue;
         } // static tools win
-        if (defs.some((x) => x.name === prefixedName)) {
+        if (defs.some((x) => x.name === toolName)) {
           continue;
         } // first space wins
 
@@ -696,7 +695,7 @@ export async function getAgentToolDefinitions() {
         }
 
         defs.push({
-          name: prefixedName,
+          name: toolName,
           description: d.description || `Agent tool: ${toolName}`,
           inputSchema: {
             type: 'object' as const,
@@ -727,10 +726,7 @@ export async function executeAgentTool(
   toolName: string,
   args: Record<string, unknown>,
   signal?: AbortSignal,
-): Promise<Record<string, unknown>> {
-  // Strip 'agent_' prefix to get the raw tool name
-  const rawName = toolName.startsWith('agent_') ? toolName.slice(6) : toolName;
-
+): Promise<AgentToolExecResult> {
   const registry = getSpacesRegistry();
   await registry.ensureLoaded();
 
@@ -745,7 +741,7 @@ export async function executeAgentTool(
     const edges = runtime.graph.edges as unknown as StoredEdge[];
 
     const toolNode = nodes.find(
-      (n) => n.type === 'agent-tool' && ((n.data ?? {}) as Record<string, unknown>).name === rawName,
+      (n) => n.type === 'agent-tool' && ((n.data ?? {}) as Record<string, unknown>).name === toolName,
     );
     if (!toolNode) {
       continue;
@@ -763,18 +759,18 @@ export async function executeAgentTool(
       (e) => e.source === toolNode.id && e.sourceHandle === 'exec-out',
     );
     if (!handlerEdge) {
-      return { result: textResult(`Agent tool "${rawName}" has no connected handler script.`), requiredApproval: false };
+      return { result: textResult(`Agent tool "${toolName}" has no connected handler script.`), requiredApproval: false };
     }
 
     const handlerNode = nodes.find((n) => n.id === handlerEdge.target);
     if (!handlerNode) {
-      return { result: textResult(`Agent tool "${rawName}": handler node not found.`), requiredApproval: false };
+      return { result: textResult(`Agent tool "${toolName}": handler node not found.`), requiredApproval: false };
     }
 
     const language = (handlerNode.data as Record<string, unknown>)?.language as string | undefined;
     if (language !== 'python' && language !== 'node') {
       return { result: textResult(
-        `Agent tool "${rawName}": handler must be Python or Node.js script, got ${language ?? 'none'}.`,
+        `Agent tool "${toolName}": handler must be Python or Node.js script, got ${language ?? 'none'}.`,
       ), requiredApproval: false };
     }
 
@@ -784,7 +780,7 @@ export async function executeAgentTool(
     const terminalContext = resolvedContexts?.['ctx-in']?.value ?? { type: 'local' };
 
     // Build event for the handler
-    const event = { params: args, context: { toolName: rawName } };
+    const event = { params: args, context: { toolName: toolName } };
 
     // Resolve env: parse data.env (KEY=value lines) + decrypt data.secrets (key names)
     const handlerData = (handlerNode.data ?? {}) as Record<string, unknown>;
@@ -805,7 +801,7 @@ export async function executeAgentTool(
         orderBy: { updatedAt: 'desc' },
       });
       if (!row) {
-        return { result: textResult(`Agent tool "${rawName}" error: secret "${name}" not found in any Secrets Store.`), requiredApproval };
+        return { result: textResult(`Agent tool "${toolName}" error: secret "${name}" not found in any Secrets Store.`), requiredApproval };
       }
       env[name] = decrypt(row.value);
     }
@@ -822,7 +818,7 @@ export async function executeAgentTool(
     ]) as { status?: number; headers?: Record<string, string>; body?: unknown; error?: string; logs?: string };
 
     if (result.error) {
-      return { result: textResult(`Agent tool "${rawName}" error: ${result.error}`), requiredApproval };
+      return { result: textResult(`Agent tool "${toolName}" error: ${result.error}`), requiredApproval };
     }
 
     if (typeof result.body === 'object' && result.body !== null) {
@@ -2048,20 +2044,16 @@ export async function handleToolCall(
   const start = Date.now();
   const handler = handlers[name];
   if (!handler) {
-    // Check if it's an agent_* tool (graph-defined)
-    if (name.startsWith('agent_')) {
-      const execResult = await executeAgentTool(name, args, signal);
-      const agentResult = execResult.result;
-      await recordAudit({
-        tool: name,
-        args,
-        result: agentResult as Record<string, unknown>,
-        status: execResult.requiredApproval ? 'approved' : 'auto-approved',
-        durationMs: Date.now() - start,
-      });
-      return agentResult as Record<string, unknown>;
-    }
-    throw { code: -32601, message: `Unknown tool: ${name}` };
+    // Fall back to graph-defined agent tools
+    const execResult = await executeAgentTool(name, args, signal);
+    await recordAudit({
+      tool: name,
+      args,
+      result: execResult.result as Record<string, unknown>,
+      status: execResult.requiredApproval ? 'approved' : 'auto-approved',
+      durationMs: Date.now() - start,
+    });
+    return execResult.result as Record<string, unknown>;
   }
   const meta = getApprovalMeta(handler);
   const yolo = isYoloMode();

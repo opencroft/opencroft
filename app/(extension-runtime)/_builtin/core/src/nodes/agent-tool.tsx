@@ -44,7 +44,7 @@ export function AgentToolInspector({ data, updateData }: { nodeId: string; data:
           className='font-mono'
         />
         <p className='text-[10px] text-muted-foreground'>
-          Unique name. Agents will call it as <code className='text-primary'>agent_{'{name}'}</code>
+          Unique name. Must not collide with any built-in MCP tool.
         </p>
       </div>
       <div className='flex flex-col gap-1'>
