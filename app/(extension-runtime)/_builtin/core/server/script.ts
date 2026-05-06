@@ -4,6 +4,7 @@ export interface ScriptRunParams {
   script: string;
   language: 'bash' | 'python' | 'node';
   context: TerminalContext;
+  env?: Record<string, string>;
 }
 
 export interface ScriptResult {
@@ -25,9 +26,9 @@ const LANG_FLAG: Record<string, string> = {
 };
 
 export async function runScript(params: ScriptRunParams): Promise<ScriptResult> {
-  const { script, language, context } = params;
+  const { script, language, context, env } = params;
   try {
-    const stdout = await terminalRun(context, [LANG_CMD[language], LANG_FLAG[language], script]);
+    const stdout = await terminalRun(context, [LANG_CMD[language], LANG_FLAG[language], script], env);
     return { stdout, stderr: '', exitCode: 0 };
   } catch (err) {
     const msg = (err as Error).message || String(err);
@@ -44,6 +45,7 @@ export interface HandlerRunParams {
   language: 'python' | 'node';
   context: TerminalContext;
   event: unknown;
+  env?: Record<string, string>;
 }
 
 export interface HandlerResult {
@@ -104,7 +106,7 @@ function splitStdout(stdout: string): SplitOutput {
 }
 
 export async function runHandler(params: HandlerRunParams): Promise<HandlerResult> {
-  const { script, language, context, event } = params;
+  const { script, language, context, event, env } = params;
   const eventB64 = Buffer.from(JSON.stringify(event), 'utf-8').toString('base64');
 
   try {
@@ -112,10 +114,10 @@ export async function runHandler(params: HandlerRunParams): Promise<HandlerResul
     let stdout: string;
     if (language === 'python') {
       fullScript = script + pythonHandlerBootstrap(eventB64);
-      stdout = await terminalRun(context, ['python', '-c', fullScript]);
+      stdout = await terminalRun(context, ['python', '-c', fullScript], env);
     } else if (language === 'node') {
       fullScript = script + nodeHandlerBootstrap(eventB64);
-      stdout = await terminalRun(context, ['node', '-e', fullScript]);
+      stdout = await terminalRun(context, ['node', '-e', fullScript], env);
     } else {
       return { status: 500, body: { error: `Unsupported language: ${language}` } };
     }
@@ -129,7 +131,15 @@ export async function runHandler(params: HandlerRunParams): Promise<HandlerResul
       logs,
     };
   } catch (err) {
-    const msg = (err as Error).message || String(err);
+    let msg = (err as Error).message || String(err);
+    // Redact secret values that may have leaked into the command line via env prefix
+    if (env) {
+      for (const v of Object.values(env)) {
+        if (v && v.length >= 4) {
+          msg = msg.split(v).join('<redacted>');
+        }
+      }
+    }
     return { status: 500, error: msg };
   }
 }

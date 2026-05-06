@@ -46,14 +46,23 @@ function shellJoin(args: string[]): string {
   }).join(' ');
 }
 
+function shellQuote(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
 function dockerExecPrefix(ctx: TerminalContext): string[] {
   const ctxArgs = ctx.contextName ? ['--context', ctx.contextName] : [];
   return ['docker', ...ctxArgs, 'exec', '-i', ctx.containerId ?? ''];
 }
 
-export async function terminalRun(ctx: TerminalContext, args: string[]): Promise<string> {
+export async function terminalRun(ctx: TerminalContext, args: string[], env?: Record<string, string>): Promise<string> {
+  // Build optional env prefix for shell commands
+  const envPrefix = env && Object.keys(env).length > 0
+    ? Object.entries(env).map(([k, v]) => `export ${k}=${shellQuote(v)}`).join(' && ') + ' && '
+    : '';
+
   if (ctx.type === 'docker-exec' && ctx.via) {
-    return terminalRun(ctx.via, [...dockerExecPrefix(ctx), 'sh', '-c', shellJoin(args)]);
+    return terminalRun(ctx.via, [...dockerExecPrefix(ctx), 'sh', '-c', envPrefix + shellJoin(args)], undefined);
   }
 
   if (ctx.type === 'ssh') {
@@ -63,15 +72,15 @@ export async function terminalRun(ctx: TerminalContext, args: string[]): Promise
       username: (ctx.username as string) || 'root',
       password: ctx.password,
       keyPath: ctx.keyPath,
-    }, shellJoin(args));
+    }, envPrefix + shellJoin(args));
   }
 
   if (ctx.type === 'wsl' && ctx.distro) {
-    return host.execFile('wsl', ['-d', ctx.distro, '--exec', ...args]);
+    return host.execFile('wsl', ['-d', ctx.distro, '--exec', 'bash', '-c', envPrefix + shellJoin(args)]);
   }
 
   // host.exec runs through bash -c on all platforms
-  return host.exec(shellJoin(args));
+  return host.exec(envPrefix + shellJoin(args));
 }
 
 export async function terminalExec(ctx: TerminalContext, command: string): Promise<string> {

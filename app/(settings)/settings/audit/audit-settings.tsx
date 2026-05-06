@@ -1,14 +1,17 @@
 'use client';
 
+import { ShieldAlert } from 'lucide-react';
 import { useEffect, useState, useTransition } from 'react';
 
 import type { AuditStatus } from '@/app/(mcp)/api/mcp/audit';
 import {
   AuditQuery,
   clearAuditLog,
+  getYoloMode,
   listAuditEntries,
   listAuditTools,
   McpAuditEntry,
+  updateYoloMode,
 } from '@/app/(settings)/settings/audit/actions';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -125,6 +128,8 @@ export default function AuditSettings() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [pending, startTransition] = useTransition();
+  const [yoloEnabled, setYoloEnabled] = useState(false);
+  const [yoloSource, setYoloSource] = useState<'env' | 'runtime'>('env');
 
   const reload = (next: AuditQuery) => {
     setLoading(true);
@@ -141,6 +146,10 @@ export default function AuditSettings() {
 
   useEffect(() => {
     reload({});
+    getYoloMode().then(({ enabled, source }) => {
+      setYoloEnabled(enabled);
+      setYoloSource(source);
+    });
   }, []);
 
   const onToolChange = (value: string) => {
@@ -222,6 +231,45 @@ export default function AuditSettings() {
             ))}
           </SelectContent>
         </Select>
+      </div>
+
+      <div className='rounded-lg border p-4 flex items-center justify-between gap-4'>
+        <div className='flex items-center gap-3'>
+          <ShieldAlert className={`size-5 ${yoloEnabled ? 'text-red-500' : 'text-muted-foreground'}`} />
+          <div>
+            <div className='text-sm font-medium'>
+              YOLO Mode
+              {yoloEnabled && (
+                <Badge variant='destructive' className='ml-2'>ACTIVE</Badge>
+              )}
+            </div>
+            <div className='text-xs text-muted-foreground'>
+              Skip all MCP tool approvals. Agents execute without confirmation.
+              {yoloSource === 'env' && ' (set via OPENCROFT_YOLO_MODE env)'}
+              {yoloSource === 'runtime' && ' (runtime override, resets on restart)'}
+            </div>
+          </div>
+        </div>
+        <button
+          role='switch'
+          aria-checked={yoloEnabled}
+          onClick={() => {
+            const next = !yoloEnabled;
+            startTransition(async () => {
+              await updateYoloMode(next);
+              setYoloEnabled(next);
+              setYoloSource('runtime');
+            });
+          }}
+          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+            yoloEnabled ? 'bg-red-500' : 'bg-input'
+          }`}
+        >
+          <span
+            className={`pointer-events-none block size-5 rounded-full bg-background shadow ring-0 transition-transform ${
+              yoloEnabled ? 'translate-x-5' : 'translate-x-0'
+            }`} />
+        </button>
       </div>
 
       <div className='rounded-lg border'>

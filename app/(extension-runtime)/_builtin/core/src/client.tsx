@@ -29,7 +29,9 @@ import { SendMessageNode, SendMessageInspector, SEND_MESSAGE_HANDLES } from './n
 import { ApiRouteNode, ApiRouteInspector, API_ROUTE_HANDLES, apiRouteExposeOutput } from './nodes/api-route';
 import { EventNode, EventInspector, EVENT_HANDLES, eventExposeOutput } from './nodes/event';
 import { GitWorkspaceNode, GitWorkspaceInspector } from './nodes/git-workspace';
+import { DocumentationNode, DocumentationDetailsTab, DocumentationKeysTab } from './nodes/documentation';
 import { AgentNode, AgentInspector, AgentOpenClawTab } from './nodes/agent';
+import { AgentToolNode, AgentToolInspector, AGENT_TOOL_HANDLES, agentToolExposeOutput } from './nodes/agent-tool';
 import { AgentJobNode, AgentJobInspector } from './nodes/agent-job';
 import { AgentInstructionNode, AgentInstructionInspector } from './nodes/agent-instruction';
 
@@ -183,7 +185,7 @@ export default defineExtension({
       icon: 'TerminalSquare',
       accent: 'oklch(0.7 0.18 60)',
       handles: SCRIPT_CONSUMER as unknown as never[],
-      defaultData: { script: '', language: 'bash' },
+      defaultData: { script: '', language: 'bash', env: '', secrets: '' },
       component: makeBashNode().component as unknown as never,
       inspector: makeBashNode().inspector as unknown as never,
       inspectorTabs: [
@@ -199,7 +201,7 @@ export default defineExtension({
       icon: 'Code',
       accent: 'oklch(0.6 0.18 260)',
       handles: SCRIPT_CONSUMER_PYTHON as unknown as never[],
-      defaultData: { script: '', language: 'python' },
+      defaultData: { script: '', language: 'python', env: '', secrets: '' },
       component: makePythonNode().component as unknown as never,
       inspector: makePythonNode().inspector as unknown as never,
       inspectorTabs: [
@@ -215,7 +217,7 @@ export default defineExtension({
       icon: 'Braces',
       accent: 'oklch(0.65 0.2 150)',
       handles: SCRIPT_CONSUMER_NODEJS as unknown as never[],
-      defaultData: { script: '', language: 'node' },
+      defaultData: { script: '', language: 'node', env: '', secrets: '' },
       component: makeNodeJsNode().component as unknown as never,
       inspector: makeNodeJsNode().inspector as unknown as never,
       inspectorTabs: [
@@ -524,7 +526,7 @@ export default defineExtension({
       icon: 'Send',
       accent: 'oklch(0.75 0.17 100)',
       handles: SEND_MESSAGE_HANDLES as unknown as never[],
-      defaultData: { sessionKey: '' },
+      defaultData: {},
       component: SendMessageNode as unknown as never,
       inspector: SendMessageInspector as unknown as never,
     },
@@ -539,6 +541,18 @@ export default defineExtension({
       component: ApiRouteNode as unknown as never,
       inspector: ApiRouteInspector as unknown as never,
       exposeOutput: apiRouteExposeOutput as unknown as never,
+    },
+    {
+      typeId: 'agent-tool',
+      name: 'Agent Tool',
+      category: 'Integration',
+      icon: 'Wrench',
+      accent: 'oklch(0.65 0.15 250)',
+      handles: AGENT_TOOL_HANDLES as unknown as never[],
+      defaultData: { name: '', description: '', inputSchema: '{"type":"object","properties":{}}', requireApproval: true },
+      component: AgentToolNode as unknown as never,
+      inspector: AgentToolInspector as unknown as never,
+      exposeOutput: agentToolExposeOutput as unknown as never,
     },
     {
       typeId: 'event',
@@ -568,6 +582,20 @@ export default defineExtension({
       defaultData: { folder: '' },
       component: GitWorkspaceNode as unknown as never,
       inspector: GitWorkspaceInspector as unknown as never,
+    },
+    {
+      typeId: 'documentation',
+      name: 'Documentation',
+      category: 'Storage',
+      icon: 'BookOpen',
+      accent: 'oklch(0.7 0.17 180)',
+      handles: [],
+      defaultData: { name: '', repoUrl: '', branch: 'main', secretId: null },
+      component: DocumentationNode as unknown as never,
+      inspector: DocumentationDetailsTab as unknown as never,
+      inspectorTabs: [
+        { id: 'keys', label: 'Keys', icon: 'KeyRound', component: DocumentationKeysTab as unknown as never },
+      ],
     },
     {
       typeId: 'network',

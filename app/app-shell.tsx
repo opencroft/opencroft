@@ -7,6 +7,7 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 
 import { getAppLinks } from '@/app/(applink)/applinks/actions';
+import { type DocNamespace, listDocNamespaces } from '@/app/(docs)/docs/actions';
 import { type ChatEntry, listAllChats } from '@/app/(openclaw)/openclaw/actions';
 import type { SpaceSummary } from '@/app/(space)/server/types';
 import { DevBuildBadge } from '@/app/components/dev-build-badge';
@@ -49,8 +50,10 @@ function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
   const pathname = usePathname() ?? '';
   const searchParams = useSearchParams();
   const activeChatKey = searchParams?.get('chat') ?? null;
+  const activeNamespace = searchParams?.get('namespace') ?? null;
   const [appLinks, setAppLinks] = useState<AppLink[]>([]);
   const [chats, setChats] = useState<ChatEntry[]>([]);
+  const [repos, setRepos] = useState<DocNamespace[]>([]);
   const inSpace = pathname.startsWith('/space/');
   const currentSpaceSlug = inSpace ? pathname.split('/')[2] : '';
 
@@ -65,6 +68,10 @@ function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
     }
     listAllChats().then(setChats).catch(() => setChats([]));
   }, [inSpace, pathname]);
+
+  useEffect(() => {
+    listDocNamespaces().then(setRepos).catch(() => setRepos([]));
+  }, [pathname]);
 
   return (
     <Sidebar collapsible='icon'>
@@ -165,18 +172,39 @@ function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
         )}
         <SidebarGroup>
           <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                asChild
-                tooltip='Documentation'
-                isActive={pathname.startsWith('/docs')}
-              >
-                <Link href='/docs'>
+            <Collapsible defaultOpen className='group/collapsible'>
+              <SidebarMenuItem>
+                <SidebarMenuButton tooltip='Documentation'>
                   <BookOpen />
                   <span>Documentation</span>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
+                </SidebarMenuButton>
+                {repos.length > 0 && (
+                  <>
+                    <CollapsibleTrigger asChild>
+                      <SidebarMenuAction>
+                        <ChevronRight className='transition-transform group-data-[state=open]/collapsible:rotate-90' />
+                      </SidebarMenuAction>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <SidebarMenuSub>
+                        {repos.map(repo => (
+                          <SidebarMenuSubItem key={repo.namespace}>
+                            <SidebarMenuSubButton
+                              asChild
+                              isActive={activeNamespace === repo.namespace}
+                            >
+                              <Link href={`/docs?namespace=${encodeURIComponent(repo.namespace)}&file=README.md`}>
+                                <span className='truncate'>{repo.name}</span>
+                              </Link>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                        ))}
+                      </SidebarMenuSub>
+                    </CollapsibleContent>
+                  </>
+                )}
+              </SidebarMenuItem>
+            </Collapsible>
           </SidebarMenu>
         </SidebarGroup>
       </SidebarContent>

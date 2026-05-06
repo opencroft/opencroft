@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronRight, Loader2, Maximize2, Minimize2, SendIcon, ShieldCheck, ShieldCog, Sparkles } from 'lucide-react';
+import { ChevronRight, Loader2, Maximize2, Minimize2, SendIcon, ShieldAlert, ShieldCheck, ShieldCog, Sparkles } from 'lucide-react';
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -548,10 +548,12 @@ export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlu
   const [commands, setCommands] = useState<OpenclawCommand[]>([]);
   const [highlight, setHighlight] = useState(0);
   const [autoApprove, setAutoApproveState] = useState(false);
+  const [yoloMode, setYoloMode] = useState(false);
 
   useEffect(() => {
     listCommands().then(setCommands);
     getAutoApprove().then(setAutoApproveState);
+    fetch('/api/yolo').then(r => r.json()).then(({ enabled }) => setYoloMode(enabled)).catch(() => {});
   }, []);
 
   const toggleAutoApprove = async () => {
@@ -681,10 +683,18 @@ export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlu
         variant='ghost'
         className='h-7 w-7 shrink-0 mt-0.5'
         onMouseDown={(e) => e.preventDefault()}
-        onClick={toggleAutoApprove}
-        title={autoApprove ? 'Auto-approve ON — all MCP tool calls approved automatically (click to require approval)' : 'Auto-approve OFF — MCP tool calls require approval (click to auto-approve)'}
+        onClick={yoloMode ? undefined : toggleAutoApprove}
+        disabled={yoloMode}
+        title={yoloMode
+          ? 'YOLO Mode — all MCP tool approvals skipped (set via OPENCROFT_YOLO_MODE env or /settings?section=audit)'
+          : autoApprove
+            ? 'Auto-approve ON — all MCP tool calls approved automatically (click to require approval)'
+            : 'Auto-approve OFF — MCP tool calls require approval (click to auto-approve)'
+        }
       >
-        {autoApprove ? (
+        {yoloMode ? (
+          <ShieldAlert className='h-4 w-4 text-red-500 animate-pulse' />
+        ) : autoApprove ? (
           <ShieldCog className='h-4 w-4 text-amber-500' />
         ) : (
           <ShieldCheck className='h-4 w-4 text-primary' />

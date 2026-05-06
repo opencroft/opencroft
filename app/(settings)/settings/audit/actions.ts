@@ -1,6 +1,7 @@
 'use server';
 
 import type { AuditStatus } from '@/app/(mcp)/api/mcp/audit';
+import { getYoloModeInfo, setYoloMode as setYolo } from '@/app/(mcp)/api/mcp/yolo';
 import { prisma } from '@/server/prisma';
 
 export interface McpAuditEntry {
@@ -71,4 +72,14 @@ export async function listAuditTools(): Promise<string[]> {
 
 export async function clearAuditLog(): Promise<void> {
   await prisma.mcpAuditLog.deleteMany({});
+}
+
+// ── YOLO Mode ──────────────────────────────────────────────────────────────
+
+export async function getYoloMode(): Promise<{ enabled: boolean; source: 'env' | 'runtime' }> {
+  return getYoloModeInfo();
+}
+
+export async function updateYoloMode(enabled: boolean): Promise<void> {
+  setYolo(enabled);
 }

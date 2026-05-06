@@ -176,6 +176,12 @@
         { "id": "run", "label": "Run", "icon": "Play", "description": "Fire the connected handler immediately." }
       ]
     },
+    { "typeId": "documentation", "name": "Documentation", "category": "Storage", "icon": "BookOpen", "actions": [
+      { "id": "clone", "label": "Clone", "icon": "Download", "description": "Clone the documentation repository." },
+      { "id": "pull", "label": "Pull", "icon": "ArrowDown", "description": "Pull latest changes from the remote." },
+      { "id": "publish", "label": "Publish", "icon": "Upload", "description": "Commit all changes and push to the remote." },
+      { "id": "discardFile", "label": "Discard", "icon": "Undo2", "description": "Discard changes for a file, reverting to the last committed version." }
+    ] },
     { "typeId": "section", "name": "Section", "category": "Organization", "icon": "Boxes" },
     { "typeId": "domain", "name": "Domain", "category": "Organization", "icon": "Globe" }
   ],

@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 
-const DOCS_ROOT = process.env.OPENCROFT_DOCS_ROOT ?? path.join(process.cwd(), 'app', 'docs');
+import { getDocsRoot } from '@/app/(docs)/docs/_server/docs-root';
 
 export interface Anchor {
   quote: string;
@@ -23,19 +23,23 @@ interface CommentFile {
   comments: Comment[];
 }
 
-function resolveCommentsPath(docPath: string): string {
+async function resolveCommentsPath(namespace: string, docPath: string): Promise<string> {
   if (!docPath.endsWith('.md')) {
     throw new Error('Only .md files have comments');
   }
-  const resolved = path.resolve(DOCS_ROOT, docPath);
-  if (!resolved.startsWith(DOCS_ROOT)) {
+  const root = await getDocsRoot(namespace);
+  if (!root) {
+    throw new Error(`No documentation repository configured for namespace "${namespace}"`);
+  }
+  const resolved = path.resolve(root, docPath);
+  if (!resolved.startsWith(root)) {
     throw new Error('Access denied');
   }
   return `${resolved}.comments`;
 }
 
-export async function readComments(docPath: string): Promise<Comment[]> {
-  const file = resolveCommentsPath(docPath);
+export async function readComments(namespace: string, docPath: string): Promise<Comment[]> {
+  const file = await resolveCommentsPath(namespace, docPath);
   try {
     const raw = await fs.readFile(file, 'utf-8');
     const parsed = JSON.parse(raw) as CommentFile;
@@ -45,8 +49,8 @@ export async function readComments(docPath: string): Promise<Comment[]> {
   }
 }
 
-async function writeCommentsTree(docPath: string, comments: Comment[]): Promise<void> {
-  const file = resolveCommentsPath(docPath);
+async function writeCommentsTree(namespace: string, docPath: string, comments: Comment[]): Promise<void> {
+  const file = await resolveCommentsPath(namespace, docPath);
   const payload: CommentFile = { version: 1, comments };
   await fs.writeFile(file, JSON.stringify(payload, null, 2), 'utf-8');
 }
@@ -75,8 +79,8 @@ export function createComment(author: string, message: string, anchor?: Anchor):
   };
 }
 
-export async function appendComment(docPath: string, comment: Comment, parentId?: string): Promise<void> {
-  const comments = await readComments(docPath);
+export async function appendComment(namespace: string, docPath: string, comment: Comment, parentId?: string): Promise<void> {
+  const comments = await readComments(namespace, docPath);
   if (parentId) {
     if (!findAndPush(comments, parentId, comment)) {
       throw new Error(`Parent comment not found: ${parentId}`);
@@ -84,7 +88,7 @@ export async function appendComment(docPath: string, comment: Comment, parentId?
   } else {
     comments.push(comment);
   }
-  await writeCommentsTree(docPath, comments);
+  await writeCommentsTree(namespace, docPath, comments);
 }
 
 function hasDescendant(node: Comment, id: string): boolean {

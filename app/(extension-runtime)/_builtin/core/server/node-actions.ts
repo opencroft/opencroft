@@ -3,6 +3,17 @@ import host from '@ext/host';
 import { dockerUp, dockerStopService, dockerRestartService, type DockerUpParams } from './docker';
 import { fireEvent } from './event';
 import { runScript, type ScriptResult } from './script';
+import {
+  docsStatus as docsStatusAction,
+  docsClone as docsCloneAction,
+  docsPull as docsPullAction,
+  docsLog as docsLogAction,
+  docsShow as docsShowAction,
+  docsPublishFile as docsPublishAction,
+  docsDiscardFile as docsDiscardFileAction,
+  type DocsStatusResult,
+  type DocsLogEntry,
+} from './docs-git';
 
 interface Stream<T> {
   subscribe(fn: (chunk: T) => void): () => void;
@@ -76,6 +87,8 @@ interface AppData {
 interface ScriptData {
   script: string;
   language: 'bash' | 'python' | 'node';
+  env?: string;
+  secrets?: string;
 }
 
 interface TerminalContext {
@@ -235,8 +248,36 @@ async function scriptRun(ctx: ActionCtx): Promise<ScriptResult> {
     throw new Error('Script is empty');
   }
   const context = ctx.input<TerminalContext>('ctx-in') ?? { type: 'local' };
+
+  // Resolve secrets
+  const secretNames = (data.secrets ?? '').split('\n').map((s: string) => s.trim()).filter(Boolean);
+  const secretEnv: Record<string, string> = {};
+  if (secretNames.length > 0) {
+    for (const name of secretNames) {
+      const row = await host.prisma.secret.findFirst({
+        where: { key: name },
+        orderBy: { createdAt: 'asc' },
+      }) as SecretRow | null;
+      if (!row) {
+        throw new Error(`Secret "${name}" not found in any Secrets Store`);
+      }
+      secretEnv[name] = host.crypto.decrypt(row.value);
+    }
+  }
+
+  // Merge env lines with secrets
+  const envLines = (data.env ?? '').split('\n').map((s: string) => s.trim()).filter(Boolean);
+  const env: Record<string, string> = {};
+  for (const line of envLines) {
+    const eq = line.indexOf('=');
+    if (eq > 0) {
+      env[line.slice(0, eq).trim()] = line.slice(eq + 1);
+    }
+  }
+  Object.assign(env, secretEnv);
+
   const stream = ctx.output<TextChunk>('stdout-out');
-  const result = await runScript({ script: data.script, language: data.language, context });
+  const result = await runScript({ script: data.script, language: data.language, context, env });
   if (result.stdout) {
     stream.broadcast({ text: result.stdout, final: false });
   }
@@ -268,5 +309,29 @@ export const nodeActions = {
   },
   event: {
     run: eventRun,
+  },
+  documentation: {
+    clone: async (ctx: ActionCtx) => docsCloneAction(ctx.nodeId),
+    pull: async (ctx: ActionCtx) => docsPullAction(ctx.nodeId),
+    status: async (ctx: ActionCtx): Promise<DocsStatusResult> => docsStatusAction(ctx.nodeId),
+    log: async (ctx: ActionCtx): Promise<DocsLogEntry[]> => {
+      const filePath = (ctx.params.filePath as string) || undefined;
+      const count = (ctx.params.count as number) || undefined;
+      return docsLogAction(ctx.nodeId, filePath, count);
+    },
+    show: async (ctx: ActionCtx): Promise<string> => {
+      const filePath = ctx.params.filePath as string;
+      const ref = (ctx.params.ref as string) || undefined;
+      return docsShowAction(ctx.nodeId, filePath, ref);
+    },
+    publish: async (ctx: ActionCtx) => {
+      const filePath = ctx.params.filePath as string;
+      const message = ctx.params.message as string;
+      return docsPublishAction(ctx.nodeId, filePath, message);
+    },
+    discardFile: async (ctx: ActionCtx) => {
+      const filePath = ctx.params.filePath as string;
+      return docsDiscardFileAction(ctx.nodeId, filePath);
+    },
   },
 };

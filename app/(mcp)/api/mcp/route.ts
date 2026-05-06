@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { toolDefinitions, handleToolCall } from '@/app/(mcp)/api/mcp/tools';
+import { toolDefinitions, handleToolCall, getAgentToolDefinitions } from '@/app/(mcp)/api/mcp/tools';
 
 type MCPRequest = {
   jsonrpc: '2.0';
@@ -40,8 +40,10 @@ async function handleMethod(
     case 'notifications/initialized':
       return null;
 
-    case 'tools/list':
-      return { tools: toolDefinitions };
+    case 'tools/list': {
+      const agentTools = await getAgentToolDefinitions();
+      return { tools: [...toolDefinitions, ...agentTools] };
+    }
 
     case 'tools/call': {
       const name = params?.name as string | undefined;

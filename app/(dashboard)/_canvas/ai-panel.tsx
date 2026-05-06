@@ -176,7 +176,17 @@ export function AiPanel({ agentId, spaceName, selectedNodeId, focused, onFocusCh
       sessions: a.sessions.filter((s) => s.key !== key),
       sessionCount: Math.max(0, a.sessionCount - (a.sessions.some((s) => s.key === key) ? 1 : 0)),
     })));
-    setActiveSessionKey((current) => (current === key ? `agent:${agentId}:dashboard` : current));
+    setActiveSessionKey((current) => {
+      if (current !== key) {
+        return current;
+      }
+      // Stay on the same agent — extract agent slug from current key
+      const parts = current.split(':');
+      if (parts.length >= 3 && parts[0] === 'agent') {
+        return `agent:${parts[1]}:dashboard`;
+      }
+      return `agent:${agentId}:dashboard`;
+    });
     deleteSession(key).catch((err) => {
       console.error('Failed to delete OpenClaw session', key, err);
     });
@@ -469,28 +479,28 @@ function SessionHeader({ agent, allAgents, externalAgents, sessions, activeSessi
             </button>
           </div>
         ))}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant='ghost' size='icon' className='size-7 shrink-0' aria-label='New session'>
+              <Plus className='size-4' />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align='end'>
+            <DropdownMenuLabel>New session</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {agent.jobs.length === 0 ? (
+              <DropdownMenuItem disabled>No jobs connected</DropdownMenuItem>
+            ) : (
+              agent.jobs.map((job) => (
+                <DropdownMenuItem key={job.nodeId} onSelect={() => onCreateSession(agent, job)}>
+                  <Briefcase className='size-3.5 shrink-0' />
+                  <span className='truncate'>{job.name}</span>
+                </DropdownMenuItem>
+              ))
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant='ghost' size='icon' className='size-7 shrink-0' aria-label='New session'>
-            <Plus className='size-4' />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align='end'>
-          <DropdownMenuLabel>New session</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          {agent.jobs.length === 0 ? (
-            <DropdownMenuItem disabled>No jobs connected</DropdownMenuItem>
-          ) : (
-            agent.jobs.map((job) => (
-              <DropdownMenuItem key={job.nodeId} onSelect={() => onCreateSession(agent, job)}>
-                <Briefcase className='size-3.5 shrink-0' />
-                <span className='truncate'>{job.name}</span>
-              </DropdownMenuItem>
-            ))
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
     </div>
   );
 }

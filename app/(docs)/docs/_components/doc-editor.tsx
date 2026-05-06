@@ -1,6 +1,10 @@
 'use client';
 
 import Link from '@tiptap/extension-link';
+import { Table } from '@tiptap/extension-table';
+import { TableCell } from '@tiptap/extension-table-cell';
+import { TableHeader } from '@tiptap/extension-table-header';
+import { TableRow } from '@tiptap/extension-table-row';
 import { Editor, EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import {
@@ -22,12 +26,13 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { Markdown, type MarkdownStorage } from 'tiptap-markdown';
 
-import { discardEditDraft, publishEditDraft, saveEditDraft } from '@/app/(docs)/docs/actions';
+import { saveDocDirectly, gitPublishDocs, gitDiscardFile } from '@/app/(docs)/docs/actions';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 
 interface DocEditorProps {
+  namespace: string;
   filePath: string;
   initialContent: string;
   onPublish: (content: string) => void;
@@ -54,14 +59,19 @@ function promptForLink(editor: Editor) {
   editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
 }
 
-export function DocEditor({ filePath, initialContent, onPublish, onDiscard }: DocEditorProps) {
+export function DocEditor({ namespace, filePath, initialContent, onPublish, onDiscard }: DocEditorProps) {
   const [busy, setBusy] = useState(false);
+  const [commitMsg, setCommitMsg] = useState('');
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const editor = useEditor({
     extensions: [
       StarterKit,
       Link.configure({ openOnClick: false, autolink: true }),
+      Table.configure({ resizable: false }),
+      TableRow,
+      TableHeader,
+      TableCell,
       Markdown.configure({ html: false, linkify: true, breaks: false, transformPastedText: true }),
     ],
     content: initialContent,
@@ -71,7 +81,7 @@ export function DocEditor({ filePath, initialContent, onPublish, onDiscard }: Do
         clearTimeout(timer.current);
       }
       timer.current = setTimeout(() => {
-        saveEditDraft(filePath, readMarkdown(ed));
+        saveDocDirectly(namespace, filePath, readMarkdown(ed));
       }, SAVE_DEBOUNCE);
     },
   });
@@ -90,10 +100,13 @@ export function DocEditor({ filePath, initialContent, onPublish, onDiscard }: Do
       clearTimeout(timer.current);
     }
     setBusy(true);
-    await saveEditDraft(filePath, readMarkdown(editor));
-    const published = await publishEditDraft(filePath);
+    // Save working tree (already auto-staged by docs.addFile), commit + push
+    await saveDocDirectly(namespace, filePath, readMarkdown(editor));
+    const msg = commitMsg.trim() || `Update ${filePath}`;
+    await gitPublishDocs(namespace, filePath, msg);
+    setCommitMsg('');
     setBusy(false);
-    onPublish(published);
+    onPublish(readMarkdown(editor));
   };
 
   const handleDiscard = async () => {
@@ -101,7 +114,7 @@ export function DocEditor({ filePath, initialContent, onPublish, onDiscard }: Do
       clearTimeout(timer.current);
     }
     setBusy(true);
-    await discardEditDraft(filePath);
+    await gitDiscardFile(namespace, filePath);
     setBusy(false);
     onDiscard();
   };
@@ -193,6 +206,14 @@ export function DocEditor({ filePath, initialContent, onPublish, onDiscard }: Do
           <SquareCode />
         </ToolbarButton>
         <div className="flex-1" />
+        <input
+          type="text"
+          value={commitMsg}
+          onChange={e => setCommitMsg(e.target.value)}
+          placeholder="Commit message..."
+          className="h-7 px-2 text-xs border rounded-md bg-transparent max-w-[200px]"
+          onKeyDown={e => e.stopPropagation()}
+        />
         <Button size="sm" variant="outline" onClick={handleDiscard} disabled={busy}>
           <X /> Discard
         </Button>

@@ -12,6 +12,14 @@
 // the graph and emits `node_data_updated` for in-place client refresh.
 
 import { updateNodeData } from '@/app/(extension-runtime)/_server/node-data';
+import {
+  buildSessionKey,
+  resolveSessionOnGraph,
+  tryParseJsonMessage,
+  wrapMessageWithContext,
+  type NodeLike as SmNodeLike,
+  type EdgeLike as SmEdgeLike,
+} from '@/app/(extension-runtime)/_server/send-message-helpers';
 import { getSpacesRegistry } from '@/app/(space)/server/store';
 import { type StreamChunkPayload } from '@/lib/sse-events';
 import { toastStore } from '@/lib/toast-store';
@@ -149,28 +157,6 @@ async function persistToDownstreamLogs(
   }
 }
 
-interface ParsedMessage {
-  session: string;
-  message: string;
-}
-
-function tryParseJsonMessage(text: string): ParsedMessage | null {
-  try {
-    const parsed = JSON.parse(text);
-    if (
-      parsed &&
-      typeof parsed === 'object' &&
-      typeof parsed.session === 'string' && parsed.session.trim() &&
-      typeof parsed.message === 'string'
-    ) {
-      return { session: parsed.session.trim(), message: parsed.message };
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 async function persistToDownstreamSendMessages(
   spaceId: string | undefined,
   sourceNodeId: string,
@@ -197,36 +183,77 @@ async function persistToDownstreamSendMessages(
       continue;
     }
 
-    // Try to parse input as JSON with { session, message }
-    const parsed = tryParseJsonMessage(text);
-    let sessionKey: string;
-    let message: string;
+    const route = resolveRoute(text, target, nodes, edges);
+    if (!route) {
+      continue;
+    }
 
-    if (parsed) {
-      sessionKey = parsed.session;
-      message = parsed.message;
-    } else {
-      // Fallback: use configured sessionKey + full buffer as message
-      const configuredKey = target.data?.['sessionKey'] as string | undefined;
-      if (!configuredKey?.trim()) {
-        continue;
-      }
-      sessionKey = configuredKey.trim();
-      message = text;
+    let message = route.message;
+    if (!message.trim().startsWith('/')) {
+      message = wrapMessageWithContext(
+        message,
+        spaceId,
+        sourceNodeId,
+        route.ctx.jobContext,
+        route.ctx.instructions,
+      );
     }
 
     try {
       const { gateway } = await import('@/app/(openclaw)/_server/gateway-client');
       await gateway().call('chat.send', {
-        sessionKey,
+        sessionKey: route.sessionKey,
         message,
         idempotencyKey: crypto.randomUUID(),
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[send-message] Failed to send to session ${sessionKey}:`, msg);
+      console.error(`[send-message] Failed to send to session ${route.sessionKey}:`, msg);
     }
   }
+}
+
+interface SendMessageNodeData {
+  defaultAgent?: string;
+  defaultJob?: string;
+}
+
+interface RouteResolution {
+  sessionKey: string;
+  message: string;
+  ctx: { jobContext: string; instructions: string[] };
+}
+
+function resolveRoute(
+  text: string,
+  target: GraphNodeLike,
+  nodes: GraphNodeLike[],
+  edges: GraphEdgeLike[],
+): RouteResolution | null {
+  const smNodes = nodes as unknown as SmNodeLike[];
+  const smEdges = edges as unknown as SmEdgeLike[];
+
+  const parsed = tryParseJsonMessage(text);
+  if (parsed) {
+    const ctx = resolveSessionOnGraph(parsed.session, smNodes, smEdges);
+    if (!ctx) {
+      return null;
+    }
+    return { sessionKey: parsed.session, message: parsed.message, ctx };
+  }
+
+  const data = (target.data ?? {}) as SendMessageNodeData;
+  const a = (data.defaultAgent || '').trim();
+  const j = (data.defaultJob || '').trim();
+  if (!a || !j) {
+    return null;
+  }
+  const sessionKey = buildSessionKey(a, j);
+  const ctx = resolveSessionOnGraph(sessionKey, smNodes, smEdges);
+  if (!ctx) {
+    return null;
+  }
+  return { sessionKey, message: text, ctx };
 }
 
 const g = globalThis as Record<string, unknown>;

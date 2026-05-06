@@ -12,6 +12,9 @@ import path from 'path';
 
 import { ApprovalRejectedError, awaitApproval, getApprovalMeta, withApprovalRequired } from '@/app/(approvals)/_server/with-approval';
 import { appendComment, createComment, readComments } from '@/app/(docs)/docs/_server/comments';
+import { getDocsRoot } from '@/app/(docs)/docs/_server/docs-root';
+import { searchDocsAtRoot } from '@/app/(docs)/docs/_server/search';
+import { getGitFileAtRef } from '@/app/(docs)/docs/actions';
 import {
   compileLocalExtension,
   createLocalExtension,
@@ -20,10 +23,12 @@ import {
   listLocalExtensions,
   updateLocalExtension,
 } from '@/app/(extension-editor)/_actions/local-extensions-actions';
+import { invokeExtensionAction } from '@/app/(extension-runtime)/_server/actions';
 import { getExtensionModule, loadAllManifests } from '@/app/(extension-runtime)/_server/loader';
 import { dispatchNodeAction, listNodeActions } from '@/app/(extension-runtime)/_server/node-actions';
 import type { ExtensionHandle } from '@/app/(extension-runtime)/_types';
 import { recordAudit } from '@/app/(mcp)/api/mcp/audit';
+import { isYoloMode } from '@/app/(mcp)/api/mcp/yolo';
 import {
   createSpace,
   deleteSpace,
@@ -34,6 +39,7 @@ import {
   renameSpace,
   saveSpaceGraph,
 } from '@/app/(space)/server/actions';
+import { getSpacesRegistry } from '@/app/(space)/server/store';
 import type { GraphData } from '@/app/(space)/server/types';
 import { toastStore } from '@/lib/toast-store';
 import { decrypt } from '@/server/crypto';
@@ -435,73 +441,101 @@ export const toolDefinitions = [
 
   // ── Docs ──────────────────────────────────────────────────────────
   {
+    name: 'doc_list_namespaces',
+    description: 'List every Documentation node available as a namespace. Use to discover which `namespace` value to pass to other doc_* tools.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
+  {
     name: 'doc_search',
-    description: 'Search across all markdown docs under the docs root for a pattern. Returns matching files with line snippets.',
+    description: 'Search committed (HEAD) markdown content in a documentation namespace. Returns matching files with line snippets.',
     inputSchema: {
       type: 'object' as const,
       properties: {
+        namespace: { type: 'string', description: 'Documentation namespace (slug). Use doc_list_namespaces to discover.' },
         pattern: { type: 'string', description: 'Regex pattern (case-insensitive).' },
         maxResults: { type: 'number', description: 'Maximum matches to return (default 50).' },
       },
-      required: ['pattern'],
+      required: ['namespace', 'pattern'],
     },
   },
   {
     name: 'doc_read',
-    description: 'Read the full content of a doc by its relative path (e.g. "guides/intro.md"). Paths must end with .md.',
+    description: 'Read the content of a doc by its relative path within a namespace (e.g. "guides/intro.md"). Paths must end with .md. Optional offset/limit slice the result by 1-indexed line.',
     inputSchema: {
       type: 'object' as const,
       properties: {
-        path: { type: 'string', description: 'Relative path from docs root.' },
+        namespace: { type: 'string', description: 'Documentation namespace (slug).' },
+        path: { type: 'string', description: 'Relative path within the namespace.' },
+        offset: { type: 'number', description: '1-indexed line to start from. Default 1.' },
+        limit: { type: 'number', description: 'Number of lines to return. Default: read to end.' },
       },
-      required: ['path'],
+      required: ['namespace', 'path'],
     },
   },
   {
     name: 'doc_edit',
-    description: 'Replace an exact string in a doc. Fails if oldString is not unique unless replaceAll is true. Mirrors the behavior of the regular Edit tool.',
+    description: 'Replace an exact string in a doc within a namespace. Fails if oldString is not unique unless replaceAll is true. Mirrors the behavior of the regular Edit tool.',
     inputSchema: {
       type: 'object' as const,
       properties: {
-        path: { type: 'string', description: 'Relative path from docs root.' },
+        namespace: { type: 'string', description: 'Documentation namespace (slug).' },
+        path: { type: 'string', description: 'Relative path within the namespace.' },
         oldString: { type: 'string', description: 'The exact text to replace.' },
         newString: { type: 'string', description: 'The text to replace with.' },
         replaceAll: { type: 'boolean', description: 'Replace every occurrence (default false).' },
       },
-      required: ['path', 'oldString', 'newString'],
+      required: ['namespace', 'path', 'oldString', 'newString'],
     },
   },
   {
     name: 'doc_write',
-    description: 'Create or overwrite a doc with the provided content. Creates parent directories as needed. Path must end with .md.',
+    description: 'Create or overwrite a doc within a namespace. Creates parent directories as needed. Path must end with .md.',
     inputSchema: {
       type: 'object' as const,
       properties: {
-        path: { type: 'string', description: 'Relative path from docs root.' },
+        namespace: { type: 'string', description: 'Documentation namespace (slug).' },
+        path: { type: 'string', description: 'Relative path within the namespace.' },
         content: { type: 'string', description: 'Full file content (UTF-8).' },
       },
-      required: ['path', 'content'],
+      required: ['namespace', 'path', 'content'],
     },
   },
   {
     name: 'doc_reply',
-    description: 'Post a reply to a comment thread anchored on a doc. Use when responding to a user comment the agent was mentioned in.',
+    description: 'Post a reply to a comment thread anchored on a doc within a namespace. Use when responding to a user comment the agent was mentioned in.',
     inputSchema: {
       type: 'object' as const,
       properties: {
+        namespace: { type: 'string', description: 'Documentation namespace (slug).' },
         docPath: { type: 'string', description: 'Relative path of the doc the comment is anchored to.' },
         commentId: { type: 'string', description: 'The id of the comment being replied to.' },
         message: { type: 'string', description: 'Reply text.' },
         author: { type: 'string', description: 'Author label shown in the thread. Defaults to "agent".' },
       },
-      required: ['docPath', 'commentId', 'message'],
+      required: ['namespace', 'docPath', 'commentId', 'message'],
+    },
+  },
+  {
+    name: 'doc_publish',
+    description: 'Commit and push a single file in a documentation namespace. Other staged changes are not pulled into the commit.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        namespace: { type: 'string', description: 'Documentation namespace (slug).' },
+        path: { type: 'string', description: 'Relative path of the file to commit.' },
+        message: { type: 'string', description: 'Git commit message.' },
+      },
+      required: ['namespace', 'path', 'message'],
     },
   },
 
   // ── Remote File & Exec Ops ──────────────────────────────────────────
   {
     name: 'remote_read',
-    description: 'Read a file from a remote node. The target is a terminal-context output handle in "node-id/handle-id" format (e.g. "localhost_abc/ssh-out").',
+    description: 'Read a file from a remote node. The target is a terminal-context output handle in "node-id/handle-id" format (e.g. "localhost_abc/ssh-out"). Output is line-numbered (cat -n style). Optional offset/limit slice by 1-indexed line.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -510,6 +544,8 @@ export const toolDefinitions = [
           description: 'Terminal-context output handle (format: "node-id/handle-id").',
         },
         path: { type: 'string', description: 'Absolute file path on the remote node.' },
+        offset: { type: 'number', description: '1-indexed line to start from. Default 1.' },
+        limit: { type: 'number', description: 'Number of lines to return. Default: read to end.' },
         ...SPACE_PARAM,
       },
       required: ['target', 'path'],
@@ -606,6 +642,194 @@ export const toolDefinitions = [
     },
   },
 ];
+
+// ── Agent Tool: dynamic graph-defined tools ───────────────────────────
+
+interface AgentToolNodeData {
+  name: string;
+  description: string;
+  inputSchema: string;
+  requireApproval: boolean;
+}
+
+export async function getAgentToolDefinitions() {
+  const defs: { name: string; description: string; inputSchema: Record<string, unknown> }[] = [];
+
+  // Collect all existing static tool names to avoid collisions
+  const staticNames = new Set(toolDefinitions.map((t) => t.name));
+
+  try {
+    const registry = getSpacesRegistry();
+    await registry.ensureLoaded();
+
+    for (const space of registry.list()) {
+      const runtime = registry.getBySlug(space.slug);
+      if (!runtime) {
+        continue;
+      }
+
+      const nodes = runtime.graph.nodes as unknown as GraphNode[];
+      for (const node of nodes) {
+        if (node.type !== 'agent-tool') {
+          continue;
+        }
+
+        const d = (node.data ?? {}) as unknown as AgentToolNodeData;
+        const toolName = d.name?.trim();
+        if (!toolName) {
+          continue;
+        }
+
+        if (staticNames.has(toolName)) {
+          continue;
+        } // static tools win
+        if (defs.some((x) => x.name === toolName)) {
+          continue;
+        } // first space wins
+
+        let inputSchema: Record<string, unknown> = { type: 'object', properties: {} };
+        try {
+          inputSchema = JSON.parse(d.inputSchema || '{}');
+        } catch {
+          // skip invalid JSON schema
+        }
+
+        defs.push({
+          name: toolName,
+          description: d.description || `Agent tool: ${toolName}`,
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              ...(inputSchema.properties as Record<string, unknown> ?? {}),
+            },
+          },
+        });
+      }
+    }
+  } catch {
+    // If spaces can't load, just return empty
+  }
+
+  return defs;
+}
+
+/**
+ * Execute an agent-tool node's connected handler script.
+ * Returns the handler result or throws on error.
+ */
+interface AgentToolExecResult {
+  result: Record<string, unknown>;
+  requiredApproval: boolean;
+}
+
+export async function executeAgentTool(
+  toolName: string,
+  args: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<AgentToolExecResult> {
+  const registry = getSpacesRegistry();
+  await registry.ensureLoaded();
+
+  // Find the agent-tool node across all spaces
+  for (const space of registry.list()) {
+    const runtime = registry.getBySlug(space.slug);
+    if (!runtime) {
+      continue;
+    }
+
+    const nodes = runtime.graph.nodes as unknown as GraphNode[];
+    const edges = runtime.graph.edges as unknown as StoredEdge[];
+
+    const toolNode = nodes.find(
+      (n) => n.type === 'agent-tool' && ((n.data ?? {}) as Record<string, unknown>).name === toolName,
+    );
+    if (!toolNode) {
+      continue;
+    }
+
+    // Check requireApproval
+    const d = (toolNode.data ?? {}) as unknown as AgentToolNodeData;
+    const requiredApproval = d.requireApproval && !isYoloMode();
+    if (requiredApproval) {
+      await awaitApproval({ tool: toolName, args, view: 'default', signal });
+    }
+
+    // Find connected handler via exec-out edge
+    const handlerEdge = edges.find(
+      (e) => e.source === toolNode.id && e.sourceHandle === 'exec-out',
+    );
+    if (!handlerEdge) {
+      return { result: textResult(`Agent tool "${toolName}" has no connected handler script.`), requiredApproval: false };
+    }
+
+    const handlerNode = nodes.find((n) => n.id === handlerEdge.target);
+    if (!handlerNode) {
+      return { result: textResult(`Agent tool "${toolName}": handler node not found.`), requiredApproval: false };
+    }
+
+    const language = (handlerNode.data as Record<string, unknown>)?.language as string | undefined;
+    if (language !== 'python' && language !== 'node') {
+      return { result: textResult(
+        `Agent tool "${toolName}": handler must be Python or Node.js script, got ${language ?? 'none'}.`,
+      ), requiredApproval: false };
+    }
+
+    const resolvedContexts = (handlerNode.data as Record<string, unknown>)?.__resolvedContexts as
+      | Record<string, { value?: Record<string, unknown> }>
+      | undefined;
+    const terminalContext = resolvedContexts?.['ctx-in']?.value ?? { type: 'local' };
+
+    // Build event for the handler
+    const event = { params: args, context: { toolName: toolName } };
+
+    // Resolve env: parse data.env (KEY=value lines) + decrypt data.secrets (key names)
+    const handlerData = (handlerNode.data ?? {}) as Record<string, unknown>;
+    const env: Record<string, string> = {};
+    const envLines = ((handlerData.env as string | undefined) ?? '')
+      .split('\n').map((s) => s.trim()).filter(Boolean);
+    for (const line of envLines) {
+      const eq = line.indexOf('=');
+      if (eq > 0) {
+        env[line.slice(0, eq).trim()] = line.slice(eq + 1);
+      }
+    }
+    const secretNames = ((handlerData.secrets as string | undefined) ?? '')
+      .split('\n').map((s) => s.trim()).filter(Boolean);
+    for (const name of secretNames) {
+      const row = await prisma.secret.findFirst({
+        where: { key: name },
+        orderBy: { updatedAt: 'desc' },
+      });
+      if (!row) {
+        return { result: textResult(`Agent tool "${toolName}" error: secret "${name}" not found in any Secrets Store.`), requiredApproval };
+      }
+      env[name] = decrypt(row.value);
+    }
+
+    // Execute handler
+    const result = await invokeExtensionAction('builtin/core', 'handler.run', [
+      {
+        script: ((handlerNode.data as Record<string, unknown>)?.script as string) ?? '',
+        language,
+        context: terminalContext,
+        event,
+        env,
+      },
+    ]) as { status?: number; headers?: Record<string, string>; body?: unknown; error?: string; logs?: string };
+
+    if (result.error) {
+      return { result: textResult(`Agent tool "${toolName}" error: ${result.error}`), requiredApproval };
+    }
+
+    if (typeof result.body === 'object' && result.body !== null) {
+      return { result: textResult(JSON.stringify(result.body)), requiredApproval };
+    }
+
+    return { result: textResult(String(result.body ?? '')), requiredApproval };
+  }
+
+  throw { code: -32601, message: `Agent tool not found: ${toolName}` };
+}
 
 // ── Tool handler registry ──────────────────────────────────────────────
 
@@ -937,55 +1161,72 @@ async function resolveSecretsForExec(names: string[] | undefined): Promise<strin
   return prefix;
 }
 
-function catN(content: string): string {
+function catN(content: string, startLine = 1): string {
   const lines = content.split('\n');
-  const width = String(lines.length).length;
+  const lastLineNo = startLine + lines.length - 1;
+  const width = String(lastLineNo).length;
   return lines
-    .map((line, i) => String(i + 1).padStart(width) + '\t' + line)
+    .map((line, i) => String(startLine + i).padStart(width) + '\t' + line)
     .join('\n');
+}
+
+function sliceLines(content: string, offset?: number, limit?: number): string {
+  if (offset == null && limit == null) {
+    return content;
+  }
+  const lines = content.split('\n');
+  const start = Math.max(0, (offset ?? 1) - 1);
+  const end = limit != null ? Math.min(lines.length, start + limit) : lines.length;
+  return lines.slice(start, end).join('\n');
 }
 
 // ── Doc helpers ─────────────────────────────────────────────────────────
 
-const DOCS_ROOT = process.env.OPENCROFT_DOCS_ROOT ?? path.join(process.cwd(), 'app', 'docs');
-
-function resolveDocPath(relative: string): string {
+async function resolveDocPath(namespace: string, relative: string): Promise<string> {
   if (!relative.endsWith('.md')) {
     fail(-32602, 'Doc path must end with .md');
   }
-  const resolved = path.resolve(DOCS_ROOT, relative);
-  if (!resolved.startsWith(DOCS_ROOT)) {
+  const root = await getDocsRoot(namespace);
+  if (!root) {
+    fail(-32602, `No documentation repository configured for namespace "${namespace}"`);
+  }
+  const resolved = path.resolve(root, relative);
+  if (!resolved.startsWith(root)) {
     fail(-32602, 'Access denied');
   }
   return resolved;
 }
 
-async function walkMarkdown(dir: string, out: string[]): Promise<void> {
-  const entries = await fs.readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.name.startsWith('.')) {
-      continue;
+async function findDocNodeIdForNamespace(namespace: string): Promise<string | null> {
+  try {
+    const mod = await getExtensionModule('builtin/core');
+    const fn = mod.actions?.['docs.findDocNodeId'];
+    if (!fn) {
+      return null;
     }
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      await walkMarkdown(full, out);
-      continue;
-    }
-    if (entry.isFile() && entry.name.endsWith('.md')) {
-      out.push(full);
-    }
+    return (await fn({ namespace })) as string | null;
+  } catch {
+    return null;
   }
 }
 
-function searchLines(content: string, regex: RegExp): { line: number; text: string }[] {
-  const matches: { line: number; text: string }[] = [];
-  const lines = content.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    if (regex.test(lines[i])) {
-      matches.push({ line: i + 1, text: lines[i] });
+
+/** Best-effort git-add for the matching namespace's Documentation node. */
+async function docsGitAdd(namespace: string, relativePath: string): Promise<void> {
+  try {
+    const nodeId = await findDocNodeIdForNamespace(namespace);
+    if (!nodeId) {
+      return;
     }
+    const mod = await getExtensionModule('builtin/core');
+    const addFn = mod.actions?.['docs.addFile'];
+    if (!addFn) {
+      return;
+    }
+    await addFn({ nodeId, filePath: relativePath });
+  } catch {
+    // best-effort — do not block doc operations if git-add fails
   }
-  return matches;
 }
 
 function buildHandlers(): Record<string, ToolHandler> {
@@ -1498,7 +1739,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       return textResult(`Extension ${extensionId} updated with ${Object.keys(files).length} files.`);
     }),
 
-    // ── delete_extension ────────────────────────────────────────────
+    // ── delete_extension ───────────────────�����────────────────────────
     delete_extension: withApprovalRequired(async (args) => {
       const extensionId = args.extensionId as string | undefined;
       if (!extensionId) {
@@ -1542,52 +1783,60 @@ function buildHandlers(): Record<string, ToolHandler> {
       }
     }),
 
+    // ── doc_list_namespaces ─────────────────────────────────────────
+    doc_list_namespaces: async () => {
+      const mod = await getExtensionModule('builtin/core');
+      const fn = mod.actions?.['docs.listNamespaces'];
+      if (!fn) {
+        return textResult('[]');
+      }
+      const list = await fn() as Array<{ id: string; namespace: string; name: string }>;
+      return textResult(JSON.stringify(list, null, 2));
+    },
+
     // ── doc_search ──────────────────────────────────────────────────
+    // Searches committed (HEAD) content via `git grep` for HEAD-only
+    // correctness and O(repo) speed.
     doc_search: async (args) => {
+      const namespace = args.namespace as string | undefined;
       const pattern = args.pattern as string | undefined;
+      if (!namespace) {
+        fail(-32602, 'Missing required param: namespace');
+      }
       if (!pattern) {
         fail(-32602, 'Missing required param: pattern');
       }
       const maxResults = (args.maxResults as number | undefined) ?? 50;
-      let regex: RegExp;
-      try {
-        regex = new RegExp(pattern, 'i');
-      } catch {
-        fail(-32602, `Invalid regex: ${pattern}`);
+      const root = await getDocsRoot(namespace);
+      if (!root) {
+        return textResult('[]');
       }
-      const files: string[] = [];
-      await walkMarkdown(DOCS_ROOT, files);
-      const results: { path: string; matches: { line: number; text: string }[] }[] = [];
-      let total = 0;
-      for (const file of files) {
-        if (total >= maxResults) {
-          break;
-        }
-        const content = await fs.readFile(file, 'utf-8');
-        const matches = searchLines(content, regex);
-        if (matches.length === 0) {
-          continue;
-        }
-        const slice = matches.slice(0, maxResults - total);
-        total += slice.length;
-        results.push({
-          path: path.relative(DOCS_ROOT, file).replace(/\\/g, '/'),
-          matches: slice,
-        });
-      }
-      return textResult(JSON.stringify(results, null, 2));
+      const enriched = await searchDocsAtRoot(root, pattern, maxResults);
+      return textResult(JSON.stringify(enriched, null, 2));
     },
 
     // ── doc_read ────────────────────────────────────────────────────
+    // Prefers committed (HEAD) content — agents see the published version.
+    // Falls back to working tree only if HEAD has no such file.
     doc_read: async (args) => {
+      const namespace = args.namespace as string | undefined;
       const relative = args.path as string | undefined;
+      if (!namespace) {
+        fail(-32602, 'Missing required param: namespace');
+      }
       if (!relative) {
         fail(-32602, 'Missing required param: path');
       }
-      const resolved = resolveDocPath(relative);
+      const offset = args.offset as number | undefined;
+      const limit = args.limit as number | undefined;
+      const resolved = await resolveDocPath(namespace, relative);
+      const head = await getGitFileAtRef(namespace, relative, 'HEAD');
+      if (head !== null) {
+        return textResult(sliceLines(head, offset, limit));
+      }
       try {
         const content = await fs.readFile(resolved, 'utf-8');
-        return textResult(content);
+        return textResult(sliceLines(content, offset, limit));
       } catch {
         fail(-32602, `File not found: ${relative}`);
       }
@@ -1595,17 +1844,18 @@ function buildHandlers(): Record<string, ToolHandler> {
 
     // ── doc_edit ────────────────────────────────────────────────────
     doc_edit: async (args) => {
+      const namespace = args.namespace as string | undefined;
       const relative = args.path as string | undefined;
       const oldString = args.oldString as string | undefined;
       const newString = args.newString as string | undefined;
-      if (!relative || oldString === undefined || newString === undefined) {
-        fail(-32602, 'Missing required params: path, oldString, newString');
+      if (!namespace || !relative || oldString === undefined || newString === undefined) {
+        fail(-32602, 'Missing required params: namespace, path, oldString, newString');
       }
       if (oldString === newString) {
         fail(-32602, 'oldString and newString must differ');
       }
       const replaceAll = Boolean(args.replaceAll);
-      const resolved = resolveDocPath(relative);
+      const resolved = await resolveDocPath(namespace, relative);
       let content: string;
       try {
         content = await fs.readFile(resolved, 'utf-8');
@@ -1621,37 +1871,62 @@ function buildHandlers(): Record<string, ToolHandler> {
       }
       const next = replaceAll ? content.split(oldString).join(newString) : content.replace(oldString, newString);
       await fs.writeFile(resolved, next, 'utf-8');
-      return textResult(`Replaced ${replaceAll ? occurrences : 1} occurrence(s) in ${relative}.`);
+      await docsGitAdd(namespace, relative);
+      return textResult(`Replaced ${replaceAll ? occurrences : 1} occurrence(s) in ${namespace}/${relative}.`);
     },
 
     // ── doc_write ───────────────────────────────────────────────────
     doc_write: async (args) => {
+      const namespace = args.namespace as string | undefined;
       const relative = args.path as string | undefined;
       const content = args.content as string | undefined;
-      if (!relative || content === undefined) {
-        fail(-32602, 'Missing required params: path, content');
+      if (!namespace || !relative || content === undefined) {
+        fail(-32602, 'Missing required params: namespace, path, content');
       }
-      const resolved = resolveDocPath(relative);
+      const resolved = await resolveDocPath(namespace, relative);
       await fs.mkdir(path.dirname(resolved), { recursive: true });
       await fs.writeFile(resolved, content, 'utf-8');
-      return textResult(`Wrote ${content.length} bytes to ${relative}.`);
+      await docsGitAdd(namespace, relative);
+      return textResult(`Wrote ${content.length} bytes to ${namespace}/${relative}.`);
     },
 
     // ── doc_reply ───────────────────────────────────────────────────
     doc_reply: async (args) => {
+      const namespace = args.namespace as string | undefined;
       const docPath = args.docPath as string | undefined;
       const commentId = args.commentId as string | undefined;
       const message = args.message as string | undefined;
-      if (!docPath || !commentId || !message) {
-        fail(-32602, 'Missing required params: docPath, commentId, message');
+      if (!namespace || !docPath || !commentId || !message) {
+        fail(-32602, 'Missing required params: namespace, docPath, commentId, message');
       }
       const author = (args.author as string | undefined) ?? 'agent';
-      resolveDocPath(docPath);
-      const existing = await readComments(docPath);
+      await resolveDocPath(namespace, docPath);
+      const existing = await readComments(namespace, docPath);
       const reply = createComment(author, message);
-      await appendComment(docPath, reply, commentId);
+      await appendComment(namespace, docPath, reply, commentId);
       toastStore.broadcast({ type: 'doc_comments_updated', docPath });
       return textResult(JSON.stringify({ replyId: reply.id, parentId: commentId, threads: existing.length }, null, 2));
+    },
+
+    // ── doc_publish ─────────────────────────────────────────────────
+    doc_publish: async (args) => {
+      const namespace = args.namespace as string | undefined;
+      const filePath = args.path as string | undefined;
+      const message = args.message as string | undefined;
+      if (!namespace || !filePath || !message) {
+        fail(-32602, 'Missing required params: namespace, path, message');
+      }
+      const nodeId = await findDocNodeIdForNamespace(namespace);
+      if (!nodeId) {
+        fail(-32602, `No Documentation node found for namespace "${namespace}".`);
+      }
+      const mod = await getExtensionModule('builtin/core');
+      const publishFn = mod.actions?.['docs.publish'];
+      if (!publishFn) {
+        fail(-32602, 'docs.publish action not found in builtin/core extension.');
+      }
+      const result = await publishFn({ nodeId, filePath, message });
+      return textResult(JSON.stringify({ nodeId, namespace, path: filePath, ...result as object }, null, 2));
     },
 
     // ── read (remote) ────────────────────────────────────────────────
@@ -1660,9 +1935,12 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!filePath) {
         fail(-32602, 'Missing required param: path');
       }
+      const offset = args.offset as number | undefined;
+      const limit = args.limit as number | undefined;
       const { ctx } = await resolveTerminalContext(args);
       const content = await remoteExec(ctx, `cat ${shellQuote(filePath)}`);
-      return textResult(catN(content));
+      const sliced = sliceLines(content, offset, limit);
+      return textResult(catN(sliced, offset ?? 1));
     },
 
     // ── write (remote) ───────────────────────────────────────────────
@@ -1763,14 +2041,24 @@ export async function handleToolCall(
   args: Record<string, unknown>,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
+  const start = Date.now();
   const handler = handlers[name];
   if (!handler) {
-    throw { code: -32601, message: `Unknown tool: ${name}` };
+    // Fall back to graph-defined agent tools
+    const execResult = await executeAgentTool(name, args, signal);
+    await recordAudit({
+      tool: name,
+      args,
+      result: execResult.result as Record<string, unknown>,
+      status: execResult.requiredApproval ? 'approved' : 'auto-approved',
+      durationMs: Date.now() - start,
+    });
+    return execResult.result as Record<string, unknown>;
   }
   const meta = getApprovalMeta(handler);
-  const start = Date.now();
+  const yolo = isYoloMode();
   try {
-    if (meta) {
+    if (meta && !yolo) {
       await awaitApproval({ tool: name, args, view: meta.view, signal });
     }
     const result = await handler(args);
@@ -1778,7 +2066,7 @@ export async function handleToolCall(
       tool: name,
       args,
       result,
-      status: meta ? 'approved' : 'auto-approved',
+      status: yolo && meta ? 'auto-approved' : (meta ? 'approved' : 'auto-approved'),
       durationMs: Date.now() - start,
     });
     return result;
