@@ -1193,13 +1193,26 @@ async function runGitGrep(root: string, pattern: string): Promise<string> {
   }
 }
 
-interface DocSearchResult {
-  path: string;
-  matches: { line: number; text: string }[];
+interface DocSearchMatch {
+  line: number;
+  text: string;
+  heading: string | null;
 }
 
-function parseGitGrep(stdout: string, maxResults: number): DocSearchResult[] {
-  const byFile = new Map<string, { line: number; text: string }[]>();
+interface DocSearchResult {
+  path: string;
+  title: string | null;
+  matches: DocSearchMatch[];
+}
+
+interface RawMatch {
+  line: number;
+  text: string;
+}
+
+function parseGitGrep(stdout: string, maxResults: number): Map<string, RawMatch[]> {
+  const byFile = new Map<string, RawMatch[]>();
+  let total = 0;
   for (const line of stdout.split('\n')) {
     if (!line) {
       continue;
@@ -1209,6 +1222,9 @@ function parseGitGrep(stdout: string, maxResults: number): DocSearchResult[] {
     if (!m) {
       continue;
     }
+    if (total >= maxResults) {
+      break;
+    }
     const file = m[1];
     let arr = byFile.get(file);
     if (!arr) {
@@ -1216,16 +1232,63 @@ function parseGitGrep(stdout: string, maxResults: number): DocSearchResult[] {
       byFile.set(file, arr);
     }
     arr.push({ line: Number(m[2]), text: m[3] });
+    total += 1;
   }
-  const out: DocSearchResult[] = [];
-  let total = 0;
-  for (const [file, matches] of byFile) {
-    if (total >= maxResults) {
-      break;
+  return byFile;
+}
+
+async function runGitShow(root: string, filePath: string): Promise<string> {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const exec = promisify(execFile);
+  try {
+    const r = await exec(
+      'git',
+      ['-c', 'safe.directory=*', '-C', root, 'show', `HEAD:${filePath}`],
+      { maxBuffer: 10 * 1024 * 1024 },
+    );
+    return r.stdout;
+  } catch {
+    return '';
+  }
+}
+
+const HEADING_RE = /^(#{1,6})\s+(.+?)\s*$/;
+
+function extractTitle(lines: string[]): string | null {
+  for (const line of lines) {
+    const m = line.match(/^#\s+(.+?)\s*$/);
+    if (m) {
+      return m[1];
     }
-    const slice = matches.slice(0, maxResults - total);
-    total += slice.length;
-    out.push({ path: file, matches: slice });
+  }
+  return null;
+}
+
+function nearestHeading(lines: string[], lineNo: number): string | null {
+  // Walk backward from `lineNo - 1` (0-indexed) — skip the matched line itself
+  // unless it's the heading.
+  for (let i = lineNo - 1; i >= 0; i--) {
+    const m = lines[i]?.match(HEADING_RE);
+    if (m) {
+      return m[2];
+    }
+  }
+  return null;
+}
+
+async function enrichResults(root: string, byFile: Map<string, RawMatch[]>): Promise<DocSearchResult[]> {
+  const out: DocSearchResult[] = [];
+  for (const [file, raw] of byFile) {
+    const content = await runGitShow(root, file);
+    const lines = content.split('\n');
+    const title = extractTitle(lines);
+    const matches: DocSearchMatch[] = raw.map(r => ({
+      line: r.line,
+      text: r.text,
+      heading: nearestHeading(lines, r.line),
+    }));
+    out.push({ path: file, title, matches });
   }
   return out;
 }
@@ -1827,7 +1890,9 @@ function buildHandlers(): Record<string, ToolHandler> {
         return textResult('[]');
       }
       const stdout = await runGitGrep(root, pattern);
-      return textResult(JSON.stringify(parseGitGrep(stdout, maxResults), null, 2));
+      const byFile = parseGitGrep(stdout, maxResults);
+      const enriched = await enrichResults(root, byFile);
+      return textResult(JSON.stringify(enriched, null, 2));
     },
 
     // ── doc_read ────────────────────────────────────────────────────
