@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { toolDefinitions, handleToolCall, getAgentToolDefinitions, executeAgentTool } from '@/app/(mcp)/api/mcp/tools';
+import { toolDefinitions, handleToolCall, getAgentToolDefinitions } from '@/app/(mcp)/api/mcp/tools';
 
 type MCPRequest = {
   jsonrpc: '2.0';

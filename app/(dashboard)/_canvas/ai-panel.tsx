@@ -177,7 +177,9 @@ export function AiPanel({ agentId, spaceName, selectedNodeId, focused, onFocusCh
       sessionCount: Math.max(0, a.sessionCount - (a.sessions.some((s) => s.key === key) ? 1 : 0)),
     })));
     setActiveSessionKey((current) => {
-      if (current !== key) return current;
+      if (current !== key) {
+        return current;
+      }
       // Stay on the same agent — extract agent slug from current key
       const parts = current.split(':');
       if (parts.length >= 3 && parts[0] === 'agent') {

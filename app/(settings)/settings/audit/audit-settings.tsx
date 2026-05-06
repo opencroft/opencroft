@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState, useTransition } from 'react';
 import { ShieldAlert } from 'lucide-react';
+import { useEffect, useState, useTransition } from 'react';
 
 import type { AuditStatus } from '@/app/(mcp)/api/mcp/audit';
 import {
