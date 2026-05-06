@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 
 interface DocCommentsOverlayProps {
+  namespace: string;
   docPath: string;
   /** Changes whenever markdown content re-renders — triggers anchor re-injection. */
   renderKey: string;
@@ -141,7 +142,7 @@ function wrapTextRange(container: HTMLElement, startOffset: number, length: numb
   return null;
 }
 
-export function DocCommentsOverlay({ docPath, renderKey }: DocCommentsOverlayProps) {
+export function DocCommentsOverlay({ namespace, docPath, renderKey }: DocCommentsOverlayProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [comments, setComments] = useState<Comment[] | null>(null);
   const [selection, setSelection] = useState<SelectionInfo | null>(null);
@@ -157,9 +158,9 @@ export function DocCommentsOverlay({ docPath, renderKey }: DocCommentsOverlayPro
   const version = docCommentsVersion.get(docPath) ?? 0;
 
   const reload = useCallback(async () => {
-    const next = await listDocComments(docPath);
+    const next = await listDocComments(namespace, docPath);
     setComments(next);
-  }, [docPath]);
+  }, [namespace, docPath]);
 
   useEffect(() => {
     reload();
@@ -307,7 +308,7 @@ export function DocCommentsOverlay({ docPath, renderKey }: DocCommentsOverlayPro
       ...(composerAnchor.prefix ? { prefix: composerAnchor.prefix } : {}),
       ...(composerAnchor.suffix ? { suffix: composerAnchor.suffix } : {}),
     };
-    await postDocComment(docPath, message.trim(), undefined, anchor);
+    await postDocComment(namespace, docPath, message.trim(), undefined, anchor);
     setMessage('');
     setComposerAnchor(null);
     setBusy(false);
@@ -320,7 +321,7 @@ export function DocCommentsOverlay({ docPath, renderKey }: DocCommentsOverlayPro
       return;
     }
     setBusy(true);
-    await postDocComment(docPath, replyMessage.trim(), parentId);
+    await postDocComment(namespace, docPath, replyMessage.trim(), parentId);
     setReplyMessage('');
     setBusy(false);
     await reload();

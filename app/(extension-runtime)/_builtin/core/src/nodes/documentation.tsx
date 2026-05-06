@@ -20,6 +20,7 @@ const { useCallback, useEffect, useState } = React;
 // ─── Types ──────────────────────────────────────────────────────────────
 
 export interface DocumentationData {
+  name: string;
   repoUrl: string;
   branch: string;
   secretId: string | null;
@@ -68,15 +69,16 @@ export function DocumentationNode({
     status === 'error' ? 'bg-red-500' :
     'bg-muted-foreground';
 
-  const subtitle = data.repoUrl
+  const repoLabel = data.repoUrl
     ? data.repoUrl.replace(/\.git$/, '').split('/').slice(-2).join('/')
     : 'no repository';
+  const title = (data.name ?? '').trim() || 'Documentation';
 
   return (
     <NodeFrame
       icon={icons.BookOpen}
-      title='Documentation'
-      subtitle={subtitle}
+      title={title}
+      subtitle={repoLabel}
       status={status === 'cloned' ? 'success' : status === 'error' ? 'warning' : 'neutral'}
       selected={selected ?? false}
     >
@@ -161,6 +163,17 @@ export function DocumentationDetailsTab({
   return (
     <ScrollArea className='h-full'>
       <div className='flex flex-col gap-3 p-1'>
+        <div className='flex flex-col gap-1'>
+          <Label>Name</Label>
+          <Input
+            value={data.name ?? ''}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ name: e.target.value })}
+            placeholder='opencroft-docs'
+          />
+          <p className='text-[10px] text-muted-foreground'>
+            Used as the cache folder name and shown in the sidebar.
+          </p>
+        </div>
         <div className='flex flex-col gap-1'>
           <Label>Repository URL</Label>
           <Input

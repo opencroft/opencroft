@@ -3,7 +3,8 @@ import path from 'path';
 
 import { NextResponse } from 'next/server';
 
-import { getDocsRootSync } from '@/app/(docs)/docs/_server/docs-root';
+import { getDocsRoot } from '@/app/(docs)/docs/_server/docs-root';
+import { getGitFileAtRef } from '@/app/(docs)/docs/actions';
 
 interface DocEntry {
   name: string;
@@ -12,14 +13,12 @@ interface DocEntry {
   children?: DocEntry[];
 }
 
-function isPathSafe(filePath: string): boolean {
-  const root = getDocsRootSync();
+function isPathSafe(root: string, filePath: string): boolean {
   const resolved = path.resolve(root, filePath);
   return resolved.startsWith(root);
 }
 
-async function readDirRecursive(dirPath: string): Promise<DocEntry[]> {
-  const root = getDocsRootSync();
+async function readDirRecursive(root: string, dirPath: string): Promise<DocEntry[]> {
   const resolved = path.resolve(root, dirPath);
   try {
     const entries = await fs.readdir(resolved, { withFileTypes: true });
@@ -40,7 +39,7 @@ async function readDirRecursive(dirPath: string): Promise<DocEntry[]> {
         if (entry.name.startsWith('.')) {
           continue;
         }
-        const children = await readDirRecursive(relativePath);
+        const children = await readDirRecursive(root, relativePath);
         if (children.some(c => c.type === 'file' || (c.type === 'directory' && c.children && c.children.length > 0))) {
           results.push({ name: entry.name, path: relativePath, type: 'directory', children });
         }
@@ -57,11 +56,21 @@ async function readDirRecursive(dirPath: string): Promise<DocEntry[]> {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const filePath = searchParams.get('file');
-  const root = getDocsRootSync();
+  const namespace = searchParams.get('namespace') ?? undefined;
+  const root = await getDocsRoot(namespace);
+  if (!root) {
+    return NextResponse.json({ error: 'No documentation repository configured' }, { status: 404 });
+  }
 
   if (filePath) {
-    if (!isPathSafe(filePath) || !filePath.endsWith('.md')) {
+    if (!isPathSafe(root, filePath) || !filePath.endsWith('.md')) {
       return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+    }
+    if (namespace) {
+      const headContent = await getGitFileAtRef(namespace, filePath, 'HEAD');
+      if (headContent !== null) {
+        return NextResponse.json({ content: headContent, name: path.basename(filePath) });
+      }
     }
     try {
       const content = await fs.readFile(path.resolve(root, filePath), 'utf-8');
@@ -71,6 +80,6 @@ export async function GET(request: Request) {
     }
   }
 
-  const tree = await readDirRecursive('');
+  const tree = await readDirRecursive(root, '');
   return NextResponse.json(tree);
 }

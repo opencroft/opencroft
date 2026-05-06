@@ -590,7 +590,7 @@ export default defineExtension({
       icon: 'BookOpen',
       accent: 'oklch(0.7 0.17 180)',
       handles: [],
-      defaultData: { repoUrl: '', branch: 'main', secretId: null },
+      defaultData: { name: '', repoUrl: '', branch: 'main', secretId: null },
       component: DocumentationNode as unknown as never,
       inspector: DocumentationDetailsTab as unknown as never,
       inspectorTabs: [

@@ -1,13 +1,14 @@
 'use client';
 
-import { BookOpen, ChevronDown, FilePlus, GitCommit, Loader2, Menu, Pencil, Trash2, X, FileText, History, RefreshCw, ArrowLeft } from 'lucide-react';
+import { ChevronDown, Loader2, Menu, Pencil, Plus, Trash2, X, FileText, History, ArrowLeft } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { DocCommentsOverlay } from '@/app/(docs)/docs/_components/doc-comments';
 import { DocEditor } from '@/app/(docs)/docs/_components/doc-editor';
-import { createDoc, deleteDoc, enterEditMode, getGitDocsStatus, getGitFileLog, getGitFileAtRef, getGitChangedFiles } from '@/app/(docs)/docs/actions';
+import { createDoc, deleteDoc, getGitFileLog, getGitFileAtRef, getGitChangedFiles, readDocWorking } from '@/app/(docs)/docs/actions';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,7 +20,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
   DialogContent,
@@ -292,7 +292,28 @@ function TocList({ items, onActiveChange }: { items: TocItem[]; onActiveChange: 
 
 // ─── Markdown Content ───────────────────────────────────────────────────────
 
-function MarkdownContent({ content, onRendered }: { content: string; onRendered: (html: string) => void }) {
+function resolveRelativeDoc(currentPath: string | null, href: string): string {
+  const base = currentPath ? currentPath.split('/').slice(0, -1) : [];
+  const out = [...base];
+  for (const s of href.split('/')) {
+    if (!s || s === '.') {
+      continue;
+    }
+    if (s === '..') {
+      out.pop();
+      continue;
+    }
+    out.push(s);
+  }
+  return out.join('/');
+}
+
+function MarkdownContent({ content, currentPath, onNavigate, onRendered }: {
+  content: string;
+  currentPath: string | null;
+  onNavigate: (p: string) => void;
+  onRendered: (html: string) => void;
+}) {
   const ref = useCallback(
     (n: HTMLDivElement | null) => {
       if (n) {
@@ -308,6 +329,35 @@ function MarkdownContent({ content, onRendered }: { content: string; onRendered:
         components={{
           h2: ({ children, ...p }) => <h2 id={slugify(children)} {...p}>{children}</h2>,
           h3: ({ children, ...p }) => <h3 id={slugify(children)} {...p}>{children}</h3>,
+          a: ({ href, children, ...rest }) => {
+            if (!href) {
+              return <a {...rest}>{children}</a>;
+            }
+            if (/^(mailto:|#)/i.test(href)) {
+              return <a href={href} {...rest}>{children}</a>;
+            }
+            if (/^https?:/i.test(href)) {
+              return <a href={href} target='_blank' rel='noopener noreferrer' {...rest}>{children}</a>;
+            }
+            const [pathPart, hashPart] = href.split('#');
+            if (!pathPart.endsWith('.md')) {
+              return <a href={href} {...rest}>{children}</a>;
+            }
+            const resolved = resolveRelativeDoc(currentPath, pathPart);
+            const url = `/docs?file=${encodeURIComponent(resolved)}${hashPart ? `#${hashPart}` : ''}`;
+            return (
+              <a
+                href={url}
+                onClick={(e) => {
+                  e.preventDefault();
+                  onNavigate(resolved);
+                }}
+                {...rest}
+              >
+                {children}
+              </a>
+            );
+          },
         }}
       >
         {content}
@@ -319,13 +369,27 @@ function MarkdownContent({ content, onRendered }: { content: string; onRendered:
 // ─── Main Page ──────────────────────────────────────────────────────────────
 
 export default function DocsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const namespace = searchParams?.get('namespace') ?? null;
+  const selectedPath = searchParams?.get('file') ?? null;
+  const setSelectedPath = useCallback((p: string | null) => {
+    const params = new URLSearchParams();
+    if (namespace) {
+      params.set('namespace', namespace);
+    }
+    if (p) {
+      params.set('file', p);
+    }
+    const qs = params.toString();
+    router.push(qs ? `/docs?${qs}` : '/docs', { scroll: false });
+  }, [router, namespace]);
+
   const [tree, setTree] = useState<DocEntry[] | null>(null);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [docContent, setDocContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [initError, setInitError] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [renderedHtml, setRenderedHtml] = useState('');
   const [editing, setEditing] = useState(false);
@@ -335,10 +399,6 @@ export default function DocsPage() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
-  // ── Git-aware state ────────────────────────────────────────────────────────
-  const [gitMode, setGitMode] = useState(false);
-  const [gitStatus, setGitStatus] = useState<'idle' | 'cloned' | 'error'>('idle');
-  const [gitChangedCount, setGitChangedCount] = useState(0);
   const [showUnpublishedOnly, setShowUnpublishedOnly] = useState(false);
   const [gitChangedFiles, setGitChangedFiles] = useState<Set<string>>(new Set());
   const [rightTab, setRightTab] = useState<'toc' | 'history'>('toc');
@@ -353,30 +413,33 @@ export default function DocsPage() {
   const scrollingFromClickRef = useRef(false);
 
   // ── Fetch file tree ───────────────────────────────────────────────────────
+  const buildApiUrl = useCallback((extra?: Record<string, string>) => {
+    const params = new URLSearchParams();
+    if (namespace) {
+      params.set('namespace', namespace);
+    }
+    if (extra) {
+      for (const [k, v] of Object.entries(extra)) {
+        params.set(k, v);
+      }
+    }
+    const qs = params.toString();
+    return qs ? `${API}?${qs}` : API;
+  }, [namespace]);
+
   const refreshTree = useCallback(async () => {
-    const r = await fetch(API);
+    const r = await fetch(buildApiUrl());
     if (!r.ok) {
       throw new Error();
     }
     const next = await r.json() as DocEntry[];
     setTree(next);
     return next;
-  }, []);
+  }, [buildApiUrl]);
 
   useEffect(() => {
-    refreshTree().catch(() => setInitError(true));
+    refreshTree().catch(() => {});
   }, [refreshTree]);
-
-  // ── Check git mode on mount ──────────────────────────────────────────────
-  useEffect(() => {
-    getGitDocsStatus().then(status => {
-      if (status.available && status.status === 'cloned') {
-        setGitMode(true);
-        setGitStatus(status.status);
-        setGitChangedCount(status.changedFiles ?? 0);
-      }
-    });
-  }, []);
 
   // ── Auto-expand parent directories when selecting a file ──────────────────
   useEffect(() => {
@@ -401,7 +464,7 @@ export default function DocsPage() {
         setSelectedPath(f);
       }
     }
-  }, [tree, selectedPath]);
+  }, [tree, selectedPath, setSelectedPath]);
 
   // ── Load document content ─────────────────────────────────────────────────
   const loadDoc = useCallback(async (p: string) => {
@@ -414,7 +477,7 @@ export default function DocsPage() {
     setFileLog([]);
     lastTocActiveRef.current = null;
     try {
-      const r = await fetch(`${API}?file=${encodeURIComponent(p)}`);
+      const r = await fetch(buildApiUrl({ file: p }));
       if (!r.ok) {
         throw new Error();
       }
@@ -423,11 +486,10 @@ export default function DocsPage() {
       setError('Failed to load document');
     }
     setLoading(false);
-    // Also load git log if in git mode
-    if (gitMode) {
-      getGitFileLog(p).then(log => setFileLog(log)).catch(() => {});
+    if (namespace) {
+      getGitFileLog(namespace, p).then(log => setFileLog(log)).catch(() => {});
     }
-  }, [gitMode]);
+  }, [buildApiUrl, namespace]);
 
   useEffect(() => {
     if (selectedPath) {
@@ -438,19 +500,15 @@ export default function DocsPage() {
   }, [selectedPath, loadDoc]);
 
   const handleStartEdit = useCallback(async () => {
-    if (!selectedPath) {
+    if (!selectedPath || !namespace) {
       return;
     }
-    if (gitMode) {
-      // In git mode, use current doc content directly (no .edit copy)
-      setEditContent(docContent ?? '');
-      setEditing(true);
-    } else {
-      const draft = await enterEditMode(selectedPath);
-      setEditContent(draft);
-      setEditing(true);
-    }
-  }, [selectedPath, gitMode, docContent]);
+    // Display shows HEAD; edit mode loads the working-tree version so
+    // in-progress (uncommitted) edits aren't lost when entering edit.
+    const working = await readDocWorking(namespace, selectedPath).catch(() => docContent ?? '');
+    setEditContent(working);
+    setEditing(true);
+  }, [selectedPath, docContent, namespace]);
 
   const handlePublish = useCallback((published: string) => {
     setDocContent(published);
@@ -465,14 +523,16 @@ export default function DocsPage() {
   }, []);
 
   const handleViewRef = useCallback(async (ref: string) => {
-    if (!selectedPath) return;
-    const content = await getGitFileAtRef(selectedPath, ref);
+    if (!selectedPath || !namespace) {
+      return;
+    }
+    const content = await getGitFileAtRef(namespace, selectedPath, ref);
     if (content !== null) {
       setViewingRef(ref);
       setRefContent(content);
       setRightTab('toc');
     }
-  }, [selectedPath]);
+  }, [selectedPath, namespace]);
 
   const handleBackToCurrent = useCallback(() => {
     setViewingRef(null);
@@ -484,33 +544,40 @@ export default function DocsPage() {
       setShowUnpublishedOnly(false);
       setGitChangedFiles(new Set());
     } else {
-      const files = await getGitChangedFiles();
+      if (!namespace) {
+        return;
+      }
+      const files = await getGitChangedFiles(namespace);
       setGitChangedFiles(new Set(files));
       setShowUnpublishedOnly(true);
     }
-  }, [showUnpublishedOnly]);
+  }, [showUnpublishedOnly, namespace]);
 
   const handleCreate = useCallback(async () => {
     setCreateError(null);
+    if (!namespace) {
+      setCreateError('Select a documentation namespace first');
+      return;
+    }
     try {
-      const created = await createDoc(createPath);
+      const created = await createDoc(namespace, createPath);
       await refreshTree();
       setCreateOpen(false);
       setCreatePath('');
       setSelectedPath(created);
-      const draft = await enterEditMode(created);
+      const draft = await readDocWorking(namespace, created);
       setEditContent(draft);
       setEditing(true);
     } catch (e) {
       setCreateError(e instanceof Error ? e.message : 'Failed to create');
     }
-  }, [createPath, refreshTree]);
+  }, [createPath, refreshTree, setSelectedPath, namespace]);
 
   const handleDeleteConfirm = useCallback(async () => {
-    if (!deleteTarget) {
+    if (!deleteTarget || !namespace) {
       return;
     }
-    await deleteDoc(deleteTarget);
+    await deleteDoc(namespace, deleteTarget);
     const next = await refreshTree();
     if (selectedPath === deleteTarget) {
       setSelectedPath(findFirstFile(next));
@@ -519,7 +586,7 @@ export default function DocsPage() {
       setDocContent(null);
     }
     setDeleteTarget(null);
-  }, [deleteTarget, selectedPath, refreshTree]);
+  }, [deleteTarget, selectedPath, refreshTree, setSelectedPath, namespace]);
 
   // ── DOM-only TOC highlight (no React re-render) ───────────────────────────
   const updateTocHighlight = useCallback((newActive: string | null) => {
@@ -709,100 +776,11 @@ export default function DocsPage() {
     });
   }, []);
 
-  // ── Error & loading states ────────────────────────────────────────────────
-
-  if (initError) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
-        <BookOpen className="size-12" />
-        <p className="text-lg font-medium">Docs not available</p>
-        <p className="text-sm">Mount the docs directory to /app/docs in the container.</p>
-      </div>
-    );
-  }
-
-  if (tree === null) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <Loader2 className="size-6 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (tree.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
-        <BookOpen className="size-12" />
-        <p className="text-lg font-medium">No documents found</p>
-        <p className="text-sm">Mount the docs directory to /app/docs in the container.</p>
-      </div>
-    );
-  }
-
-  // ── Content renderer ──────────────────────────────────────────────────────
-  const contentEl = (
-    <>
-      {loading && (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="size-5 animate-spin text-muted-foreground" />
-        </div>
-      )}
-      {error && (
-        <div className="flex flex-col items-center justify-center py-20 gap-2 text-destructive">
-          <p className="font-medium">Error</p>
-          <p className="text-sm text-muted-foreground">{error}</p>
-        </div>
-      )}
-      {editing && editContent !== null && selectedPath && (
-        <DocEditor
-          filePath={selectedPath}
-          initialContent={editContent}
-          onPublish={handlePublish}
-          onDiscard={handleDiscard}
-          gitMode={gitMode}
-        />
-      )}
-      {selectedPath && docContent !== null && !loading && !editing && !error && (
-        <>
-          <div className="flex items-center justify-end gap-2 mb-2">
-            {viewingRef && (
-              <Button size="sm" variant="outline" onClick={handleBackToCurrent}>
-                <ArrowLeft /> Back to current
-              </Button>
-            )}
-            {gitMode && !editing && !viewingRef && (
-              <Badge variant="secondary" className="text-[10px]">
-                Git
-              </Badge>
-            )}
-            {!editing && !viewingRef && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={handleStartEdit}
-              >
-                <Pencil /> Edit
-              </Button>
-            )}
-          </div>
-          <div className="relative">
-            <MarkdownContent content={viewingRef ? (refContent ?? 'Loading...') : docContent} onRendered={setRenderedHtml} />
-            {!viewingRef && <DocCommentsOverlay docPath={selectedPath} renderKey={renderedHtml} />}
-          </div>
-        </>
-      )}
-      {!selectedPath && !loading && !error && (
-        <div className="flex flex-col items-center justify-center py-20 gap-2 text-muted-foreground">
-          <FileText className="size-10" />
-          <p className="text-sm">Select a file from the sidebar</p>
-        </div>
-      )}
-    </>
-  );
-
-  // ── Filter tree for unpublished changes ─────────────────────────────────
+  // ── Filter tree for unpublished changes (must run before early returns) ──
   const filteredTree = useMemo(() => {
-    if (!showUnpublishedOnly || gitChangedFiles.size === 0) return tree;
+    if (!tree || !showUnpublishedOnly || gitChangedFiles.size === 0) {
+      return tree ?? [];
+    }
     const filterEntries = (entries: DocEntry[]): DocEntry[] => {
       const result: DocEntry[] = [];
       for (const entry of entries) {
@@ -819,14 +797,75 @@ export default function DocsPage() {
       }
       return result;
     };
-    return filterEntries(tree ?? []);
+    return filterEntries(tree);
   }, [tree, showUnpublishedOnly, gitChangedFiles]);
+
+  // ── Content renderer ──────────────────────────────────────────────────────
+  const contentEl = (
+    <>
+      {loading && (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="size-5 animate-spin text-muted-foreground" />
+        </div>
+      )}
+      {error && (
+        <div className="flex flex-col items-center justify-center py-20 gap-2 text-destructive">
+          <p className="font-medium">Error</p>
+          <p className="text-sm text-muted-foreground">{error}</p>
+        </div>
+      )}
+      {editing && editContent !== null && selectedPath && namespace && (
+        <DocEditor
+          namespace={namespace}
+          filePath={selectedPath}
+          initialContent={editContent}
+          onPublish={handlePublish}
+          onDiscard={handleDiscard}
+        />
+      )}
+      {selectedPath && docContent !== null && !loading && !editing && !error && (
+        <>
+          <div className="flex items-center justify-end gap-2 mb-2">
+            {viewingRef && (
+              <Button size="sm" variant="outline" onClick={handleBackToCurrent}>
+                <ArrowLeft /> Back to current
+              </Button>
+            )}
+            {!editing && !viewingRef && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleStartEdit}
+              >
+                <Pencil /> Edit
+              </Button>
+            )}
+          </div>
+          <div className="relative">
+            <MarkdownContent
+              content={viewingRef ? (refContent ?? 'Loading...') : docContent}
+              currentPath={selectedPath}
+              onNavigate={setSelectedPath}
+              onRendered={setRenderedHtml}
+            />
+            {!viewingRef && namespace && <DocCommentsOverlay namespace={namespace} docPath={selectedPath} renderKey={renderedHtml} />}
+          </div>
+        </>
+      )}
+      {!selectedPath && !loading && !error && (
+        <div className="flex flex-col items-center justify-center py-20 gap-2 text-muted-foreground">
+          <FileText className="size-10" />
+          <p className="text-sm">Select a file from the sidebar</p>
+        </div>
+      )}
+    </>
+  );
 
   // ── Sidebar nav element (shared between desktop & mobile) ─────────────────
   const sidebarNav = (
     <SidebarNav
       entries={filteredTree}
-      changedFiles={gitMode ? gitChangedFiles : undefined}
+      changedFiles={gitChangedFiles}
       selectedPath={selectedPath}
       onSelect={setSelectedPath}
       expandedPaths={expandedPaths}
@@ -838,7 +877,7 @@ export default function DocsPage() {
   const sidebarHeader = (
     <>
       <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Documentation</span>
-      {gitMode && (
+      <div className="ml-auto flex items-center gap-1">
         <Button
           size="icon-xs"
           variant={showUnpublishedOnly ? 'default' : 'ghost'}
@@ -847,21 +886,20 @@ export default function DocsPage() {
           aria-label="Toggle unpublished changes"
           className={showUnpublishedOnly ? '' : 'text-muted-foreground'}
         >
-          <GitCommit className="size-3" />
+          <Pencil className="size-3" />
         </Button>
-      )}
-      <Button
-        size="icon-xs"
-        variant="ghost"
-        onClick={() => {
-          setCreateError(null); setCreatePath(''); setCreateOpen(true);
-        }}
-        title="New document"
-        aria-label="New document"
-        className="ml-auto"
-      >
-        <FilePlus />
-      </Button>
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          onClick={() => {
+            setCreateError(null); setCreatePath(''); setCreateOpen(true);
+          }}
+          title="New document"
+          aria-label="New document"
+        >
+          <Plus />
+        </Button>
+      </div>
     </>
   );
 
@@ -911,20 +949,16 @@ export default function DocsPage() {
                         >
                           On this page
                         </button>
-                        {gitMode && (
-                          <>
-                            <span className="text-muted-foreground/30">|</span>
-                            <button
-                              onClick={() => setRightTab('history')}
-                              className={cn(
-                                'text-[10px] font-semibold uppercase tracking-wider transition-colors flex items-center gap-1',
-                                rightTab === 'history' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
-                              )}
-                            >
-                              <History className="size-3" /> History
-                            </button>
-                          </>
-                        )}
+                        <span className="text-muted-foreground/30">|</span>
+                        <button
+                          onClick={() => setRightTab('history')}
+                          className={cn(
+                            'text-[10px] font-semibold uppercase tracking-wider transition-colors flex items-center gap-1',
+                            rightTab === 'history' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+                          )}
+                        >
+                          <History className="size-3" /> History
+                        </button>
                       </div>
                     </ScrollHeader>
                     <div className="flex-1 min-h-0">
@@ -1062,7 +1096,7 @@ export default function DocsPage() {
               <nav className="py-1">
                 <SidebarNav
                   entries={filteredTree}
-                  changedFiles={gitMode ? gitChangedFiles : undefined}
+                  changedFiles={gitChangedFiles}
                   selectedPath={selectedPath}
                   onSelect={p => {
                     setSelectedPath(p); setSidebarOpen(false);

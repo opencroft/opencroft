@@ -1,68 +1,62 @@
 /**
  * Centralized docs root resolver.
  *
- * If a Documentation node exists on the graph and has a cloned repository,
- * returns the cache directory for that node.
- * Otherwise, falls back to OPENCROFT_DOCS_ROOT env var or app/docs/.
+ * Returns the cache directory for the matching Documentation node when
+ * its repo is cloned. Returns null otherwise — there is no on-disk
+ * fallback; docs only exist when a Documentation node has a clone.
+ *
+ * `namespace` (slugified Documentation node name) selects which repo to
+ * read. Omit to use the first Documentation node on the graph.
  */
 
-import path from 'path';
+let cache: Map<string, { value: string | null; at: number }> | null = null;
+const CACHE_TTL_MS = 5_000;
 
-const FALLBACK_DOCS_ROOT = path.join(process.cwd(), 'app', 'docs');
+function cacheKey(namespace: string | undefined): string {
+  return namespace ?? '';
+}
 
-let cachedRoot: string | null = null;
-let cacheTimestamp = 0;
-const CACHE_TTL_MS = 5_000; // re-check every 5 seconds
-
-/**
- * Get the active docs root directory.
- * Checks for a Documentation node on the graph first, then falls back.
- */
-export async function getDocsRoot(): Promise<string> {
-  // Check env override first (highest priority)
+export async function getDocsRoot(namespace?: string): Promise<string | null> {
   const envRoot = process.env.OPENCROFT_DOCS_ROOT;
-  if (envRoot) return envRoot;
-
-  // Check cache
-  const now = Date.now();
-  if (cachedRoot && (now - cacheTimestamp) < CACHE_TTL_MS) {
-    return cachedRoot;
+  if (envRoot) {
+    return envRoot;
   }
 
-  // Try to find Documentation node's cloned repo
+  if (!cache) {
+    cache = new Map();
+  }
+  const key = cacheKey(namespace);
+  const now = Date.now();
+  const entry = cache.get(key);
+  if (entry && (now - entry.at) < CACHE_TTL_MS) {
+    return entry.value;
+  }
+
+  let resolved: string | null = null;
   try {
     const { getExtensionModule } = await import('@/app/(extension-runtime)/_server/loader');
     const mod = await getExtensionModule('builtin/core');
     const findRoot = mod.actions?.['docs.findActiveDocsRoot'];
     if (findRoot) {
-      const root = await findRoot() as string | null;
-      if (root) {
-        cachedRoot = root;
-        cacheTimestamp = now;
-        return root;
-      }
+      const r = await findRoot({ namespace }) as string | null;
+      resolved = r ?? null;
     }
   } catch {
-    // Extension not loaded or action not available — fall through
+    // Extension not loaded or action not available
   }
 
-  cachedRoot = FALLBACK_DOCS_ROOT;
-  cacheTimestamp = now;
-  return FALLBACK_DOCS_ROOT;
+  cache.set(key, { value: resolved, at: now });
+  return resolved;
 }
 
-/**
- * Synchronous version — uses cached value or fallback.
- * Use this in module-level constants where async is not possible.
- */
-export function getDocsRootSync(): string {
-  return cachedRoot ?? process.env.OPENCROFT_DOCS_ROOT ?? FALLBACK_DOCS_ROOT;
+export function getDocsRootSync(namespace?: string): string | null {
+  const envRoot = process.env.OPENCROFT_DOCS_ROOT;
+  if (envRoot) {
+    return envRoot;
+  }
+  return cache?.get(cacheKey(namespace))?.value ?? null;
 }
 
-/**
- * Invalidate the cache — call after clone/pull operations.
- */
 export function invalidateDocsRootCache(): void {
-  cachedRoot = null;
-  cacheTimestamp = 0;
+  cache = null;
 }
