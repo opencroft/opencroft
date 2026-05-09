@@ -26,7 +26,7 @@ const CLOSE_ANIMATION_MS = 200;
 export type HandleDef = { id: string; contextType: string; role: 'source' | 'target'; label?: string; dynamic?: boolean };
 
 export const TERMINAL_SOURCE: HandleDef[] = [
-  { id: 'ssh-out', contextType: 'terminal-context', role: 'source', label: 'Terminal' },
+  { id: 'terminal', contextType: 'terminal-context', role: 'source', label: 'Terminal' },
   { id: 'fs-out', contextType: 'filesystem-target', role: 'source', label: 'Files' },
 ];
 
@@ -64,7 +64,7 @@ export const DOCKER_HANDLES: HandleDef[] = [
 export const APP_HANDLES: HandleDef[] = [
   { id: 'docker-in', contextType: 'docker-context', role: 'target', label: 'Docker' },
   { id: 'volumes-in', contextType: 'volume-mount', role: 'target', label: 'Volumes' },
-  { id: 'inst-', contextType: 'terminal-context', role: 'source', label: 'Terminal', dynamic: true },
+  { id: 'instance-terminal-', contextType: 'terminal-context', role: 'source', label: 'Terminal', dynamic: true },
 ];
 
 export const VOLUME_HANDLES: HandleDef[] = [
@@ -157,7 +157,7 @@ export function TerminalFileOutputs({
 }) {
   return (
     <>
-      <OutputHandle type='terminal-context' id='ssh-out'>
+      <OutputHandle type='terminal-context' id='terminal'>
         <PinButton icon={icons.TerminalSquare} label='Terminal' onClick={onTerminal} />
       </OutputHandle>
       <OutputHandle type='filesystem-target' id='fs-out'>

@@ -342,7 +342,56 @@ export interface DockerImagePullParams {
 
 export async function dockerPullImage(params: DockerImagePullParams): Promise<void> {
   const ctx = await resolveDockerContext(params.dockerNodeId);
+  await ensureRegistryLogin(ctx, params.dockerNodeId, params.reference);
   await dockerCmd(ctx, ['pull', params.reference]);
+}
+
+export interface DockerCheckImageUpdateParams {
+  dockerNodeId: string;
+  image: string;
+}
+
+export interface DockerCheckImageUpdateResult {
+  localDigest?: string;
+  remoteDigest?: string;
+  hasUpdate: boolean;
+}
+
+async function readLocalDigest(ctx: DockerContext, image: string): Promise<string | undefined> {
+  try {
+    const out = await dockerCmd(ctx, ['image', 'inspect', image, '--format', '{{join .RepoDigests "\\n"}}']);
+    const first = out.trim().split('\n')[0];
+    if (first.includes('@')) {
+      return first.split('@')[1];
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+async function readRemoteDigest(ctx: DockerContext, image: string): Promise<string | undefined> {
+  try {
+    const out = await dockerCmd(ctx, ['buildx', 'imagetools', 'inspect', image]);
+    const match = out.match(/^Digest:\s+(sha256:[a-f0-9]+)/m);
+    if (match) {
+      return match[1];
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+export async function dockerCheckImageUpdate(params: DockerCheckImageUpdateParams): Promise<DockerCheckImageUpdateResult> {
+  const ctx = await resolveDockerContext(params.dockerNodeId);
+  await ensureRegistryLogin(ctx, params.dockerNodeId, params.image);
+  const [localDigest, remoteDigest] = await Promise.all([
+    readLocalDigest(ctx, params.image),
+    readRemoteDigest(ctx, params.image),
+  ]);
+  const hasUpdate = !!localDigest && !!remoteDigest && localDigest !== remoteDigest;
+  return { localDigest, remoteDigest, hasUpdate };
 }
 
 export async function dockerListImages(params: DockerListParams): Promise<ImageListItem[]> {

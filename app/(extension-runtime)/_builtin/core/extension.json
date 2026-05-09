@@ -10,7 +10,7 @@
       "category": "Infrastructure",
       "icon": "Monitor",
       "handles": [
-        { "id": "ssh-out", "contextType": "terminal-context", "role": "source", "label": "Terminal" },
+        { "id": "terminal", "contextType": "terminal-context", "role": "source", "label": "Terminal" },
         { "id": "fs-out", "contextType": "filesystem-target", "role": "source", "label": "Files" }
       ]
     },
@@ -20,7 +20,7 @@
       "category": "Infrastructure",
       "icon": "SquareTerminal",
       "handles": [
-        { "id": "ssh-out", "contextType": "terminal-context", "role": "source", "label": "Terminal" },
+        { "id": "terminal", "contextType": "terminal-context", "role": "source", "label": "Terminal" },
         { "id": "fs-out", "contextType": "filesystem-target", "role": "source", "label": "Files" }
       ]
     },
@@ -30,7 +30,7 @@
       "category": "Infrastructure",
       "icon": "Server",
       "handles": [
-        { "id": "ssh-out", "contextType": "terminal-context", "role": "source", "label": "Terminal" },
+        { "id": "terminal", "contextType": "terminal-context", "role": "source", "label": "Terminal" },
         { "id": "fs-out", "contextType": "filesystem-target", "role": "source", "label": "Files" }
       ]
     },
@@ -138,7 +138,7 @@
       "handles": [
         { "id": "docker-in", "contextType": "docker-context", "role": "target", "label": "Docker" },
         { "id": "volumes-in", "contextType": "volume-mount", "role": "target", "label": "Volumes" },
-        { "id": "inst-", "contextType": "terminal-context", "role": "source", "label": "Terminal", "dynamic": true }
+        { "id": "instance-terminal-", "contextType": "terminal-context", "role": "source", "label": "Terminal", "dynamic": true }
       ],
       "actions": [
         { "id": "start", "label": "Start", "icon": "Play", "description": "Bring the service up via docker compose." },

@@ -170,7 +170,7 @@ export function ServerNode({
         }
         output={
           <>
-            <OutputHandle type='terminal-context' id='ssh-out'>
+            <OutputHandle type='terminal-context' id='terminal'>
               <PinButton icon={icons.TerminalSquare} label='Terminal' onClick={openTerminal} />
             </OutputHandle>
             <OutputHandle type='filesystem-target' id='fs-out'>

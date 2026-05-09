@@ -69,7 +69,7 @@ export default defineExtension({
         { id: 'files', label: 'Files', icon: 'FolderOpen', fullHeight: true, component: LocalhostFilesTab as unknown as never },
       ],
       exposeOutput: (handleId: string) => {
-        if (handleId === 'ssh-out') {
+        if (handleId === 'terminal') {
           return { type: 'local' };
         }
         if (handleId === 'fs-out') {
@@ -97,7 +97,7 @@ export default defineExtension({
         if (!d.distro) {
           return undefined;
         }
-        if (handleId === 'ssh-out') {
+        if (handleId === 'terminal') {
           return { type: 'wsl', distro: d.distro };
         }
         if (handleId === 'fs-out') {
@@ -125,7 +125,7 @@ export default defineExtension({
         if (!d.address) {
           return undefined;
         }
-        if (handleId === 'ssh-out') {
+        if (handleId === 'terminal') {
           return { type: 'ssh', host: d.address, port: d.port, username: d.username, password: d.password, keyPath: d.keyPath };
         }
         if (handleId === 'fs-out') {
@@ -275,10 +275,10 @@ export default defineExtension({
         { id: 'terminal', label: 'Terminal', icon: 'TerminalSquare', fullHeight: true, component: ApplicationTerminalTab as unknown as never },
       ],
       exposeOutput: (handleId: string, data: unknown) => {
-        if (!handleId.startsWith('inst-')) {
+        if (!handleId.startsWith('instance-terminal-')) {
           return undefined;
         }
-        const containerId = handleId.slice('inst-'.length);
+        const containerId = handleId.slice('instance-terminal-'.length);
         const d = data as { __resolvedContexts?: Record<string, { value: Record<string, unknown> }> };
         const docker = d.__resolvedContexts?.['docker-in']?.value;
         if (!docker) {
