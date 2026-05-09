@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-import { builtinExtRoot, extDir, localExtRoot } from '@/app/(extension-runtime)/_server/paths';
+import { builtinExtRoot, extDir, installedExtRoot, localExtRoot } from '@/app/(extension-runtime)/_server/paths';
 import { type ExtensionManifest } from '@/app/(extension-runtime)/_types';
 
 const MANIFEST_FILE = 'extension.json';
@@ -47,11 +47,12 @@ async function listScoped(root: string, scope: string): Promise<string[]> {
 }
 
 export async function listAllExtensionIds(): Promise<string[]> {
-  const [builtin, local] = await Promise.all([
+  const [builtin, local, installed] = await Promise.all([
     listScoped(builtinExtRoot(), 'builtin'),
     listScoped(localExtRoot(), 'local'),
+    listScoped(installedExtRoot(), 'installed'),
   ]);
-  return [...builtin, ...local];
+  return [...builtin, ...local, ...installed];
 }
 
 export async function writeManifest(extensionId: string, manifest: ExtensionManifest): Promise<void> {

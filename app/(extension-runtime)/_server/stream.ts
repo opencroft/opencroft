@@ -20,6 +20,14 @@ import {
   type EdgeLike as SmEdgeLike,
 } from '@/app/(extension-runtime)/_builtin/core/src/nodes/send-message-helpers';
 import { updateNodeData } from '@/app/(extension-runtime)/_server/node-data';
+import {
+  buildSessionKey,
+  resolveSessionOnGraph,
+  tryParseJsonMessage,
+  wrapMessageWithContext,
+  type NodeLike as SmNodeLike,
+  type EdgeLike as SmEdgeLike,
+} from '@/app/(extension-runtime)/_server/send-message-helpers';
 import { getSpacesRegistry } from '@/app/(space)/server/store';
 import { type StreamChunkPayload } from '@/lib/sse-events';
 import { toastStore } from '@/lib/toast-store';

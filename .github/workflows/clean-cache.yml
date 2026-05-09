@@ -1,0 +1,22 @@
+name: Clean Actions Caches
+
+on:
+  workflow_dispatch:
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Delete all caches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+          before=$(gh api "/repos/$REPO/actions/caches?per_page=1" --jq '.total_count')
+          echo "before: $before"
+          gh cache delete --all -R "$REPO" || true
+          after=$(gh api "/repos/$REPO/actions/caches?per_page=1" --jq '.total_count')
+          echo "after: $after"

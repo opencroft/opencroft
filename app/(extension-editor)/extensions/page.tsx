@@ -4,6 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import {
+  checkInstalledForUpdates,
+  type InstalledExtensionRecord,
+  listInstalledExtensions,
+  type UpdateCheck,
+  uninstallExtension,
+  updateInstalledExtension,
+} from '@/app/(extension-editor)/_actions/installed-extensions-actions';
+import {
   compileLocalExtension,
   createLocalExtension,
   deleteLocalExtension,
@@ -13,6 +21,7 @@ import {
 } from '@/app/(extension-editor)/_actions/local-extensions-actions';
 import { ExtensionWorkspace } from '@/app/(extension-editor)/_components/extension-workspace';
 import { ExtensionsListPanel } from '@/app/(extension-editor)/_components/extensions-list-panel';
+import { InstallExtensionDialog } from '@/app/(extension-editor)/_components/install-extension-dialog';
 import { extensionTemplate } from '@/app/(extension-editor)/_templates/template';
 import { loadExtension } from '@/app/(extension-runtime)/_client/loader';
 import { type CompileError } from '@/app/(extension-runtime)/_types';
@@ -36,6 +45,9 @@ function pickUntitledSlug(existing: LocalExtensionRecord[]): string {
 
 export default function ExtensionsPage() {
   const [records, setRecords] = useState<LocalExtensionRecord[]>([]);
+  const [installed, setInstalled] = useState<InstalledExtensionRecord[]>([]);
+  const [updateChecks, setUpdateChecks] = useState<Record<string, UpdateCheck>>({});
+  const [installDialogOpen, setInstallDialogOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [files, setFiles] = useState<Record<string, string>>({});
   const [savedSignature, setSavedSignature] = useState<string>('');
@@ -48,19 +60,50 @@ export default function ExtensionsPage() {
   const autoPersistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastAutoSignature = useRef<string>('');
 
-  const refresh = useCallback(async (): Promise<LocalExtensionRecord[]> => {
-    const list = await listLocalExtensions();
-    setRecords(list);
-    return list;
+  const refresh = useCallback(async (): Promise<{
+    local: LocalExtensionRecord[];
+    installed: InstalledExtensionRecord[];
+  }> => {
+    const [local, installedList] = await Promise.all([
+      listLocalExtensions(),
+      listInstalledExtensions(),
+    ]);
+    setRecords(local);
+    setInstalled(installedList);
+    return { local, installed: installedList };
+  }, []);
+
+  const checkAllUpdates = useCallback(async (list: InstalledExtensionRecord[]) => {
+    const results = await Promise.all(
+      list.map(async (record) => {
+        try {
+          return [record.id, await checkInstalledForUpdates(record.id)] as const;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const map: Record<string, UpdateCheck> = {};
+    for (const entry of results) {
+      if (entry) {
+        map[entry[0]] = entry[1];
+      }
+    }
+    setUpdateChecks(map);
   }, []);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    refresh().then(({ installed: list }) => {
+      checkAllUpdates(list);
+    });
+  }, [refresh, checkAllUpdates]);
 
   const selected = useMemo(
-    () => records.find((r) => r.id === selectedId) ?? null,
-    [records, selectedId],
+    () =>
+      records.find((r) => r.id === selectedId)
+        ?? installed.find((r) => r.id === selectedId)
+        ?? null,
+    [records, installed, selectedId],
   );
 
   // Load files when selection changes
@@ -86,6 +129,9 @@ export default function ExtensionsPage() {
 
   const autoPersistAndCompile = useCallback(async () => {
     if (!selectedId || Object.keys(files).length === 0) {
+      return;
+    }
+    if (selectedId.startsWith('installed/')) {
       return;
     }
     try {
@@ -208,6 +254,49 @@ export default function ExtensionsPage() {
     }
   }, [records, selectedId, refresh]);
 
+  const handleInstalled = useCallback(async (record: InstalledExtensionRecord) => {
+    const { installed: list } = await refresh();
+    setSelectedId(record.id);
+    checkAllUpdates(list);
+  }, [refresh, checkAllUpdates]);
+
+  const handleUpdate = useCallback(async (extensionId: string) => {
+    const check = updateChecks[extensionId];
+    setBusy(true);
+    try {
+      const record = await updateInstalledExtension(extensionId, check?.latest ?? undefined);
+      const { installed: list } = await refresh();
+      checkAllUpdates(list);
+      toast.success(`Updated ${record.manifest.name ?? record.id} to ${record.sidecar.ref}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [updateChecks, refresh, checkAllUpdates]);
+
+  const handleUninstall = useCallback(async (extensionId: string) => {
+    const record = installed.find((r) => r.id === extensionId);
+    if (!confirm(`Uninstall ${record?.manifest.name ?? extensionId}?`)) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await uninstallExtension(extensionId);
+      const { installed: list } = await refresh();
+      if (selectedId === extensionId) {
+        setSelectedId(null);
+        setFiles({});
+      }
+      checkAllUpdates(list);
+      toast.success('Extension uninstalled');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [installed, selectedId, refresh, checkAllUpdates]);
+
   const title = selected
     ? `${selected.manifest.name} · ${selected.id}`
     : 'Select a local extension';
@@ -220,10 +309,20 @@ export default function ExtensionsPage() {
       <Flex row expanded className="min-h-0">
         <ExtensionsListPanel
           records={records}
+          installed={installed}
+          updateChecks={updateChecks}
           selectedId={selectedId}
           onSelect={setSelectedId}
           onNew={handleNew}
+          onInstall={() => setInstallDialogOpen(true)}
           onDelete={handleDelete}
+          onUpdate={handleUpdate}
+          onUninstall={handleUninstall}
+        />
+        <InstallExtensionDialog
+          open={installDialogOpen}
+          onOpenChange={setInstallDialogOpen}
+          onInstalled={handleInstalled}
         />
         {selectedId && Object.keys(files).length > 0 ? (
           <ExtensionWorkspace
