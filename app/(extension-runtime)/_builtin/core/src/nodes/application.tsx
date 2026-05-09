@@ -6,6 +6,7 @@ import {
   dispatch,
   icons,
   inspectorIntent,
+  invoke,
   toast,
   useDockerContainers,
   useDockerSnapshotReceived,
@@ -31,7 +32,7 @@ import {
 import { COMPOSE_PROJECT } from '../../shared';
 import { InspectorTerminalBody } from '../shared';
 
-const { useCallback, useMemo, useState } = React;
+const { useCallback, useEffect, useMemo, useState } = React;
 
 export interface AppData {
   name: string;
@@ -357,9 +358,153 @@ export function ApplicationNode({
   );
 }
 
+interface ImageUpdateResult {
+  localDigest?: string;
+  remoteDigest?: string;
+  hasUpdate: boolean;
+}
+
+type ImageUpdateState =
+  | { kind: 'idle' }
+  | { kind: 'checking' }
+  | { kind: 'up-to-date' }
+  | { kind: 'update-available' }
+  | { kind: 'no-local' }
+  | { kind: 'unknown' }
+  | { kind: 'error'; message: string };
+
+function ImageUpdateChecker({
+  nodeId, dockerNodeId, image,
+}: { nodeId: string; dockerNodeId?: string; image: string }) {
+  const [state, setState] = useState<ImageUpdateState>({ kind: 'idle' });
+  const [updating, setUpdating] = useState(false);
+
+  const check = useCallback(async () => {
+    if (!dockerNodeId || !image.trim()) {
+      setState({ kind: 'idle' });
+      return;
+    }
+    setState({ kind: 'checking' });
+    try {
+      const res = await invoke<ImageUpdateResult>('docker.checkImageUpdate', { dockerNodeId, image });
+      if (res.hasUpdate) {
+        setState({ kind: 'update-available' });
+        return;
+      }
+      if (!res.remoteDigest) {
+        setState({ kind: 'unknown' });
+        return;
+      }
+      if (!res.localDigest) {
+        setState({ kind: 'no-local' });
+        return;
+      }
+      setState({ kind: 'up-to-date' });
+    } catch (err) {
+      setState({ kind: 'error', message: String(err) });
+    }
+  }, [dockerNodeId, image]);
+
+  useEffect(() => {
+    check();
+  }, [check]);
+
+  const update = useCallback(async () => {
+    if (!dockerNodeId || !image.trim()) {
+      return;
+    }
+    setUpdating(true);
+    try {
+      await invoke<void>('docker.pullImage', { dockerNodeId, reference: image });
+      await dispatch(nodeId, 'start');
+      toast.success('Image updated and service restarted');
+      await check();
+    } catch (err) {
+      toast.error(`Update failed: ${String(err)}`);
+    } finally {
+      setUpdating(false);
+    }
+  }, [dockerNodeId, image, nodeId, check]);
+
+  if (state.kind === 'idle') {
+    return null;
+  }
+
+  const message = (() => {
+    if (state.kind === 'checking') {
+      return 'Checking for image updates…';
+    }
+    if (state.kind === 'up-to-date') {
+      return 'Image up to date';
+    }
+    if (state.kind === 'update-available') {
+      return 'New image version available';
+    }
+    if (state.kind === 'no-local') {
+      return 'Image not pulled locally';
+    }
+    if (state.kind === 'unknown') {
+      return 'Could not check remote image';
+    }
+    return `Check failed: ${state.message}`;
+  })();
+
+  const Icon = (() => {
+    if (state.kind === 'checking') {
+      return icons.Loader2;
+    }
+    if (state.kind === 'up-to-date') {
+      return icons.CircleCheck;
+    }
+    if (state.kind === 'update-available') {
+      return icons.ArrowUpCircle;
+    }
+    if (state.kind === 'error') {
+      return icons.CircleAlert;
+    }
+    return icons.Info;
+  })();
+
+  const tone = state.kind === 'update-available'
+    ? 'text-primary'
+    : state.kind === 'error'
+      ? 'text-destructive'
+      : 'text-muted-foreground';
+
+  return (
+    <div className='flex items-center gap-1.5 text-[10px]'>
+      <Icon className={`h-3 w-3 shrink-0 ${tone} ${state.kind === 'checking' ? 'animate-spin' : ''}`} />
+      <span className={`flex-1 truncate ${tone}`} title={message}>{message}</span>
+      {state.kind === 'update-available' ? (
+        <Button
+          variant='outline'
+          size='sm'
+          className='h-6 text-[10px] px-2'
+          onClick={update}
+          disabled={updating}
+        >
+          {updating ? 'Updating…' : 'Pull & restart'}
+        </Button>
+      ) : (
+        <Button
+          variant='ghost'
+          size='sm'
+          className='h-6 text-[10px] px-2'
+          onClick={check}
+          disabled={state.kind === 'checking'}
+        >
+          Recheck
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export function ApplicationInspector({
-  data, updateData,
+  nodeId, data, updateData,
 }: { nodeId: string; data: AppData; updateData: (p: Partial<AppData>) => void }) {
+  const dockerNodeId = (data as AppData & { __resolvedContexts?: Record<string, { sourceNodeId?: string }> })
+    .__resolvedContexts?.['docker-in']?.sourceNodeId;
   return (
     <div className='flex flex-col gap-3'>
       <div className='flex flex-col gap-1'>
@@ -377,6 +522,7 @@ export function ApplicationInspector({
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ image: e.target.value })}
           placeholder='nginx:latest'
         />
+        <ImageUpdateChecker nodeId={nodeId} dockerNodeId={dockerNodeId} image={data.image ?? ''} />
       </div>
       <div className='flex flex-col gap-1'>
         <Label>Ports (one per line, host:container)</Label>

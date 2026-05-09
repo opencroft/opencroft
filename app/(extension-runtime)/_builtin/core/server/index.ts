@@ -16,6 +16,7 @@ import {
   dockerRestartContainer, dockerRemoveContainer,
   type DockerImageActionParams, dockerRemoveImage,
   type DockerImagePullParams, dockerPullImage,
+  type DockerCheckImageUpdateParams, dockerCheckImageUpdate,
 } from './docker';
 import {
   type OpenAIChatParams, openaiChat,
@@ -497,6 +498,7 @@ export const actions = {
   'docker.removeContainer': (params: DockerContainerActionParams) => dockerRemoveContainer(params),
   'docker.removeImage': (params: DockerImageActionParams) => dockerRemoveImage(params),
   'docker.pullImage': (params: DockerImagePullParams) => dockerPullImage(params),
+  'docker.checkImageUpdate': (params: DockerCheckImageUpdateParams) => dockerCheckImageUpdate(params),
   'openai.chat': (params: OpenAIChatParams) => openaiChat(params),
   'git.listRepos': (params: GitListReposParams) => gitListRepos(params),
   'git.clone': (params: GitCloneParams) => gitClone(params),
