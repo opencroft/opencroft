@@ -11,14 +11,6 @@
 // persisted into their own node data via `updateNodeData`, which both saves
 // the graph and emits `node_data_updated` for in-place client refresh.
 
-import {
-  buildSessionKey,
-  resolveSessionOnGraph,
-  tryParseJsonMessage,
-  wrapMessageWithContext,
-  type NodeLike as SmNodeLike,
-  type EdgeLike as SmEdgeLike,
-} from '@/app/(extension-runtime)/_builtin/core/src/nodes/send-message-helpers';
 import { updateNodeData } from '@/app/(extension-runtime)/_server/node-data';
 import {
   buildSessionKey,
