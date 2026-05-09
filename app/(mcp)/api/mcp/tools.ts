@@ -16,6 +16,12 @@ import { getDocsRoot } from '@/app/(docs)/docs/_server/docs-root';
 import { searchDocsAtRoot } from '@/app/(docs)/docs/_server/search';
 import { getGitFileAtRef } from '@/app/(docs)/docs/actions';
 import {
+  type InstallAuth,
+  installExtensionFromUrl,
+  uninstallExtension,
+  updateInstalledExtension,
+} from '@/app/(extension-editor)/_actions/installed-extensions-actions';
+import {
   compileLocalExtension,
   createLocalExtension,
   deleteLocalExtension,
@@ -434,6 +440,51 @@ export const toolDefinitions = [
       type: 'object' as const,
       properties: {
         extensionId: { type: 'string', description: 'The local extension id (must start with "local/")' },
+      },
+      required: ['extensionId'],
+    },
+  },
+  {
+    name: 'extension_install',
+    description: 'Install an extension from a public Git repository (GitHub, GitLab, Gitea, Bitbucket, any git remote). Clones at the latest tag by default (falls back to default branch HEAD if no tags). Runs `npm install` if the repo has a package.json. Stored under data/extensions/installed/<slug>/. Resulting id is "installed/<slug>".',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        url: { type: 'string', description: 'Repository: "owner/repo" (assumes github.com) or full URL (e.g. https://gitlab.com/group/repo).' },
+        ref: { type: 'string', description: 'Optional tag or branch to install. Defaults to latest semver tag, or default branch HEAD.' },
+        auth: {
+          type: 'object',
+          description: 'Optional auth for private repos. Pulls "token" (required) and "username" (optional, defaults to x-access-token) from the named Secrets Store.',
+          properties: {
+            storeId: { type: 'string', description: 'Secrets Store node id holding the credentials.' },
+            tokenKey: { type: 'string', description: 'Secret key for the token. Defaults to "token".' },
+            usernameKey: { type: 'string', description: 'Secret key for the username. Defaults to "username".' },
+          },
+          required: ['storeId'],
+        },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'extension_update',
+    description: 'Re-install an installed extension at a new (or same) ref. Pulls the latest tag from the remote unless a ref is given. Reuses the auth originally configured at install time.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        extensionId: { type: 'string', description: 'The installed extension id (must start with "installed/").' },
+        ref: { type: 'string', description: 'Optional tag or branch. Defaults to the latest semver tag from the remote.' },
+      },
+      required: ['extensionId'],
+    },
+  },
+  {
+    name: 'extension_remove',
+    description: 'Uninstall an installed extension. Removes the entire data/extensions/installed/<slug>/ folder including source, sidecar, and bundle. Cannot be undone — re-install via extension_install to restore.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        extensionId: { type: 'string', description: 'The installed extension id (must start with "installed/").' },
       },
       required: ['extensionId'],
     },
@@ -1748,6 +1799,54 @@ function buildHandlers(): Record<string, ToolHandler> {
       await deleteLocalExtension(extensionId);
       broadcastExtensionsUpdated();
       return textResult(`Extension ${extensionId} uninstalled.`);
+    }),
+
+    // ── extension_install ────────────────────────────────────────────
+    extension_install: withApprovalRequired(async (args) => {
+      const url = args.url as string | undefined;
+      if (!url) {
+        fail(-32602, 'Missing required param: url');
+      }
+      const ref = args.ref as string | undefined;
+      const authRaw = args.auth as { storeId?: string; tokenKey?: string; usernameKey?: string } | undefined;
+      let auth: InstallAuth | undefined;
+      if (authRaw) {
+        if (!authRaw.storeId) {
+          fail(-32602, 'auth.storeId is required when auth is provided');
+        }
+        auth = {
+          type: 'secret',
+          storeId: authRaw.storeId,
+          tokenKey: authRaw.tokenKey,
+          usernameKey: authRaw.usernameKey,
+        };
+      }
+      const record = await installExtensionFromUrl({ url, ref, auth });
+      broadcastExtensionsUpdated();
+      return textResult(`Installed ${record.id} at ${record.sidecar.ref} from ${record.sidecar.source.url}.`);
+    }),
+
+    // ── extension_update ─────────────────────────────────────────────
+    extension_update: withApprovalRequired(async (args) => {
+      const extensionId = args.extensionId as string | undefined;
+      if (!extensionId) {
+        fail(-32602, 'Missing required param: extensionId');
+      }
+      const ref = args.ref as string | undefined;
+      const record = await updateInstalledExtension(extensionId, ref);
+      broadcastExtensionsUpdated();
+      return textResult(`Updated ${record.id} to ${record.sidecar.ref}.`);
+    }),
+
+    // ── extension_remove ─────────────────────────────────────────────
+    extension_remove: withApprovalRequired(async (args) => {
+      const extensionId = args.extensionId as string | undefined;
+      if (!extensionId) {
+        fail(-32602, 'Missing required param: extensionId');
+      }
+      await uninstallExtension(extensionId);
+      broadcastExtensionsUpdated();
+      return textResult(`Uninstalled ${extensionId}.`);
     }),
 
     // ── compile_extension ────────────────────────────────────────────

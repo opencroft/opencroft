@@ -49,3 +49,22 @@ export async function deleteSecret(storeId: string, key: string): Promise<void> 
 export async function deleteStore(storeId: string): Promise<void> {
   await prisma.secret.deleteMany({ where: { storeId } });
 }
+
+export interface SecretStoreSummary {
+  storeId: string;
+  keys: string[];
+}
+
+export async function listSecretStores(): Promise<SecretStoreSummary[]> {
+  const rows = await prisma.secret.findMany({
+    select: { storeId: true, key: true },
+    orderBy: { storeId: 'asc' },
+  });
+  const map = new Map<string, string[]>();
+  for (const row of rows) {
+    const list = map.get(row.storeId) ?? [];
+    list.push(row.key);
+    map.set(row.storeId, list);
+  }
+  return Array.from(map.entries()).map(([storeId, keys]) => ({ storeId, keys }));
+}

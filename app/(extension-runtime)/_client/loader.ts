@@ -33,8 +33,12 @@ export async function loadExtension(manifest: ExtensionManifest): Promise<Extens
       console.error(`[ext] ${manifest.id}: bundle default export is not a valid ExtensionDeclaration`);
       return null;
     }
-    extensionRegistry.register(decl);
-    return decl;
+    const aligned: ExtensionDeclaration = {
+      ...decl,
+      manifest: { ...decl.manifest, id: manifest.id },
+    };
+    extensionRegistry.register(aligned);
+    return aligned;
   } catch (err) {
     console.error(`[ext] ${manifest.id}: load failed`, err);
     return null;
