@@ -529,7 +529,7 @@ export const exposeOutput = (
   typeId: string,
 ): unknown => {
   if (typeId === 'localhost') {
-    if (handleId === 'ssh-out' || handleId === 'fs-out') {
+    if (handleId === 'terminal' || handleId === 'fs-out') {
       return { type: 'local' };
     }
     return undefined;
@@ -540,7 +540,7 @@ export const exposeOutput = (
     if (!distro) {
       return undefined;
     }
-    if (handleId === 'ssh-out' || handleId === 'fs-out') {
+    if (handleId === 'terminal' || handleId === 'fs-out') {
       return { type: 'wsl', distro };
     }
     return undefined;
@@ -551,7 +551,7 @@ export const exposeOutput = (
     if (!address) {
       return undefined;
     }
-    if (handleId === 'ssh-out' || handleId === 'fs-out') {
+    if (handleId === 'terminal' || handleId === 'fs-out') {
       return {
         type: 'ssh',
         host: address,
@@ -576,10 +576,10 @@ export const exposeOutput = (
   }
 
   if (typeId === 'application') {
-    if (!handleId.startsWith('inst-')) {
+    if (!handleId.startsWith('instance-terminal-')) {
       return undefined;
     }
-    const containerId = handleId.slice('inst-'.length);
+    const containerId = handleId.slice('instance-terminal-'.length);
     const resolved = nodeData['__resolvedContexts'] as Record<string, { value?: Record<string, unknown> }> | undefined;
     const docker = resolved?.['docker-in']?.value;
     if (!docker) {

@@ -228,7 +228,7 @@ function InstanceCard({
         <icons.ScrollText className='h-2.5 w-2.5 shrink-0' />
       </Button>
       {container.running ? (
-        <OutputHandle type='terminal-context' id={`inst-${container.id}`}>
+        <OutputHandle type='terminal-context' id={`instance-terminal-${container.name || container.id}`}>
           <Button
             variant='ghost'
             size='sm'

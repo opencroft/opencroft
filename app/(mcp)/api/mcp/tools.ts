@@ -156,7 +156,7 @@ export const toolDefinitions = [
   },
   {
     name: 'get_nodes',
-    description: 'Get one or more nodes from a space by ID. Returns `{ found: Node[], missing: string[] }`. Each found node includes a `handles: { input, output }` map: `input[handleId]` is `"node-id/handle-id"` for the connected source or `null`, `output[handleId]` is an array of connected target endpoints (empty if unconnected).',
+    description: 'Get one or more nodes from a space by ID. Returns `{ found: Node[], missing: string[] }`. Each found node includes a `handles: { input, output }` map: `input[handleId]` is `"node-id/handle-id"` for the connected source or `null`, `output[handleId]` is an array of connected target endpoints (empty if unconnected). Dynamic source handles are expanded to live ids (e.g. application nodes expose one `instance-terminal-<containerId>` per running instance).',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -586,7 +586,7 @@ export const toolDefinitions = [
   // ── Remote File & Exec Ops ──────────────────────────────────────────
   {
     name: 'remote_read',
-    description: 'Read a file from a remote node. The target is a terminal-context output handle in "node-id/handle-id" format (e.g. "localhost_abc/ssh-out"). Output is line-numbered (cat -n style). Optional offset/limit slice by 1-indexed line.',
+    description: 'Read a file from a remote node. The target is a terminal-context output handle in "node-id/handle-id" format (e.g. "localhost_abc/terminal"). Output is line-numbered (cat -n style). Optional offset/limit slice by 1-indexed line.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -1011,11 +1011,34 @@ interface NodeHandlesView {
   output: Record<string, string[]>;
 }
 
-function nodeHandles(
+async function expandDynamicHandles(node: GraphNode, declared: ExtensionHandle[]): Promise<string[]> {
+  if (node.type !== 'application') {
+    return [];
+  }
+  const dynamic = declared.find((h) => h.dynamic && h.role === 'source');
+  if (!dynamic) {
+    return [];
+  }
+  const resolved = node.data?.['__resolvedContexts'] as Record<string, { sourceNodeId?: string }> | undefined;
+  const dockerNodeId = resolved?.['docker-in']?.sourceNodeId;
+  if (!dockerNodeId) {
+    return [];
+  }
+  const service = (node.data?.['name'] as string) || node.id;
+  try {
+    const containers = await invokeExtensionAction('builtin/core', 'docker.ps', [{ dockerNodeId, service }]) as Array<{ id: string; name: string; running: boolean }>;
+    return containers.filter((c) => c.running).map((c) => `${dynamic.id}${c.name || c.id}`);
+  } catch (err) {
+    console.error(`[mcp.expandDynamicHandles] failed for ${node.id}:`, err);
+    return [];
+  }
+}
+
+async function nodeHandles(
   node: GraphNode,
   edges: StoredEdge[],
   typeHandles: Map<string, ExtensionHandle[]>,
-): NodeHandlesView {
+): Promise<NodeHandlesView> {
   const input: Record<string, string | null> = {};
   const output: Record<string, string[]> = {};
   const declared = node.type ? typeHandles.get(node.type) ?? [] : [];
@@ -1024,7 +1047,13 @@ function nodeHandles(
       input[h.id] = null;
       continue;
     }
+    if (h.dynamic) {
+      continue;
+    }
     output[h.id] = [];
+  }
+  for (const id of await expandDynamicHandles(node, declared)) {
+    output[id] = [];
   }
   for (const edge of edges) {
     if (edge.target === node.id && edge.targetHandle) {
@@ -1420,7 +1449,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       for (const id of nodeIds) {
         const node = index.get(id);
         if (node) {
-          found.push({ ...node, handles: nodeHandles(node, edges, typeHandles) });
+          found.push({ ...node, handles: await nodeHandles(node, edges, typeHandles) });
           continue;
         }
         missing.push(id);
