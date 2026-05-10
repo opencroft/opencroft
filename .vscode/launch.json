@@ -5,28 +5,22 @@
       "name": "Next.js: debug server-side",
       "type": "node-terminal",
       "request": "launch",
-      "command": "npm run dev -- --port 3333"
+      "command": "npm run dev"
     },
     {
       "name": "Next.js: debug client-side",
       "type": "chrome",
       "request": "launch",
-      "url": "http://localhost:3333"
+      "url": "http://localhost:9999"
     },
     {
       "name": "Next.js: debug full stack",
       "type": "node",
       "request": "launch",
-      "program": "${workspaceFolder}/node_modules/next/dist/bin/next",
-      "args": [
-        "--turbopack",
-        "-H",
-        "0.0.0.0",
-        "--port",
-        "3333"
-      ],
       "runtimeArgs": [
-        "--inspect"
+        "--import",
+        "tsx",
+        "server.ts"
       ],
       "skipFiles": [
         "<node_internals>/**"
@@ -35,27 +29,10 @@
       "serverReadyAction": {
         "action": "debugWithChrome",
         "killOnServerStop": true,
-        "pattern": "- Local:.+(https?://.+)",
+        "pattern": "- Local:\\s+(https?://\\S+)",
         "uriFormat": "%s",
         "webRoot": "${workspaceFolder}"
       }
     },
-    {
-      "name": "WebSocket: terminal",
-      "type": "node-terminal",
-      "request": "launch",
-      "command": "npx tsx websocket/terminal.ts",
-      "autoAttachChildProcesses": false
-    }
-  ],
-  "compounds": [
-    {
-      "name": "Full Stack + WebSocket",
-      "configurations": [
-        "Next.js: debug full stack",
-        "WebSocket: terminal"
-      ],
-      "stopAll": true
-    }
   ]
 }

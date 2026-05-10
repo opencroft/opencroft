@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ClientMessage, TerminalConfig, ServerMessage } from '@/app/(terminal)/terminal/types';
+import { createWebSocket } from '@/hooks/utils/use-websocket';
 
 interface UseTerminalWsOptions {
   onData: (data: string) => void;
@@ -44,11 +45,7 @@ export function useTerminalWs({ onData, onConnected, onDisconnected, onError }: 
     cleanup();
     setStatus('connecting');
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const hostname = window.location.hostname;
-    const isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('192.168.') || hostname.startsWith('10.') || hostname.startsWith('172.');
-    const url = isLocal ? `${protocol}//${hostname}:3334` : `${protocol}//${hostname}/ws-terminal`;
-    const ws = new WebSocket(url);
+    const ws = createWebSocket('/api/ws/terminal');
     wsRef.current = ws;
 
     ws.onopen = () => {

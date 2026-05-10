@@ -4,7 +4,7 @@ import {
   icons,
   useNodeContext,
 } from '@ext/host';
-import { WindowShell } from '../shared';
+import { WindowShell, createWebSocket } from '../shared';
 
 const { useEffect, useRef, useState } = React;
 
@@ -178,8 +178,7 @@ function TerminalBody({
       };
       el.addEventListener('contextmenu', contextMenuHandler);
 
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${protocol}//${window.location.hostname}:3334`);
+      const ws = createWebSocket('/api/ws/terminal');
       wsRef.current = ws;
 
       ws.onopen = () => {
