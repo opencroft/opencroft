@@ -38,14 +38,14 @@ export async function awaitApproval(input: {
   args: Record<string, unknown>;
   view?: string;
   signal?: AbortSignal;
+  spaceId?: string;
 }): Promise<void> {
-  const spaceId = typeof input.args.space === 'string' ? input.args.space : undefined;
   const request: PendingApproval = {
     id: nextRequestId(),
     tool: input.tool,
     args: input.args,
     view: input.view,
-    spaceId,
+    spaceId: input.spaceId,
     createdAt: Date.now(),
   };
   const onAbort = () => approvalStore.cancel(request.id);

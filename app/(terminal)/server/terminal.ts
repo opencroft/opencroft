@@ -6,8 +6,6 @@ import { WebSocket, WebSocketServer } from 'ws';
 import * as sshClient from '@/app/(ssh)/server/ssh-client';
 import { SshCredentials, SshShell } from '@/app/(ssh)/server/ssh-client';
 
-// --- Types ---
-
 interface ConnectPayload extends SshCredentials {
   command?: string;
   cols: number;
@@ -42,8 +40,6 @@ type ClientMessage =
   | { type: 'resize'; payload: { cols: number; rows: number } }
   | { type: 'disconnect' };
 
-// --- Session management ---
-
 const sessions = new Map<WebSocket, Session>();
 
 function send(ws: WebSocket, type: string, payload: Record<string, unknown>) {
@@ -64,8 +60,6 @@ function destroySession(ws: WebSocket) {
   }
   sessions.delete(ws);
 }
-
-// --- Handlers ---
 
 async function handleConnect(ws: WebSocket, payload: ConnectPayload) {
   const { cols, rows, command, ...creds } = payload;
@@ -189,29 +183,11 @@ function handleMessage(ws: WebSocket, raw: string) {
   }
 }
 
-// --- Server ---
-
-const wsPort = parseInt(process.env.WS_PORT || '3334', 10);
-const wss = new WebSocketServer({ port: wsPort });
-
-function destroyAll() {
-  for (const [ws] of sessions) {
-    destroySession(ws);
-  }
-  wss.close();
-}
-
-wss.on('connection', (ws) => {
-  ws.on('message', (raw) => {
-    handleMessage(ws, raw.toString());
+export function setupTerminalWss(wss: WebSocketServer) {
+  wss.on('connection', (ws) => {
+    ws.on('message', (raw) => {
+      handleMessage(ws, raw.toString());
+    });
+    ws.on('close', () => destroySession(ws));
   });
-  ws.on('close', () => destroySession(ws));
-});
-
-process.on('exit', destroyAll);
-process.on('SIGINT', destroyAll);
-process.on('SIGTERM', destroyAll);
-process.on('uncaughtException', destroyAll);
-process.on('unhandledRejection', destroyAll);
-
-console.log(`> Terminal WebSocket server on ws://localhost:${wsPort}`);
+}

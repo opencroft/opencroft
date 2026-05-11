@@ -23,6 +23,11 @@ const CLOSE_ANIMATION_MS = 200;
 // Handle definitions
 // ═════════════════════════════════════════════════════════════════════
 
+export function createWebSocket(path: string): WebSocket {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return new WebSocket(`${protocol}//${window.location.host}${path}`);
+}
+
 export type HandleDef = { id: string; contextType: string; role: 'source' | 'target'; label?: string; dynamic?: boolean };
 
 export const TERMINAL_SOURCE: HandleDef[] = [
@@ -263,8 +268,7 @@ export function InspectorTerminalBody({ connection, command }: InspectorTerminal
       };
       el.addEventListener('contextmenu', contextMenuHandler);
 
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${protocol}//${window.location.hostname}:3334`);
+      const ws = createWebSocket('/api/ws/terminal');
       wsRef.current = ws;
 
       ws.onopen = () => {

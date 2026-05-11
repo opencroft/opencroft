@@ -1,7 +1,7 @@
 /**
  * MCP tool definitions and handlers for the App Dashboard.
  *
- * Graph tools are scoped by `space` (slug or case-insensitive name).
+ * Graph tools are scoped by `space` (slug).
  * If omitted, the active space is used. Extension tools operate on v2
  * local extensions (folders under `data/extensions/local/<slug>/`).
  * UI feedback (toasts, focus, comments) is broadcast via SSE.
@@ -54,7 +54,7 @@ import { prisma } from '@/server/prisma';
 const SPACE_PARAM = {
   space: {
     type: 'string',
-    description: 'Space slug or name (case-insensitive). Omit to target the currently active space.',
+    description: 'Space slug. Omit to target the currently active space.',
   },
 };
 
@@ -113,7 +113,7 @@ export const toolDefinitions = [
     inputSchema: {
       type: 'object' as const,
       properties: {
-        space: { type: 'string', description: 'Space slug or name' },
+        space: { type: 'string', description: 'Space slug' },
         name: { type: 'string', description: 'New name' },
       },
       required: ['space', 'name'],
@@ -121,11 +121,11 @@ export const toolDefinitions = [
   },
   {
     name: 'delete_space',
-    description: 'Delete a space by slug or name. The last remaining space cannot be deleted.',
+    description: 'Delete a space by slug. The last remaining space cannot be deleted.',
     inputSchema: {
       type: 'object' as const,
       properties: {
-        space: { type: 'string', description: 'Space slug or name' },
+        space: { type: 'string', description: 'Space slug' },
       },
       required: ['space'],
     },
@@ -802,7 +802,7 @@ export async function executeAgentTool(
     const d = (toolNode.data ?? {}) as unknown as AgentToolNodeData;
     const requiredApproval = d.requireApproval && !isYoloMode();
     if (requiredApproval) {
-      await awaitApproval({ tool: toolName, args, view: 'default', signal });
+      await awaitApproval({ tool: toolName, args, view: 'default', signal, spaceId: space.slug });
     }
 
     // Find connected handler via exec-out edge
@@ -915,7 +915,7 @@ function fail(code: number, message: string): never {
 }
 
 async function resolveSpace(args: Record<string, unknown>): Promise<string> {
-  const input = (args.space as string | undefined)?.toLowerCase();
+  const input = args.space as string | undefined;
   if (!input) {
     return getActiveSpaceSlug();
   }
@@ -924,15 +924,7 @@ async function resolveSpace(args: Record<string, unknown>): Promise<string> {
   if (bySlug) {
     return bySlug.slug;
   }
-  const byName = spaces.filter((s) => s.name.toLowerCase() === input);
-  if (byName.length === 0) {
-    fail(-32602, `Space not found: ${input}`);
-  }
-  if (byName.length > 1) {
-    const list = byName.map((s) => `\t${s.slug}: ${s.name}`).join('\n');
-    fail(-32602, `Ambiguous space name "${input}" matches ${byName.length} spaces. Use the slug instead:\n${list}`);
-  }
-  return byName[0].slug;
+  fail(-32602, `Space not found: ${input} (use a slug — see list_spaces)`);
 }
 
 async function loadOrFail(slug: string): Promise<GraphData> {
@@ -2187,7 +2179,8 @@ export async function handleToolCall(
   const yolo = isYoloMode();
   try {
     if (meta && !yolo) {
-      await awaitApproval({ tool: name, args, view: meta.view, signal });
+      const spaceId = typeof args.space === 'string' ? await resolveSpace(args) : undefined;
+      await awaitApproval({ tool: name, args, view: meta.view, signal, spaceId });
     }
     const result = await handler(args);
     await recordAudit({

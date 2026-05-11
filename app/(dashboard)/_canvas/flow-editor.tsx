@@ -626,6 +626,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
           <CanvasOverlay
             nodes={commandNodes}
             spaceName={spaceName}
+            spaceSlug={slug}
             selectedNodeId={selected?.id ?? null}
             onFocusNode={focusNode}
           />

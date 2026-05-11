@@ -21,6 +21,12 @@ const nextConfig: NextConfig = {
       ],
     },
   },
+  outputFileTracingIncludes: {
+    '*': [
+      './node_modules/@lydell/node-pty/**',
+      './node_modules/@lydell/node-pty-*/**',
+    ],
+  },
   output: 'standalone',
   typescript: {
     ignoreBuildErrors: true,
