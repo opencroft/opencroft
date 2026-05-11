@@ -14,7 +14,16 @@ import {
   Badge,
   Separator,
   ScrollArea,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from '@ext/ui';
+import CodeMirror from '@uiw/react-codemirror';
+import { oneDark } from '@codemirror/theme-one-dark';
+
+import { slug } from './send-message-helpers';
 
 const { useCallback, useRef, useState, useEffect, useMemo } = React;
 
@@ -138,12 +147,30 @@ interface ConnectionState {
   reason?: string;
 }
 
+interface FileMeta {
+  name: string;
+  path?: string;
+  missing: boolean;
+  size?: number;
+  updatedAtMs?: number;
+}
+
+interface FilesList {
+  workspace: string;
+  files: FileMeta[];
+}
+
+interface FileContent extends FileMeta {
+  content: string;
+}
+
 // ─── OpenClaw Tab Component ──────────────────────────────────────────
 
 export function AgentOpenClawTab({
   data,
 }: { nodeId: string; data: AgentData; updateData: (p: Partial<AgentData>) => void }) {
   const agentName = data.name?.trim() ?? '';
+  const agentSlug = slug(agentName);
   const [connection, setConnection] = useState<ConnectionState | null>(null);
   const [lookup, setLookup] = useState<AgentLookup | null>(null);
   const [externalAgents, setExternalAgents] = useState<AgentInfo[]>([]);
@@ -152,29 +179,30 @@ export function AgentOpenClawTab({
   const [error, setError] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState('');
 
-  // Auto-suggest workspace when agent name changes
+  // Auto-suggest workspace when agent slug changes
   useEffect(() => {
-    if (agentName) {
-      setWorkspace(`~/.openclaw/workspace-${agentName}`);
+    if (agentSlug) {
+      setWorkspace(`~/.openclaw/workspace-${agentSlug}`);
     } else {
       setWorkspace('');
     }
-  }, [agentName]);
+  }, [agentSlug]);
 
-  // Get all agent node names on the graph to compute external agents
+  // Get all agent node slugs on the graph to compute external agents
   const graphNodes = useGraphNodes();
-  const agentNodeNames = useMemo(() => {
-    const names: string[] = [];
+  const agentNodeSlugs = useMemo(() => {
+    const slugs: string[] = [];
     for (const node of graphNodes) {
-      if ((node as { type?: string }).type === 'agent') {
-        const nodeData = (node as { data?: { name?: string } }).data;
-        const name = nodeData?.name?.trim();
-        if (name) {
-          names.push(name);
-        }
+      if ((node as { type?: string }).type !== 'agent') {
+        continue;
+      }
+      const nodeData = (node as { data?: { name?: string } }).data;
+      const s = slug(nodeData?.name ?? '');
+      if (s) {
+        slugs.push(s);
       }
     }
-    return names;
+    return slugs;
   }, [graphNodes]);
 
   useEffect(() => {
@@ -187,7 +215,7 @@ export function AgentOpenClawTab({
       agentName
         ? invoke<AgentLookup>('agent.lookupOpenclaw', agentName)
         : Promise.resolve<AgentLookup>({ exists: false }),
-      invoke<AgentInfo[]>('agent.listOpenclawExternal', agentNodeNames),
+      invoke<AgentInfo[]>('agent.listOpenclawExternal', agentNodeSlugs),
     ])
       .then(([conn, agentResult, external]) => {
         if (cancelled) return;
@@ -204,7 +232,7 @@ export function AgentOpenClawTab({
       });
 
     return () => { cancelled = true; };
-  }, [agentName, agentNodeNames]);
+  }, [agentName, agentNodeSlugs]);
 
   const handleCreate = useCallback(async () => {
     if (!agentName) return;
@@ -232,7 +260,7 @@ export function AgentOpenClawTab({
     setError(null);
     Promise.all([
       invoke<AgentLookup>('agent.lookupOpenclaw', agentName),
-      invoke<AgentInfo[]>('agent.listOpenclawExternal', agentNodeNames),
+      invoke<AgentInfo[]>('agent.listOpenclawExternal', agentNodeSlugs),
     ])
       .then(([agentResult, external]) => {
         setLookup(agentResult);
@@ -242,7 +270,24 @@ export function AgentOpenClawTab({
         setError(err instanceof Error ? err.message : 'Failed to refresh');
       })
       .finally(() => setLoading(false));
-  }, [agentName, agentNodeNames]);
+  }, [agentName, agentNodeSlugs]);
+
+  const handleDelete = useCallback(async () => {
+    if (!lookup?.exists) {
+      return;
+    }
+    setError(null);
+    try {
+      await invoke('agent.deleteOpenclaw', lookup.agentId);
+      toast.success(`Agent "${lookup.name}" deleted from OpenClaw`);
+      setLookup({ exists: false });
+      handleRefresh();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to delete agent';
+      setError(msg);
+      toast.error(msg);
+    }
+  }, [lookup, handleRefresh]);
 
   // Not connected
   if (connection && !connection.connected) {
@@ -268,44 +313,53 @@ export function AgentOpenClawTab({
     );
   }
 
+  const header = (
+    <>
+      <div className='flex items-center gap-2'>
+        <div className='size-2 rounded-full bg-green-500 shrink-0' />
+        <span className='text-xs text-muted-foreground'>Connected to OpenClaw</span>
+        <div className='flex-1' />
+        <Button variant='ghost' size='sm' className='size-6 p-0' onClick={handleRefresh} disabled={loading}>
+          <icons.RefreshCw className={`size-3 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </div>
+      <Separator />
+      {!agentName ? (
+        <p className='text-xs text-muted-foreground italic'>
+          Set an agent name in the Details tab first.
+        </p>
+      ) : lookup?.exists ? (
+        <AgentInfoCard agent={lookup} onDelete={handleDelete} />
+      ) : (
+        <AgentCreateCard
+          agentSlug={agentSlug}
+          workspace={workspace}
+          onWorkspaceChange={setWorkspace}
+          creating={creating}
+          onCreate={handleCreate}
+        />
+      )}
+      {error && (
+        <p className='text-xs text-destructive'>{error}</p>
+      )}
+    </>
+  );
+
+  if (lookup?.exists) {
+    return (
+      <div className='flex flex-col h-full'>
+        <div className='flex flex-col gap-3 p-1 shrink-0'>
+          {header}
+        </div>
+        <FilesSection agentId={lookup.agentId} />
+      </div>
+    );
+  }
+
   return (
     <ScrollArea className='h-full'>
       <div className='flex flex-col gap-3 p-1'>
-        {/* Connection status */}
-        <div className='flex items-center gap-2'>
-          <div className='size-2 rounded-full bg-green-500 shrink-0' />
-          <span className='text-xs text-muted-foreground'>Connected to OpenClaw</span>
-          <div className='flex-1' />
-          <Button variant='ghost' size='sm' className='size-6 p-0' onClick={handleRefresh} disabled={loading}>
-            <icons.RefreshCw className={`size-3 ${loading ? 'animate-spin' : ''}`} />
-          </Button>
-        </div>
-
-        <Separator />
-
-        {/* Agent lookup result */}
-        {!agentName ? (
-          <p className='text-xs text-muted-foreground italic'>
-            Set an agent name in the Details tab first.
-          </p>
-        ) : lookup?.exists ? (
-          <AgentInfoCard agent={lookup} />
-        ) : (
-          <AgentCreateCard
-            agentName={agentName}
-            workspace={workspace}
-            onWorkspaceChange={setWorkspace}
-            creating={creating}
-            onCreate={handleCreate}
-          />
-        )}
-
-        {/* Error display */}
-        {error && (
-          <p className='text-xs text-destructive'>{error}</p>
-        )}
-
-        {/* External agents section */}
+        {header}
         {externalAgents.length > 0 && (
           <>
             <Separator />
@@ -331,9 +385,171 @@ export function AgentOpenClawTab({
   );
 }
 
+// ─── Files Section ───────────────────────────────────────────────────
+
+function FilesSection({ agentId }: { agentId: string }) {
+  const [files, setFiles] = useState<FileMeta[]>([]);
+  const [filesLoading, setFilesLoading] = useState(false);
+  const [filesError, setFilesError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [content, setContent] = useState('');
+  const [original, setOriginal] = useState('');
+  const [fileLoading, setFileLoading] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const reloadList = useCallback(async () => {
+    setFilesLoading(true);
+    setFilesError(null);
+    try {
+      const r = await invoke<FilesList>('agent.listOpenclawFiles', agentId);
+      setFiles(r.files);
+    } catch (err) {
+      setFilesError(err instanceof Error ? err.message : 'Failed to list files');
+    } finally {
+      setFilesLoading(false);
+    }
+  }, [agentId]);
+
+  useEffect(() => {
+    reloadList();
+  }, [reloadList]);
+
+  const loadFile = useCallback(async (name: string) => {
+    setSelected(name);
+    setFileLoading(true);
+    setFileError(null);
+    try {
+      const r = await invoke<FileContent>('agent.getOpenclawFile', agentId, name);
+      setContent(r.content);
+      setOriginal(r.content);
+    } catch (err) {
+      setFileError(err instanceof Error ? err.message : 'Failed to read file');
+      setContent('');
+      setOriginal('');
+    } finally {
+      setFileLoading(false);
+    }
+  }, [agentId]);
+
+  const save = useCallback(async () => {
+    if (!selected) {
+      return;
+    }
+    setSaving(true);
+    setFileError(null);
+    try {
+      await invoke('agent.setOpenclawFile', agentId, selected, content);
+      setOriginal(content);
+      toast.success(`Saved ${selected}`);
+      reloadList();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save';
+      setFileError(msg);
+      toast.error(msg);
+    } finally {
+      setSaving(false);
+    }
+  }, [agentId, selected, content, reloadList]);
+
+  const dirty = content !== original;
+
+  return (
+    <div className='flex-1 min-h-0 flex flex-col gap-2 p-1 border-t'>
+      <div className='flex items-center gap-2'>
+        <icons.FileText className='size-3.5 text-muted-foreground' />
+        <span className='text-xs font-medium'>Files</span>
+        <Badge variant='secondary' className='text-[10px] px-1.5 py-0'>
+          {files.length}
+        </Badge>
+        <div className='flex-1' />
+        <Button variant='ghost' size='sm' className='size-6 p-0' onClick={reloadList} disabled={filesLoading}>
+          <icons.RefreshCw className={`size-3 ${filesLoading ? 'animate-spin' : ''}`} />
+        </Button>
+      </div>
+      {filesError && (
+        <p className='text-xs text-destructive'>{filesError}</p>
+      )}
+      <Select value={selected ?? ''} onValueChange={loadFile}>
+        <SelectTrigger className='h-7 text-xs'>
+          <SelectValue placeholder='Select a file…' />
+        </SelectTrigger>
+        <SelectContent>
+          {files.map((f) => (
+            <SelectItem key={f.name} value={f.name} className='font-mono text-xs'>
+              <div className='flex items-center gap-2'>
+                <span>{f.name}</span>
+                {f.missing ? (
+                  <Badge variant='outline' className='text-[10px] px-1.5 py-0'>
+                    new
+                  </Badge>
+                ) : null}
+              </div>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {selected ? (
+        <div className='flex-1 min-h-0 flex flex-col gap-2'>
+          {fileLoading ? (
+            <div className='flex items-center justify-center py-4'>
+              <icons.Loader2 className='size-4 animate-spin text-muted-foreground' />
+            </div>
+          ) : (
+            <div className='flex-1 min-h-0 overflow-hidden border rounded-md'>
+              <CodeMirror
+                value={content}
+                height='100%'
+                theme={oneDark}
+                onChange={(v: string) => setContent(v)}
+                className='h-full [&_.cm-editor]:h-full [&_.cm-scroller]:overflow-auto'
+                basicSetup={{
+                  lineNumbers: true,
+                  foldGutter: true,
+                  highlightActiveLine: true,
+                  tabSize: 2,
+                }}
+              />
+            </div>
+          )}
+          {fileError && (
+            <p className='text-xs text-destructive'>{fileError}</p>
+          )}
+          <div className='flex items-center gap-2'>
+            <Button
+              variant='outline'
+              size='sm'
+              onClick={save}
+              disabled={!dirty || saving || fileLoading}
+              className='flex-1'
+            >
+              {saving ? (
+                <>
+                  <icons.Loader2 className='size-3 mr-1 animate-spin' />
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <icons.Save className='size-3 mr-1' />
+                  Save
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <p className='text-xs text-muted-foreground italic'>
+          Pick a file to view or edit.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ─── Sub-components ──────────────────────────────────────────────────
 
-function AgentInfoCard({ agent }: { agent: AgentInfo }) {
+function AgentInfoCard({ agent, onDelete }: { agent: AgentInfo; onDelete: () => void }) {
+  const [confirming, setConfirming] = useState(false);
   return (
     <div className='flex flex-col gap-2'>
       <div className='flex items-center gap-2'>
@@ -343,6 +559,37 @@ function AgentInfoCard({ agent }: { agent: AgentInfo }) {
           <Badge variant='outline' className='text-[10px] px-1.5 py-0'>
             default
           </Badge>
+        )}
+        <div className='flex-1' />
+        {confirming ? (
+          <>
+            <Button
+              variant='ghost'
+              size='sm'
+              className='h-6 px-2 text-[10px]'
+              onClick={() => setConfirming(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant='destructive'
+              size='sm'
+              className='h-6 px-2 text-[10px]'
+              onClick={() => { setConfirming(false); onDelete(); }}
+            >
+              Confirm
+            </Button>
+          </>
+        ) : (
+          <Button
+            variant='ghost'
+            size='sm'
+            className='h-6 px-2 text-[10px] text-destructive hover:text-destructive'
+            onClick={() => setConfirming(true)}
+          >
+            <icons.Trash2 className='size-3 mr-1' />
+            Delete
+          </Button>
         )}
       </div>
       <div className='rounded-md border p-2.5 flex flex-col gap-1.5'>
@@ -397,13 +644,13 @@ function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string;
 }
 
 function AgentCreateCard({
-  agentName,
+  agentSlug,
   workspace,
   onWorkspaceChange,
   creating,
   onCreate,
 }: {
-  agentName: string;
+  agentSlug: string;
   workspace: string;
   onWorkspaceChange: (v: string) => void;
   creating: boolean;
@@ -416,7 +663,7 @@ function AgentCreateCard({
         <span className='text-xs font-medium'>Not found in OpenClaw</span>
       </div>
       <p className='text-xs text-muted-foreground'>
-        No agent named &ldquo;{agentName}&rdquo; exists in OpenClaw. Create one to enable chat sessions from this node.
+        No agent <code className='font-mono text-[11px]'>{agentSlug}</code> exists in OpenClaw. Create one to enable chat sessions from this node.
       </p>
       <div className='flex flex-col gap-1'>
         <Label className='text-xs'>Workspace</Label>
@@ -445,7 +692,7 @@ function AgentCreateCard({
         ) : (
           <>
             <icons.Plus className='size-3 mr-1' />
-            Create &ldquo;{agentName}&rdquo; in OpenClaw
+            Create {agentSlug} in OpenClaw
           </>
         )}
       </Button>
