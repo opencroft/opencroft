@@ -37,8 +37,8 @@ app/(mcp)/
 | `rename_space(space, name)` | `renameSpace(slug, name)` |
 | `delete_space(space)` | `deleteSpace(slug)` (refuses the last `default`) |
 
-Every other graph-scoped tool accepts an optional `space` argument (slug or
-case-insensitive name). When omitted, the active space is used.
+Every other graph-scoped tool accepts an optional `space` argument (slug).
+When omitted, the active space is used.
 
 ### Nodes
 

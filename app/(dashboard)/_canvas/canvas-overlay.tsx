@@ -20,11 +20,12 @@ import { cn } from '@/lib/utils';
 interface CanvasOverlayProps {
   nodes: CommandNodeEntry[];
   spaceName: string;
+  spaceSlug: string;
   selectedNodeId: string | null;
   onFocusNode: (nodeId: string) => void;
 }
 
-export function CanvasOverlay({ nodes, spaceName, selectedNodeId, onFocusNode }: CanvasOverlayProps) {
+export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, onFocusNode }: CanvasOverlayProps) {
   const [commandFocused, setCommandFocused] = useState(false);
   const [mode, setMode] = useState<CommandMode>('ai');
   const [agentId, setAgentId] = useState<string | null>(null);
@@ -141,6 +142,7 @@ export function CanvasOverlay({ nodes, spaceName, selectedNodeId, onFocusNode }:
         <AiPanel
           agentId={agentId}
           spaceName={spaceName}
+          spaceSlug={spaceSlug}
           selectedNodeId={selectedNodeId}
           focused={commandFocused}
           onFocusChange={setCommandFocused}

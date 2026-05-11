@@ -34,6 +34,7 @@ import { cn } from '@/lib/utils';
 interface AiPanelProps {
   agentId: string;
   spaceName: string;
+  spaceSlug: string;
   selectedNodeId: string | null;
   focused: boolean;
   onFocusChange: (focused: boolean) => void;
@@ -85,7 +86,7 @@ function persistSessions(list: SessionEntry[]) {
   window.localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(list));
 }
 
-export function AiPanel({ agentId, spaceName, selectedNodeId, focused, onFocusChange }: AiPanelProps) {
+export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused, onFocusChange }: AiPanelProps) {
   const [slashOpen, setSlashOpen] = useState(false);
   const [agents, setAgents] = useState<AgentNodeRef[]>([]);
   const [externalAgents, setExternalAgents] = useState<OpenclawAgent[]>([]);
@@ -112,7 +113,7 @@ export function AiPanel({ agentId, spaceName, selectedNodeId, focused, onFocusCh
     if (text.trim().startsWith('/')) {
       return text;
     }
-    const system = `<opencroft-system>Sent from OpenCroft space: ${spaceName}. Selected node: ${selectedNodeId ?? 'none'}.</opencroft-system>`;
+    const system = `<opencroft-system>Sent from OpenCroft space: ${spaceName} (${spaceSlug}). Selected node: ${selectedNodeId ?? 'none'}.</opencroft-system>`;
     if (!isFirstMessage) {
       return `${system}\n${text}`;
     }
@@ -132,7 +133,7 @@ export function AiPanel({ agentId, spaceName, selectedNodeId, focused, onFocusCh
       }
     }
     return `${prefix}\n${text}`;
-  }, [spaceName, selectedNodeId, activeSessionKey, sessions, agents]);
+  }, [spaceName, spaceSlug, selectedNodeId, activeSessionKey, sessions, agents]);
 
   const session = useAgentSession(activeSessionKey, transformOutgoing);
 

@@ -192,7 +192,7 @@ async function persistToDownstreamSendMessages(
     if (!message.trim().startsWith('/')) {
       message = wrapMessageWithContext(
         message,
-        spaceId,
+        { name: space.name, slug: spaceId },
         sourceNodeId,
         route.ctx.jobContext,
         route.ctx.instructions,

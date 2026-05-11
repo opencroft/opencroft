@@ -160,13 +160,13 @@ export function listJobNames(nodes: NodeLike[]): string[] {
  */
 export function wrapMessageWithContext(
   message: string,
-  spaceId: string,
+  space: { name: string; slug: string },
   sourceNodeId: string | null,
   jobContext: string,
   instructions: string[],
 ): string {
   const selectedPart = sourceNodeId ?? 'none';
-  const system = `<opencroft-system>Sent from OpenCroft space: ${spaceId}. Selected node: ${selectedPart}.</opencroft-system>`;
+  const system = `<opencroft-system>Sent from OpenCroft space: ${space.name} (${space.slug}). Selected node: ${selectedPart}.</opencroft-system>`;
   let prefix = system;
   if (jobContext) {
     prefix += `\n<opencroft-task>${jobContext}</opencroft-task>`;
