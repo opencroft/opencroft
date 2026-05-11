@@ -312,7 +312,6 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
   }, [sessions, agents, activeSessionKey]);
 
 
-
   const headerSessions = useMemo(() => {
     // Only show sessions that are in the openTabs list
     // Build ALL sessions across all agents for lookup
@@ -325,7 +324,9 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
       const groups = buildSessionGroups(agent, own, ext);
       for (const job of agent.jobs) {
         const list = groups.byJob.get(job.nodeId);
-        if (!list) continue;
+        if (!list) {
+          continue;
+        }
         for (const item of list) {
           if (!seen.has(item.key)) {
             seen.add(item.key);
@@ -343,7 +344,9 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
 
     for (const extAgent of unmatchedExternalAgents) {
       for (const s of extAgent.sessions) {
-        if (seen.has(s.key)) continue;
+        if (seen.has(s.key)) {
+          continue;
+        }
         seen.add(s.key);
         allSessions.push({
           key: s.key,
@@ -391,7 +394,9 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
           externalAgents={unmatchedExternalAgents}
           sessions={headerSessions}
           activeSessionKey={activeSessionKey}
-          onSelectSession={(key) => { openTab(key); setActiveSessionKey(key); }}
+          onSelectSession={(key) => {
+            openTab(key); setActiveSessionKey(key);
+          }}
           onCloseSession={closeTab}
           onPermanentlyDeleteSession={permanentlyDeleteSession}
           onCreateSession={createSession}
