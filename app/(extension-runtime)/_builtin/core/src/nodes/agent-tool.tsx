@@ -23,7 +23,6 @@ export function AgentToolNode({ id, data, selected }: { id: string; data: AgentT
           {data.requireApproval && (
             <span className='px-1 py-0.5 bg-amber-500/20 text-amber-400 rounded font-medium'>approval</span>
           )}
-          <span className='text-muted-foreground truncate'>{data.description ?? 'Agent tool'}</span>
         </div>
       }
     />

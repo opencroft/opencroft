@@ -547,7 +547,7 @@ export default defineExtension({
       name: 'Agent Tool',
       category: 'Integration',
       icon: 'Wrench',
-      accent: 'oklch(0.65 0.15 250)',
+      accent: 'oklch(0.65 0.24 25)',
       handles: AGENT_TOOL_HANDLES as unknown as never[],
       defaultData: { name: '', description: '', inputSchema: '{"type":"object","properties":{}}', requireApproval: true },
       component: AgentToolNode as unknown as never,
