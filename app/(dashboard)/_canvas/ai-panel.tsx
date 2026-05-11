@@ -169,17 +169,17 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
     });
   }, [focused]);
 
-  const externalByName = useMemo(() => {
+  const externalById = useMemo(() => {
     const map = new Map<string, OpenclawAgent>();
     for (const ext of externalAgents) {
-      map.set(ext.name.trim().toLowerCase(), ext);
+      map.set(ext.agentId, ext);
     }
     return map;
   }, [externalAgents]);
 
   const unmatchedExternalAgents = useMemo(() => {
-    const localNames = new Set(agents.map((a) => a.name.trim().toLowerCase()));
-    return externalAgents.filter((a) => !localNames.has(a.name.trim().toLowerCase()));
+    const localSlugs = new Set(agents.map((a) => slug(a.name)));
+    return externalAgents.filter((a) => !localSlugs.has(a.agentId));
   }, [agents, externalAgents]);
 
   const closeTab = useCallback((key: string) => {
@@ -274,16 +274,6 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
     });
   }, []);
 
-  const selectAgent = useCallback((agentNode: AgentNodeRef) => {
-    if (agentNode.jobs.length > 0) {
-      createSession(agentNode, agentNode.jobs[0]);
-    } else {
-      const key = `agent:${slug(agentNode.name)}:dashboard`;
-      openTab(key);
-      setActiveSessionKey(key);
-    }
-  }, [createSession, openTab]);
-
   const selectExternalAgent = useCallback((extAgent: OpenclawAgent) => {
     if (extAgent.sessions.length > 0) {
       const key = extAgent.sessions[0].key;
@@ -320,7 +310,7 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
 
     for (const agent of agents) {
       const own = sessions.filter((s) => s.agentNodeId === agent.nodeId);
-      const ext = externalByName.get(agent.name.trim().toLowerCase()) ?? null;
+      const ext = externalById.get(slug(agent.name)) ?? null;
       const groups = buildSessionGroups(agent, own, ext);
       for (const job of agent.jobs) {
         const list = groups.byJob.get(job.nodeId);
@@ -380,7 +370,7 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
     }
 
     return openSessionItems;
-  }, [agents, sessions, externalByName, unmatchedExternalAgents, openTabs]);
+  }, [agents, sessions, externalById, unmatchedExternalAgents, openTabs]);
 
   const headerNode = useMemo(() => {
     if (!showChat) {
@@ -389,7 +379,6 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
     return (
       <NodeCard selected className='pointer-events-auto px-2 py-1.5'>
         <SessionHeader
-          activeAgent={activeAgent}
           allAgents={agents}
           externalAgents={unmatchedExternalAgents}
           sessions={headerSessions}
@@ -400,13 +389,12 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
           onCloseSession={closeTab}
           onPermanentlyDeleteSession={permanentlyDeleteSession}
           onCreateSession={createSession}
-          onSelectAgent={selectAgent}
-          existingSessionsByAgent={externalByName}
+          existingSessionsByAgent={externalById}
           onSelectExternalAgent={selectExternalAgent}
         />
       </NodeCard>
     );
-  }, [showChat, activeAgent, agents, unmatchedExternalAgents, externalByName, headerSessions, activeSessionKey, createSession, closeTab, openTab, selectAgent, selectExternalAgent, permanentlyDeleteSession]);
+  }, [showChat, activeAgent, agents, unmatchedExternalAgents, externalById, headerSessions, activeSessionKey, createSession, closeTab, openTab, selectExternalAgent, permanentlyDeleteSession]);
 
   const contentNode = useMemo(() => {
     if (!showChat) {
@@ -442,9 +430,9 @@ interface SessionItem {
 }
 
 function buildSessionGroups(agent: AgentNodeRef, sessions: SessionEntry[], externalAgent: OpenclawAgent | null) {
-  const jobsByName = new Map<string, AgentJobRef>();
+  const jobsBySlug = new Map<string, AgentJobRef>();
   for (const job of agent.jobs) {
-    jobsByName.set(job.name.trim().toLowerCase(), job);
+    jobsBySlug.set(slug(job.name), job);
   }
   const byJob = new Map<string, SessionItem[]>();
   const pet: SessionItem[] = [];
@@ -464,18 +452,18 @@ function buildSessionGroups(agent: AgentNodeRef, sessions: SessionEntry[], exter
   }
 
   if (externalAgent) {
-    const agentNameKey = agent.name.trim().toLowerCase();
+    const agentSlug = slug(agent.name);
     for (const s of externalAgent.sessions) {
       if (seen.has(s.key)) {
         continue;
       }
       const parsed = parseOpenclawSessionKey(s.key);
-      const matchedJob = parsed && parsed.agentName.trim().toLowerCase() === agentNameKey
-        ? jobsByName.get(parsed.jobName.trim().toLowerCase())
+      const matchedJob = parsed && parsed.agentSlug === agentSlug
+        ? jobsBySlug.get(parsed.jobSlug)
         : undefined;
       const item: SessionItem = {
         key: s.key,
-        label: s.title ?? matchedJob?.name ?? parsed?.jobName ?? shortSessionKey(s.key),
+        label: s.title ?? matchedJob?.name ?? parsed?.jobSlug ?? shortSessionKey(s.key),
         subtitle: s.lastMessage ?? undefined,
         agentName: agent.name,
         agentAvatar: agent.avatar,
@@ -493,16 +481,15 @@ function buildSessionGroups(agent: AgentNodeRef, sessions: SessionEntry[], exter
   return { byJob, pet };
 }
 
-function parseOpenclawSessionKey(key: string): { agentName: string; jobName: string } | null {
+function parseOpenclawSessionKey(key: string): { agentSlug: string; jobSlug: string } | null {
   const parts = key.split(':');
   if (parts.length < 3 || parts[0] !== 'agent') {
     return null;
   }
-  return { agentName: parts[1], jobName: parts.slice(2).join(':') };
+  return { agentSlug: parts[1], jobSlug: parts.slice(2).join(':') };
 }
 
 interface SessionHeaderProps {
-  activeAgent: AgentNodeRef | undefined;
   allAgents: AgentNodeRef[];
   externalAgents: OpenclawAgent[];
   existingSessionsByAgent: Map<string, OpenclawAgent>;
@@ -512,11 +499,10 @@ interface SessionHeaderProps {
   onCloseSession: (key: string) => void;
   onPermanentlyDeleteSession: (key: string) => void;
   onCreateSession: (agent: AgentNodeRef, job: AgentJobRef) => void;
-  onSelectAgent: (agent: AgentNodeRef) => void;
   onSelectExternalAgent: (agent: OpenclawAgent) => void;
 }
 
-function SessionHeader({ activeAgent, allAgents, externalAgents, existingSessionsByAgent, sessions, activeSessionKey, onSelectSession, onCloseSession, onPermanentlyDeleteSession, onCreateSession, onSelectAgent, onSelectExternalAgent }: SessionHeaderProps) {
+function SessionHeader({ allAgents, externalAgents, existingSessionsByAgent, sessions, activeSessionKey, onSelectSession, onCloseSession, onPermanentlyDeleteSession, onCreateSession, onSelectExternalAgent }: SessionHeaderProps) {
   return (
     <div className='flex w-full items-center gap-2'>
       {/* Left: Menu button with dropdown showing all agents */}
@@ -537,9 +523,7 @@ function SessionHeader({ activeAgent, allAgents, externalAgents, existingSession
             <AgentMenuItem
               key={agent.nodeId}
               agent={agent}
-              isActive={activeAgent?.nodeId === agent.nodeId}
-              existingSessions={existingSessionsByAgent.get(agent.name.trim().toLowerCase())?.sessions ?? []}
-              onSelect={onSelectAgent}
+              existingSessions={existingSessionsByAgent.get(slug(agent.name))?.sessions ?? []}
               onCreateSession={onCreateSession}
               onOpenSession={onSelectSession}
               onDeleteSession={onPermanentlyDeleteSession}
@@ -613,28 +597,13 @@ function SessionHeader({ activeAgent, allAgents, externalAgents, existingSession
 
 interface AgentMenuItemProps {
   agent: AgentNodeRef;
-  isActive: boolean;
   existingSessions: OpenclawSession[];
-  onSelect: (agent: AgentNodeRef) => void;
   onCreateSession: (agent: AgentNodeRef, job: AgentJobRef) => void;
   onOpenSession: (key: string) => void;
   onDeleteSession: (key: string) => void;
 }
 
-function AgentMenuItem({ agent, isActive, existingSessions, onSelect, onCreateSession, onOpenSession, onDeleteSession }: AgentMenuItemProps) {
-  if (agent.jobs.length === 0 && existingSessions.length === 0) {
-    return (
-      <DropdownMenuItem onSelect={() => onSelect(agent)}>
-        {agent.avatar ? (
-          <img src={agent.avatar} alt='' className='size-4 shrink-0 rounded-full object-cover' />
-        ) : (
-          <User className='size-4 shrink-0' />
-        )}
-        <span className='truncate'>{agent.name}</span>
-      </DropdownMenuItem>
-    );
-  }
-
+function AgentMenuItem({ agent, existingSessions, onCreateSession, onOpenSession, onDeleteSession }: AgentMenuItemProps) {
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger>

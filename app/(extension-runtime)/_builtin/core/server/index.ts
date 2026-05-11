@@ -371,15 +371,19 @@ async function getOpenclawConnection(): Promise<OpenclawConnectionState> {
   }
 }
 
+function slug(name: string): string {
+  return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
 async function lookupOpenclawAgent(agentName: string): Promise<OpenclawAgentLookup> {
-  if (!agentName.trim()) {
+  const agentSlug = slug(agentName);
+  if (!agentSlug) {
     return { exists: false };
   }
   try {
     const list = await host.openclaw.call<{ agents?: OpenclawAgentEntry[]; items?: OpenclawAgentEntry[] }>('agents.list', {});
     const entries = list.agents ?? list.items ?? [];
-    const normalizedName = agentName.trim().toLowerCase();
-    const found = entries.find((a) => (a.name ?? a.id).trim().toLowerCase() === normalizedName);
+    const found = entries.find((a) => a.id === agentSlug);
     if (!found) {
       return { exists: false };
     }
@@ -396,27 +400,78 @@ async function lookupOpenclawAgent(agentName: string): Promise<OpenclawAgentLook
 }
 
 async function createOpenclawAgent(agentName: string, workspace?: string): Promise<OpenclawAgentInfo> {
-  const resolvedWorkspace = workspace?.trim() || `~/.openclaw/workspace-${agentName}`;
+  const agentSlug = slug(agentName);
+  const resolvedWorkspace = workspace?.trim() || `~/.openclaw/workspace-${agentSlug}`;
   const result = await host.openclaw.call<{ id?: string; name?: string }>('agents.create', {
-    name: agentName,
+    name: agentSlug,
     workspace: resolvedWorkspace,
   });
   return {
     exists: true,
-    agentId: result.id ?? agentName,
-    name: result.name ?? agentName,
+    agentId: result.id ?? agentSlug,
+    name: result.name ?? agentSlug,
     isDefault: false,
     workspace: resolvedWorkspace,
   };
 }
 
-async function listOpenclawExternalAgents(excludeNames: string[]): Promise<OpenclawAgentInfo[]> {
+interface OpenclawFileMeta {
+  name: string;
+  path?: string;
+  missing: boolean;
+  size?: number;
+  updatedAtMs?: number;
+}
+
+interface OpenclawFilesList {
+  workspace: string;
+  files: OpenclawFileMeta[];
+}
+
+interface OpenclawFileContent extends OpenclawFileMeta {
+  content: string;
+}
+
+async function listOpenclawFiles(agentId: string): Promise<OpenclawFilesList> {
+  const r = await host.openclaw.call<{ workspace: string; files: OpenclawFileMeta[] }>(
+    'agents.files.list',
+    { agentId },
+  );
+  return { workspace: r.workspace, files: r.files ?? [] };
+}
+
+async function getOpenclawFile(agentId: string, name: string): Promise<OpenclawFileContent> {
+  const r = await host.openclaw.call<{ file: OpenclawFileMeta & { content?: string } }>(
+    'agents.files.get',
+    { agentId, name },
+  );
+  return {
+    name: r.file.name,
+    path: r.file.path,
+    missing: r.file.missing,
+    size: r.file.size,
+    updatedAtMs: r.file.updatedAtMs,
+    content: r.file.content ?? '',
+  };
+}
+
+async function setOpenclawFile(agentId: string, name: string, content: string): Promise<{ ok: true }> {
+  await host.openclaw.call('agents.files.set', { agentId, name, content });
+  return { ok: true };
+}
+
+async function deleteOpenclawAgent(agentId: string): Promise<{ ok: true }> {
+  await host.openclaw.call('agents.delete', { agentId });
+  return { ok: true };
+}
+
+async function listOpenclawExternalAgents(excludeSlugs: string[]): Promise<OpenclawAgentInfo[]> {
   try {
     const list = await host.openclaw.call<{ agents?: OpenclawAgentEntry[]; items?: OpenclawAgentEntry[] }>('agents.list', {});
     const entries = list.agents ?? list.items ?? [];
-    const excludeSet = new Set(excludeNames.map((n) => n.trim().toLowerCase()));
+    const excludeSet = new Set(excludeSlugs.filter(Boolean));
     return entries
-      .filter((a) => !excludeSet.has((a.name ?? a.id).trim().toLowerCase()))
+      .filter((a) => !excludeSet.has(a.id))
       .map((a) => ({
         agentId: a.id,
         name: a.name ?? a.id,
@@ -519,6 +574,10 @@ export const actions = {
   'agent.lookupOpenclaw': (name: string) => lookupOpenclawAgent(name),
   'agent.createOpenclaw': (name: string, workspace?: string) => createOpenclawAgent(name, workspace),
   'agent.listOpenclawExternal': (excludeNames: string[]) => listOpenclawExternalAgents(excludeNames),
+  'agent.listOpenclawFiles': (agentId: string) => listOpenclawFiles(agentId),
+  'agent.getOpenclawFile': (agentId: string, name: string) => getOpenclawFile(agentId, name),
+  'agent.setOpenclawFile': (agentId: string, name: string, content: string) => setOpenclawFile(agentId, name, content),
+  'agent.deleteOpenclaw': (agentId: string) => deleteOpenclawAgent(agentId),
 };
 
 // ═══════════════════════════════════════════════════════════════════

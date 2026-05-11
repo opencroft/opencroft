@@ -71,13 +71,14 @@ export async function listAgentNodes(): Promise<AgentNodeRef[]> {
       if (!edge.source || !edge.target) {
         continue;
       }
-      // Jobs connected to agent via agent-in handle
+      // Jobs connected to agent via agent-in handle (skip unnamed jobs)
       const job = jobsById.get(edge.source);
-      if (job) {
+      const jobName = job?.data?.name?.trim();
+      if (job && jobName) {
         const list = jobsByAgent.get(edge.target) ?? [];
         list.push({
           nodeId: edge.source,
-          name: job.data?.name?.trim() || 'Job',
+          name: jobName,
           context: job.data?.context ?? '',
           workingDirectory: job.data?.workingDirectory ?? '',
         });
