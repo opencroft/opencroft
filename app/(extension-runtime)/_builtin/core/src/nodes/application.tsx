@@ -596,7 +596,8 @@ export function ApplicationInspector({
                 </a>
                 <Badge
                   variant={item.category === 'public' ? 'default' : 'secondary'}
-                  className='text-[9px] px-1.5 py-0 h-4 w-full text-center'
+                  className='text-[9px] px-1.5 py-0 h-4 w-full text-center cursor-default'
+                  onClick={() => copyUrl(item.url)}
                 >
                   {item.category}
                 </Badge>
