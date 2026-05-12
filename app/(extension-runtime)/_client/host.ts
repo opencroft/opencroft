@@ -56,6 +56,12 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { StatusIndicator } from '@/components/ui/utils/status-indicator';
 
 export interface ExtensionComponentProps<D = Record<string, unknown>> {
@@ -294,6 +300,10 @@ export const extensionUiApi = {
   ChatInput,
   Slider,
   StatusIndicator,
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
   Dialog,
   DialogClose,
   DialogContent,

@@ -28,6 +28,10 @@ import {
   SelectValue,
   StatusIndicator,
   Textarea,
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
 } from '@ext/ui';
 import { COMPOSE_PROJECT } from '../../shared';
 import { InspectorTerminalBody } from '../shared';
@@ -217,9 +221,20 @@ function InstanceCard({
 }) {
   return (
     <div className='flex items-center gap-1.5 text-[10px]'>
-      <StatusIndicator variant={instanceVariant(container)} />
-      <span className='text-muted-foreground'>#{index + 1}</span>
-      <span className='flex-1 truncate'>{container.status}</span>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className='flex items-center gap-1.5 cursor-default'>
+              <StatusIndicator variant={instanceVariant(container)} />
+              <span className='text-muted-foreground'>#{index + 1}</span>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side='top'>
+            {container.status}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+      <span className='flex-1' />
       <Button
         variant='ghost'
         size='sm'
@@ -505,8 +520,100 @@ export function ApplicationInspector({
 }: { nodeId: string; data: AppData; updateData: (p: Partial<AppData>) => void }) {
   const dockerNodeId = (data as AppData & { __resolvedContexts?: Record<string, { sourceNodeId?: string }> })
     .__resolvedContexts?.['docker-in']?.sourceNodeId;
+
+  const portUrls = useMemo(() => {
+    const urls: { label: string; url: string; category: 'public' | 'local' | 'container' }[] = [];
+    const serviceName = data.name || nodeId;
+
+    // Public URL from proxy config
+    if (data.proxyDomain?.trim()) {
+      const scheme = data.proxyTls ? 'https' : 'http';
+      urls.push({
+        label: data.proxyDomain,
+        url: `${scheme}://${data.proxyDomain}`,
+        category: 'public',
+      });
+    }
+
+    // Local URLs from port mappings
+    if (data.ports?.trim()) {
+      for (const line of data.ports.split('\n').map((l) => l.trim()).filter(Boolean)) {
+        const parts = line.split(':');
+        const hostPort = parts.length >= 2 ? parts[0].trim() : parts[0].trim();
+        const containerPort = parts.length >= 2 ? parts[1].trim() : parts[0].trim();
+        urls.push({
+          label: `localhost:${hostPort}`,
+          url: `http://localhost:${hostPort}`,
+          category: 'local',
+        });
+        urls.push({
+          label: `${serviceName}:${containerPort}`,
+          url: `http://${serviceName}:${containerPort}`,
+          category: 'container',
+        });
+      }
+    }
+
+    // Container URL from service port (if not already covered by port mappings)
+    if (data.proxyPort && !data.ports?.trim().split('\n').some((l) => {
+      const parts = l.trim().split(':');
+      return (parts.length >= 2 ? parts[1].trim() : parts[0].trim()) === String(data.proxyPort);
+    })) {
+      urls.push({
+        label: `${serviceName}:${data.proxyPort}`,
+        url: `http://${serviceName}:${data.proxyPort}`,
+        category: 'container',
+      });
+    }
+
+    // Sort: public first, then local, then container
+    const order = { public: 0, local: 1, container: 2 };
+    urls.sort((a, b) => order[a.category] - order[b.category]);
+
+    return urls;
+  }, [data.ports, data.proxyDomain, data.proxyTls, data.proxyPort, data.name, nodeId]);
+
+  const copyUrl = useCallback((url: string) => {
+    navigator.clipboard.writeText(url);
+    toast.success('URL copied');
+  }, []);
+
   return (
     <div className='flex flex-col gap-3'>
+      {portUrls.length > 0 ? (
+        <div className='flex flex-col gap-1'>
+          <Label>URLs</Label>
+          <div className='grid grid-cols-[1fr_auto_auto] gap-x-1 gap-y-0.5 items-center'>
+            {portUrls.map((item, i) => (
+              <React.Fragment key={i}>
+                <a
+                  href={item.url}
+                  target='_blank'
+                  rel='noopener noreferrer'
+                  className='truncate text-primary hover:underline font-mono text-[11px]'
+                >
+                  {item.url}
+                </a>
+                <Badge
+                  variant={item.category === 'public' ? 'default' : 'secondary'}
+                  className='text-[9px] px-1.5 py-0 h-4 w-full text-center cursor-default'
+                  onClick={() => copyUrl(item.url)}
+                >
+                  {item.category}
+                </Badge>
+                <Button
+                  variant='ghost'
+                  size='sm'
+                  className='h-5 w-5 p-0'
+                  onClick={() => copyUrl(item.url)}
+                >
+                  <icons.Copy className='h-3 w-3' />
+                </Button>
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div className='flex flex-col gap-1'>
         <Label>Service Name</Label>
         <Input
