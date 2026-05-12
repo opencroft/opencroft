@@ -573,12 +573,6 @@ export function ApplicationInspector({
           <div className='flex flex-col gap-0.5'>
             {portUrls.map((item, i) => (
               <div key={i} className='flex items-center gap-1 text-xs'>
-                <Badge
-                  variant={item.category === 'public' ? 'default' : 'secondary'}
-                  className='text-[9px] px-1.5 py-0 h-4 shrink-0'
-                >
-                  {item.category}
-                </Badge>
                 <a
                   href={item.url}
                   target='_blank'
@@ -587,6 +581,12 @@ export function ApplicationInspector({
                 >
                   {item.url}
                 </a>
+                <Badge
+                  variant={item.category === 'public' ? 'default' : 'secondary'}
+                  className='text-[9px] px-1.5 py-0 h-4 shrink-0'
+                >
+                  {item.category}
+                </Badge>
                 <Button
                   variant='ghost'
                   size='sm'
