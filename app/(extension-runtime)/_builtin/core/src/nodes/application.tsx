@@ -522,49 +522,41 @@ export function ApplicationInspector({
     .__resolvedContexts?.['docker-in']?.sourceNodeId;
 
   const portUrls = useMemo(() => {
-    if (!data.ports?.trim()) return [];
     const urls: { label: string; url: string; category: 'public' | 'local' | 'container' }[] = [];
-    const lines = data.ports.split('\n').map((l) => l.trim()).filter(Boolean);
+    const serviceName = data.name || nodeId;
 
     // Public URL from proxy config
     if (data.proxyDomain?.trim()) {
       const scheme = data.proxyTls ? 'https' : 'http';
-      const port = data.proxyPort ? `:${data.proxyPort}` : '';
-      // If proxyPort is set and matches one of the container ports, show the public URL
       urls.push({
         label: data.proxyDomain,
-        url: `${scheme}://${data.proxyDomain}${port && !data.proxyTls ? port : ''}`,
+        url: `${scheme}://${data.proxyDomain}`,
         category: 'public',
       });
     }
 
-    for (const line of lines) {
-      const parts = line.split(':');
-      if (parts.length === 2) {
-        const hostPort = parts[0].trim();
-        const containerPort = parts[1].trim();
-        // Local URL
+    // Container URL from service port
+    if (data.proxyPort) {
+      urls.push({
+        label: `${serviceName}:${data.proxyPort}`,
+        url: `http://${serviceName}:${data.proxyPort}`,
+        category: 'container',
+      });
+    }
+
+    // Local URLs from port mappings
+    if (data.ports?.trim()) {
+      for (const line of data.ports.split('\n').map((l) => l.trim()).filter(Boolean)) {
+        const parts = line.split(':');
+        const hostPort = parts.length >= 2 ? parts[0].trim() : parts[0].trim();
         urls.push({
           label: `localhost:${hostPort}`,
           url: `http://localhost:${hostPort}`,
           category: 'local',
         });
-        // Container URL
-        const serviceName = data.name || nodeId;
-        urls.push({
-          label: `${serviceName}:${containerPort}`,
-          url: `http://${serviceName}:${containerPort}`,
-          category: 'container',
-        });
-      } else if (parts.length === 1) {
-        const port = parts[0].trim();
-        urls.push({
-          label: `localhost:${port}`,
-          url: `http://localhost:${port}`,
-          category: 'local',
-        });
       }
     }
+
     return urls;
   }, [data.ports, data.proxyDomain, data.proxyTls, data.proxyPort, data.name, nodeId]);
 
