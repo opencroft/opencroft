@@ -535,8 +535,30 @@ export function ApplicationInspector({
       });
     }
 
-    // Container URL from service port
-    if (data.proxyPort) {
+    // Local URLs from port mappings
+    if (data.ports?.trim()) {
+      for (const line of data.ports.split('\n').map((l) => l.trim()).filter(Boolean)) {
+        const parts = line.split(':');
+        const hostPort = parts.length >= 2 ? parts[0].trim() : parts[0].trim();
+        const containerPort = parts.length >= 2 ? parts[1].trim() : parts[0].trim();
+        urls.push({
+          label: `localhost:${hostPort}`,
+          url: `http://localhost:${hostPort}`,
+          category: 'local',
+        });
+        urls.push({
+          label: `${serviceName}:${containerPort}`,
+          url: `http://${serviceName}:${containerPort}`,
+          category: 'container',
+        });
+      }
+    }
+
+    // Container URL from service port (if not already covered by port mappings)
+    if (data.proxyPort && !data.ports?.trim().split('\n').some((l) => {
+      const parts = l.trim().split(':');
+      return (parts.length >= 2 ? parts[1].trim() : parts[0].trim()) === String(data.proxyPort);
+    })) {
       urls.push({
         label: `${serviceName}:${data.proxyPort}`,
         url: `http://${serviceName}:${data.proxyPort}`,
@@ -544,18 +566,9 @@ export function ApplicationInspector({
       });
     }
 
-    // Local URLs from port mappings
-    if (data.ports?.trim()) {
-      for (const line of data.ports.split('\n').map((l) => l.trim()).filter(Boolean)) {
-        const parts = line.split(':');
-        const hostPort = parts.length >= 2 ? parts[0].trim() : parts[0].trim();
-        urls.push({
-          label: `localhost:${hostPort}`,
-          url: `http://localhost:${hostPort}`,
-          category: 'local',
-        });
-      }
-    }
+    // Sort: public first, then local, then container
+    const order = { public: 0, local: 1, container: 2 };
+    urls.sort((a, b) => order[a.category] - order[b.category]);
 
     return urls;
   }, [data.ports, data.proxyDomain, data.proxyTls, data.proxyPort, data.name, nodeId]);
@@ -570,32 +583,32 @@ export function ApplicationInspector({
       {portUrls.length > 0 ? (
         <div className='flex flex-col gap-1'>
           <Label>URLs</Label>
-          <div className='flex flex-col gap-0.5'>
+          <div className='grid grid-cols-[1fr_auto_auto] gap-x-1 gap-y-0.5 items-center'>
             {portUrls.map((item, i) => (
-              <div key={i} className='flex items-center gap-1 text-xs'>
+              <React.Fragment key={i}>
                 <a
                   href={item.url}
                   target='_blank'
                   rel='noopener noreferrer'
-                  className='flex-1 truncate text-primary hover:underline font-mono text-[11px]'
+                  className='truncate text-primary hover:underline font-mono text-[11px]'
                 >
                   {item.url}
                 </a>
                 <Badge
                   variant={item.category === 'public' ? 'default' : 'secondary'}
-                  className='text-[9px] px-1.5 py-0 h-4 shrink-0'
+                  className='text-[9px] px-1.5 py-0 h-4 w-full text-center'
                 >
                   {item.category}
                 </Badge>
                 <Button
                   variant='ghost'
                   size='sm'
-                  className='h-5 w-5 p-0 shrink-0'
+                  className='h-5 w-5 p-0'
                   onClick={() => copyUrl(item.url)}
                 >
                   <icons.Copy className='h-3 w-3' />
                 </Button>
-              </div>
+              </React.Fragment>
             ))}
           </div>
         </div>
