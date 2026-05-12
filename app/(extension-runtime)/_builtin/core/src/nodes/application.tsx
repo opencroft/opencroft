@@ -28,6 +28,10 @@ import {
   SelectValue,
   StatusIndicator,
   Textarea,
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
 } from '@ext/ui';
 import { COMPOSE_PROJECT } from '../../shared';
 import { InspectorTerminalBody } from '../shared';
@@ -217,9 +221,20 @@ function InstanceCard({
 }) {
   return (
     <div className='flex items-center gap-1.5 text-[10px]'>
-      <StatusIndicator variant={instanceVariant(container)} />
-      <span className='text-muted-foreground'>#{index + 1}</span>
-      <span className='flex-1 truncate'>{container.status}</span>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className='flex items-center gap-1.5 cursor-default'>
+              <StatusIndicator variant={instanceVariant(container)} />
+              <span className='text-muted-foreground'>#{index + 1}</span>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side='top'>
+            {container.status}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+      <span className='flex-1' />
       <Button
         variant='ghost'
         size='sm'
@@ -505,8 +520,94 @@ export function ApplicationInspector({
 }: { nodeId: string; data: AppData; updateData: (p: Partial<AppData>) => void }) {
   const dockerNodeId = (data as AppData & { __resolvedContexts?: Record<string, { sourceNodeId?: string }> })
     .__resolvedContexts?.['docker-in']?.sourceNodeId;
+
+  const portUrls = useMemo(() => {
+    if (!data.ports?.trim()) return [];
+    const urls: { label: string; url: string; category: 'public' | 'local' | 'container' }[] = [];
+    const lines = data.ports.split('\n').map((l) => l.trim()).filter(Boolean);
+
+    // Public URL from proxy config
+    if (data.proxyDomain?.trim()) {
+      const scheme = data.proxyTls ? 'https' : 'http';
+      const port = data.proxyPort ? `:${data.proxyPort}` : '';
+      // If proxyPort is set and matches one of the container ports, show the public URL
+      urls.push({
+        label: data.proxyDomain,
+        url: `${scheme}://${data.proxyDomain}${port && !data.proxyTls ? port : ''}`,
+        category: 'public',
+      });
+    }
+
+    for (const line of lines) {
+      const parts = line.split(':');
+      if (parts.length === 2) {
+        const hostPort = parts[0].trim();
+        const containerPort = parts[1].trim();
+        // Local URL
+        urls.push({
+          label: `localhost:${hostPort}`,
+          url: `http://localhost:${hostPort}`,
+          category: 'local',
+        });
+        // Container URL
+        const serviceName = data.name || nodeId;
+        urls.push({
+          label: `${serviceName}:${containerPort}`,
+          url: `http://${serviceName}:${containerPort}`,
+          category: 'container',
+        });
+      } else if (parts.length === 1) {
+        const port = parts[0].trim();
+        urls.push({
+          label: `localhost:${port}`,
+          url: `http://localhost:${port}`,
+          category: 'local',
+        });
+      }
+    }
+    return urls;
+  }, [data.ports, data.proxyDomain, data.proxyTls, data.proxyPort, data.name, nodeId]);
+
+  const copyUrl = useCallback((url: string) => {
+    navigator.clipboard.writeText(url);
+    toast.success('URL copied');
+  }, []);
+
   return (
     <div className='flex flex-col gap-3'>
+      {portUrls.length > 0 ? (
+        <div className='flex flex-col gap-1'>
+          <Label>URLs</Label>
+          <div className='flex flex-col gap-0.5'>
+            {portUrls.map((item, i) => (
+              <div key={i} className='flex items-center gap-1 text-xs'>
+                <Badge
+                  variant={item.category === 'public' ? 'default' : 'secondary'}
+                  className='text-[9px] px-1.5 py-0 h-4 shrink-0'
+                >
+                  {item.category}
+                </Badge>
+                <a
+                  href={item.url}
+                  target='_blank'
+                  rel='noopener noreferrer'
+                  className='flex-1 truncate text-primary hover:underline font-mono text-[11px]'
+                >
+                  {item.url}
+                </a>
+                <Button
+                  variant='ghost'
+                  size='sm'
+                  className='h-5 w-5 p-0 shrink-0'
+                  onClick={() => copyUrl(item.url)}
+                >
+                  <icons.Copy className='h-3 w-3' />
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div className='flex flex-col gap-1'>
         <Label>Service Name</Label>
         <Input
