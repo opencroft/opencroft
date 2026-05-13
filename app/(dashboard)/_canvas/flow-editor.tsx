@@ -22,6 +22,8 @@ import '@xterm/xterm/css/xterm.css';
 import { Box, GripVertical } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+import { useIsMobile } from '@/hooks/use-mobile';
 import { toast } from 'sonner';
 
 import { ApprovalList } from '@/app/(approvals)/_components/approval-list';
@@ -112,6 +114,8 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const [resizing, setResizing] = useState(false);
   const [inspectorExpanded, setInspectorExpanded] = useState(false);
   const inspector = useInspectorState();
+  const isMobile = useIsMobile();
+  const [mobileInspectorVisible, setMobileInspectorVisible] = useState(false);
   const { resolvedTheme } = useTheme();
   const { screenToFlowPosition, setCenter } = useReactFlow();
   const debouncedSave = useDebouncedSave(slug, 500);
@@ -126,6 +130,12 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     'comment': CommentNode,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }) as any, [allNodes]);
+  // On mobile, disable ReactFlow built-in click-to-select; we use long press instead
+  const mobileNodes = useMemo(() => isMobile
+    ? nodes.map((n) => ({ ...n, selectable: false }))
+    : nodes,
+  [nodes, isMobile]);
+
   const selected = nodes.find((n) => n.selected && n.type !== 'comment') ?? null;
 
   const commandNodes = useMemo<CommandNodeEntry[]>(() => {
@@ -564,6 +574,76 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     window.location.href = '/extensions';
   }, []);
 
+
+  // Mobile long-press handling
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressFired = useRef(false);
+  const touchTargetRef = useRef<{ x: number; y: number; target: EventTarget | null } | null>(null);
+
+  const cancelLongPress = useCallback(() => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }, []);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (!isMobile) return;
+    longPressFired.current = false;
+    const touch = e.touches[0];
+    touchTargetRef.current = { x: touch.clientX, y: touch.clientY, target: touch.target };
+    cancelLongPress();
+    longPressTimer.current = setTimeout(() => {
+      longPressFired.current = true;
+      const { x, y, target } = touchTargetRef.current ?? {};
+      // Use saved target first, fallback to elementFromPoint
+      const el = (target instanceof Element ? target : null) ?? document.elementFromPoint(x ?? 0, y ?? 0);
+      const nodeEl = el?.closest('.react-flow__node');
+      if (nodeEl) {
+        // Long press on node -> select it and open inspector
+        const nodeId = nodeEl.getAttribute('data-id');
+        if (nodeId) {
+          setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === nodeId })));
+          setMobileInspectorVisible(true);
+        }
+      } else {
+        // Long press on empty pane -> open context menu
+        const flow = screenToFlowPosition({ x: x ?? 0, y: y ?? 0 });
+        setMenu({ screen: { x: x ?? 0, y: y ?? 0 }, flow });
+      }
+    }, 500);
+  }, [isMobile, cancelLongPress, setNodes, screenToFlowPosition]);
+
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (!isMobile) return;
+    cancelLongPress();
+    if (!longPressFired.current) {
+      // Short tap on empty space -> deselect and hide inspector
+      const touch = e.changedTouches[0];
+      const el = (touch.target instanceof Element ? touch.target as Element : null) ?? document.elementFromPoint(touch.clientX, touch.clientY);
+      const nodeEl = el?.closest('.react-flow__node');
+      if (!nodeEl) {
+        deselect();
+        setMobileInspectorVisible(false);
+      }
+    }
+    longPressFired.current = false;
+  }, [isMobile, cancelLongPress, deselect]);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (!isMobile) return;
+    // Cancel long press if finger moved too far
+    const touch = e.touches[0];
+    const start = touchTargetRef.current;
+    if (start) {
+      const dx = touch.clientX - start.x;
+      const dy = touch.clientY - start.y;
+      if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+        cancelLongPress();
+      }
+    }
+  }, [isMobile, cancelLongPress]);
+
   const colorMode = resolvedTheme === 'dark' ? 'dark' : 'light';
 
   if (!loaded) {
@@ -583,9 +663,12 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
             className="dashboard-mvp-flow absolute inset-0"
             onDragOver={handleDragOver}
             onDrop={handleDrop}
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
+            onTouchMove={handleTouchMove}
           >
             <ReactFlow
-              nodes={nodes}
+              nodes={mobileNodes}
               edges={styledEdges}
               nodeTypes={nodeTypes}
               onNodesChange={handleNodesChange}
@@ -597,14 +680,19 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
               onConnectEnd={onConnectEnd}
               isValidConnection={isValidConnection}
               onPaneContextMenu={onPaneContextMenu}
-              onNodeContextMenu={onPaneContextMenu}
+              onNodeContextMenu={isMobile
+                ? (_e: React.MouseEvent, node: Node) => {
+                    setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === node.id })));
+                    setMobileInspectorVisible(true);
+                  }
+                : onPaneContextMenu}
               onPaneClick={closeMenu}
               deleteKeyCode={['Backspace', 'Delete']}
               multiSelectionKeyCode='Shift'
               selectionKeyCode='Shift'
-              selectionOnDrag
-              panOnDrag={[1]}
-              selectionMode={SelectionMode.Partial}
+              selectionOnDrag={!isMobile}
+              panOnDrag={isMobile ? true : [1]}
+              selectionMode={isMobile ? undefined : SelectionMode.Partial}
               colorMode={colorMode}
               maxZoom={1}
               minZoom={0.25}
@@ -632,7 +720,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
           />
           <ApprovalList spaceId={slug} />
         </div>
-        {!inspectorExpanded && (
+        {(!isMobile || mobileInspectorVisible) && !inspectorExpanded && (
           <div
             onPointerDown={startInspectorResize}
             role="separator"
@@ -645,11 +733,12 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
             </div>
           </div>
         )}
+        {(!isMobile || mobileInspectorVisible || inspectorExpanded) && (
         <div
-          className={inspectorExpanded
+          className={inspectorExpanded || (isMobile && mobileInspectorVisible)
             ? 'fixed inset-0 z-50'
             : 'h-full border-l shrink-0 max-w-6xl min-w-md'}
-          style={inspectorExpanded ? undefined : { width: inspectorWidth }}
+          style={inspectorExpanded || (isMobile && mobileInspectorVisible) ? undefined : { width: inspectorWidth }}
         >
           <NodeInspector
             node={selected}
@@ -658,13 +747,14 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
             graphNodes={nodes}
             override={inspector.inspectorNode}
             updateNodeData={updateNodeData}
-            onDeselect={deselect}
+            onDeselect={() => { deselect(); if (isMobile) setMobileInspectorVisible(false); }}
             onEditExtension={openEditor}
             onNewExtension={() => openEditor(null)}
             onExpandedChange={setInspectorExpanded}
             onFocusNode={focusNode}
           />
         </div>
+        )}
       </div>
     </InspectorContext.Provider>
   );
