@@ -22,8 +22,6 @@ import '@xterm/xterm/css/xterm.css';
 import { Box, GripVertical } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-
-import { useIsMobile } from '@/hooks/use-mobile';
 import { toast } from 'sonner';
 
 import { ApprovalList } from '@/app/(approvals)/_components/approval-list';
@@ -45,6 +43,7 @@ import { findExtensionHandle } from '@/app/(extension-runtime)/_types';
 import { fetchSpaceGraph, saveSpaceGraph } from '@/app/(space)/space/_components/space-client';
 import { useSSEEvents, useSSEEventsDispatch } from '@/app/(sse)/stores/sse-events-store';
 import { Spinner } from '@/components/ui/spinner';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 installExtensionApi();
 
@@ -588,7 +587,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   }, []);
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    if (!isMobile) return;
+    if (!isMobile) {
+      return;
+    }
     longPressFired.current = false;
     const touch = e.touches[0];
     touchTargetRef.current = { x: touch.clientX, y: touch.clientY, target: touch.target };
@@ -615,7 +616,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   }, [isMobile, cancelLongPress, setNodes, screenToFlowPosition]);
 
   const handleTouchEnd = useCallback((e: React.TouchEvent) => {
-    if (!isMobile) return;
+    if (!isMobile) {
+      return;
+    }
     cancelLongPress();
     if (!longPressFired.current) {
       // Short tap on empty space -> deselect and hide inspector
@@ -631,7 +634,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   }, [isMobile, cancelLongPress, deselect]);
 
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
-    if (!isMobile) return;
+    if (!isMobile) {
+      return;
+    }
     // Cancel long press if finger moved too far
     const touch = e.touches[0];
     const start = touchTargetRef.current;
@@ -682,9 +687,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
               onPaneContextMenu={onPaneContextMenu}
               onNodeContextMenu={isMobile
                 ? (_e: React.MouseEvent, node: Node) => {
-                    setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === node.id })));
-                    setMobileInspectorVisible(true);
-                  }
+                  setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === node.id })));
+                  setMobileInspectorVisible(true);
+                }
                 : onPaneContextMenu}
               onPaneClick={closeMenu}
               deleteKeyCode={['Backspace', 'Delete']}
@@ -734,26 +739,30 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
           </div>
         )}
         {(!isMobile || mobileInspectorVisible || inspectorExpanded) && (
-        <div
-          className={inspectorExpanded || (isMobile && mobileInspectorVisible)
-            ? 'fixed inset-0 z-50'
-            : 'h-full border-l shrink-0 max-w-6xl min-w-md'}
-          style={inspectorExpanded || (isMobile && mobileInspectorVisible) ? undefined : { width: inspectorWidth }}
-        >
-          <NodeInspector
-            node={selected}
-            expanded={inspectorExpanded}
-            extensions={allNodes}
-            graphNodes={nodes}
-            override={inspector.inspectorNode}
-            updateNodeData={updateNodeData}
-            onDeselect={() => { deselect(); if (isMobile) setMobileInspectorVisible(false); }}
-            onEditExtension={openEditor}
-            onNewExtension={() => openEditor(null)}
-            onExpandedChange={setInspectorExpanded}
-            onFocusNode={focusNode}
-          />
-        </div>
+          <div
+            className={inspectorExpanded || (isMobile && mobileInspectorVisible)
+              ? 'fixed inset-0 z-50'
+              : 'h-full border-l shrink-0 max-w-6xl min-w-md'}
+            style={inspectorExpanded || (isMobile && mobileInspectorVisible) ? undefined : { width: inspectorWidth }}
+          >
+            <NodeInspector
+              node={selected}
+              expanded={inspectorExpanded}
+              extensions={allNodes}
+              graphNodes={nodes}
+              override={inspector.inspectorNode}
+              updateNodeData={updateNodeData}
+              onDeselect={() => {
+                deselect(); if (isMobile) {
+                  setMobileInspectorVisible(false);
+                }
+              }}
+              onEditExtension={openEditor}
+              onNewExtension={() => openEditor(null)}
+              onExpandedChange={setInspectorExpanded}
+              onFocusNode={focusNode}
+            />
+          </div>
         )}
       </div>
     </InspectorContext.Provider>
