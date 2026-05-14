@@ -23,9 +23,10 @@ interface CanvasOverlayProps {
   spaceSlug: string;
   selectedNodeId: string | null;
   onFocusNode: (nodeId: string) => void;
+  onActiveChange?: (active: boolean) => void;
 }
 
-export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, onFocusNode }: CanvasOverlayProps) {
+export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, onFocusNode, onActiveChange }: CanvasOverlayProps) {
   const [commandFocused, setCommandFocused] = useState(false);
   const [mode, setMode] = useState<CommandMode>('ai');
   const [agentId, setAgentId] = useState<string | null>(null);
@@ -102,6 +103,16 @@ export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, onF
   const selectedApproval = selectedApprovalId ? pendingApprovals.get(selectedApprovalId) : null;
 
   const slots = useOverlayState();
+
+  // Notify parent when overlay content or header is active
+  const prevActive = useRef(false);
+  useEffect(() => {
+    const active = !!(slots.content || slots.header);
+    if (active !== prevActive.current) {
+      prevActive.current = active;
+      onActiveChange?.(active);
+    }
+  }, [slots.content, slots.header, onActiveChange]);
 
   const dismiss = useCallback(() => {
     setCommandFocused(false);
