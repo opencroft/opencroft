@@ -8,7 +8,7 @@ import { ApprovalBar } from '@/app/(approvals)/_components/approval-bar';
 import { AiPanel } from '@/app/(dashboard)/_canvas/ai-panel';
 import { type CommandMode, type CommandNodeEntry } from '@/app/(dashboard)/_canvas/canvas-command-bar';
 import { CommandBar, CommandBarMenu } from '@/app/(dashboard)/_canvas/command-bar';
-import { OverlayContext, useOverlayState } from '@/app/(dashboard)/_canvas/overlay-context';
+import { OverlayContext, useOverlayBackIntercept, useOverlayState } from '@/app/(dashboard)/_canvas/overlay-context';
 import { SearchFindBar } from '@/app/(dashboard)/_canvas/search-find-bar';
 import { extensionRegistry } from '@/app/(extension-runtime)/_client/registry';
 import { loadAiSettings } from '@/app/(settings)/settings/ai/actions';
@@ -113,6 +113,9 @@ export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, onF
       onActiveChange?.(active);
     }
   }, [slots.content, slots.header, onActiveChange]);
+
+  const overlayActive = !!(slots.content || slots.header);
+  useOverlayBackIntercept(overlayActive, dismiss);
 
   const dismiss = useCallback(() => {
     setCommandFocused(false);

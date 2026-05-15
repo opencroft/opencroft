@@ -74,6 +74,38 @@ export function useOverlayState(): OverlaySlots {
   return { header, content, menu, bar, setSlot, containerRef };
 }
 
+export function useOverlayBackIntercept(active: boolean, onClose: () => void) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    if (!active) return;
+
+    const nav = window.navigation;
+    if (!nav) return;
+
+    // Push a history entry so back button can be intercepted
+    nav.navigate('#overlay', { history: 'push' });
+
+    function onNavigate(e: NavigateEvent) {
+      if (e.navigationType === 'traverse' && e.destination.index < nav.currentEntry.index) {
+        // Back navigation — close overlay instead
+        e.preventDefault();
+        onCloseRef.current();
+      }
+    }
+
+    nav.addEventListener('navigate', onNavigate);
+    return () => {
+      nav.removeEventListener('navigate', onNavigate);
+      // Clean up the pushed entry if overlay closed without back navigation
+      if (nav.currentEntry?.url?.includes('#overlay') && nav.canGoBack) {
+        nav.back();
+      }
+    };
+  }, [active]);
+}
+
 export function useOverlayClose(active: boolean, onClose: () => void) {
   const { containerRef } = useContext(OverlayContext);
   useEffect(() => {
