@@ -85,7 +85,8 @@ export function useOverlayBackIntercept(active: boolean, onClose: () => void) {
     const nav = window.navigation;
     if (!nav) return;
 
-    nav.navigate(location.href, { history: 'push' });
+    // Use history.pushState to add entry without triggering Next.js routing
+    history.pushState(null, '');
     pushed.current = true;
 
     function onNavigate(e: NavigateEvent) {
