@@ -115,7 +115,6 @@ export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, onF
   }, [slots.content, slots.header, onActiveChange]);
 
   const overlayActive = !!(slots.content || slots.header);
-  useOverlayBackIntercept(overlayActive, dismiss);
 
   const dismiss = useCallback(() => {
     setCommandFocused(false);
@@ -131,6 +130,8 @@ export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, onF
       router.replace(pathname);
     }
   }, [chatParam, pathname, router]);
+
+  useOverlayBackIntercept(overlayActive, dismiss);
 
   const onOverlayMouseDown = useCallback(() => {
     dismiss();
