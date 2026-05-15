@@ -85,7 +85,7 @@ export function useOverlayBackIntercept(active: boolean, onClose: () => void) {
     if (!nav) return;
 
     // Push a history entry so back button can be intercepted
-    nav.navigate('#overlay', { history: 'push' });
+    nav.navigate(location.href, { history: 'push', state: { overlay: true } });
 
     function onNavigate(e: NavigateEvent) {
       if (e.navigationType === 'traverse' && e.destination.index < nav.currentEntry.index) {
@@ -99,7 +99,8 @@ export function useOverlayBackIntercept(active: boolean, onClose: () => void) {
     return () => {
       nav.removeEventListener('navigate', onNavigate);
       // Clean up the pushed entry if overlay closed without back navigation
-      if (nav.currentEntry?.url?.includes('#overlay') && nav.canGoBack) {
+      const overlayEntries = nav.entries().filter(e => e.getState?.()?.overlay);
+      if (overlayEntries.length > 0 && nav.canGoBack) {
         nav.back();
       }
     };
