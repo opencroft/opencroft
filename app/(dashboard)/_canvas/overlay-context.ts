@@ -105,7 +105,6 @@ export function useOverlayBackIntercept(active: boolean, onClose: () => void) {
       }
     };
   }, [active]);
-  }, [active]);
 }
 
 export function useOverlayClose(active: boolean, onClose: () => void) {
