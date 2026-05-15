@@ -36,6 +36,7 @@ import { subscribeNodeDataUpdates } from '@/app/(dashboard)/_canvas/node-data-ev
 import { NodeInspector } from '@/app/(dashboard)/_canvas/node-inspector';
 import { buildNodeTypes } from '@/app/(dashboard)/_canvas/node-wrapper';
 import { useClipboard } from '@/app/(dashboard)/_canvas/use-clipboard';
+import { useBackIntercept } from '@/app/(dashboard)/_canvas/overlay-context';
 import { useGraphEvents } from '@/app/(dashboard)/_canvas/use-graph-events';
 import { installExtensionApi } from '@/app/(dashboard)/extension-system/extension-api';
 import { loadAllExtensions } from '@/app/(extension-runtime)/_client/loader';
@@ -122,6 +123,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const [mobileNodeMenu, setMobileNodeMenu] = useState<{ screen: { x: number; y: number }; nodeId: string } | null>(null);
   const [overlayActive, setOverlayActive] = useState(false);
   const { toggleSidebar } = useSidebar();
+
+  // Back button closes inspector on mobile
+  useBackIntercept(isMobile && mobileInspectorVisible, () => setMobileInspectorVisible(false));
   const { resolvedTheme } = useTheme();
   const { screenToFlowPosition, setCenter } = useReactFlow();
   const debouncedSave = useDebouncedSave(slug, 500);
