@@ -23,7 +23,7 @@ import { Box, GripVertical, Lock, LockOpen, PanelLeft, Trash2, Wrench } from 'lu
 import { useTheme } from 'next-themes';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { useSidebar } from '@/components/ui/sidebar';
+
 
 import { ApprovalList } from '@/app/(approvals)/_components/approval-list';
 import { type CommandNodeEntry } from '@/app/(dashboard)/_canvas/canvas-command-bar';
@@ -35,8 +35,8 @@ import { InspectorContext, useInspectorState } from '@/app/(dashboard)/_canvas/i
 import { subscribeNodeDataUpdates } from '@/app/(dashboard)/_canvas/node-data-events';
 import { NodeInspector } from '@/app/(dashboard)/_canvas/node-inspector';
 import { buildNodeTypes } from '@/app/(dashboard)/_canvas/node-wrapper';
-import { useClipboard } from '@/app/(dashboard)/_canvas/use-clipboard';
 import { useBackIntercept } from '@/app/(dashboard)/_canvas/overlay-context';
+import { useClipboard } from '@/app/(dashboard)/_canvas/use-clipboard';
 import { useGraphEvents } from '@/app/(dashboard)/_canvas/use-graph-events';
 import { installExtensionApi } from '@/app/(dashboard)/extension-system/extension-api';
 import { loadAllExtensions } from '@/app/(extension-runtime)/_client/loader';
@@ -44,6 +44,7 @@ import { extensionRegistry } from '@/app/(extension-runtime)/_client/registry';
 import { findExtensionHandle } from '@/app/(extension-runtime)/_types';
 import { fetchSpaceGraph, saveSpaceGraph } from '@/app/(space)/space/_components/space-client';
 import { useSSEEvents, useSSEEventsDispatch } from '@/app/(sse)/stores/sse-events-store';
+import { useSidebar } from '@/components/ui/sidebar';
 import { Spinner } from '@/components/ui/spinner';
 import { useIsMobile } from '@/hooks/use-mobile';
 
@@ -697,7 +698,11 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
                   setMobileNodeMenu({ screen: { x: e.clientX, y: e.clientY }, nodeId: node.id });
                 }
                 : onPaneContextMenu}
-              onPaneClick={() => { closeMenu(); setMobileNodeMenu(null); if (isMobile) { deselect(); setMobileInspectorVisible(false); } }}
+              onPaneClick={() => {
+                closeMenu(); setMobileNodeMenu(null); if (isMobile) {
+                  deselect(); setMobileInspectorVisible(false);
+                }
+              }}
               deleteKeyCode={['Backspace', 'Delete']}
               multiSelectionKeyCode='Shift'
               selectionKeyCode='Shift'

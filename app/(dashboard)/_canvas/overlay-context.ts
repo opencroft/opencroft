@@ -81,7 +81,9 @@ export function useBackIntercept(active: boolean, onClose: () => void) {
 
   useEffect(() => {
     const nav = window.navigation;
-    if (!nav) return;
+    if (!nav) {
+      return;
+    }
 
     if (active && !pushedRef.current) {
       history.pushState(null, '');
@@ -89,8 +91,12 @@ export function useBackIntercept(active: boolean, onClose: () => void) {
     }
 
     function onNavigate(e: NavigateEvent) {
-      if (e.navigationType !== 'traverse') return;
-      if (!pushedRef.current) return;
+      if (e.navigationType !== 'traverse') {
+        return;
+      }
+      if (!pushedRef.current) {
+        return;
+      }
       e.intercept({
         handler() {
           pushedRef.current = false;
