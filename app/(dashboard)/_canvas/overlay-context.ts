@@ -85,10 +85,10 @@ export function useOverlayBackIntercept(active: boolean, onClose: () => void) {
     if (!nav) return;
 
     function onNavigate(e: NavigateEvent) {
-      if (e.navigationType === 'traverse' && e.destination.index < nav.currentEntry.index) {
-        e.preventDefault();
-        onCloseRef.current();
-      }
+      if (!e.canIntercept) return;
+      if (e.navigationType !== 'traverse') return;
+      if (e.destination.index >= nav.currentEntry.index) return;
+      e.intercept({ handler: () => onCloseRef.current() });
     }
 
     nav.addEventListener('navigate', onNavigate);
