@@ -8,7 +8,7 @@ import { ApprovalBar } from '@/app/(approvals)/_components/approval-bar';
 import { AiPanel } from '@/app/(dashboard)/_canvas/ai-panel';
 import { type CommandMode, type CommandNodeEntry } from '@/app/(dashboard)/_canvas/canvas-command-bar';
 import { CommandBar, CommandBarMenu } from '@/app/(dashboard)/_canvas/command-bar';
-import { OverlayContext, useOverlayState } from '@/app/(dashboard)/_canvas/overlay-context';
+import { OverlayContext, useOverlayBackIntercept, useOverlayState } from '@/app/(dashboard)/_canvas/overlay-context';
 import { SearchFindBar } from '@/app/(dashboard)/_canvas/search-find-bar';
 import { extensionRegistry } from '@/app/(extension-runtime)/_client/registry';
 import { loadAiSettings } from '@/app/(settings)/settings/ai/actions';
@@ -23,9 +23,10 @@ interface CanvasOverlayProps {
   spaceSlug: string;
   selectedNodeId: string | null;
   onFocusNode: (nodeId: string) => void;
+  onActiveChange?: (active: boolean) => void;
 }
 
-export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, onFocusNode }: CanvasOverlayProps) {
+export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, onFocusNode, onActiveChange }: CanvasOverlayProps) {
   const [commandFocused, setCommandFocused] = useState(false);
   const [mode, setMode] = useState<CommandMode>('ai');
   const [agentId, setAgentId] = useState<string | null>(null);
@@ -103,6 +104,18 @@ export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, onF
 
   const slots = useOverlayState();
 
+  // Notify parent when overlay content or header is active
+  const prevActive = useRef(false);
+  useEffect(() => {
+    const active = !!(slots.content || slots.header);
+    if (active !== prevActive.current) {
+      prevActive.current = active;
+      onActiveChange?.(active);
+    }
+  }, [slots.content, slots.header, onActiveChange]);
+
+  const overlayActive = !!(slots.content || slots.header);
+
   const dismiss = useCallback(() => {
     setCommandFocused(false);
     slots.setSlot('content', null);
@@ -117,6 +130,8 @@ export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, onF
       router.replace(pathname);
     }
   }, [chatParam, pathname, router]);
+
+  useOverlayBackIntercept(overlayActive, dismiss);
 
   const onOverlayMouseDown = useCallback(() => {
     dismiss();

@@ -19,10 +19,11 @@ import {
 import { SelectionMode } from '@xyflow/system';
 import '@xyflow/react/dist/style.css';
 import '@xterm/xterm/css/xterm.css';
-import { Box, GripVertical } from 'lucide-react';
+import { Box, GripVertical, Lock, LockOpen, PanelLeft, Trash2, Wrench } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { useSidebar } from '@/components/ui/sidebar';
 
 import { ApprovalList } from '@/app/(approvals)/_components/approval-list';
 import { type CommandNodeEntry } from '@/app/(dashboard)/_canvas/canvas-command-bar';
@@ -35,6 +36,7 @@ import { subscribeNodeDataUpdates } from '@/app/(dashboard)/_canvas/node-data-ev
 import { NodeInspector } from '@/app/(dashboard)/_canvas/node-inspector';
 import { buildNodeTypes } from '@/app/(dashboard)/_canvas/node-wrapper';
 import { useClipboard } from '@/app/(dashboard)/_canvas/use-clipboard';
+import { useBackIntercept } from '@/app/(dashboard)/_canvas/overlay-context';
 import { useGraphEvents } from '@/app/(dashboard)/_canvas/use-graph-events';
 import { installExtensionApi } from '@/app/(dashboard)/extension-system/extension-api';
 import { loadAllExtensions } from '@/app/(extension-runtime)/_client/loader';
@@ -69,7 +71,9 @@ function snap(v: number): number {
 }
 
 function stripVirtualNodes(nodes: Node[]): Node[] {
-  return nodes.filter((n) => n.type !== 'comment');
+  return nodes
+    .filter((n) => n.type !== 'comment')
+    .map(({ selectable, ...rest }) => rest);
 }
 
 function nodeFrameDefaults(category?: string): Partial<Node> {
@@ -115,6 +119,13 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const inspector = useInspectorState();
   const isMobile = useIsMobile();
   const [mobileInspectorVisible, setMobileInspectorVisible] = useState(false);
+  const [nodesLocked, setNodesLocked] = useState(false);
+  const [mobileNodeMenu, setMobileNodeMenu] = useState<{ screen: { x: number; y: number }; nodeId: string } | null>(null);
+  const [overlayActive, setOverlayActive] = useState(false);
+  const { toggleSidebar } = useSidebar();
+
+  // Back button closes inspector on mobile
+  useBackIntercept(isMobile && mobileInspectorVisible, () => setMobileInspectorVisible(false));
   const { resolvedTheme } = useTheme();
   const { screenToFlowPosition, setCenter } = useReactFlow();
   const debouncedSave = useDebouncedSave(slug, 500);
@@ -129,12 +140,6 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     'comment': CommentNode,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }) as any, [allNodes]);
-  // On mobile, disable ReactFlow built-in click-to-select; we use long press instead
-  const mobileNodes = useMemo(() => isMobile
-    ? nodes.map((n) => ({ ...n, selectable: false }))
-    : nodes,
-  [nodes, isMobile]);
-
   const selected = nodes.find((n) => n.selected && n.type !== 'comment') ?? null;
 
   const commandNodes = useMemo<CommandNodeEntry[]>(() => {
@@ -601,11 +606,11 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       const el = (target instanceof Element ? target : null) ?? document.elementFromPoint(x ?? 0, y ?? 0);
       const nodeEl = el?.closest('.react-flow__node');
       if (nodeEl) {
-        // Long press on node -> select it and open inspector
+        // Long press on node -> show mobile context menu
         const nodeId = nodeEl.getAttribute('data-id');
         if (nodeId) {
           setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === nodeId })));
-          setMobileInspectorVisible(true);
+          setMobileNodeMenu({ screen: { x: x ?? 0, y: y ?? 0 }, nodeId });
         }
       } else {
         // Long press on empty pane -> open context menu
@@ -673,7 +678,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
             onTouchMove={handleTouchMove}
           >
             <ReactFlow
-              nodes={mobileNodes}
+              nodes={nodes}
               edges={styledEdges}
               nodeTypes={nodeTypes}
               onNodesChange={handleNodesChange}
@@ -686,15 +691,17 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
               isValidConnection={isValidConnection}
               onPaneContextMenu={onPaneContextMenu}
               onNodeContextMenu={isMobile
-                ? (_e: React.MouseEvent, node: Node) => {
+                ? (e: React.MouseEvent, node: Node) => {
+                  e.preventDefault();
                   setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === node.id })));
-                  setMobileInspectorVisible(true);
+                  setMobileNodeMenu({ screen: { x: e.clientX, y: e.clientY }, nodeId: node.id });
                 }
                 : onPaneContextMenu}
-              onPaneClick={closeMenu}
+              onPaneClick={() => { closeMenu(); setMobileNodeMenu(null); if (isMobile) { deselect(); setMobileInspectorVisible(false); } }}
               deleteKeyCode={['Backspace', 'Delete']}
               multiSelectionKeyCode='Shift'
               selectionKeyCode='Shift'
+              nodesDraggable={isMobile ? !nodesLocked : undefined}
               selectionOnDrag={!isMobile}
               panOnDrag={isMobile ? true : [1]}
               selectionMode={isMobile ? undefined : SelectionMode.Partial}
@@ -706,6 +713,68 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
             >
               <Background variant={BackgroundVariant.Dots} gap={10} />
             </ReactFlow>
+            {/* Mobile node context menu */}
+            {isMobile && mobileNodeMenu && (
+              <div
+                className="fixed inset-0 z-50"
+                onClick={() => setMobileNodeMenu(null)}
+                onTouchEnd={() => setMobileNodeMenu(null)}
+              >
+                <div
+                  className="absolute bg-popover border rounded-lg shadow-lg py-1 min-w-[140px]"
+                  style={{
+                    left: Math.min(mobileNodeMenu.screen.x, window.innerWidth - 160),
+                    top: Math.min(mobileNodeMenu.screen.y, window.innerHeight - 100),
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  onTouchEnd={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-accent/50 transition-colors"
+                    onClick={() => {
+                      setMobileInspectorVisible(true);
+                      setMobileNodeMenu(null);
+                    }}
+                  >
+                    <Wrench className="size-4" />
+                    Details
+                  </button>
+                  <button
+                    type="button"
+                    className="flex items-center gap-2 w-full px-3 py-2 text-sm text-destructive hover:bg-accent/50 transition-colors"
+                    onClick={() => {
+                      setNodes((nds) => nds.filter((n) => !n.selected));
+                      setMobileNodeMenu(null);
+                    }}
+                  >
+                    <Trash2 className="size-4" />
+                    Delete
+                  </button>
+                </div>
+              </div>
+            )}
+            {/* Mobile overlay toolbar */}
+            {isMobile && !overlayActive && (
+              <div className="absolute top-3 left-3 z-40 flex flex-col gap-2">
+                <button
+                  type="button"
+                  className="size-10 flex items-center justify-center rounded-lg bg-background/80 backdrop-blur border shadow-sm active:bg-accent"
+                  onClick={() => toggleSidebar()}
+                  title="Toggle sidebar"
+                >
+                  <PanelLeft className="size-5" />
+                </button>
+                <button
+                  type="button"
+                  className={`size-10 flex items-center justify-center rounded-lg border shadow-sm active:bg-accent ${nodesLocked ? 'bg-primary/20 border-primary' : 'bg-background/80 backdrop-blur'}`}
+                  onClick={() => setNodesLocked((v) => !v)}
+                  title={nodesLocked ? 'Unlock nodes' : 'Lock nodes'}
+                >
+                  {nodesLocked ? <Lock className="size-5" /> : <LockOpen className="size-5" />}
+                </button>
+              </div>
+            )}
           </div>
           {menu && (
             <FlowContextMenu
@@ -722,6 +791,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
             spaceSlug={slug}
             selectedNodeId={selected?.id ?? null}
             onFocusNode={focusNode}
+            onActiveChange={isMobile ? setOverlayActive : undefined}
           />
           <ApprovalList spaceId={slug} />
         </div>
