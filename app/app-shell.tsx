@@ -261,7 +261,7 @@ export function AppShell({ pinnedSpaces, children }: Props) {
         <Suspense fallback={null}>
           <AppSidebar pinnedSpaces={pinnedSpaces} />
         </Suspense>
-        <main className='flex flex-col w-full h-screen'>
+        <main className='flex flex-col w-full h-dvh'>
           {children}
         </main>
       </SidebarProvider>

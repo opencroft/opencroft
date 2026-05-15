@@ -74,6 +74,50 @@ export function useOverlayState(): OverlaySlots {
   return { header, content, menu, bar, setSlot, containerRef };
 }
 
+export function useBackIntercept(active: boolean, onClose: () => void) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const pushedRef = useRef(false);
+
+  useEffect(() => {
+    const nav = window.navigation;
+    if (!nav) {
+      return;
+    }
+
+    if (active && !pushedRef.current) {
+      history.pushState(null, '');
+      pushedRef.current = true;
+    }
+
+    function onNavigate(e: NavigateEvent) {
+      if (e.navigationType !== 'traverse') {
+        return;
+      }
+      if (!pushedRef.current) {
+        return;
+      }
+      e.intercept({
+        handler() {
+          pushedRef.current = false;
+          onCloseRef.current();
+        },
+      });
+    }
+
+    nav.addEventListener('navigate', onNavigate);
+    return () => {
+      nav.removeEventListener('navigate', onNavigate);
+      if (pushedRef.current) {
+        pushedRef.current = false;
+        history.back();
+      }
+    };
+  }, [active]);
+}
+
+export { useBackIntercept as useOverlayBackIntercept };
+
 export function useOverlayClose(active: boolean, onClose: () => void) {
   const { containerRef } = useContext(OverlayContext);
   useEffect(() => {

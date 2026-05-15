@@ -19,10 +19,11 @@ import {
 import { SelectionMode } from '@xyflow/system';
 import '@xyflow/react/dist/style.css';
 import '@xterm/xterm/css/xterm.css';
-import { Box, GripVertical } from 'lucide-react';
+import { Box, GripVertical, Lock, LockOpen, PanelLeft, Trash2, Wrench } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
+
 
 import { ApprovalList } from '@/app/(approvals)/_components/approval-list';
 import { type CommandNodeEntry } from '@/app/(dashboard)/_canvas/canvas-command-bar';
@@ -34,6 +35,7 @@ import { InspectorContext, useInspectorState } from '@/app/(dashboard)/_canvas/i
 import { subscribeNodeDataUpdates } from '@/app/(dashboard)/_canvas/node-data-events';
 import { NodeInspector } from '@/app/(dashboard)/_canvas/node-inspector';
 import { buildNodeTypes } from '@/app/(dashboard)/_canvas/node-wrapper';
+import { useBackIntercept } from '@/app/(dashboard)/_canvas/overlay-context';
 import { useClipboard } from '@/app/(dashboard)/_canvas/use-clipboard';
 import { useGraphEvents } from '@/app/(dashboard)/_canvas/use-graph-events';
 import { installExtensionApi } from '@/app/(dashboard)/extension-system/extension-api';
@@ -42,7 +44,9 @@ import { extensionRegistry } from '@/app/(extension-runtime)/_client/registry';
 import { findExtensionHandle } from '@/app/(extension-runtime)/_types';
 import { fetchSpaceGraph, saveSpaceGraph } from '@/app/(space)/space/_components/space-client';
 import { useSSEEvents, useSSEEventsDispatch } from '@/app/(sse)/stores/sse-events-store';
+import { useSidebar } from '@/components/ui/sidebar';
 import { Spinner } from '@/components/ui/spinner';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 installExtensionApi();
 
@@ -68,7 +72,9 @@ function snap(v: number): number {
 }
 
 function stripVirtualNodes(nodes: Node[]): Node[] {
-  return nodes.filter((n) => n.type !== 'comment');
+  return nodes
+    .filter((n) => n.type !== 'comment')
+    .map(({ selectable, ...rest }) => rest);
 }
 
 function nodeFrameDefaults(category?: string): Partial<Node> {
@@ -112,6 +118,15 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const [resizing, setResizing] = useState(false);
   const [inspectorExpanded, setInspectorExpanded] = useState(false);
   const inspector = useInspectorState();
+  const isMobile = useIsMobile();
+  const [mobileInspectorVisible, setMobileInspectorVisible] = useState(false);
+  const [nodesLocked, setNodesLocked] = useState(false);
+  const [mobileNodeMenu, setMobileNodeMenu] = useState<{ screen: { x: number; y: number }; nodeId: string } | null>(null);
+  const [overlayActive, setOverlayActive] = useState(false);
+  const { toggleSidebar } = useSidebar();
+
+  // Back button closes inspector on mobile
+  useBackIntercept(isMobile && mobileInspectorVisible, () => setMobileInspectorVisible(false));
   const { resolvedTheme } = useTheme();
   const { screenToFlowPosition, setCenter } = useReactFlow();
   const debouncedSave = useDebouncedSave(slug, 500);
@@ -564,6 +579,82 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     window.location.href = '/extensions';
   }, []);
 
+
+  // Mobile long-press handling
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressFired = useRef(false);
+  const touchTargetRef = useRef<{ x: number; y: number; target: EventTarget | null } | null>(null);
+
+  const cancelLongPress = useCallback(() => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }, []);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (!isMobile) {
+      return;
+    }
+    longPressFired.current = false;
+    const touch = e.touches[0];
+    touchTargetRef.current = { x: touch.clientX, y: touch.clientY, target: touch.target };
+    cancelLongPress();
+    longPressTimer.current = setTimeout(() => {
+      longPressFired.current = true;
+      const { x, y, target } = touchTargetRef.current ?? {};
+      // Use saved target first, fallback to elementFromPoint
+      const el = (target instanceof Element ? target : null) ?? document.elementFromPoint(x ?? 0, y ?? 0);
+      const nodeEl = el?.closest('.react-flow__node');
+      if (nodeEl) {
+        // Long press on node -> show mobile context menu
+        const nodeId = nodeEl.getAttribute('data-id');
+        if (nodeId) {
+          setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === nodeId })));
+          setMobileNodeMenu({ screen: { x: x ?? 0, y: y ?? 0 }, nodeId });
+        }
+      } else {
+        // Long press on empty pane -> open context menu
+        const flow = screenToFlowPosition({ x: x ?? 0, y: y ?? 0 });
+        setMenu({ screen: { x: x ?? 0, y: y ?? 0 }, flow });
+      }
+    }, 500);
+  }, [isMobile, cancelLongPress, setNodes, screenToFlowPosition]);
+
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (!isMobile) {
+      return;
+    }
+    cancelLongPress();
+    if (!longPressFired.current) {
+      // Short tap on empty space -> deselect and hide inspector
+      const touch = e.changedTouches[0];
+      const el = (touch.target instanceof Element ? touch.target as Element : null) ?? document.elementFromPoint(touch.clientX, touch.clientY);
+      const nodeEl = el?.closest('.react-flow__node');
+      if (!nodeEl) {
+        deselect();
+        setMobileInspectorVisible(false);
+      }
+    }
+    longPressFired.current = false;
+  }, [isMobile, cancelLongPress, deselect]);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (!isMobile) {
+      return;
+    }
+    // Cancel long press if finger moved too far
+    const touch = e.touches[0];
+    const start = touchTargetRef.current;
+    if (start) {
+      const dx = touch.clientX - start.x;
+      const dy = touch.clientY - start.y;
+      if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+        cancelLongPress();
+      }
+    }
+  }, [isMobile, cancelLongPress]);
+
   const colorMode = resolvedTheme === 'dark' ? 'dark' : 'light';
 
   if (!loaded) {
@@ -583,6 +674,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
             className="dashboard-mvp-flow absolute inset-0"
             onDragOver={handleDragOver}
             onDrop={handleDrop}
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
+            onTouchMove={handleTouchMove}
           >
             <ReactFlow
               nodes={nodes}
@@ -597,14 +691,25 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
               onConnectEnd={onConnectEnd}
               isValidConnection={isValidConnection}
               onPaneContextMenu={onPaneContextMenu}
-              onNodeContextMenu={onPaneContextMenu}
-              onPaneClick={closeMenu}
+              onNodeContextMenu={isMobile
+                ? (e: React.MouseEvent, node: Node) => {
+                  e.preventDefault();
+                  setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === node.id })));
+                  setMobileNodeMenu({ screen: { x: e.clientX, y: e.clientY }, nodeId: node.id });
+                }
+                : onPaneContextMenu}
+              onPaneClick={() => {
+                closeMenu(); setMobileNodeMenu(null); if (isMobile) {
+                  deselect(); setMobileInspectorVisible(false);
+                }
+              }}
               deleteKeyCode={['Backspace', 'Delete']}
               multiSelectionKeyCode='Shift'
               selectionKeyCode='Shift'
-              selectionOnDrag
-              panOnDrag={[1]}
-              selectionMode={SelectionMode.Partial}
+              nodesDraggable={isMobile ? !nodesLocked : undefined}
+              selectionOnDrag={!isMobile}
+              panOnDrag={isMobile ? true : [1]}
+              selectionMode={isMobile ? undefined : SelectionMode.Partial}
               colorMode={colorMode}
               maxZoom={1}
               minZoom={0.25}
@@ -613,6 +718,68 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
             >
               <Background variant={BackgroundVariant.Dots} gap={10} />
             </ReactFlow>
+            {/* Mobile node context menu */}
+            {isMobile && mobileNodeMenu && (
+              <div
+                className="fixed inset-0 z-50"
+                onClick={() => setMobileNodeMenu(null)}
+                onTouchEnd={() => setMobileNodeMenu(null)}
+              >
+                <div
+                  className="absolute bg-popover border rounded-lg shadow-lg py-1 min-w-[140px]"
+                  style={{
+                    left: Math.min(mobileNodeMenu.screen.x, window.innerWidth - 160),
+                    top: Math.min(mobileNodeMenu.screen.y, window.innerHeight - 100),
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  onTouchEnd={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-accent/50 transition-colors"
+                    onClick={() => {
+                      setMobileInspectorVisible(true);
+                      setMobileNodeMenu(null);
+                    }}
+                  >
+                    <Wrench className="size-4" />
+                    Details
+                  </button>
+                  <button
+                    type="button"
+                    className="flex items-center gap-2 w-full px-3 py-2 text-sm text-destructive hover:bg-accent/50 transition-colors"
+                    onClick={() => {
+                      setNodes((nds) => nds.filter((n) => !n.selected));
+                      setMobileNodeMenu(null);
+                    }}
+                  >
+                    <Trash2 className="size-4" />
+                    Delete
+                  </button>
+                </div>
+              </div>
+            )}
+            {/* Mobile overlay toolbar */}
+            {isMobile && !overlayActive && (
+              <div className="absolute top-3 left-3 z-40 flex flex-col gap-2">
+                <button
+                  type="button"
+                  className="size-10 flex items-center justify-center rounded-lg bg-background/80 backdrop-blur border shadow-sm active:bg-accent"
+                  onClick={() => toggleSidebar()}
+                  title="Toggle sidebar"
+                >
+                  <PanelLeft className="size-5" />
+                </button>
+                <button
+                  type="button"
+                  className={`size-10 flex items-center justify-center rounded-lg border shadow-sm active:bg-accent ${nodesLocked ? 'bg-primary/20 border-primary' : 'bg-background/80 backdrop-blur'}`}
+                  onClick={() => setNodesLocked((v) => !v)}
+                  title={nodesLocked ? 'Unlock nodes' : 'Lock nodes'}
+                >
+                  {nodesLocked ? <Lock className="size-5" /> : <LockOpen className="size-5" />}
+                </button>
+              </div>
+            )}
           </div>
           {menu && (
             <FlowContextMenu
@@ -629,10 +796,11 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
             spaceSlug={slug}
             selectedNodeId={selected?.id ?? null}
             onFocusNode={focusNode}
+            onActiveChange={isMobile ? setOverlayActive : undefined}
           />
           <ApprovalList spaceId={slug} />
         </div>
-        {!inspectorExpanded && (
+        {(!isMobile || mobileInspectorVisible) && !inspectorExpanded && (
           <div
             onPointerDown={startInspectorResize}
             role="separator"
@@ -645,26 +813,32 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
             </div>
           </div>
         )}
-        <div
-          className={inspectorExpanded
-            ? 'fixed inset-0 z-50'
-            : 'h-full border-l shrink-0 max-w-6xl min-w-md'}
-          style={inspectorExpanded ? undefined : { width: inspectorWidth }}
-        >
-          <NodeInspector
-            node={selected}
-            expanded={inspectorExpanded}
-            extensions={allNodes}
-            graphNodes={nodes}
-            override={inspector.inspectorNode}
-            updateNodeData={updateNodeData}
-            onDeselect={deselect}
-            onEditExtension={openEditor}
-            onNewExtension={() => openEditor(null)}
-            onExpandedChange={setInspectorExpanded}
-            onFocusNode={focusNode}
-          />
-        </div>
+        {(!isMobile || mobileInspectorVisible || inspectorExpanded) && (
+          <div
+            className={inspectorExpanded || (isMobile && mobileInspectorVisible)
+              ? 'fixed inset-0 z-50'
+              : 'h-full border-l shrink-0 max-w-6xl min-w-md'}
+            style={inspectorExpanded || (isMobile && mobileInspectorVisible) ? undefined : { width: inspectorWidth }}
+          >
+            <NodeInspector
+              node={selected}
+              expanded={inspectorExpanded}
+              extensions={allNodes}
+              graphNodes={nodes}
+              override={inspector.inspectorNode}
+              updateNodeData={updateNodeData}
+              onDeselect={() => {
+                deselect(); if (isMobile) {
+                  setMobileInspectorVisible(false);
+                }
+              }}
+              onEditExtension={openEditor}
+              onNewExtension={() => openEditor(null)}
+              onExpandedChange={setInspectorExpanded}
+              onFocusNode={focusNode}
+            />
+          </div>
+        )}
       </div>
     </InspectorContext.Provider>
   );
