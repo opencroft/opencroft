@@ -7,7 +7,7 @@
 
 import { createContext, useCallback, useContext, useRef, useSyncExternalStore } from 'react';
 
-import type { Comment, DockerContainerSnapshot, PendingApproval, SSEEvent } from '@/lib/sse-events';
+import type { Comment, DockerContainerSnapshot, PendingApproval, PendingAskUser, SSEEvent } from '@/lib/sse-events';
 
 // ── State ───────────────────────────────────────────────────────────────
 
@@ -26,6 +26,10 @@ interface SSEEventsState {
   pendingApprovals: Map<string, PendingApproval>;
   /** Currently selected pending approval id (drives the command bar approval state). */
   selectedApprovalId: string | null;
+  /** Pending AskUser requests keyed by request id. */
+  pendingAskUsers: Map<string, PendingAskUser>;
+  /** Currently active AskUser request id. */
+  selectedAskUserId: string | null;
   /** Bumped on every focus_node dispatch so consumers can re-trigger even on the same id. */
   focusVersion: number;
   /** Latest container snapshots keyed by dockerNodeId. */
@@ -41,6 +45,8 @@ function createInitialState(): SSEEventsState {
     docCommentsVersion: new Map(),
     pendingApprovals: new Map(),
     selectedApprovalId: null,
+    pendingAskUsers: new Map(),
+    selectedAskUserId: null,
     focusVersion: 0,
     dockerContainers: new Map(),
   };
@@ -128,6 +134,23 @@ class SSEEventsStore {
         this.state = { ...this.state, dockerContainers: next };
         break;
       }
+      case 'ask_user_pending': {
+        const next = new Map(this.state.pendingAskUsers);
+        next.set(event.request.id, event.request);
+        const selected = this.state.selectedAskUserId ?? event.request.id;
+        this.state = { ...this.state, pendingAskUsers: next, selectedAskUserId: selected };
+        break;
+      }
+      case 'ask_user_resolved': {
+        const next = new Map(this.state.pendingAskUsers);
+        next.delete(event.id);
+        let selected = this.state.selectedAskUserId;
+        if (selected === event.id || !selected || !next.has(selected)) {
+          selected = next.values().next().value?.id ?? null;
+        }
+        this.state = { ...this.state, pendingAskUsers: next, selectedAskUserId: selected };
+        break;
+      }
       case 'toast':
         // Handled by useSSE directly (sonner), nothing to store.
         return;
@@ -156,6 +179,15 @@ class SSEEventsStore {
       return;
     }
     this.state = { ...this.state, selectedApprovalId: id };
+    this.emit();
+  };
+
+  /** Select (or clear) a pending AskUser request. */
+  setSelectedAskUser = (id: string | null): void => {
+    if (this.state.selectedAskUserId === id) {
+      return;
+    }
+    this.state = { ...this.state, selectedAskUserId: id };
     this.emit();
   };
 
@@ -203,6 +235,7 @@ const SERVER_COMMENTS = new Map<string, Comment>();
 const SERVER_DOC_COMMENTS_VERSION = new Map<string, number>();
 const SERVER_PENDING_APPROVALS = new Map<string, PendingApproval>();
 const SERVER_DOCKER_CONTAINERS = new Map<string, DockerContainerSnapshot[]>();
+const SERVER_PENDING_ASK_USERS = new Map<string, PendingAskUser>();
 const SERVER_STATE: SSEEventsState = {
   focusedNodeId: null,
   comments: SERVER_COMMENTS,
@@ -211,6 +244,8 @@ const SERVER_STATE: SSEEventsState = {
   docCommentsVersion: SERVER_DOC_COMMENTS_VERSION,
   pendingApprovals: SERVER_PENDING_APPROVALS,
   selectedApprovalId: null,
+  pendingAskUsers: SERVER_PENDING_ASK_USERS,
+  selectedAskUserId: null,
   focusVersion: 0,
   dockerContainers: SERVER_DOCKER_CONTAINERS,
 };

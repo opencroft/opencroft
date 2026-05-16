@@ -15,6 +15,7 @@ import { appendComment, createComment, readComments } from '@/app/(docs)/docs/_s
 import { getDocsRoot } from '@/app/(docs)/docs/_server/docs-root';
 import { searchDocsAtRoot } from '@/app/(docs)/docs/_server/search';
 import { getGitFileAtRef } from '@/app/(docs)/docs/actions';
+import { askUserStore } from '@/lib/ask-user-store';
 import {
   type InstallAuth,
   installExtensionFromUrl,
@@ -690,6 +691,39 @@ export const toolDefinitions = [
         },
       },
       required: ['nodeId', 'action'],
+    },
+  },
+
+  // ── AskUser ────────────────────────────────────────────────────────────
+  {
+    name: 'ask_user',
+    description: 'Ask the user structured questions with predefined options. Returns answers in "title"="answer" format. Up to 5 questions, each with up to 5 options plus a custom text input.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        questions: {
+          type: 'array',
+          description: 'Up to 5 questions to ask the user.',
+          items: {
+            type: 'object',
+            properties: {
+              title: { type: 'string', description: 'Short title (1-2 words)' },
+              question: { type: 'string', description: 'The question to ask' },
+              options: {
+                type: 'array',
+                description: 'Up to 5 answer options',
+                items: { type: 'string' },
+                maxItems: 5,
+              },
+              multiple: { type: 'boolean', description: 'Allow multiple selection' },
+            },
+            required: ['title', 'question', 'options'],
+          },
+          maxItems: 5,
+        },
+        ...SPACE_PARAM,
+      },
+      required: ['questions'],
     },
   },
 ];
@@ -2144,6 +2178,44 @@ function buildHandlers(): Record<string, ToolHandler> {
       const text = result === undefined ? `Action ${action} completed.` : JSON.stringify(result, null, 2);
       return textResult(text);
     }, { view: 'call' }),
+
+    // ── ask_user ──────────────────────────────────────────────────────────
+    ask_user: async (args) => {
+      const rawQuestions = args.questions as Array<Record<string, unknown>> | undefined;
+      if (!rawQuestions || !Array.isArray(rawQuestions) || rawQuestions.length === 0) {
+        fail(-32602, 'Missing required param: questions (non-empty array)');
+      }
+      if (rawQuestions.length > 5) {
+        fail(-32602, 'Too many questions (max 5)');
+      }
+
+      const questions = rawQuestions.map((q) => ({
+        title: String(q.title ?? ''),
+        question: String(q.question ?? ''),
+        options: (Array.isArray(q.options) ? q.options : []).map(String).slice(0, 5),
+        multiple: Boolean(q.multiple),
+      }));
+
+      if (questions.some((q) => !q.title || !q.question || q.options.length === 0)) {
+        fail(-32602, 'Each question must have title, question, and at least 1 option');
+      }
+
+      const spaceId = typeof args.space === 'string' ? await resolveSpace(args) : undefined;
+      const id = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+      const answers = await askUserStore.add({
+        id,
+        questions,
+        spaceId,
+        createdAt: Date.now(),
+      });
+
+      const lines = questions.map((q) => {
+        const answer = answers[q.title] ?? '';
+        return `"${q.title}"="${answer}"`;
+      });
+      return textResult(lines.join('\n'));
+    },
   };
 }
 
