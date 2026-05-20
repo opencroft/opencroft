@@ -1,157 +1,225 @@
 'use client';
 
-import { ChevronLeft, ChevronRight, MessageCircleQuestion, X } from 'lucide-react';
+import { Check, MessageCircleQuestion, X } from 'lucide-react';
 import { type KeyboardEvent, useCallback, useMemo, useState, useTransition } from 'react';
 
 import { answerAskUser, cancelAskUser } from '@/app/(approvals)/actions';
 import { useOverlayBar, useOverlayMenu } from '@/app/(dashboard)/_canvas/overlay-context';
-import { sseEventsStore } from '@/app/(sse)/stores/sse-events-store';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
-import type { PendingAskUser, AskUserQuestion } from '@/lib/sse-events';
+import { Label } from '@/components/ui/label';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import type { PendingAskUser } from '@/lib/sse-events';
+
+const CUSTOM_VALUE = '__custom__';
+
+/** Check if a question has an answer (options selected or custom text typed). */
+function isQuestionAnswered(
+  title: string,
+  answers: Record<string, string[]>,
+  customTexts: Record<string, string>,
+): boolean {
+  return (answers[title] ?? []).length > 0 || (customTexts[title] ?? '').trim() !== '';
+}
 
 export function AskUserBar({ request }: { request: PendingAskUser }) {
   const [currentIdx, setCurrentIdx] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
-  const [customText, setCustomText] = useState('');
+  const [customTexts, setCustomTexts] = useState<Record<string, string>>({});
   const [pending, startTransition] = useTransition();
 
   const questions = request.questions;
-  const question: AskUserQuestion = questions[currentIdx];
-  const selected = answers[question.title] ?? [];
-
+  const question = questions[currentIdx];
+  const title = question.title;
+  const selected = answers[title] ?? [];
+  const customText = customTexts[title] ?? '';
   const isLast = currentIdx === questions.length - 1;
-  const isAnswered = selected.length > 0 || customText.trim() !== '';
+  const answered = isQuestionAnswered(title, answers, customTexts);
+  const allAnswered = questions.every((q) => isQuestionAnswered(q.title, answers, customTexts));
+
+  // ── State helpers ──────────────────────────────────────────────────────
+
+  const updateCustomText = useCallback((value: string) => {
+    setCustomTexts((prev) => ({ ...prev, [title]: value }));
+  }, [title]);
 
   const toggleOption = useCallback((option: string) => {
     setAnswers((prev) => {
-      const current = prev[question.title] ?? [];
+      const current = prev[title] ?? [];
       if (question.multiple) {
-        const next = current.includes(option)
-          ? current.filter((o) => o !== option)
-          : [...current, option];
-        return { ...prev, [question.title]: next };
+        return current.includes(option)
+          ? { ...prev, [title]: current.filter((o) => o !== option) }
+          : { ...prev, [title]: [...current, option] };
       }
-      return { ...prev, [question.title]: [option] };
+      return { ...prev, [title]: [option] };
     });
-    setCustomText('');
-  }, [question]);
+    if (!question.multiple) {
+      setCustomTexts((prev) => ({ ...prev, [title]: '' }));
+    }
+  }, [title, question.multiple]);
 
-  const submitCustom = useCallback(() => {
+  /** Commit pending custom text for current question into answers. */
+  const commitCustom = useCallback(() => {
     const text = customText.trim();
     if (!text) return;
     setAnswers((prev) => {
+      const current = prev[title] ?? [];
       if (question.multiple) {
-        const current = prev[question.title] ?? [];
-        return { ...prev, [question.title]: [...current, text] };
+        return current.includes(text) ? prev : { ...prev, [title]: [...current, text] };
       }
-      return { ...prev, [question.title]: [text] };
+      return { ...prev, [title]: [text] };
     });
-    setCustomText('');
-  }, [question, customText]);
+    setCustomTexts((prev) => ({ ...prev, [title]: '' }));
+  }, [customText, title, question.multiple]);
+
+  // ── Resolve all answers into final string map ──────────────────────────
+
+  const buildFinalAnswers = useCallback((): Record<string, string> => {
+    const result: Record<string, string> = {};
+    for (const q of questions) {
+      const sel = (answers[q.title] ?? [])
+        .map((s) => s === CUSTOM_VALUE ? (customTexts[q.title] ?? '').trim() : s)
+        .filter(Boolean);
+      result[q.title] = sel.join(', ');
+    }
+    return result;
+  }, [questions, answers, customTexts]);
+
+  // ── Actions ────────────────────────────────────────────────────────────
 
   const submit = useCallback(() => {
     startTransition(async () => {
-      const finalAnswers: Record<string, string> = {};
-      for (const q of questions) {
-        const selected = answers[q.title] ?? [];
-        finalAnswers[q.title] = selected.join(', ');
-      }
-      await answerAskUser(request.id, finalAnswers);
+      await answerAskUser(request.id, buildFinalAnswers());
     });
-  }, [questions, answers, request.id]);
+  }, [request.id, buildFinalAnswers]);
 
-  const dismiss = useCallback(() => {
-    startTransition(async () => {
-      await cancelAskUser(request.id);
-    });
-  }, [request.id]);
-
-  const goNext = useCallback(() => {
+  /** Commit pending text, then advance to next tab or submit. */
+  const advance = useCallback(() => {
+    commitCustom();
     if (isLast) {
       submit();
     } else {
       setCurrentIdx((i) => i + 1);
     }
-  }, [isLast, submit]);
+  }, [commitCustom, isLast, submit]);
+
+  const dismiss = useCallback(() => {
+    startTransition(async () => { await cancelAskUser(request.id); });
+  }, [request.id]);
 
   const onCustomKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      submitCustom();
-    }
-  }, [submitCustom]);
+    if (e.key === 'Enter') { e.preventDefault(); advance(); }
+  }, [advance]);
+
+  // ── Render ─────────────────────────────────────────────────────────────
+
+  const selectedKey = selected.join(',');
+  const stateKey = `${currentIdx}|${selectedKey}|${customText}|${pending ? 1 : 0}`;
 
   const menuNode = useMemo(() => (
     <div className="flex flex-col gap-2 px-3 py-2">
-      <div className="flex items-center gap-2 border-b pb-2">
+      {/* Header */}
+      <div className="flex items-center gap-2">
         <MessageCircleQuestion className="h-4 w-4 shrink-0 text-primary" />
-        <span className="text-sm font-medium flex-1">{question.question}</span>
-        <span className="text-xs text-muted-foreground">{currentIdx + 1}/{questions.length}</span>
-      </div>
-      <div className="flex flex-col gap-1">
-        {question.options.map((option) => {
-          const isSelected = selected.includes(option);
-          return (
-            <Button
-              key={option}
-              size="sm"
-              variant={isSelected ? 'default' : 'outline'}
-              className="justify-start w-full"
-              onClick={() => toggleOption(option)}
-            >
-              {option}
-            </Button>
-          );
-        })}
-      </div>
-      <div className="flex gap-1.5">
-        <Input
-          value={customText}
-          onChange={(e) => setCustomText(e.target.value)}
-          onKeyDown={onCustomKeyDown}
-          placeholder="Custom answer (Enter)"
-          className="h-8 flex-1"
-        />
-        <Button size="sm" onClick={submitCustom} disabled={!customText.trim()} className="h-8">
-          Add
-        </Button>
-      </div>
-      {question.multiple && selected.length > 0 && (
-        <div className="text-xs text-muted-foreground">
-          Selected: {selected.join(', ')}
-        </div>
-      )}
-      <div className="flex items-center gap-1.5 pt-1">
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => setCurrentIdx((i) => Math.max(0, i - 1))}
-          disabled={currentIdx === 0}
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </Button>
-        <Button
-          size="sm"
-          onClick={goNext}
-          disabled={!isAnswered || pending}
-          className="flex-1"
-        >
-          {isLast ? 'Submit' : 'Next'}
-          {!isLast && <ChevronRight className="h-4 w-4" />}
-        </Button>
-        <Button size="sm" variant="ghost" onClick={dismiss} disabled={pending}>
+        <span className="text-sm font-medium flex-1">Questions</span>
+        <Button size="sm" variant="ghost" onClick={dismiss} disabled={pending} className="h-6 w-6 p-0">
           <X className="h-4 w-4" />
         </Button>
       </div>
+
+      {/* Tabs */}
+      <div className="flex items-center gap-0 -mx-3 px-3 border-b">
+        {questions.map((q, idx) => (
+          <button
+            key={q.title}
+            type="button"
+            onClick={() => setCurrentIdx(idx)}
+            className={[
+              'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border-b-2 transition-colors',
+              currentIdx === idx
+                ? 'border-primary text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground/80',
+            ].join(' ')}
+          >
+            {isQuestionAnswered(q.title, answers, customTexts) && <Check className="size-3 text-primary" />}
+            {q.title}
+          </button>
+        ))}
+      </div>
+
+      {/* Question */}
+      <div className="text-sm text-muted-foreground">{question.question}</div>
+
+      {/* Options */}
+      {question.multiple ? (
+        <div className="flex flex-col gap-1.5">
+          {question.options.map((option) => (
+            <div key={option} className="flex items-center gap-2">
+              <Checkbox id={`opt-${option}`} checked={selected.includes(option)} onCheckedChange={() => toggleOption(option)} />
+              <Label htmlFor={`opt-${option}`} className="text-sm cursor-pointer">{option}</Label>
+            </div>
+          ))}
+          {selected.filter((s) => !question.options.includes(s)).map((custom) => (
+            <div key={custom} className="flex items-center gap-2">
+              <Checkbox checked onCheckedChange={() => toggleOption(custom)} />
+              <Label className="text-sm">{custom}</Label>
+            </div>
+          ))}
+          <Input
+            value={customText}
+            onChange={(e) => updateCustomText(e.target.value)}
+            onKeyDown={onCustomKeyDown}
+            placeholder="Custom answer (Enter to add)"
+            className="h-8 mt-1"
+          />
+        </div>
+      ) : (
+        <RadioGroup
+          value={selected[0] ?? ''}
+          onValueChange={(val) => { if (val !== CUSTOM_VALUE) toggleOption(val); }}
+          className="gap-1.5"
+        >
+          {question.options.map((option) => (
+            <div key={option} className="flex items-center gap-2">
+              <RadioGroupItem value={option} id={`opt-${option}`} />
+              <Label htmlFor={`opt-${option}`} className="text-sm cursor-pointer">{option}</Label>
+            </div>
+          ))}
+          <div className="flex items-center gap-2">
+            <RadioGroupItem value={CUSTOM_VALUE} id="opt-custom" />
+            <Input
+              value={customText}
+              onChange={(e) => updateCustomText(e.target.value)}
+              onFocus={() => setAnswers((prev) => ({ ...prev, [title]: [CUSTOM_VALUE] }))}
+              onKeyDown={onCustomKeyDown}
+              placeholder="Custom answer (Enter to submit)"
+              className="h-8 flex-1"
+            />
+          </div>
+        </RadioGroup>
+      )}
+
+      {/* Next / Submit */}
+      {!isLast ? (
+        <Button size="sm" onClick={advance} disabled={!answered || pending} className="w-full">
+          Next
+        </Button>
+      ) : (
+        <Button size="sm" onClick={advance} disabled={!allAnswered || pending} className="w-full">
+          Submit
+        </Button>
+      )}
     </div>
-  ), [question, questions, currentIdx, selected, customText, isAnswered, isLast, pending, toggleOption, submitCustom, goNext, dismiss, onCustomKeyDown]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [stateKey, allAnswered]);
 
   const barNode = useMemo(() => (
     <div className="flex items-center gap-2 w-full text-xs text-muted-foreground">
       <MessageCircleQuestion className="h-4 w-4 shrink-0 text-primary" />
       <span>Question {currentIdx + 1} of {questions.length}</span>
     </div>
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   ), [currentIdx, questions.length]);
 
   useOverlayMenu(menuNode);

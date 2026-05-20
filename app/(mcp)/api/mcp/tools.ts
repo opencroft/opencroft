@@ -2212,9 +2212,9 @@ function buildHandlers(): Record<string, ToolHandler> {
 
       const lines = questions.map((q) => {
         const answer = answers[q.title] ?? '';
-        return `"${q.title}"="${answer}"`;
+        return `"${q.question}"="${answer}"`;
       });
-      return textResult(lines.join('\n'));
+      return textResult(`User answered to your questions:\n${lines.join('\n')}`);
     },
   };
 }
