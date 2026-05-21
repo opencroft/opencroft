@@ -217,8 +217,10 @@ export function flushCache(extensionId?: string): void {
   if (extensionId) {
     moduleCache().delete(extensionId);
     manifestCache().delete(extensionId);
+    manifestMtimeCache.delete(extensionId);
     return;
   }
   moduleCache().clear();
   manifestCache().clear();
+  manifestMtimeCache.clear();
 }
