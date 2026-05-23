@@ -1,14 +1,14 @@
 'use client';
 
 import { AppLink } from '@prisma/client';
-import { BookOpen, ChevronRight, ExternalLink, Globe, MessageSquare, Network, Puzzle, SettingsIcon } from 'lucide-react';
+import { BookOpen, ChevronRight, ExternalLink, Globe, MessageSquare, Network, Puzzle, SettingsIcon, X } from 'lucide-react';
 import Link from 'next/link';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 
 import { getAppLinks } from '@/app/(applink)/applinks/actions';
 import { type DocNamespace, listDocNamespaces } from '@/app/(docs)/docs/actions';
-import { type ChatEntry, listAllChats } from '@/app/(openclaw)/openclaw/actions';
+import { ChatTabsProvider, useChatTabs } from '@/app/(openclaw)/openclaw/chat-tabs-context';
 import type { SpaceSummary } from '@/app/(space)/server/types';
 import { DevBuildBadge } from '@/app/components/dev-build-badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -37,37 +37,26 @@ interface Props {
   children: React.ReactNode;
 }
 
-function shortChatLabel(chat: ChatEntry): string {
-  if (chat.title) {
-    return chat.title;
-  }
-  const parts = chat.key.split(':');
-  return parts[parts.length - 1] || chat.key;
-}
-
 
 function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
   const pathname = usePathname() ?? '';
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const activeChatKey = searchParams?.get('chat') ?? null;
   const activeNamespace = searchParams?.get('namespace') ?? null;
   const [appLinks, setAppLinks] = useState<AppLink[]>([]);
-  const [chats, setChats] = useState<ChatEntry[]>([]);
   const [repos, setRepos] = useState<DocNamespace[]>([]);
   const inSpace = pathname.startsWith('/space/');
   const currentSpaceSlug = inSpace ? pathname.split('/')[2] : '';
+  const chatTabs = useChatTabs();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     getAppLinks().then(setAppLinks);
   }, []);
-
-  useEffect(() => {
-    if (!inSpace) {
-      setChats([]);
-      return;
-    }
-    listAllChats().then(setChats).catch(() => setChats([]));
-  }, [inSpace, pathname]);
 
   useEffect(() => {
     listDocNamespaces().then(setRepos).catch(() => setRepos([]));
@@ -131,40 +120,59 @@ function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
                     <MessageSquare />
                     <span>Chats</span>
                   </SidebarMenuButton>
-                  {chats.length > 0 && (
-                    <>
-                      <CollapsibleTrigger asChild>
-                        <SidebarMenuAction>
-                          <ChevronRight className='transition-transform group-data-[state=open]/collapsible:rotate-90' />
-                        </SidebarMenuAction>
-                      </CollapsibleTrigger>
-                      <CollapsibleContent>
-                        <SidebarMenuSub>
-                          {chats.map(chat => (
-                            <SidebarMenuSubItem key={chat.key}>
-                              <SidebarMenuSubButton
-                                asChild
-                                isActive={activeChatKey === chat.key}
+                  <CollapsibleTrigger asChild>
+                    <SidebarMenuAction>
+                      <ChevronRight className='transition-transform group-data-[state=open]/collapsible:rotate-90' />
+                    </SidebarMenuAction>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <SidebarMenuSub>
+                      {mounted && chatTabs.tabs.map(tab => (
+                        <SidebarMenuSubItem key={tab.key}>
+                          <SidebarMenuSubButton
+                            asChild
+                            isActive={chatTabs.activeSessionKey === tab.key}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              chatTabs.selectSession(tab.key);
+                              router.push(`/space/${currentSpaceSlug}?chat=${encodeURIComponent(tab.key)}`);
+                            }}
+                          >
+                            <button className='flex items-center gap-2 w-full min-w-0'>
+                              {tab.agentAvatar ? (
+                                <img
+                                  src={tab.agentAvatar}
+                                  alt=''
+                                  className='size-4 shrink-0 rounded-full object-cover'
+                                />
+                              ) : (
+                                <MessageSquare className='size-4 shrink-0' />
+                              )}
+                              <span className='truncate'>{tab.label}</span>
+                              <span
+                                role='button'
+                                tabIndex={0}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  chatTabs.closeTab(tab.key);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.stopPropagation();
+                                    chatTabs.closeTab(tab.key);
+                                  }
+                                }}
+                                className='ml-auto size-4 inline-flex items-center justify-center rounded-sm hover:bg-muted hover:text-destructive shrink-0'
+                                aria-label='Close tab'
                               >
-                                <Link href={`/space/${currentSpaceSlug}?chat=${encodeURIComponent(chat.key)}`}>
-                                  {chat.agentAvatar ? (
-                                    <img
-                                      src={chat.agentAvatar}
-                                      alt=''
-                                      className='size-4 shrink-0 rounded-full object-cover'
-                                    />
-                                  ) : (
-                                    <MessageSquare className='size-4 shrink-0' />
-                                  )}
-                                  <span>{shortChatLabel(chat)}</span>
-                                </Link>
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                          ))}
-                        </SidebarMenuSub>
-                      </CollapsibleContent>
-                    </>
-                  )}
+                                <X className='size-3' />
+                              </span>
+                            </button>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                      ))}
+                    </SidebarMenuSub>
+                  </CollapsibleContent>
                 </SidebarMenuItem>
               </Collapsible>
             </SidebarMenu>
@@ -257,14 +265,16 @@ function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
 export function AppShell({ pinnedSpaces, children }: Props) {
   return (
     <TitlebarProvider>
-      <SidebarProvider>
-        <Suspense fallback={null}>
-          <AppSidebar pinnedSpaces={pinnedSpaces} />
-        </Suspense>
-        <main className='flex flex-col w-full h-dvh'>
-          {children}
-        </main>
-      </SidebarProvider>
+      <ChatTabsProvider>
+        <SidebarProvider>
+          <Suspense fallback={null}>
+            <AppSidebar pinnedSpaces={pinnedSpaces} />
+          </Suspense>
+          <main className='flex flex-col w-full h-dvh'>
+            {children}
+          </main>
+        </SidebarProvider>
+      </ChatTabsProvider>
     </TitlebarProvider>
   );
 }
