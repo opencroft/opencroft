@@ -32,6 +32,7 @@ import {
 import { invokeExtensionAction } from '@/app/(extension-runtime)/_server/actions';
 import { getExtensionModule, loadAllManifests } from '@/app/(extension-runtime)/_server/loader';
 import { dispatchNodeAction, listNodeActions } from '@/app/(extension-runtime)/_server/node-actions';
+import { resolveExtensionRepo, searchRegistries } from '@/app/(extension-runtime)/_server/registry';
 import type { ExtensionHandle } from '@/app/(extension-runtime)/_types';
 import { recordAudit } from '@/app/(mcp)/api/mcp/audit';
 import { isYoloMode } from '@/app/(mcp)/api/mcp/yolo';
@@ -47,6 +48,7 @@ import {
 } from '@/app/(space)/server/actions';
 import { getSpacesRegistry } from '@/app/(space)/server/store';
 import type { GraphData } from '@/app/(space)/server/types';
+import { askUserStore } from '@/lib/ask-user-store';
 import { toastStore } from '@/lib/toast-store';
 import { decrypt } from '@/server/crypto';
 import { prisma } from '@/server/prisma';
@@ -490,6 +492,41 @@ export const toolDefinitions = [
     },
   },
 
+  // ── Registry ─────────────────────────────────────────────────────
+  {
+    name: 'registry_list',
+    description: 'List extensions from all connected extension registries. Registries are Git repos with a registry.json file listing available extensions.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        query: { type: 'string', description: 'Optional search query to filter extensions by name, description, author, or tags.' },
+      },
+    },
+  },
+  {
+    name: 'registry_install',
+    description: 'Install an extension by its registry ID. Resolves the repository URL from connected registries, then installs it. Use registry_list to discover available extensions.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        extensionId: { type: 'string', description: 'Extension ID from the registry (e.g. "opencroft/demo-extension").' },
+        ref: { type: 'string', description: 'Optional tag or branch to install. Defaults to latest semver tag.' },
+      },
+      required: ['extensionId'],
+    },
+  },
+  {
+    name: 'registry_uninstall',
+    description: 'Uninstall a previously installed extension that was installed from a registry. Removes the extension folder and clears caches.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        extensionId: { type: 'string', description: 'The installed extension id (must start with "installed/").' },
+      },
+      required: ['extensionId'],
+    },
+  },
+
   // ── Docs ──────────────────────────────────────────────────────────
   {
     name: 'doc_list_namespaces',
@@ -690,6 +727,39 @@ export const toolDefinitions = [
         },
       },
       required: ['nodeId', 'action'],
+    },
+  },
+
+  // ── AskUser ────────────────────────────────────────────────────────────
+  {
+    name: 'ask_user',
+    description: 'Ask the user structured questions with predefined options. Returns answers in "title"="answer" format. Up to 5 questions, each with up to 5 options plus a custom text input.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        questions: {
+          type: 'array',
+          description: 'Up to 5 questions to ask the user.',
+          items: {
+            type: 'object',
+            properties: {
+              title: { type: 'string', description: 'Short title (1-2 words)' },
+              question: { type: 'string', description: 'The question to ask' },
+              options: {
+                type: 'array',
+                description: 'Up to 5 answer options',
+                items: { type: 'string' },
+                maxItems: 5,
+              },
+              multiple: { type: 'boolean', description: 'Allow multiple selection' },
+            },
+            required: ['title', 'question', 'options'],
+          },
+          maxItems: 5,
+        },
+        ...SPACE_PARAM,
+      },
+      required: ['questions'],
     },
   },
 ];
@@ -1903,6 +1973,55 @@ function buildHandlers(): Record<string, ToolHandler> {
       }
     }),
 
+    // ── registry_list ────────────────────────────────────────────────
+    registry_list: async (args) => {
+      const query = args.query as string | undefined;
+      const results = await searchRegistries(query || undefined);
+      if (results.length === 0) {
+        return textResult('No extensions found in connected registries.');
+      }
+      const lines = results.map((ext) => {
+        const parts = [`**${ext.name}** (${ext.id})`];
+        if (ext.description) {
+          parts.push(`  ${ext.description}`);
+        }
+        parts.push(`  Repository: ${ext.repository}`);
+        if (ext.author) {
+          parts.push(`  Author: ${ext.author}`);
+        }
+        parts.push(`  Registry: ${ext.registryName}`);
+        return parts.join('\n');
+      });
+      return textResult(`Found ${results.length} extension(s):\n\n${lines.join('\n\n')}`);
+    },
+
+    // ── registry_install ─────────────────────────────────────────────
+    registry_install: withApprovalRequired(async (args) => {
+      const extensionId = args.extensionId as string | undefined;
+      if (!extensionId) {
+        fail(-32602, 'Missing required param: extensionId');
+      }
+      const ref = args.ref as string | undefined;
+      const resolved = await resolveExtensionRepo({ id: extensionId });
+      if (!resolved) {
+        return textResult(`Extension "${extensionId}" not found in any connected registry.`);
+      }
+      const record = await installExtensionFromUrl({ url: resolved.repository, ref });
+      broadcastExtensionsUpdated();
+      return textResult(`Installed ${record.manifest.name ?? record.id} (${record.sidecar.ref}) from ${resolved.repository}`);
+    }),
+
+    // ── registry_uninstall ──────────────────────────────────────────
+    registry_uninstall: withApprovalRequired(async (args) => {
+      const extensionId = args.extensionId as string | undefined;
+      if (!extensionId) {
+        fail(-32602, 'Missing required param: extensionId');
+      }
+      await uninstallExtension(extensionId);
+      broadcastExtensionsUpdated();
+      return textResult(`Uninstalled ${extensionId}.`);
+    }),
+
     // ── doc_list_namespaces ─────────────────────────────────────────
     doc_list_namespaces: async () => {
       const mod = await getExtensionModule('builtin/core');
@@ -2144,6 +2263,44 @@ function buildHandlers(): Record<string, ToolHandler> {
       const text = result === undefined ? `Action ${action} completed.` : JSON.stringify(result, null, 2);
       return textResult(text);
     }, { view: 'call' }),
+
+    // ── ask_user ──────────────────────────────────────────────────────────
+    ask_user: async (args) => {
+      const rawQuestions = args.questions as Array<Record<string, unknown>> | undefined;
+      if (!rawQuestions || !Array.isArray(rawQuestions) || rawQuestions.length === 0) {
+        fail(-32602, 'Missing required param: questions (non-empty array)');
+      }
+      if (rawQuestions.length > 5) {
+        fail(-32602, 'Too many questions (max 5)');
+      }
+
+      const questions = rawQuestions.map((q) => ({
+        title: String(q.title ?? ''),
+        question: String(q.question ?? ''),
+        options: (Array.isArray(q.options) ? q.options : []).map(String).slice(0, 5),
+        multiple: Boolean(q.multiple),
+      }));
+
+      if (questions.some((q) => !q.title || !q.question || q.options.length === 0)) {
+        fail(-32602, 'Each question must have title, question, and at least 1 option');
+      }
+
+      const spaceId = typeof args.space === 'string' ? await resolveSpace(args) : undefined;
+      const id = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+      const answers = await askUserStore.add({
+        id,
+        questions,
+        spaceId,
+        createdAt: Date.now(),
+      });
+
+      const lines = questions.map((q) => {
+        const answer = answers[q.title] ?? '';
+        return `"${q.question}"="${answer}"`;
+      });
+      return textResult(`User answered to your questions:\n${lines.join('\n')}`);
+    },
   };
 }
 

@@ -10,6 +10,7 @@ import { flushCache } from '@/app/(extension-runtime)/_server/loader';
 import { extDir, installedExtRoot } from '@/app/(extension-runtime)/_server/paths';
 import { type ExtensionManifest } from '@/app/(extension-runtime)/_types';
 import { getSecretValue } from '@/app/(secrets-store)/secrets-store/actions';
+import { toastStore } from '@/lib/toast-store';
 
 const execFile = promisify(execFileCb);
 
@@ -414,6 +415,7 @@ export async function uninstallExtension(extensionId: string): Promise<void> {
   const dir = path.join(installedExtRoot(), slug);
   await fs.rm(dir, { recursive: true, force: true });
   flushCache(extensionId);
+  toastStore.broadcast({ type: 'extensions_updated' });
 }
 
 export async function checkInstalledForUpdates(extensionId: string): Promise<UpdateCheck> {

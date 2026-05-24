@@ -16,6 +16,20 @@ export interface PendingApproval {
   createdAt: number;
 }
 
+export interface AskUserQuestion {
+  title: string;
+  question: string;
+  options: string[];
+  multiple: boolean;
+}
+
+export interface PendingAskUser {
+  id: string;
+  questions: AskUserQuestion[];
+  spaceId?: string;
+  createdAt: number;
+}
+
 export interface DockerContainerSnapshot {
   id: string;
   name: string;
@@ -41,6 +55,8 @@ export type SSEEvent = BaseEvent & (
   | { type: 'doc_comments_updated'; docPath: string }
   | { type: 'approval_pending'; request: PendingApproval }
   | { type: 'approval_resolved'; id: string }
+  | { type: 'ask_user_pending'; request: PendingAskUser }
+  | { type: 'ask_user_resolved'; id: string }
   | { type: 'docker_ps_updated'; dockerNodeId: string; containers: DockerContainerSnapshot[] }
   | { type: 'stream_chunk'; nodeId: string; handleId: string; chunk: StreamChunkPayload }
   | { type: 'node_data_updated'; nodeId: string; data: Record<string, unknown> }

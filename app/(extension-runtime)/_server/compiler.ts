@@ -241,6 +241,16 @@ export const extensionId = host.extensionId;
   };
 }
 
+async function readDependencyNames(extensionId: string): Promise<string[]> {
+  try {
+    const raw = await fs.readFile(path.join(extDir(extensionId), 'package.json'), 'utf-8');
+    const pkg = JSON.parse(raw) as { dependencies?: Record<string, string> };
+    return Object.keys(pkg.dependencies ?? {});
+  } catch {
+    return [];
+  }
+}
+
 async function pickEntry(dir: string, candidates: string[]): Promise<string | null> {
   for (const name of candidates) {
     const file = path.join(dir, name);
@@ -275,6 +285,15 @@ async function compileSide(
   const format = side === 'client' ? 'esm' : 'cjs';
   const platform = side === 'client' ? 'browser' : 'node';
 
+  // Server bundles must not inline the extension's own dependencies: native
+  // modules (sharp, ffmpeg-static) break when bundled, and bundling JS that is
+  // then run against a different copy of the same package in the app's
+  // node_modules causes version/ABI clashes. Keep them as runtime requires,
+  // resolved from the extension's node_modules by the loader.
+  const serverExternals = side === 'server'
+    ? [...SERVER_EXTERNAL_PACKAGES, ...await readDependencyNames(extensionId)]
+    : [];
+
   try {
     const result = await esbuild.build({
       entryPoints: [entry],
@@ -286,7 +305,7 @@ async function compileSide(
       sourcemap: 'inline',
       jsx: 'automatic',
       plugins: [hostVirtualPlugin(side, extensionId)],
-      external: side === 'server' ? SERVER_EXTERNAL_PACKAGES : [],
+      external: serverExternals,
       logLevel: 'silent',
       write: true,
       absWorkingDir: src,

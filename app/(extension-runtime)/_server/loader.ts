@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 
 import { buildExtension } from '@/app/(extension-runtime)/_server/compiler';
@@ -138,7 +139,25 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
   (globalThis as { __extensionServerApi?: unknown }).__extensionServerApi = { host };
   try {
     const mod: { exports: ExtensionServerModule } = { exports: {} };
-    const runtimeRequire: NodeRequire = eval('require');
+    // Resolve the extension's own dependencies (sharp, ffmpeg-static, …) from
+    // its own node_modules; fall back to the app for host-provided externals
+    // (@prisma/client, ssh2, node built-ins).
+    const extRequire = createRequire(bundleFile);
+    const appRequire: NodeRequire = eval('require');
+    const runtimeRequire = ((id: string) => {
+      try {
+        return extRequire(id);
+      } catch {
+        return appRequire(id);
+      }
+    }) as NodeRequire;
+    runtimeRequire.resolve = ((id: string) => {
+      try {
+        return extRequire.resolve(id);
+      } catch {
+        return appRequire.resolve(id);
+      }
+    }) as NodeRequire['resolve'];
     const fn = new Function('module', 'exports', 'require', '__dirname', '__filename', code);
     fn(mod, mod.exports, runtimeRequire, extDir(extensionId), bundleFile);
 
@@ -217,8 +236,10 @@ export function flushCache(extensionId?: string): void {
   if (extensionId) {
     moduleCache().delete(extensionId);
     manifestCache().delete(extensionId);
+    manifestMtimeCache.delete(extensionId);
     return;
   }
   moduleCache().clear();
   manifestCache().clear();
+  manifestMtimeCache.clear();
 }

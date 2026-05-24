@@ -541,9 +541,11 @@ interface AgentChatInputProps {
   onFocus?: () => void;
   onBlur?: () => void;
   onSlashOpenChange?: (open: boolean) => void;
+  /** Extra content rendered at the start of the command bar (left of sparkles icon). */
+  leadingBarContent?: React.ReactNode;
 }
 
-export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlur, onSlashOpenChange }: AgentChatInputProps) {
+export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlur, onSlashOpenChange, leadingBarContent }: AgentChatInputProps) {
   const [text, setText] = useState('');
   const [commands, setCommands] = useState<OpenclawCommand[]>([]);
   const [highlight, setHighlight] = useState(0);
@@ -665,6 +667,7 @@ export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlu
 
   const barNode = useMemo(() => (
     <>
+      {leadingBarContent}
       <Sparkles className='h-4 w-4 ml-1 mt-1.5 shrink-0 text-primary' />
       <Textarea
         value={text}
@@ -713,7 +716,7 @@ export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlu
       </Button>
     </>
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [text, session.sending, inputPlaceholder, autoFocus, autoApprove]);
+  ), [leadingBarContent, text, session.sending, inputPlaceholder, autoFocus, autoApprove]);
 
   useOverlayMenu(menuNode);
   useOverlayBar(barNode);

@@ -5,6 +5,7 @@ import * as React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ApprovalBar } from '@/app/(approvals)/_components/approval-bar';
+import { AskUserBar } from '@/app/(approvals)/_components/ask-user-bar';
 import { AiPanel } from '@/app/(dashboard)/_canvas/ai-panel';
 import { type CommandMode, type CommandNodeEntry } from '@/app/(dashboard)/_canvas/canvas-command-bar';
 import { CommandBar, CommandBarMenu } from '@/app/(dashboard)/_canvas/command-bar';
@@ -99,8 +100,9 @@ export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, onF
     setMode('ai');
   }, []);
 
-  const { pendingApprovals, selectedApprovalId } = useSSEEvents();
+  const { pendingApprovals, selectedApprovalId, pendingAskUsers, selectedAskUserId } = useSSEEvents();
   const selectedApproval = selectedApprovalId ? pendingApprovals.get(selectedApprovalId) : null;
+  const selectedAskUser = selectedAskUserId ? pendingAskUsers.get(selectedAskUserId) : null;
 
   const slots = useOverlayState();
 
@@ -151,6 +153,9 @@ export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, onF
   const activeMode = (() => {
     if (selectedApproval) {
       return <ApprovalBar request={selectedApproval} />;
+    }
+    if (selectedAskUser) {
+      return <AskUserBar request={selectedAskUser} />;
     }
     if (mode === 'ai' && agentId) {
       return (

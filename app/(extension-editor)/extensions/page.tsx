@@ -318,6 +318,7 @@ export default function ExtensionsPage() {
           onDelete={handleDelete}
           onUpdate={handleUpdate}
           onUninstall={handleUninstall}
+          onInstalled={handleInstalled}
         />
         <InstallExtensionDialog
           open={installDialogOpen}
