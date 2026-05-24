@@ -62,7 +62,9 @@ export function AskUserBar({ request }: { request: PendingAskUser }) {
   /** Commit pending custom text for current question into answers. */
   const commitCustom = useCallback(() => {
     const text = customText.trim();
-    if (!text) return;
+    if (!text) {
+      return;
+    }
     setAnswers((prev) => {
       const current = prev[title] ?? [];
       if (question.multiple) {
@@ -105,11 +107,15 @@ export function AskUserBar({ request }: { request: PendingAskUser }) {
   }, [commitCustom, isLast, submit]);
 
   const dismiss = useCallback(() => {
-    startTransition(async () => { await cancelAskUser(request.id); });
+    startTransition(async () => {
+      await cancelAskUser(request.id);
+    });
   }, [request.id]);
 
   const onCustomKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') { e.preventDefault(); advance(); }
+    if (e.key === 'Enter') {
+      e.preventDefault(); advance();
+    }
   }, [advance]);
 
   // ── Render ─────────────────────────────────────────────────────────────
@@ -177,7 +183,11 @@ export function AskUserBar({ request }: { request: PendingAskUser }) {
       ) : (
         <RadioGroup
           value={selected[0] ?? ''}
-          onValueChange={(val) => { if (val !== CUSTOM_VALUE) toggleOption(val); }}
+          onValueChange={(val) => {
+            if (val !== CUSTOM_VALUE) {
+              toggleOption(val);
+            }
+          }}
           className="gap-1.5"
         >
           {question.options.map((option) => (
@@ -219,7 +229,7 @@ export function AskUserBar({ request }: { request: PendingAskUser }) {
       <MessageCircleQuestion className="h-4 w-4 shrink-0 text-primary" />
       <span>Question {currentIdx + 1} of {questions.length}</span>
     </div>
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+
   ), [currentIdx, questions.length]);
 
   useOverlayMenu(menuNode);

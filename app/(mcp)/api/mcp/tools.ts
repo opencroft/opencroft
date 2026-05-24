@@ -15,7 +15,6 @@ import { appendComment, createComment, readComments } from '@/app/(docs)/docs/_s
 import { getDocsRoot } from '@/app/(docs)/docs/_server/docs-root';
 import { searchDocsAtRoot } from '@/app/(docs)/docs/_server/search';
 import { getGitFileAtRef } from '@/app/(docs)/docs/actions';
-import { askUserStore } from '@/lib/ask-user-store';
 import {
   type InstallAuth,
   installExtensionFromUrl,
@@ -49,6 +48,7 @@ import {
 } from '@/app/(space)/server/actions';
 import { getSpacesRegistry } from '@/app/(space)/server/store';
 import type { GraphData } from '@/app/(space)/server/types';
+import { askUserStore } from '@/lib/ask-user-store';
 import { toastStore } from '@/lib/toast-store';
 import { decrypt } from '@/server/crypto';
 import { prisma } from '@/server/prisma';
@@ -1982,9 +1982,13 @@ function buildHandlers(): Record<string, ToolHandler> {
       }
       const lines = results.map((ext) => {
         const parts = [`**${ext.name}** (${ext.id})`];
-        if (ext.description) parts.push(`  ${ext.description}`);
+        if (ext.description) {
+          parts.push(`  ${ext.description}`);
+        }
         parts.push(`  Repository: ${ext.repository}`);
-        if (ext.author) parts.push(`  Author: ${ext.author}`);
+        if (ext.author) {
+          parts.push(`  Author: ${ext.author}`);
+        }
         parts.push(`  Registry: ${ext.registryName}`);
         return parts.join('\n');
       });

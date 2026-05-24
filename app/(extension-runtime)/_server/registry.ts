@@ -148,17 +148,23 @@ async function resolveAuth(source: RegistrySource): Promise<{ username: string; 
     return { username: source.username ?? 'x-access-token', token: source.token };
   }
   // Fallback to Secrets Store
-  if (!source.authStoreId) return null;
+  if (!source.authStoreId) {
+    return null;
+  }
   const [token, username] = await Promise.all([
     getSecretValue(source.authStoreId, 'token'),
     getSecretValue(source.authStoreId, 'username'),
   ]);
-  if (!token) return null;
+  if (!token) {
+    return null;
+  }
   return { username: username ?? 'x-access-token', token };
 }
 
 function applyAuthToUrl(url: string, creds: { username: string; token: string } | null): string {
-  if (!creds) return url;
+  if (!creds) {
+    return url;
+  }
   try {
     const parsed = new URL(url);
     parsed.username = encodeURIComponent(creds.username);
@@ -205,7 +211,7 @@ interface CachedRegistry {
 }
 
 declare global {
-  // eslint-disable-next-line no-var
+
   var __REGISTRY_CACHE__: Map<string, CachedRegistry> | undefined;
 }
 
@@ -346,7 +352,9 @@ export interface ExtensionSpec {
  */
 export function parseExtensionsEnv(): ExtensionSpec[] {
   const raw = process.env.EXTENSIONS?.trim();
-  if (!raw) return [];
+  if (!raw) {
+    return [];
+  }
 
   return raw
     .split(',')
@@ -382,7 +390,9 @@ export async function resolveExtensionRepo(
  */
 export async function autoInstallExtensions(): Promise<void> {
   const specs = parseExtensionsEnv();
-  if (specs.length === 0) return;
+  if (specs.length === 0) {
+    return;
+  }
 
   console.log(`[extensions] auto-install: ${specs.length} extension(s) to check`);
 
