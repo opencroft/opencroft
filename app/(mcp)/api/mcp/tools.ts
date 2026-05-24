@@ -2006,7 +2006,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!resolved) {
         return textResult(`Extension "${extensionId}" not found in any connected registry.`);
       }
-      const record = await installExtensionFromUrl({ url: resolved.repository, ref });
+      const record = await installExtensionFromUrl({ url: resolved.repository, ref, auth: resolved.auth });
       broadcastExtensionsUpdated();
       return textResult(`Installed ${record.manifest.name ?? record.id} (${record.sidecar.ref}) from ${resolved.repository}`);
     }),

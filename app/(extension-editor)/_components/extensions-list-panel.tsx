@@ -5,12 +5,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
 import {
-  installExtensionFromUrl,
   type InstalledExtensionRecord,
   type UpdateCheck,
 } from '@/app/(extension-editor)/_actions/installed-extensions-actions';
 import { type LocalExtensionRecord } from '@/app/(extension-editor)/_actions/local-extensions-actions';
-import { listRegistryExtensions } from '@/app/(extension-editor)/_actions/registry-actions';
+import { installRegistryExtension, listRegistryExtensions } from '@/app/(extension-editor)/_actions/registry-actions';
 import type { RegistryExtension } from '@/app/(extension-runtime)/_server/registry';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -77,7 +76,7 @@ export function ExtensionsListPanel({
   async function handleInstallFromRegistry(ext: RegistryExtension) {
     setInstalling(ext.id);
     try {
-      const record = await installExtensionFromUrl({ url: ext.repository });
+      const record = await installRegistryExtension(ext.id);
       toast.success(`Installed ${record.manifest.name ?? record.id}`);
       onInstalled(record);
     } catch (err) {

@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import type { InstallAuth } from '@/app/(extension-editor)/_actions/installed-extensions-actions';
 import { getSecretValue } from '@/app/(secrets-store)/secrets-store/actions';
 
 const execFile = promisify(execFileCb);
@@ -367,17 +368,28 @@ export function parseExtensionsEnv(): ExtensionSpec[] {
 }
 
 /**
+ * Build install-time auth from a registry source so the extension repo
+ * reuses the same credentials used to fetch the registry manifest.
+ */
+function sourceInstallAuth(source: RegistrySource): InstallAuth | undefined {
+  if (source.authStoreId) {
+    return { type: 'secret', storeId: source.authStoreId };
+  }
+  return undefined;
+}
+
+/**
  * Resolve extension spec to repository URL using registries.
- * Returns the repository URL if found, or null.
+ * Returns the repository URL and the owning registry's auth if found, or null.
  */
 export async function resolveExtensionRepo(
   spec: ExtensionSpec,
-): Promise<{ repository: string } | null> {
+): Promise<{ repository: string; auth?: InstallAuth } | null> {
   const registries = await fetchAllRegistries();
   for (const reg of registries) {
     for (const ext of reg.manifest.extensions) {
       if (ext.id === spec.id) {
-        return { repository: ext.repository };
+        return { repository: ext.repository, auth: sourceInstallAuth(reg.source) };
       }
     }
   }
@@ -435,6 +447,7 @@ export async function autoInstallExtensions(): Promise<void> {
       await installExtensionFromUrl({
         url: resolved.repository,
         ref: spec.version,
+        auth: resolved.auth,
       });
       console.log(`[extensions] auto-install: ${spec.id} installed successfully`);
     } catch (err) {
