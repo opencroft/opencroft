@@ -3,11 +3,6 @@ export interface TextChunk {
   final: boolean;
 }
 
-export interface AudioChunk {
-  data: Blob;
-  final: boolean;
-}
-
 export interface Stream<T> {
   subscribe(fn: (chunk: T) => void): () => void;
   broadcast(chunk: T): void;

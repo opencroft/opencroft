@@ -6,7 +6,7 @@ import { buildExtension } from '@/app/(extension-runtime)/_server/compiler';
 import { createHost } from '@/app/(extension-runtime)/_server/host';
 import { listAllExtensionIds, readManifest } from '@/app/(extension-runtime)/_server/manifest';
 import { extDir, extDistFile } from '@/app/(extension-runtime)/_server/paths';
-import { type ExtensionManifest } from '@/app/(extension-runtime)/_types';
+import { type ExtensionManifest, type ExtensionRouteHandler } from '@/app/(extension-runtime)/_types';
 import { toastStore } from '@/lib/toast-store';
 
 export type NodeActionHandler = (ctx: unknown) => Promise<unknown>;
@@ -17,6 +17,7 @@ interface CachedModule {
   actions: Record<string, (...args: unknown[]) => Promise<unknown>>;
   exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown;
   nodeActions?: Record<string, Record<string, NodeActionHandler>>;
+  routes?: Record<string, ExtensionRouteHandler>;
 }
 
 declare global {
@@ -118,10 +119,12 @@ interface ExtensionServerModule {
   actions?: Record<string, (...args: unknown[]) => Promise<unknown>>;
   exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown;
   nodeActions?: Record<string, Record<string, NodeActionHandler>>;
+  routes?: Record<string, ExtensionRouteHandler>;
   default?: {
     actions?: Record<string, (...args: unknown[]) => Promise<unknown>>;
     exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown;
     nodeActions?: Record<string, Record<string, NodeActionHandler>>;
+    routes?: Record<string, ExtensionRouteHandler>;
   };
 }
 
@@ -165,7 +168,8 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
     const actions = exported.actions ?? exported.default?.actions ?? {};
     const exposeOutput = exported.exposeOutput ?? exported.default?.exposeOutput;
     const nodeActions = exported.nodeActions ?? exported.default?.nodeActions;
-    return { updatedAt: Date.now(), manifest, actions, exposeOutput, nodeActions };
+    const routes = exported.routes ?? exported.default?.routes;
+    return { updatedAt: Date.now(), manifest, actions, exposeOutput, nodeActions, routes };
   } finally {
     (globalThis as { __extensionServerApi?: unknown }).__extensionServerApi = prevGlobal;
   }

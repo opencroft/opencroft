@@ -192,6 +192,15 @@ export const useUpdateNodeInternals = host.useUpdateNodeInternals;
 export const Handle = host.Handle;
 export const Position = host.Position;
 export const createStorage = (key) => host.createStorage(${quoted}, key);
+export const extensionId = ${quoted};
+export const assetUrl = (p) => {
+  const [scope, slug] = ${quoted}.split('/');
+  return '/api/ext/' + scope + '/' + slug + '/assets/' + String(p).replace(/^\\/+/, '');
+};
+export const routeUrl = (p) => {
+  const [scope, slug] = ${quoted}.split('/');
+  return '/api/ext/' + scope + '/' + slug + '/http/' + String(p).replace(/^\\/+/, '');
+};
 export const icons = host.icons;
 export const toast = host.toast;
 export const invoke = (name, ...args) => host.callAction(${quoted}, name, args);

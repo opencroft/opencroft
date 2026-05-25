@@ -14,16 +14,9 @@ import { ApplicationNode, ApplicationInspector, ApplicationLogsTab, ApplicationT
 import { VolumeNode, VolumeInspector, VolumeData } from './nodes/volume';
 import { NetworkNode, NetworkInspector } from './nodes/network';
 import { OpenAIClientNode, OpenAIClientInspector } from './nodes/openai-client';
-import { OpenAIAudioNode, OpenAIAudioInspector } from './nodes/openai-audio';
-import { OpenAIChatSpeechNode, OpenAIChatSpeechInspector } from './nodes/openai-chat-speech';
-import { OpenAIChatNode, OpenAIChatInspector } from './nodes/openai-chat';
 import { OpenAIAssistantNode, OpenAIAssistantInspector } from './nodes/openai-assistant';
-import { MicrophoneNode, MicrophoneInspector, MICROPHONE_HANDLES, microphoneExposeOutput } from './nodes/microphone';
 import { PromptNode, PromptInspector, PROMPT_HANDLES, promptExposeOutput } from './nodes/prompt';
-import { AsrNode, AsrInspector, ASR_HANDLES, asrExposeOutput } from './nodes/asr-node';
 import { TextGenerationNode, TextGenerationInspector, TEXT_GENERATION_HANDLES, textGenerationExposeOutput } from './nodes/text-generation';
-import { TextToSpeechNode, TextToSpeechInspector, TEXT_TO_SPEECH_HANDLES, textToSpeechExposeOutput } from './nodes/text-to-speech';
-import { SpeakerNode, SpeakerInspector, SPEAKER_HANDLES } from './nodes/speaker';
 import { LogNode, LogInspector, LogOutputTab, LOG_HANDLES } from './nodes/log';
 import { SendMessageNode, SendMessageInspector, SEND_MESSAGE_HANDLES } from './nodes/send-message';
 import { ApiRouteNode, ApiRouteInspector, API_ROUTE_HANDLES, apiRouteExposeOutput } from './nodes/api-route';
@@ -48,7 +41,6 @@ export default defineExtension({
     { id: 'docker-context', label: 'Docker Context', color: 'oklch(0.75 0.14 240)' },
     { id: 'volume-mount', label: 'Volume Mount', color: 'oklch(0.7 0.15 50)' },
     { id: 'text-stream', label: 'Text Stream', color: 'oklch(0.75 0.17 100)' },
-    { id: 'audio-stream', label: 'Audio Stream', color: 'oklch(0.68 0.16 230)' },
     { id: 'execution-context', label: 'Execution Context', color: 'oklch(0.65 0.24 25)' },
     { id: 'agent-job', label: 'Agent Job', color: 'oklch(0.7 0.17 60)' },
     { id: 'agent-instruction', label: 'Agent Instruction', color: 'oklch(0.72 0.16 180)' },
@@ -361,53 +353,6 @@ export default defineExtension({
       inspector: OpenAIClientInspector as unknown as never,
     },
     {
-      typeId: 'openai-audio',
-      name: 'OpenAI Audio',
-      category: 'Audio',
-      icon: 'AudioLines',
-      accent: 'oklch(0.68 0.16 230)',
-      handles: [],
-      defaultData: {
-        assistantId: '',
-        input: '',
-        format: 'mp3',
-      },
-      component: OpenAIAudioNode as unknown as never,
-      inspector: OpenAIAudioInspector as unknown as never,
-    },
-    {
-      typeId: 'openai-chat-speech',
-      name: 'Chat → Speech',
-      category: 'Audio',
-      icon: 'MessageCircle',
-      accent: 'oklch(0.68 0.16 230)',
-      handles: [],
-      defaultData: {
-        assistantId: '',
-        systemPrompt: '',
-        userPrompt: '',
-        splitSentences: true,
-      },
-      component: OpenAIChatSpeechNode as unknown as never,
-      inspector: OpenAIChatSpeechInspector as unknown as never,
-    },
-    {
-      typeId: 'openai-chat',
-      name: 'Chat',
-      category: 'Text',
-      icon: 'MessagesSquare',
-      accent: 'oklch(0.75 0.17 100)',
-      handles: [],
-      defaultData: {
-        assistantId: '',
-        systemPrompt: '',
-        ttsEnabled: false,
-        splitSentences: true,
-      },
-      component: OpenAIChatNode as unknown as never,
-      inspector: OpenAIChatInspector as unknown as never,
-    },
-    {
       typeId: 'openai-assistant',
       name: 'AI Assistant',
       category: 'AI',
@@ -435,18 +380,6 @@ export default defineExtension({
       inspector: OpenAIAssistantInspector as unknown as never,
     },
     {
-      typeId: 'microphone',
-      name: 'Microphone',
-      category: 'Audio',
-      icon: 'Mic',
-      accent: 'oklch(0.68 0.16 230)',
-      handles: MICROPHONE_HANDLES as unknown as never[],
-      defaultData: { mode: 'ptt' },
-      component: MicrophoneNode as unknown as never,
-      inspector: MicrophoneInspector as unknown as never,
-      exposeOutput: microphoneExposeOutput as unknown as never,
-    },
-    {
       typeId: 'prompt',
       name: 'Prompt',
       category: 'Text',
@@ -459,18 +392,6 @@ export default defineExtension({
       exposeOutput: promptExposeOutput as unknown as never,
     },
     {
-      typeId: 'asr',
-      name: 'Speech Recognition',
-      category: 'Text',
-      icon: 'Ear',
-      accent: 'oklch(0.75 0.17 100)',
-      handles: ASR_HANDLES as unknown as never[],
-      defaultData: { model: 'Qwen/Qwen3-ASR-0.6B', url: '/api/asr/transcribe' },
-      component: AsrNode as unknown as never,
-      inspector: AsrInspector as unknown as never,
-      exposeOutput: asrExposeOutput as unknown as never,
-    },
-    {
       typeId: 'text-generation',
       name: 'Text Generation',
       category: 'Text',
@@ -481,29 +402,6 @@ export default defineExtension({
       component: TextGenerationNode as unknown as never,
       inspector: TextGenerationInspector as unknown as never,
       exposeOutput: textGenerationExposeOutput as unknown as never,
-    },
-    {
-      typeId: 'text-to-speech',
-      name: 'Text to Speech',
-      category: 'Audio',
-      icon: 'Speech',
-      accent: 'oklch(0.68 0.16 230)',
-      handles: TEXT_TO_SPEECH_HANDLES as unknown as never[],
-      defaultData: { assistantId: '', splitSentences: true },
-      component: TextToSpeechNode as unknown as never,
-      inspector: TextToSpeechInspector as unknown as never,
-      exposeOutput: textToSpeechExposeOutput as unknown as never,
-    },
-    {
-      typeId: 'speaker',
-      name: 'Speaker',
-      category: 'Audio',
-      icon: 'Volume2',
-      accent: 'oklch(0.68 0.16 230)',
-      handles: SPEAKER_HANDLES as unknown as never[],
-      defaultData: {},
-      component: SpeakerNode as unknown as never,
-      inspector: SpeakerInspector as unknown as never,
     },
     {
       typeId: 'log',

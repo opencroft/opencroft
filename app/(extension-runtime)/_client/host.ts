@@ -14,7 +14,6 @@ import { useOverlayBar, useOverlayContent, useOverlayMenu } from '@/app/(dashboa
 import { useNodeContext } from '@/app/(dashboard)/extension-system/use-node-context';
 import { extensionRegistry } from '@/app/(extension-runtime)/_client/registry';
 import {
-  type AudioChunk,
   broadcast,
   getStream,
   type Stream,
@@ -356,7 +355,7 @@ export const extensionHostApi = {
   useSeedDockerContainers,
 };
 
-export type { AudioChunk, Stream, TextChunk };
+export type { Stream, TextChunk };
 
 export type ExtensionHostApi = typeof extensionHostApi;
 

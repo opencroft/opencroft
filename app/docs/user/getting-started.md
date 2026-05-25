@@ -14,10 +14,6 @@ cd opencroft
 npm install
 ```
 
-The `postinstall` script copies VAD audio assets into `public/`. If you're
-on a fresh install and see warnings about missing assets, run
-`node scripts/copy-vad-assets.mjs` manually.
-
 ## Run
 
 Open two terminals.

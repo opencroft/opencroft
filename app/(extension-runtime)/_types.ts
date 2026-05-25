@@ -145,6 +145,15 @@ export interface NodeActionDescriptor {
   description?: string;
 }
 
+/** An HTTP handler exposed by an extension's server module, served at
+ *  `/api/ext/<scope>/<slug>/http/<path>`. Receives the raw Request and returns a
+ *  (possibly streaming) Response — suitable for proxies, webhooks, and SSE. */
+export type ExtensionRouteHandler = (request: Request) => Response | Promise<Response>;
+
+/** Map of route path → handler. Exported as `routes` from an extension's
+ *  server module, the same way `actions` and `nodeActions` are. */
+export type ExtensionRoutes = Record<string, ExtensionRouteHandler>;
+
 export interface CompileError {
   file: string;
   line?: number;

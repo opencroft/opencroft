@@ -7,7 +7,6 @@ const src = resolve(root, 'node_modules');
 const dst = resolve(root, process.argv[2] || 'extension-deps');
 
 const roots = [
-  '@ricky0123/vad-web',
   '@xterm/xterm',
   '@xterm/addon-fit',
   '@uiw/react-codemirror',

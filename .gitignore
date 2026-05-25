@@ -43,8 +43,6 @@ next-env.d.ts
 
 *.local.json
 
-# VAD runtime assets (copied from node_modules by scripts/copy-vad-assets.mjs)
-/public/vad/
 dist/
 /.cache/
 /data/

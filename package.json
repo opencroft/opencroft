@@ -10,8 +10,7 @@
     "start": "node scripts/start.mjs",
     "lint": "eslint",
     "fix": "eslint --fix",
-    "update": "npx shadcn@latest add @croftcn/all --all --overwrite",
-    "postinstall": "node scripts/copy-vad-assets.mjs"
+    "update": "npx shadcn@latest add @croftcn/all --all --overwrite"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1017.0",
@@ -55,7 +54,6 @@
     "@radix-ui/react-toggle": "^1.1.10",
     "@radix-ui/react-toggle-group": "^1.1.11",
     "@radix-ui/react-tooltip": "^1.2.8",
-    "@ricky0123/vad-web": "^0.0.30",
     "@tiptap/extension-link": "^3.22.4",
     "@tiptap/extension-table": "^3.22.4",
     "@tiptap/extension-table-cell": "^3.22.4",
