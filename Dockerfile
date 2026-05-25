@@ -30,7 +30,6 @@ ENV OPENCROFT_CACHE_DIR=/home/node/.cache
 
 COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
-COPY --from=build --chown=node:node /app/public ./public
 COPY --from=build --chown=node:node /app/prisma ./prisma
 COPY --from=build --chown=node:node /app/extension-deps ./node_modules
 
