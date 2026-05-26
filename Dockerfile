@@ -32,6 +32,7 @@ COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
 COPY --from=build --chown=node:node /app/prisma ./prisma
 COPY --from=build --chown=node:node /app/extension-deps ./node_modules
+COPY --from=build --chown=node:node /app/data/opencroft.db ./seed.db
 
 USER node
 EXPOSE 9999
