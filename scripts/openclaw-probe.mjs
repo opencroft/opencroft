@@ -19,8 +19,8 @@ const call = (method, params = {}) => {
 };
 
 const connect = () => call('connect', {
-  minProtocol: 1,
-  maxProtocol: 3,
+  minProtocol: 4,
+  maxProtocol: 4,
   client: {
     id: 'gateway-client',
     version: '0.1.0',
@@ -29,6 +29,11 @@ const connect = () => call('connect', {
   },
   role: 'operator',
   scopes: ['operator.read'],
+  caps: [],
+  commands: [],
+  permissions: {},
+  locale: 'en-US',
+  userAgent: 'opencroft-gateway-client/0.1.0',
   auth: { token },
 });
 
