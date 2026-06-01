@@ -1,4 +1,4 @@
-'use server';
+import { createServerFn } from '@tanstack/react-start';
 
 import { getSpacesRegistry } from '@/app/(space)/server/store';
 
@@ -44,7 +44,7 @@ interface EdgeShape {
   targetHandle?: string;
 }
 
-export async function listAgentNodes(): Promise<AgentNodeRef[]> {
+export const listAgentNodes = createServerFn().handler(async (): Promise<AgentNodeRef[]> => {
   const r = getSpacesRegistry();
   await r.ensureLoaded();
   const out: AgentNodeRef[] = [];
@@ -112,4 +112,4 @@ export async function listAgentNodes(): Promise<AgentNodeRef[]> {
     }
   }
   return out;
-}
+});

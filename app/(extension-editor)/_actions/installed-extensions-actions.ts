@@ -1,9 +1,9 @@
-'use server';
-
 import { execFile as execFileCb } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
+
+import { createServerFn } from '@tanstack/react-start';
 
 import { buildExtension } from '@/app/(extension-runtime)/_server/compiler';
 import { flushCache } from '@/app/(extension-runtime)/_server/loader';
@@ -123,8 +123,8 @@ async function resolveAuth(auth?: InstallAuth): Promise<ResolvedAuth | null> {
   const tokenKey = auth.tokenKey ?? 'token';
   const usernameKey = auth.usernameKey ?? 'username';
   const [token, username] = await Promise.all([
-    getSecretValue(auth.storeId, tokenKey),
-    getSecretValue(auth.storeId, usernameKey),
+    getSecretValue({ data: { storeId: auth.storeId, key: tokenKey } }),
+    getSecretValue({ data: { storeId: auth.storeId, key: usernameKey } }),
   ]);
   if (!token) {
     throw new Error(`Secret ${auth.storeId}/${tokenKey} not found or empty`);
@@ -365,17 +365,17 @@ async function performInstall(
   return record;
 }
 
-export async function installExtensionFromUrl(input: {
+export const installExtensionFromUrl = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((input: {
   url: string;
   ref?: string;
   auth?: InstallAuth;
-}): Promise<InstalledExtensionRecord> {
+}) => input).handler(async ({ data: input }): Promise<InstalledExtensionRecord> => {
   const parsed = parseRepoUrl(input.url);
   const slug = await pickFreshSlug(parsed.owner, parsed.repo);
   return performInstall(slug, parsed, input.auth, input.ref);
-}
+});
 
-export async function listInstalledExtensions(): Promise<InstalledExtensionRecord[]> {
+export const listInstalledExtensions = createServerFn({ strict: { output: false } }).handler(async (): Promise<InstalledExtensionRecord[]> => {
   let entries: string[];
   try {
     entries = await fs.readdir(installedExtRoot());
@@ -390,7 +390,7 @@ export async function listInstalledExtensions(): Promise<InstalledExtensionRecor
     }
   }
   return records;
-}
+});
 
 function slugFromInstalledId(extensionId: string): string {
   const [scope, slug] = extensionId.split('/');
@@ -400,7 +400,8 @@ function slugFromInstalledId(extensionId: string): string {
   return slug;
 }
 
-export async function updateInstalledExtension(extensionId: string, ref?: string): Promise<InstalledExtensionRecord> {
+export const updateInstalledExtension = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((data: { extensionId: string; ref?: string }) => data).handler(async ({ data }): Promise<InstalledExtensionRecord> => {
+  const { extensionId, ref } = data;
   const slug = slugFromInstalledId(extensionId);
   const sidecar = await readSidecar(extDir(extensionId));
   if (!sidecar) {
@@ -408,17 +409,17 @@ export async function updateInstalledExtension(extensionId: string, ref?: string
   }
   const parsed = parseRepoUrl(sidecar.source.url);
   return performInstall(slug, parsed, sidecar.auth, ref);
-}
+});
 
-export async function uninstallExtension(extensionId: string): Promise<void> {
+export const uninstallExtension = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((extensionId: string) => extensionId).handler(async ({ data: extensionId }): Promise<void> => {
   const slug = slugFromInstalledId(extensionId);
   const dir = path.join(installedExtRoot(), slug);
   await fs.rm(dir, { recursive: true, force: true });
   flushCache(extensionId);
   toastStore.broadcast({ type: 'extensions_updated' });
-}
+});
 
-export async function checkInstalledForUpdates(extensionId: string): Promise<UpdateCheck> {
+export const checkInstalledForUpdates = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((extensionId: string) => extensionId).handler(async ({ data: extensionId }): Promise<UpdateCheck> => {
   const sidecar = await readSidecar(extDir(extensionId));
   if (!sidecar) {
     throw new Error(`Not an installed extension: ${extensionId}`);
@@ -437,4 +438,4 @@ export async function checkInstalledForUpdates(extensionId: string): Promise<Upd
     hasUpdate: sidecar.ref !== latest,
     availableTags: sortedDesc,
   };
-}
+});

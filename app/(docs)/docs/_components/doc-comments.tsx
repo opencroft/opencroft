@@ -158,7 +158,7 @@ export function DocCommentsOverlay({ namespace, docPath, renderKey }: DocComment
   const version = docCommentsVersion.get(docPath) ?? 0;
 
   const reload = useCallback(async () => {
-    const next = await listDocComments(namespace, docPath);
+    const next = await listDocComments({ data: { namespace, filePath: docPath } });
     setComments(next);
   }, [namespace, docPath]);
 
@@ -308,7 +308,7 @@ export function DocCommentsOverlay({ namespace, docPath, renderKey }: DocComment
       ...(composerAnchor.prefix ? { prefix: composerAnchor.prefix } : {}),
       ...(composerAnchor.suffix ? { suffix: composerAnchor.suffix } : {}),
     };
-    await postDocComment(namespace, docPath, message.trim(), undefined, anchor);
+    await postDocComment({ data: { namespace, filePath: docPath, message: message.trim(), parentId: undefined, anchor } });
     setMessage('');
     setComposerAnchor(null);
     setBusy(false);
@@ -321,7 +321,7 @@ export function DocCommentsOverlay({ namespace, docPath, renderKey }: DocComment
       return;
     }
     setBusy(true);
-    await postDocComment(namespace, docPath, replyMessage.trim(), parentId);
+    await postDocComment({ data: { namespace, filePath: docPath, message: replyMessage.trim(), parentId } });
     setReplyMessage('');
     setBusy(false);
     await reload();

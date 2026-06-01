@@ -148,7 +148,7 @@ function KeyStoreSettings({ id, updateData, onDirtyChange, onLoadingChange }: No
   const [newType, setNewType] = useState('ed25519');
 
   const load = useCallback(async () => {
-    const list = await listKeys(id);
+    const list = await listKeys({ data: id });
     setKeys(list);
     updateData({ keyNames: list.map((k) => k.name) });
   }, [id, updateData]);
@@ -166,36 +166,36 @@ function KeyStoreSettings({ id, updateData, onDirtyChange, onLoadingChange }: No
     if (!newName.trim()) {
       return;
     }
-    await createKey(id, newName.trim(), newType);
+    await createKey({ data: { storeId: id, name: newName.trim(), keyType: newType } });
     setNewName('');
     await load();
     toast.success('Key created');
   }, [id, newName, newType, load]);
 
   const handleImport = useCallback(async (name: string, content: string) => {
-    await importKey(id, name, content);
+    await importKey({ data: { storeId: id, name, content } });
     await load();
     toast.success(`Imported ${name}`);
   }, [id, load]);
 
   const handleDelete = useCallback(async (name: string) => {
-    await deleteKey(id, name);
+    await deleteKey({ data: { storeId: id, name } });
     await load();
     toast.success('Key deleted');
   }, [id, load]);
 
   const handleCopyPublic = useCallback(async (name: string) => {
-    const pub = await readPublicKey(id, name);
+    const pub = await readPublicKey({ data: { storeId: id, name } });
     await navigator.clipboard.writeText(pub.trim());
     toast.success('Public key copied');
   }, [id]);
 
   const handleToggleWsl = useCallback(async (entry: KeyEntry) => {
     if (entry.inWsl) {
-      await removeKeyFromWsl(entry.name);
+      await removeKeyFromWsl({ data: entry.name });
       toast.success(`Removed ${entry.name} from WSL`);
     } else {
-      await copyKeyToWsl(id, entry.name);
+      await copyKeyToWsl({ data: { storeId: id, name: entry.name } });
       toast.success(`Copied ${entry.name} to WSL`);
     }
     await load();

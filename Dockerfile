@@ -11,8 +11,7 @@ RUN --mount=type=cache,target=/root/.npm npm ci
 COPY . .
 RUN npx prisma generate
 RUN mkdir -p data && npx prisma db push
-RUN --mount=type=cache,target=/app/.next/cache npm run build
-RUN node scripts/collect-extension-deps.mjs extension-deps
+RUN npm run build
 
 # --- Runtime ---
 FROM node:24-slim AS runtime
@@ -23,17 +22,22 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=9999
 ENV HOSTNAME=0.0.0.0
 ENV OPENCROFT_CACHE_DIR=/home/node/.cache
 
-COPY --from=build --chown=node:node /app/.next/standalone ./
-COPY --from=build --chown=node:node /app/.next/static ./.next/static
+# App build output + the Node prod entry (HTTP + static + WebSocket terminal).
+COPY --from=build --chown=node:node /app/dist ./dist
+# Runtime deps: the Start server build, prisma client, esbuild (runtime extension
+# compile), ssh2 / node-pty / ws (terminal), and extension dependencies all live here.
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/package.json ./package.json
 COPY --from=build --chown=node:node /app/prisma ./prisma
-COPY --from=build --chown=node:node /app/extension-deps ./node_modules
+COPY --from=build --chown=node:node /app/prisma.config.ts ./prisma.config.ts
+# Source is needed at runtime by the extension compiler (builtin extension lives in app/).
+COPY --from=build --chown=node:node /app/app ./app
 COPY --from=build --chown=node:node /app/data/opencroft.db ./seed.db
 
 USER node
 EXPOSE 9999
-CMD ["node", "server.js"]
+CMD ["node", "dist/prod.mjs"]

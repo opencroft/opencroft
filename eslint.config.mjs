@@ -1,24 +1,15 @@
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-
-import { FlatCompat } from "@eslint/eslintrc";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const compat = new FlatCompat({
-  "baseDirectory": __dirname,
-});
+import tsParser from "@typescript-eslint/parser";
 
 const eslintConfig = [
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
     "ignores": [
       "node_modules/**",
+      "dist/**",
       ".next/**",
       "out/**",
       "build/**",
       "next-env.d.ts",
+      "app/routeTree.gen.ts",
       "components/ui/**",
       "hooks/use-mobile.ts",
       "websocket/**",
@@ -28,7 +19,17 @@ const eslintConfig = [
     ],
   },
   {
+    "files": ["**/*.{ts,tsx}"],
+    "languageOptions": {
+      "parser": tsParser,
+      "parserOptions": {
+        "ecmaFeatures": { "jsx": true },
+        "sourceType": "module",
+      },
+    },
     "plugins": {
+      "@typescript-eslint": (await import("@typescript-eslint/eslint-plugin")).default,
+      "react-hooks": (await import("eslint-plugin-react-hooks")).default,
       "import": (await import("eslint-plugin-import")).default,
       "unused-imports": (await import("eslint-plugin-unused-imports")).default,
       "no-relative-import-paths": (await import("eslint-plugin-no-relative-import-paths")).default,

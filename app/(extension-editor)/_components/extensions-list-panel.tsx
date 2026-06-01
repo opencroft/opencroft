@@ -55,7 +55,7 @@ export function ExtensionsListPanel({
   const doSearch = useCallback(async (q: string) => {
     setSearching(true);
     try {
-      const results = await listRegistryExtensions(q);
+      const results = await listRegistryExtensions({ data: q });
       setRegistryResults(results);
     } catch {
       toast.error('Failed to search registries');
@@ -76,7 +76,7 @@ export function ExtensionsListPanel({
   async function handleInstallFromRegistry(ext: RegistryExtension) {
     setInstalling(ext.id);
     try {
-      const record = await installRegistryExtension(ext.id);
+      const record = await installRegistryExtension({ data: { extensionId: ext.id } });
       toast.success(`Installed ${record.manifest.name ?? record.id}`);
       onInstalled(record);
     } catch (err) {

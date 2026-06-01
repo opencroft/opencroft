@@ -88,7 +88,7 @@ export function ExtensionEditor({
     const results = await Promise.all(
       list.map(async (record) => {
         try {
-          return [record.id, await checkInstalledForUpdates(record.id)] as const;
+          return [record.id, await checkInstalledForUpdates({ data: record.id })] as const;
         } catch {
           return null;
         }
@@ -161,10 +161,10 @@ export function ExtensionEditor({
     setErrors([]);
     setWarnings([]);
     try {
-      const record = await updateLocalExtension(selectedId, files);
+      const record = await updateLocalExtension({ data: { extensionId: selectedId, files } });
       setSavedSignature(recordSignature(record.files));
       setRecords((prev) => prev.map((r) => (r.id === record.id ? record : r)));
-      const result = await compileLocalExtension(selectedId);
+      const result = await compileLocalExtension({ data: selectedId });
       setErrors(result.errors);
       setWarnings(result.warnings);
       if (result.success) {
@@ -237,7 +237,7 @@ export function ExtensionEditor({
       const list = await listLocalExtensions();
       const slug = pickUntitledSlug(list);
       const templateFiles = extensionTemplate(slug);
-      const record = await createLocalExtension(templateFiles);
+      const record = await createLocalExtension({ data: templateFiles });
       await refresh();
       setSelectedId(record.id);
       onExtensionChanged();
@@ -256,7 +256,7 @@ export function ExtensionEditor({
     }
     setBusy(true);
     try {
-      await deleteLocalExtension(extensionId);
+      await deleteLocalExtension({ data: extensionId });
       await refresh();
       if (selectedId === extensionId) {
         setSelectedId(null);
@@ -282,7 +282,7 @@ export function ExtensionEditor({
     const check = updateChecks[extensionId];
     setBusy(true);
     try {
-      const record = await updateInstalledExtension(extensionId, check?.latest ?? undefined);
+      const record = await updateInstalledExtension({ data: { extensionId, ref: check?.latest ?? undefined } });
       const { installed: list } = await refresh();
       checkAllUpdates(list);
       onExtensionChanged();
@@ -301,7 +301,7 @@ export function ExtensionEditor({
     }
     setBusy(true);
     try {
-      await uninstallExtension(extensionId);
+      await uninstallExtension({ data: extensionId });
       const { installed: list } = await refresh();
       if (selectedId === extensionId) {
         setSelectedId(null);

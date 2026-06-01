@@ -1,8 +1,8 @@
-'use server';
-
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import pathLib from 'node:path';
+
+import { createServerFn } from '@tanstack/react-start';
 
 import { setPermissions } from '@/app/(server)/server/ssh-utils';
 import { type Server, getSshFeature, slug } from '@/app/(server)/server/types';
@@ -72,7 +72,7 @@ function resolveKeyPath(keyRef: string): string {
   return cacheDir('ssh-keys', storeId, keyName);
 }
 
-export async function resolveServer(server: Server): Promise<Server> {
+export const resolveServer = createServerFn({ method: 'POST' }).inputValidator((server: Server) => server).handler(async ({ data: server }): Promise<Server> => {
   const ssh = getSshFeature(server);
   if (!ssh?.keyPath || !ssh.keyPath.includes(':')) {
     return server;
@@ -84,9 +84,9 @@ export async function resolveServer(server: Server): Promise<Server> {
       f.type === 'ssh' ? { ...f, keyPath: resolved } : f,
     ),
   };
-}
+});
 
-export async function applyServerConfig(server: Server): Promise<void> {
+export const applyServerConfig = createServerFn({ method: 'POST' }).inputValidator((server: Server) => server).handler(async ({ data: server }): Promise<void> => {
   const ssh = getSshFeature(server);
   if (!ssh?.keyPath) {
     return;
@@ -132,9 +132,9 @@ export async function applyServerConfig(server: Server): Promise<void> {
     }
     await saveWslConfig(wslEntries);
   }
-}
+});
 
-export async function removeServerConfig(name: string): Promise<void> {
+export const removeServerConfig = createServerFn({ method: 'POST' }).inputValidator((name: string) => name).handler(async ({ data: name }): Promise<void> => {
   const alias = slug(name);
   const entries = await loadConfig();
   await saveConfig(entries.filter((e) => e.host !== alias));
@@ -143,7 +143,7 @@ export async function removeServerConfig(name: string): Promise<void> {
     const wslEntries = await loadWslConfig();
     await saveWslConfig(wslEntries.filter((e) => e.host !== alias));
   }
-}
+});
 
 async function loadWslConfig(): Promise<SshConfigEntry[]> {
   try {

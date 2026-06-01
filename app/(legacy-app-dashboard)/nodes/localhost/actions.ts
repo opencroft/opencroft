@@ -1,7 +1,7 @@
-'use server';
-
 import { execFile } from 'node:child_process';
 import os from 'node:os';
+
+import { createServerFn } from '@tanstack/react-start';
 
 export interface LocalhostStats {
   os: string;
@@ -12,7 +12,7 @@ export interface LocalhostStats {
   platform: string;
 }
 
-export async function getLocalhostStats(): Promise<LocalhostStats> {
+export const getLocalhostStats = createServerFn().handler(async (): Promise<LocalhostStats> => {
   const cpus = os.cpus();
   const totalMem = os.totalmem();
   const freeMem = os.freemem();
@@ -33,7 +33,7 @@ export async function getLocalhostStats(): Promise<LocalhostStats> {
   };
 
   return stats;
-}
+});
 
 function getDiskUsage(): Promise<string> {
   if (os.platform() === 'win32') {

@@ -45,7 +45,7 @@ function useDebouncedSave(delay: number) {
   const save = useCallback((nodes: Node[], edges: Edge[]) => {
     clearTimeout(timer.current);
     timer.current = setTimeout(() => {
-      saveGraph({ nodes: nodes.filter((n) => n.type !== 'window' && n.type !== 'comment'), edges });
+      saveGraph({ data: { nodes: nodes.filter((n) => n.type !== 'window' && n.type !== 'comment'), edges } });
     }, delay);
   }, [delay]);
 

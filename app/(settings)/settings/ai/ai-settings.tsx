@@ -52,14 +52,14 @@ export default function AiSettings() {
 
   const onAgentChange = (agentId: string) => {
     startAgentSave(async () => {
-      const settings = await saveDefaultAgent(agentId || null);
+      const settings = await saveDefaultAgent({ data: agentId || null });
       setState((prev) => (prev ? { ...prev, settings } : prev));
     });
   };
 
   const onSaveGateway = () => {
     startGatewaySave(async () => {
-      const settings = await saveGatewayConfig({ url, token });
+      const settings = await saveGatewayConfig({ data: { url, token } });
       const next = await loadAiSettingsState();
       setState({ ...next, settings });
     });

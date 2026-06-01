@@ -336,7 +336,7 @@ declare global {
 }
 
 async function loadGatewayConfig(): Promise<GatewayConfig> {
-  const row = await getSetting<GatewayConfigSettings>('ai-settings');
+  const row = await getSetting({ data: 'ai-settings' });
   const url = row?.data?.gatewayUrl?.trim() || process.env.OPENCLAW_GATEWAY_URL;
   const token = row?.data?.gatewayToken?.trim() || process.env.OPENCLAW_GATEWAY_TOKEN;
   if (!url || !token) {

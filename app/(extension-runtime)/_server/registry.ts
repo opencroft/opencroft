@@ -153,8 +153,8 @@ async function resolveAuth(source: RegistrySource): Promise<{ username: string; 
     return null;
   }
   const [token, username] = await Promise.all([
-    getSecretValue(source.authStoreId, 'token'),
-    getSecretValue(source.authStoreId, 'username'),
+    getSecretValue({ data: { storeId: source.authStoreId, key: 'token' } }),
+    getSecretValue({ data: { storeId: source.authStoreId, key: 'username' } }),
   ]);
   if (!token) {
     return null;
@@ -435,7 +435,7 @@ export async function autoInstallExtensions(): Promise<void> {
         // Already installed — optionally update
         if (spec.version) {
           console.log(`[extensions] auto-install: updating ${spec.id} to ${spec.version}`);
-          await updateInstalledExtension(spec.id, spec.version);
+          await updateInstalledExtension({ data: { extensionId: spec.id, ref: spec.version } });
         } else {
           console.log(`[extensions] auto-install: ${spec.id} already installed`);
         }
@@ -445,9 +445,11 @@ export async function autoInstallExtensions(): Promise<void> {
       // Install fresh
       console.log(`[extensions] auto-install: installing ${spec.id}${spec.version ? `@${spec.version}` : ''}`);
       await installExtensionFromUrl({
-        url: resolved.repository,
-        ref: spec.version,
-        auth: resolved.auth,
+        data: {
+          url: resolved.repository,
+          ref: spec.version,
+          auth: resolved.auth,
+        },
       });
       console.log(`[extensions] auto-install: ${spec.id} installed successfully`);
     } catch (err) {

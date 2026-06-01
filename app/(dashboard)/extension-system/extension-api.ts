@@ -49,11 +49,11 @@ export interface ExtensionStorage {
 
 export function createStorage(extensionId: string): ExtensionStorage {
   return {
-    get: (key) => extensionStorageGet(extensionId, key),
-    set: (key, value) => extensionStorageSet(extensionId, key, value),
-    delete: (key) => extensionStorageDelete(extensionId, key),
-    list: () => extensionStorageList(extensionId),
-    clear: () => extensionStorageClear(extensionId),
+    get: (key) => extensionStorageGet({ data: { extensionId, key } }),
+    set: (key, value) => extensionStorageSet({ data: { extensionId, key, value } }),
+    delete: (key) => extensionStorageDelete({ data: { extensionId, key } }),
+    list: () => extensionStorageList({ data: extensionId }),
+    clear: () => extensionStorageClear({ data: extensionId }),
   };
 }
 

@@ -23,14 +23,14 @@ export function ApprovalBar({ request }: { request: PendingApproval }) {
 
   const onApprove = useCallback(() => {
     startTransition(async () => {
-      await approveRequest(request.id);
+      await approveRequest({ data: request.id });
       close();
     });
   }, [request.id, close]);
 
   const onReject = useCallback((withReason: string) => {
     startTransition(async () => {
-      await rejectRequest(request.id, withReason);
+      await rejectRequest({ data: { id: request.id, reason: withReason } });
       close();
     });
   }, [request.id, close]);

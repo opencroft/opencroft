@@ -1,5 +1,3 @@
-import Image from 'next/image';
-
 import { Flex } from '@/components/ui/layout/flex';
 import { StatusIndicator, StatusVariant } from '@/components/ui/utils/status-indicator';
 
@@ -19,7 +17,7 @@ export function ServiceMenuItem({ iconSrc, status, children, ...props }: Service
       {...props}
     >
       <div className='relative min-w-12 min-h-12 bg-background/30 rounded-lg'>
-        <Image alt='' fill src={iconSrc} />
+        <img alt='' src={iconSrc} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
         <StatusIndicator className='absolute bottom-1 right-1' variant={status} />
       </div>
       <Flex>

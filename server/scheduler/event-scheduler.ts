@@ -97,7 +97,7 @@ async function fireDue(node: GraphNode): Promise<void> {
   }
   inFlight.add(node.id);
   try {
-    await dispatchNodeAction(node.id, 'run');
+    await dispatchNodeAction({ data: { nodeId: node.id, actionId: 'run' } });
     toastStore.broadcast({ type: 'graph_updated' });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

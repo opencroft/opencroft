@@ -92,7 +92,7 @@ export function AskUserBar({ request }: { request: PendingAskUser }) {
 
   const submit = useCallback(() => {
     startTransition(async () => {
-      await answerAskUser(request.id, buildFinalAnswers());
+      await answerAskUser({ data: { id: request.id, answers: buildFinalAnswers() } });
     });
   }, [request.id, buildFinalAnswers]);
 
@@ -108,7 +108,7 @@ export function AskUserBar({ request }: { request: PendingAskUser }) {
 
   const dismiss = useCallback(() => {
     startTransition(async () => {
-      await cancelAskUser(request.id);
+      await cancelAskUser({ data: request.id });
     });
   }, [request.id]);
 

@@ -1,9 +1,8 @@
 'use client';
 
-import { AppLink } from '@prisma/client';
+import type { AppLink } from '@prisma/client';
+import { Link, useLocation, useNavigate, useSearch } from '@tanstack/react-router';
 import { BookOpen, ChevronRight, ExternalLink, Globe, MessageSquare, Network, Puzzle, SettingsIcon, X } from 'lucide-react';
-import Link from 'next/link';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 
 import { getAppLinks } from '@/app/(applink)/applinks/actions';
@@ -39,10 +38,10 @@ interface Props {
 
 
 function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
-  const pathname = usePathname() ?? '';
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const activeNamespace = searchParams?.get('namespace') ?? null;
+  const pathname = useLocation({ select: (l) => l.pathname });
+  const navigate = useNavigate();
+  const search = useSearch({ strict: false }) as { namespace?: string };
+  const activeNamespace = search.namespace ?? null;
   const [appLinks, setAppLinks] = useState<AppLink[]>([]);
   const [repos, setRepos] = useState<DocNamespace[]>([]);
   const inSpace = pathname.startsWith('/space/');
@@ -77,7 +76,7 @@ function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
                   tooltip='Spaces'
                   isActive={pathname === '/spaces'}
                 >
-                  <Link href='/spaces'>
+                  <Link to='/spaces'>
                     <Network />
                     <span>Spaces</span>
                   </Link>
@@ -97,7 +96,7 @@ function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
                               asChild
                               isActive={pathname === `/space/${space.slug}`}
                             >
-                              <Link href={`/space/${space.slug}`}>
+                              <Link to={`/space/${space.slug}`}>
                                 <span>{space.name}</span>
                               </Link>
                             </SidebarMenuSubButton>
@@ -135,7 +134,7 @@ function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
                             onClick={(e) => {
                               e.preventDefault();
                               chatTabs.selectSession(tab.key);
-                              router.push(`/space/${currentSpaceSlug}?chat=${encodeURIComponent(tab.key)}`);
+                              navigate({ to: `/space/${currentSpaceSlug}`, search: { chat: tab.key } });
                             }}
                           >
                             <button className='flex items-center gap-2 w-full min-w-0'>
@@ -201,7 +200,7 @@ function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
                               asChild
                               isActive={activeNamespace === repo.namespace}
                             >
-                              <Link href={`/docs?namespace=${encodeURIComponent(repo.namespace)}&file=README.md`}>
+                              <Link to='/docs' search={{ namespace: repo.namespace, file: 'README.md' }}>
                                 <span className='truncate'>{repo.name}</span>
                               </Link>
                             </SidebarMenuSubButton>
@@ -238,7 +237,7 @@ function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild tooltip='Extensions' isActive={pathname.startsWith('/extensions')}>
-              <Link href='/extensions'>
+              <Link to='/extensions'>
                 <Puzzle />
                 <span>Extensions</span>
               </Link>
@@ -248,7 +247,7 @@ function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild tooltip='Settings' isActive={pathname.startsWith('/settings')}>
-              <Link href='/settings'>
+              <Link to='/settings'>
                 <SettingsIcon />
                 <span>Settings</span>
               </Link>

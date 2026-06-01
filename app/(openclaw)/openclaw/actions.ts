@@ -1,4 +1,4 @@
-'use server';
+import { createServerFn } from '@tanstack/react-start';
 
 import { gateway, GatewayNotConfiguredError, PairingPendingError } from '@/app/(openclaw)/_server/gateway-client';
 import { RawChatMessage } from '@/app/(openclaw)/openclaw/messages';
@@ -45,7 +45,7 @@ interface ChatHistoryPayload {
   messages?: RawChatMessage[];
 }
 
-export async function loadOpenclaw(): Promise<OpenclawState> {
+export const loadOpenclaw = createServerFn({ strict: { output: false } }).handler(async (): Promise<OpenclawState> => {
   if (!(await isGatewayConfigured())) {
     return { status: 'not-configured', reason: 'OpenClaw gateway URL and token are not set' };
   }
@@ -75,10 +75,10 @@ export async function loadOpenclaw(): Promise<OpenclawState> {
     }
     throw error;
   }
-}
+});
 
 async function isGatewayConfigured(): Promise<boolean> {
-  const row = await getSetting<{ gatewayUrl?: string; gatewayToken?: string }>('ai-settings');
+  const row = await getSetting({ data: 'ai-settings' });
   const url = row?.data?.gatewayUrl?.trim() || process.env.OPENCLAW_GATEWAY_URL;
   const token = row?.data?.gatewayToken?.trim() || process.env.OPENCLAW_GATEWAY_TOKEN;
   return Boolean(url && token);
@@ -111,9 +111,9 @@ async function loadAgent(entry: AgentEntry): Promise<OpenclawAgent> {
   };
 }
 
-export async function deleteSession(key: string): Promise<void> {
+export const deleteSession = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((key: string) => key).handler(async ({ data: key }): Promise<void> => {
   await gateway().call('sessions.delete', { key });
-}
+});
 
 export interface ChatEntry {
   key: string;
@@ -124,7 +124,7 @@ export interface ChatEntry {
   updatedAt: number;
 }
 
-export async function listAllChats(): Promise<ChatEntry[]> {
+export const listAllChats = createServerFn({ strict: { output: false } }).handler(async (): Promise<ChatEntry[]> => {
   const [state, agentNodes] = await Promise.all([loadOpenclaw(), listAgentNodes()]);
   if (state.status !== 'ok') {
     return [];
@@ -151,15 +151,15 @@ export async function listAllChats(): Promise<ChatEntry[]> {
   }
   out.sort((a, b) => b.updatedAt - a.updatedAt);
   return out;
-}
+});
 
-export async function loadSession(key: string): Promise<RawChatMessage[]> {
+export const loadSession = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((key: string) => key).handler(async ({ data: key }): Promise<RawChatMessage[]> => {
   const payload = await gateway().call<ChatHistoryPayload>('chat.history', {
     sessionKey: key,
     limit: 200,
   });
   return payload.messages ?? [];
-}
+});
 
 export interface OpenclawCommand {
   name: string;
@@ -173,12 +173,13 @@ interface CommandsListPayload {
   commands?: OpenclawCommand[];
 }
 
-export async function listCommands(): Promise<OpenclawCommand[]> {
+export const listCommands = createServerFn({ strict: { output: false } }).handler(async (): Promise<OpenclawCommand[]> => {
   const payload = await gateway().call<CommandsListPayload>('commands.list', {});
   return payload.commands ?? [];
-}
+});
 
-export async function sendMessage(key: string, text: string): Promise<void> {
+export const sendMessage = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((data: { key: string; text: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { key, text } = data;
   const command = parseCommand(text);
   if (command) {
     await runCommand(key, command);
@@ -189,7 +190,7 @@ export async function sendMessage(key: string, text: string): Promise<void> {
     message: text,
     idempotencyKey: crypto.randomUUID(),
   });
-}
+});
 
 async function runCommand(key: string, command: { name: string; args: string }): Promise<void> {
   if (command.name === 'stop' || command.name === 'abort') {

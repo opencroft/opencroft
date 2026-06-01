@@ -1,12 +1,12 @@
-'use server';
-
 import { spawn } from 'child_process';
 import { networkInterfaces } from 'os';
+
+import { createServerFn } from '@tanstack/react-start';
 
 import { resolveServer } from '@/app/(docker)/docker/server/context-actions';
 
 async function contextArgs(server?: string): Promise<string[]> {
-  const context = server ? await resolveServer(server) : undefined;
+  const context = server ? await resolveServer({ data: server }) : undefined;
   if (context && context !== 'default') {
     return ['--context', context];
   }
@@ -116,7 +116,7 @@ export interface CreateDockerContainerData {
   extraHosts?: string[];
 }
 
-export async function getDockerContainers(server?: string): Promise<DockerContainer[]> {
+export const getDockerContainers = createServerFn({ method: 'POST' }).inputValidator((server?: string) => server).handler(async ({ data: server }): Promise<DockerContainer[]> => {
   const ctxArgs = await contextArgs(server);
   return new Promise((resolve, reject) => {
     const child = spawn('wsl', ['--exec', 'docker', ...ctxArgs, 'ps', '-a', '--format=json'], { windowsHide: true });
@@ -169,9 +169,9 @@ export async function getDockerContainers(server?: string): Promise<DockerContai
       reject(error);
     });
   });
-}
+});
 
-export async function createContainer(containerData: CreateDockerContainerData): Promise<void> {
+export const createContainer = createServerFn({ method: 'POST' }).inputValidator((containerData: CreateDockerContainerData) => containerData).handler(async ({ data: containerData }): Promise<void> => {
   return new Promise((resolve, reject) => {
     const args = ['--exec', 'docker', 'run'];
 
@@ -237,9 +237,9 @@ export async function createContainer(containerData: CreateDockerContainerData):
       reject(error);
     });
   });
-}
+});
 
-export async function startContainer(containerId: string): Promise<void> {
+export const startContainer = createServerFn({ method: 'POST' }).inputValidator((containerId: string) => containerId).handler(async ({ data: containerId }): Promise<void> => {
   return new Promise((resolve, reject) => {
     const child = spawn('wsl', ['--exec', 'docker', 'start', containerId], { windowsHide: true });
     let stderr = '';
@@ -261,9 +261,9 @@ export async function startContainer(containerId: string): Promise<void> {
       reject(error);
     });
   });
-}
+});
 
-export async function stopContainer(containerId: string): Promise<void> {
+export const stopContainer = createServerFn({ method: 'POST' }).inputValidator((containerId: string) => containerId).handler(async ({ data: containerId }): Promise<void> => {
   return new Promise((resolve, reject) => {
     const child = spawn('wsl', ['--exec', 'docker', 'stop', containerId], { windowsHide: true });
     let stderr = '';
@@ -285,9 +285,9 @@ export async function stopContainer(containerId: string): Promise<void> {
       reject(error);
     });
   });
-}
+});
 
-export async function rebootContainer(containerId: string): Promise<void> {
+export const rebootContainer = createServerFn({ method: 'POST' }).inputValidator((containerId: string) => containerId).handler(async ({ data: containerId }): Promise<void> => {
   return new Promise((resolve, reject) => {
     const child = spawn('wsl', ['--exec', 'docker', 'restart', containerId], { windowsHide: true });
     let stderr = '';
@@ -309,9 +309,9 @@ export async function rebootContainer(containerId: string): Promise<void> {
       reject(error);
     });
   });
-}
+});
 
-export async function removeContainer(containerId: string): Promise<void> {
+export const removeContainer = createServerFn({ method: 'POST' }).inputValidator((containerId: string) => containerId).handler(async ({ data: containerId }): Promise<void> => {
   return new Promise((resolve, reject) => {
     const child = spawn('wsl', ['--exec', 'docker', 'rm', containerId], { windowsHide: true });
     let stderr = '';
@@ -333,9 +333,9 @@ export async function removeContainer(containerId: string): Promise<void> {
       reject(error);
     });
   });
-}
+});
 
-export async function getContainerMounts(containerId: string): Promise<VolumeMount[]> {
+export const getContainerMounts = createServerFn({ method: 'POST' }).inputValidator((containerId: string) => containerId).handler(async ({ data: containerId }): Promise<VolumeMount[]> => {
   return new Promise((resolve, reject) => {
     const child = spawn('wsl', ['--exec', 'docker', 'inspect', containerId, '--format={{json .Mounts}}'], { windowsHide: true });
     let stdout = '';
@@ -371,9 +371,11 @@ export async function getContainerMounts(containerId: string): Promise<VolumeMou
       reject(error);
     });
   });
-}
+});
 
-export async function openTerminalInContainer(containerId: string, workingDir?: string): Promise<void> {
+export const openTerminalInContainer = createServerFn({ method: 'POST' }).inputValidator((data: { containerId: string; workingDir?: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { containerId } = data;
+  const workingDir = data.workingDir;
   return new Promise(() => {
     const args = ['--exec', 'docker', 'exec', '-it'];
     if (workingDir) {
@@ -386,4 +388,4 @@ export async function openTerminalInContainer(containerId: string, workingDir?: 
       windowsHide: false
     });
   });
-}
+});

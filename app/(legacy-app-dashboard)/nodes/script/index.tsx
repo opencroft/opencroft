@@ -42,9 +42,11 @@ function ScriptComponent({ id, data, selected }: NodeProps<ScriptNode>) {
     setOutput(null);
     try {
       const result = await runScript({
-        nodeType: source.type,
-        nodeData: source.data as Record<string, unknown>,
-        code: data.code,
+        data: {
+          nodeType: source.type,
+          nodeData: source.data as Record<string, unknown>,
+          code: data.code,
+        },
       });
       setOutput(result);
     } catch (e) {

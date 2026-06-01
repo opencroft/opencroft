@@ -32,7 +32,7 @@ function ApplicationComponent({ id, data, selected }: NodeProps<ApplicationNode>
   const [statuses, setStatuses] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    getContainerStatuses(id).then(setStatuses);
+    getContainerStatuses({ data: id }).then(setStatuses);
   }, [id]);
 
   const names = data.serviceNames ?? [];
@@ -154,7 +154,7 @@ function ApplicationSettings({ id, updateData, onDirtyChange, onLoadingChange }:
 
   useEffect(() => {
     onLoadingChange(true);
-    loadApp(id).then((data) => {
+    loadApp({ data: id }).then((data) => {
       if (data) {
         setAppData(data);
       }
@@ -188,7 +188,7 @@ function ApplicationSettings({ id, updateData, onDirtyChange, onLoadingChange }:
 
   useEffect(() => {
     onDirtyChange(dirty, async () => {
-      await saveApp(id, appData);
+      await saveApp({ data: { appId: id, data: appData } });
       updateData({
         appName: appData.name,
         serviceNames: appData.services.map((s) => s.name).filter(Boolean),
@@ -199,13 +199,13 @@ function ApplicationSettings({ id, updateData, onDirtyChange, onLoadingChange }:
   }, [dirty, appData, id, updateData, onDirtyChange]);
 
   const handleUp = useCallback(async () => {
-    await saveApp(id, appData);
-    await composeUp(id);
+    await saveApp({ data: { appId: id, data: appData } });
+    await composeUp({ data: id });
     toast.success('Containers started');
   }, [id, appData]);
 
   const handleDown = useCallback(async () => {
-    await composeDown(id);
+    await composeDown({ data: id });
     toast.success('Containers stopped');
   }, [id]);
 

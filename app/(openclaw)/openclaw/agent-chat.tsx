@@ -78,7 +78,7 @@ export function useAgentSession(sessionKey: string, transformOutgoing?: (text: s
       return false;
     };
     const refresh = async (resetWaiting = true) => {
-      const rows = await loadSession(sessionKey);
+      const rows = await loadSession({ data: sessionKey });
       if (!active) {
         return;
       }
@@ -136,7 +136,7 @@ export function useAgentSession(sessionKey: string, transformOutgoing?: (text: s
     const payload = transformOutgoing ? transformOutgoing(value, isFirstMessage) : value;
     setWaiting(true);
     startSending(async () => {
-      await sendMessage(sessionKey, payload);
+      await sendMessage({ data: { key: sessionKey, text: payload } });
     });
   }, [sessionKey, transformOutgoing, isFirstMessage]);
 
@@ -559,7 +559,7 @@ export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlu
   }, []);
 
   const toggleAutoApprove = async () => {
-    const next = await setAutoApprove(!autoApprove);
+    const next = await setAutoApprove({ data: !autoApprove });
     setAutoApproveState(next);
   };
 

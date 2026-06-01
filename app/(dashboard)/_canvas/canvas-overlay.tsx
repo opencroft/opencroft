@@ -1,6 +1,6 @@
 'use client';
 
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useLocation, useRouter } from '@tanstack/react-router';
 import * as React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -33,10 +33,10 @@ export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, onF
   const [agentId, setAgentId] = useState<string | null>(null);
   const [focusTick, setFocusTick] = useState(0);
   const initialized = useRef(false);
-  const searchParams = useSearchParams();
+  const searchParams = new URLSearchParams(useLocation({ select: (l) => l.searchStr }));
   const router = useRouter();
-  const pathname = usePathname();
-  const chatParam = searchParams?.get('chat') ?? null;
+  const pathname = useLocation({ select: (l) => l.pathname });
+  const chatParam = searchParams.get('chat') ?? null;
 
   const extensionModes = useMemo(() => extensionRegistry.allCommandModes(), []);
 
@@ -129,7 +129,7 @@ export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, onF
     }
 
     if (chatParam && pathname) {
-      router.replace(pathname);
+      router.navigate({ to: pathname, replace: true });
     }
   }, [chatParam, pathname, router]);
 

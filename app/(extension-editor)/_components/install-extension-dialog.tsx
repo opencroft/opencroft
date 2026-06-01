@@ -72,9 +72,11 @@ export function InstallExtensionDialog({ open, onOpenChange, onInstalled }: Inst
         ? undefined
         : { type: 'secret', storeId };
       const record = await installExtensionFromUrl({
-        url: trimmedUrl,
-        ref: ref.trim() || undefined,
-        auth,
+        data: {
+          url: trimmedUrl,
+          ref: ref.trim() || undefined,
+          auth,
+        },
       });
       toast.success(`Installed ${record.manifest.name ?? record.id} (${record.sidecar.ref})`);
       onInstalled(record);

@@ -1,8 +1,8 @@
 'use client';
 
+import { Link } from '@tanstack/react-router';
 import { useReactFlow, type Node, type NodeProps } from '@xyflow/react';
 import { Check, Container, Cpu, Download, FolderOpen, HardDrive, Loader2, MemoryStick, Monitor, RefreshCw, Server, Terminal, TerminalSquare, Trash2, X } from 'lucide-react';
-import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -79,8 +79,8 @@ function ServerComponent({ data, selected, positionAbsoluteX, positionAbsoluteY 
     }
     setLoading(true);
     setError(false);
-    resolveServer({ name: data.name, address: data.address, features: data.features ?? [] })
-      .then((s) => getServerStats(s))
+    resolveServer({ data: { name: data.name, address: data.address, features: data.features ?? [] } })
+      .then((s) => getServerStats({ data: s }))
       .then((s) => {
         setStats(s); setLoading(false);
       })
@@ -93,7 +93,7 @@ function ServerComponent({ data, selected, positionAbsoluteX, positionAbsoluteY 
     if (!ssh || !data.name) {
       return;
     }
-    const resolved = await resolveServer({ name: data.name, address: data.address, features: data.features ?? [] });
+    const resolved = await resolveServer({ data: { name: data.name, address: data.address, features: data.features ?? [] } });
     const termConfig = buildTerminalConfig({ ...data, features: resolved.features });
     if (!termConfig) {
       return;
@@ -108,7 +108,7 @@ function ServerComponent({ data, selected, positionAbsoluteX, positionAbsoluteY 
     if (!ssh || !data.name) {
       return;
     }
-    const resolved = await resolveServer({ name: data.name, address: data.address, features: data.features ?? [] });
+    const resolved = await resolveServer({ data: { name: data.name, address: data.address, features: data.features ?? [] } });
     const rSsh = getSsh(resolved.features);
     if (!rSsh) {
       return;
@@ -158,7 +158,7 @@ function ServerComponent({ data, selected, positionAbsoluteX, positionAbsoluteY 
           <ButtonPin handleId={HANDLE_FILESYSTEM} icon={FolderOpen} label="Files" side="right" onClick={openFiles} />
           {hasDocker(data.features) && (
             <div className="nodrag nopan">
-              <Link href={`/docker/containers/${slug(data.name)}`}>
+              <Link to={`/docker/containers/${slug(data.name)}`}>
                 <Button variant="ghost" size="sm" className="h-5 text-[10px] px-1.5">
                   <Container className="h-2.5 w-2.5 mr-0.5" /> Docker
                 </Button>
@@ -184,7 +184,7 @@ function KeyStoreKeySelector({ value, onChange }: { value: string; onChange: (v:
   useEffect(() => {
     const stores = getNodes().filter((n) => n.type === 'key-store');
     Promise.all(stores.map(async (store) => {
-      const list = await listKeys(store.id);
+      const list = await listKeys({ data: store.id });
       return list.map((k: KeyEntry) => ({
         ref: `${store.id}:${k.name}`,
         name: k.name,
@@ -232,8 +232,8 @@ function DockerSubSection({ feature, serverData, onUpdate }: {
 
   const handleCheck = async () => {
     setChecking(true);
-    const server = await resolveServer({ name: serverData.name, address: serverData.address, features: serverData.features });
-    const installed = await checkDocker(server);
+    const server = await resolveServer({ data: { name: serverData.name, address: serverData.address, features: serverData.features } });
+    const installed = await checkDocker({ data: server });
     onUpdate({ ...feature, installed });
     setChecking(false);
     toast.success(installed ? 'Docker is installed' : 'Docker not found');
@@ -241,8 +241,8 @@ function DockerSubSection({ feature, serverData, onUpdate }: {
 
   const handleInstall = async () => {
     setInstalling(true);
-    const server = await resolveServer({ name: serverData.name, address: serverData.address, features: serverData.features });
-    await installDockerUbuntu(server);
+    const server = await resolveServer({ data: { name: serverData.name, address: serverData.address, features: serverData.features } });
+    await installDockerUbuntu({ data: server });
     onUpdate({ ...feature, installed: true });
     setInstalling(false);
     toast.success('Docker installed');
@@ -286,8 +286,8 @@ function StatsSubSection({ serverData }: { serverData: ServerData }) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const server = await resolveServer({ name: serverData.name, address: serverData.address, features: serverData.features });
-      setStats(await getServerStats(server));
+      const server = await resolveServer({ data: { name: serverData.name, address: serverData.address, features: serverData.features } });
+      setStats(await getServerStats({ data: server }));
     } catch {
       toast.error('Failed to fetch stats');
     }
@@ -311,18 +311,18 @@ function StatsSubSection({ serverData }: { serverData: ServerData }) {
         <Button variant="ghost" size="icon" className="h-5 w-5" onClick={refresh} disabled={loading}>
           <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
         </Button>
-        <Link href={`/terminal/${s}`}>
+        <Link to={`/terminal/${s}`}>
           <Button variant="ghost" size="icon" className="h-5 w-5">
             <TerminalSquare className="h-3 w-3" />
           </Button>
         </Link>
-        <Link href={`/files/${s}`}>
+        <Link to={`/files/${s}`}>
           <Button variant="ghost" size="icon" className="h-5 w-5">
             <FolderOpen className="h-3 w-3" />
           </Button>
         </Link>
         {hasDocker(serverData.features) && (
-          <Link href={`/docker/containers/${s}`}>
+          <Link to={`/docker/containers/${s}`}>
             <Button variant="ghost" size="icon" className="h-5 w-5">
               <Container className="h-3 w-3" />
             </Button>
@@ -357,7 +357,7 @@ function StatsSubSection({ serverData }: { serverData: ServerData }) {
 
 function ServerSettings(props: NodeSettingsProps<ServerData>) {
   const { draft, update } = useSettingsDraft(props, async (data) => {
-    await applyServerConfig({ name: data.name, address: data.address, features: data.features ?? [] });
+    await applyServerConfig({ data: { name: data.name, address: data.address, features: data.features ?? [] } });
   });
 
   const ssh = getSsh(draft.features);

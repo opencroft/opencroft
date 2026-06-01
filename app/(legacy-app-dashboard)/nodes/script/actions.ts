@@ -1,6 +1,6 @@
-'use server';
-
 import { execFile } from 'node:child_process';
+
+import { createServerFn } from '@tanstack/react-start';
 
 import { resolveServer } from '@/app/(legacy-app-dashboard)/nodes/server/actions';
 import { remoteExec } from '@/app/(server)/server/remote';
@@ -36,16 +36,18 @@ interface RunParams {
   code: string;
 }
 
-export async function runScript({ nodeType, nodeData, code }: RunParams): Promise<string> {
+export const runScript = createServerFn({ method: 'POST' }).inputValidator((data: RunParams) => data).handler(async ({ data: { nodeType, nodeData, code } }): Promise<string> => {
   switch (nodeType) {
     case 'server': {
       const data = nodeData as { name: string; address: string; features: unknown[] };
       const server = await resolveServer({
-        name: data.name,
-        address: data.address,
-        features: (data.features ?? []) as Server['features'],
+        data: {
+          name: data.name,
+          address: data.address,
+          features: (data.features ?? []) as Server['features'],
+        },
       });
-      return remoteExec(server, code);
+      return remoteExec({ data: { server, command: code } });
     }
     case 'localhost':
       return localExec(code);
@@ -56,4 +58,4 @@ export async function runScript({ nodeType, nodeData, code }: RunParams): Promis
     default:
       throw new Error(`Unsupported node type: ${nodeType}`);
   }
-}
+});

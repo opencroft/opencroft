@@ -1,4 +1,4 @@
-'use server';
+import { createServerFn } from '@tanstack/react-start';
 
 import { resolveGraphContexts } from '@/app/(extension-runtime)/_server/graph-context-resolver';
 import { type GraphSnapshot } from '@/app/(extension-runtime)/_server/host';
@@ -40,89 +40,105 @@ async function resolveGraph(graph: GraphData): Promise<GraphData> {
   };
 }
 
-export async function listSpaces(): Promise<SpaceSummary[]> {
+export const listSpaces = createServerFn({ strict: { output: false } }).handler(async (): Promise<SpaceSummary[]> => {
   const r = await registry();
   return r.list();
-}
+});
 
-export async function loadSpaceGraph(slug: string): Promise<GraphData | null> {
-  const r = await registry();
-  const space = r.getBySlug(slug);
-  if (!space) {
-    return null;
-  }
-  return space.graph;
-}
+export const loadSpaceGraph = createServerFn({ strict: { output: false } })
+  .inputValidator((slug: string) => slug)
+  .handler(async ({ data: slug }): Promise<GraphData | null> => {
+    const r = await registry();
+    const space = r.getBySlug(slug);
+    if (!space) {
+      return null;
+    }
+    return space.graph;
+  });
 
-export async function saveSpaceGraph(slug: string, data: GraphData): Promise<void> {
-  const r = await registry();
-  const resolved = await resolveGraph(data);
-  await r.saveGraph(slug, resolved);
-}
+export const saveSpaceGraph = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { slug: string; graph: GraphData }) => data)
+  .handler(async ({ data }): Promise<void> => {
+    const r = await registry();
+    const resolved = await resolveGraph(data.graph);
+    await r.saveGraph(data.slug, resolved);
+  });
 
-export async function createSpace(name: string): Promise<SpaceSummary> {
-  const r = await registry();
-  const trimmed = name.trim() || 'Space';
-  const existing = new Set(r.list().map((s) => s.slug));
-  const slug = uniqueSlug(slugify(trimmed), existing);
-  const runtime = await r.create(trimmed, slug, { nodes: [], edges: [] });
-  return toSummary(runtime);
-}
+export const createSpace = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((name: string) => name)
+  .handler(async ({ data: name }): Promise<SpaceSummary> => {
+    const r = await registry();
+    const trimmed = name.trim() || 'Space';
+    const existing = new Set(r.list().map((s) => s.slug));
+    const slug = uniqueSlug(slugify(trimmed), existing);
+    const runtime = await r.create(trimmed, slug, { nodes: [], edges: [] });
+    return toSummary(runtime);
+  });
 
-export async function renameSpace(slug: string, name: string): Promise<SpaceSummary | null> {
-  const r = await registry();
-  const runtime = await r.rename(slug, name.trim() || 'Space');
-  if (!runtime) {
-    return null;
-  }
-  return toSummary(runtime);
-}
+export const renameSpace = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { slug: string; name: string }) => data)
+  .handler(async ({ data }): Promise<SpaceSummary | null> => {
+    const r = await registry();
+    const runtime = await r.rename(data.slug, data.name.trim() || 'Space');
+    if (!runtime) {
+      return null;
+    }
+    return toSummary(runtime);
+  });
 
-export async function deleteSpace(slug: string): Promise<boolean> {
-  const r = await registry();
-  if (slug === DEFAULT_SPACE_SLUG && r.list().length <= 1) {
-    return false;
-  }
-  return r.remove(slug);
-}
+export const deleteSpace = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((slug: string) => slug)
+  .handler(async ({ data: slug }): Promise<boolean> => {
+    const r = await registry();
+    if (slug === DEFAULT_SPACE_SLUG && r.list().length <= 1) {
+      return false;
+    }
+    return r.remove(slug);
+  });
 
-export async function setSpacePinned(slug: string, pinned: boolean): Promise<SpaceSummary | null> {
-  const r = await registry();
-  const runtime = await r.setPinned(slug, pinned);
-  if (!runtime) {
-    return null;
-  }
-  return toSummary(runtime);
-}
+export const setSpacePinned = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { slug: string; pinned: boolean }) => data)
+  .handler(async ({ data }): Promise<SpaceSummary | null> => {
+    const r = await registry();
+    const runtime = await r.setPinned(data.slug, data.pinned);
+    if (!runtime) {
+      return null;
+    }
+    return toSummary(runtime);
+  });
 
-export async function exportSpace(slug: string): Promise<SpaceExport | null> {
-  const r = await registry();
-  const space = r.getBySlug(slug);
-  if (!space) {
-    return null;
-  }
-  return {
-    name: space.name,
-    slug: space.slug,
-    graph: space.graph,
-    exportedAt: new Date().toISOString(),
-  };
-}
+export const exportSpace = createServerFn({ strict: { output: false } })
+  .inputValidator((slug: string) => slug)
+  .handler(async ({ data: slug }): Promise<SpaceExport | null> => {
+    const r = await registry();
+    const space = r.getBySlug(slug);
+    if (!space) {
+      return null;
+    }
+    return {
+      name: space.name,
+      slug: space.slug,
+      graph: space.graph,
+      exportedAt: new Date().toISOString(),
+    };
+  });
 
-export async function importSpace(payload: SpaceExport): Promise<SpaceSummary> {
-  const r = await registry();
-  const existing = new Set(r.list().map((s) => s.slug));
-  const desired = slugify(payload.slug || payload.name || 'space');
-  const slug = uniqueSlug(desired, existing);
-  const graph: GraphData = {
-    nodes: Array.isArray(payload.graph?.nodes) ? payload.graph.nodes : [],
-    edges: Array.isArray(payload.graph?.edges) ? payload.graph.edges : [],
-  };
-  const runtime = await r.create(payload.name || 'Imported', slug, graph);
-  return toSummary(runtime);
-}
+export const importSpace = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((payload: SpaceExport) => payload)
+  .handler(async ({ data: payload }): Promise<SpaceSummary> => {
+    const r = await registry();
+    const existing = new Set(r.list().map((s) => s.slug));
+    const desired = slugify(payload.slug || payload.name || 'space');
+    const slug = uniqueSlug(desired, existing);
+    const graph: GraphData = {
+      nodes: Array.isArray(payload.graph?.nodes) ? payload.graph.nodes : [],
+      edges: Array.isArray(payload.graph?.edges) ? payload.graph.edges : [],
+    };
+    const runtime = await r.create(payload.name || 'Imported', slug, graph);
+    return toSummary(runtime);
+  });
 
-export async function getActiveSpaceSlug(): Promise<string> {
+export const getActiveSpaceSlug = createServerFn({ strict: { output: false } }).handler(async (): Promise<string> => {
   const r = await registry();
   const active = await r.getActiveSlug();
   if (active) {
@@ -130,21 +146,25 @@ export async function getActiveSpaceSlug(): Promise<string> {
   }
   const list = r.list();
   return list[0]?.slug ?? DEFAULT_SPACE_SLUG;
-}
+});
 
-export async function setActiveSpaceSlug(slug: string): Promise<void> {
-  const r = await registry();
-  if (!r.hasSlug(slug)) {
-    return;
-  }
-  await r.setActiveSlug(slug);
-}
+export const setActiveSpaceSlug = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((slug: string) => slug)
+  .handler(async ({ data: slug }): Promise<void> => {
+    const r = await registry();
+    if (!r.hasSlug(slug)) {
+      return;
+    }
+    await r.setActiveSlug(slug);
+  });
 
-export async function findSpaceByNode(nodeId: string): Promise<SpaceSummary | null> {
-  const r = await registry();
-  const space = r.findByNode(nodeId);
-  if (!space) {
-    return null;
-  }
-  return toSummary(space);
-}
+export const findSpaceByNode = createServerFn({ strict: { output: false } })
+  .inputValidator((nodeId: string) => nodeId)
+  .handler(async ({ data: nodeId }): Promise<SpaceSummary | null> => {
+    const r = await registry();
+    const space = r.findByNode(nodeId);
+    if (!space) {
+      return null;
+    }
+    return toSummary(space);
+  });

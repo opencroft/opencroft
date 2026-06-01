@@ -1,4 +1,4 @@
-'use server';
+import { createServerFn } from '@tanstack/react-start';
 
 import { decrypt, encrypt } from '@/server/crypto';
 import { prisma } from '@/server/prisma';
@@ -9,53 +9,66 @@ export interface SecretEntry {
   value: string;
 }
 
-export async function getSecrets(storeId: string): Promise<SecretEntry[]> {
-  const rows = await prisma.secret.findMany({
-    where: { storeId },
-    orderBy: { createdAt: 'asc' },
+export const getSecrets = createServerFn({ method: 'POST' })
+  .inputValidator((storeId: string) => storeId)
+  .handler(async ({ data: storeId }): Promise<SecretEntry[]> => {
+    const rows = await prisma.secret.findMany({
+      where: { storeId },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      key: r.key,
+      value: decrypt(r.value),
+    }));
   });
-  return rows.map((r) => ({
-    id: r.id,
-    key: r.key,
-    value: decrypt(r.value),
-  }));
-}
 
-export async function getSecretValue(storeId: string, key: string): Promise<string | null> {
-  const row = await prisma.secret.findUnique({
-    where: { storeId_key: { storeId, key } },
+export const getSecretValue = createServerFn({ method: 'POST' })
+  .inputValidator((data: { storeId: string; key: string }) => data)
+  .handler(async ({ data }): Promise<string | null> => {
+    const { storeId, key } = data;
+    const row = await prisma.secret.findUnique({
+      where: { storeId_key: { storeId, key } },
+    });
+    if (!row) {
+      return null;
+    }
+    return decrypt(row.value);
   });
-  if (!row) {
-    return null;
-  }
-  return decrypt(row.value);
-}
 
-export async function setSecret(storeId: string, key: string, value: string): Promise<void> {
-  const encrypted = encrypt(value);
-  await prisma.secret.upsert({
-    where: { storeId_key: { storeId, key } },
-    create: { storeId, key, value: encrypted },
-    update: { value: encrypted },
+export const setSecret = createServerFn({ method: 'POST' })
+  .inputValidator((data: { storeId: string; key: string; value: string }) => data)
+  .handler(async ({ data }): Promise<void> => {
+    const { storeId, key, value } = data;
+    const encrypted = encrypt(value);
+    await prisma.secret.upsert({
+      where: { storeId_key: { storeId, key } },
+      create: { storeId, key, value: encrypted },
+      update: { value: encrypted },
+    });
   });
-}
 
-export async function deleteSecret(storeId: string, key: string): Promise<void> {
-  await prisma.secret.delete({
-    where: { storeId_key: { storeId, key } },
-  }).catch(() => {});
-}
+export const deleteSecret = createServerFn({ method: 'POST' })
+  .inputValidator((data: { storeId: string; key: string }) => data)
+  .handler(async ({ data }): Promise<void> => {
+    const { storeId, key } = data;
+    await prisma.secret.delete({
+      where: { storeId_key: { storeId, key } },
+    }).catch(() => {});
+  });
 
-export async function deleteStore(storeId: string): Promise<void> {
-  await prisma.secret.deleteMany({ where: { storeId } });
-}
+export const deleteStore = createServerFn({ method: 'POST' })
+  .inputValidator((storeId: string) => storeId)
+  .handler(async ({ data: storeId }): Promise<void> => {
+    await prisma.secret.deleteMany({ where: { storeId } });
+  });
 
 export interface SecretStoreSummary {
   storeId: string;
   keys: string[];
 }
 
-export async function listSecretStores(): Promise<SecretStoreSummary[]> {
+export const listSecretStores = createServerFn().handler(async (): Promise<SecretStoreSummary[]> => {
   const rows = await prisma.secret.findMany({
     select: { storeId: true, key: true },
     orderBy: { storeId: 'asc' },
@@ -67,4 +80,4 @@ export async function listSecretStores(): Promise<SecretStoreSummary[]> {
     map.set(row.storeId, list);
   }
   return Array.from(map.entries()).map(([storeId, keys]) => ({ storeId, keys }));
-}
+});

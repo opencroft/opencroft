@@ -1,7 +1,7 @@
 'use client';
 
+import { useLocation, useRouter } from '@tanstack/react-router';
 import { ChevronDown, Loader2, Menu, Pencil, Plus, Search, Trash2, X, FileText, History, ArrowLeft } from 'lucide-react';
-import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -419,9 +419,9 @@ function MarkdownContent({ content, currentPath, onNavigate, onRendered }: {
 
 export default function DocsPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const namespace = searchParams?.get('namespace') ?? null;
-  const selectedPath = searchParams?.get('file') ?? null;
+  const searchParams = new URLSearchParams(useLocation({ select: (l) => l.searchStr }));
+  const namespace = searchParams.get('namespace') ?? null;
+  const selectedPath = searchParams.get('file') ?? null;
   const setSelectedPath = useCallback((p: string | null) => {
     const params = new URLSearchParams();
     if (namespace) {
@@ -431,7 +431,7 @@ export default function DocsPage() {
       params.set('file', p);
     }
     const qs = params.toString();
-    router.push(qs ? `/docs?${qs}` : '/docs', { scroll: false });
+    router.navigate({ to: qs ? `/docs?${qs}` : '/docs' });
   }, [router, namespace]);
 
   const [tree, setTree] = useState<DocEntry[] | null>(null);
@@ -539,7 +539,7 @@ export default function DocsPage() {
     }
     setLoading(false);
     if (namespace) {
-      getGitFileLog(namespace, p).then(log => setFileLog(log)).catch(() => {});
+      getGitFileLog({ data: { namespace, filePath: p } }).then(log => setFileLog(log)).catch(() => {});
     }
   }, [buildApiUrl, namespace]);
 
@@ -557,7 +557,7 @@ export default function DocsPage() {
     }
     // Display shows HEAD; edit mode loads the working-tree version so
     // in-progress (uncommitted) edits aren't lost when entering edit.
-    const working = await readDocWorking(namespace, selectedPath).catch(() => docContent ?? '');
+    const working = await readDocWorking({ data: { namespace, filePath: selectedPath } }).catch(() => docContent ?? '');
     setEditContent(working);
     setEditing(true);
   }, [selectedPath, docContent, namespace]);
@@ -578,7 +578,7 @@ export default function DocsPage() {
     if (!selectedPath || !namespace) {
       return;
     }
-    const content = await getGitFileAtRef(namespace, selectedPath, ref);
+    const content = await getGitFileAtRef({ data: { namespace, filePath: selectedPath, ref } });
     if (content !== null) {
       setViewingRef(ref);
       setRefContent(content);
@@ -602,7 +602,7 @@ export default function DocsPage() {
     setSearching(true);
     const t = setTimeout(async () => {
       try {
-        const r = await searchDocs(namespace, searchQuery.trim());
+        const r = await searchDocs({ data: { namespace, pattern: searchQuery.trim() } });
         if (!cancelled) {
           setSearchResults(r);
         }
@@ -630,7 +630,7 @@ export default function DocsPage() {
       if (!namespace) {
         return;
       }
-      const files = await getGitChangedFiles(namespace);
+      const files = await getGitChangedFiles({ data: namespace });
       setGitChangedFiles(new Set(files));
       setShowUnpublishedOnly(true);
     }
@@ -643,12 +643,12 @@ export default function DocsPage() {
       return;
     }
     try {
-      const created = await createDoc(namespace, createPath);
+      const created = await createDoc({ data: { namespace, inputPath: createPath } });
       await refreshTree();
       setCreateOpen(false);
       setCreatePath('');
       setSelectedPath(created);
-      const draft = await readDocWorking(namespace, created);
+      const draft = await readDocWorking({ data: { namespace, filePath: created } });
       setEditContent(draft);
       setEditing(true);
     } catch (e) {
@@ -660,7 +660,7 @@ export default function DocsPage() {
     if (!deleteTarget || !namespace) {
       return;
     }
-    await deleteDoc(namespace, deleteTarget);
+    await deleteDoc({ data: { namespace, filePath: deleteTarget } });
     const next = await refreshTree();
     if (selectedPath === deleteTarget) {
       setSelectedPath(findFirstFile(next));

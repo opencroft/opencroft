@@ -1,4 +1,4 @@
-'use server';
+import { createServerFn } from '@tanstack/react-start';
 
 import type { AuditStatus } from '@/app/(mcp)/api/mcp/audit';
 import { getYoloModeInfo, setYoloMode as setYolo } from '@/app/(mcp)/api/mcp/yolo';
@@ -45,41 +45,47 @@ function toEntry(row: {
   };
 }
 
-export async function listAuditEntries(query: AuditQuery = {}): Promise<McpAuditEntry[]> {
-  const where: { tool?: string; status?: string } = {};
-  if (query.tool) {
-    where.tool = query.tool;
-  }
-  if (query.status && query.status !== 'all') {
-    where.status = query.status;
-  }
-  const rows = await prisma.mcpAuditLog.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-    take: query.limit ?? DEFAULT_LIMIT,
+export const listAuditEntries = createServerFn({ method: 'POST' })
+  .inputValidator((query: AuditQuery = {}) => query)
+  .handler(async ({ data: query }): Promise<McpAuditEntry[]> => {
+    const where: { tool?: string; status?: string } = {};
+    if (query.tool) {
+      where.tool = query.tool;
+    }
+    if (query.status && query.status !== 'all') {
+      where.status = query.status;
+    }
+    const rows = await prisma.mcpAuditLog.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: query.limit ?? DEFAULT_LIMIT,
+    });
+    return rows.map(toEntry);
   });
-  return rows.map(toEntry);
-}
 
-export async function listAuditTools(): Promise<string[]> {
+export const listAuditTools = createServerFn().handler(async (): Promise<string[]> => {
   const rows = await prisma.mcpAuditLog.findMany({
     distinct: ['tool'],
     select: { tool: true },
     orderBy: { tool: 'asc' },
   });
   return rows.map((r) => r.tool);
-}
+});
 
-export async function clearAuditLog(): Promise<void> {
+export const clearAuditLog = createServerFn().handler(async (): Promise<void> => {
   await prisma.mcpAuditLog.deleteMany({});
-}
+});
 
 // ── YOLO Mode ──────────────────────────────────────────────────────────────
 
-export async function getYoloMode(): Promise<{ enabled: boolean; source: 'env' | 'runtime' }> {
-  return getYoloModeInfo();
-}
+export const getYoloMode = createServerFn().handler(
+  async (): Promise<{ enabled: boolean; source: 'env' | 'runtime' }> => {
+    return getYoloModeInfo();
+  },
+);
 
-export async function updateYoloMode(enabled: boolean): Promise<void> {
-  setYolo(enabled);
-}
+export const updateYoloMode = createServerFn({ method: 'POST' })
+  .inputValidator((enabled: boolean) => enabled)
+  .handler(async ({ data: enabled }): Promise<void> => {
+    setYolo(enabled);
+  });

@@ -1,6 +1,6 @@
-'use server';
-
 import { execFile } from 'node:child_process';
+
+import { createServerFn } from '@tanstack/react-start';
 
 export interface WslStats {
   os: string;
@@ -21,7 +21,7 @@ function wslExec(distro: string, cmd: string): Promise<string> {
   });
 }
 
-export async function getWslStats(distro: string): Promise<WslStats> {
+export const getWslStats = createServerFn({ method: 'POST' }).inputValidator((distro: string) => distro).handler(async ({ data: distro }): Promise<WslStats> => {
   const script = [
     'echo "OS=$(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME" || uname -s)"',
     'echo "CPU=$(grep -c ^processor /proc/cpuinfo 2>/dev/null || echo unknown)x $(grep "model name" /proc/cpuinfo 2>/dev/null | head -1 | cut -d: -f2 | xargs || uname -m)"',
@@ -42,4 +42,4 @@ export async function getWslStats(distro: string): Promise<WslStats> {
     memory: lines['MEMORY'] || 'unknown',
     storage: lines['STORAGE'] || 'unknown',
   };
-}
+});

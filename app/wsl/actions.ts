@@ -1,6 +1,6 @@
-'use server';
-
 import { spawn } from 'child_process';
+
+import { createServerFn } from '@tanstack/react-start';
 
 export interface WSLDistro {
   key: string;
@@ -10,7 +10,7 @@ export interface WSLDistro {
   isDefault: boolean;
 }
 
-export async function getDistros(): Promise<WSLDistro[]> {
+export const getDistros = createServerFn().handler(async (): Promise<WSLDistro[]> => {
   return new Promise((resolve, reject) => {
     const child = spawn('wsl', ['--list', '--verbose']);
     let stdout = '';
@@ -58,4 +58,4 @@ export async function getDistros(): Promise<WSLDistro[]> {
       reject(error);
     });
   });
-}
+});

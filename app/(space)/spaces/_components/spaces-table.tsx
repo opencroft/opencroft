@@ -1,8 +1,7 @@
 'use client';
 
+import { Link, useRouter } from '@tanstack/react-router';
 import { Download, Pencil, Pin, Plus, Trash2, Upload } from 'lucide-react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useRef, useState } from 'react';
 
 import {
@@ -65,11 +64,11 @@ export function SpacesTable({ initialSpaces }: Props) {
     if (!name) {
       return;
     }
-    const space = await createSpace(name);
+    const space = await createSpace({ data: name });
     setNewOpen(false);
     setNewName('');
     await refresh();
-    router.push(`/space/${space.slug}`);
+    router.navigate({ to: `/space/${space.slug}` });
   }
 
   async function handleRename() {
@@ -80,28 +79,28 @@ export function SpacesTable({ initialSpaces }: Props) {
     if (!name) {
       return;
     }
-    await renameSpace(renameState.slug, name);
+    await renameSpace({ data: { slug: renameState.slug, name } });
     setRenameState(null);
     await refresh();
-    router.refresh();
+    router.invalidate();
   }
 
   async function handleDelete(slug: string) {
     if (spaces.length <= 1) {
       return;
     }
-    const ok = await deleteSpace(slug);
+    const ok = await deleteSpace({ data: slug });
     if (!ok) {
       return;
     }
     await refresh();
-    router.refresh();
+    router.invalidate();
   }
 
   async function handleTogglePin(slug: string, pinned: boolean) {
-    await setSpacePinned(slug, !pinned);
+    await setSpacePinned({ data: { slug, pinned: !pinned } });
     await refresh();
-    router.refresh();
+    router.invalidate();
   }
 
   function handleExport(slug: string) {
@@ -120,9 +119,9 @@ export function SpacesTable({ initialSpaces }: Props) {
     }
     const text = await file.text();
     const payload = JSON.parse(text) as SpaceExport;
-    const space = await importSpace(payload);
+    const space = await importSpace({ data: payload });
     await refresh();
-    router.push(`/space/${space.slug}`);
+    router.navigate({ to: `/space/${space.slug}` });
   }
 
   return (
@@ -158,7 +157,7 @@ export function SpacesTable({ initialSpaces }: Props) {
               <TableRow key={space.id}>
                 <TableCell>
                   <Link
-                    href={`/space/${space.slug}`}
+                    to={`/space/${space.slug}`}
                     className='font-medium hover:underline'
                   >
                     {space.name}

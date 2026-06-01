@@ -1,31 +1,46 @@
-'use server';
+import { createServerFn } from '@tanstack/react-start';
 
 import { sshKeys } from '@/app/(server)/server/ssh-key';
 
-export async function listSshKeys() {
+export const listSshKeys = createServerFn().handler(async () => {
   return sshKeys.list();
-}
+});
 
-export async function getPublicKey(keyPath: string) {
-  return sshKeys.readPublicKey(keyPath);
-}
+export const getPublicKey = createServerFn({ method: 'POST' })
+  .inputValidator((keyPath: string) => keyPath)
+  .handler(async ({ data: keyPath }) => {
+    return sshKeys.readPublicKey(keyPath);
+  });
 
-export async function createSshKey(name: string, keyType: string) {
-  return sshKeys.create(name, keyType);
-}
+export const createSshKey = createServerFn({ method: 'POST' })
+  .inputValidator((data: { name: string; keyType: string }) => data)
+  .handler(async ({ data }) => {
+    const { name, keyType } = data;
+    return sshKeys.create(name, keyType);
+  });
 
-export async function importSshKey(name: string, content: string) {
-  return sshKeys.import(name, content);
-}
+export const importSshKey = createServerFn({ method: 'POST' })
+  .inputValidator((data: { name: string; content: string }) => data)
+  .handler(async ({ data }) => {
+    const { name, content } = data;
+    return sshKeys.import(name, content);
+  });
 
-export async function deleteSshKey(keyPath: string) {
-  return sshKeys.delete(keyPath);
-}
+export const deleteSshKey = createServerFn({ method: 'POST' })
+  .inputValidator((keyPath: string) => keyPath)
+  .handler(async ({ data: keyPath }) => {
+    return sshKeys.delete(keyPath);
+  });
 
-export async function copyKeyToWsl(keyPath: string, name: string) {
-  return sshKeys.copyToWsl(keyPath, name);
-}
+export const copyKeyToWsl = createServerFn({ method: 'POST' })
+  .inputValidator((data: { keyPath: string; name: string }) => data)
+  .handler(async ({ data }) => {
+    const { keyPath, name } = data;
+    return sshKeys.copyToWsl(keyPath, name);
+  });
 
-export async function removeKeyFromWsl(name: string) {
-  return sshKeys.removeFromWsl(name);
-}
+export const removeKeyFromWsl = createServerFn({ method: 'POST' })
+  .inputValidator((name: string) => name)
+  .handler(async ({ data: name }) => {
+    return sshKeys.removeFromWsl(name);
+  });

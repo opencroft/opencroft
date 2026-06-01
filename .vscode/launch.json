@@ -2,37 +2,42 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Next.js: debug server-side",
+      "name": "Dev server (Vite)",
       "type": "node-terminal",
       "request": "launch",
       "command": "npm run dev"
     },
     {
-      "name": "Next.js: debug client-side",
+      "name": "Debug client (Chrome)",
       "type": "chrome",
       "request": "launch",
       "url": "http://localhost:9999"
     },
     {
-      "name": "Next.js: debug full stack",
-      "type": "node",
+      "name": "Dev full stack (Vite + Chrome)",
+      "type": "node-terminal",
       "request": "launch",
-      "runtimeArgs": [
-        "--import",
-        "tsx",
-        "server.ts"
-      ],
-      "skipFiles": [
-        "<node_internals>/**"
-      ],
-      "console": "integratedTerminal",
+      "command": "npm run dev",
+      "env": {
+        "NO_COLOR": "1"
+      },
       "serverReadyAction": {
         "action": "debugWithChrome",
         "killOnServerStop": true,
-        "pattern": "- Local:\\s+(https?://\\S+)",
+        "pattern": "Local:\\s+(https?://\\S+)",
         "uriFormat": "%s",
         "webRoot": "${workspaceFolder}"
       }
     },
+    {
+      "name": "Prod server (dist/prod.mjs)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/dist/prod.mjs",
+      "skipFiles": [
+        "<node_internals>/**"
+      ],
+      "console": "integratedTerminal"
+    }
   ]
 }

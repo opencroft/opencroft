@@ -135,7 +135,7 @@ export default function AuditSettings() {
     setLoading(true);
     startTransition(async () => {
       const [rows, knownTools] = await Promise.all([
-        listAuditEntries(next),
+        listAuditEntries({ data: next }),
         listAuditTools(),
       ]);
       setEntries(rows);
@@ -171,7 +171,7 @@ export default function AuditSettings() {
     setLoading(true);
     startTransition(async () => {
       await clearAuditLog();
-      const rows = await listAuditEntries({});
+      const rows = await listAuditEntries({ data: {} });
       setEntries(rows);
       setTools([]);
       setTool(ALL);
@@ -256,7 +256,7 @@ export default function AuditSettings() {
           onClick={() => {
             const next = !yoloEnabled;
             startTransition(async () => {
-              await updateYoloMode(next);
+              await updateYoloMode({ data: next });
               setYoloEnabled(next);
               setYoloSource('runtime');
             });

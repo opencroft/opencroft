@@ -32,7 +32,7 @@ function WslComponent({ data, selected, positionAbsoluteX, positionAbsoluteY }: 
     }
     setLoading(true);
     setError(false);
-    getWslStats(data.distro)
+    getWslStats({ data: data.distro })
       .then((s) => {
         setStats(s); setLoading(false);
       })

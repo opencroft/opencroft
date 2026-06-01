@@ -1,6 +1,5 @@
 'use client';
 
-import Image from 'next/image';
 import React from 'react';
 
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
@@ -36,12 +35,11 @@ export const ThumbnailCard = React.memo(function ThumbnailCard({
           }`}
           onClick={onClick}
         >
-          <Image
+          <img
             src={`${imageSrc}?t=${imageKey || 0}`}
             alt={`${name} thumbnail`}
-            fill
             className="object-cover"
-            unoptimized
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
           />
           <div className="absolute bottom-0 left-0 right-0 bg-background/50 text-foreground p-2 text-shadow-xs text-shadow-accent">
             <div className="text-sm font-medium truncate">{name}</div>

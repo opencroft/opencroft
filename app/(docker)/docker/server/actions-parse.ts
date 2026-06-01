@@ -1,6 +1,6 @@
-'use server';
-
 import { parseArgs } from 'util';
+
+import { createServerFn } from '@tanstack/react-start';
 
 export interface ParsedDockerCommand {
   name?: string;
@@ -14,7 +14,7 @@ export interface ParsedDockerCommand {
   command?: string;
 }
 
-export async function parseDockerRunCommand(command: string): Promise<ParsedDockerCommand> {
+export const parseDockerRunCommand = createServerFn({ method: 'POST' }).inputValidator((command: string) => command).handler(async ({ data: command }): Promise<ParsedDockerCommand> => {
   const cleanCommand = command.replaceAll('\\', '').trim();
   const parts = cleanCommand.split(' ');
 
@@ -149,4 +149,4 @@ export async function parseDockerRunCommand(command: string): Promise<ParsedDock
   }
 
   return result;
-}
+});

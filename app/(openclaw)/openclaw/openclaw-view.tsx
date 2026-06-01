@@ -1,7 +1,7 @@
 'use client';
 
+import { useRouter } from '@tanstack/react-router';
 import { Bot, KeyRound, MessageSquare, RotateCw } from 'lucide-react';
-import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
 import { OpenclawAgent, OpenclawSession, OpenclawState } from '@/app/(openclaw)/openclaw/actions';
@@ -128,7 +128,7 @@ function PairingRequired({ state }: { state: PairingState }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
-  const refresh = () => startTransition(() => router.refresh());
+  const refresh = () => startTransition(() => router.invalidate());
 
   return (
     <Flex expanded align="center" justify="center" withPadding>

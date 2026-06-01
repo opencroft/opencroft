@@ -1,4 +1,4 @@
-'use server';
+import { createServerFn } from '@tanstack/react-start';
 
 import { StorageConnection } from '@/app/(filemanager)/files/types';
 import { getSetting, setSetting, deleteSetting } from '@/app/(settings)/server/actions';
@@ -13,37 +13,41 @@ interface ConnectionIndex {
   ids: string[];
 }
 
-export async function getConnections(): Promise<StorageConnection[]> {
-  const index = await getSetting<ConnectionIndex>(INDEX_KEY);
+export const getConnections = createServerFn().handler(async (): Promise<StorageConnection[]> => {
+  const index = await getSetting({ data: INDEX_KEY });
   if (!index) {
     return [];
   }
 
   const results: StorageConnection[] = [];
   for (const id of index.data.ids) {
-    const row = await getSetting<StorageConnection>(connectionKey(id));
+    const row = await getSetting({ data: connectionKey(id) });
     if (row) {
       results.push(row.data);
     }
   }
   return results;
-}
+});
 
-export async function saveConnection(connection: StorageConnection): Promise<void> {
-  await setSetting(connectionKey(connection.id), connection);
+export const saveConnection = createServerFn({ method: 'POST' })
+  .inputValidator((connection: StorageConnection) => connection)
+  .handler(async ({ data: connection }): Promise<void> => {
+    await setSetting({ data: { id: connectionKey(connection.id), data: connection } });
 
-  const index = await getSetting<ConnectionIndex>(INDEX_KEY);
-  const ids = index?.data.ids ?? [];
-  if (!ids.includes(connection.id)) {
-    await setSetting(INDEX_KEY, { ids: [...ids, connection.id] });
-  }
-}
+    const index = await getSetting({ data: INDEX_KEY });
+    const ids = index?.data.ids ?? [];
+    if (!ids.includes(connection.id)) {
+      await setSetting({ data: { id: INDEX_KEY, data: { ids: [...ids, connection.id] } } });
+    }
+  });
 
-export async function deleteConnection(id: string): Promise<void> {
-  await deleteSetting(connectionKey(id));
+export const deleteConnection = createServerFn({ method: 'POST' })
+  .inputValidator((id: string) => id)
+  .handler(async ({ data: id }): Promise<void> => {
+    await deleteSetting({ data: connectionKey(id) });
 
-  const index = await getSetting<ConnectionIndex>(INDEX_KEY);
-  if (index) {
-    await setSetting(INDEX_KEY, { ids: index.data.ids.filter(i => i !== id) });
-  }
-}
+    const index = await getSetting({ data: INDEX_KEY });
+    if (index) {
+      await setSetting({ data: { id: INDEX_KEY, data: { ids: index.data.ids.filter(i => i !== id) } } });
+    }
+  });

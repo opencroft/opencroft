@@ -55,7 +55,7 @@ function useRemoteFileContent(target: string | undefined, space: string | undefi
     let cancelled = false;
     setContent(null);
     setError(null);
-    readRemoteFile(target, space, path).then((value) => {
+    readRemoteFile({ data: { target, space, path } }).then((value) => {
       if (!cancelled) {
         setContent(value);
       }

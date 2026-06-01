@@ -1,4 +1,4 @@
-'use server';
+import { createServerFn } from '@tanstack/react-start';
 
 export interface Item {
   key: string;
@@ -8,21 +8,21 @@ export interface Item {
 
 let items: Item[] = [];
 
-export async function getItems(): Promise<Item[]> {
+export const getItems = createServerFn().handler(async (): Promise<Item[]> => {
   return items;
-}
+});
 
-export async function addItem(item: Item): Promise<void> {
+export const addItem = createServerFn({ method: 'POST' }).inputValidator((item: Item) => item).handler(async ({ data: item }): Promise<void> => {
   items.push(item);
-}
+});
 
-export async function updateItem(item: Item): Promise<void> {
+export const updateItem = createServerFn({ method: 'POST' }).inputValidator((item: Item) => item).handler(async ({ data: item }): Promise<void> => {
   const index = items.findIndex(i => i.key === item.key);
   if (index !== -1) {
     items[index] = item;
   }
-}
+});
 
-export async function deleteItem(item: Item): Promise<void> {
+export const deleteItem = createServerFn({ method: 'POST' }).inputValidator((item: Item) => item).handler(async ({ data: item }): Promise<void> => {
   items = items.filter(i => i.key !== item.key);
-}
+});

@@ -1,4 +1,4 @@
-'use server';
+import { createServerFn } from '@tanstack/react-start';
 
 import {
   installExtensionFromUrl,
@@ -7,24 +7,29 @@ import {
 import type { RegistryExtension, ResolvedRegistry } from '@/app/(extension-runtime)/_server/registry';
 import { fetchAllRegistries, resolveExtensionRepo, searchRegistries } from '@/app/(extension-runtime)/_server/registry';
 
-export async function listRegistryExtensions(query?: string): Promise<
-  (RegistryExtension & { registryName: string })[]
-> {
-  return searchRegistries(query);
-}
+export const listRegistryExtensions = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((query?: string) => query)
+  .handler(async ({ data: query }): Promise<
+    (RegistryExtension & { registryName: string })[]
+  > => {
+    return searchRegistries(query);
+  });
 
-export async function installRegistryExtension(extensionId: string, ref?: string): Promise<InstalledExtensionRecord> {
-  const resolved = await resolveExtensionRepo({ id: extensionId });
-  if (!resolved) {
-    throw new Error(`Extension "${extensionId}" not found in any registry`);
-  }
-  return installExtensionFromUrl({ url: resolved.repository, ref, auth: resolved.auth });
-}
+export const installRegistryExtension = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { extensionId: string; ref?: string }) => data)
+  .handler(async ({ data }): Promise<InstalledExtensionRecord> => {
+    const { extensionId, ref } = data;
+    const resolved = await resolveExtensionRepo({ id: extensionId });
+    if (!resolved) {
+      throw new Error(`Extension "${extensionId}" not found in any registry`);
+    }
+    return installExtensionFromUrl({ data: { url: resolved.repository, ref, auth: resolved.auth } });
+  });
 
-export async function getRegistries(): Promise<ResolvedRegistry[]> {
+export const getRegistries = createServerFn({ strict: { output: false } }).handler(async (): Promise<ResolvedRegistry[]> => {
   return fetchAllRegistries();
-}
+});
 
-export async function refreshRegistries(): Promise<ResolvedRegistry[]> {
+export const refreshRegistries = createServerFn({ strict: { output: false } }).handler(async (): Promise<ResolvedRegistry[]> => {
   return fetchAllRegistries(true);
-}
+});

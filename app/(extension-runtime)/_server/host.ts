@@ -187,33 +187,33 @@ function storageApi(extensionId: string): ExtensionStorageApi {
   const prefix = `${extensionId}::`;
   return {
     async get<T>(key: string): Promise<T | null> {
-      const all = (await getSetting<Record<string, unknown>>(STORAGE_SETTING_ID))?.data ?? {};
+      const all = (await getSetting({ data: STORAGE_SETTING_ID }))?.data ?? {};
       return (all[prefix + key] as T | undefined) ?? null;
     },
     async set<T>(key: string, value: T): Promise<void> {
-      const all = (await getSetting<Record<string, unknown>>(STORAGE_SETTING_ID))?.data ?? {};
+      const all = (await getSetting({ data: STORAGE_SETTING_ID }))?.data ?? {};
       all[prefix + key] = value;
-      await setSetting<Record<string, unknown>>(STORAGE_SETTING_ID, all);
+      await setSetting({ data: { id: STORAGE_SETTING_ID, data: all } });
     },
     async delete(key: string): Promise<void> {
-      const all = (await getSetting<Record<string, unknown>>(STORAGE_SETTING_ID))?.data ?? {};
+      const all = (await getSetting({ data: STORAGE_SETTING_ID }))?.data ?? {};
       delete all[prefix + key];
-      await setSetting<Record<string, unknown>>(STORAGE_SETTING_ID, all);
+      await setSetting({ data: { id: STORAGE_SETTING_ID, data: all } });
     },
     async list(): Promise<string[]> {
-      const all = (await getSetting<Record<string, unknown>>(STORAGE_SETTING_ID))?.data ?? {};
+      const all = (await getSetting({ data: STORAGE_SETTING_ID }))?.data ?? {};
       return Object.keys(all)
         .filter((k) => k.startsWith(prefix))
         .map((k) => k.slice(prefix.length));
     },
     async clear(): Promise<void> {
-      const all = (await getSetting<Record<string, unknown>>(STORAGE_SETTING_ID))?.data ?? {};
+      const all = (await getSetting({ data: STORAGE_SETTING_ID }))?.data ?? {};
       for (const k of Object.keys(all)) {
         if (k.startsWith(prefix)) {
           delete all[k];
         }
       }
-      await setSetting<Record<string, unknown>>(STORAGE_SETTING_ID, all);
+      await setSetting({ data: { id: STORAGE_SETTING_ID, data: all } });
     },
   };
 }

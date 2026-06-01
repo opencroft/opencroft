@@ -1,8 +1,8 @@
-'use server';
-
 import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import path from 'path';
+
+import { createServerFn } from '@tanstack/react-start';
 
 import { Server, ServerOS, getSshFeature, slug } from '@/app/(server)/server/types';
 import * as sshClient from '@/app/(ssh)/server/ssh-client';
@@ -41,19 +41,20 @@ function serverTarget(server: Server): string | SshCredentials {
 
 // --- Remote execution ---
 
-export async function remoteExec(server: Server, command: string): Promise<string> {
+export const remoteExec = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((data: { server: Server; command: string }) => data).handler(async ({ data }) => {
+  const { server, command } = data;
   const ssh = getSshFeature(server);
   if (!ssh) {
     throw new Error('Server has no SSH feature');
   }
 
   return sshClient.exec(serverTarget(server), command);
-}
+});
 
 // --- OS detection ---
 
-export async function detectOS(server: Server): Promise<ServerOS> {
-  const uname = (await remoteExec(server, 'uname -s')).trim().toLowerCase();
+export const detectOS = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((server: Server) => server).handler(async ({ data: server }) => {
+  const uname = (await remoteExec({ data: { server, command: 'uname -s' } })).trim().toLowerCase();
   if (uname.includes('linux')) {
     return ServerOS.Linux;
   }
@@ -64,7 +65,7 @@ export async function detectOS(server: Server): Promise<ServerOS> {
     return ServerOS.Windows;
   }
   return ServerOS.Other;
-}
+});
 
 // --- Server stats ---
 
@@ -77,7 +78,7 @@ export interface ServerStats {
   uptime: string;
 }
 
-export async function getServerStats(server: Server): Promise<ServerStats> {
+export const getServerStats = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((server: Server) => server).handler(async ({ data: server }) => {
   const script = [
     'echo "OS=$(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME" || uname -s)"',
     'echo "KERNEL=$(uname -r)"',
@@ -87,7 +88,7 @@ export async function getServerStats(server: Server): Promise<ServerStats> {
     'echo "UPTIME=$(uptime -p 2>/dev/null || uptime | sed "s/.*up/up/" | cut -d, -f1)"',
   ].join(' && ');
 
-  const output = await remoteExec(server, script);
+  const output = await remoteExec({ data: { server, command: script } });
   const lines: Record<string, string> = {};
   for (const line of output.trim().split('\n')) {
     const [key, ...rest] = line.split('=');
@@ -102,20 +103,20 @@ export async function getServerStats(server: Server): Promise<ServerStats> {
     storage: lines['STORAGE'] || 'unknown',
     uptime: lines['UPTIME'] || 'unknown',
   };
-}
+});
 
 // --- Docker ---
 
-export async function checkDocker(server: Server): Promise<boolean> {
+export const checkDocker = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((server: Server) => server).handler(async ({ data: server }) => {
   try {
-    await remoteExec(server, 'docker --version');
+    await remoteExec({ data: { server, command: 'docker --version' } });
     return true;
   } catch {
     return false;
   }
-}
+});
 
-export async function installDockerUbuntu(server: Server): Promise<string> {
+export const installDockerUbuntu = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((server: Server) => server).handler(async ({ data: server }) => {
   const ssh = getSshFeature(server);
   if (!ssh) {
     throw new Error('Server has no SSH feature');
@@ -134,10 +135,10 @@ export async function installDockerUbuntu(server: Server): Promise<string> {
     'docker --version',
   ].join(' && ');
 
-  const result = await remoteExec(server, script);
-  await createDockerContext(server);
+  const result = await remoteExec({ data: { server, command: script } });
+  await createDockerContext({ data: server });
   return result;
-}
+});
 
 // --- Docker context ---
 
@@ -166,24 +167,25 @@ function wslExec(cmd: string): Promise<string> {
   });
 }
 
-export async function renameDockerContext(oldName: string): Promise<void> {
+export const renameDockerContext = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((oldName: string) => oldName).handler(async ({ data: oldName }) => {
   try {
     await wslExec(`docker context rm ${oldName} -f 2>/dev/null`);
   } catch {
     // old context may not exist
   }
-}
+});
 
-export async function renameComposesFolder(oldSlug: string, newSlug: string): Promise<void> {
+export const renameComposesFolder = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((data: { oldSlug: string; newSlug: string }) => data).handler(async ({ data }) => {
+  const { oldSlug, newSlug } = data;
   const basePath = 'data/docker/composes';
   try {
     await fs.rename(path.join(basePath, oldSlug), path.join(basePath, newSlug));
   } catch {
     // folder may not exist
   }
-}
+});
 
-export async function createDockerContext(server: Server): Promise<void> {
+export const createDockerContext = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((server: Server) => server).handler(async ({ data: server }) => {
   const ssh = getSshFeature(server);
   if (!ssh) {
     throw new Error('Server has no SSH feature');
@@ -216,4 +218,4 @@ export async function createDockerContext(server: Server): Promise<void> {
     });
     proc.on('error', reject);
   });
-}
+});

@@ -76,7 +76,7 @@ export function FileManagerProvider({ children, initialConnection }: { children:
     }
     let cancelled = false;
     setLoading(true);
-    actions.listFiles({ connection: conn, path }).then(result => {
+    actions.listFiles({ data: { connection: conn, path } }).then(result => {
       if (!cancelled) {
         setFiles(result);
         setLoading(false);
@@ -109,12 +109,12 @@ export function FileManagerProvider({ children, initialConnection }: { children:
   }, []);
 
   const addConnection = useCallback(async (connection: StorageConnection) => {
-    await connectionActions.saveConnection(connection);
+    await connectionActions.saveConnection({ data: connection });
     setConnections(prev => [...prev, connection]);
   }, []);
 
   const updateConnection = useCallback(async (connection: StorageConnection) => {
-    await connectionActions.saveConnection(connection);
+    await connectionActions.saveConnection({ data: connection });
     setConnections(prev => prev.map(c => c.id === connection.id ? connection : c));
     if (connRef.current?.id === connection.id) {
       connRef.current = connection;
@@ -123,7 +123,7 @@ export function FileManagerProvider({ children, initialConnection }: { children:
   }, []);
 
   const removeConnection = useCallback(async (id: string) => {
-    await connectionActions.deleteConnection(id);
+    await connectionActions.deleteConnection({ data: id });
     setConnections(prev => prev.filter(c => c.id !== id));
     if (connRef.current?.id === id) {
       connRef.current = null;
@@ -240,7 +240,7 @@ export function FileManagerProvider({ children, initialConnection }: { children:
     if (!conn) {
       return;
     }
-    const data = await actions.downloadFile({ connection: conn, path: entry.path });
+    const data = await actions.downloadFile({ data: { connection: conn, path: entry.path } });
     const blob = new Blob([Uint8Array.from(atob(data), c => c.charCodeAt(0))]);
     triggerDownload(blob, entry.name);
   }, []);
@@ -250,7 +250,7 @@ export function FileManagerProvider({ children, initialConnection }: { children:
     if (!conn) {
       return;
     }
-    await actions.deleteFile({ connection: conn, path });
+    await actions.deleteFile({ data: { connection: conn, path } });
     setRefreshKey(k => k + 1);
   }, []);
 
@@ -262,7 +262,7 @@ export function FileManagerProvider({ children, initialConnection }: { children:
     const parts = oldPath.split('/');
     parts[parts.length - 1] = newName;
     const newPath = parts.join('/');
-    await actions.renameFile({ connection: conn, oldPath, newPath });
+    await actions.renameFile({ data: { connection: conn, oldPath, newPath } });
     setRefreshKey(k => k + 1);
   }, []);
 
@@ -273,7 +273,7 @@ export function FileManagerProvider({ children, initialConnection }: { children:
     }
     const base = pathRef.current;
     const fullPath = base.endsWith('/') ? base + path : base + '/' + path;
-    await actions.createDirectory({ connection: conn, path: fullPath });
+    await actions.createDirectory({ data: { connection: conn, path: fullPath } });
     setRefreshKey(k => k + 1);
   }, []);
 

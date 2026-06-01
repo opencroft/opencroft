@@ -1,4 +1,4 @@
-'use server';
+import { createServerFn } from '@tanstack/react-start';
 
 import { resolveGraphContexts } from '@/app/(extension-runtime)/_server/graph-context-resolver';
 import { type GraphSnapshot } from '@/app/(extension-runtime)/_server/host';
@@ -170,7 +170,7 @@ function buildCtx(
   };
 }
 
-export async function listNodeActions(nodeId: string): Promise<NodeActionDescriptor[]> {
+export const listNodeActions = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((nodeId: string) => nodeId).handler(async ({ data: nodeId }): Promise<NodeActionDescriptor[]> => {
   const found = await findNodeWithGraph(nodeId);
   if (!found || !found.node.type) {
     return [];
@@ -191,7 +191,7 @@ export async function listNodeActions(nodeId: string): Promise<NodeActionDescrip
     }));
   }
   return [];
-}
+});
 
 async function persistErrors(found: FoundNode, errors: string[]): Promise<void> {
   const r = getSpacesRegistry();
@@ -213,11 +213,9 @@ async function persistErrors(found: FoundNode, errors: string[]): Promise<void> 
   await r.saveGraph(found.slug, space.graph);
 }
 
-export async function dispatchNodeAction(
-  nodeId: string,
-  actionId: string,
-  params: Record<string, unknown> = {},
-): Promise<unknown> {
+export const dispatchNodeAction = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((data: { nodeId: string; actionId: string; params?: Record<string, unknown> }) => data).handler(async ({ data }): Promise<unknown> => {
+  const { nodeId, actionId } = data;
+  const params = data.params ?? {};
   const found = await findNodeWithGraph(nodeId);
   if (!found) {
     throw new Error(`Node not found: ${nodeId}`);
@@ -246,4 +244,4 @@ export async function dispatchNodeAction(
     await persistErrors(found, [message]);
     throw err;
   }
-}
+});

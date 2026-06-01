@@ -254,11 +254,11 @@ export function InputHandle({ type, id, color, children }: HandlePinProps) {
 }
 
 async function callAction(extensionId: string, actionName: string, args: unknown[]): Promise<unknown> {
-  return invokeExtensionAction(extensionId, actionName, args);
+  return invokeExtensionAction({ data: { extensionId, actionName, args } });
 }
 
 async function callNodeAction(nodeId: string, actionId: string, params?: Record<string, unknown>): Promise<unknown> {
-  return dispatchNodeAction(nodeId, actionId, params ?? {});
+  return dispatchNodeAction({ data: { nodeId, actionId, params: params ?? {} } });
 }
 
 export interface ExtensionStorage {

@@ -1,5 +1,3 @@
-import Image from 'next/image';
-
 export interface CardProps {
   children?: React.ReactNode;
   imageSrc?: string;
@@ -10,11 +8,11 @@ export function Card({ children, imageSrc, onClick }: CardProps) {
   return (
     <div className='relative w-full aspect-[2/3] bg-muted rounded-lg overflow-hidden cursor-pointer hover:shadow-lg transition-shadow group' onClick={onClick}>
       {imageSrc && (
-        <Image
+        <img
           src={imageSrc}
           alt=""
-          fill
           className='object-cover'
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
         />
       )}
 

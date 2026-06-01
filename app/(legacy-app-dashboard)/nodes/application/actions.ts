@@ -1,8 +1,7 @@
-'use server';
-
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
+import { createServerFn } from '@tanstack/react-start';
 import * as yaml from 'js-yaml';
 
 import { cacheDir } from '@/server/cache';
@@ -57,19 +56,20 @@ function serviceToYaml(service: AppService): Record<string, unknown> {
   return svc;
 }
 
-export async function loadApp(appId: string): Promise<AppData | null> {
+export const loadApp = createServerFn({ method: 'POST' }).inputValidator((appId: string) => appId).handler(async ({ data: appId }): Promise<AppData | null> => {
   const row = await prisma.setting.findUnique({ where: { id: SETTING_PREFIX + appId } });
   if (!row) {
     return null;
   }
   return JSON.parse(row.data) as AppData;
-}
+});
 
-export async function saveApp(appId: string, data: AppData): Promise<void> {
+export const saveApp = createServerFn({ method: 'POST' }).inputValidator((data: { appId: string; data: AppData }) => data).handler(async ({ data }): Promise<void> => {
+  const { appId, data: appData } = data;
   await prisma.setting.upsert({
     where: { id: SETTING_PREFIX + appId },
-    create: { id: SETTING_PREFIX + appId, data: JSON.stringify(data) },
-    update: { data: JSON.stringify(data) },
+    create: { id: SETTING_PREFIX + appId, data: JSON.stringify(appData) },
+    update: { data: JSON.stringify(appData) },
   });
 
   const dir = appDir(appId);
@@ -77,19 +77,19 @@ export async function saveApp(appId: string, data: AppData): Promise<void> {
 
   const compose: Record<string, unknown> = {
     services: Object.fromEntries(
-      data.services.map((s) => [s.name, serviceToYaml(s)]),
+      appData.services.map((s) => [s.name, serviceToYaml(s)]),
     ),
   };
   await fs.writeFile(composeFile(appId), yaml.dump(compose, { sortKeys: true, indent: 2, lineWidth: -1 }));
-}
+});
 
-export async function deleteApp(appId: string): Promise<void> {
+export const deleteApp = createServerFn({ method: 'POST' }).inputValidator((appId: string) => appId).handler(async ({ data: appId }): Promise<void> => {
   await prisma.setting.delete({ where: { id: SETTING_PREFIX + appId } }).catch(() => {});
   const dir = appDir(appId);
   await fs.rm(dir, { recursive: true, force: true });
-}
+});
 
-export async function getContainerStatuses(appId: string): Promise<Record<string, string>> {
+export const getContainerStatuses = createServerFn({ method: 'POST' }).inputValidator((appId: string) => appId).handler(async ({ data: appId }): Promise<Record<string, string>> => {
   const file = composeFile(appId);
   try {
     await fs.access(file);
@@ -116,9 +116,9 @@ export async function getContainerStatuses(appId: string): Promise<Record<string
       resolve(statuses);
     });
   });
-}
+});
 
-export async function composeUp(appId: string): Promise<void> {
+export const composeUp = createServerFn({ method: 'POST' }).inputValidator((appId: string) => appId).handler(async ({ data: appId }): Promise<void> => {
   const file = composeFile(appId);
   const { execFile } = await import('node:child_process');
   return new Promise((resolve, reject) => {
@@ -130,9 +130,9 @@ export async function composeUp(appId: string): Promise<void> {
       resolve();
     });
   });
-}
+});
 
-export async function composeDown(appId: string): Promise<void> {
+export const composeDown = createServerFn({ method: 'POST' }).inputValidator((appId: string) => appId).handler(async ({ data: appId }): Promise<void> => {
   const file = composeFile(appId);
   const { execFile } = await import('node:child_process');
   return new Promise((resolve, reject) => {
@@ -144,4 +144,4 @@ export async function composeDown(appId: string): Promise<void> {
       resolve();
     });
   });
-}
+});

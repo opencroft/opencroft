@@ -1,10 +1,11 @@
-'use server';
+import { createServerFn } from '@tanstack/react-start';
 
 import { loadGraph } from '@/app/(legacy-app-dashboard)/app-dashboard/actions';
 import { resolveServer } from '@/app/(legacy-app-dashboard)/nodes/server/actions';
 import { createDockerContext, detectOS, renameComposesFolder, renameDockerContext } from '@/app/(server)/server/remote';
 import { Server, ServerFeature, getDockerFeature, getSshFeature, slug } from '@/app/(server)/server/types';
 import { getSetting, setSetting, deleteSetting } from '@/app/(settings)/server/actions';
+import { Setting } from '@/app/(settings)/server/setting';
 import * as sshConfig from '@/app/(ssh)/server/ssh-config';
 
 const INDEX_KEY = 'servers';
@@ -17,12 +18,12 @@ interface ServerIndex {
   slugs: string[];
 }
 
-export async function getServers(): Promise<Server[]> {
-  const index = await getSetting<ServerIndex>(INDEX_KEY);
+export const getServers = createServerFn({ strict: { output: false } }).handler(async (): Promise<Server[]> => {
+  const index = (await getSetting({ data: INDEX_KEY })) as Setting<ServerIndex> | null;
   const slugs = index?.data.slugs ?? [];
   const results: Server[] = [];
   for (const s of slugs) {
-    const row = await getSetting<Server>(serverKey(s));
+    const row = (await getSetting({ data: serverKey(s) })) as Setting<Server> | null;
     if (row) {
       results.push(row.data);
     }
@@ -37,39 +38,41 @@ export async function getServers(): Promise<Server[]> {
       continue;
     }
     const server: Server = { name: data.name, address: data.address ?? '', features: data.features ?? [] };
-    results.push(await resolveServer(server));
+    results.push(await resolveServer({ data: server }));
   }
 
   return results;
-}
+});
 
-export async function saveServer(server: Server, oldSlug?: string): Promise<void> {
+export const saveServer = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((data: { server: Server; oldSlug?: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { server } = data;
+  const oldSlug = data.oldSlug;
   const newSlug = slug(server.name);
   const renamed = oldSlug && oldSlug !== newSlug;
 
   if (getSshFeature(server) && server.address && !server.os) {
     try {
-      server.os = await detectOS(server);
+      server.os = await detectOS({ data: server });
     } catch {
       // SSH unreachable — save without OS
     }
   }
 
   // Save new data first before cleaning up old
-  await setSetting(serverKey(newSlug), server);
+  await setSetting({ data: { id: serverKey(newSlug), data: server } });
 
-  const index = await getSetting<ServerIndex>(INDEX_KEY);
+  const index = (await getSetting({ data: INDEX_KEY })) as Setting<ServerIndex> | null;
   const slugs = (index?.data.slugs ?? []).filter(s => s !== oldSlug);
   if (!slugs.includes(newSlug)) {
     slugs.push(newSlug);
   }
-  await setSetting(INDEX_KEY, { slugs });
+  await setSetting({ data: { id: INDEX_KEY, data: { slugs } } });
 
   // Clean up old resources after new data is safely persisted
   if (renamed) {
-    await deleteSetting(serverKey(oldSlug));
-    await renameComposesFolder(oldSlug, newSlug).catch(() => {});
-    await renameDockerContext(oldSlug).catch(() => {});
+    await deleteSetting({ data: serverKey(oldSlug) });
+    await renameComposesFolder({ data: { oldSlug, newSlug } }).catch(() => {});
+    await renameDockerContext({ data: oldSlug }).catch(() => {});
     await sshConfig.removeServer(oldSlug).catch(() => {});
   }
 
@@ -78,18 +81,18 @@ export async function saveServer(server: Server, oldSlug?: string): Promise<void
 
   // Create/update docker context (best-effort, after save)
   if (getDockerFeature(server) && getSshFeature(server)) {
-    await createDockerContext(server).catch(() => {});
+    await createDockerContext({ data: server }).catch(() => {});
   }
-}
+});
 
-export async function deleteServer(name: string): Promise<void> {
+export const deleteServer = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((name: string) => name).handler(async ({ data: name }): Promise<void> => {
   const s = slug(name);
-  await deleteSetting(serverKey(s));
+  await deleteSetting({ data: serverKey(s) });
 
-  const index = await getSetting<ServerIndex>(INDEX_KEY);
+  const index = (await getSetting({ data: INDEX_KEY })) as Setting<ServerIndex> | null;
   if (index) {
-    await setSetting(INDEX_KEY, { slugs: (index.data.slugs ?? []).filter(x => x !== s) });
+    await setSetting({ data: { id: INDEX_KEY, data: { slugs: (index.data.slugs ?? []).filter(x => x !== s) } } });
   }
 
   await sshConfig.removeServer(s).catch(() => {});
-}
+});

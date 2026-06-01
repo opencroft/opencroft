@@ -1,9 +1,9 @@
-'use server';
-
 import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+import { createServerFn } from '@tanstack/react-start';
 
 import { cacheDir } from '@/server/cache';
 import { exec } from '@/server/shell';
@@ -63,7 +63,7 @@ function setPermissions(filePath: string): Promise<void> {
   });
 }
 
-export async function listKeys(storeId: string): Promise<KeyEntry[]> {
+export const listKeys = createServerFn({ method: 'POST' }).inputValidator((storeId: string) => storeId).handler(async ({ data: storeId }): Promise<KeyEntry[]> => {
   const dir = storeDir(storeId);
   let entries: string[];
   try {
@@ -115,39 +115,44 @@ export async function listKeys(storeId: string): Promise<KeyEntry[]> {
     keys.push({ name, type, fingerprint, hasPublicKey, inWsl });
   }
   return keys;
-}
+});
 
-export async function createKey(storeId: string, name: string, keyType: string): Promise<void> {
+export const createKey = createServerFn({ method: 'POST' }).inputValidator((data: { storeId: string; name: string; keyType: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { storeId, name, keyType } = data;
   const dir = storeDir(storeId);
   await fs.mkdir(dir, { recursive: true });
   await run('ssh-keygen', ['-t', keyType, '-f', path.join(dir, name), '-N', '', '-q']);
-}
+});
 
-export async function importKey(storeId: string, name: string, content: string): Promise<void> {
+export const importKey = createServerFn({ method: 'POST' }).inputValidator((data: { storeId: string; name: string; content: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { storeId, name, content } = data;
   const dir = storeDir(storeId);
   await fs.mkdir(dir, { recursive: true });
   const keyPath = path.join(dir, name);
   await fs.writeFile(keyPath, content);
   await setPermissions(keyPath);
-}
+});
 
-export async function deleteKey(storeId: string, name: string): Promise<void> {
+export const deleteKey = createServerFn({ method: 'POST' }).inputValidator((data: { storeId: string; name: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { storeId, name } = data;
   const dir = storeDir(storeId);
   const keyPath = path.join(dir, name);
   await fs.unlink(keyPath).catch(() => {});
   await fs.unlink(`${keyPath}.pub`).catch(() => {});
-}
+});
 
-export async function readPublicKey(storeId: string, name: string): Promise<string> {
+export const readPublicKey = createServerFn({ method: 'POST' }).inputValidator((data: { storeId: string; name: string }) => data).handler(async ({ data }): Promise<string> => {
+  const { storeId, name } = data;
   const keyPath = path.join(storeDir(storeId), name);
   try {
     return await fs.readFile(`${keyPath}.pub`, 'utf-8');
   } catch {
     return await run('ssh-keygen', ['-y', '-f', keyPath]);
   }
-}
+});
 
-export async function copyKeyToWsl(storeId: string, name: string): Promise<void> {
+export const copyKeyToWsl = createServerFn({ method: 'POST' }).inputValidator((data: { storeId: string; name: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { storeId, name } = data;
   const keyPath = path.join(storeDir(storeId), name);
   const content = await fs.readFile(keyPath, 'utf-8');
   await exec('mkdir -p ~/.ssh/keys');
@@ -159,8 +164,8 @@ export async function copyKeyToWsl(storeId: string, name: string): Promise<void>
   } catch {
     // no pub
   }
-}
+});
 
-export async function removeKeyFromWsl(name: string): Promise<void> {
+export const removeKeyFromWsl = createServerFn({ method: 'POST' }).inputValidator((name: string) => name).handler(async ({ data: name }): Promise<void> => {
   await exec(`rm -f ~/.ssh/keys/${name} ~/.ssh/keys/${name}.pub`);
-}
+});

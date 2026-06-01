@@ -67,19 +67,19 @@ export default function AppLinksSettings() {
     if (!title || !url) {
       return;
     }
-    await createAppLink({ title, url });
+    await createAppLink({ data: { title, url } });
     setTitle('');
     setUrl('');
     await reload();
   };
 
   const remove = async (id: string) => {
-    await deleteAppLink(id);
+    await deleteAppLink({ data: id });
     await reload();
   };
 
   const update = async (data: { id: string; title: string; url: string }) => {
-    await updateAppLink(data);
+    await updateAppLink({ data });
     await reload();
   };
 

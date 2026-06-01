@@ -1,25 +1,31 @@
-'use server';
+import { createServerFn } from '@tanstack/react-start';
 
 import { prisma } from '@/server/prisma';
 
-export async function getAppLinks() {
+export const getAppLinks = createServerFn().handler(async () => {
   return prisma.appLink.findMany({ orderBy: { order: 'asc' } });
-}
+});
 
-export async function createAppLink(data: { title: string; url: string }) {
-  const last = await prisma.appLink.findFirst({ orderBy: { order: 'desc' } });
-  return prisma.appLink.create({
-    data: { ...data, order: (last?.order ?? -1) + 1 },
+export const createAppLink = createServerFn({ method: 'POST' })
+  .inputValidator((data: { title: string; url: string }) => data)
+  .handler(async ({ data }) => {
+    const last = await prisma.appLink.findFirst({ orderBy: { order: 'desc' } });
+    return prisma.appLink.create({
+      data: { ...data, order: (last?.order ?? -1) + 1 },
+    });
   });
-}
 
-export async function updateAppLink(data: { id: string; title: string; url: string }) {
-  return prisma.appLink.update({
-    where: { id: data.id },
-    data: { title: data.title, url: data.url },
+export const updateAppLink = createServerFn({ method: 'POST' })
+  .inputValidator((data: { id: string; title: string; url: string }) => data)
+  .handler(async ({ data }) => {
+    return prisma.appLink.update({
+      where: { id: data.id },
+      data: { title: data.title, url: data.url },
+    });
   });
-}
 
-export async function deleteAppLink(id: string) {
-  return prisma.appLink.delete({ where: { id } });
-}
+export const deleteAppLink = createServerFn({ method: 'POST' })
+  .inputValidator((id: string) => id)
+  .handler(async ({ data: id }) => {
+    return prisma.appLink.delete({ where: { id } });
+  });

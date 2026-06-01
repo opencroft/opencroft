@@ -1,14 +1,13 @@
-import { useSearchParams } from 'next/navigation';
+import { useLocation, useRouter } from '@tanstack/react-router';
 import { useCallback, useMemo } from 'react';
 
 /**
- * Updates the URL with new search parameters
+ * Builds a path+query URL string from search params, preserving the current pathname.
  * @internal
  */
-function updateUrl(params: URLSearchParams): void {
+function buildUrl(params: URLSearchParams): string {
   const queryString = params.toString();
-  const newUrl = queryString ? `?${queryString}` : window.location.pathname;
-  window.history.replaceState({}, '', newUrl);
+  return queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname;
 }
 
 /**
@@ -23,22 +22,14 @@ function updateUrl(params: URLSearchParams): void {
  * const [search, setSearch] = useUrlState('q', '');
  * // URL: ?q=hello -> search = 'hello'
  * // setSearch('world') -> URL becomes ?q=world
- *
- * @example
- * const [page, setPage] = useUrlState('page', 1);
- * // URL: ?page=5 -> page = 5
- * // setPage(10) -> URL becomes ?page=10
- *
- * @example
- * const [enabled, setEnabled] = useUrlState('enabled', false);
- * // URL: ?enabled=true -> enabled = true
- * // setEnabled(true) -> URL becomes ?enabled=true
  */
 export function useUrlState<T extends string | number | boolean>(
   key: string,
   defaultValue: T
 ): [T, (value: T) => void] {
-  const searchParams = useSearchParams();
+  const searchStr = useLocation({ select: (l) => l.searchStr });
+  const router = useRouter();
+  const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr]);
 
   const value = useMemo(() => {
     const rawValue = searchParams.get(key);
@@ -69,8 +60,8 @@ export function useUrlState<T extends string | number | boolean>(
       params.set(key, String(newValue));
     }
 
-    updateUrl(params);
-  }, [searchParams, key, defaultValue]);
+    router.history.replace(buildUrl(params));
+  }, [searchParams, key, defaultValue, router]);
 
   return [value, setValue] as unknown as [T, (value: T) => void];
 }
@@ -92,7 +83,9 @@ export function useUrlArrayState(
   key: string,
   defaultValue: string[] = []
 ): [string[], (value: string[]) => void] {
-  const searchParams = useSearchParams();
+  const searchStr = useLocation({ select: (l) => l.searchStr });
+  const router = useRouter();
+  const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr]);
 
   const value = useMemo(() => {
     const allValues = searchParams.getAll(key);
@@ -110,8 +103,8 @@ export function useUrlArrayState(
       newValue.forEach(v => params.append(key, v));
     }
 
-    updateUrl(params);
-  }, [searchParams, key]);
+    router.history.replace(buildUrl(params));
+  }, [searchParams, key, router]);
 
   return [value, setValue];
 }
@@ -133,7 +126,9 @@ export function useUrlRecordState<T extends Record<string, string>>(
   prefix: string,
   defaultValue: T = {} as T
 ): [T, (value: T) => void] {
-  const searchParams = useSearchParams();
+  const searchStr = useLocation({ select: (l) => l.searchStr });
+  const router = useRouter();
+  const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr]);
 
   const value = useMemo(() => {
     const result: Record<string, string> = {};
@@ -167,8 +162,8 @@ export function useUrlRecordState<T extends Record<string, string>>(
       }
     });
 
-    updateUrl(params);
-  }, [searchParams, prefix]);
+    router.history.replace(buildUrl(params));
+  }, [searchParams, prefix, router]);
 
   return [value, setValue];
 }

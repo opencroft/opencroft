@@ -1,6 +1,6 @@
 'use client';
 
-import { usePathname, useRouter } from 'next/navigation';
+import { useLocation, useRouter } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { toast } from 'sonner';
 
@@ -19,7 +19,7 @@ function extractSlug(pathname: string | null): string | null {
 
 export function useSSE() {
   const dispatch = useSSEEventsDispatch();
-  const pathname = usePathname();
+  const pathname = useLocation({ select: (l) => l.pathname });
   const router = useRouter();
   const slug = extractSlug(pathname);
 
@@ -37,7 +37,7 @@ export function useSSE() {
         }
 
         if (data.type === 'open_space') {
-          router.push(`/space/${data.slug}`);
+          router.navigate({ to: `/space/${data.slug}` });
         }
 
         if (data.type === 'stream_chunk') {

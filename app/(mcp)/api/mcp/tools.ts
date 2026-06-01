@@ -928,7 +928,7 @@ export async function executeAgentTool(
     }
 
     // Execute handler
-    const result = await invokeExtensionAction('builtin/core', 'handler.run', [
+    const result = await invokeExtensionAction({ data: { extensionId: 'builtin/core', actionName: 'handler.run', args: [
       {
         script: ((handlerNode.data as Record<string, unknown>)?.script as string) ?? '',
         language,
@@ -936,7 +936,7 @@ export async function executeAgentTool(
         event,
         env,
       },
-    ]) as { status?: number; headers?: Record<string, string>; body?: unknown; error?: string; logs?: string };
+    ] } }) as { status?: number; headers?: Record<string, string>; body?: unknown; error?: string; logs?: string };
 
     if (result.error) {
       return { result: textResult(`Agent tool "${toolName}" error: ${result.error}`), requiredApproval };
@@ -998,7 +998,7 @@ async function resolveSpace(args: Record<string, unknown>): Promise<string> {
 }
 
 async function loadOrFail(slug: string): Promise<GraphData> {
-  const graph = await loadSpaceGraph(slug);
+  const graph = await loadSpaceGraph({ data: slug });
   if (!graph) {
     fail(-32602, `Space not found: ${slug}`);
   }
@@ -1088,7 +1088,7 @@ async function expandDynamicHandles(node: GraphNode, declared: ExtensionHandle[]
   }
   const service = (node.data?.['name'] as string) || node.id;
   try {
-    const containers = await invokeExtensionAction('builtin/core', 'docker.ps', [{ dockerNodeId, service }]) as Array<{ id: string; name: string; running: boolean }>;
+    const containers = await invokeExtensionAction({ data: { extensionId: 'builtin/core', actionName: 'docker.ps', args: [{ dockerNodeId, service }] } }) as Array<{ id: string; name: string; running: boolean }>;
     return containers.filter((c) => c.running).map((c) => `${dynamic.id}${c.name || c.id}`);
   } catch (err) {
     console.error(`[mcp.expandDynamicHandles] failed for ${node.id}:`, err);
@@ -1402,7 +1402,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!name) {
         fail(-32602, 'Missing required param: name');
       }
-      const space = await createSpace(name);
+      const space = await createSpace({ data: name });
       return textResult(JSON.stringify(space, null, 2));
     }),
 
@@ -1413,7 +1413,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         fail(-32602, 'Missing required params: space, name');
       }
       const slug = await resolveSpace(args);
-      const space = await renameSpace(slug, name);
+      const space = await renameSpace({ data: { slug, name } });
       if (!space) {
         fail(-32602, `Space not found: ${slug}`);
       }
@@ -1426,7 +1426,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         fail(-32602, 'Missing required param: space');
       }
       const slug = await resolveSpace(args);
-      const ok = await deleteSpace(slug);
+      const ok = await deleteSpace({ data: slug });
       if (!ok) {
         fail(-32602, 'Cannot delete (not found or last remaining space)');
       }
@@ -1552,7 +1552,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         graph.nodes.push(node);
         created.push(node);
       }
-      await saveSpaceGraph(slug, graph);
+      await saveSpaceGraph({ data: { slug, graph } });
       broadcastGraphUpdated(slug);
       return textResult(JSON.stringify(created, null, 2));
     }),
@@ -1593,7 +1593,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         }
         updated.push(node);
       }
-      await saveSpaceGraph(slug, graph);
+      await saveSpaceGraph({ data: { slug, graph } });
       broadcastGraphUpdated(slug);
       return textResult(JSON.stringify(updated, null, 2));
     }, { view: 'update_nodes' }),
@@ -1616,7 +1616,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         node.data = {};
       }
       setByPath(node.data, propPath, value);
-      await saveSpaceGraph(slug, graph);
+      await saveSpaceGraph({ data: { slug, graph } });
       broadcastGraphUpdated(slug);
       return textResult(`Property ${propPath} on ${nodeId} written.`);
     }, { view: 'write_node_property' }),
@@ -1658,7 +1658,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         node.data = {};
       }
       setByPath(node.data, propPath, updated);
-      await saveSpaceGraph(slug, graph);
+      await saveSpaceGraph({ data: { slug, graph } });
       broadcastGraphUpdated(slug);
       return textResult(`Property ${propPath} on ${nodeId} updated.`);
     }, { view: 'edit_node_property' }),
@@ -1681,7 +1681,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         return !targets.has(edge.source) && !targets.has(edge.target);
       });
       const removedEdges = beforeEdges - graph.edges.length;
-      await saveSpaceGraph(slug, graph);
+      await saveSpaceGraph({ data: { slug, graph } });
       broadcastGraphUpdated(slug);
       return textResult(JSON.stringify({ deleted: nodeIds, removedEdges }, null, 2));
     }),
@@ -1734,7 +1734,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         graph.edges.push(edge);
         created.push(edgeToApi(edge));
       }
-      await saveSpaceGraph(slug, graph);
+      await saveSpaceGraph({ data: { slug, graph } });
       broadcastGraphUpdated(slug);
       return textResult(JSON.stringify(created, null, 2));
     }),
@@ -1765,7 +1765,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         const edge = graph.edges.splice(idx, 1)[0] as StoredEdge;
         removed.push(edge.id);
       }
-      await saveSpaceGraph(slug, graph);
+      await saveSpaceGraph({ data: { slug, graph } });
       broadcastGraphUpdated(slug);
       return textResult(JSON.stringify({ removed }, null, 2));
     }),
@@ -1776,7 +1776,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!nodeId) {
         fail(-32602, 'Missing required param: nodeId');
       }
-      const space = await findSpaceByNode(nodeId);
+      const space = await findSpaceByNode({ data: nodeId });
       if (!space) {
         fail(-32602, `Node not found in any space: ${nodeId}`);
       }
@@ -1831,7 +1831,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!extensionId) {
         fail(-32602, 'Missing required param: extensionId');
       }
-      const record = await getLocalExtension(extensionId);
+      const record = await getLocalExtension({ data: extensionId });
       if (!record) {
         fail(-32602, `Extension not found: ${extensionId}`);
       }
@@ -1854,7 +1854,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!files['extension.json']) {
         fail(-32602, 'files must include "extension.json"');
       }
-      const record = await createLocalExtension(files);
+      const record = await createLocalExtension({ data: files });
       broadcastExtensionsUpdated();
       return textResult(`Extension ${record.id} installed with ${Object.keys(files).length} files.`);
     }),
@@ -1876,7 +1876,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         }
         files[k] = v;
       }
-      await updateLocalExtension(extensionId, files);
+      await updateLocalExtension({ data: { extensionId, files } });
       broadcastExtensionsUpdated();
       return textResult(`Extension ${extensionId} updated with ${Object.keys(files).length} files.`);
     }),
@@ -1887,7 +1887,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!extensionId) {
         fail(-32602, 'Missing required param: extensionId');
       }
-      await deleteLocalExtension(extensionId);
+      await deleteLocalExtension({ data: extensionId });
       broadcastExtensionsUpdated();
       return textResult(`Extension ${extensionId} uninstalled.`);
     }),
@@ -1912,7 +1912,7 @@ function buildHandlers(): Record<string, ToolHandler> {
           usernameKey: authRaw.usernameKey,
         };
       }
-      const record = await installExtensionFromUrl({ url, ref, auth });
+      const record = await installExtensionFromUrl({ data: { url, ref, auth } });
       broadcastExtensionsUpdated();
       return textResult(`Installed ${record.id} at ${record.sidecar.ref} from ${record.sidecar.source.url}.`);
     }),
@@ -1924,7 +1924,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         fail(-32602, 'Missing required param: extensionId');
       }
       const ref = args.ref as string | undefined;
-      const record = await updateInstalledExtension(extensionId, ref);
+      const record = await updateInstalledExtension({ data: { extensionId, ref } });
       broadcastExtensionsUpdated();
       return textResult(`Updated ${record.id} to ${record.sidecar.ref}.`);
     }),
@@ -1935,7 +1935,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!extensionId) {
         fail(-32602, 'Missing required param: extensionId');
       }
-      await uninstallExtension(extensionId);
+      await uninstallExtension({ data: extensionId });
       broadcastExtensionsUpdated();
       return textResult(`Uninstalled ${extensionId}.`);
     }),
@@ -1947,7 +1947,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         fail(-32602, 'Missing required param: extensionId');
       }
       try {
-        const result = await compileLocalExtension(extensionId);
+        const result = await compileLocalExtension({ data: extensionId });
         const parts: string[] = [];
         parts.push(`Build ${result.success ? '✅ succeeded' : '❌ failed'}`);
         if (result.errors.length > 0) {
@@ -2006,7 +2006,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!resolved) {
         return textResult(`Extension "${extensionId}" not found in any connected registry.`);
       }
-      const record = await installExtensionFromUrl({ url: resolved.repository, ref, auth: resolved.auth });
+      const record = await installExtensionFromUrl({ data: { url: resolved.repository, ref, auth: resolved.auth } });
       broadcastExtensionsUpdated();
       return textResult(`Installed ${record.manifest.name ?? record.id} (${record.sidecar.ref}) from ${resolved.repository}`);
     }),
@@ -2017,7 +2017,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!extensionId) {
         fail(-32602, 'Missing required param: extensionId');
       }
-      await uninstallExtension(extensionId);
+      await uninstallExtension({ data: extensionId });
       broadcastExtensionsUpdated();
       return textResult(`Uninstalled ${extensionId}.`);
     }),
@@ -2069,7 +2069,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       const offset = args.offset as number | undefined;
       const limit = args.limit as number | undefined;
       const resolved = await resolveDocPath(namespace, relative);
-      const head = await getGitFileAtRef(namespace, relative, 'HEAD');
+      const head = await getGitFileAtRef({ data: { namespace, filePath: relative, ref: 'HEAD' } });
       if (head !== null) {
         return textResult(sliceLines(head, offset, limit));
       }
@@ -2247,7 +2247,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!nodeId) {
         fail(-32602, 'Missing required param: nodeId');
       }
-      const actions = await listNodeActions(nodeId);
+      const actions = await listNodeActions({ data: nodeId });
       return textResult(JSON.stringify(actions, null, 2));
     },
 
@@ -2259,7 +2259,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         fail(-32602, 'Missing required params: nodeId, action');
       }
       const params = (args.params as Record<string, unknown> | undefined) ?? {};
-      const result = await dispatchNodeAction(nodeId, action, params);
+      const result = await dispatchNodeAction({ data: { nodeId, actionId: action, params } });
       const text = result === undefined ? `Action ${action} completed.` : JSON.stringify(result, null, 2);
       return textResult(text);
     }, { view: 'call' }),

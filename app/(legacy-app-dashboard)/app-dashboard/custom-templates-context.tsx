@@ -42,13 +42,13 @@ export function CustomTemplatesProvider({ children }: { children: React.ReactNod
       ? templates.map((t) => t.id === template.id ? template : t)
       : [...templates, template];
     setTemplates(next);
-    await saveTemplates(next);
+    await saveTemplates({ data: next });
   }, [templates]);
 
   const deleteTemplate = useCallback(async (id: string) => {
     const next = templates.filter((t) => t.id !== id);
     setTemplates(next);
-    await saveTemplates(next);
+    await saveTemplates({ data: next });
   }, [templates]);
 
   return (

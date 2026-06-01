@@ -81,7 +81,7 @@ export function DocEditor({ namespace, filePath, initialContent, onPublish, onDi
         clearTimeout(timer.current);
       }
       timer.current = setTimeout(() => {
-        saveDocDirectly(namespace, filePath, readMarkdown(ed));
+        saveDocDirectly({ data: { namespace, filePath, content: readMarkdown(ed) } });
       }, SAVE_DEBOUNCE);
     },
   });
@@ -101,9 +101,9 @@ export function DocEditor({ namespace, filePath, initialContent, onPublish, onDi
     }
     setBusy(true);
     // Save working tree (already auto-staged by docs.addFile), commit + push
-    await saveDocDirectly(namespace, filePath, readMarkdown(editor));
+    await saveDocDirectly({ data: { namespace, filePath, content: readMarkdown(editor) } });
     const msg = commitMsg.trim() || `Update ${filePath}`;
-    await gitPublishDocs(namespace, filePath, msg);
+    await gitPublishDocs({ data: { namespace, filePath, message: msg } });
     setCommitMsg('');
     setBusy(false);
     onPublish(readMarkdown(editor));
@@ -114,7 +114,7 @@ export function DocEditor({ namespace, filePath, initialContent, onPublish, onDi
       clearTimeout(timer.current);
     }
     setBusy(true);
-    await gitDiscardFile(namespace, filePath);
+    await gitDiscardFile({ data: { namespace, filePath } });
     setBusy(false);
     onDiscard();
   };

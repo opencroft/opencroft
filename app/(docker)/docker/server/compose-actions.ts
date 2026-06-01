@@ -1,9 +1,8 @@
-'use server';
-
 import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import path from 'path';
 
+import { createServerFn } from '@tanstack/react-start';
 import * as yaml from 'js-yaml';
 
 import { CreateDockerContainerData } from '@/app/(docker)/docker/server/actions';
@@ -206,7 +205,7 @@ function parseComposeServices(content: string, statuses: Record<string, 'running
 
 // --- CRUD operations ---
 
-export async function getDockerComposes(context: string): Promise<DockerCompose[]> {
+export const getDockerComposes = createServerFn({ method: 'POST' }).inputValidator((context: string) => context).handler(async ({ data: context }): Promise<DockerCompose[]> => {
   const dir = getComposesDir(context);
   await fs.mkdir(dir, { recursive: true });
 
@@ -221,30 +220,34 @@ export async function getDockerComposes(context: string): Promise<DockerCompose[
     const services = parseComposeServices(content, statuses);
     return { name, filePath, content, services };
   }));
-}
+});
 
-export async function createDockerCompose(context: string, name: string): Promise<void> {
+export const createDockerCompose = createServerFn({ method: 'POST' }).inputValidator((data: { context: string; name: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { context, name } = data;
   const dir = getComposesDir(context);
   await fs.mkdir(dir, { recursive: true });
 
   const filePath = path.join(dir, `${name}.yml`);
   await fs.writeFile(filePath, dumpYaml({ services: {} }), 'utf-8');
-}
+});
 
-export async function updateDockerCompose(context: string, name: string, content: string): Promise<void> {
+export const updateDockerCompose = createServerFn({ method: 'POST' }).inputValidator((data: { context: string; name: string; content: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { context, name, content } = data;
   yaml.load(content);
   await fs.writeFile(composeFile(context, name), content, 'utf-8');
-}
+});
 
-export async function deleteDockerCompose(context: string, name: string): Promise<void> {
+export const deleteDockerCompose = createServerFn({ method: 'POST' }).inputValidator((data: { context: string; name: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { context, name } = data;
   await fs.unlink(composeFile(context, name));
-}
+});
 
-export async function renameDockerCompose(context: string, oldName: string, newName: string): Promise<void> {
+export const renameDockerCompose = createServerFn({ method: 'POST' }).inputValidator((data: { context: string; oldName: string; newName: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { context, oldName, newName } = data;
   const content = await fs.readFile(composeFile(context, oldName), 'utf-8');
   await fs.writeFile(composeFile(context, newName), content, 'utf-8');
   await fs.unlink(composeFile(context, oldName));
-}
+});
 
 // --- Service CRUD ---
 
@@ -346,7 +349,8 @@ function convertContainerDataToServiceFormat(serviceData: CreateDockerContainerD
   return service;
 }
 
-export async function addServiceToCompose(context: string, composeName: string, serviceName: string, serviceData: CreateDockerContainerData): Promise<void> {
+export const addServiceToCompose = createServerFn({ method: 'POST' }).inputValidator((data: { context: string; composeName: string; serviceName: string; serviceData: CreateDockerContainerData }) => data).handler(async ({ data }): Promise<void> => {
+  const { context, composeName, serviceName, serviceData } = data;
   const file = composeFile(context, composeName);
   const content = await fs.readFile(file, 'utf-8');
   const composeData = yaml.load(content) as Record<string, unknown>;
@@ -358,9 +362,10 @@ export async function addServiceToCompose(context: string, composeName: string, 
   (composeData.services as Record<string, unknown>)[serviceName] = service;
 
   await fs.writeFile(file, dumpYaml(composeData), 'utf-8');
-}
+});
 
-export async function updateServiceInCompose(context: string, composeName: string, oldServiceName: string, newServiceName: string, serviceData: CreateDockerContainerData): Promise<void> {
+export const updateServiceInCompose = createServerFn({ method: 'POST' }).inputValidator((data: { context: string; composeName: string; oldServiceName: string; newServiceName: string; serviceData: CreateDockerContainerData }) => data).handler(async ({ data }): Promise<void> => {
+  const { context, composeName, oldServiceName, newServiceName, serviceData } = data;
   const file = composeFile(context, composeName);
   const content = await fs.readFile(file, 'utf-8');
   const composeData = yaml.load(content) as Record<string, unknown>;
@@ -377,9 +382,10 @@ export async function updateServiceInCompose(context: string, composeName: strin
   (composeData.services as Record<string, unknown>)[newServiceName] = service;
 
   await fs.writeFile(file, dumpYaml(composeData), 'utf-8');
-}
+});
 
-export async function removeServiceFromCompose(context: string, composeName: string, serviceName: string): Promise<void> {
+export const removeServiceFromCompose = createServerFn({ method: 'POST' }).inputValidator((data: { context: string; composeName: string; serviceName: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { context, composeName, serviceName } = data;
   const file = composeFile(context, composeName);
   const content = await fs.readFile(file, 'utf-8');
   const composeData = yaml.load(content) as Record<string, unknown>;
@@ -390,42 +396,51 @@ export async function removeServiceFromCompose(context: string, composeName: str
 
   delete (composeData.services as Record<string, unknown>)[serviceName];
   await fs.writeFile(file, dumpYaml(composeData), 'utf-8');
-}
+});
 
 // --- Docker compose commands ---
 
-export async function upCompose(context: string, name: string): Promise<void> {
+export const upCompose = createServerFn({ method: 'POST' }).inputValidator((data: { context: string; name: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { context, name } = data;
   await executeDockerCommand([...composeArgs(context, name), 'up', '-d'], context);
-}
+});
 
-export async function deployCompose(context: string, name: string): Promise<void> {
+export const deployCompose = createServerFn({ method: 'POST' }).inputValidator((data: { context: string; name: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { context, name } = data;
   await executeDockerCommand([...composeArgs(context, name), 'up', '-d', '--build'], context);
-}
+});
 
-export async function stopCompose(context: string, name: string): Promise<void> {
+export const stopCompose = createServerFn({ method: 'POST' }).inputValidator((data: { context: string; name: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { context, name } = data;
   await executeDockerCommand([...composeArgs(context, name), 'stop'], context);
-}
+});
 
-export async function downCompose(context: string, name: string): Promise<void> {
+export const downCompose = createServerFn({ method: 'POST' }).inputValidator((data: { context: string; name: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { context, name } = data;
   await executeDockerCommand([...composeArgs(context, name), 'down'], context);
-}
+});
 
-export async function startService(context: string, composeName: string, serviceName: string): Promise<void> {
+export const startService = createServerFn({ method: 'POST' }).inputValidator((data: { context: string; composeName: string; serviceName: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { context, composeName, serviceName } = data;
   await executeDockerCommand([...composeArgs(context, composeName), 'up', '-d', serviceName], context);
-}
+});
 
-export async function stopService(context: string, composeName: string, serviceName: string): Promise<void> {
+export const stopService = createServerFn({ method: 'POST' }).inputValidator((data: { context: string; composeName: string; serviceName: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { context, composeName, serviceName } = data;
   await executeDockerCommand([...composeArgs(context, composeName), 'stop', serviceName], context);
-}
+});
 
-export async function terminateService(context: string, composeName: string, serviceName: string): Promise<void> {
+export const terminateService = createServerFn({ method: 'POST' }).inputValidator((data: { context: string; composeName: string; serviceName: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { context, composeName, serviceName } = data;
   await executeDockerCommand([...composeArgs(context, composeName), 'rm', '-sf', serviceName], context);
-}
+});
 
-export async function rebootService(context: string, composeName: string, serviceName: string): Promise<void> {
+export const rebootService = createServerFn({ method: 'POST' }).inputValidator((data: { context: string; composeName: string; serviceName: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { context, composeName, serviceName } = data;
   await executeDockerCommand([...composeArgs(context, composeName), 'restart', serviceName], context);
-}
+});
 
-export async function deployService(context: string, composeName: string, serviceName: string): Promise<void> {
+export const deployService = createServerFn({ method: 'POST' }).inputValidator((data: { context: string; composeName: string; serviceName: string }) => data).handler(async ({ data }): Promise<void> => {
+  const { context, composeName, serviceName } = data;
   await executeDockerCommand([...composeArgs(context, composeName), 'up', '-d', '--build', serviceName], context);
-}
+});

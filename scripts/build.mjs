@@ -1,23 +1,28 @@
 import { execSync } from 'node:child_process';
-import { renameSync } from 'node:fs';
-import { resolve } from 'node:path';
 
 import { build } from 'esbuild';
 
-execSync('next build', { stdio: 'inherit' });
+// 1. Build the TanStack Start app (client + server) into dist/
+execSync('vite build', { stdio: 'inherit' });
 
-const standalone = resolve('.next/standalone');
-renameSync(`${standalone}/server.js`, `${standalone}/server.next.js`);
-
+// 2. Bundle the production Node entry (HTTP + static + WebSocket terminal) that
+//    mounts the built Start fetch handler. Native/runtime modules and the built
+//    server handler stay external (resolved from node_modules / dist at runtime).
 await build({
-  entryPoints: ['scripts/standalone-wrapper.ts'],
+  entryPoints: ['server/prod.ts'],
   bundle: true,
   platform: 'node',
-  format: 'cjs',
-  target: 'node20',
-  external: ['@lydell/node-pty', 'ssh2', 'ws', './server.next.js'],
+  format: 'esm',
+  target: 'node22',
+  outfile: 'dist/prod.mjs',
   tsconfig: 'tsconfig.json',
-  outfile: `${standalone}/server.js`,
+  external: [
+    '@lydell/node-pty',
+    'ssh2',
+    'cpu-features',
+    'ws',
+    './server/server.js',
+  ],
 });
 
-console.log(`> Wrapped Next standalone ${standalone}/server.js with WebSocket upgrade handler`);
+console.log('> Built dist/prod.mjs (Node server with WebSocket terminal)');

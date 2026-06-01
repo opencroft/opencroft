@@ -51,7 +51,7 @@ export function DockerProvider({ children }: { children: React.ReactNode }) {
       serverRef.current = server;
     }
     try {
-      const data = await getDockerContainers(serverRef.current);
+      const data = await getDockerContainers({ data: serverRef.current });
       setState(s => ({ ...s, containers: data }));
     } catch {
       setState(s => ({ ...s, containers: [] }));
@@ -66,36 +66,36 @@ export function DockerProvider({ children }: { children: React.ReactNode }) {
     },
 
     createContainer: async (container: CreateDockerContainerData) => {
-      await createContainer(container);
+      await createContainer({ data: container });
       await loadContainers();
     },
 
     startContainer: async (container: DockerContainer) => {
-      await startContainer(container.id);
+      await startContainer({ data: container.id });
       await loadContainers();
     },
 
     stopContainer: async (container: DockerContainer) => {
-      await stopContainer(container.id);
+      await stopContainer({ data: container.id });
       await loadContainers();
     },
 
     rebootContainer: async (container: DockerContainer) => {
-      await rebootContainer(container.id);
+      await rebootContainer({ data: container.id });
       await loadContainers();
     },
 
     removeContainer: async (container: DockerContainer) => {
-      await removeContainer(container.id);
+      await removeContainer({ data: container.id });
       setState(s => ({ ...s, containers: s.containers.filter(c => c.id !== container.id) }));
     },
 
     openTerminal: async (container: DockerContainer, workingDir?: string) => {
-      await openTerminalInContainer(container.id, workingDir);
+      await openTerminalInContainer({ data: { containerId: container.id, workingDir } });
     },
 
     getContainerMounts: async (containerId: string) => {
-      return await getContainerMounts(containerId);
+      return await getContainerMounts({ data: containerId });
     },
   }), [loadContainers]);
 

@@ -91,7 +91,7 @@ function SecretsStoreSettings({ id, updateData, onDirtyChange, onLoadingChange }
 
   useEffect(() => {
     onLoadingChange(true);
-    getSecrets(id).then((secrets) => {
+    getSecrets({ data: id }).then((secrets) => {
       setRows(secrets.map((s) => ({ key: s.key, value: s.value, dirty: false })));
       setRemoved([]);
       setDirty(false);
@@ -102,11 +102,11 @@ function SecretsStoreSettings({ id, updateData, onDirtyChange, onLoadingChange }
   useEffect(() => {
     onDirtyChange(dirty, async () => {
       for (const key of removed) {
-        await deleteSecret(id, key);
+        await deleteSecret({ data: { storeId: id, key } });
       }
       for (const row of rows) {
         if (row.key && row.dirty) {
-          await setSecret(id, row.key, row.value);
+          await setSecret({ data: { storeId: id, key: row.key, value: row.value } });
         }
       }
       setRemoved([]);

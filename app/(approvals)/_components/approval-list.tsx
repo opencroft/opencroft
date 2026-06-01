@@ -12,7 +12,7 @@ export function ApprovalList({ spaceId }: { spaceId?: string }) {
   const { pendingApprovals, selectedApprovalId } = useSSEEvents();
 
   useEffect(() => {
-    listPendingApprovals(spaceId).then((rows) => {
+    listPendingApprovals({ data: spaceId }).then((rows) => {
       sseEventsStore.setPendingApprovals(rows);
     });
   }, [spaceId]);

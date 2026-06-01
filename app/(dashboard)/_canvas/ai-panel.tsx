@@ -1,7 +1,7 @@
 'use client';
 
+import { useLocation } from '@tanstack/react-router';
 import { Briefcase, MessageSquare, Plus, Trash2, User } from 'lucide-react';
-import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useOverlayContent } from '@/app/(dashboard)/_canvas/overlay-context';
@@ -83,8 +83,8 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
   const [externalAgents, setExternalAgents] = useState<OpenclawAgent[]>([]);
   const [sessions, setSessions] = useState<SessionEntry[]>([]);
   const chatTabs = useChatTabsMaybe();
-  const searchParams = useSearchParams();
-  const chatParam = searchParams?.get('chat') ?? null;
+  const searchParams = new URLSearchParams(useLocation({ select: (l) => l.searchStr }));
+  const chatParam = searchParams.get('chat') ?? null;
 
   // Set fallback key for chat tabs context
   useEffect(() => {
@@ -174,7 +174,7 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
       sessions: a.sessions.filter((s) => s.key !== key),
       sessionCount: Math.max(0, a.sessionCount - (a.sessions.some((s) => s.key === key) ? 1 : 0)),
     })));
-    deleteSession(key).catch((err) => {
+    deleteSession({ data: key }).catch((err) => {
       console.error('Failed to delete OpenClaw session', key, err);
     });
   }, [chatTabs]);

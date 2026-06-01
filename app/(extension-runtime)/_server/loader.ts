@@ -146,7 +146,7 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
     // its own node_modules; fall back to the app for host-provided externals
     // (@prisma/client, ssh2, node built-ins).
     const extRequire = createRequire(bundleFile);
-    const appRequire: NodeRequire = eval('require');
+    const appRequire: NodeRequire = createRequire(import.meta.url);
     const runtimeRequire = ((id: string) => {
       try {
         return extRequire(id);

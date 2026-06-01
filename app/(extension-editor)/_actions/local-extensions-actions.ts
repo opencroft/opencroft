@@ -1,7 +1,7 @@
-'use server';
-
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+
+import { createServerFn } from '@tanstack/react-start';
 
 import { buildExtension } from '@/app/(extension-runtime)/_server/compiler';
 import { flushCache } from '@/app/(extension-runtime)/_server/loader';
@@ -94,7 +94,7 @@ async function loadExtension(slug: string): Promise<LocalExtensionRecord | null>
   };
 }
 
-export async function listLocalExtensions(): Promise<LocalExtensionRecord[]> {
+export const listLocalExtensions = createServerFn({ strict: { output: false } }).handler(async (): Promise<LocalExtensionRecord[]> => {
   const root = localExtRoot();
   let entries: string[];
   try {
@@ -110,16 +110,14 @@ export async function listLocalExtensions(): Promise<LocalExtensionRecord[]> {
     }
   }
   return records;
-}
+});
 
-export async function getLocalExtension(extensionId: string): Promise<LocalExtensionRecord | null> {
+export const getLocalExtension = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((extensionId: string) => extensionId).handler(async ({ data: extensionId }): Promise<LocalExtensionRecord | null> => {
   return loadExtension(slugFromId(extensionId));
-}
+});
 
-export async function updateLocalExtension(
-  extensionId: string,
-  files: Record<string, string>,
-): Promise<LocalExtensionRecord> {
+export const updateLocalExtension = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((data: { extensionId: string; files: Record<string, string> }) => data).handler(async ({ data }): Promise<LocalExtensionRecord> => {
+  const { extensionId, files } = data;
   const slug = slugFromId(extensionId);
   const dir = extDirPath(slug);
   try {
@@ -141,11 +139,9 @@ export async function updateLocalExtension(
     throw new Error(`Failed to read extension ${extensionId} after update`);
   }
   return record;
-}
+});
 
-export async function createLocalExtension(
-  files: Record<string, string>,
-): Promise<LocalExtensionRecord> {
+export const createLocalExtension = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((files: Record<string, string>) => files).handler(async ({ data: files }): Promise<LocalExtensionRecord> => {
   const manifest = JSON.parse(files[MANIFEST_FILE]) as ExtensionManifest;
   const slug = slugFromId(manifest.id);
   const dir = extDirPath(slug);
@@ -171,16 +167,16 @@ export async function createLocalExtension(
     throw new Error(`Failed to create extension ${manifest.id}`);
   }
   return record;
-}
+});
 
-export async function deleteLocalExtension(extensionId: string): Promise<void> {
+export const deleteLocalExtension = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((extensionId: string) => extensionId).handler(async ({ data: extensionId }): Promise<void> => {
   const slug = slugFromId(extensionId);
   const dir = extDirPath(slug);
   await fs.rm(dir, { recursive: true, force: true });
   flushCache(extensionId);
-}
+});
 
-export async function compileLocalExtension(extensionId: string): Promise<BuildResult> {
+export const compileLocalExtension = createServerFn({ method: 'POST', strict: { output: false } }).inputValidator((extensionId: string) => extensionId).handler(async ({ data: extensionId }): Promise<BuildResult> => {
   const slug = slugFromId(extensionId);
   const record = await loadExtension(slug);
   if (!record) {
@@ -188,4 +184,4 @@ export async function compileLocalExtension(extensionId: string): Promise<BuildR
   }
   flushCache(extensionId);
   return buildExtension(extensionId, record.manifest);
-}
+});

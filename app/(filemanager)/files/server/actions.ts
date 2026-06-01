@@ -1,4 +1,4 @@
-'use server';
+import { createServerFn } from '@tanstack/react-start';
 
 import * as dockerStorage from '@/app/(filemanager)/files/server/storage-docker';
 import * as s3Storage from '@/app/(filemanager)/files/server/storage-s3';
@@ -65,38 +65,52 @@ function getStorage(connection: StorageConnection) {
   };
 }
 
-export async function listFiles(params: ListFilesParams): Promise<FileEntry[]> {
-  const storage = getStorage(params.connection);
-  return storage.listFiles(params.path);
-}
+export const listFiles = createServerFn({ method: 'POST' })
+  .inputValidator((params: ListFilesParams) => params)
+  .handler(async ({ data: params }): Promise<FileEntry[]> => {
+    const storage = getStorage(params.connection);
+    return storage.listFiles(params.path);
+  });
 
-export async function downloadFile(params: TransferFileParams): Promise<string> {
-  const storage = getStorage(params.connection);
-  return storage.downloadFile(params.path);
-}
+export const downloadFile = createServerFn({ method: 'POST' })
+  .inputValidator((params: TransferFileParams) => params)
+  .handler(async ({ data: params }): Promise<string> => {
+    const storage = getStorage(params.connection);
+    return storage.downloadFile(params.path);
+  });
 
-export async function uploadFile(params: UploadFileParams): Promise<void> {
-  const storage = getStorage(params.connection);
-  await storage.uploadFile(params.path, params.data, params.filename);
-}
+export const uploadFile = createServerFn({ method: 'POST' })
+  .inputValidator((params: UploadFileParams) => params)
+  .handler(async ({ data: params }): Promise<void> => {
+    const storage = getStorage(params.connection);
+    await storage.uploadFile(params.path, params.data, params.filename);
+  });
 
-export async function deleteFile(params: DeleteFileParams): Promise<void> {
-  const storage = getStorage(params.connection);
-  await storage.deleteFile(params.path);
-}
+export const deleteFile = createServerFn({ method: 'POST' })
+  .inputValidator((params: DeleteFileParams) => params)
+  .handler(async ({ data: params }): Promise<void> => {
+    const storage = getStorage(params.connection);
+    await storage.deleteFile(params.path);
+  });
 
-export async function renameFile(params: RenameFileParams): Promise<void> {
-  const storage = getStorage(params.connection);
-  await storage.renameFile(params.oldPath, params.newPath);
-}
+export const renameFile = createServerFn({ method: 'POST' })
+  .inputValidator((params: RenameFileParams) => params)
+  .handler(async ({ data: params }): Promise<void> => {
+    const storage = getStorage(params.connection);
+    await storage.renameFile(params.oldPath, params.newPath);
+  });
 
-export async function createDirectory(params: CreateDirectoryParams): Promise<void> {
-  const storage = getStorage(params.connection);
-  await storage.createDirectory(params.path);
-}
+export const createDirectory = createServerFn({ method: 'POST' })
+  .inputValidator((params: CreateDirectoryParams) => params)
+  .handler(async ({ data: params }): Promise<void> => {
+    const storage = getStorage(params.connection);
+    await storage.createDirectory(params.path);
+  });
 
-export async function testConnection(connection: StorageConnection): Promise<boolean> {
-  const storage = getStorage(connection);
-  await storage.listFiles('/');
-  return true;
-}
+export const testConnection = createServerFn({ method: 'POST' })
+  .inputValidator((connection: StorageConnection) => connection)
+  .handler(async ({ data: connection }): Promise<boolean> => {
+    const storage = getStorage(connection);
+    await storage.listFiles('/');
+    return true;
+  });

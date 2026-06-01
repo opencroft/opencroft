@@ -1,6 +1,6 @@
-'use server';
-
 import { spawn } from 'child_process';
+
+import { createServerFn } from '@tanstack/react-start';
 
 export interface DockerContext {
   name: string;
@@ -48,7 +48,7 @@ async function resolveSSHHost(endpoint: string): Promise<string> {
   return match ? match[1].trim() : sshHost;
 }
 
-export async function getDockerContexts(): Promise<DockerContext[]> {
+export const getDockerContexts = createServerFn().handler(async (): Promise<DockerContext[]> => {
   const stdout = await runDocker(['context', 'ls', '--format=json']);
   const items = stdout
     .split('\n')
@@ -62,14 +62,14 @@ export async function getDockerContexts(): Promise<DockerContext[]> {
     host: await resolveSSHHost(json.DockerEndpoint || ''),
     current: json.Current,
   })));
-}
+});
 
-export async function getCurrentDockerContext(): Promise<string> {
+export const getCurrentDockerContext = createServerFn().handler(async (): Promise<string> => {
   const stdout = await runDocker(['context', 'show']);
   return stdout.trim();
-}
+});
 
-export async function resolveServer(server: string): Promise<string> {
+export const resolveServer = createServerFn({ method: 'POST' }).inputValidator((server: string) => server).handler(async ({ data: server }): Promise<string> => {
   if (server !== 'localhost') {
     return server;
   }
@@ -79,4 +79,4 @@ export async function resolveServer(server: string): Promise<string> {
     return 'rootless';
   }
   return 'default';
-}
+});
