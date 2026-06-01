@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/*.gen.ts", "!components/ui", "!**/_builtin"]
+    "includes": ["**", "!**/*.gen.ts", "!**/_builtin"]
   },
   "formatter": {
     "enabled": true,
