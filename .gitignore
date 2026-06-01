@@ -47,3 +47,4 @@ dist/
 /.cache/
 /data/
 .mcp.json
+*.gen.ts
