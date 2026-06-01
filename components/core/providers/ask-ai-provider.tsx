@@ -1,39 +1,39 @@
-'use client';
+'use client'
 
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, type ReactNode, useContext, useState } from 'react'
 
 interface AskAIContextValue {
-  isOpen: boolean;
-  content: string;
-  instruction: string;
-  onApply: ((result: string) => void) | null;
-  openChat: (content: string, instruction: string, onApply: (result: string) => void) => void;
-  closeChat: () => void;
-  setContent: (content: string) => void;
+  isOpen: boolean
+  content: string
+  instruction: string
+  onApply: ((result: string) => void) | null
+  openChat: (content: string, instruction: string, onApply: (result: string) => void) => void
+  closeChat: () => void
+  setContent: (content: string) => void
 }
 
-const AskAIContext = createContext<AskAIContextValue | null>(null);
+const AskAIContext = createContext<AskAIContextValue | null>(null)
 
 interface AskAIProviderProps {
-  children: ReactNode;
+  children: ReactNode
 }
 
 export function AskAIProvider({ children }: AskAIProviderProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [content, setContent] = useState('');
-  const [instruction, setInstruction] = useState('');
-  const [onApply, setOnApply] = useState<((result: string) => void) | null>(null);
+  const [isOpen, setIsOpen] = useState(false)
+  const [content, setContent] = useState('')
+  const [instruction, setInstruction] = useState('')
+  const [onApply, setOnApply] = useState<((result: string) => void) | null>(null)
 
   const openChat = (newContent: string, newInstruction: string, applyCallback: (result: string) => void) => {
-    setContent(newContent);
-    setInstruction(newInstruction);
-    setOnApply(() => applyCallback);
-    setIsOpen(true);
-  };
+    setContent(newContent)
+    setInstruction(newInstruction)
+    setOnApply(() => applyCallback)
+    setIsOpen(true)
+  }
 
   const closeChat = () => {
-    setIsOpen(false);
-  };
+    setIsOpen(false)
+  }
 
   return (
     <AskAIContext.Provider
@@ -49,13 +49,13 @@ export function AskAIProvider({ children }: AskAIProviderProps) {
     >
       {children}
     </AskAIContext.Provider>
-  );
+  )
 }
 
 export function useAskAI() {
-  const context = useContext(AskAIContext);
+  const context = useContext(AskAIContext)
   if (!context) {
-    throw new Error('useAskAI must be used within AskAIProvider');
+    throw new Error('useAskAI must be used within AskAIProvider')
   }
-  return context;
+  return context
 }

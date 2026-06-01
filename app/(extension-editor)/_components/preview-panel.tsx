@@ -1,21 +1,15 @@
-'use client';
+'use client'
 
-import {
-  Background,
-  BackgroundVariant,
-  ReactFlow,
-  ReactFlowProvider,
-  type Node,
-} from '@xyflow/react';
-import { useMemo } from 'react';
+import { Background, BackgroundVariant, type Node, ReactFlow, ReactFlowProvider } from '@xyflow/react'
+import { useMemo } from 'react'
 
-import '@/app/(dashboard)/_canvas/flow-editor.css';
-import { buildNodeTypes } from '@/app/(dashboard)/_canvas/node-wrapper';
-import { extensionRegistry } from '@/app/(extension-runtime)/_client/registry';
+import '@/app/(dashboard)/_canvas/flow-editor.css'
+import { buildNodeTypes } from '@/app/(dashboard)/_canvas/node-wrapper'
+import { extensionRegistry } from '@/app/(extension-runtime)/_client/registry'
 
 interface PreviewPanelProps {
-  previewTypeId: string | null;
-  version: number;
+  previewTypeId: string | null
+  version: number
 }
 
 export function PreviewPanel({ previewTypeId, version }: PreviewPanelProps) {
@@ -23,16 +17,13 @@ export function PreviewPanel({ previewTypeId, version }: PreviewPanelProps) {
     () => (previewTypeId ? extensionRegistry.resolveNode(previewTypeId) : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [previewTypeId, version],
-  );
+  )
 
-  const nodeTypes = useMemo(
-    () => (resolved ? buildNodeTypes([resolved]) : {}),
-    [resolved],
-  );
+  const nodeTypes = useMemo(() => (resolved ? buildNodeTypes([resolved]) : {}), [resolved])
 
   const nodes: Node[] = useMemo(() => {
     if (!resolved) {
-      return [];
+      return []
     }
     return [
       {
@@ -43,15 +34,11 @@ export function PreviewPanel({ previewTypeId, version }: PreviewPanelProps) {
         selected: true,
         draggable: false,
       },
-    ];
-  }, [resolved]);
+    ]
+  }, [resolved])
 
   if (!resolved) {
-    return (
-      <div className='h-full w-full flex items-center justify-center text-xs text-muted-foreground'>
-        Compile to preview
-      </div>
-    );
+    return <div className='h-full w-full flex items-center justify-center text-xs text-muted-foreground'>Compile to preview</div>
   }
 
   return (
@@ -76,5 +63,5 @@ export function PreviewPanel({ previewTypeId, version }: PreviewPanelProps) {
         </ReactFlow>
       </ReactFlowProvider>
     </div>
-  );
+  )
 }

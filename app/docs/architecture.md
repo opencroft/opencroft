@@ -152,7 +152,7 @@ See [mcp.md](mcp.md) for the full tool list and behaviour.
 
 ### 5. Live updates
 
-`SSEProvider` (`app/(sse)/components/`) opens an EventSource against
+`SSEProvider` (`app/(sse)/_components/`) opens an EventSource against
 `/api/sse`. The server uses `lib/toast-store.ts` to broadcast toasts,
 extension-rebuilt notifications and focus events to every open tab. The
 canvas uses `useSSEEvents` to react: a rebuilt extension triggers an

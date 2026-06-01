@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react';
 
 import { Loader2 } from 'lucide-react';
 
-import { SshKey } from '@/app/(server)/server/ssh-key';
-import { listSshKeys } from '@/app/(ssh)/ssh-keys/actions';
+import { SshKey } from '@/app/(server)/_server/ssh-key';
+import { listSshKeys } from '@/app/(ssh)/_server/ssh-keys-actions';
 import { Flex } from '@/components/ui/layout/flex';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 

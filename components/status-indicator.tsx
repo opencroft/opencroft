@@ -1,19 +1,15 @@
-import type { HTMLAttributes } from 'react';
+import type { HTMLAttributes } from 'react'
 
-import { cn } from '@/lib/utils';
+import { cn } from '@/lib/utils'
 
-type StatusVariant = 'primary' | 'secondary' | 'muted' | 'accent' | 'success' | 'warning' | 'destructive';
+type StatusVariant = 'primary' | 'secondary' | 'muted' | 'accent' | 'success' | 'warning' | 'destructive'
 
 export interface StatusIndicatorProps extends Omit<HTMLAttributes<HTMLSpanElement>, 'className'> {
-  variant?: StatusVariant;
-  className?: string;
+  variant?: StatusVariant
+  className?: string
 }
 
-export const StatusIndicator = ({
-  variant,
-  className,
-  ...props
-}: StatusIndicatorProps) => (
+export const StatusIndicator = ({ variant, className, ...props }: StatusIndicatorProps) => (
   <span className={cn('relative flex h-2 w-2', 'group', variant, className)} {...props}>
     <span
       className={cn(
@@ -40,6 +36,6 @@ export const StatusIndicator = ({
       )}
     />
   </span>
-);
+)
 
-export default StatusIndicator;
+export default StatusIndicator

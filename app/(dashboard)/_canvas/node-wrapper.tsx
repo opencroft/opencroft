@@ -1,37 +1,37 @@
-'use client';
+'use client'
 
-import { type Node, type NodeProps } from '@xyflow/react';
-import { AlertTriangle } from 'lucide-react';
-import { Component, memo, type ReactNode } from 'react';
+import type { Node, NodeProps } from '@xyflow/react'
+import { AlertTriangle } from 'lucide-react'
+import { Component, memo, type ReactNode } from 'react'
 
-import { NodeAccentProvider } from '@/app/(dashboard)/_canvas/node-frame';
-import { extensionRegistry, type ResolvedNode } from '@/app/(extension-runtime)/_client/registry';
-import { type NodeData } from '@/app/(extension-runtime)/_types';
+import { NodeAccentProvider } from '@/app/(dashboard)/_canvas/node-frame'
+import { extensionRegistry, type ResolvedNode } from '@/app/(extension-runtime)/_client/registry'
+import type { NodeData } from '@/app/(extension-runtime)/_types'
 
 interface NodeErrorBoundaryProps {
-  typeId: string;
-  children: ReactNode;
+  typeId: string
+  children: ReactNode
 }
 
 interface NodeErrorBoundaryState {
-  error: Error | null;
+  error: Error | null
 }
 
 class NodeErrorBoundary extends Component<NodeErrorBoundaryProps, NodeErrorBoundaryState> {
-  state: NodeErrorBoundaryState = { error: null };
+  state: NodeErrorBoundaryState = { error: null }
 
   static getDerivedStateFromError(error: Error): NodeErrorBoundaryState {
-    return { error };
+    return { error }
   }
 
   componentDidUpdate(prevProps: NodeErrorBoundaryProps): void {
     if (prevProps.typeId !== this.props.typeId && this.state.error) {
-      this.setState({ error: null });
+      this.setState({ error: null })
     }
   }
 
   componentDidCatch(error: Error): void {
-    console.error(`[ext:${this.props.typeId}] render failed`, error);
+    console.error(`[ext:${this.props.typeId}] render failed`, error)
   }
 
   render(): ReactNode {
@@ -46,42 +46,38 @@ class NodeErrorBoundary extends Component<NodeErrorBoundaryProps, NodeErrorBound
             {this.state.error.message}
           </div>
         </div>
-      );
+      )
     }
-    return this.props.children;
+    return this.props.children
   }
 }
 
 interface NodeWrapperProps extends NodeProps<Node<NodeData>> {
-  type: string;
+  type: string
 }
 
 function NodeWrapperImpl(props: NodeWrapperProps) {
-  const resolved = extensionRegistry.resolveNode(props.type);
+  const resolved = extensionRegistry.resolveNode(props.type)
   if (!resolved) {
-    return (
-      <div className='rounded-md border border-destructive bg-destructive/10 text-destructive px-2 py-1 text-xs'>
-        Unknown extension: {props.type}
-      </div>
-    );
+    return <div className='rounded-md border border-destructive bg-destructive/10 text-destructive px-2 py-1 text-xs'>Unknown extension: {props.type}</div>
   }
-  const Component = resolved.component;
+  const Component = resolved.component
   return (
     <NodeAccentProvider accent={resolved.accent}>
       <NodeErrorBoundary typeId={props.type}>
         <Component {...props} />
       </NodeErrorBoundary>
     </NodeAccentProvider>
-  );
+  )
 }
 
 export function buildNodeTypes(nodes: ResolvedNode[]) {
-  const entries: Record<string, React.ComponentType<NodeProps<Node<NodeData>>>> = {};
+  const entries: Record<string, React.ComponentType<NodeProps<Node<NodeData>>>> = {}
   for (const resolved of nodes) {
-    const typeId = resolved.typeId;
-    const Wrapped = (props: NodeProps<Node<NodeData>>) => <NodeWrapperImpl {...props} type={typeId} />;
-    Wrapped.displayName = `ExtensionNode(${typeId})`;
-    entries[typeId] = memo(Wrapped);
+    const typeId = resolved.typeId
+    const Wrapped = (props: NodeProps<Node<NodeData>>) => <NodeWrapperImpl {...props} type={typeId} />
+    Wrapped.displayName = `ExtensionNode(${typeId})`
+    entries[typeId] = memo(Wrapped)
   }
-  return entries;
+  return entries
 }

@@ -1,8 +1,8 @@
-import tailwindcss from '@tailwindcss/vite';
-import { tanstackStart } from '@tanstack/react-start/plugin/vite';
-import viteReact from '@vitejs/plugin-react';
-import { defineConfig, type Plugin, type ViteDevServer } from 'vite';
-import { WebSocketServer } from 'ws';
+import tailwindcss from '@tailwindcss/vite'
+import { tanstackStart } from '@tanstack/react-start/plugin/vite'
+import viteReact from '@vitejs/plugin-react'
+import { defineConfig, type Plugin, type ViteDevServer } from 'vite'
+import { WebSocketServer } from 'ws'
 
 /**
  * Mounts the terminal WebSocket handler on Vite's dev HTTP server, mirroring the
@@ -13,34 +13,34 @@ function wsTerminalPlugin(): Plugin {
   return {
     name: 'opencroft-ws-terminal',
     configureServer(server: ViteDevServer) {
-      let wss: WebSocketServer | null = null;
+      let wss: WebSocketServer | null = null
       const ensureWss = async () => {
         if (wss) {
-          return wss;
+          return wss
         }
-        const { setupTerminalWss } = await server.ssrLoadModule('/app/(terminal)/server/terminal.ts');
-        wss = new WebSocketServer({ noServer: true });
-        setupTerminalWss(wss);
-        return wss;
-      };
+        const { setupTerminalWss } = await server.ssrLoadModule('/app/(terminal)/_server/terminal.ts')
+        wss = new WebSocketServer({ noServer: true })
+        setupTerminalWss(wss)
+        return wss
+      }
       server.httpServer?.on('upgrade', (req, socket, head) => {
-        const { pathname } = new URL(req.url ?? '', 'http://localhost');
+        const { pathname } = new URL(req.url ?? '', 'http://localhost')
         if (pathname !== '/api/ws/terminal') {
-          return;
+          return
         }
         ensureWss()
           .then((server) => {
             server.handleUpgrade(req, socket, head, (client) => {
-              server.emit('connection', client, req);
-            });
+              server.emit('connection', client, req)
+            })
           })
           .catch((err) => {
-            console.error('[ws-terminal] upgrade failed', err);
-            socket.destroy();
-          });
-      });
+            console.error('[ws-terminal] upgrade failed', err)
+            socket.destroy()
+          })
+      })
     },
-  };
+  }
 }
 
 export default defineConfig({
@@ -54,28 +54,10 @@ export default defineConfig({
   // Native / server-only modules must never be pulled into client dep optimization
   // or bundled for SSR — they are resolved from node_modules at runtime.
   optimizeDeps: {
-    exclude: [
-      'ssh2',
-      'cpu-features',
-      '@lydell/node-pty',
-      'esbuild',
-      'esbuild-wasm',
-      'better-sqlite3',
-      '@prisma/client',
-      '@prisma/adapter-better-sqlite3',
-    ],
+    exclude: ['ssh2', 'cpu-features', '@lydell/node-pty', 'esbuild', 'esbuild-wasm', 'better-sqlite3', '@prisma/client', '@prisma/adapter-better-sqlite3'],
   },
   ssr: {
-    external: [
-      'ssh2',
-      'cpu-features',
-      '@lydell/node-pty',
-      'esbuild',
-      'esbuild-wasm',
-      'better-sqlite3',
-      '@prisma/client',
-      '@prisma/adapter-better-sqlite3',
-    ],
+    external: ['ssh2', 'cpu-features', '@lydell/node-pty', 'esbuild', 'esbuild-wasm', 'better-sqlite3', '@prisma/client', '@prisma/adapter-better-sqlite3'],
   },
   plugins: [
     wsTerminalPlugin(),
@@ -83,9 +65,10 @@ export default defineConfig({
     tanstackStart({
       srcDirectory: 'app',
       router: {
-        routesDirectory: 'routes',
+        routesDirectory: '.',
+        routeFileIgnorePattern: '(^|/)(_[^_/]|router\\.|server\\.|client\\.|start\\.|routeTree\\.gen\\.)',
       },
     }),
     viteReact(),
   ],
-});
+})

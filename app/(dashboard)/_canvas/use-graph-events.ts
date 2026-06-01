@@ -1,62 +1,62 @@
-'use client';
+'use client'
 
-import { type Node, useReactFlow } from '@xyflow/react';
-import { useEffect, useRef } from 'react';
+import { type Node, useReactFlow } from '@xyflow/react'
+import { useEffect, useRef } from 'react'
 
-import { useSSEEvents } from '@/app/(sse)/stores/sse-events-store';
+import { useSSEEvents } from '@/app/(sse)/_lib/sse-events-store'
 
 interface UseGraphEventsOptions {
-  setNodes: React.Dispatch<React.SetStateAction<Node[]>>;
-  onDismissComment?: (nodeId: string) => void;
+  setNodes: React.Dispatch<React.SetStateAction<Node[]>>
+  onDismissComment?: (nodeId: string) => void
 }
 
 export function useGraphEvents({ setNodes, onDismissComment }: UseGraphEventsOptions) {
-  const { focusedNodeId, focusVersion, comments } = useSSEEvents();
-  const { getNode, fitView } = useReactFlow();
-  const prevFocusedRef = useRef<string>('');
-  const onDismissRef = useRef(onDismissComment);
-  onDismissRef.current = onDismissComment;
+  const { focusedNodeId, focusVersion, comments } = useSSEEvents()
+  const { getNode, fitView } = useReactFlow()
+  const prevFocusedRef = useRef<string>('')
+  const onDismissRef = useRef(onDismissComment)
+  onDismissRef.current = onDismissComment
 
   useEffect(() => {
-    const fingerprint = `${focusedNodeId ?? ''}:${focusVersion}`;
+    const fingerprint = `${focusedNodeId ?? ''}:${focusVersion}`
     if (fingerprint === prevFocusedRef.current) {
-      return;
+      return
     }
-    prevFocusedRef.current = fingerprint;
+    prevFocusedRef.current = fingerprint
 
     if (focusedNodeId) {
-      const node = getNode(focusedNodeId);
+      const node = getNode(focusedNodeId)
       if (!node) {
-        return;
+        return
       }
       setNodes((nds) =>
         nds.map((n) => ({
           ...n,
           selected: n.id === focusedNodeId,
         })),
-      );
+      )
       setTimeout(() => {
         fitView({
           nodes: [{ id: focusedNodeId }],
           padding: 0.4,
           duration: 400,
-        });
-      }, 50);
-      return;
+        })
+      }, 50)
+      return
     }
-    setNodes((nds) => nds.map((n) => ({ ...n, selected: false })));
-  }, [focusedNodeId, focusVersion, getNode, setNodes, fitView]);
+    setNodes((nds) => nds.map((n) => ({ ...n, selected: false })))
+  }, [focusedNodeId, focusVersion, getNode, setNodes, fitView])
 
   useEffect(() => {
     setNodes((nds) => {
-      const withoutComments = nds.filter((n) => n.type !== 'comment');
-      const commentNodes: Node[] = [];
+      const withoutComments = nds.filter((n) => n.type !== 'comment')
+      const commentNodes: Node[] = []
       for (const [, comment] of comments) {
-        const target = withoutComments.find((n) => n.id === comment.nodeId);
+        const target = withoutComments.find((n) => n.id === comment.nodeId)
         if (!target) {
-          continue;
+          continue
         }
-        const nodeWidth = (target.measured?.width ?? (target.style?.width as number) ?? 200) as number;
+        const nodeWidth = (target.measured?.width ?? (target.style?.width as number) ?? 200) as number
         commentNodes.push({
           id: `comment-${comment.nodeId}`,
           type: 'comment',
@@ -73,9 +73,9 @@ export function useGraphEvents({ setNodes, onDismissComment }: UseGraphEventsOpt
           selectable: false,
           deletable: false,
           style: { zIndex: 1000 },
-        });
+        })
       }
-      return [...withoutComments, ...commentNodes];
-    });
-  }, [comments, setNodes]);
+      return [...withoutComments, ...commentNodes]
+    })
+  }, [comments, setNodes])
 }

@@ -1,13 +1,13 @@
-import { useLocation, useRouter } from '@tanstack/react-router';
-import { useCallback, useMemo } from 'react';
+import { useLocation, useRouter } from '@tanstack/react-router'
+import { useCallback, useMemo } from 'react'
 
 /**
  * Builds a path+query URL string from search params, preserving the current pathname.
  * @internal
  */
 function buildUrl(params: URLSearchParams): string {
-  const queryString = params.toString();
-  return queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname;
+  const queryString = params.toString()
+  return queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname
 }
 
 /**
@@ -23,47 +23,47 @@ function buildUrl(params: URLSearchParams): string {
  * // URL: ?q=hello -> search = 'hello'
  * // setSearch('world') -> URL becomes ?q=world
  */
-export function useUrlState<T extends string | number | boolean>(
-  key: string,
-  defaultValue: T
-): [T, (value: T) => void] {
-  const searchStr = useLocation({ select: (l) => l.searchStr });
-  const router = useRouter();
-  const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr]);
+export function useUrlState<T extends string | number | boolean>(key: string, defaultValue: T): [T, (value: T) => void] {
+  const searchStr = useLocation({ select: (l) => l.searchStr })
+  const router = useRouter()
+  const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr])
 
   const value = useMemo(() => {
-    const rawValue = searchParams.get(key);
+    const rawValue = searchParams.get(key)
 
     if (rawValue === null) {
-      return defaultValue;
+      return defaultValue
     }
 
     // Parse based on default value type
     if (typeof defaultValue === 'boolean') {
-      return rawValue === 'true';
+      return rawValue === 'true'
     }
 
     if (typeof defaultValue === 'number') {
-      const parsed = Number(rawValue);
-      return isNaN(parsed) ? defaultValue : parsed;
+      const parsed = Number(rawValue)
+      return isNaN(parsed) ? defaultValue : parsed
     }
 
-    return rawValue;
-  }, [searchParams, key, defaultValue]);
+    return rawValue
+  }, [searchParams, key, defaultValue])
 
-  const setValue = useCallback((newValue: string | number | boolean) => {
-    const params = new URLSearchParams(searchParams);
+  const setValue = useCallback(
+    (newValue: string | number | boolean) => {
+      const params = new URLSearchParams(searchParams)
 
-    if (newValue === defaultValue || (typeof defaultValue === 'string' && !newValue)) {
-      params.delete(key);
-    } else {
-      params.set(key, String(newValue));
-    }
+      if (newValue === defaultValue || (typeof defaultValue === 'string' && !newValue)) {
+        params.delete(key)
+      } else {
+        params.set(key, String(newValue))
+      }
 
-    router.history.replace(buildUrl(params));
-  }, [searchParams, key, defaultValue, router]);
+      router.history.replace(buildUrl(params))
+    },
+    [searchParams, key, defaultValue, router],
+  )
 
-  return [value, setValue] as unknown as [T, (value: T) => void];
+  return [value, setValue] as unknown as [T, (value: T) => void]
 }
 
 /**
@@ -79,34 +79,34 @@ export function useUrlState<T extends string | number | boolean>(
  * // URL: ?tags=foo&tags=bar&tags=baz -> tags = ['foo', 'bar', 'baz']
  * // setTags(['a', 'b']) -> URL becomes ?tags=a&tags=b
  */
-export function useUrlArrayState(
-  key: string,
-  defaultValue: string[] = []
-): [string[], (value: string[]) => void] {
-  const searchStr = useLocation({ select: (l) => l.searchStr });
-  const router = useRouter();
-  const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr]);
+export function useUrlArrayState(key: string, defaultValue: string[] = []): [string[], (value: string[]) => void] {
+  const searchStr = useLocation({ select: (l) => l.searchStr })
+  const router = useRouter()
+  const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr])
 
   const value = useMemo(() => {
-    const allValues = searchParams.getAll(key);
-    return allValues.length > 0 ? allValues : defaultValue;
-  }, [searchParams, key, defaultValue]);
+    const allValues = searchParams.getAll(key)
+    return allValues.length > 0 ? allValues : defaultValue
+  }, [searchParams, key, defaultValue])
 
-  const setValue = useCallback((newValue: string[]) => {
-    const params = new URLSearchParams(searchParams);
+  const setValue = useCallback(
+    (newValue: string[]) => {
+      const params = new URLSearchParams(searchParams)
 
-    // Remove all existing values for this key
-    params.delete(key);
+      // Remove all existing values for this key
+      params.delete(key)
 
-    // Add each value as a separate parameter
-    if (newValue.length > 0) {
-      newValue.forEach(v => params.append(key, v));
-    }
+      // Add each value as a separate parameter
+      if (newValue.length > 0) {
+        newValue.forEach((v) => params.append(key, v))
+      }
 
-    router.history.replace(buildUrl(params));
-  }, [searchParams, key, router]);
+      router.history.replace(buildUrl(params))
+    },
+    [searchParams, key, router],
+  )
 
-  return [value, setValue];
+  return [value, setValue]
 }
 
 /**
@@ -122,48 +122,48 @@ export function useUrlArrayState(
  * // URL: ?filter.age=25&filter.name=John -> filters = { age: '25', name: 'John' }
  * // setFilters({ age: '30' }) -> URL becomes ?filter.age=30
  */
-export function useUrlRecordState<T extends Record<string, string>>(
-  prefix: string,
-  defaultValue: T = {} as T
-): [T, (value: T) => void] {
-  const searchStr = useLocation({ select: (l) => l.searchStr });
-  const router = useRouter();
-  const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr]);
+export function useUrlRecordState<T extends Record<string, string>>(prefix: string, defaultValue: T = {} as T): [T, (value: T) => void] {
+  const searchStr = useLocation({ select: (l) => l.searchStr })
+  const router = useRouter()
+  const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr])
 
   const value = useMemo(() => {
-    const result: Record<string, string> = {};
-    let hasValues = false;
+    const result: Record<string, string> = {}
+    let hasValues = false
 
     searchParams.forEach((value, key) => {
       if (key.startsWith(`${prefix}.`)) {
-        const fieldKey = key.substring(prefix.length + 1);
-        result[fieldKey] = value;
-        hasValues = true;
+        const fieldKey = key.substring(prefix.length + 1)
+        result[fieldKey] = value
+        hasValues = true
       }
-    });
+    })
 
-    return hasValues ? (result as T) : defaultValue;
-  }, [searchParams, prefix, defaultValue]);
+    return hasValues ? (result as T) : defaultValue
+  }, [searchParams, prefix, defaultValue])
 
-  const setValue = useCallback((newValue: T) => {
-    const params = new URLSearchParams(searchParams);
+  const setValue = useCallback(
+    (newValue: T) => {
+      const params = new URLSearchParams(searchParams)
 
-    // Remove all existing parameters with this prefix
-    Array.from(params.keys()).forEach(key => {
-      if (key.startsWith(`${prefix}.`)) {
-        params.delete(key);
-      }
-    });
+      // Remove all existing parameters with this prefix
+      Array.from(params.keys()).forEach((key) => {
+        if (key.startsWith(`${prefix}.`)) {
+          params.delete(key)
+        }
+      })
 
-    // Add new parameters
-    Object.entries(newValue).forEach(([key, val]) => {
-      if (val) {
-        params.set(`${prefix}.${key}`, String(val));
-      }
-    });
+      // Add new parameters
+      Object.entries(newValue).forEach(([key, val]) => {
+        if (val) {
+          params.set(`${prefix}.${key}`, String(val))
+        }
+      })
 
-    router.history.replace(buildUrl(params));
-  }, [searchParams, prefix, router]);
+      router.history.replace(buildUrl(params))
+    },
+    [searchParams, prefix, router],
+  )
 
-  return [value, setValue];
+  return [value, setValue]
 }

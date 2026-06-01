@@ -1,69 +1,69 @@
-'use client';
+'use client'
 
-import { forwardRef, Ref, ComponentType, useImperativeHandle, useState, ReactNode } from 'react';
+import { type ComponentType, forwardRef, type ReactNode, type Ref, useImperativeHandle, useState } from 'react'
 
-import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { HorizontalBox } from '@/components/ui/layout/horizontal-box';
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { HorizontalBox } from '@/components/ui/layout/horizontal-box'
 
 export interface EditPopupFormProps<T> {
-  data?: T;
-  setData?: (data: T) => void;
+  data?: T
+  setData?: (data: T) => void
 }
 
 export interface EditPopupRef<T = unknown> {
-  open: (title: string, data: T, createMode: boolean) => void;
-  close: () => void;
+  open: (title: string, data: T, createMode: boolean) => void
+  close: () => void
 }
 
 interface EditPopupProps<T> {
-  children?: ReactNode;
-  form: ComponentType<EditPopupFormProps<T>>;
-  onCreate?: (data: T) => Promise<void>;
-  onSave?: (data: T) => Promise<void>;
-  onDelete?: (data: T) => Promise<void>;
+  children?: ReactNode
+  form: ComponentType<EditPopupFormProps<T>>
+  onCreate?: (data: T) => Promise<void>
+  onSave?: (data: T) => Promise<void>
+  onDelete?: (data: T) => Promise<void>
 }
 
 function EditPopup<T>({ form: FormComponent, onCreate, onSave, onDelete }: EditPopupProps<T>, ref: Ref<EditPopupRef<T>>) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [title, setTitle] = useState('Edit');
-  const [data, setData] = useState<T | undefined>();
-  const [createMode, setCreateMode] = useState(false);
+  const [isOpen, setIsOpen] = useState(false)
+  const [title, setTitle] = useState('Edit')
+  const [data, setData] = useState<T | undefined>()
+  const [createMode, setCreateMode] = useState(false)
 
   const handleClose = () => {
-    setIsOpen(false);
-  };
+    setIsOpen(false)
+  }
 
   const handleSave = async () => {
-    handleClose();
+    handleClose()
     if (data && onSave) {
-      await onSave(data);
+      await onSave(data)
     }
-  };
+  }
 
   const handleCreate = async () => {
-    handleClose();
+    handleClose()
     if (data && onCreate) {
-      await onCreate(data);
+      await onCreate(data)
     }
-  };
+  }
 
   const handleDeletion = async () => {
-    handleClose();
+    handleClose()
     if (data && onDelete) {
-      await onDelete(data);
+      await onDelete(data)
     }
-  };
+  }
 
   useImperativeHandle(ref, () => ({
     open: (title: string, data: T, createMode: boolean = false) => {
-      setTitle(title);
-      setData(data);
-      setCreateMode(createMode);
-      setIsOpen(true);
+      setTitle(title)
+      setData(data)
+      setCreateMode(createMode)
+      setIsOpen(true)
     },
     close: handleClose,
-  }));
+  }))
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
@@ -77,14 +77,20 @@ function EditPopup<T>({ form: FormComponent, onCreate, onSave, onDelete }: EditP
             <Button onClick={handleCreate}>Create</Button>
           ) : (
             <>
-              {onDelete ? <Button variant={'destructive'} onClick={handleDeletion}>Delete</Button> : ''}
+              {onDelete ? (
+                <Button variant={'destructive'} onClick={handleDeletion}>
+                  Delete
+                </Button>
+              ) : (
+                ''
+              )}
               <Button onClick={handleSave}>Save</Button>
             </>
           )}
         </HorizontalBox>
       </DialogContent>
     </Dialog>
-  );
-};
+  )
+}
 
-export default forwardRef(EditPopup);
+export default forwardRef(EditPopup)

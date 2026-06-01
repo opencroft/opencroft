@@ -1,15 +1,15 @@
-'use client';
+'use client'
 
-import { useLocation } from '@tanstack/react-router';
-import { Briefcase, MessageSquare, Plus, Trash2, User } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocation } from '@tanstack/react-router'
+import { Briefcase, MessageSquare, Plus, Trash2, User } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { useOverlayContent } from '@/app/(dashboard)/_canvas/overlay-context';
-import { deleteSession, loadOpenclaw, type OpenclawAgent, type OpenclawSession } from '@/app/(openclaw)/openclaw/actions';
-import { AgentChat, AgentChatInput, useAgentSession } from '@/app/(openclaw)/openclaw/agent-chat';
-import { useChatTabsMaybe } from '@/app/(openclaw)/openclaw/chat-tabs-context';
-import { slug } from '@/app/(server)/server/types';
-import { type AgentNodeRef, type AgentJobRef, listAgentNodes } from '@/app/(space)/server/agents';
+import { useOverlayContent } from '@/app/(dashboard)/_canvas/overlay-context'
+import { AgentChat, AgentChatInput, useAgentSession } from '@/app/(openclaw)/_components/agent-chat'
+import { useChatTabsMaybe } from '@/app/(openclaw)/_lib/chat-tabs-context'
+import { deleteSession, loadOpenclaw, type OpenclawAgent, type OpenclawSession } from '@/app/(openclaw)/_server/actions'
+import { slug } from '@/app/(server)/_server/types'
+import { type AgentJobRef, type AgentNodeRef, listAgentNodes } from '@/app/(space)/_server/agents'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,279 +20,284 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+} from '@/components/ui/dropdown-menu'
 
 interface AiPanelProps {
-  agentId: string;
-  spaceName: string;
-  spaceSlug: string;
-  selectedNodeId: string | null;
-  focused: boolean;
-  onFocusChange: (focused: boolean) => void;
+  agentId: string
+  spaceName: string
+  spaceSlug: string
+  selectedNodeId: string | null
+  focused: boolean
+  onFocusChange: (focused: boolean) => void
 }
 
 interface SessionEntry {
-  key: string;
-  agentNodeId: string;
-  agentName: string;
-  jobNodeId: string;
-  jobName: string;
-  createdAt: number;
+  key: string
+  agentNodeId: string
+  agentName: string
+  jobNodeId: string
+  jobName: string
+  createdAt: number
 }
 
-const SESSIONS_STORAGE_KEY = 'opencroft.aiPanel.sessions';
+const SESSIONS_STORAGE_KEY = 'opencroft.aiPanel.sessions'
 
 function loadStoredSessions(): SessionEntry[] {
   if (typeof window === 'undefined') {
-    return [];
+    return []
   }
-  const raw = window.localStorage.getItem(SESSIONS_STORAGE_KEY);
+  const raw = window.localStorage.getItem(SESSIONS_STORAGE_KEY)
   if (!raw) {
-    return [];
+    return []
   }
-  const parsed = JSON.parse(raw) as SessionEntry[];
-  return Array.isArray(parsed) ? parsed : [];
+  const parsed = JSON.parse(raw) as SessionEntry[]
+  return Array.isArray(parsed) ? parsed : []
 }
 
 function resolveJobForSession(sessionKey: string, sessions: SessionEntry[], agents: AgentNodeRef[]): { job: AgentJobRef | null; agent: AgentNodeRef | null } {
-  const local = sessions.find((s) => s.key === sessionKey);
+  const local = sessions.find((s) => s.key === sessionKey)
   if (local) {
-    const agent = agents.find((a) => a.nodeId === local.agentNodeId);
-    return { job: agent?.jobs.find((j) => j.nodeId === local.jobNodeId) ?? null, agent: agent ?? null };
+    const agent = agents.find((a) => a.nodeId === local.agentNodeId)
+    return { job: agent?.jobs.find((j) => j.nodeId === local.jobNodeId) ?? null, agent: agent ?? null }
   }
-  const parts = sessionKey.split(':');
+  const parts = sessionKey.split(':')
   if (parts.length < 3 || parts[0] !== 'agent') {
-    return { job: null, agent: null };
+    return { job: null, agent: null }
   }
-  const agentSlug = parts[1].trim().toLowerCase();
-  const jobSlug = parts.slice(2).join(':').trim().toLowerCase();
-  const agent = agents.find((a) => slug(a.name) === agentSlug);
-  return { job: agent?.jobs.find((j) => slug(j.name) === jobSlug) ?? null, agent: agent ?? null };
+  const agentSlug = parts[1].trim().toLowerCase()
+  const jobSlug = parts.slice(2).join(':').trim().toLowerCase()
+  const agent = agents.find((a) => slug(a.name) === agentSlug)
+  return { job: agent?.jobs.find((j) => slug(j.name) === jobSlug) ?? null, agent: agent ?? null }
 }
 
 function persistSessions(list: SessionEntry[]) {
   if (typeof window === 'undefined') {
-    return;
+    return
   }
-  window.localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(list));
+  window.localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(list))
 }
 
 export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused, onFocusChange }: AiPanelProps) {
-  const [slashOpen, setSlashOpen] = useState(false);
-  const [agents, setAgents] = useState<AgentNodeRef[]>([]);
-  const [externalAgents, setExternalAgents] = useState<OpenclawAgent[]>([]);
-  const [sessions, setSessions] = useState<SessionEntry[]>([]);
-  const chatTabs = useChatTabsMaybe();
-  const searchParams = new URLSearchParams(useLocation({ select: (l) => l.searchStr }));
-  const chatParam = searchParams.get('chat') ?? null;
+  const [slashOpen, setSlashOpen] = useState(false)
+  const [agents, setAgents] = useState<AgentNodeRef[]>([])
+  const [externalAgents, setExternalAgents] = useState<OpenclawAgent[]>([])
+  const [sessions, setSessions] = useState<SessionEntry[]>([])
+  const chatTabs = useChatTabsMaybe()
+  const searchParams = new URLSearchParams(useLocation({ select: (l) => l.searchStr }))
+  const chatParam = searchParams.get('chat') ?? null
 
   // Set fallback key for chat tabs context
   useEffect(() => {
     if (chatTabs) {
-      chatTabs.setFallbackKey(`agent:${agentId}:dashboard`);
+      chatTabs.setFallbackKey(`agent:${agentId}:dashboard`)
     }
-  }, [agentId, chatTabs]);
+  }, [agentId, chatTabs])
 
   useEffect(() => {
-    setSessions(loadStoredSessions());
-  }, []);
+    setSessions(loadStoredSessions())
+  }, [])
 
   // Sync active session from chat param
   useEffect(() => {
     if (!chatParam || !chatTabs) {
-      return;
+      return
     }
-    chatTabs.setActiveKey(chatParam);
-  }, [chatParam, chatTabs]);
+    chatTabs.setActiveKey(chatParam)
+  }, [chatParam, chatTabs])
 
   // Determine active session key
-  const activeSessionKey = chatTabs?.activeSessionKey || `agent:${agentId}:dashboard`;
+  const activeSessionKey = chatTabs?.activeSessionKey || `agent:${agentId}:dashboard`
 
-  const transformOutgoing = useCallback((text: string, isFirstMessage: boolean) => {
-    if (text.trim().startsWith('/')) {
-      return text;
-    }
-    const system = `<opencroft-system>Sent from OpenCroft space: ${spaceName} (${spaceSlug}). Selected node: ${selectedNodeId ?? 'none'}.</opencroft-system>`;
-    if (!isFirstMessage) {
-      return `${system}\n${text}`;
-    }
-    const { job, agent } = resolveJobForSession(activeSessionKey, sessions, agents);
-    const ctx = job?.context.trim();
-    if (!ctx && !agent?.instructions.length) {
-      return `${system}\n${text}`;
-    }
-    let prefix = system;
-    if (ctx) {
-      prefix += `\n<opencroft-task>${ctx}</opencroft-task>`;
-    }
-    for (const instr of agent?.instructions ?? []) {
-      const trimmed = instr.instruction.trim();
-      if (trimmed) {
-        prefix += `\n<opencroft-instruction>${trimmed}</opencroft-instruction>`;
+  const transformOutgoing = useCallback(
+    (text: string, isFirstMessage: boolean) => {
+      if (text.trim().startsWith('/')) {
+        return text
       }
-    }
-    return `${prefix}\n${text}`;
-  }, [spaceName, spaceSlug, selectedNodeId, activeSessionKey, sessions, agents]);
+      const system = `<opencroft-system>Sent from OpenCroft space: ${spaceName} (${spaceSlug}). Selected node: ${selectedNodeId ?? 'none'}.</opencroft-system>`
+      if (!isFirstMessage) {
+        return `${system}\n${text}`
+      }
+      const { job, agent } = resolveJobForSession(activeSessionKey, sessions, agents)
+      const ctx = job?.context.trim()
+      if (!ctx && !agent?.instructions.length) {
+        return `${system}\n${text}`
+      }
+      let prefix = system
+      if (ctx) {
+        prefix += `\n<opencroft-task>${ctx}</opencroft-task>`
+      }
+      for (const instr of agent?.instructions ?? []) {
+        const trimmed = instr.instruction.trim()
+        if (trimmed) {
+          prefix += `\n<opencroft-instruction>${trimmed}</opencroft-instruction>`
+        }
+      }
+      return `${prefix}\n${text}`
+    },
+    [spaceName, spaceSlug, selectedNodeId, activeSessionKey, sessions, agents],
+  )
 
-  const session = useAgentSession(activeSessionKey, transformOutgoing);
+  const session = useAgentSession(activeSessionKey, transformOutgoing)
 
   useEffect(() => {
-    listAgentNodes().then(setAgents);
-    loadOpenclaw().then((state) => {
-      if (state.status === 'ok') {
-        setExternalAgents(state.agents);
-      } else {
-        setExternalAgents([]);
-      }
-    }).catch(() => {
-      setExternalAgents([]);
-    });
-  }, []);
+    listAgentNodes().then(setAgents)
+    loadOpenclaw()
+      .then((state) => {
+        if (state.status === 'ok') {
+          setExternalAgents(state.agents)
+        } else {
+          setExternalAgents([])
+        }
+      })
+      .catch(() => {
+        setExternalAgents([])
+      })
+  }, [])
 
   const externalById = useMemo(() => {
-    const map = new Map<string, OpenclawAgent>();
+    const map = new Map<string, OpenclawAgent>()
     for (const ext of externalAgents) {
-      map.set(ext.agentId, ext);
+      map.set(ext.agentId, ext)
     }
-    return map;
-  }, [externalAgents]);
+    return map
+  }, [externalAgents])
 
   const unmatchedExternalAgents = useMemo(() => {
-    const localSlugs = new Set(agents.map((a) => slug(a.name)));
-    return externalAgents.filter((a) => !localSlugs.has(a.agentId));
-  }, [agents, externalAgents]);
+    const localSlugs = new Set(agents.map((a) => slug(a.name)))
+    return externalAgents.filter((a) => !localSlugs.has(a.agentId))
+  }, [agents, externalAgents])
 
-  const permanentlyDeleteSession = useCallback((key: string) => {
-    chatTabs?.closeTab(key);
-    setSessions((prev) => {
-      const next = prev.filter((s) => s.key !== key);
-      persistSessions(next);
-      return next;
-    });
-    setExternalAgents((prev) => prev.map((a) => ({
-      ...a,
-      sessions: a.sessions.filter((s) => s.key !== key),
-      sessionCount: Math.max(0, a.sessionCount - (a.sessions.some((s) => s.key === key) ? 1 : 0)),
-    })));
-    deleteSession({ data: key }).catch((err) => {
-      console.error('Failed to delete OpenClaw session', key, err);
-    });
-  }, [chatTabs]);
+  const permanentlyDeleteSession = useCallback(
+    (key: string) => {
+      chatTabs?.closeTab(key)
+      setSessions((prev) => {
+        const next = prev.filter((s) => s.key !== key)
+        persistSessions(next)
+        return next
+      })
+      setExternalAgents((prev) =>
+        prev.map((a) => ({
+          ...a,
+          sessions: a.sessions.filter((s) => s.key !== key),
+          sessionCount: Math.max(0, a.sessionCount - (a.sessions.some((s) => s.key === key) ? 1 : 0)),
+        })),
+      )
+      deleteSession({ data: key }).catch((err) => {
+        console.error('Failed to delete OpenClaw session', key, err)
+      })
+    },
+    [chatTabs],
+  )
 
-  const createSession = useCallback((agent: AgentNodeRef, job: AgentJobRef) => {
-    const key = `agent:${slug(agent.name)}:${slug(job.name)}`;
-    const entry: SessionEntry = {
-      key,
-      agentNodeId: agent.nodeId,
-      agentName: agent.name,
-      jobNodeId: job.nodeId,
-      jobName: job.name,
-      createdAt: Date.now(),
-    };
-    setSessions((prev) => {
-      if (prev.some((s) => s.key === key)) {
-        return prev;
+  const createSession = useCallback(
+    (agent: AgentNodeRef, job: AgentJobRef) => {
+      const key = `agent:${slug(agent.name)}:${slug(job.name)}`
+      const entry: SessionEntry = {
+        key,
+        agentNodeId: agent.nodeId,
+        agentName: agent.name,
+        jobNodeId: job.nodeId,
+        jobName: job.name,
+        createdAt: Date.now(),
       }
-      const next = [...prev, entry];
-      persistSessions(next);
-      return next;
-    });
-    chatTabs?.selectSession(key);
-  }, [chatTabs]);
+      setSessions((prev) => {
+        if (prev.some((s) => s.key === key)) {
+          return prev
+        }
+        const next = [...prev, entry]
+        persistSessions(next)
+        return next
+      })
+      chatTabs?.selectSession(key)
+    },
+    [chatTabs],
+  )
 
-  const selectExternalAgent = useCallback((extAgent: OpenclawAgent) => {
-    if (extAgent.sessions.length > 0) {
-      const key = extAgent.sessions[0].key;
-      chatTabs?.selectSession(key);
-    } else {
-      const key = `agent:${extAgent.name}:dashboard`;
-      chatTabs?.selectSession(key);
-    }
-  }, [chatTabs]);
+  const selectExternalAgent = useCallback(
+    (extAgent: OpenclawAgent) => {
+      if (extAgent.sessions.length > 0) {
+        const key = extAgent.sessions[0].key
+        chatTabs?.selectSession(key)
+      } else {
+        const key = `agent:${extAgent.name}:dashboard`
+        chatTabs?.selectSession(key)
+      }
+    },
+    [chatTabs],
+  )
 
-  const showChat = focused && !slashOpen;
+  const showChat = focused && !slashOpen
 
   const activeAgent = useMemo(() => {
-    const local = sessions.find((s) => s.key === activeSessionKey);
+    const local = sessions.find((s) => s.key === activeSessionKey)
     if (local) {
-      return agents.find((a) => a.nodeId === local.agentNodeId);
+      return agents.find((a) => a.nodeId === local.agentNodeId)
     }
-    const parts = activeSessionKey.split(':');
+    const parts = activeSessionKey.split(':')
     if (parts.length < 3 || parts[0] !== 'agent') {
-      return undefined;
+      return undefined
     }
-    const agentSlug = parts[1].trim().toLowerCase();
-    return agents.find((a) => slug(a.name) === agentSlug);
-  }, [sessions, agents, activeSessionKey]);
+    const agentSlug = parts[1].trim().toLowerCase()
+    return agents.find((a) => slug(a.name) === agentSlug)
+  }, [sessions, agents, activeSessionKey])
 
   // Update active tab metadata when agent/session info changes
   useEffect(() => {
     if (!chatTabs || !activeSessionKey) {
-      return;
+      return
     }
-    const parts = activeSessionKey.split(':');
-    const jobSlug = parts.length >= 3 ? parts.slice(2).join(':') : undefined;
-    const label = activeAgent
-      ? (jobSlug && jobSlug !== 'dashboard' ? `${activeAgent.name}: ${jobSlug}` : activeAgent.name)
-      : (parts[parts.length - 1] ?? activeSessionKey);
+    const parts = activeSessionKey.split(':')
+    const jobSlug = parts.length >= 3 ? parts.slice(2).join(':') : undefined
+    const label = activeAgent ? (jobSlug && jobSlug !== 'dashboard' ? `${activeAgent.name}: ${jobSlug}` : activeAgent.name) : (parts[parts.length - 1] ?? activeSessionKey)
     chatTabs.updateTabMeta(activeSessionKey, {
       label,
       agentName: activeAgent?.name,
       agentAvatar: activeAgent?.avatar,
-    });
-  }, [activeSessionKey, activeAgent, chatTabs]);
+    })
+  }, [activeSessionKey, activeAgent, chatTabs])
 
   const contentNode = useMemo(() => {
     if (!showChat) {
-      return null;
+      return null
     }
-    return <AgentChat session={session} agentAvatar={activeAgent?.avatar} agentName={activeAgent?.name} />;
-  }, [showChat, session, activeAgent]);
+    return <AgentChat session={session} agentAvatar={activeAgent?.avatar} agentName={activeAgent?.name} />
+  }, [showChat, session, activeAgent])
 
-  useOverlayContent(contentNode);
+  useOverlayContent(contentNode)
 
-  const createButton = useMemo(() => (
-    <CreateChatMenu
-      allAgents={agents}
-      externalAgents={unmatchedExternalAgents}
-      existingSessionsByAgent={externalById}
-      onCreateSession={createSession}
-      onOpenSession={(key) => chatTabs?.selectSession(key)}
-      onDeleteSession={permanentlyDeleteSession}
-      onSelectExternalAgent={selectExternalAgent}
-    />
-  ), [agents, unmatchedExternalAgents, externalById, createSession, permanentlyDeleteSession, selectExternalAgent, chatTabs]);
+  const createButton = useMemo(
+    () => (
+      <CreateChatMenu
+        allAgents={agents}
+        externalAgents={unmatchedExternalAgents}
+        existingSessionsByAgent={externalById}
+        onCreateSession={createSession}
+        onOpenSession={(key) => chatTabs?.selectSession(key)}
+        onDeleteSession={permanentlyDeleteSession}
+        onSelectExternalAgent={selectExternalAgent}
+      />
+    ),
+    [agents, unmatchedExternalAgents, externalById, createSession, permanentlyDeleteSession, selectExternalAgent, chatTabs],
+  )
 
-  return (
-    <AgentChatInput
-      session={session}
-      placeholder='Ask AI...'
-      onSlashOpenChange={setSlashOpen}
-      onFocus={() => onFocusChange(true)}
-      leadingBarContent={createButton}
-    />
-  );
+  return <AgentChatInput session={session} placeholder='Ask AI...' onSlashOpenChange={setSlashOpen} onFocus={() => onFocusChange(true)} leadingBarContent={createButton} />
 }
 
 interface CreateChatMenuProps {
-  allAgents: AgentNodeRef[];
-  externalAgents: OpenclawAgent[];
-  existingSessionsByAgent: Map<string, OpenclawAgent>;
-  onCreateSession: (agent: AgentNodeRef, job: AgentJobRef) => void;
-  onOpenSession: (key: string) => void;
-  onDeleteSession: (key: string) => void;
-  onSelectExternalAgent: (agent: OpenclawAgent) => void;
+  allAgents: AgentNodeRef[]
+  externalAgents: OpenclawAgent[]
+  existingSessionsByAgent: Map<string, OpenclawAgent>
+  onCreateSession: (agent: AgentNodeRef, job: AgentJobRef) => void
+  onOpenSession: (key: string) => void
+  onDeleteSession: (key: string) => void
+  onSelectExternalAgent: (agent: OpenclawAgent) => void
 }
 
 function CreateChatMenu({ allAgents, externalAgents, existingSessionsByAgent, onCreateSession, onOpenSession, onDeleteSession, onSelectExternalAgent }: CreateChatMenuProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button
-          type='button'
-          className='flex items-center justify-center size-7 shrink-0 rounded-md hover:bg-accent/50 transition-colors cursor-pointer'
-          aria-label='New chat'
-        >
+        <button type='button' className='flex items-center justify-center size-7 shrink-0 rounded-md hover:bg-accent/50 transition-colors cursor-pointer' aria-label='New chat'>
           <Plus className='size-4' />
         </button>
       </DropdownMenuTrigger>
@@ -314,41 +319,32 @@ function CreateChatMenu({ allAgents, externalAgents, existingSessionsByAgent, on
             <DropdownMenuSeparator />
             <DropdownMenuLabel>OpenClaw</DropdownMenuLabel>
             {externalAgents.map((agent) => (
-              <DropdownMenuItem
-                key={agent.agentId}
-                onSelect={() => onSelectExternalAgent(agent)}
-              >
+              <DropdownMenuItem key={agent.agentId} onSelect={() => onSelectExternalAgent(agent)}>
                 <User className='size-4 shrink-0' />
                 <span className='truncate'>{agent.name}</span>
-                {agent.isDefault && (
-                  <span className='ml-auto text-[10px] uppercase tracking-wide text-muted-foreground'>default</span>
-                )}
+                {agent.isDefault && <span className='ml-auto text-[10px] uppercase tracking-wide text-muted-foreground'>default</span>}
               </DropdownMenuItem>
             ))}
           </>
         )}
       </DropdownMenuContent>
     </DropdownMenu>
-  );
+  )
 }
 
 interface AgentMenuItemProps {
-  agent: AgentNodeRef;
-  existingSessions: OpenclawSession[];
-  onCreateSession: (agent: AgentNodeRef, job: AgentJobRef) => void;
-  onOpenSession: (key: string) => void;
-  onDeleteSession: (key: string) => void;
+  agent: AgentNodeRef
+  existingSessions: OpenclawSession[]
+  onCreateSession: (agent: AgentNodeRef, job: AgentJobRef) => void
+  onOpenSession: (key: string) => void
+  onDeleteSession: (key: string) => void
 }
 
 function AgentMenuItem({ agent, existingSessions, onCreateSession, onOpenSession, onDeleteSession }: AgentMenuItemProps) {
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger>
-        {agent.avatar ? (
-          <img src={agent.avatar} alt='' className='size-4 shrink-0 rounded-full object-cover' />
-        ) : (
-          <User className='size-4 shrink-0' />
-        )}
+        {agent.avatar ? <img src={agent.avatar} alt='' className='size-4 shrink-0 rounded-full object-cover' /> : <User className='size-4 shrink-0' />}
         <span className='truncate'>{agent.name}</span>
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent className='w-[260px]'>
@@ -394,5 +390,5 @@ function AgentMenuItem({ agent, existingSessions, onCreateSession, onOpenSession
         )}
       </DropdownMenuSubContent>
     </DropdownMenuSub>
-  );
+  )
 }

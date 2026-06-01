@@ -66,7 +66,7 @@ or statically render it.
 [`SSEProvider`](../%28sse%29/components/sse-provider.tsx) sits at the root
 of `app/layout.tsx`. It wraps the tree in `SSEEventsProvider` (a Zustand-ish
 context) and mounts a `useSSE()` hook
-([app/(sse)/hooks/use-sse.ts](../%28sse%29/hooks/use-sse.ts)) that:
+([app/(sse)/_hooks/use-sse.ts](../%28sse%29/_hooks/use-sse.ts)) that:
 
 1. Reads the current pathname; if the URL is `/space/<slug>`, the slug is
    passed as `?spaceId=<slug>` so this tab only gets events for that space.

@@ -1,32 +1,32 @@
-'use client';
+'use client'
 
-import { ShieldQuestion } from 'lucide-react';
-import { useEffect } from 'react';
+import { ShieldQuestion } from 'lucide-react'
+import { useEffect } from 'react'
 
-import { listPendingApprovals } from '@/app/(approvals)/actions';
-import { sseEventsStore, useSSEEvents } from '@/app/(sse)/stores/sse-events-store';
-import { Badge } from '@/components/ui/badge';
-import { cn } from '@/lib/utils';
+import { listPendingApprovals } from '@/app/(approvals)/_server/actions'
+import { sseEventsStore, useSSEEvents } from '@/app/(sse)/_lib/sse-events-store'
+import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 
 export function ApprovalList({ spaceId }: { spaceId?: string }) {
-  const { pendingApprovals, selectedApprovalId } = useSSEEvents();
+  const { pendingApprovals, selectedApprovalId } = useSSEEvents()
 
   useEffect(() => {
     listPendingApprovals({ data: spaceId }).then((rows) => {
-      sseEventsStore.setPendingApprovals(rows);
-    });
-  }, [spaceId]);
+      sseEventsStore.setPendingApprovals(rows)
+    })
+  }, [spaceId])
 
-  const requests = Array.from(pendingApprovals.values());
+  const requests = Array.from(pendingApprovals.values())
   if (!requests.length) {
-    return null;
+    return null
   }
 
   return (
     <div className='pointer-events-none absolute right-0 bottom-0 z-10 p-3'>
       <div className='pointer-events-auto flex flex-col items-end gap-1.5'>
         {requests.map((request) => {
-          const active = request.id === selectedApprovalId;
+          const active = request.id === selectedApprovalId
           return (
             <button
               key={request.id}
@@ -40,11 +40,13 @@ export function ApprovalList({ spaceId }: { spaceId?: string }) {
             >
               <ShieldQuestion className='h-3.5 w-3.5 text-primary shrink-0' />
               <span className='font-mono truncate max-w-48'>{request.tool}</span>
-              <Badge variant='secondary' className='text-[10px]'>approve</Badge>
+              <Badge variant='secondary' className='text-[10px]'>
+                approve
+              </Badge>
             </button>
-          );
+          )
         })}
       </div>
     </div>
-  );
+  )
 }

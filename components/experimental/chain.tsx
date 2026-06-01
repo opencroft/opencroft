@@ -1,8 +1,8 @@
-import { cva, type VariantProps } from 'class-variance-authority';
-import { type ReactNode } from 'react';
+import { cva, type VariantProps } from 'class-variance-authority'
+import type { ReactNode } from 'react'
 
-import { Flex } from '@/components/ui/layout/flex';
-import { cn } from '@/lib/utils';
+import { Flex } from '@/components/ui/layout/flex'
+import { cn } from '@/lib/utils'
 
 export const chainDotVariants = cva('size-2 rounded-full', {
   variants: {
@@ -15,26 +15,26 @@ export const chainDotVariants = cva('size-2 rounded-full', {
   defaultVariants: {
     variant: 'default',
   },
-});
+})
 
-export type ChainDotVariant = NonNullable<VariantProps<typeof chainDotVariants>['variant']>;
+export type ChainDotVariant = NonNullable<VariantProps<typeof chainDotVariants>['variant']>
 
 export function ChainDot({ variant }: { variant?: ChainDotVariant }) {
-  return <div className={chainDotVariants({ variant })} />;
+  return <div className={chainDotVariants({ variant })} />
 }
 
-export type ChainedAlign = 'center' | 'start';
+export type ChainedAlign = 'center' | 'start'
 
 export interface ChainedProps {
-  marker: ReactNode;
-  lineAbove: boolean;
-  lineBelow: boolean;
-  align?: ChainedAlign;
-  children: ReactNode;
+  marker: ReactNode
+  lineAbove: boolean
+  lineBelow: boolean
+  align?: ChainedAlign
+  children: ReactNode
 }
 
 export function Chained({ marker, lineAbove, lineBelow, align = 'center', children }: ChainedProps) {
-  const top = align === 'start';
+  const top = align === 'start'
   return (
     <Flex row className='min-h-8 min-w-0 gap-2'>
       <Flex align='center' className='w-8 shrink-0'>
@@ -44,5 +44,5 @@ export function Chained({ marker, lineAbove, lineBelow, align = 'center', childr
       </Flex>
       <div className={cn('flex-1 min-w-0 py-2', top ? 'self-start' : 'self-center')}>{children}</div>
     </Flex>
-  );
+  )
 }

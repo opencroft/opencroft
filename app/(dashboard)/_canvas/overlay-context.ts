@@ -1,146 +1,146 @@
-'use client';
+'use client'
 
-import * as React from 'react';
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type * as React from 'react'
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
-type Slot = 'header' | 'content' | 'menu' | 'bar';
+type Slot = 'header' | 'content' | 'menu' | 'bar'
 
 interface OverlayContextValue {
-  setSlot: (slot: Slot, node: ReactNode | null) => void;
-  containerRef: React.RefObject<HTMLElement | null>;
+  setSlot: (slot: Slot, node: ReactNode | null) => void
+  containerRef: React.RefObject<HTMLElement | null>
 }
 
 export const OverlayContext = createContext<OverlayContextValue>({
-  setSlot: () => { },
+  setSlot: () => {},
   containerRef: { current: null },
-});
+})
 
 function useOverlaySlot(slot: Slot, node: ReactNode | null): void {
-  const { setSlot } = useContext(OverlayContext);
+  const { setSlot } = useContext(OverlayContext)
   useLayoutEffect(() => {
-    setSlot(slot, node);
-  }, [slot, node, setSlot]);
-  useLayoutEffect(() => () => setSlot(slot, null), [slot, setSlot]);
+    setSlot(slot, node)
+  }, [slot, node, setSlot])
+  useLayoutEffect(() => () => setSlot(slot, null), [slot, setSlot])
 }
 
 export function useOverlayHeader(node: ReactNode | null) {
-  useOverlaySlot('header', node);
+  useOverlaySlot('header', node)
 }
 
 export function useOverlayContent(node: ReactNode | null) {
-  useOverlaySlot('content', node);
+  useOverlaySlot('content', node)
 }
 
 export function useOverlayMenu(node: ReactNode | null) {
-  useOverlaySlot('menu', node);
+  useOverlaySlot('menu', node)
 }
 
 export function useOverlayBar(node: ReactNode | null) {
-  useOverlaySlot('bar', node);
+  useOverlaySlot('bar', node)
 }
 
 export interface OverlaySlots {
-  header: ReactNode | null;
-  content: ReactNode | null;
-  menu: ReactNode | null;
-  bar: ReactNode | null;
-  setSlot: (slot: Slot, node: ReactNode | null) => void;
-  containerRef: React.RefObject<HTMLElement | null>;
+  header: ReactNode | null
+  content: ReactNode | null
+  menu: ReactNode | null
+  bar: ReactNode | null
+  setSlot: (slot: Slot, node: ReactNode | null) => void
+  containerRef: React.RefObject<HTMLElement | null>
 }
 
 export function useOverlayState(): OverlaySlots {
-  const [header, setHeader] = useState<ReactNode | null>(null);
-  const [content, setContent] = useState<ReactNode | null>(null);
-  const [menu, setMenu] = useState<ReactNode | null>(null);
-  const [bar, setBar] = useState<ReactNode | null>(null);
-  const containerRef = useRef<HTMLElement | null>(null);
+  const [header, setHeader] = useState<ReactNode | null>(null)
+  const [content, setContent] = useState<ReactNode | null>(null)
+  const [menu, setMenu] = useState<ReactNode | null>(null)
+  const [bar, setBar] = useState<ReactNode | null>(null)
+  const containerRef = useRef<HTMLElement | null>(null)
 
   const setSlot = useCallback((slot: Slot, node: ReactNode | null) => {
     if (slot === 'header') {
-      setHeader(node);
-      return;
+      setHeader(node)
+      return
     }
     if (slot === 'content') {
-      setContent(node);
-      return;
+      setContent(node)
+      return
     }
     if (slot === 'menu') {
-      setMenu(node);
-      return;
+      setMenu(node)
+      return
     }
-    setBar(node);
-  }, []);
+    setBar(node)
+  }, [])
 
-  return { header, content, menu, bar, setSlot, containerRef };
+  return { header, content, menu, bar, setSlot, containerRef }
 }
 
 export function useBackIntercept(active: boolean, onClose: () => void) {
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  const pushedRef = useRef(false);
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+  const pushedRef = useRef(false)
 
   useEffect(() => {
-    const nav = window.navigation;
+    const nav = window.navigation
     if (!nav) {
-      return;
+      return
     }
 
     if (active && !pushedRef.current) {
-      history.pushState(null, '');
-      pushedRef.current = true;
+      history.pushState(null, '')
+      pushedRef.current = true
     }
 
     function onNavigate(e: NavigateEvent) {
       if (e.navigationType !== 'traverse') {
-        return;
+        return
       }
       if (!pushedRef.current) {
-        return;
+        return
       }
       e.intercept({
         handler() {
-          pushedRef.current = false;
-          onCloseRef.current();
+          pushedRef.current = false
+          onCloseRef.current()
         },
-      });
+      })
     }
 
-    nav.addEventListener('navigate', onNavigate);
+    nav.addEventListener('navigate', onNavigate)
     return () => {
-      nav.removeEventListener('navigate', onNavigate);
+      nav.removeEventListener('navigate', onNavigate)
       if (pushedRef.current) {
-        pushedRef.current = false;
-        history.back();
+        pushedRef.current = false
+        history.back()
       }
-    };
-  }, [active]);
+    }
+  }, [active])
 }
 
-export { useBackIntercept as useOverlayBackIntercept };
+export { useBackIntercept as useOverlayBackIntercept }
 
 export function useOverlayClose(active: boolean, onClose: () => void) {
-  const { containerRef } = useContext(OverlayContext);
+  const { containerRef } = useContext(OverlayContext)
   useEffect(() => {
     if (!active) {
-      return;
+      return
     }
     function onMouseDown(event: MouseEvent) {
-      const target = event.target as Node;
+      const target = event.target as Node
       if (containerRef.current?.contains(target)) {
-        return;
+        return
       }
-      onClose();
+      onClose()
     }
     function onKey(event: KeyboardEvent) {
       if (event.key === 'Escape') {
-        onClose();
+        onClose()
       }
     }
-    document.addEventListener('mousedown', onMouseDown);
-    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onMouseDown)
+    document.addEventListener('keydown', onKey)
     return () => {
-      document.removeEventListener('mousedown', onMouseDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [active, onClose, containerRef]);
+      document.removeEventListener('mousedown', onMouseDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [active, onClose, containerRef])
 }

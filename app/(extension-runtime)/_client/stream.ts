@@ -1,50 +1,50 @@
 export interface TextChunk {
-  text: string;
-  final: boolean;
+  text: string
+  final: boolean
 }
 
 export interface Stream<T> {
-  subscribe(fn: (chunk: T) => void): () => void;
-  broadcast(chunk: T): void;
+  subscribe(fn: (chunk: T) => void): () => void
+  broadcast(chunk: T): void
 }
 
 class StreamImpl<T> implements Stream<T> {
-  private handlers = new Set<(chunk: T) => void>();
+  private handlers = new Set<(chunk: T) => void>()
 
   subscribe(fn: (chunk: T) => void): () => void {
-    this.handlers.add(fn);
+    this.handlers.add(fn)
     return () => {
-      this.handlers.delete(fn);
-    };
+      this.handlers.delete(fn)
+    }
   }
 
   broadcast(chunk: T): void {
     for (const handler of this.handlers) {
-      handler(chunk);
+      handler(chunk)
     }
   }
 }
 
-const registry = new Map<string, StreamImpl<unknown>>();
+const registry = new Map<string, StreamImpl<unknown>>()
 
 function keyFor(nodeId: string, handleId: string): string {
-  return `${nodeId}::${handleId}`;
+  return `${nodeId}::${handleId}`
 }
 
 export function getStream<T>(nodeId: string, handleId: string): Stream<T> {
-  const key = keyFor(nodeId, handleId);
-  let impl = registry.get(key);
+  const key = keyFor(nodeId, handleId)
+  let impl = registry.get(key)
   if (!impl) {
-    impl = new StreamImpl<unknown>();
-    registry.set(key, impl);
+    impl = new StreamImpl<unknown>()
+    registry.set(key, impl)
   }
-  return impl as unknown as Stream<T>;
+  return impl as unknown as Stream<T>
 }
 
 export function subscribe<T>(stream: Stream<T>, fn: (chunk: T) => void): () => void {
-  return stream.subscribe(fn);
+  return stream.subscribe(fn)
 }
 
 export function broadcast<T>(stream: Stream<T>, chunk: T): void {
-  stream.broadcast(chunk);
+  stream.broadcast(chunk)
 }

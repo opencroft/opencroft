@@ -34,9 +34,7 @@
       "type": "node",
       "request": "launch",
       "program": "${workspaceFolder}/dist/prod.mjs",
-      "skipFiles": [
-        "<node_internals>/**"
-      ],
+      "skipFiles": ["<node_internals>/**"],
       "console": "integratedTerminal"
     }
   ]

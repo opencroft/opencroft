@@ -1,27 +1,14 @@
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
 
-import * as esbuild from 'esbuild';
+import * as esbuild from 'esbuild'
 
-import { extDir, extDistDir, projectRoot } from '@/app/(extension-runtime)/_server/paths';
-import { type BuildResult, type CompileError, type ExtensionManifest } from '@/app/(extension-runtime)/_types';
+import { extDir, extDistDir, projectRoot } from '@/app/(extension-runtime)/_server/paths'
+import type { BuildResult, CompileError, ExtensionManifest } from '@/app/(extension-runtime)/_types'
 
-const PROJECT_NODE_MODULES = path.join(projectRoot(), 'node_modules');
+const PROJECT_NODE_MODULES = path.join(projectRoot(), 'node_modules')
 
-const SERVER_EXTERNAL_PACKAGES = [
-  'node:*',
-  'fs',
-  'path',
-  'os',
-  'child_process',
-  'crypto',
-  'stream',
-  'util',
-  'events',
-  'ssh2',
-  '@prisma/client',
-  '@prisma/adapter-better-sqlite3',
-];
+const SERVER_EXTERNAL_PACKAGES = ['node:*', 'fs', 'path', 'os', 'child_process', 'crypto', 'stream', 'util', 'events', 'ssh2', '@prisma/client', '@prisma/adapter-better-sqlite3']
 
 function toCompileErrors(messages: esbuild.Message[]): CompileError[] {
   return messages.map((m) => ({
@@ -29,7 +16,7 @@ function toCompileErrors(messages: esbuild.Message[]): CompileError[] {
     line: m.location?.line,
     column: m.location?.column,
     message: m.text,
-  }));
+  }))
 }
 
 function hostVirtualPlugin(side: 'client' | 'server', extensionId: string): esbuild.Plugin {
@@ -39,38 +26,38 @@ function hostVirtualPlugin(side: 'client' | 'server', extensionId: string): esbu
       build.onResolve({ filter: /^@ext\/host$/ }, () => ({
         path: '@ext/host',
         namespace: 'ext-host',
-      }));
+      }))
       build.onResolve({ filter: /^@ext\/ui$/ }, () => ({
         path: '@ext/ui',
         namespace: 'ext-host',
-      }));
+      }))
       // Redirect react imports to host's React (prevents duplicate React copies)
       if (side === 'client') {
         build.onResolve({ filter: /^react$/ }, () => ({
           path: 'react',
           namespace: 'ext-host',
-        }));
+        }))
         build.onResolve({ filter: /^react\/jsx-runtime$/ }, () => ({
           path: 'react/jsx-runtime',
           namespace: 'ext-host',
-        }));
+        }))
         build.onResolve({ filter: /^react-dom$/ }, () => ({
           path: 'react-dom',
           namespace: 'ext-host',
-        }));
+        }))
       }
       build.onLoad({ filter: /.*/, namespace: 'ext-host' }, (args) => {
         if (side === 'client') {
-          return clientHostShim(args.path, extensionId);
+          return clientHostShim(args.path, extensionId)
         }
-        return serverHostShim(args.path);
-      });
+        return serverHostShim(args.path)
+      })
     },
-  };
+  }
 }
 
 function clientHostShim(specifier: string, extensionId: string): esbuild.OnLoadResult {
-  const quoted = JSON.stringify(extensionId);
+  const quoted = JSON.stringify(extensionId)
   if (specifier === 'react') {
     return {
       contents: `
@@ -86,7 +73,7 @@ export const {
 } = React;
 `,
       loader: 'js',
-    };
+    }
   }
   if (specifier === 'react/jsx-runtime' || specifier === 'react/jsx-dev-runtime') {
     return {
@@ -106,7 +93,7 @@ export const jsxDEV = jsx;
 export const Fragment = React.Fragment;
 `,
       loader: 'js',
-    };
+    }
   }
   if (specifier === 'react-dom') {
     return {
@@ -116,7 +103,7 @@ export const createPortal = () => null;
 export const flushSync = (fn) => fn();
 `,
       loader: 'js',
-    };
+    }
   }
   if (specifier === '@ext/ui') {
     return {
@@ -162,7 +149,7 @@ export const CommandBarMenuItem = ui.CommandBarMenuItem;
 export default ui;
 `,
       loader: 'js',
-    };
+    }
   }
   return {
     contents: `
@@ -215,12 +202,12 @@ export const useSeedDockerContainers = host.useSeedDockerContainers;
 export default host;
 `,
     loader: 'js',
-  };
+  }
 }
 
 function serverHostShim(specifier: string): esbuild.OnLoadResult {
   if (specifier === '@ext/ui') {
-    return { contents: 'throw new Error("@ext/ui is only available on the client");', loader: 'js' };
+    return { contents: 'throw new Error("@ext/ui is only available on the client");', loader: 'js' }
   }
   return {
     contents: `
@@ -247,61 +234,53 @@ export const openclaw = host.openclaw;
 export const extensionId = host.extensionId;
 `,
     loader: 'js',
-  };
+  }
 }
 
 async function readDependencyNames(extensionId: string): Promise<string[]> {
   try {
-    const raw = await fs.readFile(path.join(extDir(extensionId), 'package.json'), 'utf-8');
-    const pkg = JSON.parse(raw) as { dependencies?: Record<string, string> };
-    return Object.keys(pkg.dependencies ?? {});
+    const raw = await fs.readFile(path.join(extDir(extensionId), 'package.json'), 'utf-8')
+    const pkg = JSON.parse(raw) as { dependencies?: Record<string, string> }
+    return Object.keys(pkg.dependencies ?? {})
   } catch {
-    return [];
+    return []
   }
 }
 
 async function pickEntry(dir: string, candidates: string[]): Promise<string | null> {
   for (const name of candidates) {
-    const file = path.join(dir, name);
+    const file = path.join(dir, name)
     try {
-      await fs.access(file);
-      return file;
+      await fs.access(file)
+      return file
     } catch {
       // try next
     }
   }
-  return null;
+  return null
 }
 
-async function compileSide(
-  extensionId: string,
-  manifest: ExtensionManifest,
-  side: 'client' | 'server',
-): Promise<{ errors: CompileError[]; warnings: CompileError[] }> {
-  const src = extDir(extensionId);
-  const outDir = extDistDir(extensionId);
-  await fs.mkdir(outDir, { recursive: true });
+async function compileSide(extensionId: string, manifest: ExtensionManifest, side: 'client' | 'server'): Promise<{ errors: CompileError[]; warnings: CompileError[] }> {
+  const src = extDir(extensionId)
+  const outDir = extDistDir(extensionId)
+  await fs.mkdir(outDir, { recursive: true })
 
-  const entries = side === 'client'
-    ? ['src/client.tsx', 'src/client.ts', 'src/index.tsx', 'src/index.ts']
-    : ['server/index.ts', 'server/index.tsx'];
-  const entry = manifest.main && side === 'server' ? path.join(src, manifest.main) : await pickEntry(src, entries);
+  const entries = side === 'client' ? ['src/client.tsx', 'src/client.ts', 'src/index.tsx', 'src/index.ts'] : ['server/index.ts', 'server/index.tsx']
+  const entry = manifest.main && side === 'server' ? path.join(src, manifest.main) : await pickEntry(src, entries)
   if (!entry) {
-    return { errors: [], warnings: [] };
+    return { errors: [], warnings: [] }
   }
 
-  const outfile = path.join(outDir, side === 'client' ? 'client.js' : 'server.js');
-  const format = side === 'client' ? 'esm' : 'cjs';
-  const platform = side === 'client' ? 'browser' : 'node';
+  const outfile = path.join(outDir, side === 'client' ? 'client.js' : 'server.js')
+  const format = side === 'client' ? 'esm' : 'cjs'
+  const platform = side === 'client' ? 'browser' : 'node'
 
   // Server bundles must not inline the extension's own dependencies: native
   // modules (sharp, ffmpeg-static) break when bundled, and bundling JS that is
   // then run against a different copy of the same package in the app's
   // node_modules causes version/ABI clashes. Keep them as runtime requires,
   // resolved from the extension's node_modules by the loader.
-  const serverExternals = side === 'server'
-    ? [...SERVER_EXTERNAL_PACKAGES, ...await readDependencyNames(extensionId)]
-    : [];
+  const serverExternals = side === 'server' ? [...SERVER_EXTERNAL_PACKAGES, ...(await readDependencyNames(extensionId))] : []
 
   try {
     const result = await esbuild.build({
@@ -319,35 +298,29 @@ async function compileSide(
       write: true,
       absWorkingDir: src,
       nodePaths: [path.join(src, 'node_modules'), PROJECT_NODE_MODULES],
-    });
+    })
     return {
       errors: toCompileErrors(result.errors),
       warnings: toCompileErrors(result.warnings),
-    };
+    }
   } catch (err) {
-    const buildErr = err as esbuild.BuildFailure;
+    const buildErr = err as esbuild.BuildFailure
     return {
       errors: buildErr.errors ? toCompileErrors(buildErr.errors) : [{ file: entry, message: String(err) }],
       warnings: buildErr.warnings ? toCompileErrors(buildErr.warnings) : [],
-    };
+    }
   }
 }
 
-export async function buildExtension(
-  extensionId: string,
-  manifest: ExtensionManifest,
-): Promise<BuildResult> {
-  const [client, server] = await Promise.all([
-    compileSide(extensionId, manifest, 'client'),
-    compileSide(extensionId, manifest, 'server'),
-  ]);
-  const errors = [...client.errors, ...server.errors];
-  const warnings = [...client.warnings, ...server.warnings];
+export async function buildExtension(extensionId: string, manifest: ExtensionManifest): Promise<BuildResult> {
+  const [client, server] = await Promise.all([compileSide(extensionId, manifest, 'client'), compileSide(extensionId, manifest, 'server')])
+  const errors = [...client.errors, ...server.errors]
+  const warnings = [...client.warnings, ...server.warnings]
   return {
     success: errors.length === 0,
     errors,
     warnings,
     clientHash: String(Date.now()),
     serverHash: String(Date.now()),
-  };
+  }
 }

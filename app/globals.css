@@ -128,7 +128,6 @@
 }
 
 @keyframes dot-bounce {
-
   0%,
   80%,
   100% {
@@ -172,16 +171,16 @@
 }
 
 /* Ensure all children respect width bounds */
-.prose-docs>* {
+.prose-docs > * {
   max-width: 100%;
   overflow-x: auto;
 }
 
-.prose-docs>*:first-child {
+.prose-docs > *:first-child {
   margin-top: 0;
 }
 
-.prose-docs>*:last-child {
+.prose-docs > *:last-child {
   margin-bottom: 0;
 }
 
@@ -262,8 +261,8 @@
   margin-bottom: 0.25em;
 }
 
-.prose-docs li>ul,
-.prose-docs li>ol {
+.prose-docs li > ul,
+.prose-docs li > ol {
   margin-top: 0.25em;
   margin-bottom: 0.25em;
 }
@@ -287,7 +286,7 @@
 }
 
 /* Inline code should wrap on mobile */
-.prose-docs :not(pre)>code {
+.prose-docs :not(pre) > code {
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -357,7 +356,7 @@
   margin-bottom: 1em;
 }
 
-.prose-docs :not(pre)>code {
+.prose-docs :not(pre) > code {
   color: var(--foreground);
 }
 
@@ -369,7 +368,7 @@
 }
 
 .doc-comment-anchor:hover,
-.doc-comment-anchor[data-active='true'] {
+.doc-comment-anchor[data-active="true"] {
   background: color-mix(in oklab, var(--primary) 26%, transparent);
 }
 
@@ -384,11 +383,11 @@
   max-width: 100%;
 }
 
-.prose-chat>*:first-child {
+.prose-chat > *:first-child {
   margin-top: 0;
 }
 
-.prose-chat>*:last-child {
+.prose-chat > *:last-child {
   margin-bottom: 0;
 }
 
@@ -471,7 +470,7 @@
   word-break: break-all;
 }
 
-.prose-chat :not(pre)>code {
+.prose-chat :not(pre) > code {
   white-space: pre-wrap;
   word-break: break-all;
   color: var(--foreground);

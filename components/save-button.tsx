@@ -1,33 +1,29 @@
-import { useState } from 'react';
+import { useState } from 'react'
 
-import { Button } from '@/components/ui/button';
+import { Button } from '@/components/ui/button'
 
 interface SaveButtonProps {
-  saveConfig: () => Promise<void>;
-  text?: string;
+  saveConfig: () => Promise<void>
+  text?: string
 }
 
 export function SaveButton({ saveConfig, text = 'Save' }: SaveButtonProps) {
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useState(false)
 
   const handleSave = async () => {
-    setSaving(true);
+    setSaving(true)
     try {
-      await saveConfig();
+      await saveConfig()
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  };
+  }
 
   return (
-    <div className="flex justify-end">
-      <Button
-        onClick={handleSave}
-        disabled={saving}
-        className="min-w-[120px]"
-      >
+    <div className='flex justify-end'>
+      <Button onClick={handleSave} disabled={saving} className='min-w-[120px]'>
         {saving ? 'Saving...' : text}
       </Button>
     </div>
-  );
+  )
 }

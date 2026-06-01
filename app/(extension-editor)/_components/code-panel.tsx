@@ -1,19 +1,19 @@
-'use client';
+'use client'
 
-import { javascript } from '@codemirror/lang-javascript';
-import CodeMirror from '@uiw/react-codemirror';
-import { useTheme } from 'next-themes';
+import { javascript } from '@codemirror/lang-javascript'
+import CodeMirror from '@uiw/react-codemirror'
+import { useTheme } from 'next-themes'
 
 interface CodePanelProps {
-  value: string;
-  language: 'tsx' | 'json';
-  readOnly?: boolean;
-  onChange: (value: string) => void;
+  value: string
+  language: 'tsx' | 'json'
+  readOnly?: boolean
+  onChange: (value: string) => void
 }
 
 export function CodePanel({ value, language, readOnly, onChange }: CodePanelProps) {
-  const { resolvedTheme } = useTheme();
-  const jsx = language === 'tsx';
+  const { resolvedTheme } = useTheme()
+  const jsx = language === 'tsx'
 
   return (
     <div className='flex-1 min-h-0 min-w-0 overflow-hidden'>
@@ -27,5 +27,5 @@ export function CodePanel({ value, language, readOnly, onChange }: CodePanelProp
         onChange={onChange}
       />
     </div>
-  );
+  )
 }

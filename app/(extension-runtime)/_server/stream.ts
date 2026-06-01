@@ -11,37 +11,36 @@
 // persisted into their own node data via `updateNodeData`, which both saves
 // the graph and emits `node_data_updated` for in-place client refresh.
 
-import { updateNodeData } from '@/app/(extension-runtime)/_server/node-data';
+import { updateNodeData } from '@/app/(extension-runtime)/_server/node-data'
 import {
   buildSessionKey,
   resolveSessionOnGraph,
+  type EdgeLike as SmEdgeLike,
+  type NodeLike as SmNodeLike,
   tryParseJsonMessage,
   wrapMessageWithContext,
-  type NodeLike as SmNodeLike,
-  type EdgeLike as SmEdgeLike,
-} from '@/app/(extension-runtime)/_server/send-message-helpers';
-import { getSpacesRegistry } from '@/app/(space)/server/store';
-import { type StreamChunkPayload } from '@/lib/sse-events';
-import { toastStore } from '@/lib/toast-store';
-
+} from '@/app/(extension-runtime)/_server/send-message-helpers'
+import { getSpacesRegistry } from '@/app/(space)/_server/store'
+import type { StreamChunkPayload } from '@/lib/sse-events'
+import { toastStore } from '@/lib/toast-store'
 
 export interface Stream<T> {
-  subscribe(fn: (chunk: T) => void): () => void;
-  broadcast(chunk: T): void;
+  subscribe(fn: (chunk: T) => void): () => void
+  broadcast(chunk: T): void
 }
 
 interface StreamMeta {
-  spaceId?: string;
-  nodeId: string;
-  handleId: string;
+  spaceId?: string
+  nodeId: string
+  handleId: string
 }
 
-const BUFFER_SIZE = 1000;
+const BUFFER_SIZE = 1000
 
 class StreamImpl<T> implements Stream<T> {
-  private handlers = new Set<(chunk: T) => void>();
-  private buffer: T[] = [];
-  private accBuffer = '';
+  private handlers = new Set<(chunk: T) => void>()
+  private buffer: T[] = []
+  private accBuffer = ''
 
   constructor(
     private spaceId: string | undefined,
@@ -50,19 +49,19 @@ class StreamImpl<T> implements Stream<T> {
   ) {}
 
   subscribe(fn: (chunk: T) => void): () => void {
-    this.handlers.add(fn);
+    this.handlers.add(fn)
     return () => {
-      this.handlers.delete(fn);
-    };
+      this.handlers.delete(fn)
+    }
   }
 
   broadcast(chunk: T): void {
     if (this.buffer.length >= BUFFER_SIZE) {
-      this.buffer.shift();
+      this.buffer.shift()
     }
-    this.buffer.push(chunk);
+    this.buffer.push(chunk)
     for (const h of this.handlers) {
-      h(chunk);
+      h(chunk)
     }
     toastStore.broadcast({
       type: 'stream_chunk',
@@ -70,238 +69,213 @@ class StreamImpl<T> implements Stream<T> {
       nodeId: this.nodeId,
       handleId: this.handleId,
       chunk: chunk as unknown as StreamChunkPayload,
-    });
-    const tc = chunk as unknown as { text?: string; final?: boolean };
+    })
+    const tc = chunk as unknown as { text?: string; final?: boolean }
     if (typeof tc.text === 'string' && typeof tc.final === 'boolean') {
-      this.accBuffer += tc.text;
+      this.accBuffer += tc.text
       if (tc.final) {
-        const text = this.accBuffer.trim();
-        this.accBuffer = '';
+        const text = this.accBuffer.trim()
+        this.accBuffer = ''
         if (text) {
-          void persistToDownstreamLogs(this.spaceId, this.nodeId, this.handleId, text);
-          void persistToDownstreamSendMessages(this.spaceId, this.nodeId, this.handleId, text);
+          void persistToDownstreamLogs(this.spaceId, this.nodeId, this.handleId, text)
+          void persistToDownstreamSendMessages(this.spaceId, this.nodeId, this.handleId, text)
         }
       }
     }
   }
 
   snapshot(): T[] {
-    return this.buffer.slice();
+    return this.buffer.slice()
   }
 
   meta(): StreamMeta {
-    return { spaceId: this.spaceId, nodeId: this.nodeId, handleId: this.handleId };
+    return { spaceId: this.spaceId, nodeId: this.nodeId, handleId: this.handleId }
   }
 
   clear(): void {
-    this.buffer = [];
+    this.buffer = []
   }
 }
 
 interface GraphEdgeLike {
-  source: string;
-  target: string;
-  sourceHandle?: string;
-  targetHandle?: string;
+  source: string
+  target: string
+  sourceHandle?: string
+  targetHandle?: string
 }
 
 interface GraphNodeLike {
-  id: string;
-  type?: string;
-  data?: Record<string, unknown>;
+  id: string
+  type?: string
+  data?: Record<string, unknown>
 }
 
 interface LogEntry {
-  at: number;
-  text: string;
+  at: number
+  text: string
 }
 
-const DEFAULT_LOG_MAX = 500;
+const DEFAULT_LOG_MAX = 500
 
-async function persistToDownstreamLogs(
-  spaceId: string | undefined,
-  sourceNodeId: string,
-  sourceHandleId: string,
-  text: string,
-): Promise<void> {
+async function persistToDownstreamLogs(spaceId: string | undefined, sourceNodeId: string, sourceHandleId: string, text: string): Promise<void> {
   if (!spaceId) {
-    return;
+    return
   }
-  const r = getSpacesRegistry();
-  await r.ensureLoaded();
-  const space = r.getBySlug(spaceId);
+  const r = getSpacesRegistry()
+  await r.ensureLoaded()
+  const space = r.getBySlug(spaceId)
   if (!space) {
-    return;
+    return
   }
-  const edges = space.graph.edges as unknown as GraphEdgeLike[];
-  const nodes = space.graph.nodes as unknown as GraphNodeLike[];
+  const edges = space.graph.edges as unknown as GraphEdgeLike[]
+  const nodes = space.graph.nodes as unknown as GraphNodeLike[]
   for (const edge of edges) {
     if (edge.source !== sourceNodeId || edge.sourceHandle !== sourceHandleId) {
-      continue;
+      continue
     }
-    const target = nodes.find((n) => n.id === edge.target);
+    const target = nodes.find((n) => n.id === edge.target)
     if (target?.type !== 'log') {
-      continue;
+      continue
     }
-    const max = ((target.data?.['max'] as number | undefined) && (target.data?.['max'] as number) > 0)
-      ? (target.data?.['max'] as number)
-      : DEFAULT_LOG_MAX;
+    const max = (target.data?.['max'] as number | undefined) && (target.data?.['max'] as number) > 0 ? (target.data?.['max'] as number) : DEFAULT_LOG_MAX
     await updateNodeData(spaceId, target.id, (prev) => {
-      const prevEntries = ((prev['entries'] as LogEntry[] | undefined) ?? []);
-      const entry: LogEntry = { at: Date.now(), text };
-      const nextEntries = prevEntries.length >= max
-        ? [...prevEntries.slice(prevEntries.length - max + 1), entry]
-        : [...prevEntries, entry];
-      return { ...prev, entries: nextEntries };
-    });
+      const prevEntries = (prev['entries'] as LogEntry[] | undefined) ?? []
+      const entry: LogEntry = { at: Date.now(), text }
+      const nextEntries = prevEntries.length >= max ? [...prevEntries.slice(prevEntries.length - max + 1), entry] : [...prevEntries, entry]
+      return { ...prev, entries: nextEntries }
+    })
   }
 }
 
-async function persistToDownstreamSendMessages(
-  spaceId: string | undefined,
-  sourceNodeId: string,
-  sourceHandleId: string,
-  text: string,
-): Promise<void> {
+async function persistToDownstreamSendMessages(spaceId: string | undefined, sourceNodeId: string, sourceHandleId: string, text: string): Promise<void> {
   if (!spaceId) {
-    return;
+    return
   }
-  const r = getSpacesRegistry();
-  await r.ensureLoaded();
-  const space = r.getBySlug(spaceId);
+  const r = getSpacesRegistry()
+  await r.ensureLoaded()
+  const space = r.getBySlug(spaceId)
   if (!space) {
-    return;
+    return
   }
-  const edges = space.graph.edges as unknown as GraphEdgeLike[];
-  const nodes = space.graph.nodes as unknown as GraphNodeLike[];
+  const edges = space.graph.edges as unknown as GraphEdgeLike[]
+  const nodes = space.graph.nodes as unknown as GraphNodeLike[]
   for (const edge of edges) {
     if (edge.source !== sourceNodeId || edge.sourceHandle !== sourceHandleId) {
-      continue;
+      continue
     }
-    const target = nodes.find((n) => n.id === edge.target);
+    const target = nodes.find((n) => n.id === edge.target)
     if (target?.type !== 'send-message') {
-      continue;
+      continue
     }
 
-    const route = resolveRoute(text, target, nodes, edges);
+    const route = resolveRoute(text, target, nodes, edges)
     if (!route) {
-      continue;
+      continue
     }
 
-    let message = route.message;
+    let message = route.message
     if (!message.trim().startsWith('/')) {
-      message = wrapMessageWithContext(
-        message,
-        { name: space.name, slug: spaceId },
-        sourceNodeId,
-        route.ctx.jobContext,
-        route.ctx.instructions,
-      );
+      message = wrapMessageWithContext(message, { name: space.name, slug: spaceId }, sourceNodeId, route.ctx.jobContext, route.ctx.instructions)
     }
 
     try {
-      const { gateway } = await import('@/app/(openclaw)/_server/gateway-client');
+      const { gateway } = await import('@/app/(openclaw)/_server/gateway-client')
       await gateway().call('chat.send', {
         sessionKey: route.sessionKey,
         message,
         idempotencyKey: crypto.randomUUID(),
-      });
+      })
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[send-message] Failed to send to session ${route.sessionKey}:`, msg);
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`[send-message] Failed to send to session ${route.sessionKey}:`, msg)
     }
   }
 }
 
 interface SendMessageNodeData {
-  defaultAgent?: string;
-  defaultJob?: string;
+  defaultAgent?: string
+  defaultJob?: string
 }
 
 interface RouteResolution {
-  sessionKey: string;
-  message: string;
-  ctx: { jobContext: string; instructions: string[] };
+  sessionKey: string
+  message: string
+  ctx: { jobContext: string; instructions: string[] }
 }
 
-function resolveRoute(
-  text: string,
-  target: GraphNodeLike,
-  nodes: GraphNodeLike[],
-  edges: GraphEdgeLike[],
-): RouteResolution | null {
-  const smNodes = nodes as unknown as SmNodeLike[];
-  const smEdges = edges as unknown as SmEdgeLike[];
+function resolveRoute(text: string, target: GraphNodeLike, nodes: GraphNodeLike[], edges: GraphEdgeLike[]): RouteResolution | null {
+  const smNodes = nodes as unknown as SmNodeLike[]
+  const smEdges = edges as unknown as SmEdgeLike[]
 
-  const parsed = tryParseJsonMessage(text);
+  const parsed = tryParseJsonMessage(text)
   if (parsed) {
-    const ctx = resolveSessionOnGraph(parsed.session, smNodes, smEdges);
+    const ctx = resolveSessionOnGraph(parsed.session, smNodes, smEdges)
     if (!ctx) {
-      return null;
+      return null
     }
-    return { sessionKey: parsed.session, message: parsed.message, ctx };
+    return { sessionKey: parsed.session, message: parsed.message, ctx }
   }
 
-  const data = (target.data ?? {}) as SendMessageNodeData;
-  const a = (data.defaultAgent || '').trim();
-  const j = (data.defaultJob || '').trim();
+  const data = (target.data ?? {}) as SendMessageNodeData
+  const a = (data.defaultAgent || '').trim()
+  const j = (data.defaultJob || '').trim()
   if (!a || !j) {
-    return null;
+    return null
   }
-  const sessionKey = buildSessionKey(a, j);
-  const ctx = resolveSessionOnGraph(sessionKey, smNodes, smEdges);
+  const sessionKey = buildSessionKey(a, j)
+  const ctx = resolveSessionOnGraph(sessionKey, smNodes, smEdges)
   if (!ctx) {
-    return null;
+    return null
   }
-  return { sessionKey, message: text, ctx };
+  return { sessionKey, message: text, ctx }
 }
 
-const g = globalThis as Record<string, unknown>;
+const g = globalThis as Record<string, unknown>
 if (!g.__STREAM_REGISTRY__) {
-  g.__STREAM_REGISTRY__ = new Map<string, StreamImpl<unknown>>();
+  g.__STREAM_REGISTRY__ = new Map<string, StreamImpl<unknown>>()
 }
-const registry = g.__STREAM_REGISTRY__ as Map<string, StreamImpl<unknown>>;
+const registry = g.__STREAM_REGISTRY__ as Map<string, StreamImpl<unknown>>
 
 function keyFor(nodeId: string, handleId: string): string {
-  return `${nodeId}::${handleId}`;
+  return `${nodeId}::${handleId}`
 }
 
 export function getStream<T>(spaceId: string | undefined, nodeId: string, handleId: string): Stream<T> {
-  const key = keyFor(nodeId, handleId);
-  let impl = registry.get(key);
+  const key = keyFor(nodeId, handleId)
+  let impl = registry.get(key)
   if (!impl) {
-    impl = new StreamImpl<unknown>(spaceId, nodeId, handleId);
-    registry.set(key, impl);
+    impl = new StreamImpl<unknown>(spaceId, nodeId, handleId)
+    registry.set(key, impl)
   }
-  return impl as unknown as Stream<T>;
+  return impl as unknown as Stream<T>
 }
 
 export function subscribe<T>(stream: Stream<T>, fn: (chunk: T) => void): () => void {
-  return stream.subscribe(fn);
+  return stream.subscribe(fn)
 }
 
 export function broadcast<T>(stream: Stream<T>, chunk: T): void {
-  stream.broadcast(chunk);
+  stream.broadcast(chunk)
 }
 
 export interface BufferedStream {
-  nodeId: string;
-  handleId: string;
-  chunks: StreamChunkPayload[];
+  nodeId: string
+  handleId: string
+  chunks: StreamChunkPayload[]
 }
 
 export function listBufferedStreams(spaceId: string | undefined): BufferedStream[] {
-  const result: BufferedStream[] = [];
+  const result: BufferedStream[] = []
   for (const impl of registry.values()) {
-    const meta = impl.meta();
+    const meta = impl.meta()
     if (spaceId !== undefined && meta.spaceId !== undefined && meta.spaceId !== spaceId) {
-      continue;
+      continue
     }
-    const chunks = impl.snapshot() as StreamChunkPayload[];
+    const chunks = impl.snapshot() as StreamChunkPayload[]
     if (chunks.length === 0) {
-      continue;
+      continue
     }
-    result.push({ nodeId: meta.nodeId, handleId: meta.handleId, chunks });
+    result.push({ nodeId: meta.nodeId, handleId: meta.handleId, chunks })
   }
-  return result;
+  return result
 }

@@ -1,26 +1,27 @@
 export function extensionTemplate(slug: string): Record<string, string> {
-  const id = `local/${slug}`;
-  const name = slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  const id = `local/${slug}`
+  const name = slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
   return {
-    'extension.json': JSON.stringify(
-      {
-        id,
-        name,
-        version: '0.0.1',
-        description: 'A new local extension',
-        nodes: [
-          {
-            typeId: `${slug}-node`,
-            name: `${name} Node`,
-            category: 'Custom',
-            icon: 'Box',
-          },
-        ],
-      },
-      null,
-      2,
-    ) + '\n',
+    'extension.json':
+      JSON.stringify(
+        {
+          id,
+          name,
+          version: '0.0.1',
+          description: 'A new local extension',
+          nodes: [
+            {
+              typeId: `${slug}-node`,
+              name: `${name} Node`,
+              category: 'Custom',
+              icon: 'Box',
+            },
+          ],
+        },
+        null,
+        2,
+      ) + '\n',
 
     'src/client.tsx': `import {
   defineExtension,
@@ -67,9 +68,9 @@ export const actions = {
   '${slug}-node.ping': async () => 'pong',
 };
 `,
-  };
+  }
 }
 
 function camelCase(s: string): string {
-  return s.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+  return s.replace(/-([a-z])/g, (_, c) => c.toUpperCase())
 }
