@@ -54,10 +54,10 @@ export default defineConfig({
   // Native / server-only modules must never be pulled into client dep optimization
   // or bundled for SSR — they are resolved from node_modules at runtime.
   optimizeDeps: {
-    exclude: ['ssh2', 'cpu-features', '@lydell/node-pty', 'esbuild', 'esbuild-wasm', 'better-sqlite3', '@prisma/client', '@prisma/adapter-better-sqlite3'],
+    exclude: ['ssh2', 'cpu-features', '@lydell/node-pty', 'esbuild', 'esbuild-wasm', 'better-sqlite3'],
   },
   ssr: {
-    external: ['ssh2', 'cpu-features', '@lydell/node-pty', 'esbuild', 'esbuild-wasm', 'better-sqlite3', '@prisma/client', '@prisma/adapter-better-sqlite3'],
+    external: ['ssh2', 'cpu-features', '@lydell/node-pty', 'esbuild', 'esbuild-wasm', 'better-sqlite3'],
   },
   plugins: [
     wsTerminalPlugin(),

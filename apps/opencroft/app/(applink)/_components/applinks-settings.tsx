@@ -1,6 +1,6 @@
 'use client'
 
-import type { AppLink } from '@prisma/client'
+import type { AppLink } from '@opencroft/db'
 import { Pencil, Plus, Trash2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 

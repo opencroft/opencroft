@@ -5,7 +5,7 @@ import { createServerFn } from '@tanstack/react-start'
 import * as yaml from 'js-yaml'
 
 import { cacheDir } from '@/server/cache'
-import { prisma } from '@/server/prisma'
+import { prisma } from '@opencroft/db'
 
 export interface AppService {
   name: string

@@ -1,5 +1,5 @@
 import { ACTIVE_SPACE_SETTING_ID, DEFAULT_SPACE_NAME, DEFAULT_SPACE_SLUG, type GraphData, LEGACY_GRAPH_SETTING_ID, type SpaceSummary } from '@/app/(space)/_server/types'
-import { prisma } from '@/server/prisma'
+import { prisma } from '@opencroft/db'
 
 interface SpaceRuntime {
   id: string

@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 
 import { decrypt, encrypt } from '@/server/crypto'
-import { prisma } from '@/server/prisma'
+import { prisma } from '@opencroft/db'
 
 export interface SecretEntry {
   id: string

@@ -1,5 +1,5 @@
-import type { Setting as PrismaSetting } from '@prisma/client'
+import type { Setting as SettingRow } from '@opencroft/db'
 
-export type Setting<T = Record<string, unknown>> = Omit<PrismaSetting, 'data'> & {
+export type Setting<T = Record<string, unknown>> = Omit<SettingRow, 'data'> & {
   data: T
 }

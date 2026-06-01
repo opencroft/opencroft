@@ -10,7 +10,7 @@ import { getSpacesRegistry } from '@/app/(space)/_server/store'
 import type { GraphData } from '@/app/(space)/_server/types'
 import { cacheDir } from '@/server/cache'
 import { decrypt, encrypt } from '@/server/crypto'
-import { prisma } from '@/server/prisma'
+import { db, prisma } from '@opencroft/db'
 import { exec } from '@/server/shell'
 
 function randomToken(bytes = 32): string {
@@ -233,6 +233,8 @@ export interface ExtensionHost {
   execFile: (cmd: string, args: string[]) => Promise<string>
   cacheDir: (...parts: string[]) => string
   crypto: { encrypt: typeof encrypt; decrypt: typeof decrypt; randomToken: typeof randomToken }
+  db: typeof db
+  /** @deprecated Prisma-compatible facade over Drizzle; prefer `db`. */
   prisma: typeof prisma
   settings: { get: typeof getSetting; set: typeof setSetting }
   graph: HostGraphApi
@@ -250,6 +252,7 @@ export function createHost(extensionId: string): ExtensionHost {
     execFile: execFilePromise,
     cacheDir: (...parts) => cacheDir('extensions', extensionId, ...parts),
     crypto: { encrypt, decrypt, randomToken },
+    db,
     prisma,
     settings: { get: getSetting, set: setSetting },
     graph: graphApi,

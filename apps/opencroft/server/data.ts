@@ -1,6 +1,6 @@
 'use server'
 
-import { prisma } from '@/server/prisma'
+import { prisma } from '@opencroft/db'
 
 // ── Setting CRUD ──
 

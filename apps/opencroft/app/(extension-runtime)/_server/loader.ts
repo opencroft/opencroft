@@ -138,7 +138,7 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
     const mod: { exports: ExtensionServerModule } = { exports: {} }
     // Resolve the extension's own dependencies (sharp, ffmpeg-static, …) from
     // its own node_modules; fall back to the app for host-provided externals
-    // (@prisma/client, ssh2, node built-ins).
+    // (ssh2, node built-ins).
     const extRequire = createRequire(bundleFile)
     const appRequire: NodeRequire = createRequire(import.meta.url)
     const runtimeRequire = ((id: string) => {

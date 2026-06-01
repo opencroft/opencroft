@@ -8,7 +8,7 @@ import type { BuildResult, CompileError, ExtensionManifest } from '@/app/(extens
 
 const PROJECT_NODE_MODULES = path.join(projectRoot(), 'node_modules')
 
-const SERVER_EXTERNAL_PACKAGES = ['node:*', 'fs', 'path', 'os', 'child_process', 'crypto', 'stream', 'util', 'events', 'ssh2', '@prisma/client', '@prisma/adapter-better-sqlite3']
+const SERVER_EXTERNAL_PACKAGES = ['node:*', 'fs', 'path', 'os', 'child_process', 'crypto', 'stream', 'util', 'events', 'ssh2']
 
 function toCompileErrors(messages: esbuild.Message[]): CompileError[] {
   return messages.map((m) => ({

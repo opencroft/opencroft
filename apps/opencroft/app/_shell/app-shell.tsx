@@ -1,6 +1,6 @@
 'use client'
 
-import type { AppLink } from '@prisma/client'
+import type { AppLink } from '@opencroft/db'
 import { Link, useLocation, useNavigate, useSearch } from '@tanstack/react-router'
 import { BookOpen, ChevronRight, ExternalLink, Globe, MessageSquare, Network, Puzzle, SettingsIcon, X } from 'lucide-react'
 import { Suspense, useEffect, useState } from 'react'

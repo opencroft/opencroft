@@ -37,7 +37,7 @@ import type { GraphData } from '@/app/(space)/_server/types'
 import { askUserStore } from '@/lib/ask-user-store'
 import { toastStore } from '@/lib/toast-store'
 import { decrypt } from '@/server/crypto'
-import { prisma } from '@/server/prisma'
+import { prisma } from '@opencroft/db'
 
 const SPACE_PARAM = {
   space: {

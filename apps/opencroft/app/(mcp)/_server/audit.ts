@@ -1,4 +1,4 @@
-import { prisma } from '@/server/prisma'
+import { prisma } from '@opencroft/db'
 
 const MAX_PAYLOAD = 16384
 
