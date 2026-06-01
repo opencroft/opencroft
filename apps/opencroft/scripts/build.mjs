@@ -1,6 +1,11 @@
 import { execSync } from 'node:child_process'
+import { rmSync } from 'node:fs'
 
 import { build } from 'esbuild'
+
+// 0. Always start from a clean dist. Otherwise a stale dist/server (whose SSR
+//    HTML links an old client asset hash) can survive a rebuild and 404 in prod.
+rmSync('dist', { recursive: true, force: true })
 
 // 1. Build the TanStack Start app (client + server) into dist/
 execSync('vite build', { stdio: 'inherit' })
