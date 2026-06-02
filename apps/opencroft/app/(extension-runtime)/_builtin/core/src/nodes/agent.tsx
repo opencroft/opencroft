@@ -38,7 +38,6 @@ export interface AgentData {
   adapterId?: string;
   model?: string;
   apiKeySecret?: string;
-  cwd?: string;
   defaultModeId?: string;
 }
 
@@ -248,15 +247,9 @@ function LocalProfileFields({
           </p>
         ) : null}
       </div>
-      <div className='flex flex-col gap-1'>
-        <Label className='text-xs'>Working directory</Label>
-        <Input
-          value={data.cwd ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ cwd: e.target.value })}
-          placeholder='/app'
-          className='text-xs font-mono'
-        />
-      </div>
+      <p className='text-[10px] text-muted-foreground'>
+        Runs in a persistent per-agent workspace: <code>data/agent-workspace/&lt;agent-slug&gt;</code>.
+      </p>
     </div>
   );
 }

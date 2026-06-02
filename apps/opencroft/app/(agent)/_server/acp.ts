@@ -1,10 +1,11 @@
 import { mkdir } from 'node:fs/promises'
+import { join } from 'node:path'
 
 import { prisma } from '@opencroft/db'
 import { createServerFn } from '@tanstack/react-start'
-import type { AgentProfile } from 'agent-client/profiles'
-import { readProfiles, writeProfiles } from 'agent-client/profiles-store'
+import type { AgentSelection } from 'agent-client/types'
 import { agentClient } from '@/app/(agent)/_server/agent-client-instance'
+import { slug } from '@/app/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
 import { decrypt } from '@/server/crypto'
 
@@ -15,12 +16,7 @@ interface AgentNodeData {
   adapterId?: string
   model?: string
   apiKeySecret?: string
-  cwd?: string
   defaultModeId?: string
-}
-
-interface JobNodeData {
-  workingDirectory?: string
 }
 
 async function findNodeData<T>(nodeId: string): Promise<T | null> {
@@ -47,17 +43,6 @@ async function resolveSecret(key: string): Promise<string> {
   return row ? decrypt(row.value) : ''
 }
 
-function profileId(agentNodeId: string): string {
-  return `agent-${agentNodeId}`
-}
-
-async function upsertProfile(profile: AgentProfile): Promise<void> {
-  const file = await readProfiles()
-  const profiles = file.profiles.filter((p) => p.id !== profile.id)
-  profiles.push(profile)
-  await writeProfiles({ profiles, activeProfileId: file.activeProfileId })
-}
-
 // ACP sessions live only in agentClient's memory, so they don't survive a dev
 // server restart. Map each opencroft chat tab to its live ACP session id and
 // re-create lazily — this keeps session creation idempotent per tab (no loops)
@@ -70,8 +55,8 @@ if (!globalRef.__acpTabSessions) {
 }
 const tabSessions = globalRef.__acpTabSessions
 
-// Derive an agent-client profile from the Agent node's data, persist it, and
-// open (or reuse) the ACP session bound to this chat tab. Returns its id.
+// Build the agent's selection in memory from its node data + Secrets Store key
+// (no on-disk profile store), and open (or reuse) the ACP session for this tab.
 export const ensureLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { agentNodeId: string; jobNodeId: string; tabKey: string }) => data)
   .handler(async ({ data }): Promise<{ sessionId: string }> => {
@@ -83,25 +68,19 @@ export const ensureLocalSession = createServerFn({ method: 'POST', strict: { out
     if (!agent) {
       throw new Error('Agent node not found')
     }
-    const job = await findNodeData<JobNodeData>(data.jobNodeId)
-    const id = profileId(data.agentNodeId)
-    const profile: AgentProfile = {
-      id,
-      name: agent.name?.trim() || id,
-      selection: {
-        providerId: agent.providerId ?? '',
-        adapterId: agent.adapterId ?? 'claude',
-        model: agent.model ?? '',
-        apiKey: await resolveSecret(agent.apiKeySecret ?? ''),
-        cwd: agent.cwd?.trim() || job?.workingDirectory?.trim() || '/app',
-      },
-      defaultModeId: agent.defaultModeId,
+    // Each agent gets a persistent workspace next to the DB in the data volume,
+    // keyed by slug: <cwd>/data/agent-workspace/<agent-slug>.
+    const workspaceSlug = slug(agent.name ?? '') || data.agentNodeId
+    const selection: AgentSelection = {
+      providerId: agent.providerId ?? '',
+      adapterId: agent.adapterId ?? 'claude',
+      model: agent.model ?? '',
+      apiKey: await resolveSecret(agent.apiKeySecret ?? ''),
+      cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
     }
-    await upsertProfile(profile)
-    // The harness is spawned with cwd = the profile's working directory; create
-    // it up front so spawn doesn't fail with ENOENT on a missing path.
-    await mkdir(profile.selection.cwd, { recursive: true })
-    const meta = await agentClient.createSession(id)
+    // Spawn cwd must exist or spawn fails with ENOENT.
+    await mkdir(selection.cwd, { recursive: true })
+    const meta = await agentClient.createSession(selection, agent.defaultModeId)
     tabSessions.set(data.tabKey, meta.id)
     return { sessionId: meta.id }
   })
