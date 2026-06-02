@@ -1,3 +1,4 @@
+import { devtools } from '@tanstack/devtools-vite'
 import tailwindcss from '@tailwindcss/vite'
 import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
@@ -60,6 +61,7 @@ export default defineConfig({
     external: ['ssh2', 'cpu-features', '@lydell/node-pty', 'esbuild', 'esbuild-wasm', 'better-sqlite3'],
   },
   plugins: [
+    devtools(),
     wsTerminalPlugin(),
     tailwindcss(),
     tanstackStart({
