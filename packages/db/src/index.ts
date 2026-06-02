@@ -27,6 +27,6 @@ export const db = drizzle({ client: sqlite, schema })
 /** Deprecated Prisma-compatible facade — kept for the `host.prisma` extension API. */
 export const prisma = createPrismaCompat(db)
 
-export { schema }
 export * from './schema'
+export { schema }
 export type DB = typeof db

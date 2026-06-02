@@ -1,13 +1,12 @@
 'use client'
 
+import { Button } from '@opencroft/ui-kit/button'
+import { Input } from '@opencroft/ui-kit/input'
 import { ArrowUp, type LucideIcon, Search, Target } from 'lucide-react'
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
-
 import type { CommandNodeEntry } from '@/app/(dashboard)/_canvas/canvas-command-bar'
 import { CommandBarMenuItem } from '@/app/(dashboard)/_canvas/command-bar'
 import { useOverlayBar, useOverlayMenu } from '@/app/(dashboard)/_canvas/overlay-context'
-import { Button } from '@opencroft/ui-kit/button'
-import { Input } from '@opencroft/ui-kit/input'
 
 type SearchFindMode = 'search' | 'find'
 

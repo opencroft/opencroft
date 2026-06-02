@@ -1,11 +1,10 @@
 'use client'
 
-import { useEffect, useState, useTransition } from 'react'
-
-import { type AiSettingsState, loadAiSettingsState, rePairGateway, saveDefaultAgent, saveGatewayConfig } from '@/app/(settings)/_server/ai-actions'
 import { Button } from '@opencroft/ui-kit/button'
 import { Input } from '@opencroft/ui-kit/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@opencroft/ui-kit/select'
+import { useEffect, useState, useTransition } from 'react'
+import { type AiSettingsState, loadAiSettingsState, rePairGateway, saveDefaultAgent, saveGatewayConfig } from '@/app/(settings)/_server/ai-actions'
 
 function buildNodesUrl(gatewayUrl: string | null | undefined): string | null {
   if (!gatewayUrl) {

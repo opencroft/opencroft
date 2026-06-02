@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, gte, inArray, like, lt, lte, ne, notInArray, or, sql, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, inArray, like, lt, lte, ne, notInArray, or, type SQL, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { SQLiteColumn, SQLiteTable } from 'drizzle-orm/sqlite-core'
 import { schema } from './schema'
@@ -190,7 +190,12 @@ function model<T extends SQLiteTable>(db: AnyDb, table: T, name: string) {
       return (row ?? notFound('update')) as Row
     },
     async upsert(args: { where: Where; create: Insert; update: Partial<Insert> }): Promise<Row> {
-      return db.insert(table).values(args.create).onConflictDoUpdate({ target: upsertTarget(cols, name, args.where), set: args.update }).returning().get() as Row
+      return db
+        .insert(table)
+        .values(args.create)
+        .onConflictDoUpdate({ target: upsertTarget(cols, name, args.where), set: args.update })
+        .returning()
+        .get() as Row
     },
     async delete(args: { where: Where }): Promise<Row> {
       const w = buildWhere(cols, name, args.where)
@@ -204,11 +209,7 @@ function model<T extends SQLiteTable>(db: AnyDb, table: T, name: string) {
     },
     async count(args: { where?: Where } = {}): Promise<number> {
       const w = buildWhere(cols, name, args.where)
-      const r = db
-        .select({ c: sql<number>`count(*)` })
-        .from(base)
-        .where(w)
-        .get()
+      const r = db.select({ c: sql<number>`count(*)` }).from(base).where(w).get()
       return Number(r?.c ?? 0)
     },
   }

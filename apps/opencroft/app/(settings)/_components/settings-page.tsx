@@ -1,16 +1,15 @@
 'use client'
 
+import { MenuLayout } from '@opencroft/ui-kit/layout/menulayout'
+import { ScrollContent, ScrollPage } from '@opencroft/ui-kit/layout/scrollpage'
 import { ExternalLink, ScrollText, Sparkles } from 'lucide-react'
 import type React from 'react'
 import { Suspense, useCallback } from 'react'
-
 import AppLinksSettings from '@/app/(applink)/_components/applinks-settings'
 import AiSettings from '@/app/(settings)/_components/ai-settings'
 import AuditSettings from '@/app/(settings)/_components/audit-settings'
 import { ExtensionSettingsMenu, findExtensionPage, useExtensionSettings } from '@/app/(settings)/_components/extension-settings'
 import { useUrlState } from '@/components/hooks/use-url-state'
-import { MenuLayout } from '@opencroft/ui-kit/layout/menulayout'
-import { ScrollContent, ScrollPage } from '@opencroft/ui-kit/layout/scrollpage'
 import { cn } from '@/lib/utils'
 
 interface BuiltinPage {

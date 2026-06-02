@@ -1,9 +1,8 @@
 'use client'
 
-import { PanelRightIcon } from 'lucide-react'
-
 import { Button } from '@opencroft/ui-kit/button'
 import { useSidebar } from '@opencroft/ui-kit/sidebar'
+import { PanelRightIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 type RightSidebarTriggerProps = React.ComponentProps<typeof Button>

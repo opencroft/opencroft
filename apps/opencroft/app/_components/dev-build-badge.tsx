@@ -1,8 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-
 import { SidebarMenu, SidebarMenuItem } from '@opencroft/ui-kit/sidebar'
+import { useEffect, useState } from 'react'
 
 interface BuildInfo {
   branch: string

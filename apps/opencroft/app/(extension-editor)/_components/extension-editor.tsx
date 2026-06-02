@@ -1,9 +1,9 @@
 'use client'
 
+import { Button } from '@opencroft/ui-kit/button'
 import { ArrowLeft } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-
 import {
   checkInstalledForUpdates,
   type InstalledExtensionRecord,
@@ -26,7 +26,6 @@ import { InstallExtensionDialog } from '@/app/(extension-editor)/_components/ins
 import { extensionTemplate } from '@/app/(extension-editor)/_templates/template'
 import { loadExtension } from '@/app/(extension-runtime)/_client/loader'
 import type { CompileError } from '@/app/(extension-runtime)/_types'
-import { Button } from '@opencroft/ui-kit/button'
 
 function recordSignature(files: Record<string, string>): string {
   return Object.entries(files)

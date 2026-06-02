@@ -20,8 +20,8 @@ import type {
 import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
 
 import { readMcpConfig, resolveMcpServers } from './mcp-config'
-import type { McpServerConfig } from './mcp-types'
 import { createMcpServer, type LocalTool, type SkillHandler, type SkillsInput } from './mcp-server'
+import type { McpServerConfig } from './mcp-types'
 import { buildSpawnConfig } from './resolve'
 import { fileSkillHandler, fileSkills } from './skills'
 import type { AgentSelection, ChatEvent, SessionMeta, SessionMode, SpawnConfig } from './types'

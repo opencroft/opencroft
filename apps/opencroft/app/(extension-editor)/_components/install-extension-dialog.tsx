@@ -1,16 +1,15 @@
 'use client'
 
-import { Loader2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { toast } from 'sonner'
-
-import { type InstallAuth, type InstalledExtensionRecord, installExtensionFromUrl } from '@/app/(extension-editor)/_actions/installed-extensions-actions'
-import { listSecretStores, type SecretStoreSummary } from '@/app/(secrets-store)/_server/actions'
 import { Button } from '@opencroft/ui-kit/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@opencroft/ui-kit/dialog'
 import { Input } from '@opencroft/ui-kit/input'
 import { Label } from '@opencroft/ui-kit/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@opencroft/ui-kit/select'
+import { Loader2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { toast } from 'sonner'
+import { type InstallAuth, type InstalledExtensionRecord, installExtensionFromUrl } from '@/app/(extension-editor)/_actions/installed-extensions-actions'
+import { listSecretStores, type SecretStoreSummary } from '@/app/(secrets-store)/_server/actions'
 
 interface InstallExtensionDialogProps {
   open: boolean

@@ -1,6 +1,5 @@
-import { createServerFn } from '@tanstack/react-start'
-
 import { prisma } from '@opencroft/db'
+import { createServerFn } from '@tanstack/react-start'
 
 export const getAppLinks = createServerFn().handler(async () => {
   return prisma.appLink.findMany({ orderBy: { order: 'asc' } })

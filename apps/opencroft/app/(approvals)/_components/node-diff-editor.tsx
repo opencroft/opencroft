@@ -5,12 +5,11 @@ import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { MergeView, unifiedMergeView } from '@codemirror/merge'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { EditorView, lineNumbers } from '@codemirror/view'
+import { Button } from '@opencroft/ui-kit/button'
 import CodeMirror from '@uiw/react-codemirror'
 import { Columns2, Rows2 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useEffect, useMemo, useRef, useState } from 'react'
-
-import { Button } from '@opencroft/ui-kit/button'
 import { cn } from '@/lib/utils'
 
 type DiffMode = 'unified' | 'split'

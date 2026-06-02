@@ -1,14 +1,14 @@
 'use client'
 
+import { Button } from '@opencroft/ui-kit/button'
+import { Popover, PopoverAnchor, PopoverContent } from '@opencroft/ui-kit/popover'
+import { Textarea } from '@opencroft/ui-kit/textarea'
 import { Bot, Loader2, MessageCircle, Send, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { listDocComments, postDocComment } from '@/app/(docs)/_server/actions'
 import type { Anchor, Comment } from '@/app/(docs)/_server/comments'
 import { useSSEEvents } from '@/app/(sse)/_lib/sse-events-store'
-import { Button } from '@opencroft/ui-kit/button'
-import { Popover, PopoverAnchor, PopoverContent } from '@opencroft/ui-kit/popover'
-import { Textarea } from '@opencroft/ui-kit/textarea'
 import { cn } from '@/lib/utils'
 
 interface DocCommentsOverlayProps {

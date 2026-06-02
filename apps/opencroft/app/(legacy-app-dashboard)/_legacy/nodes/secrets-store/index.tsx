@@ -1,15 +1,14 @@
 'use client'
 
-import type { Node, NodeProps } from '@xyflow/react'
-import { Eye, EyeOff, Plus, ShieldCheck, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
-
-import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
-import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
-import { deleteSecret, getSecrets, setSecret } from '@/app/(secrets-store)/_server/actions'
 import { Button } from '@opencroft/ui-kit/button'
 import { Input } from '@opencroft/ui-kit/input'
 import { Label } from '@opencroft/ui-kit/label'
+import type { Node, NodeProps } from '@xyflow/react'
+import { Eye, EyeOff, Plus, ShieldCheck, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
+import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
+import { deleteSecret, getSecrets, setSecret } from '@/app/(secrets-store)/_server/actions'
 
 export type SecretsStoreData = {
   secretKeys: string[]

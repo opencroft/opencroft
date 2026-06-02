@@ -1,8 +1,7 @@
+import { prisma } from '@opencroft/db'
 import { createServerFn } from '@tanstack/react-start'
-
 import type { AuditStatus } from '@/app/(mcp)/_server/audit'
 import { getYoloModeInfo, setYoloMode as setYolo } from '@/app/(mcp)/_server/yolo'
-import { prisma } from '@opencroft/db'
 
 export interface McpAuditEntry {
   id: string

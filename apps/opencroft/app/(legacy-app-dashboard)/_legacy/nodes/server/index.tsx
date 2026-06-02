@@ -1,11 +1,17 @@
 'use client'
 
+import { Button } from '@opencroft/ui-kit/button'
+import { Input } from '@opencroft/ui-kit/input'
+import { Label } from '@opencroft/ui-kit/label'
+import { Flex } from '@opencroft/ui-kit/layout/flex'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@opencroft/ui-kit/select'
+import { Separator } from '@opencroft/ui-kit/separator'
+import { Spinner } from '@opencroft/ui-kit/spinner'
 import { Link } from '@tanstack/react-router'
 import { type Node, type NodeProps, useReactFlow } from '@xyflow/react'
 import { Check, Container, Cpu, Download, FolderOpen, HardDrive, Loader2, MemoryStick, Monitor, RefreshCw, Server, Terminal, TerminalSquare, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-
 import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 import { useSettingsDraft } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/use-settings-draft'
 import { type KeyEntry, listKeys } from '@/app/(legacy-app-dashboard)/_legacy/nodes/key-store/actions'
@@ -15,13 +21,6 @@ import { PinnedNode, StatsList } from '@/app/(legacy-app-dashboard)/_legacy/node
 import { spawnFileBrowserWindow, spawnTerminalWindow } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/spawn-window'
 import { checkDocker, getServerStats, installDockerUbuntu, type ServerStats } from '@/app/(server)/_server/remote'
 import { type DockerFeature, type ServerFeature, type SshFeature, slug } from '@/app/(server)/_server/types'
-import { Button } from '@opencroft/ui-kit/button'
-import { Input } from '@opencroft/ui-kit/input'
-import { Label } from '@opencroft/ui-kit/label'
-import { Flex } from '@opencroft/ui-kit/layout/flex'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@opencroft/ui-kit/select'
-import { Separator } from '@opencroft/ui-kit/separator'
-import { Spinner } from '@opencroft/ui-kit/spinner'
 
 export type ServerData = {
   name: string

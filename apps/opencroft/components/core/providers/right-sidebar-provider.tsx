@@ -1,9 +1,8 @@
 'use client'
 
+import { SidebarProvider, useSidebar } from '@opencroft/ui-kit/sidebar'
 import type React from 'react'
 import { createContext, useContext } from 'react'
-
-import { SidebarProvider, useSidebar } from '@opencroft/ui-kit/sidebar'
 
 interface RightSidebarContextValue {
   state: 'expanded' | 'collapsed'

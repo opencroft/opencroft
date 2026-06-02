@@ -1,9 +1,12 @@
 'use client'
 
+import { Button } from '@opencroft/ui-kit/button'
+import { Input } from '@opencroft/ui-kit/input'
+import { Label } from '@opencroft/ui-kit/label'
+import { Textarea } from '@opencroft/ui-kit/textarea'
 import { useReactFlow } from '@xyflow/react'
 import * as LucideIcons from 'lucide-react'
 import * as React from 'react'
-
 import type { NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 import { useSettingsDraft } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/use-settings-draft'
 import type { CustomTemplate } from '@/app/(legacy-app-dashboard)/_legacy/nodes/custom/types'
@@ -11,10 +14,6 @@ import { runScript } from '@/app/(legacy-app-dashboard)/_legacy/nodes/script/act
 import { ButtonPin, HANDLE_EXECUTION, HANDLE_FILESYSTEM } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/button-pin'
 import { PinnedNode } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/pinned-node'
 import { spawnFileBrowserWindow, spawnTerminalWindow } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/spawn-window'
-import { Button } from '@opencroft/ui-kit/button'
-import { Input } from '@opencroft/ui-kit/input'
-import { Label } from '@opencroft/ui-kit/label'
-import { Textarea } from '@opencroft/ui-kit/textarea'
 
 const SCOPE = {
   React,

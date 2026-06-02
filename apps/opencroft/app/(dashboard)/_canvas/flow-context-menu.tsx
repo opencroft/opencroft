@@ -1,10 +1,9 @@
 'use client'
 
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from '@opencroft/ui-kit/command'
 import { Plus } from 'lucide-react'
 import { useEffect, useRef } from 'react'
-
 import type { ResolvedNode } from '@/app/(extension-runtime)/_client/registry'
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from '@opencroft/ui-kit/command'
 
 interface FlowContextMenuProps {
   position: { x: number; y: number }

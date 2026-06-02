@@ -1,15 +1,14 @@
 'use client'
 
+import { Button } from '@opencroft/ui-kit/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@opencroft/ui-kit/tooltip'
+import type { StatusVariant as IndicatorVariant } from '@opencroft/ui-kit/utils/status-indicator'
 import { useEdges as useConnections, useInternalNode, useNodeId } from '@xyflow/react'
 import { AlertTriangle, Copy, type LucideIcon } from 'lucide-react'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-
 import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/(dashboard)/_canvas/node-card'
 import { InputHandle, OutputHandle } from '@/app/(extension-runtime)/_client/host'
-import { Button } from '@opencroft/ui-kit/button'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@opencroft/ui-kit/tooltip'
-import type { StatusVariant as IndicatorVariant } from '@opencroft/ui-kit/utils/status-indicator'
 
 type StatusVariant = 'success' | 'warning' | 'error' | 'info' | 'neutral'
 

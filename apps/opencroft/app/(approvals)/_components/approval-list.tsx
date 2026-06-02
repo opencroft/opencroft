@@ -1,11 +1,10 @@
 'use client'
 
+import { Badge } from '@opencroft/ui-kit/badge'
 import { ShieldQuestion } from 'lucide-react'
 import { useEffect } from 'react'
-
 import { listPendingApprovals } from '@/app/(approvals)/_server/actions'
 import { sseEventsStore, useSSEEvents } from '@/app/(sse)/_lib/sse-events-store'
-import { Badge } from '@opencroft/ui-kit/badge'
 import { cn } from '@/lib/utils'
 
 export function ApprovalList({ spaceId }: { spaceId?: string }) {
