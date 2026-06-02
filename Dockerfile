@@ -42,6 +42,12 @@ COPY --from=build --chown=node:node /repo/apps/opencroft/dist ./dist
 # app so Node resolves them from /app/node_modules. The Start server build,
 # drizzle-orm / better-sqlite3, esbuild (runtime extension compile), ssh2 / node-pty / ws live here.
 COPY --from=build --chown=node:node /repo/node_modules ./node_modules
+# Workspace package sources. node_modules/<pkg> are relative symlinks into
+# ../packages (e.g. agent-client, which ships raw TS and is imported by the
+# builtin core extension). The runtime extension compiler resolves these from
+# /app/node_modules, so the real source must exist at /app/packages or the
+# symlinks dangle and core fails to build.
+COPY --from=build --chown=node:node /repo/packages ./packages
 COPY --from=build --chown=node:node /repo/apps/opencroft/package.json ./package.json
 # Source is needed at runtime by the extension compiler (builtin extension lives in app/).
 COPY --from=build --chown=node:node /repo/apps/opencroft/app ./app
