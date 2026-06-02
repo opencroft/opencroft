@@ -1,11 +1,10 @@
 'use client'
 
-import { Pencil, Plus } from 'lucide-react'
-import type { DragEvent } from 'react'
-
-import type { ResolvedNode } from '@/app/(extension-runtime)/_client/registry'
 import { Button } from '@opencroft/ui-kit/button'
 import { ScrollArea } from '@opencroft/ui-kit/layout/scroll-area'
+import { Pencil, Plus } from 'lucide-react'
+import type { DragEvent } from 'react'
+import type { ResolvedNode } from '@/app/(extension-runtime)/_client/registry'
 
 interface NodePaletteProps {
   extensions: ResolvedNode[]

@@ -1,17 +1,16 @@
 'use client'
 
-import type { Node, NodeProps } from '@xyflow/react'
-import { AppWindow, Circle, Play, Plus, Square, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
-import { toast } from 'sonner'
-
-import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
-import { type AppData, type AppService, composeDown, composeUp, getContainerStatuses, loadApp, saveApp } from '@/app/(legacy-app-dashboard)/_legacy/nodes/application/actions'
-import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
 import { Button } from '@opencroft/ui-kit/button'
 import { Input } from '@opencroft/ui-kit/input'
 import { Label } from '@opencroft/ui-kit/label'
 import { Separator } from '@opencroft/ui-kit/separator'
+import type { Node, NodeProps } from '@xyflow/react'
+import { AppWindow, Circle, Play, Plus, Square, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
+import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
+import { type AppData, type AppService, composeDown, composeUp, getContainerStatuses, loadApp, saveApp } from '@/app/(legacy-app-dashboard)/_legacy/nodes/application/actions'
+import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
 
 export type ApplicationNodeData = {
   appName: string

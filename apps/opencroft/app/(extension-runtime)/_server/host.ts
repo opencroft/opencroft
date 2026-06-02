@@ -3,14 +3,13 @@ import { randomBytes } from 'node:crypto'
 import { promises as fsPromises } from 'node:fs'
 import nodeOs from 'node:os'
 import nodePath from 'node:path'
-
+import { db, prisma } from '@opencroft/db'
 import { gateway } from '@/app/(openclaw)/_server/gateway-client'
 import { getSetting, setSetting } from '@/app/(settings)/_server/actions'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
 import type { GraphData } from '@/app/(space)/_server/types'
 import { cacheDir } from '@/server/cache'
 import { decrypt, encrypt } from '@/server/crypto'
-import { db, prisma } from '@opencroft/db'
 import { exec } from '@/server/shell'
 
 function randomToken(bytes = 32): string {

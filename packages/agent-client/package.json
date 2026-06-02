@@ -1,0 +1,21 @@
+{
+  "name": "agent-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.22.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  }
+}

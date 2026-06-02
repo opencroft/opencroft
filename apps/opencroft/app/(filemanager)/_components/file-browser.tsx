@@ -1,15 +1,14 @@
 'use client'
 
-import { ArrowUp, Check, Download, File, Folder, FolderPlus, Loader2, Pencil, RefreshCw, Trash2, Upload, X } from 'lucide-react'
-import { useCallback, useRef, useState } from 'react'
-
-import { type UploadEntry, useFileManager } from '@/app/(filemanager)/_components/filemanager-provider'
-import type { FileEntry } from '@/app/(filemanager)/_lib/types'
 import { Button } from '@opencroft/ui-kit/button'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@opencroft/ui-kit/context-menu'
 import { Input } from '@opencroft/ui-kit/input'
 import { Flex } from '@opencroft/ui-kit/layout/flex'
 import { ScrollContent } from '@opencroft/ui-kit/layout/scrollpage'
+import { ArrowUp, Check, Download, File, Folder, FolderPlus, Loader2, Pencil, RefreshCw, Trash2, Upload, X } from 'lucide-react'
+import { useCallback, useRef, useState } from 'react'
+import { type UploadEntry, useFileManager } from '@/app/(filemanager)/_components/filemanager-provider'
+import type { FileEntry } from '@/app/(filemanager)/_lib/types'
 
 function formatSize(bytes: number) {
   const units = ['B', 'KB', 'MB', 'GB', 'TB']

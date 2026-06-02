@@ -1,15 +1,14 @@
 'use client'
 
+import { Button } from '@opencroft/ui-kit/button'
 import { useReactFlow } from '@xyflow/react'
 import { GitCompare } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-
 import { type ApprovalViewProps, registerApprovalView } from '@/app/(approvals)/_components/approval-views'
 import { NodeDiffEditor } from '@/app/(approvals)/_components/node-diff-editor'
 import { readRemoteFile } from '@/app/(approvals)/_server/actions'
 import { NodeCard } from '@/app/(dashboard)/_canvas/node-card'
 import { useOverlayContent } from '@/app/(dashboard)/_canvas/overlay-context'
-import { Button } from '@opencroft/ui-kit/button'
 import { cn } from '@/lib/utils'
 
 function FieldRow({ label, value }: { label: string; value: string }) {

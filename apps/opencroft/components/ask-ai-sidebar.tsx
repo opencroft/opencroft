@@ -1,14 +1,13 @@
 'use client'
 
-import { Check, Copy, X } from 'lucide-react'
-import { useState } from 'react'
-
-import { useAskAI } from '@/components/core/providers/ask-ai-provider'
 import { Button } from '@opencroft/ui-kit/button'
 import { ChatInput } from '@opencroft/ui-kit/chat/chat-input'
 import { ChatMessage } from '@opencroft/ui-kit/chat/chat-message'
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from '@opencroft/ui-kit/sidebar'
 import { Textarea } from '@opencroft/ui-kit/textarea'
+import { Check, Copy, X } from 'lucide-react'
+import { useState } from 'react'
+import { useAskAI } from '@/components/core/providers/ask-ai-provider'
 import { enhancePrompt } from '@/lib/ai-utils'
 
 interface Message {

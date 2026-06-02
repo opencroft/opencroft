@@ -1,18 +1,17 @@
 'use client'
 
+import { Button } from '@opencroft/ui-kit/button'
+import { Flex } from '@opencroft/ui-kit/layout/flex'
+import { ScrollArea } from '@opencroft/ui-kit/layout/scroll-area'
+import { Separator } from '@opencroft/ui-kit/separator'
 import type { Node } from '@xyflow/react'
 import * as lucideIcons from 'lucide-react'
 import { Box, GripVertical, List, Maximize2, Minimize2, Pencil, X } from 'lucide-react'
 import { type DragEvent, type ReactNode, useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-
 import { useInspectorIntent } from '@/app/(dashboard)/_canvas/inspector-intent'
 import { extensionRegistry, type ResolvedNode } from '@/app/(extension-runtime)/_client/registry'
 import type { NodeData } from '@/app/(extension-runtime)/_types'
-import { Button } from '@opencroft/ui-kit/button'
-import { Flex } from '@opencroft/ui-kit/layout/flex'
-import { ScrollArea } from '@opencroft/ui-kit/layout/scroll-area'
-import { Separator } from '@opencroft/ui-kit/separator'
 
 function resolveIcon(name?: string): lucideIcons.LucideIcon {
   if (!name) {

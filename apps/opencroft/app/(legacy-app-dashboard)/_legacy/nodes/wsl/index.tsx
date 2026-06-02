@@ -1,18 +1,17 @@
 'use client'
 
+import { Badge } from '@opencroft/ui-kit/badge'
+import { Input } from '@opencroft/ui-kit/input'
+import { Label } from '@opencroft/ui-kit/label'
 import { type Node, type NodeProps, useReactFlow } from '@xyflow/react'
 import { Cpu, FolderOpen, HardDrive, MemoryStick, Monitor, TerminalSquare } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
-
 import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 import { useSettingsDraft } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/use-settings-draft'
 import { ButtonPin, HANDLE_EXECUTION, HANDLE_FILESYSTEM } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/button-pin'
 import { PinnedNode, StatsList } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/pinned-node'
 import { spawnFileBrowserWindow, spawnTerminalWindow } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/spawn-window'
 import { getWslStats, type WslStats } from '@/app/(legacy-app-dashboard)/_legacy/nodes/wsl/actions'
-import { Badge } from '@opencroft/ui-kit/badge'
-import { Input } from '@opencroft/ui-kit/input'
-import { Label } from '@opencroft/ui-kit/label'
 
 export type WslData = {
   distro: string

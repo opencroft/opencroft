@@ -1,18 +1,17 @@
 'use client'
 
+import { Button } from '@opencroft/ui-kit/button'
+import { Input } from '@opencroft/ui-kit/input'
+import { Label } from '@opencroft/ui-kit/label'
+import { Textarea } from '@opencroft/ui-kit/textarea'
 import { type Node, type NodeProps, useReactFlow } from '@xyflow/react'
 import { FileCode2, Play, TerminalSquare } from 'lucide-react'
 import { useCallback, useState } from 'react'
-
 import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 import { useSettingsDraft } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/use-settings-draft'
 import { runScript } from '@/app/(legacy-app-dashboard)/_legacy/nodes/script/actions'
 import { ButtonPin, HANDLE_EXECUTION } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/button-pin'
 import { PinnedNode } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/pinned-node'
-import { Button } from '@opencroft/ui-kit/button'
-import { Input } from '@opencroft/ui-kit/input'
-import { Label } from '@opencroft/ui-kit/label'
-import { Textarea } from '@opencroft/ui-kit/textarea'
 
 export type ScriptData = {
   name: string

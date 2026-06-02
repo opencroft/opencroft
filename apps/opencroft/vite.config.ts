@@ -1,5 +1,5 @@
-import { devtools } from '@tanstack/devtools-vite'
 import tailwindcss from '@tailwindcss/vite'
+import { devtools } from '@tanstack/devtools-vite'
 import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
 import { defineConfig, type Plugin, type ViteDevServer } from 'vite'
@@ -48,6 +48,12 @@ export default defineConfig({
   server: {
     port: 9999,
     host: '0.0.0.0',
+    // agent-client persists these JSON files next to the app cwd at runtime;
+    // writing them must not trigger a dev reload (otherwise creating a session
+    // reloads the page, which re-triggers session creation in a loop).
+    watch: {
+      ignored: ['**/agent-profiles.json', '**/agent-config.json', '**/mcp-config.json'],
+    },
   },
   resolve: {
     tsconfigPaths: true,
@@ -59,6 +65,9 @@ export default defineConfig({
   },
   ssr: {
     external: ['ssh2', 'cpu-features', '@lydell/node-pty', 'esbuild', 'esbuild-wasm', 'better-sqlite3'],
+    // agent-client ships TS source and must be transpiled for SSR (it spawns the
+    // ACP harness via node:child_process, so it only ever runs server-side).
+    noExternal: ['agent-client'],
   },
   plugins: [
     devtools(),

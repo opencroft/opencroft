@@ -1,17 +1,16 @@
 'use client'
 
-import { ArrowDownToLine, Box, Download, Loader2, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
-import { toast } from 'sonner'
-
-import type { InstalledExtensionRecord, UpdateCheck } from '@/app/(extension-editor)/_actions/installed-extensions-actions'
-import type { LocalExtensionRecord } from '@/app/(extension-editor)/_actions/local-extensions-actions'
-import { installRegistryExtension, listRegistryExtensions } from '@/app/(extension-editor)/_actions/registry-actions'
-import type { RegistryExtension } from '@/app/(extension-runtime)/_server/registry'
 import { Button } from '@opencroft/ui-kit/button'
 import { Input } from '@opencroft/ui-kit/input'
 import { ScrollArea } from '@opencroft/ui-kit/layout/scroll-area'
 import { Separator } from '@opencroft/ui-kit/separator'
+import { ArrowDownToLine, Box, Download, Loader2, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
+import type { InstalledExtensionRecord, UpdateCheck } from '@/app/(extension-editor)/_actions/installed-extensions-actions'
+import type { LocalExtensionRecord } from '@/app/(extension-editor)/_actions/local-extensions-actions'
+import { installRegistryExtension, listRegistryExtensions } from '@/app/(extension-editor)/_actions/registry-actions'
+import type { RegistryExtension } from '@/app/(extension-runtime)/_server/registry'
 import { cn } from '@/lib/utils'
 
 interface ExtensionsListPanelProps {

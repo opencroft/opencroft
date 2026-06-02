@@ -1,9 +1,8 @@
 'use client'
 
-import { type ReactNode, useEffect, useRef } from 'react'
-
-import { NodeCard } from '@/app/(dashboard)/_canvas/node-card'
 import { ScrollArea } from '@opencroft/ui-kit/scroll-area'
+import { type ReactNode, useEffect, useRef } from 'react'
+import { NodeCard } from '@/app/(dashboard)/_canvas/node-card'
 import { cn } from '@/lib/utils'
 
 interface CommandBarProps {

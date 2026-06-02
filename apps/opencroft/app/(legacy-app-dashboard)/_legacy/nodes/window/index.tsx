@@ -1,9 +1,9 @@
 'use client'
 
+import { Button } from '@opencroft/ui-kit/button'
 import { type NodeProps, useReactFlow } from '@xyflow/react'
 import { AppWindow, FolderOpen, TerminalSquare, X } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
-
 import { FileBrowser } from '@/app/(filemanager)/_components/file-browser'
 import { FileManagerProvider } from '@/app/(filemanager)/_components/filemanager-provider'
 import type { StorageConnection } from '@/app/(filemanager)/_lib/types'
@@ -11,7 +11,6 @@ import { InvisibleResizer } from '@/app/(legacy-app-dashboard)/_legacy/nodes/sha
 import { NodeCard, NodeCardHeader } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
 import { TerminalView } from '@/app/(terminal)/_components/terminal-view'
 import type { TerminalConfig } from '@/app/(terminal)/_lib/types'
-import { Button } from '@opencroft/ui-kit/button'
 
 import '@/app/(legacy-app-dashboard)/_legacy/nodes/window/window.css'
 

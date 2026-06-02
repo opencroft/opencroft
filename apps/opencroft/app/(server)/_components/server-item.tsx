@@ -1,10 +1,9 @@
 'use client'
 
-import { Apple, Monitor, Server as ServerIcon, TerminalSquare } from 'lucide-react'
-
-import { type Server, ServerOS } from '@/app/(server)/_server/types'
 import { Flex } from '@opencroft/ui-kit/layout/flex'
 import { StatusIndicator } from '@opencroft/ui-kit/utils/status-indicator'
+import { Apple, Monitor, Server as ServerIcon, TerminalSquare } from 'lucide-react'
+import { type Server, ServerOS } from '@/app/(server)/_server/types'
 
 const osIcons: Record<string, React.ElementType> = {
   [ServerOS.Linux]: TerminalSquare,

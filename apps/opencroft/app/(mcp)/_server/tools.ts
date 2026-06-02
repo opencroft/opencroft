@@ -7,9 +7,9 @@
  * UI feedback (toasts, focus, comments) is broadcast via SSE.
  */
 
+import { prisma } from '@opencroft/db'
 import fs from 'fs/promises'
 import path from 'path'
-
 import { ApprovalRejectedError, awaitApproval, getApprovalMeta, withApprovalRequired } from '@/app/(approvals)/_server/with-approval'
 import { getGitFileAtRef } from '@/app/(docs)/_server/actions'
 import { appendComment, createComment, readComments } from '@/app/(docs)/_server/comments'
@@ -37,7 +37,6 @@ import type { GraphData } from '@/app/(space)/_server/types'
 import { askUserStore } from '@/lib/ask-user-store'
 import { toastStore } from '@/lib/toast-store'
 import { decrypt } from '@/server/crypto'
-import { prisma } from '@opencroft/db'
 
 const SPACE_PARAM = {
   space: {

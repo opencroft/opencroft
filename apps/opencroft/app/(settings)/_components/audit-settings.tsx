@@ -1,15 +1,14 @@
 'use client'
 
-import { ShieldAlert } from 'lucide-react'
-import { useEffect, useState, useTransition } from 'react'
-
-import type { AuditStatus } from '@/app/(mcp)/_server/audit'
-import { type AuditQuery, clearAuditLog, getYoloMode, listAuditEntries, listAuditTools, type McpAuditEntry, updateYoloMode } from '@/app/(settings)/_server/audit-actions'
 import { Badge } from '@opencroft/ui-kit/badge'
 import { Button } from '@opencroft/ui-kit/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@opencroft/ui-kit/select'
 import { Spinner } from '@opencroft/ui-kit/spinner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@opencroft/ui-kit/table'
+import { ShieldAlert } from 'lucide-react'
+import { useEffect, useState, useTransition } from 'react'
+import type { AuditStatus } from '@/app/(mcp)/_server/audit'
+import { type AuditQuery, clearAuditLog, getYoloMode, listAuditEntries, listAuditTools, type McpAuditEntry, updateYoloMode } from '@/app/(settings)/_server/audit-actions'
 
 const ALL = '__all__'
 

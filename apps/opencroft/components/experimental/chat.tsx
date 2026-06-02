@@ -1,11 +1,10 @@
 'use client'
 
-import { ChevronRight } from 'lucide-react'
-import { type ReactNode, useState } from 'react'
-
-import { StickySection } from '@/components/experimental/sticky-section'
 import { Flex, type FlexProps } from '@opencroft/ui-kit/layout/flex'
 import { ScrollArea } from '@opencroft/ui-kit/scroll-area'
+import { ChevronRight } from 'lucide-react'
+import { type ReactNode, useState } from 'react'
+import { StickySection } from '@/components/experimental/sticky-section'
 import { cn } from '@/lib/utils'
 
 export interface ChatAreaProps {

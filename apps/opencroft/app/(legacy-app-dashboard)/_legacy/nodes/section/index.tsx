@@ -1,13 +1,12 @@
 'use client'
 
+import { Input } from '@opencroft/ui-kit/input'
+import { Label } from '@opencroft/ui-kit/label'
 import type { Node, NodeProps } from '@xyflow/react'
 import { Boxes, Globe } from 'lucide-react'
-
 import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 import { useSettingsDraft } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/use-settings-draft'
 import { InvisibleResizer } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/invisible-resizer'
-import { Input } from '@opencroft/ui-kit/input'
-import { Label } from '@opencroft/ui-kit/label'
 
 export type SectionData = {
   label: string

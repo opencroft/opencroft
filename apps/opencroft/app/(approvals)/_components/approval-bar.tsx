@@ -4,12 +4,12 @@ import { Check, Crosshair, ShieldQuestion, X } from 'lucide-react'
 import { type KeyboardEvent, useCallback, useMemo, useState, useTransition } from 'react'
 
 import '@/app/(approvals)/_components/builtin-views'
+import { Button } from '@opencroft/ui-kit/button'
+import { Input } from '@opencroft/ui-kit/input'
 import { resolveApprovalView } from '@/app/(approvals)/_components/approval-views'
 import { approveRequest, rejectRequest } from '@/app/(approvals)/_server/actions'
 import { useOverlayBar, useOverlayMenu } from '@/app/(dashboard)/_canvas/overlay-context'
 import { sseEventsStore } from '@/app/(sse)/_lib/sse-events-store'
-import { Button } from '@opencroft/ui-kit/button'
-import { Input } from '@opencroft/ui-kit/input'
 import type { PendingApproval } from '@/lib/sse-events'
 
 export function ApprovalBar({ request }: { request: PendingApproval }) {

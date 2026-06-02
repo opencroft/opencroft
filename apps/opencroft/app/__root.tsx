@@ -1,10 +1,10 @@
+import { Toaster } from '@opencroft/ui-kit/sonner'
+import { ThemeProvider } from '@opencroft/ui-kit/theme-provider'
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
 import { AppShell } from '@/app/_shell/app-shell'
 import { listSpaces } from '@/app/(space)/_server/actions'
 import { SSEProvider } from '@/app/(sse)/_components/sse-provider'
 import appCss from '@/app/globals.css?url'
-import { Toaster } from '@opencroft/ui-kit/sonner'
-import { ThemeProvider } from '@opencroft/ui-kit/theme-provider'
 
 export const Route = createRootRoute({
   head: () => ({

@@ -1,7 +1,6 @@
+import { Flex } from '@opencroft/ui-kit/layout/flex'
 import { cva, type VariantProps } from 'class-variance-authority'
 import type { ReactNode } from 'react'
-
-import { Flex } from '@opencroft/ui-kit/layout/flex'
 import { cn } from '@/lib/utils'
 
 export const chainDotVariants = cva('size-2 rounded-full', {

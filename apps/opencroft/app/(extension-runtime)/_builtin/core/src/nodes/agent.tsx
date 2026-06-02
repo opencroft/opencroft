@@ -24,12 +24,21 @@ import CodeMirror from '@uiw/react-codemirror';
 import { oneDark } from '@codemirror/theme-one-dark';
 
 import { slug } from './send-message-helpers';
+import { useSecretKeys } from './secrets';
 
 const { useCallback, useRef, useState, useEffect, useMemo } = React;
 
 export interface AgentData {
   name: string;
   avatar?: string;
+  /** Chat transport: OpenClaw gateway (default) or a local agent-client harness. */
+  backend?: 'openclaw' | 'local';
+  /** Local agent-client profile (used when backend === 'local'). */
+  providerId?: string;
+  adapterId?: string;
+  model?: string;
+  apiKeySecret?: string;
+  defaultModeId?: string;
 }
 
 function readAsDataUrl(file: File): Promise<string> {
@@ -122,6 +131,151 @@ export function AgentInspector({
           placeholder='Agent name'
         />
       </div>
+    </div>
+  );
+}
+
+// ─── Agent Profile Tab (local agent-client backend) ─────────────────
+
+interface AgentCatalog {
+  adapters: { id: string; label: string; protocol: string }[];
+  providers: { id: string; label: string; models: string[]; protocols: string[] }[];
+}
+
+const NO_SECRET = '__none__';
+
+export function AgentProfileTab({
+  data, updateData,
+}: { nodeId: string; data: AgentData; updateData: (p: Partial<AgentData>) => void }) {
+  const [catalog, setCatalog] = useState<AgentCatalog | null>(null);
+  const secretKeys = useSecretKeys();
+
+  useEffect(() => {
+    invoke<AgentCatalog>('agent.listAgentCatalog')
+      .then(setCatalog)
+      .catch(() => setCatalog(null));
+  }, []);
+
+  const backend = data.backend ?? 'openclaw';
+
+  return (
+    <ScrollArea className='h-full'>
+      <div className='flex flex-col gap-3 p-1'>
+        <div className='flex flex-col gap-1'>
+          <Label className='text-xs'>Backend</Label>
+          <Select value={backend} onValueChange={(v: string) => updateData({ backend: v as AgentData['backend'] })}>
+            <SelectTrigger className='h-8 text-xs'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='openclaw'>OpenClaw gateway</SelectItem>
+              <SelectItem value='local'>Local (agent-client)</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className='text-[10px] text-muted-foreground'>
+            OpenClaw runs chats via the paired gateway. Local spawns a coding-agent harness inside this container.
+          </p>
+        </div>
+        {backend === 'local' ? (
+          catalog ? (
+            <LocalProfileFields data={data} updateData={updateData} catalog={catalog} secretKeys={secretKeys} />
+          ) : (
+            <p className='text-xs text-muted-foreground'>Loading profile options…</p>
+          )
+        ) : null}
+      </div>
+    </ScrollArea>
+  );
+}
+
+function LocalProfileFields({
+  data, updateData, catalog, secretKeys,
+}: {
+  data: AgentData;
+  updateData: (p: Partial<AgentData>) => void;
+  catalog: AgentCatalog;
+  secretKeys: string[];
+}) {
+  const provider = catalog.providers.find((p) => p.id === data.providerId);
+  const adapters = catalog.adapters.filter(
+    (a) => a.protocol === 'native' || (provider ? provider.protocols.includes(a.protocol) : true),
+  );
+  const models = provider?.models ?? [];
+
+  return (
+    <div className='flex flex-col gap-3'>
+      <ProfileSelect
+        label='Provider'
+        value={data.providerId}
+        placeholder='Select provider…'
+        options={catalog.providers.map((p) => ({ value: p.id, label: p.label }))}
+        onChange={(v) => updateData({ providerId: v })}
+      />
+      <ProfileSelect
+        label='Harness'
+        value={data.adapterId}
+        placeholder='Select harness…'
+        options={adapters.map((a) => ({ value: a.id, label: a.label }))}
+        onChange={(v) => updateData({ adapterId: v })}
+      />
+      <ProfileSelect
+        label='Model'
+        value={data.model}
+        placeholder='Select model…'
+        options={models.map((m) => ({ value: m, label: m }))}
+        onChange={(v) => updateData({ model: v })}
+      />
+      <div className='flex flex-col gap-1'>
+        <Label className='text-xs'>API key secret</Label>
+        <Select
+          value={data.apiKeySecret || NO_SECRET}
+          onValueChange={(v: string) => updateData({ apiKeySecret: v === NO_SECRET ? '' : v })}
+        >
+          <SelectTrigger className='h-8 text-xs'>
+            <SelectValue placeholder='None' />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NO_SECRET}>None</SelectItem>
+            {secretKeys.map((k) => (
+              <SelectItem key={k} value={k} className='font-mono text-xs'>{k}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {secretKeys.length === 0 ? (
+          <p className='text-[10px] text-muted-foreground'>
+            Add a Secrets Store node with the provider key to reference it here.
+          </p>
+        ) : null}
+      </div>
+      <p className='text-[10px] text-muted-foreground'>
+        Runs in a persistent per-agent workspace: <code>data/agent-workspace/&lt;agent-slug&gt;</code>.
+      </p>
+    </div>
+  );
+}
+
+function ProfileSelect({
+  label, value, placeholder, options, onChange,
+}: {
+  label: string;
+  value: string | undefined;
+  placeholder: string;
+  options: { value: string; label: string }[];
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className='flex flex-col gap-1'>
+      <Label className='text-xs'>{label}</Label>
+      <Select value={value || ''} onValueChange={onChange}>
+        <SelectTrigger className='h-8 text-xs'>
+          <SelectValue placeholder={placeholder} />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((o) => (
+            <SelectItem key={o.value} value={o.value} className='text-xs'>{o.label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }

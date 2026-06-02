@@ -1,14 +1,13 @@
 'use client'
 
+import { Button } from '@opencroft/ui-kit/button'
+import { Separator } from '@opencroft/ui-kit/separator'
 import { type Node, useReactFlow } from '@xyflow/react'
 import { Loader2, Pencil, Save, X } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
-
 import { useCustomTemplates } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/custom-templates-context'
 import { nodeDefinitions } from '@/app/(legacy-app-dashboard)/_legacy/nodes'
 import type { CustomTemplate } from '@/app/(legacy-app-dashboard)/_legacy/nodes/custom/types'
-import { Button } from '@opencroft/ui-kit/button'
-import { Separator } from '@opencroft/ui-kit/separator'
 
 interface NodeSettingsPanelProps {
   node: Node

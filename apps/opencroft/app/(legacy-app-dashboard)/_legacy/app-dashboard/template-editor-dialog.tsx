@@ -1,14 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-
-import { useCustomTemplates } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/custom-templates-context'
-import type { CustomTemplate } from '@/app/(legacy-app-dashboard)/_legacy/nodes/custom/types'
 import { Button } from '@opencroft/ui-kit/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@opencroft/ui-kit/dialog'
 import { Input } from '@opencroft/ui-kit/input'
 import { Label } from '@opencroft/ui-kit/label'
 import { Textarea } from '@opencroft/ui-kit/textarea'
+import { useEffect, useState } from 'react'
+import { useCustomTemplates } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/custom-templates-context'
+import type { CustomTemplate } from '@/app/(legacy-app-dashboard)/_legacy/nodes/custom/types'
 
 const STARTER_CODE = `// Scope: React, h (React.createElement), useState, useCallback, useEffect,
 //   useRef, useMemo, useReactFlow, useSettingsDraft,

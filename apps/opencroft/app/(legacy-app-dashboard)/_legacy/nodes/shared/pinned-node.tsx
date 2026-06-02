@@ -1,9 +1,8 @@
 'use client'
 
-import type { LucideIcon } from 'lucide-react'
-
-import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
 import type { StatusVariant } from '@opencroft/ui-kit/utils/status-indicator'
+import type { LucideIcon } from 'lucide-react'
+import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
 
 interface PinnedNodeProps {
   selected?: boolean

@@ -1,20 +1,19 @@
 'use client'
 
+import { Button } from '@opencroft/ui-kit/button'
+import { TypingDots } from '@opencroft/ui-kit/chat/typing-dots'
+import { Flex } from '@opencroft/ui-kit/layout/flex'
+import { Textarea } from '@opencroft/ui-kit/textarea'
 import { ChevronRight, Loader2, Maximize2, Minimize2, SendIcon, ShieldAlert, ShieldCheck, ShieldCog, Sparkles } from 'lucide-react'
 import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-
 import { getAutoApprove, setAutoApprove } from '@/app/(approvals)/_server/actions'
 import { CommandBarMenuItem } from '@/app/(dashboard)/_canvas/command-bar'
 import { useOverlayBar, useOverlayMenu } from '@/app/(dashboard)/_canvas/overlay-context'
 import { messageId, normalizeHistory, type OpenclawMessage, type RawChatMessage } from '@/app/(openclaw)/_lib/messages'
 import { listCommands, loadSession, type OpenclawCommand, sendMessage } from '@/app/(openclaw)/_server/actions'
 import { ChainDot, type ChainDotVariant, Chained } from '@/components/experimental/chain'
-import { Button } from '@opencroft/ui-kit/button'
-import { TypingDots } from '@opencroft/ui-kit/chat/typing-dots'
-import { Flex } from '@opencroft/ui-kit/layout/flex'
-import { Textarea } from '@opencroft/ui-kit/textarea'
 import { cn } from '@/lib/utils'
 
 export interface AgentSession {
@@ -68,7 +67,16 @@ export function useAgentSession(sessionKey: string, transformOutgoing?: (text: s
       return false
     }
     const refresh = async (resetWaiting = true) => {
-      const rows = await loadSession({ data: sessionKey })
+      let rows: RawChatMessage[]
+      try {
+        rows = await loadSession({ data: sessionKey })
+      } catch (error) {
+        if (active) {
+          console.error('loadSession failed', error)
+          setLoading(false)
+        }
+        return
+      }
       if (!active) {
         return
       }
@@ -127,7 +135,12 @@ export function useAgentSession(sessionKey: string, transformOutgoing?: (text: s
       const payload = transformOutgoing ? transformOutgoing(value, isFirstMessage) : value
       setWaiting(true)
       startSending(async () => {
-        await sendMessage({ data: { key: sessionKey, text: payload } })
+        try {
+          await sendMessage({ data: { key: sessionKey, text: payload } })
+        } catch (error) {
+          console.error('sendMessage failed', error)
+          setWaiting(false)
+        }
       })
     },
     [sessionKey, transformOutgoing, isFirstMessage],

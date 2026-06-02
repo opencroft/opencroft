@@ -1,19 +1,18 @@
 'use client'
 
+import { Badge } from '@opencroft/ui-kit/badge'
+import { Button } from '@opencroft/ui-kit/button'
+import { Flex } from '@opencroft/ui-kit/layout/flex'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@opencroft/ui-kit/select'
+import { Separator } from '@opencroft/ui-kit/separator'
 import type { Node, NodeProps } from '@xyflow/react'
 import { Check, Copy, KeyRound, Plus, Trash2, Upload } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-
 import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 import { copyKeyToWsl, createKey, deleteKey, importKey, type KeyEntry, listKeys, readPublicKey, removeKeyFromWsl } from '@/app/(legacy-app-dashboard)/_legacy/nodes/key-store/actions'
 import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
-import { Badge } from '@opencroft/ui-kit/badge'
-import { Button } from '@opencroft/ui-kit/button'
 import { ControlledInput } from '@/components/ui/input/controlled-input'
-import { Flex } from '@opencroft/ui-kit/layout/flex'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@opencroft/ui-kit/select'
-import { Separator } from '@opencroft/ui-kit/separator'
 
 export type KeyStoreData = {
   keyNames: string[]

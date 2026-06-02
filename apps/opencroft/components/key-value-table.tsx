@@ -1,10 +1,9 @@
 'use client'
 
-import { Trash } from 'lucide-react'
-
 import { Button } from '@opencroft/ui-kit/button'
-import { ControlledInput } from '@/components/ui/input/controlled-input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@opencroft/ui-kit/table'
+import { Trash } from 'lucide-react'
+import { ControlledInput } from '@/components/ui/input/controlled-input'
 
 interface KeyValuePair {
   key: string

@@ -1,11 +1,5 @@
 'use client'
 
-import { Link, useRouter } from '@tanstack/react-router'
-import { Download, Pencil, Pin, Plus, Trash2, Upload } from 'lucide-react'
-import { useRef, useState } from 'react'
-
-import { createSpace, deleteSpace, importSpace, listSpaces, renameSpace, setSpacePinned } from '@/app/(space)/_server/actions'
-import type { SpaceExport, SpaceSummary } from '@/app/(space)/_server/types'
 import { Button } from '@opencroft/ui-kit/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@opencroft/ui-kit/dialog'
 import { Input } from '@opencroft/ui-kit/input'
@@ -13,6 +7,11 @@ import { Flex } from '@opencroft/ui-kit/layout/flex'
 import { ScrollContent, ScrollHeader, ScrollPage } from '@opencroft/ui-kit/layout/scrollpage'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@opencroft/ui-kit/table'
 import { Toggle } from '@opencroft/ui-kit/toggle'
+import { Link, useRouter } from '@tanstack/react-router'
+import { Download, Pencil, Pin, Plus, Trash2, Upload } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { createSpace, deleteSpace, importSpace, listSpaces, renameSpace, setSpacePinned } from '@/app/(space)/_server/actions'
+import type { SpaceExport, SpaceSummary } from '@/app/(space)/_server/types'
 
 interface Props {
   initialSpaces: SpaceSummary[]
