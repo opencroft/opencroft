@@ -23,7 +23,8 @@ import { ApiRouteNode, ApiRouteInspector, API_ROUTE_HANDLES, apiRouteExposeOutpu
 import { EventNode, EventInspector, EVENT_HANDLES, eventExposeOutput } from './nodes/event';
 import { GitWorkspaceNode, GitWorkspaceInspector } from './nodes/git-workspace';
 import { DocumentationNode, DocumentationDetailsTab, DocumentationKeysTab } from './nodes/documentation';
-import { AgentNode, AgentInspector, AgentOpenClawTab } from './nodes/agent';
+import { AgentNode, AgentInspector, AgentOpenClawTab, AgentProfileTab } from './nodes/agent';
+import { AgentMcpTab } from './nodes/agent-mcp';
 import { AgentToolNode, AgentToolInspector, AGENT_TOOL_HANDLES, agentToolExposeOutput } from './nodes/agent-tool';
 import { AgentJobNode, AgentJobInspector } from './nodes/agent-job';
 import { AgentInstructionNode, AgentInstructionInspector } from './nodes/agent-instruction';
@@ -308,10 +309,12 @@ export default defineExtension({
       icon: 'User',
       accent: 'oklch(0.65 0.24 25)',
       handles: AGENT_HANDLES as unknown as never[],
-      defaultData: { name: '' },
+      defaultData: { name: '', backend: 'openclaw' },
       component: AgentNode as unknown as never,
       inspector: AgentInspector as unknown as never,
       inspectorTabs: [
+        { id: 'profile', label: 'Profile', icon: 'Bot', fullHeight: true, component: AgentProfileTab as unknown as never },
+        { id: 'mcp', label: 'MCP', icon: 'Wrench', fullHeight: true, component: AgentMcpTab as unknown as never },
         { id: 'openclaw', label: 'OpenClaw', icon: 'Globe', fullHeight: true, component: AgentOpenClawTab as unknown as never },
       ],
     },

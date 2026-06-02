@@ -44,8 +44,31 @@ import {
   type DocsLogEntry,
 } from './docs-git';
 import { nodeActions } from './node-actions';
+import { AGENT_PROVIDERS } from 'agent-client/agent-providers';
+import { HARNESS_ADAPTERS } from 'agent-client/harness-adapters';
 
 export { nodeActions };
+
+// ═══════════════════════════════════════════════════════════════════
+// Agent profile catalog (agent-client harnesses + providers)
+// ═══════════════════════════════════════════════════════════════════
+
+interface AgentCatalog {
+  adapters: { id: string; label: string; protocol: string }[];
+  providers: { id: string; label: string; models: string[]; protocols: string[] }[];
+}
+
+function listAgentCatalog(): AgentCatalog {
+  return {
+    adapters: HARNESS_ADAPTERS.map((a) => ({ id: a.id, label: a.label, protocol: a.protocol })),
+    providers: AGENT_PROVIDERS.map((p) => ({
+      id: p.id,
+      label: p.label,
+      models: p.models,
+      protocols: Object.keys(p.endpoints),
+    })),
+  };
+}
 
 const isWindows = host.os.platform() === 'win32';
 
@@ -578,6 +601,7 @@ export const actions = {
   'agent.getOpenclawFile': (agentId: string, name: string) => getOpenclawFile(agentId, name),
   'agent.setOpenclawFile': (agentId: string, name: string, content: string) => setOpenclawFile(agentId, name, content),
   'agent.deleteOpenclaw': (agentId: string) => deleteOpenclawAgent(agentId),
+  'agent.listAgentCatalog': () => listAgentCatalog(),
 };
 
 // ═══════════════════════════════════════════════════════════════════

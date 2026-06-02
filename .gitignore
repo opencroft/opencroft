@@ -49,3 +49,9 @@ data/
 .tanstack/
 .mcp.json
 *.gen.ts
+
+# agent-client runtime state (agent-profiles.json holds a decrypted API key)
+agent-profiles.json
+mcp-config.json
+agent-config.json
+/sandbox/

@@ -19,6 +19,7 @@ export interface AgentNodeRef {
   nodeId: string
   name: string
   avatar?: string
+  backend: 'openclaw' | 'local'
   spaceSlug: string
   spaceName: string
   jobs: AgentJobRef[]
@@ -31,6 +32,7 @@ interface NodeShape {
   data?: {
     name?: string
     avatar?: string
+    backend?: 'openclaw' | 'local'
     context?: string
     workingDirectory?: string
     instruction?: string
@@ -104,6 +106,7 @@ export const listAgentNodes = createServerFn().handler(async (): Promise<AgentNo
         nodeId: node.id,
         name: node.data?.name?.trim() || 'Agent',
         avatar: node.data?.avatar,
+        backend: node.data?.backend === 'local' ? 'local' : 'openclaw',
         spaceSlug: space.slug,
         spaceName: space.name,
         jobs: jobsByAgent.get(node.id) ?? [],
