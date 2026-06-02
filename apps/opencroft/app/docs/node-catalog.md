@@ -24,7 +24,6 @@ These nodes describe a place where commands run.
 | `wsl` | `out: terminal-context`, `out: filesystem-target` | `{ type: 'wsl', distro }`. Uses `wsl -d <distro> --exec ...`. Distro is set in the inspector. |
 | `server` | `out: terminal-context`, `out: filesystem-target` | `{ type: 'ssh', host, port, username, password?, keyPath? }`. Uses the `ssh2` library. SSH keys come from a connected Key Store; secrets come from a connected Secrets Store. |
 | `docker` | `in: terminal-context` (`ctx-in`, host shell), `in: terminal-context` (`context-in`, only used to pick a context), `out: docker-context` (`docker-out`) | Chains its `ctx-in` upstream and adds `contextName`. The `terminal-context` it receives becomes the host where `docker` CLI is invoked. |
-| `git-workspace` | `in: terminal-context` (`ctx-in`) | A staging area for `git clone` operations. The inspector lists repositories and triggers `git.clone`. |
 
 The reason `localhost`, `wsl` and `server` look identical from the graph
 side is intentional: they all produce the same context shape, so anything

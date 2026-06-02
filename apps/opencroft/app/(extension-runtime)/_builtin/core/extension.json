@@ -122,15 +122,6 @@
       "icon": "Network"
     },
     {
-      "typeId": "git-workspace",
-      "name": "Git Workspace",
-      "category": "Infrastructure",
-      "icon": "GitBranch",
-      "handles": [
-        { "id": "ctx-in", "contextType": "terminal-context", "role": "target", "label": "Terminal" }
-      ]
-    },
-    {
       "typeId": "application",
       "name": "Application",
       "category": "Applications",

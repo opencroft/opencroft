@@ -22,10 +22,6 @@ import {
   type OpenAIChatParams, openaiChat,
 } from './openai';
 import {
-  type GitListReposParams, gitListRepos,
-  type GitCloneParams, gitClone,
-} from './git';
-import {
   docsStatus as docsStatusAction,
   docsClone,
   docsPull,
@@ -578,8 +574,6 @@ export const actions = {
   'docker.pullImage': (params: DockerImagePullParams) => dockerPullImage(params),
   'docker.checkImageUpdate': (params: DockerCheckImageUpdateParams) => dockerCheckImageUpdate(params),
   'openai.chat': (params: OpenAIChatParams) => openaiChat(params),
-  'git.listRepos': (params: GitListReposParams) => gitListRepos(params),
-  'git.clone': (params: GitCloneParams) => gitClone(params),
   'docs.status': (params: { nodeId: string }) => docsStatusAction(params.nodeId),
   'docs.clone': (params: { nodeId: string }) => docsClone(params.nodeId),
   'docs.pull': (params: { nodeId: string }) => docsPull(params.nodeId),

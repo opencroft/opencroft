@@ -1,5 +1,5 @@
 import { defineExtension } from '@ext/host';
-import { TERMINAL_SOURCE, TERMINAL_CONSUMER, FS_TARGET_CONSUMER, SCRIPT_CONSUMER, SCRIPT_CONSUMER_PYTHON, SCRIPT_CONSUMER_NODEJS, DOCKER_HANDLES, APP_HANDLES, VOLUME_HANDLES, GIT_WORKSPACE_HANDLES, AGENT_HANDLES, AGENT_JOB_HANDLES, AGENT_INSTRUCTION_HANDLES } from './shared';
+import { TERMINAL_SOURCE, TERMINAL_CONSUMER, FS_TARGET_CONSUMER, SCRIPT_CONSUMER, SCRIPT_CONSUMER_PYTHON, SCRIPT_CONSUMER_NODEJS, DOCKER_HANDLES, APP_HANDLES, VOLUME_HANDLES, AGENT_HANDLES, AGENT_JOB_HANDLES, AGENT_INSTRUCTION_HANDLES } from './shared';
 import { LocalhostNode, LocalhostInspector, LocalhostTerminalTab, LocalhostFilesTab } from './nodes/localhost';
 import { WslNode, WslInspector, WslData, WslTerminalTab, WslFilesTab } from './nodes/wsl';
 import { ServerNode, ServerInspector, ServerTerminalTab, ServerFilesTab, ServerData } from './nodes/server';
@@ -21,7 +21,6 @@ import { LogNode, LogInspector, LogOutputTab, LOG_HANDLES } from './nodes/log';
 import { SendMessageNode, SendMessageInspector, SEND_MESSAGE_HANDLES } from './nodes/send-message';
 import { ApiRouteNode, ApiRouteInspector, API_ROUTE_HANDLES, apiRouteExposeOutput } from './nodes/api-route';
 import { EventNode, EventInspector, EVENT_HANDLES, eventExposeOutput } from './nodes/event';
-import { GitWorkspaceNode, GitWorkspaceInspector } from './nodes/git-workspace';
 import { DocumentationNode, DocumentationDetailsTab, DocumentationKeysTab } from './nodes/documentation';
 import { AgentNode, AgentInspector, AgentOpenClawTab, AgentProfileTab } from './nodes/agent';
 import { AgentMcpTab } from './nodes/agent-mcp';
@@ -472,17 +471,6 @@ export default defineExtension({
       component: EventNode as unknown as never,
       inspector: EventInspector as unknown as never,
       exposeOutput: eventExposeOutput as unknown as never,
-    },
-    {
-      typeId: 'git-workspace',
-      name: 'Git Workspace',
-      category: 'Infrastructure',
-      icon: 'GitBranch',
-      accent: 'oklch(0.7 0.18 30)',
-      handles: GIT_WORKSPACE_HANDLES as unknown as never[],
-      defaultData: { folder: '' },
-      component: GitWorkspaceNode as unknown as never,
-      inspector: GitWorkspaceInspector as unknown as never,
     },
     {
       typeId: 'documentation',

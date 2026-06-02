@@ -19,7 +19,6 @@ All nodes ship in the [`builtin/core`](../extension-system.md) extension.
 - [WSL](wsl.md)
 - [Server](server.md)
 - [Docker](docker.md)
-- [Git Workspace](git-workspace.md)
 
 ## Storage
 

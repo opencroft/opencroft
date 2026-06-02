@@ -76,10 +76,6 @@ export const VOLUME_HANDLES: HandleDef[] = [
   { id: 'vol-out', contextType: 'volume-mount', role: 'source', label: 'Volume' },
 ];
 
-export const GIT_WORKSPACE_HANDLES: HandleDef[] = [
-  { id: 'ctx-in', contextType: 'terminal-context', role: 'target', label: 'Terminal' },
-];
-
 export const AGENT_HANDLES: HandleDef[] = [
   { id: 'agent-in', contextType: 'agent-job', role: 'target', label: 'Jobs' },
   { id: 'instructions-in', contextType: 'agent-instruction', role: 'target', label: 'Instructions' },
