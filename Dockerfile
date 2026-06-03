@@ -21,8 +21,8 @@ WORKDIR /repo/apps/opencroft
 RUN npm run build
 
 # --- Runtime ---
-# The app is flattened into /app: dist, runtime deps, and the source the
-# extension compiler needs all live there, with /app as the working directory
+# The app is flattened into /app: the Nitro output, runtime deps, and the source
+# the extension compiler needs all live there, with /app as the working directory
 # so process.cwd()-relative paths (data/, .cache, extensions) resolve.
 FROM node:24-slim AS runtime
 WORKDIR /app
@@ -33,11 +33,13 @@ RUN apt-get update \
 
 ENV NODE_ENV=production
 ENV PORT=9999
+ENV HOST=0.0.0.0
 ENV HOSTNAME=0.0.0.0
 ENV OPENCROFT_CACHE_DIR=/home/node/.cache
 
-# App build output + the Node prod entry (HTTP + static + WebSocket terminal).
-COPY --from=build --chown=node:node /repo/apps/opencroft/dist ./dist
+# Nitro build output: the self-contained Node server (.output/server, incl. the
+# /api/ws/terminal WebSocket route) plus the public client assets (.output/public).
+COPY --from=build --chown=node:node /repo/apps/opencroft/.output ./.output
 # Runtime deps are hoisted to the workspace root by npm; copy them next to the
 # app so Node resolves them from /app/node_modules. The Start server build,
 # drizzle-orm / better-sqlite3, esbuild (runtime extension compile), ssh2 / node-pty / ws live here.
@@ -55,4 +57,4 @@ COPY --from=build --chown=node:node /repo/apps/opencroft/data/opencroft.db ./see
 
 USER node
 EXPOSE 9999
-CMD ["node", "dist/prod.mjs"]
+CMD ["node", ".output/server/index.mjs"]

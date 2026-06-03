@@ -9,6 +9,8 @@ Dockerfile
 .dockerignore
 README.md
 **/dist
+**/.output
+**/.nitro
 **/.cache
 **/.tanstack
 **/.backups

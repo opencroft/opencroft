@@ -2,47 +2,8 @@ import tailwindcss from '@tailwindcss/vite'
 import { devtools } from '@tanstack/devtools-vite'
 import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
-import { defineConfig, type Plugin, type ViteDevServer } from 'vite'
-import { WebSocketServer } from 'ws'
-
-/**
- * Mounts the terminal WebSocket handler on Vite's dev HTTP server, mirroring the
- * production upgrade handler. Only intercepts `/api/ws/terminal`; all other
- * upgrades (e.g. Vite HMR) fall through to the remaining listeners.
- */
-function wsTerminalPlugin(): Plugin {
-  return {
-    name: 'opencroft-ws-terminal',
-    configureServer(server: ViteDevServer) {
-      let wss: WebSocketServer | null = null
-      const ensureWss = async () => {
-        if (wss) {
-          return wss
-        }
-        const { setupTerminalWss } = await server.ssrLoadModule('/app/(terminal)/_server/terminal.ts')
-        wss = new WebSocketServer({ noServer: true })
-        setupTerminalWss(wss)
-        return wss
-      }
-      server.httpServer?.on('upgrade', (req, socket, head) => {
-        const { pathname } = new URL(req.url ?? '', 'http://localhost')
-        if (pathname !== '/api/ws/terminal') {
-          return
-        }
-        ensureWss()
-          .then((server) => {
-            server.handleUpgrade(req, socket, head, (client) => {
-              server.emit('connection', client, req)
-            })
-          })
-          .catch((err) => {
-            console.error('[ws-terminal] upgrade failed', err)
-            socket.destroy()
-          })
-      })
-    },
-  }
-}
+import { nitro } from 'nitro/vite'
+import { defineConfig } from 'vite'
 
 export default defineConfig({
   server: {
@@ -71,7 +32,20 @@ export default defineConfig({
   },
   plugins: [
     devtools(),
-    wsTerminalPlugin(),
+    // Nitro builds the production server into .output/ and, in dev, serves the app
+    // plus the extra server routes under serverDir. The terminal WebSocket lives at
+    // server/routes/api/ws/terminal.ts and is mounted by features.websocket — this
+    // replaces the previous hand-rolled `ws` upgrade plugin + dist/prod.mjs server.
+    nitro({
+      serverDir: './server',
+      features: { websocket: true },
+      // @lydell/node-pty must stay external (not inlined into the server bundle):
+      // the bundled copy can't resolve its conpty worker script or per-platform
+      // native binary at runtime. traceDeps copies the package (+ its platform
+      // binary subpackage) into .output so the build stays self-contained.
+      rollupConfig: { external: [/^@sentry\//, /^@lydell\/node-pty/] },
+      traceDeps: ['@lydell/node-pty*'],
+    }),
     tailwindcss(),
     tanstackStart({
       srcDirectory: 'app',

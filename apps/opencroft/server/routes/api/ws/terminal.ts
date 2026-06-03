@@ -1,6 +1,8 @@
-import * as pty from '@lydell/node-pty'
+import type { Peer } from 'crossws'
+import { defineWebSocketHandler } from 'nitro/h3'
 import os from 'os'
-import { WebSocket, type WebSocketServer } from 'ws'
+
+import * as pty from '@lydell/node-pty'
 import type { SshCredentials, SshShell } from '@/app/(ssh)/_server/ssh-client'
 import * as sshClient from '@/app/(ssh)/_server/ssh-client'
 
@@ -36,16 +38,14 @@ type ClientMessage =
   | { type: 'resize'; payload: { cols: number; rows: number } }
   | { type: 'disconnect' }
 
-const sessions = new Map<WebSocket, Session>()
+const sessions = new Map<Peer, Session>()
 
-function send(ws: WebSocket, type: string, payload: Record<string, unknown>) {
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type, payload }))
-  }
+function send(peer: Peer, type: string, payload: Record<string, unknown>) {
+  peer.send(JSON.stringify({ type, payload }))
 }
 
-function destroySession(ws: WebSocket) {
-  const session = sessions.get(ws)
+function destroySession(peer: Peer) {
+  const session = sessions.get(peer)
   if (!session) {
     return
   }
@@ -54,26 +54,26 @@ function destroySession(ws: WebSocket) {
   } else {
     session.proc.kill()
   }
-  sessions.delete(ws)
+  sessions.delete(peer)
 }
 
-async function handleConnect(ws: WebSocket, payload: ConnectPayload) {
+async function handleConnect(peer: Peer, payload: ConnectPayload) {
   const { cols, rows, command, ...creds } = payload
 
   try {
     const sh = await sshClient.shell(creds, cols, rows, command)
 
-    sessions.set(ws, { type: 'ssh', shell: sh })
+    sessions.set(peer, { type: 'ssh', shell: sh })
 
-    sh.onData((data) => send(ws, 'data', { data }))
+    sh.onData((data) => send(peer, 'data', { data }))
     sh.onClose(() => {
-      send(ws, 'disconnected', { reason: 'Shell closed' })
-      sessions.delete(ws)
+      send(peer, 'disconnected', { reason: 'Shell closed' })
+      sessions.delete(peer)
     })
 
-    send(ws, 'connected', { sessionId: 'ssh' })
+    send(peer, 'connected', { sessionId: 'ssh' })
   } catch (err) {
-    send(ws, 'error', { message: `SSH ${creds.host}: ${(err as Error).message}` })
+    send(peer, 'error', { message: `SSH ${creds.host}: ${(err as Error).message}` })
   }
 }
 
@@ -87,7 +87,7 @@ function resolveShell(file: string): string {
   return file + '.exe'
 }
 
-function spawnPty(ws: WebSocket, file: string, args: string[], cols: number, rows: number, label: string) {
+function spawnPty(peer: Peer, file: string, args: string[], cols: number, rows: number, label: string) {
   const resolved = resolveShell(file)
   try {
     const proc = pty.spawn(resolved, args, {
@@ -98,29 +98,29 @@ function spawnPty(ws: WebSocket, file: string, args: string[], cols: number, row
       env: process.env as Record<string, string>,
     })
 
-    sessions.set(ws, { type: 'pty', proc })
+    sessions.set(peer, { type: 'pty', proc })
 
-    proc.onData((data) => send(ws, 'data', { data }))
+    proc.onData((data) => send(peer, 'data', { data }))
     proc.onExit(() => {
-      send(ws, 'disconnected', { reason: 'Shell exited' })
-      sessions.delete(ws)
+      send(peer, 'disconnected', { reason: 'Shell exited' })
+      sessions.delete(peer)
     })
 
-    send(ws, 'connected', { sessionId: label })
+    send(peer, 'connected', { sessionId: label })
   } catch (err) {
     const msg = (err as Error).message
     console.error(`[${label}] spawn failed:`, msg)
-    send(ws, 'error', { message: `Failed to spawn "${resolved}" ${args.join(' ')}: ${msg}` })
+    send(peer, 'error', { message: `Failed to spawn "${resolved}" ${args.join(' ')}: ${msg}` })
   }
 }
 
-function handleLocal(ws: WebSocket, payload: LocalPayload) {
+function handleLocal(peer: Peer, payload: LocalPayload) {
   const defaultShell = os.platform() === 'win32' ? 'powershell.exe' : 'bash'
   const exe = payload.command || payload.shell || defaultShell
-  spawnPty(ws, exe, payload.args || [], payload.cols, payload.rows, 'local')
+  spawnPty(peer, exe, payload.args || [], payload.cols, payload.rows, 'local')
 }
 
-function handleWsl(ws: WebSocket, payload: WslPayload) {
+function handleWsl(peer: Peer, payload: WslPayload) {
   const args: string[] = []
   if (payload.distro) {
     args.push('-d', payload.distro)
@@ -128,10 +128,10 @@ function handleWsl(ws: WebSocket, payload: WslPayload) {
   if (payload.command) {
     args.push('--exec', payload.command, ...(payload.args || []))
   }
-  spawnPty(ws, 'wsl.exe', args, payload.cols, payload.rows, 'wsl')
+  spawnPty(peer, 'wsl.exe', args, payload.cols, payload.rows, 'wsl')
 }
 
-function handleMessage(ws: WebSocket, raw: string) {
+function handleMessage(peer: Peer, raw: string) {
   let msg: ClientMessage
   try {
     msg = JSON.parse(raw)
@@ -141,16 +141,16 @@ function handleMessage(ws: WebSocket, raw: string) {
 
   switch (msg.type) {
     case 'connect':
-      handleConnect(ws, msg.payload)
+      handleConnect(peer, msg.payload)
       break
     case 'local':
-      handleLocal(ws, msg.payload)
+      handleLocal(peer, msg.payload)
       break
     case 'wsl':
-      handleWsl(ws, msg.payload)
+      handleWsl(peer, msg.payload)
       break
     case 'data': {
-      const session = sessions.get(ws)
+      const session = sessions.get(peer)
       if (!session) {
         break
       }
@@ -162,7 +162,7 @@ function handleMessage(ws: WebSocket, raw: string) {
       break
     }
     case 'resize': {
-      const session = sessions.get(ws)
+      const session = sessions.get(peer)
       if (!session) {
         break
       }
@@ -174,16 +174,19 @@ function handleMessage(ws: WebSocket, raw: string) {
       break
     }
     case 'disconnect':
-      destroySession(ws)
+      destroySession(peer)
       break
   }
 }
 
-export function setupTerminalWss(wss: WebSocketServer) {
-  wss.on('connection', (ws) => {
-    ws.on('message', (raw) => {
-      handleMessage(ws, raw.toString())
-    })
-    ws.on('close', () => destroySession(ws))
-  })
-}
+// Terminal WebSocket, served at /api/ws/terminal by Nitro's file-based routing.
+// Bridges browser xterm sessions to a local pty (powershell/bash/wsl) or an SSH
+// shell. Each peer owns one session for the lifetime of the connection.
+export default defineWebSocketHandler({
+  message(peer, message) {
+    handleMessage(peer, message.text())
+  },
+  close(peer) {
+    destroySession(peer)
+  },
+})
