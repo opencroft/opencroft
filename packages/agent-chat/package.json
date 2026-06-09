@@ -1,0 +1,35 @@
+{
+  "name": "agent-chat",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles.css",
+    "./use-agent-session": "./src/use-agent-session.ts",
+    "./server": "./src/server/index.ts",
+    "./server/*": "./src/server/*.ts",
+    "./*": "./src/*.tsx"
+  },
+  "dependencies": {
+    "agent-client": "*",
+    "ui": "*",
+    "@tiptap/react": "^2.11.5",
+    "@tiptap/pm": "^2.11.5",
+    "@tiptap/starter-kit": "^2.11.5",
+    "@tiptap/extension-link": "^2.11.5",
+    "tiptap-markdown": "^0.8.10"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "@tanstack/react-start": "*",
+    "lucide-react": "*",
+    "sonner": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0"
+  }
+}

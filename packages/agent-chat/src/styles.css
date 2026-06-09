@@ -1,0 +1,6 @@
+/* agent-chat — Tailwind content registration. The app consumes this via
+   `@import "agent-chat/styles.css"` after `@import "tailwindcss"` (and
+   `ui/styles.css`), so every class used by this package's components is
+   generated. `@source` is resolved relative to THIS file, so the app needn't
+   know the package layout (and Tailwind otherwise skips node_modules). */
+@source "./";
