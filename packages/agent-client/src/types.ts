@@ -11,6 +11,19 @@ export interface AgentSelection {
   model: string
   apiKey: string
   cwd: string
+  // Optional base-URL override (e.g. a custom OpenAI-compatible endpoint).
+  // When set, it wins over the provider's table endpoint in buildSpawnConfig.
+  baseUrl?: string
+  // System prompt for the in-process Custom (native) harness. Ignored by ACP
+  // agents, which carry their own. Lets each profile define its own prompt.
+  systemPrompt?: string
+  // Reasoning effort (e.g. "low" | "medium" | "high" | "minimal"); empty = off.
+  // Custom harness passes it as reasoning_effort; ACP agents get it applied via
+  // their thought_level config option when they expose one.
+  reasoningEffort?: string
+  // Sampling temperature for the Custom (native) harness; undefined = provider
+  // default. Ignored by ACP agents, which manage their own sampling.
+  temperature?: number
 }
 
 export interface SessionMeta {
@@ -64,6 +77,7 @@ export type ChatEvent =
   | { kind: 'ask_user_resolved'; requestId: string }
   | { kind: 'modes'; available: SessionMode[]; current: string }
   | { kind: 'mode_changed'; current: string }
+  | { kind: 'usage'; used: number; size?: number }
   | { kind: 'turn_end'; stopReason: string }
   | { kind: 'error'; message: string }
 

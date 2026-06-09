@@ -19,10 +19,12 @@ import type {
 } from '@agentclientprotocol/sdk'
 import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
 
+import type { AgentConnection } from './connection'
 import { readMcpConfig, resolveMcpServers } from './mcp-config'
 import { createMcpServer, type LocalTool, type SkillHandler, type SkillsInput } from './mcp-server'
 import type { McpServerConfig } from './mcp-types'
-import { buildSpawnConfig } from './resolve'
+import { createNativeHarness, type NativeHarnessConfig, type NativeSession } from './native-harness'
+import { buildSpawnConfig, findAdapter } from './resolve'
 import { fileSkillHandler, fileSkills } from './skills'
 import type { AgentSelection, ChatEvent, SessionMeta, SessionMode, SpawnConfig } from './types'
 
@@ -37,6 +39,10 @@ export interface AgentClientOptions {
   // Source the user-configured MCP servers (defaults to reading mcp-config.json).
   // Lets a host store them elsewhere, e.g. a database, instead of on disk.
   loadMcpServers?: () => Promise<McpServerConfig[]>
+  // System prompt and step cap for the in-process native harness (kind:'native'
+  // adapter). Ignored by external ACP agents, which carry their own.
+  systemPrompt?: string
+  maxSteps?: number
 }
 
 type Subscriber = (event: ChatEvent) => void
@@ -51,8 +57,9 @@ interface SessionState {
 }
 
 interface ConnEntry {
-  process: ChildProcessWithoutNullStreams
-  connection: ClientSideConnection
+  // Absent for the in-process native harness, which has no subprocess.
+  process?: ChildProcessWithoutNullStreams
+  connection: AgentConnection
 }
 
 interface ClientStore {
@@ -75,6 +82,12 @@ interface ClientStore {
     }
   >
   lastModes: { available: SessionMode[]; current: string } | null
+  // Tools / system prompt for the in-process native harness, registered by
+  // createAgentClient so ensureNativeConnection can build harnesses on demand.
+  nativeConfig: NativeHarnessConfig | null
+  // Native-harness conversation state, owned here (not in the harness closure)
+  // so it survives dev hot-reloads while the harness object is rebuilt fresh.
+  nativeSessions: Map<string, NativeSession>
 }
 
 function createStore(): ClientStore {
@@ -85,6 +98,8 @@ function createStore(): ClientStore {
     pendingPermissions: new Map(),
     pendingElicitations: new Map(),
     lastModes: null,
+    nativeConfig: null,
+    nativeSessions: new Map(),
   }
 }
 
@@ -95,6 +110,9 @@ if (!globalRef.__acpStore) {
   globalRef.__acpStore = createStore()
 }
 const store = globalRef.__acpStore
+// Backfill fields added after a store was first created — the store survives dev
+// hot-reloads, so createStore() doesn't re-run to add them.
+store.nativeSessions ??= new Map()
 
 function textOf(content: ContentBlock): string {
   if (content.type === 'text') {
@@ -169,6 +187,15 @@ function handleUpdate(notification: SessionNotification): void {
       emit(sessionId, { kind: 'mode_changed', current: update.currentModeId })
       break
     }
+    case 'usage_update': {
+      // size <= 0 means the agent couldn't determine the context window.
+      emit(sessionId, {
+        kind: 'usage',
+        used: update.used,
+        size: update.size > 0 ? update.size : undefined,
+      })
+      break
+    }
     default:
       break
   }
@@ -236,7 +263,42 @@ function spawnKey(config: SpawnConfig): string {
   return JSON.stringify(config)
 }
 
-async function ensureConnection(selection: AgentSelection): Promise<ClientSideConnection> {
+// Map a generic effort word ("low" | "high" | …) to the value id of an ACP
+// agent's thought_level select option, matching against its values/labels. The
+// options may be flat or grouped; both are flattened defensively.
+function matchReasoningValue(options: unknown, effort: string): string | undefined {
+  if (!Array.isArray(options)) {
+    return undefined
+  }
+  const flat: Array<{ name?: string; value?: string }> = []
+  for (const entry of options as Array<Record<string, unknown>>) {
+    if (Array.isArray(entry.options)) {
+      flat.push(...(entry.options as Array<{ name?: string; value?: string }>))
+    } else if (typeof entry.value === 'string') {
+      flat.push(entry as { name?: string; value?: string })
+    }
+  }
+  const wanted = effort.toLowerCase()
+  const hit = flat.find((option) => typeof option.value === 'string' && (option.value.toLowerCase().includes(wanted) || (option.name ?? '').toLowerCase().includes(wanted)))
+  return hit?.value
+}
+
+function isNativeSelection(selection: AgentSelection): boolean {
+  return findAdapter(selection.adapterId)?.kind === 'native'
+}
+
+// The in-process harness has no subprocess and no persistent identity to keep
+// alive, so it's rebuilt fresh on every call (always the latest code) over the
+// shared, store-owned session map. Cheap, and immune to hot-reload staleness.
+function ensureNativeConnection(selection: AgentSelection): AgentConnection {
+  const config = store.nativeConfig ?? { tools: [], skills: [] }
+  return createNativeHarness(buildClient(), selection, config, store.nativeSessions)
+}
+
+async function ensureConnection(selection: AgentSelection): Promise<AgentConnection> {
+  if (isNativeSelection(selection)) {
+    return ensureNativeConnection(selection)
+  }
   const spawnConfig = buildSpawnConfig(selection)
   const key = spawnKey(spawnConfig)
   // One live harness subprocess per distinct spawn config. Distinct profiles
@@ -252,9 +314,20 @@ async function ensureConnection(selection: AgentSelection): Promise<ClientSideCo
     cwd: spawnConfig.cwd,
     env: { ...process.env, ...spawnConfig.env },
     stdio: ['pipe', 'pipe', 'pipe'],
+    // On Windows, launchers like `npx`/`npm` are `.cmd` scripts that Node's
+    // spawn can't resolve on PATH without a shell, so they ENOENT otherwise.
+    // Args here come from the fixed harness-adapter table, not user input.
+    shell: process.platform === 'win32',
   })
   child.stderr.on('data', (chunk: Buffer) => {
     console.error('[acp-agent]', chunk.toString())
+  })
+  // Without an 'error' listener a failed spawn throws at the process level and
+  // takes the host server down; handle it so the failure surfaces as a rejected
+  // initialize()/prompt() instead.
+  child.on('error', (error) => {
+    console.error('[acp-agent] spawn failed:', error)
+    store.connections.delete(key)
   })
   child.on('exit', () => {
     store.connections.delete(key)
@@ -275,7 +348,7 @@ async function ensureConnection(selection: AgentSelection): Promise<ClientSideCo
 
 // Resolve a live connection for an already-created session, using the spawn
 // config of the session's recorded profile (falling back to the active one).
-async function connectionForSession(sessionId: string): Promise<ClientSideConnection> {
+async function connectionForSession(sessionId: string): Promise<AgentConnection> {
   const selection = store.sessions.get(sessionId)?.selection
   if (!selection) {
     throw new Error(`Unknown session: ${sessionId}`)
@@ -291,6 +364,16 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     skills: options.skills ?? [],
     skillHandler: options.skillHandler,
   })
+
+  // The native harness reuses the same tools/skills, but runs them in-process
+  // instead of serving them over MCP.
+  store.nativeConfig = {
+    tools: options.tools ?? [],
+    skills: options.skills ?? [],
+    skillHandler: options.skillHandler,
+    systemPrompt: options.systemPrompt,
+    maxSteps: options.maxSteps,
+  }
 
   async function buildMcpServers(): Promise<AcpMcpServer[]> {
     const url = await mcp.ensureUrl()
@@ -313,7 +396,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       const connection = await ensureConnection(selection)
       const response = await connection.newSession({
         cwd: selection.cwd,
-        mcpServers: await buildMcpServers(),
+        // The native harness has native tools — no MCP server hack needed.
+        mcpServers: isNativeSelection(selection) ? [] : await buildMcpServers(),
       })
       const sessionId = response.sessionId
       const meta: SessionMeta = {
@@ -347,6 +431,15 @@ export function createAgentClient(options: AgentClientOptions = {}) {
           )
           .catch((error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }))
       }
+      // Apply the reasoning preference to ACP agents that expose a thought_level
+      // config option (the native harness handles reasoning via providerOptions).
+      if (!isNativeSelection(selection) && selection.reasoningEffort && response.configOptions) {
+        const option = response.configOptions.find((entry) => entry.category === 'thought_level' && entry.type === 'select')
+        const value = option && option.type === 'select' ? matchReasoningValue(option.options, selection.reasoningEffort) : undefined
+        if (option && value) {
+          await connection.setSessionConfigOption({ sessionId, configId: option.id, value }).catch((error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }))
+        }
+      }
       return meta
     },
 
@@ -359,7 +452,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       await connection.resumeSession({
         sessionId,
         cwd: session.selection.cwd,
-        mcpServers: await buildMcpServers(),
+        mcpServers: isNativeSelection(session.selection) ? [] : await buildMcpServers(),
       })
     },
 
@@ -380,6 +473,57 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       if (store.lastSessionId === sessionId) {
         store.lastSessionId = null
       }
+    },
+
+    // Branch a session into a new one, rewound to a turn (dropFromTurn, 0-based;
+    // defaults to the last turn). Only the native harness can do this (we own its
+    // message store); ACP fork copies the whole session with no cutoff, so it's
+    // rejected here.
+    async forkSession(sessionId: string, dropFromTurn?: number): Promise<SessionMeta | null> {
+      const session = store.sessions.get(sessionId)
+      if (!session) {
+        return null
+      }
+      if (!isNativeSelection(session.selection)) {
+        throw new Error('Forking is only supported for the Custom harness.')
+      }
+      const connection = await ensureConnection(session.selection)
+      const response = await connection.unstable_forkSession({
+        sessionId,
+        cwd: session.selection.cwd,
+        mcpServers: [],
+        _meta: dropFromTurn === undefined ? undefined : { dropFromTurn },
+      })
+      // Trim our event log at the same boundary the harness trims its messages —
+      // drop from the chosen user turn's event — so the fork's replayed transcript
+      // matches its model history. With no prior turn, keep the leading modes event.
+      const userEvents: number[] = []
+      session.events.forEach((event, index) => {
+        if (event.kind === 'user') {
+          userEvents.push(index)
+        }
+      })
+      let forkedEvents: ChatEvent[]
+      if (userEvents.length === 0) {
+        forkedEvents = session.events.filter((event) => event.kind === 'modes')
+      } else {
+        const turn = dropFromTurn ?? userEvents.length - 1
+        const clamped = Math.max(0, Math.min(turn, userEvents.length - 1))
+        forkedEvents = session.events.slice(0, userEvents[clamped])
+      }
+      const meta: SessionMeta = {
+        id: response.sessionId,
+        title: `${session.meta.title} (fork)`,
+        createdAt: Date.now(),
+        profileId: session.meta.profileId,
+      }
+      store.sessions.set(response.sessionId, {
+        meta,
+        selection: session.selection,
+        events: forkedEvents,
+        subscribers: new Set(),
+      })
+      return meta
     },
 
     async prompt(sessionId: string, text: string): Promise<void> {
@@ -455,10 +599,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
 
     async reset(): Promise<void> {
       for (const entry of store.connections.values()) {
-        entry.process.kill()
+        entry.process?.kill()
       }
       store.connections.clear()
       store.sessions.clear()
+      store.nativeSessions.clear()
       store.pendingPermissions.clear()
       store.pendingElicitations.clear()
       store.lastSessionId = null
