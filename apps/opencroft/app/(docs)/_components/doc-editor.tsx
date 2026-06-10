@@ -1,7 +1,5 @@
 'use client'
 
-import { Button } from 'ui/button'
-import { Separator } from 'ui/separator'
 import Link from '@tiptap/extension-link'
 import { Table } from '@tiptap/extension-table'
 import { TableCell } from '@tiptap/extension-table-cell'
@@ -12,6 +10,8 @@ import StarterKit from '@tiptap/starter-kit'
 import { Bold, Check, Code, Heading1, Heading2, Heading3, Italic, Link2, List, ListOrdered, Loader2, SquareCode, TextQuote, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Markdown, type MarkdownStorage } from 'tiptap-markdown'
+import { Button } from 'ui/button'
+import { Separator } from 'ui/separator'
 import { gitDiscardFile, gitPublishDocs, saveDocDirectly } from '@/app/(docs)/_server/actions'
 import { cn } from '@/lib/utils'
 

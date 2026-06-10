@@ -1,5 +1,8 @@
 'use client'
 
+import { useLocation } from '@tanstack/react-router'
+import { Briefcase, MessageSquare, Plus, Trash2, User } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,9 +14,6 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from 'ui/dropdown-menu'
-import { useLocation } from '@tanstack/react-router'
-import { Briefcase, MessageSquare, Plus, Trash2, User } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
 import { LocalAgentHost, OpenclawAgentHost } from '@/app/(agent)/_components/chat-hosts'
 import { forgetLocalSession } from '@/app/(agent)/_server/acp'
 import { useChatTabsMaybe } from '@/app/(openclaw)/_lib/chat-tabs-context'

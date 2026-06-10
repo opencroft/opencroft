@@ -3,15 +3,14 @@
 import { Save, Trash } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-
-import { Button } from 'ui/components/ui/button'
-import { Input } from 'ui/components/ui/input'
-import { Field, FieldLabel } from 'ui/components/ui/field'
-import { MenuLayout } from 'ui/components/ui/layout/menulayout'
-import { Flex } from 'ui/components/ui/layout/flex'
-import { SidebarMenuButton } from 'ui/components/ui/sidebar'
-import { ScrollContent, ScrollHeader, ScrollPage } from 'ui/components/ui/layout/scrollpage'
 import { AddImportFooter } from 'ui/components/experimental/add-import-footer'
+import { Button } from 'ui/components/ui/button'
+import { Field, FieldLabel } from 'ui/components/ui/field'
+import { Input } from 'ui/components/ui/input'
+import { Flex } from 'ui/components/ui/layout/flex'
+import { MenuLayout } from 'ui/components/ui/layout/menulayout'
+import { ScrollContent, ScrollHeader, ScrollPage } from 'ui/components/ui/layout/scrollpage'
+import { SidebarMenuButton } from 'ui/components/ui/sidebar'
 
 import type { SkillRecord } from './server/runtime'
 import { SkillEditor } from './skill-editor'
@@ -21,15 +20,8 @@ export type { SkillRecord }
 export interface SkillsManagerProps {
   // The current skill catalog (the host loads this, e.g. via getSkills()).
   skills: SkillRecord[]
-  onCreate: (input: {
-    name: string
-    description?: string
-    content?: string
-  }) => Promise<SkillRecord>
-  onUpdate: (
-    name: string,
-    updates: { name?: string; description?: string; content?: string },
-  ) => Promise<SkillRecord | null>
+  onCreate: (input: { name: string; description?: string; content?: string }) => Promise<SkillRecord>
+  onUpdate: (name: string, updates: { name?: string; description?: string; content?: string }) => Promise<SkillRecord | null>
   onDelete: (name: string) => Promise<boolean>
 }
 
@@ -135,15 +127,11 @@ export function SkillsManager({ skills: incoming, onCreate, onUpdate, onDelete }
     <MenuLayout
       isOpened={!!selected}
       onClosed={() => setSelected(null)}
-      menuFooter={<AddImportFooter onAdd={handleAdd} onImport={handleImport} accept=".md,.txt" />}
+      menuFooter={<AddImportFooter onAdd={handleAdd} onImport={handleImport} accept='.md,.txt' />}
       menu={
-        <Flex className="p-1 gap-1">
+        <Flex className='p-1 gap-1'>
           {skills.map((skill) => (
-            <SidebarMenuButton
-              key={skill.id}
-              isActive={selected?.id === skill.id}
-              onClick={() => setSelected(skill)}
-            >
+            <SidebarMenuButton key={skill.id} isActive={selected?.id === skill.id} onClick={() => setSelected(skill)}>
               {skill.name}
             </SidebarMenuButton>
           ))}
@@ -156,37 +144,31 @@ export function SkillsManager({ skills: incoming, onCreate, onUpdate, onDelete }
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Skill name"
-              className="flex-1 border-0 bg-transparent px-0 text-2xl font-semibold shadow-none focus-visible:ring-0 md:text-2xl"
+              placeholder='Skill name'
+              className='flex-1 border-0 bg-transparent px-0 text-2xl font-semibold shadow-none focus-visible:ring-0 md:text-2xl'
             />
             <Button onClick={handleSave}>
-              <Save className="h-4 w-4" />
+              <Save className='h-4 w-4' />
               Save
             </Button>
-            <Button onClick={handleDelete} variant="destructive">
-              <Trash className="h-4 w-4" />
+            <Button onClick={handleDelete} variant='destructive'>
+              <Trash className='h-4 w-4' />
               Delete
             </Button>
           </ScrollHeader>
-          <ScrollContent className="p-3 gap-3">
+          <ScrollContent className='p-3 gap-3'>
             <Field>
               <FieldLabel>Description</FieldLabel>
-              <Input
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="One-line summary shown to the agent in the skill catalog"
-              />
+              <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder='One-line summary shown to the agent in the skill catalog' />
             </Field>
-            <Field className="flex-1 min-h-0">
+            <Field className='flex-1 min-h-0'>
               <FieldLabel>Instructions</FieldLabel>
-              <SkillEditor value={content} onChange={setContent} className="flex-1 min-h-100" />
+              <SkillEditor value={content} onChange={setContent} className='flex-1 min-h-100' />
             </Field>
           </ScrollContent>
         </ScrollPage>
       ) : (
-        <div className="flex-1 flex items-center justify-center font-medium">
-          Select a skill to edit
-        </div>
+        <div className='flex-1 flex items-center justify-center font-medium'>Select a skill to edit</div>
       )}
     </MenuLayout>
   )

@@ -1,9 +1,9 @@
 'use client'
 
 import { PermissionRequest } from 'agent-chat/messages'
+import { type ReactNode, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
 import { Input } from 'ui/input'
-import { type ReactNode, useMemo, useState } from 'react'
 import { type AcpSession, type LocalSource, type PendingAsk, useAcpSession } from '@/app/(agent)/_components/use-acp-session'
 import { useOverlayContent } from '@/app/(dashboard)/_canvas/overlay-context'
 import { AgentChat, AgentChatInput, type AgentSession, useAgentSession } from '@/app/(openclaw)/_components/agent-chat'

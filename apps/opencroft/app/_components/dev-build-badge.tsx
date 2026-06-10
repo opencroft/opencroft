@@ -1,7 +1,7 @@
 'use client'
 
-import { SidebarMenu, SidebarMenuItem } from 'ui/sidebar'
 import { useEffect, useState } from 'react'
+import { SidebarMenu, SidebarMenuItem } from 'ui/sidebar'
 
 interface BuildInfo {
   branch: string

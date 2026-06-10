@@ -1,11 +1,11 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Input } from 'ui/input'
 import { Label } from 'ui/label'
 import { Textarea } from 'ui/textarea'
-import { useEffect, useState } from 'react'
 import { useCustomTemplates } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/custom-templates-context'
 import type { CustomTemplate } from '@/app/(legacy-app-dashboard)/_legacy/nodes/custom/types'
 

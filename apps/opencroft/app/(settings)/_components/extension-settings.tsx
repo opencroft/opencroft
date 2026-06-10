@@ -1,8 +1,8 @@
 'use client'
 
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/collapsible'
 import { ChevronRight, Puzzle } from 'lucide-react'
 import React, { useEffect, useState } from 'react'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/collapsible'
 import type { SettingsPageDefinition } from '@/app/(extension-runtime)/_client/host'
 import { loadAllExtensions } from '@/app/(extension-runtime)/_client/loader'
 import { extensionRegistry, type ResolvedExtensionSettings, resolveIcon } from '@/app/(extension-runtime)/_client/registry'

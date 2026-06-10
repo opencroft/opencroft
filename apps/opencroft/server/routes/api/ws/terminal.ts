@@ -1,8 +1,7 @@
+import * as pty from '@lydell/node-pty'
 import type { Peer } from 'crossws'
 import { defineWebSocketHandler } from 'nitro/h3'
 import os from 'os'
-
-import * as pty from '@lydell/node-pty'
 import type { SshCredentials, SshShell } from '@/app/(ssh)/_server/ssh-client'
 import * as sshClient from '@/app/(ssh)/_server/ssh-client'
 

@@ -1,10 +1,10 @@
 'use client'
 
-import { Button } from 'ui/button'
-import { Separator } from 'ui/separator'
 import { type Node, useReactFlow } from '@xyflow/react'
 import { Loader2, Pencil, Save, X } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
+import { Button } from 'ui/button'
+import { Separator } from 'ui/separator'
 import { useCustomTemplates } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/custom-templates-context'
 import { nodeDefinitions } from '@/app/(legacy-app-dashboard)/_legacy/nodes'
 import type { CustomTemplate } from '@/app/(legacy-app-dashboard)/_legacy/nodes/custom/types'

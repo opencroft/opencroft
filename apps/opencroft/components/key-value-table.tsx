@@ -1,8 +1,8 @@
 'use client'
 
+import { Trash } from 'lucide-react'
 import { Button } from 'ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'ui/table'
-import { Trash } from 'lucide-react'
 import { ControlledInput } from '@/components/ui/input/controlled-input'
 
 interface KeyValuePair {

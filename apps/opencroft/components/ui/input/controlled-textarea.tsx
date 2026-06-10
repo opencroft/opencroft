@@ -1,7 +1,7 @@
 'use client'
 
-import { Textarea } from 'ui/textarea'
 import { useEffect, useRef, useState } from 'react'
+import { Textarea } from 'ui/textarea'
 import { useDebounce } from '@/components/hooks/use-debounce'
 import { useIsMobile } from '@/hooks/use-mobile'
 

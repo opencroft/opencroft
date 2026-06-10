@@ -1,25 +1,19 @@
 'use client'
 
-import { useState } from 'react'
 import { Bot, Loader2, Plug, Settings2, Trash2 } from 'lucide-react'
+import { useState } from 'react'
 
 import { Button } from 'ui/components/ui/button'
-import { Switch } from 'ui/components/ui/switch'
 import { Flex } from 'ui/components/ui/layout/flex'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from 'ui/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/components/ui/select'
+import { Switch } from 'ui/components/ui/switch'
 import { cn } from 'ui/lib/utils'
 
 import { AgentChatInput } from './chat-input'
 import { ChatView } from './chat-view'
-import { AgentPresetForm, AgentProfilePicker } from './preset-form'
 import { McpServerDialog } from './mcp-form'
+import { AgentPresetForm, AgentProfilePicker } from './preset-form'
 import { imageToolView, type ToolViewRegistry } from './tool-views'
 import { useAgentSession } from './use-agent-session'
 
@@ -51,22 +45,16 @@ export function AgentChat({ eventsUrl, toolViews = DEFAULT_TOOL_VIEWS, className
   return (
     <Flex className={cn('h-full min-h-0 w-full', className)}>
       {/* Toolbar */}
-      <Flex row align="center" withSpacing className="border-b gap-2 flex-wrap">
+      <Flex row align='center' withSpacing className='border-b gap-2 flex-wrap'>
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="outline" size="sm">
+            <Button variant='outline' size='sm'>
               <Settings2 /> Agent
             </Button>
           </PopoverTrigger>
-          <PopoverContent align="start" className="w-96">
+          <PopoverContent align='start' className='w-96'>
             <Flex withGaps>
-              <AgentProfilePicker
-                profiles={session.profiles}
-                activeId={session.activeId}
-                onSelect={session.switchProfile}
-                onCreate={session.newProfile}
-                onDelete={session.deleteProfile}
-              />
+              <AgentProfilePicker profiles={session.profiles} activeId={session.activeId} onSelect={session.switchProfile} onCreate={session.newProfile} onDelete={session.deleteProfile} />
               <AgentPresetForm
                 name={session.name}
                 onNameChange={session.setName}
@@ -86,7 +74,7 @@ export function AgentChat({ eventsUrl, toolViews = DEFAULT_TOOL_VIEWS, className
 
         <McpServerDialog
           trigger={
-            <Button variant="outline" size="sm">
+            <Button variant='outline' size='sm'>
               <Plug /> MCP
             </Button>
           }
@@ -94,8 +82,8 @@ export function AgentChat({ eventsUrl, toolViews = DEFAULT_TOOL_VIEWS, className
 
         {session.modes.length > 0 && (
           <Select value={session.currentMode} onValueChange={session.setMode}>
-            <SelectTrigger size="sm">
-              <SelectValue placeholder="Mode" />
+            <SelectTrigger size='sm'>
+              <SelectValue placeholder='Mode' />
             </SelectTrigger>
             <SelectContent>
               {session.modes.map((mode) => (
@@ -107,47 +95,39 @@ export function AgentChat({ eventsUrl, toolViews = DEFAULT_TOOL_VIEWS, className
           </Select>
         )}
 
-        <Flex row align="center" className="gap-3 text-xs text-muted-foreground">
-          <label className="flex items-center gap-1.5 cursor-pointer">
-            <Switch size="sm" checked={showThinking} onCheckedChange={setShowThinking} />
+        <Flex row align='center' className='gap-3 text-xs text-muted-foreground'>
+          <label className='flex items-center gap-1.5 cursor-pointer'>
+            <Switch size='sm' checked={showThinking} onCheckedChange={setShowThinking} />
             Thinking
           </label>
-          <label className="flex items-center gap-1.5 cursor-pointer">
-            <Switch size="sm" checked={showTools} onCheckedChange={setShowTools} />
+          <label className='flex items-center gap-1.5 cursor-pointer'>
+            <Switch size='sm' checked={showTools} onCheckedChange={setShowTools} />
             Tools
           </label>
         </Flex>
 
-        <div className="flex-1" />
+        <div className='flex-1' />
 
         {session.usage && (
-          <span
-            className="text-xs text-muted-foreground tabular-nums"
-            title="Context: tokens in context / window"
-          >
+          <span className='text-xs text-muted-foreground tabular-nums' title='Context: tokens in context / window'>
             {formatTokens(session.usage.used)}
             {session.usage.size ? ` / ${formatTokens(session.usage.size)}` : ''} ctx
           </span>
         )}
 
-        <Flex row align="center" className="gap-1.5 text-xs text-muted-foreground">
-          <span
-            className={cn(
-              'w-2 h-2 rounded-full',
-              session.sessionId ? 'bg-green-500' : 'bg-muted-foreground/40',
-            )}
-          />
+        <Flex row align='center' className='gap-1.5 text-xs text-muted-foreground'>
+          <span className={cn('w-2 h-2 rounded-full', session.sessionId ? 'bg-green-500' : 'bg-muted-foreground/40')} />
           {session.sessionId ? 'Active' : 'No session'}
         </Flex>
 
         {session.sessionId && (
-          <Button variant="ghost" size="icon-sm" onClick={session.clear} title="Clear session">
+          <Button variant='ghost' size='icon-sm' onClick={session.clear} title='Clear session'>
             <Trash2 />
           </Button>
         )}
 
-        <Button size="sm" onClick={session.start} disabled={!session.canStart || session.starting}>
-          {session.starting ? <Loader2 className="animate-spin" /> : <Bot />} New chat
+        <Button size='sm' onClick={session.start} disabled={!session.canStart || session.starting}>
+          {session.starting ? <Loader2 className='animate-spin' /> : <Bot />} New chat
         </Button>
       </Flex>
 
@@ -165,10 +145,8 @@ export function AgentChat({ eventsUrl, toolViews = DEFAULT_TOOL_VIEWS, className
         onRespondAsk={session.respondAsk}
         emptyState={
           <>
-            <Bot className="size-8 opacity-40" />
-            {session.sessionId
-              ? 'Send a message to start the conversation.'
-              : 'Configure an agent and start a new chat.'}
+            <Bot className='size-8 opacity-40' />
+            {session.sessionId ? 'Send a message to start the conversation.' : 'Configure an agent and start a new chat.'}
           </>
         }
         footer={
@@ -179,11 +157,7 @@ export function AgentChat({ eventsUrl, toolViews = DEFAULT_TOOL_VIEWS, className
             busy={session.turnActive}
             onStop={session.stop}
             disabled={!session.sessionId && !session.canStart}
-            placeholder={
-              session.sessionId || session.canStart
-                ? 'Message the agent…'
-                : 'Configure an agent to begin'
-            }
+            placeholder={session.sessionId || session.canStart ? 'Message the agent…' : 'Configure an agent to begin'}
           />
         }
       />

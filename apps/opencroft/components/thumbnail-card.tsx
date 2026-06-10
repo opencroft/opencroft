@@ -1,7 +1,7 @@
 'use client'
 
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from 'ui/context-menu'
 import React from 'react'
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from 'ui/context-menu'
 
 interface ThumbnailCardProps {
   key: string

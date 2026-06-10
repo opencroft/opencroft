@@ -1,6 +1,9 @@
 'use client'
 
 import type { AppLink } from '@opencroft/db'
+import { Link, useLocation, useNavigate, useSearch } from '@tanstack/react-router'
+import { BookOpen, ChevronRight, ExternalLink, Globe, MessageSquare, Network, Puzzle, SettingsIcon, X } from 'lucide-react'
+import { Suspense, useEffect, useState } from 'react'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/collapsible'
 import { TitlebarProvider } from 'ui/layout/titlebar'
 import {
@@ -21,9 +24,6 @@ import {
   SidebarRail,
   SidebarTrigger,
 } from 'ui/sidebar'
-import { Link, useLocation, useNavigate, useSearch } from '@tanstack/react-router'
-import { BookOpen, ChevronRight, ExternalLink, Globe, MessageSquare, Network, Puzzle, SettingsIcon, X } from 'lucide-react'
-import { Suspense, useEffect, useState } from 'react'
 import { DevBuildBadge } from '@/app/_components/dev-build-badge'
 import { getAppLinks } from '@/app/(applink)/_server/actions'
 import { type DocNamespace, listDocNamespaces } from '@/app/(docs)/_server/actions'

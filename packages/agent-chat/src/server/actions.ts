@@ -1,36 +1,29 @@
 import { createServerFn } from '@tanstack/react-start'
 
 import { writeSelection } from 'agent-client/config'
-import { readMcpConfig, writeMcpConfig } from 'agent-client/mcp-config'
 import { checkMcpServer, type McpCheckResult } from 'agent-client/mcp-check'
-import type { AgentProfile, ProfilesFile } from 'agent-client/profiles'
+import { readMcpConfig, writeMcpConfig } from 'agent-client/mcp-config'
 import type { McpServerConfig } from 'agent-client/mcp-types'
-import {
-  resolveSessionPermissions,
-  type DefaultAccess,
-  type PermissionValue,
-  type ResolvedPermissions,
-} from 'agent-client/permissions'
+import { type DefaultAccess, type PermissionValue, type ResolvedPermissions, resolveSessionPermissions } from 'agent-client/permissions'
+import type { AgentProfile, ProfilesFile } from 'agent-client/profiles'
 import type { AgentSelection, SessionMeta } from 'agent-client/types'
 
 import { getRuntime, type RoleRecord, type SkillRecord } from './runtime'
 
 // ---- Agent selection (provider / adapter / model / key / cwd) ----
 
-const _getAgentConfig = createServerFn({ method: 'GET' }).handler(
-  async (): Promise<AgentSelection | null> => {
-    // Read the saved selection directly so an unconfigured host returns null
-    // (readSelection() would substitute a hard-coded default instead).
-    const { readFile } = await import('node:fs/promises')
-    const { join } = await import('node:path')
-    try {
-      const raw = await readFile(join(process.cwd(), 'agent-config.json'), 'utf8')
-      return JSON.parse(raw) as AgentSelection
-    } catch {
-      return null
-    }
-  },
-)
+const _getAgentConfig = createServerFn({ method: 'GET' }).handler(async (): Promise<AgentSelection | null> => {
+  // Read the saved selection directly so an unconfigured host returns null
+  // (readSelection() would substitute a hard-coded default instead).
+  const { readFile } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  try {
+    const raw = await readFile(join(process.cwd(), 'agent-config.json'), 'utf8')
+    return JSON.parse(raw) as AgentSelection
+  } catch {
+    return null
+  }
+})
 export const getAgentConfig = () => _getAgentConfig()
 
 const _saveAgentConfig = createServerFn({ method: 'POST' })
@@ -40,14 +33,11 @@ const _saveAgentConfig = createServerFn({ method: 'POST' })
     await writeSelection({ ...data, cwd: process.cwd() })
     return { ok: true }
   })
-export const saveAgentConfig = (selection: AgentSelection) =>
-  _saveAgentConfig({ data: selection })
+export const saveAgentConfig = (selection: AgentSelection) => _saveAgentConfig({ data: selection })
 
 // ---- Agent profiles (multiple saved selections + system prompts) ----
 
-const _listAgentProfiles = createServerFn({ method: 'GET' }).handler(
-  async (): Promise<ProfilesFile> => getRuntime().profiles.read(),
-)
+const _listAgentProfiles = createServerFn({ method: 'GET' }).handler(async (): Promise<ProfilesFile> => getRuntime().profiles.read())
 export const listAgentProfiles = () => _listAgentProfiles()
 
 const _saveAgentProfile = createServerFn({ method: 'POST' })
@@ -72,8 +62,7 @@ const _saveAgentProfile = createServerFn({ method: 'POST' })
     await store.write(file)
     return file
   })
-export const saveAgentProfile = (profile: AgentProfile, setActive?: boolean) =>
-  _saveAgentProfile({ data: { profile, setActive } })
+export const saveAgentProfile = (profile: AgentProfile, setActive?: boolean) => _saveAgentProfile({ data: { profile, setActive } })
 
 const _deleteAgentProfile = createServerFn({ method: 'POST' })
   .inputValidator((id: string) => id)
@@ -118,14 +107,11 @@ const _listOpenAiModels = createServerFn({ method: 'POST' })
       .filter((id): id is string => Boolean(id))
       .sort()
   })
-export const listOpenAiModels = (baseUrl: string, apiKey?: string) =>
-  _listOpenAiModels({ data: { baseUrl, apiKey } })
+export const listOpenAiModels = (baseUrl: string, apiKey?: string) => _listOpenAiModels({ data: { baseUrl, apiKey } })
 
 // ---- Sessions (single-session model: starting one drops the rest) ----
 
-const _listAgentSessions = createServerFn({ method: 'GET' }).handler(
-  async (): Promise<SessionMeta[]> => getRuntime().agent.listSessions(),
-)
+const _listAgentSessions = createServerFn({ method: 'GET' }).handler(async (): Promise<SessionMeta[]> => getRuntime().agent.listSessions())
 export const listAgentSessions = () => _listAgentSessions()
 
 // Resolve the active profile's roles into the session's effective permissions.
@@ -158,8 +144,7 @@ const _startAgentSession = createServerFn({ method: 'POST' })
     // Default this page to bypass-permissions (applied when the harness offers it).
     return agent.createSession(selection, 'bypass', permissions)
   })
-export const startAgentSession = (selection: AgentSelection) =>
-  _startAgentSession({ data: selection })
+export const startAgentSession = (selection: AgentSelection) => _startAgentSession({ data: selection })
 
 const _deleteAgentSession = createServerFn({ method: 'POST' })
   .inputValidator((sessionId: string) => sessionId)
@@ -167,17 +152,12 @@ const _deleteAgentSession = createServerFn({ method: 'POST' })
     getRuntime().agent.deleteSession(sessionId)
     return { ok: true }
   })
-export const deleteAgentSession = (sessionId: string) =>
-  _deleteAgentSession({ data: sessionId })
+export const deleteAgentSession = (sessionId: string) => _deleteAgentSession({ data: sessionId })
 
 const _forkAgentSession = createServerFn({ method: 'POST' })
   .inputValidator((data: { sessionId: string; dropFromTurn?: number }) => data)
-  .handler(
-    async ({ data }): Promise<SessionMeta | null> =>
-      getRuntime().agent.forkSession(data.sessionId, data.dropFromTurn),
-  )
-export const forkAgentSession = (sessionId: string, dropFromTurn?: number) =>
-  _forkAgentSession({ data: { sessionId, dropFromTurn } })
+  .handler(async ({ data }): Promise<SessionMeta | null> => getRuntime().agent.forkSession(data.sessionId, data.dropFromTurn))
+export const forkAgentSession = (sessionId: string, dropFromTurn?: number) => _forkAgentSession({ data: { sessionId, dropFromTurn } })
 
 // ---- Turn control ----
 
@@ -187,8 +167,7 @@ const _sendAgentPrompt = createServerFn({ method: 'POST' })
     await getRuntime().agent.prompt(data.sessionId, data.text)
     return { ok: true }
   })
-export const sendAgentPrompt = (sessionId: string, text: string) =>
-  _sendAgentPrompt({ data: { sessionId, text } })
+export const sendAgentPrompt = (sessionId: string, text: string) => _sendAgentPrompt({ data: { sessionId, text } })
 
 const _cancelAgentTurn = createServerFn({ method: 'POST' })
   .inputValidator((sessionId: string) => sessionId)
@@ -199,10 +178,7 @@ const _cancelAgentTurn = createServerFn({ method: 'POST' })
 export const cancelAgentTurn = (sessionId: string) => _cancelAgentTurn({ data: sessionId })
 
 const _respondAgent = createServerFn({ method: 'POST' })
-  .inputValidator(
-    (data: { type: 'permission' | 'ask'; requestId: string; optionId?: string; answer?: string }) =>
-      data,
-  )
+  .inputValidator((data: { type: 'permission' | 'ask'; requestId: string; optionId?: string; answer?: string }) => data)
   .handler(async ({ data }) => {
     const { agent } = getRuntime()
     if (data.type === 'permission') {
@@ -212,10 +188,8 @@ const _respondAgent = createServerFn({ method: 'POST' })
     }
     return { ok: true }
   })
-export const respondPermission = (requestId: string, optionId?: string) =>
-  _respondAgent({ data: { type: 'permission', requestId, optionId } })
-export const respondAsk = (requestId: string, answer?: string) =>
-  _respondAgent({ data: { type: 'ask', requestId, answer } })
+export const respondPermission = (requestId: string, optionId?: string) => _respondAgent({ data: { type: 'permission', requestId, optionId } })
+export const respondAsk = (requestId: string, answer?: string) => _respondAgent({ data: { type: 'ask', requestId, answer } })
 
 const _setAgentMode = createServerFn({ method: 'POST' })
   .inputValidator((data: { sessionId: string; modeId: string }) => data)
@@ -223,14 +197,11 @@ const _setAgentMode = createServerFn({ method: 'POST' })
     await getRuntime().agent.setMode(data.sessionId, data.modeId)
     return { ok: true }
   })
-export const setAgentMode = (sessionId: string, modeId: string) =>
-  _setAgentMode({ data: { sessionId, modeId } })
+export const setAgentMode = (sessionId: string, modeId: string) => _setAgentMode({ data: { sessionId, modeId } })
 
 // ---- MCP server (single optional server, edited via dialog) ----
 
-const _getMcpServers = createServerFn({ method: 'GET' }).handler(
-  async (): Promise<McpServerConfig[]> => readMcpConfig(),
-)
+const _getMcpServers = createServerFn({ method: 'GET' }).handler(async (): Promise<McpServerConfig[]> => readMcpConfig())
 export const getMcpServers = () => _getMcpServers()
 
 const _saveMcpServers = createServerFn({ method: 'POST' })
@@ -241,35 +212,27 @@ const _saveMcpServers = createServerFn({ method: 'POST' })
     await getRuntime().agent.refreshMcpServers()
     return { ok: true }
   })
-export const saveMcpServers = (servers: McpServerConfig[]) =>
-  _saveMcpServers({ data: servers })
+export const saveMcpServers = (servers: McpServerConfig[]) => _saveMcpServers({ data: servers })
 
 const _checkMcpServer = createServerFn({ method: 'POST' })
   .inputValidator((config: McpServerConfig) => config)
   .handler(async ({ data }): Promise<McpCheckResult> => checkMcpServer(data))
-export const checkMcpServerConfig = (config: McpServerConfig) =>
-  _checkMcpServer({ data: config })
+export const checkMcpServerConfig = (config: McpServerConfig) => _checkMcpServer({ data: config })
 
 // ---- Skills (the agent's editable, load-on-demand instruction catalog) ----
 
 export type { SkillRecord }
 
-const _getSkills = createServerFn({ method: 'GET' }).handler(
-  async (): Promise<SkillRecord[]> => getRuntime().skills.list(),
-)
+const _getSkills = createServerFn({ method: 'GET' }).handler(async (): Promise<SkillRecord[]> => getRuntime().skills.list())
 export const getSkills = () => _getSkills()
 
 const _createSkill = createServerFn({ method: 'POST' })
   .inputValidator((data: { name: string; description?: string; content?: string }) => data)
   .handler(async ({ data }): Promise<SkillRecord> => getRuntime().skills.create(data))
-export const createSkill = (input: { name: string; description?: string; content?: string }) =>
-  _createSkill({ data: input })
+export const createSkill = (input: { name: string; description?: string; content?: string }) => _createSkill({ data: input })
 
 const _updateSkill = createServerFn({ method: 'POST' })
-  .inputValidator(
-    (data: { name: string; updates: { name?: string; description?: string; content?: string } }) =>
-      data,
-  )
+  .inputValidator((data: { name: string; updates: { name?: string; description?: string; content?: string } }) => data)
   .handler(async ({ data }): Promise<SkillRecord | null> => {
     try {
       // A renamed skill can collide with an existing name (unique constraint).
@@ -278,10 +241,7 @@ const _updateSkill = createServerFn({ method: 'POST' })
       return null
     }
   })
-export const updateSkill = (
-  name: string,
-  updates: { name?: string; description?: string; content?: string },
-) => _updateSkill({ data: { name, updates } })
+export const updateSkill = (name: string, updates: { name?: string; description?: string; content?: string }) => _updateSkill({ data: { name, updates } })
 
 const _deleteSkill = createServerFn({ method: 'POST' })
   .inputValidator((name: string) => name)
@@ -297,10 +257,7 @@ export const deleteSkill = (name: string) => _deleteSkill({ data: name })
 
 // ---- Agent tools (the local tool catalog, for the roles editor) ----
 
-const _getAgentTools = createServerFn({ method: 'GET' }).handler(
-  async (): Promise<{ name: string; description: string }[]> =>
-    getRuntime().agent.listTools(),
-)
+const _getAgentTools = createServerFn({ method: 'GET' }).handler(async (): Promise<{ name: string; description: string }[]> => getRuntime().agent.listTools())
 export const getAgentTools = () => _getAgentTools()
 
 // ---- Agent roles (per-tool / per-skill permissions) ----
@@ -315,25 +272,13 @@ function rolesLayer() {
   return roles
 }
 
-const _getAgentRoles = createServerFn({ method: 'GET' }).handler(
-  async (): Promise<RoleRecord[]> => rolesLayer().list(),
-)
+const _getAgentRoles = createServerFn({ method: 'GET' }).handler(async (): Promise<RoleRecord[]> => rolesLayer().list())
 export const getAgentRoles = () => _getAgentRoles()
 
 const _createAgentRole = createServerFn({ method: 'POST' })
-  .inputValidator(
-    (data: {
-      name: string
-      description?: string
-      permissions?: Record<string, PermissionValue>
-    }) => data,
-  )
+  .inputValidator((data: { name: string; description?: string; permissions?: Record<string, PermissionValue> }) => data)
   .handler(async ({ data }): Promise<RoleRecord> => rolesLayer().create(data))
-export const createAgentRole = (input: {
-  name: string
-  description?: string
-  permissions?: Record<string, PermissionValue>
-}) => _createAgentRole({ data: input })
+export const createAgentRole = (input: { name: string; description?: string; permissions?: Record<string, PermissionValue> }) => _createAgentRole({ data: input })
 
 const _updateAgentRole = createServerFn({ method: 'POST' })
   .inputValidator(
@@ -375,9 +320,7 @@ const _deleteAgentRole = createServerFn({ method: 'POST' })
   })
 export const deleteAgentRole = (id: string) => _deleteAgentRole({ data: id })
 
-const _getDefaultAccess = createServerFn({ method: 'GET' }).handler(
-  async (): Promise<DefaultAccess> => rolesLayer().getDefaultAccess(),
-)
+const _getDefaultAccess = createServerFn({ method: 'GET' }).handler(async (): Promise<DefaultAccess> => rolesLayer().getDefaultAccess())
 export const getDefaultAccess = () => _getDefaultAccess()
 
 const _setDefaultAccess = createServerFn({ method: 'POST' })
@@ -386,5 +329,4 @@ const _setDefaultAccess = createServerFn({ method: 'POST' })
     await rolesLayer().setDefaultAccess(access)
     return { ok: true }
   })
-export const setDefaultAccess = (access: DefaultAccess) =>
-  _setDefaultAccess({ data: access })
+export const setDefaultAccess = (access: DefaultAccess) => _setDefaultAccess({ data: access })

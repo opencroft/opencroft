@@ -348,5 +348,8 @@ export function useAcpSession(source: LocalSource, transformOutgoing?: (text: st
     [tabKey, folded.messages, folded.waiting, loading, sending, localWaiting, botName, send, stop, canFork, editMessage, draft],
   )
 
-  return useMemo(() => ({ session, permissions: folded.permissions, asks: folded.asks, resolvePermission, resolveAsk, respondPermissionText }), [session, folded.permissions, folded.asks, resolvePermission, resolveAsk, respondPermissionText])
+  return useMemo(
+    () => ({ session, permissions: folded.permissions, asks: folded.asks, resolvePermission, resolveAsk, respondPermissionText }),
+    [session, folded.permissions, folded.asks, resolvePermission, resolveAsk, respondPermissionText],
+  )
 }

@@ -1,13 +1,12 @@
 'use client'
 
+import { buildBlocks, type ChatBlock, foldEvents } from 'agent-client/fold'
+import type { AgentProfile } from 'agent-client/profiles'
+import type { AgentSelection, ChatEvent, SessionMode } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
-import { buildBlocks, foldEvents, type ChatBlock } from 'agent-client/fold'
-import type { AgentProfile } from 'agent-client/profiles'
-import type { AgentSelection, ChatEvent, SessionMode } from 'agent-client/types'
-
-import { EMPTY_SELECTION, canStartSelection } from './preset-form'
+import { canStartSelection, EMPTY_SELECTION } from './preset-form'
 import {
   cancelAgentTurn,
   deleteAgentProfile,

@@ -1,11 +1,11 @@
 'use client'
 
-import * as uiKit from 'ui/ext'
 import { Handle, NodeResizer, Position, useEdges, useNodeId, useNodes, useReactFlow, useUpdateNodeInternals } from '@xyflow/react'
 import * as icons from 'lucide-react'
 import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
+import * as uiKit from 'ui/ext'
 import { CommandBar, CommandBarMenu, CommandBarMenuItem } from '@/app/(dashboard)/_canvas/command-bar'
 import { inspectorIntent, useInspectorIntent } from '@/app/(dashboard)/_canvas/inspector-intent'
 import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/(dashboard)/_canvas/node-card'

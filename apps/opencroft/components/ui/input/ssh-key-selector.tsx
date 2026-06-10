@@ -1,9 +1,9 @@
 'use client'
 
-import { Flex } from 'ui/layout/flex'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
 import { Loader2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { Flex } from 'ui/layout/flex'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
 import type { SshKey } from '@/app/(server)/_server/ssh-key'
 import { listSshKeys } from '@/app/(ssh)/_server/ssh-keys-actions'
 

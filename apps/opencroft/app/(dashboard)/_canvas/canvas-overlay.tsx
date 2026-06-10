@@ -1,11 +1,11 @@
 'use client'
 
-import { Flex } from 'ui/layout/flex'
-import { ScrollArea } from 'ui/scroll-area'
 import { useLocation, useRouter } from '@tanstack/react-router'
 import { X } from 'lucide-react'
 import type * as React from 'react'
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { Flex } from 'ui/layout/flex'
+import { ScrollArea } from 'ui/scroll-area'
 import { ApprovalBar } from '@/app/(approvals)/_components/approval-bar'
 import { AskUserBar } from '@/app/(approvals)/_components/ask-user-bar'
 import { AiPanel } from '@/app/(dashboard)/_canvas/ai-panel'

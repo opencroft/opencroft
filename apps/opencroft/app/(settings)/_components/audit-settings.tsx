@@ -1,12 +1,12 @@
 'use client'
 
+import { ShieldAlert } from 'lucide-react'
+import { useEffect, useState, useTransition } from 'react'
 import { Badge } from 'ui/badge'
 import { Button } from 'ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
 import { Spinner } from 'ui/spinner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'ui/table'
-import { ShieldAlert } from 'lucide-react'
-import { useEffect, useState, useTransition } from 'react'
 import type { AuditStatus } from '@/app/(mcp)/_server/audit'
 import { type AuditQuery, clearAuditLog, getYoloMode, listAuditEntries, listAuditTools, type McpAuditEntry, updateYoloMode } from '@/app/(settings)/_server/audit-actions'
 

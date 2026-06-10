@@ -1,7 +1,7 @@
 'use client'
 
-import { Input } from 'ui/input'
 import { useEffect, useRef, useState } from 'react'
+import { Input } from 'ui/input'
 import { useDebounce } from '@/components/hooks/use-debounce'
 
 export interface ControlledInputProps extends Omit<React.ComponentProps<typeof Input>, 'onChange' | 'onBlur' | 'onKeyDown'> {

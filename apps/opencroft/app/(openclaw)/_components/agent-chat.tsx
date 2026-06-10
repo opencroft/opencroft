@@ -1,21 +1,21 @@
 'use client'
 
-import { Button } from 'ui/button'
-import { TypingDots } from 'ui/chat/typing-dots'
-import { Flex } from 'ui/layout/flex'
-import { Textarea } from 'ui/textarea'
+import { ChainDot, type ChainDotVariant, Chained } from 'agent-chat/chain'
+import { ThinkingBlock } from 'agent-chat/thinking-block'
+import { ToolCallBlock } from 'agent-chat/tool-block'
 import { Maximize2, Minimize2, Pencil, SendIcon, ShieldAlert, ShieldCheck, ShieldCog, Sparkles, Square } from 'lucide-react'
 import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { Button } from 'ui/button'
+import { TypingDots } from 'ui/chat/typing-dots'
+import { Flex } from 'ui/layout/flex'
+import { Textarea } from 'ui/textarea'
 import { getAutoApprove, setAutoApprove } from '@/app/(approvals)/_server/actions'
 import { CommandBarMenuItem } from '@/app/(dashboard)/_canvas/command-bar'
 import { useOverlayBar, useOverlayMenu } from '@/app/(dashboard)/_canvas/overlay-context'
 import { messageId, normalizeHistory, type OpenclawMessage, type RawChatMessage } from '@/app/(openclaw)/_lib/messages'
 import { listCommands, loadSession, type OpenclawCommand, sendMessage } from '@/app/(openclaw)/_server/actions'
-import { Chained, ChainDot, type ChainDotVariant } from 'agent-chat/chain'
-import { ThinkingBlock } from 'agent-chat/thinking-block'
-import { ToolCallBlock } from 'agent-chat/tool-block'
 import { cn } from '@/lib/utils'
 
 export interface AgentSession {
@@ -240,7 +240,15 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName }: AgentC
           b.kind === 'user' ? (
             <UserMessage key={i} text={b.text} editDisabled={session.waiting} onEdit={edit ? () => edit(turnByBlock.get(i) ?? 0, b.text) : undefined} />
           ) : (
-            <Chain key={i} items={b.items} botName={displayName} agentAvatar={agentAvatar} defaultCollapsed={chainCollapsedRef.current} onCollapseChange={onChainCollapseChange} pending={i === blocks.length - 1 && session.waiting} />
+            <Chain
+              key={i}
+              items={b.items}
+              botName={displayName}
+              agentAvatar={agentAvatar}
+              defaultCollapsed={chainCollapsedRef.current}
+              onCollapseChange={onChainCollapseChange}
+              pending={i === blocks.length - 1 && session.waiting}
+            />
           ),
         )
       )}
@@ -308,7 +316,15 @@ function UserMessage({ text, editDisabled, onEdit }: { text: string; editDisable
         </div>
       </Flex>
       {onEdit && (
-        <Button type='button' size='icon' variant='ghost' className='h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100' title='Edit message' disabled={editDisabled} onClick={onEdit}>
+        <Button
+          type='button'
+          size='icon'
+          variant='ghost'
+          className='h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100'
+          title='Edit message'
+          disabled={editDisabled}
+          onClick={onEdit}
+        >
           <Pencil className='size-3.5' />
         </Button>
       )}

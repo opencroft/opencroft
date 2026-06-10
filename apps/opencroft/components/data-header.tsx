@@ -1,7 +1,7 @@
+import { Plus, Search, Settings } from 'lucide-react'
 import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 import { Flex } from 'ui/layout/flex'
-import { Plus, Search, Settings } from 'lucide-react'
 
 interface EDataHeaderProps {
   searchTerm: string

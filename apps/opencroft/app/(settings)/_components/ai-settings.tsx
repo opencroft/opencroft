@@ -1,9 +1,9 @@
 'use client'
 
+import { useEffect, useState, useTransition } from 'react'
 import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
-import { useEffect, useState, useTransition } from 'react'
 import { type AiSettingsState, loadAiSettingsState, rePairGateway, saveDefaultAgent, saveGatewayConfig } from '@/app/(settings)/_server/ai-actions'
 
 function buildNodesUrl(gatewayUrl: string | null | undefined): string | null {

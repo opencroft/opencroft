@@ -1,13 +1,13 @@
 'use client'
 
+import { Loader2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Input } from 'ui/input'
 import { Label } from 'ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
-import { Loader2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { toast } from 'sonner'
 import { type InstallAuth, type InstalledExtensionRecord, installExtensionFromUrl } from '@/app/(extension-editor)/_actions/installed-extensions-actions'
 import { listSecretStores, type SecretStoreSummary } from '@/app/(secrets-store)/_server/actions'
 

@@ -1,6 +1,5 @@
-import type { ReactNode } from 'react'
-
 import type { ChatMessage } from 'agent-client/fold'
+import type { ReactNode } from 'react'
 
 export type ToolMessage = Extract<ChatMessage, { kind: 'tool' }>
 
@@ -26,10 +25,7 @@ export type ToolViewRegistry = Record<string, ToolViewDef>
 // a node. Such messages stay visible even when the "Tools" toggle hides plain
 // tool calls.
 export function hasToolView(message: ChatMessage, registry: ToolViewRegistry): boolean {
-  return (
-    message.kind === 'tool' &&
-    (registry[message.title]?.render(message) ?? null) !== null
-  )
+  return message.kind === 'tool' && (registry[message.title]?.render(message) ?? null) !== null
 }
 
 // Pull a usable http(s) URL out of a tool result (a string, {url}/{text}, or an
@@ -44,9 +40,7 @@ export function extractUrl(output: unknown): string | null {
     if (typeof obj.url === 'string') text = obj.url
     else if (typeof obj.text === 'string') text = obj.text
     else if (Array.isArray(obj.content)) {
-      const part = (obj.content as Array<Record<string, unknown>>).find(
-        (entry) => typeof entry.text === 'string',
-      )
+      const part = (obj.content as Array<Record<string, unknown>>).find((entry) => typeof entry.text === 'string')
       text = part?.text as string | undefined
     }
   }
@@ -64,13 +58,8 @@ export const imageToolView: ToolViewDef = {
     if (!url) return null
     const prompt = (message.input as { prompt?: unknown } | undefined)?.prompt
     return (
-      <a href={url} target="_blank" rel="noreferrer" className="block w-full overflow-hidden">
-        <img
-          src={url}
-          alt={typeof prompt === 'string' ? prompt : 'Generated image'}
-          decoding="async"
-          className="w-full max-w-full rounded-lg border shadow-sm"
-        />
+      <a href={url} target='_blank' rel='noreferrer' className='block w-full overflow-hidden'>
+        <img src={url} alt={typeof prompt === 'string' ? prompt : 'Generated image'} decoding='async' className='w-full max-w-full rounded-lg border shadow-sm' />
       </a>
     )
   },

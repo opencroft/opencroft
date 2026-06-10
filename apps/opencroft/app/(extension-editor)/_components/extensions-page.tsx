@@ -1,8 +1,8 @@
 'use client'
 
-import { Flex } from 'ui/layout/flex'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { Flex } from 'ui/layout/flex'
 import {
   checkInstalledForUpdates,
   type InstalledExtensionRecord,

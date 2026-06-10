@@ -1,5 +1,5 @@
-import type { HostSecretsApi, SecretRecord } from '@opencroft/server'
 import { db, secret } from '@opencroft/db'
+import type { HostSecretsApi, SecretRecord } from '@opencroft/server'
 import { and, asc, desc, eq } from 'drizzle-orm'
 import { decrypt, encrypt } from '@/server/crypto'
 

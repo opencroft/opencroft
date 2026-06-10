@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
 import { ChevronRight, Loader2 } from 'lucide-react'
+import { useState } from 'react'
 
 import { Flex } from 'ui/components/ui/layout/flex'
 import { cn } from 'ui/lib/utils'
@@ -25,9 +25,7 @@ export function ThinkingBlock({ text, pending = false }: ThinkingBlockProps) {
         <span className='font-medium text-muted-foreground shrink-0'>Thinking</span>
         {pending && <Loader2 className='size-3 shrink-0 animate-spin text-muted-foreground' />}
       </button>
-      {open && text.trim() && (
-        <div className='whitespace-pre-wrap wrap-break-word border-l-2 pl-3 text-[11px] text-muted-foreground italic'>{text}</div>
-      )}
+      {open && text.trim() && <div className='whitespace-pre-wrap wrap-break-word border-l-2 pl-3 text-[11px] text-muted-foreground italic'>{text}</div>}
     </Flex>
   )
 }

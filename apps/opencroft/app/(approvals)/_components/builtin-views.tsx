@@ -1,9 +1,9 @@
 'use client'
 
-import { Button } from 'ui/button'
 import { useReactFlow } from '@xyflow/react'
 import { GitCompare } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { Button } from 'ui/button'
 import { type ApprovalViewProps, registerApprovalView } from '@/app/(approvals)/_components/approval-views'
 import { NodeDiffEditor } from '@/app/(approvals)/_components/node-diff-editor'
 import { readRemoteFile } from '@/app/(approvals)/_server/actions'

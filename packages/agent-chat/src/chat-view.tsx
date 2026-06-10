@@ -1,23 +1,16 @@
 'use client'
 
-import { useEffect, useMemo, useRef, type ReactNode } from 'react'
+import type { ChatBlock, ChatMessage } from 'agent-client/fold'
 import { Bot, Copy, GitFork } from 'lucide-react'
-
+import { type ReactNode, useEffect, useMemo, useRef } from 'react'
+import { StickySection } from 'ui/components/experimental/sticky-section'
+import { useAutoScroll } from 'ui/components/hooks/use-auto-scroll'
+import { TypingDots } from 'ui/components/ui/chat/typing-dots'
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from 'ui/components/ui/context-menu'
 import { Flex } from 'ui/components/ui/layout/flex'
 import { ScrollArea } from 'ui/components/ui/layout/scroll-area'
-import { StickySection } from 'ui/components/experimental/sticky-section'
-import { TypingDots } from 'ui/components/ui/chat/typing-dots'
 import { ScrollToBottomButton } from 'ui/components/ui/utils/scroll-to-bottom-button'
-import { useAutoScroll } from 'ui/components/hooks/use-auto-scroll'
 import { useIsMobile } from 'ui/hooks/use-mobile'
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from 'ui/components/ui/context-menu'
-
-import type { ChatBlock, ChatMessage } from 'agent-client/fold'
 
 import { MessageView } from './messages'
 import { hasToolView, type ToolViewRegistry } from './tool-views'
@@ -50,12 +43,7 @@ export interface ChatViewProps {
   className?: string
 }
 
-function isItemVisible(
-  message: ChatMessage,
-  hideThinking: boolean,
-  hideToolCalls: boolean,
-  toolViews: ToolViewRegistry,
-): boolean {
+function isItemVisible(message: ChatMessage, hideThinking: boolean, hideToolCalls: boolean, toolViews: ToolViewRegistry): boolean {
   if (message.kind === 'thought') return !hideThinking
   if (message.kind === 'tool') return !hideToolCalls || hasToolView(message, toolViews)
   // Pending permissions must stay actionable even with tools hidden.
@@ -89,9 +77,7 @@ export function ChatView({
             ? block
             : {
                 ...block,
-                items: block.items.filter((message) =>
-                  isItemVisible(message, hideThinking, hideToolCalls, toolViews),
-                ),
+                items: block.items.filter((message) => isItemVisible(message, hideThinking, hideToolCalls, toolViews)),
               },
         )
         .filter((block) => block.kind === 'user' || block.items.length > 0),
@@ -115,34 +101,27 @@ export function ChatView({
   // The last item while a turn is running — marked pending so a streaming
   // thought shows its spinner.
   const lastBlock = visibleBlocks[visibleBlocks.length - 1]
-  const activeItemId =
-    turnActive && lastBlock && lastBlock.kind !== 'user' ? lastBlock.items[lastBlock.items.length - 1]?.id : undefined
+  const activeItemId = turnActive && lastBlock && lastBlock.kind !== 'user' ? lastBlock.items[lastBlock.items.length - 1]?.id : undefined
 
   return (
     <Flex expanded className={className ?? 'min-h-0 justify-end'}>
-      <ScrollArea ref={scrollRef} className="w-full" innerClassName="items-center" onScroll={handleScroll}>
+      <ScrollArea ref={scrollRef} className='w-full' innerClassName='items-center' onScroll={handleScroll}>
         {visibleBlocks.length === 0 ? (
-          <Flex align="center" justify="center" className="min-h-40 p-8 text-sm text-muted-foreground gap-2">
+          <Flex align='center' justify='center' className='min-h-40 p-8 text-sm text-muted-foreground gap-2'>
             {emptyState ?? (
               <>
-                <Bot className="size-8 opacity-40" />
+                <Bot className='size-8 opacity-40' />
                 No messages yet.
               </>
             )}
           </Flex>
         ) : (
-          <Flex withGaps className="w-full max-w-2xl gap-4 px-4 py-4">
+          <Flex withGaps className='w-full max-w-2xl gap-4 px-4 py-4'>
             {visibleBlocks.map((block) =>
               block.kind === 'user' ? (
-                <UserBubble
-                  key={block.id}
-                  text={block.text}
-                  canFork={canFork}
-                  forkDisabled={turnActive}
-                  onFork={onFork ? () => onFork(turnIndexById.get(block.id) ?? 0) : undefined}
-                />
+                <UserBubble key={block.id} text={block.text} canFork={canFork} forkDisabled={turnActive} onFork={onFork ? () => onFork(turnIndexById.get(block.id) ?? 0) : undefined} />
               ) : (
-                <Flex key={block.id} withGaps className="gap-2">
+                <Flex key={block.id} withGaps className='gap-2'>
                   {block.items.map((message) => (
                     <MessageView
                       key={message.id}
@@ -159,19 +138,19 @@ export function ChatView({
               ),
             )}
             {turnActive && (
-              <Flex row align="center" className="gap-2 text-sm text-muted-foreground">
-                <TypingDots variant="primary" size="sm" /> Typing…
+              <Flex row align='center' className='gap-2 text-sm text-muted-foreground'>
+                <TypingDots variant='primary' size='sm' /> Typing…
               </Flex>
             )}
           </Flex>
         )}
 
         {footer && (
-          <StickySection side="bottom" fade variant="background" className="w-full max-w-2xl">
-            <Flex className="absolute right-0 top-0">
+          <StickySection side='bottom' fade variant='background' className='w-full max-w-2xl'>
+            <Flex className='absolute right-0 top-0'>
               <ScrollToBottomButton scrollContainerRef={scrollRef} />
             </Flex>
-            <div className="flex-1">{footer}</div>
+            <div className='flex-1'>{footer}</div>
           </StickySection>
         )}
       </ScrollArea>
@@ -179,17 +158,7 @@ export function ChatView({
   )
 }
 
-function UserBubble({
-  text,
-  canFork,
-  forkDisabled,
-  onFork,
-}: {
-  text: string
-  canFork?: boolean
-  forkDisabled?: boolean
-  onFork?: () => void
-}) {
+function UserBubble({ text, canFork, forkDisabled, onFork }: { text: string; canFork?: boolean; forkDisabled?: boolean; onFork?: () => void }) {
   const isMobile = useIsMobile()
   const wrapperRef = useRef<HTMLDivElement>(null)
 
@@ -217,18 +186,14 @@ function UserBubble({
       document.getSelection()?.removeAllRanges()
       return
     }
-    event.currentTarget.dispatchEvent(
-      new MouseEvent('contextmenu', { bubbles: true, clientX: event.clientX, clientY: event.clientY }),
-    )
+    event.currentTarget.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: event.clientX, clientY: event.clientY }))
   }
 
   return (
-    <div ref={wrapperRef} className="self-end max-w-[85%]">
+    <div ref={wrapperRef} className='self-end max-w-[85%]'>
       <ContextMenu>
         <ContextMenuTrigger asChild onClick={isMobile ? handleTap : undefined}>
-          <div className="rounded-lg bg-primary/10 px-3 py-2 text-sm whitespace-pre-wrap wrap-break-word">
-            {text}
-          </div>
+          <div className='rounded-lg bg-primary/10 px-3 py-2 text-sm whitespace-pre-wrap wrap-break-word'>{text}</div>
         </ContextMenuTrigger>
         <ContextMenuContent>
           <ContextMenuItem onClick={() => void navigator.clipboard.writeText(text)}>

@@ -1,8 +1,8 @@
 'use client'
 
+import React, { useCallback } from 'react'
 import { MenuLayout, type MenuLayoutProps } from 'ui/layout/menulayout'
 import { ScrollContent, ScrollFooter, ScrollPage } from 'ui/layout/scrollpage'
-import React, { useCallback } from 'react'
 import { useUrlState } from '@/components/hooks/use-url-state'
 import { cn } from '@/lib/utils'
 

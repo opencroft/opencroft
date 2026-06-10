@@ -73,7 +73,12 @@ function dockerExecPrefix(ctx: TerminalContext): string[] {
 }
 
 export async function terminalRun(ctx: TerminalContext, args: string[], env?: Record<string, string>): Promise<string> {
-  const envPrefix = env && Object.keys(env).length > 0 ? `${Object.entries(env).map(([k, v]) => `export ${k}=${shellQuote(v)}`).join(' && ')} && ` : ''
+  const envPrefix =
+    env && Object.keys(env).length > 0
+      ? `${Object.entries(env)
+          .map(([k, v]) => `export ${k}=${shellQuote(v)}`)
+          .join(' && ')} && `
+      : ''
 
   if (ctx.type === 'docker-exec' && ctx.via) {
     return terminalRun(ctx.via, [...dockerExecPrefix(ctx), 'sh', '-c', envPrefix + shellJoin(args)], undefined)

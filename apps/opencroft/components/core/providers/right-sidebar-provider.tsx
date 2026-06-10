@@ -1,8 +1,8 @@
 'use client'
 
-import { SidebarProvider, useSidebar } from 'ui/sidebar'
 import type React from 'react'
 import { createContext, useContext } from 'react'
+import { SidebarProvider, useSidebar } from 'ui/sidebar'
 
 interface RightSidebarContextValue {
   state: 'expanded' | 'collapsed'

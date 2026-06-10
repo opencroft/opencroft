@@ -1,9 +1,9 @@
 'use client'
 
-import { Flex, type FlexProps } from 'ui/layout/flex'
-import { ScrollArea } from 'ui/scroll-area'
 import { ChevronRight } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
+import { Flex, type FlexProps } from 'ui/layout/flex'
+import { ScrollArea } from 'ui/scroll-area'
 import { StickySection } from '@/components/experimental/sticky-section'
 import { cn } from '@/lib/utils'
 

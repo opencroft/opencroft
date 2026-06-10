@@ -1,12 +1,12 @@
 'use client'
 
-import { Button } from 'ui/button'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from 'ui/tooltip'
-import type { StatusVariant as IndicatorVariant } from 'ui/utils/status-indicator'
 import { useEdges as useConnections, useInternalNode, useNodeId } from '@xyflow/react'
 import { AlertTriangle, Copy, type LucideIcon } from 'lucide-react'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { Button } from 'ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from 'ui/tooltip'
+import type { StatusVariant as IndicatorVariant } from 'ui/utils/status-indicator'
 import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/(dashboard)/_canvas/node-card'
 import { InputHandle, OutputHandle } from '@/app/(extension-runtime)/_client/host'
 

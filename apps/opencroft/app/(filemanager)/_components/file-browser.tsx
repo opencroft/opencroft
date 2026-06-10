@@ -1,12 +1,12 @@
 'use client'
 
+import { ArrowUp, Check, Download, File, Folder, FolderPlus, Loader2, Pencil, RefreshCw, Trash2, Upload, X } from 'lucide-react'
+import { useCallback, useRef, useState } from 'react'
 import { Button } from 'ui/button'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from 'ui/context-menu'
 import { Input } from 'ui/input'
 import { Flex } from 'ui/layout/flex'
 import { ScrollContent } from 'ui/layout/scrollpage'
-import { ArrowUp, Check, Download, File, Folder, FolderPlus, Loader2, Pencil, RefreshCw, Trash2, Upload, X } from 'lucide-react'
-import { useCallback, useRef, useState } from 'react'
 import { type UploadEntry, useFileManager } from '@/app/(filemanager)/_components/filemanager-provider'
 import type { FileEntry } from '@/app/(filemanager)/_lib/types'
 

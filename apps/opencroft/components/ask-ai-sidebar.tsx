@@ -1,12 +1,12 @@
 'use client'
 
+import { Check, Copy, X } from 'lucide-react'
+import { useState } from 'react'
 import { Button } from 'ui/button'
 import { ChatInput } from 'ui/chat/chat-input'
 import { ChatMessage } from 'ui/chat/chat-message'
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from 'ui/sidebar'
 import { Textarea } from 'ui/textarea'
-import { Check, Copy, X } from 'lucide-react'
-import { useState } from 'react'
 import { useAskAI } from '@/components/core/providers/ask-ai-provider'
 import { enhancePrompt } from '@/lib/ai-utils'
 

@@ -1,8 +1,8 @@
 'use client'
 
-import { Badge } from 'ui/badge'
 import { ShieldQuestion } from 'lucide-react'
 import { useEffect } from 'react'
+import { Badge } from 'ui/badge'
 import { listPendingApprovals } from '@/app/(approvals)/_server/actions'
 import { sseEventsStore, useSSEEvents } from '@/app/(sse)/_lib/sse-events-store'
 import { cn } from '@/lib/utils'

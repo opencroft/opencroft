@@ -1,8 +1,8 @@
 'use client'
 
+import { PanelRightIcon } from 'lucide-react'
 import { Button } from 'ui/button'
 import { useSidebar } from 'ui/sidebar'
-import { PanelRightIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 type RightSidebarTriggerProps = React.ComponentProps<typeof Button>

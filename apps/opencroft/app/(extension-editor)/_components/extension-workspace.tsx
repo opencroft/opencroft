@@ -1,7 +1,7 @@
 'use client'
 
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from 'ui/resizable'
 import { Loader2 } from 'lucide-react'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from 'ui/resizable'
 import { CodePanel } from '@/app/(extension-editor)/_components/code-panel'
 import { type EditorFile, FileTabs, fileLanguage } from '@/app/(extension-editor)/_components/file-tabs'
 import { PreviewPanel } from '@/app/(extension-editor)/_components/preview-panel'

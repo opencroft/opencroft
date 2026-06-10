@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, type ReactNode } from 'react'
 import { ChevronRight, Loader2 } from 'lucide-react'
+import { type ReactNode, useState } from 'react'
 
 import { Flex } from 'ui/components/ui/layout/flex'
 import { cn } from 'ui/lib/utils'
