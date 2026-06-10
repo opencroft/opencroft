@@ -1,6 +1,6 @@
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import { createFileRoute } from '@tanstack/react-router'
-import fs from 'fs/promises'
-import path from 'path'
 import { getGitFileAtRef } from '@/app/(docs)/_server/actions'
 import { getDocsRoot } from '@/app/(docs)/_server/docs-root'
 

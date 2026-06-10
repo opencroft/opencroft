@@ -1,6 +1,6 @@
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import { createServerFn } from '@tanstack/react-start'
-import fs from 'fs/promises'
-import path from 'path'
 
 import { type Anchor, appendComment, type Comment, createComment, findThreadRoot, readComments } from '@/app/(docs)/_server/comments'
 import { getDocsRoot } from '@/app/(docs)/_server/docs-root'
@@ -234,7 +234,7 @@ function formatAgentPrompt(docPath: string, comment: Comment, isReply: boolean, 
   const kind = isReply ? 'reply' : 'comment'
   const lines = [`A user ${kind} was posted on doc "${docPath}" (commentId: ${comment.id}):`]
   if (comment.anchor?.quote) {
-    lines.push('', `Anchored to the following passage in the doc:`, '> ' + comment.anchor.quote.replace(/\n/g, '\n> '))
+    lines.push('', 'Anchored to the following passage in the doc:', `> ${comment.anchor.quote.replace(/\n/g, '\n> ')}`)
   }
   lines.push('', comment.message, '')
   const replyId = threadRootId ?? comment.id

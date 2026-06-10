@@ -17,11 +17,6 @@ function cacheKey(namespace: string | undefined): string {
 }
 
 export async function getDocsRoot(namespace?: string): Promise<string | null> {
-  const envRoot = process.env.OPENCROFT_DOCS_ROOT
-  if (envRoot) {
-    return envRoot
-  }
-
   if (!cache) {
     cache = new Map()
   }
@@ -47,16 +42,4 @@ export async function getDocsRoot(namespace?: string): Promise<string | null> {
 
   cache.set(key, { value: resolved, at: now })
   return resolved
-}
-
-export function getDocsRootSync(namespace?: string): string | null {
-  const envRoot = process.env.OPENCROFT_DOCS_ROOT
-  if (envRoot) {
-    return envRoot
-  }
-  return cache?.get(cacheKey(namespace))?.value ?? null
-}
-
-export function invalidateDocsRootCache(): void {
-  cache = null
 }
