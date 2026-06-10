@@ -840,6 +840,19 @@ interface AgentToolExecResult {
   requiredApproval: boolean
 }
 
+async function hasHandleNodeAction(typeId: string | undefined): Promise<boolean> {
+  if (!typeId) {
+    return false
+  }
+  const manifests = await loadAllManifests()
+  const owning = manifests.find((m) => m.nodes?.some((n) => n.typeId === typeId))
+  if (!owning) {
+    return false
+  }
+  const mod = await getExtensionModule(owning.id)
+  return Boolean(mod.nodeActions?.[typeId]?.handle)
+}
+
 export async function executeAgentTool(toolName: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<AgentToolExecResult> {
   const registry = getSpacesRegistry()
   await registry.ensureLoaded()
@@ -877,6 +890,23 @@ export async function executeAgentTool(toolName: string, args: Record<string, un
       return { result: textResult(`Agent tool "${toolName}": handler node not found.`), requiredApproval: false }
     }
 
+    // Build event for the handler
+    const event = { params: args, context: { toolName: toolName } }
+
+    // Extension-implemented handler: the node's extension exports a "handle" node action
+    if (await hasHandleNodeAction(handlerNode.type)) {
+      try {
+        const result = (await dispatchNodeAction({ data: { nodeId: handlerNode.id, actionId: 'handle', params: event } })) as { body?: unknown } | undefined
+        const body = result?.body
+        if (typeof body === 'object' && body !== null) {
+          return { result: textResult(JSON.stringify(body)), requiredApproval }
+        }
+        return { result: textResult(String(body ?? '')), requiredApproval }
+      } catch (e) {
+        return { result: textResult(`Agent tool "${toolName}" error: ${e instanceof Error ? e.message : String(e)}`), requiredApproval }
+      }
+    }
+
     const language = (handlerNode.data as Record<string, unknown>)?.language as string | undefined
     if (language !== 'python' && language !== 'node') {
       return { result: textResult(`Agent tool "${toolName}": handler must be Python or Node.js script, got ${language ?? 'none'}.`), requiredApproval: false }
@@ -884,9 +914,6 @@ export async function executeAgentTool(toolName: string, args: Record<string, un
 
     const resolvedContexts = (handlerNode.data as Record<string, unknown>)?.__resolvedContexts as Record<string, { value?: Record<string, unknown> }> | undefined
     const terminalContext = resolvedContexts?.['ctx-in']?.value ?? { type: 'local' }
-
-    // Build event for the handler
-    const event = { params: args, context: { toolName: toolName } }
 
     // Resolve env: parse data.env (KEY=value lines) + decrypt data.secrets (key names)
     const handlerData = (handlerNode.data ?? {}) as Record<string, unknown>
