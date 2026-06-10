@@ -10,6 +10,7 @@ import {
 import {
   Button,
   Input,
+  Textarea,
   Label,
   Badge,
   Separator,
@@ -39,6 +40,14 @@ export interface AgentData {
   model?: string;
   apiKeySecret?: string;
   defaultModeId?: string;
+  /** Optional OpenAI-compatible base-URL override (wins over the provider endpoint). */
+  baseUrl?: string;
+  /** System prompt for the Custom (native) harness; ignored by ACP agents. */
+  systemPrompt?: string;
+  /** Reasoning effort (e.g. 'low' | 'medium' | 'high'); empty = off. */
+  reasoningEffort?: string;
+  /** Sampling temperature for the Custom (native) harness. */
+  temperature?: number;
 }
 
 function readAsDataUrl(file: File): Promise<string> {
@@ -138,11 +147,13 @@ export function AgentInspector({
 // ─── Agent Profile Tab (local agent-client backend) ─────────────────
 
 interface AgentCatalog {
-  adapters: { id: string; label: string; protocol: string }[];
+  adapters: { id: string; label: string; protocol: string; kind: 'acp' | 'native' }[];
   providers: { id: string; label: string; models: string[]; protocols: string[] }[];
+  reasoning: Record<string, string[]>;
 }
 
 const NO_SECRET = '__none__';
+const NO_REASONING = '__default__';
 
 export function AgentProfileTab({
   data, updateData,
@@ -197,10 +208,41 @@ function LocalProfileFields({
   secretKeys: string[];
 }) {
   const provider = catalog.providers.find((p) => p.id === data.providerId);
+  const adapter = catalog.adapters.find((a) => a.id === data.adapterId);
   const adapters = catalog.adapters.filter(
     (a) => a.protocol === 'native' || (provider ? provider.protocols.includes(a.protocol) : true),
   );
   const models = provider?.models ?? [];
+  const efforts = catalog.reasoning[data.model ?? ''] ?? [];
+  const isNative = adapter?.kind === 'native';
+
+  const [discovered, setDiscovered] = useState<string[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const modelOptions = Array.from(new Set([...(data.model ? [data.model] : []), ...models, ...discovered]));
+
+  const loadModels = useCallback(async () => {
+    if (!data.baseUrl) {
+      return;
+    }
+    setLoadingModels(true);
+    try {
+      setDiscovered(await invoke<string[]>('agent.listModels', { baseUrl: data.baseUrl, apiKeySecret: data.apiKeySecret }));
+    } catch {
+      setDiscovered([]);
+    } finally {
+      setLoadingModels(false);
+    }
+  }, [data.baseUrl, data.apiKeySecret]);
+
+  // OpenAI-compatible endpoints expose no static catalog, so read
+  // `<baseUrl>/models` and refresh whenever the endpoint or key changes.
+  useEffect(() => {
+    if (data.baseUrl?.startsWith('http')) {
+      loadModels();
+    } else {
+      setDiscovered([]);
+    }
+  }, [data.baseUrl, loadModels]);
 
   return (
     <div className='flex flex-col gap-3'>
@@ -218,13 +260,33 @@ function LocalProfileFields({
         options={adapters.map((a) => ({ value: a.id, label: a.label }))}
         onChange={(v) => updateData({ adapterId: v })}
       />
-      <ProfileSelect
-        label='Model'
-        value={data.model}
-        placeholder='Select model…'
-        options={models.map((m) => ({ value: m, label: m }))}
-        onChange={(v) => updateData({ model: v })}
-      />
+      <div className='flex flex-col gap-1'>
+        <div className='flex items-center justify-between'>
+          <Label className='text-xs'>Model</Label>
+          {data.baseUrl ? (
+            <Button
+              variant='ghost'
+              size='sm'
+              className='h-5 px-1.5 text-[10px]'
+              onClick={loadModels}
+              disabled={loadingModels}
+            >
+              <icons.RefreshCw className={`size-2.5 mr-1 ${loadingModels ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          ) : null}
+        </div>
+        <Select value={data.model || ''} onValueChange={(v: string) => updateData({ model: v })}>
+          <SelectTrigger className='h-8 text-xs'>
+            <SelectValue placeholder='Select model…' />
+          </SelectTrigger>
+          <SelectContent>
+            {modelOptions.map((m) => (
+              <SelectItem key={m} value={m} className='text-xs'>{m}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
       <div className='flex flex-col gap-1'>
         <Label className='text-xs'>API key secret</Label>
         <Select
@@ -247,9 +309,79 @@ function LocalProfileFields({
           </p>
         ) : null}
       </div>
+      {efforts.length > 0 ? (
+        <div className='flex flex-col gap-1'>
+          <Label className='text-xs'>Reasoning effort</Label>
+          <Select
+            value={data.reasoningEffort || NO_REASONING}
+            onValueChange={(v: string) => updateData({ reasoningEffort: v === NO_REASONING ? '' : v })}
+          >
+            <SelectTrigger className='h-8 text-xs'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_REASONING}>Default</SelectItem>
+              {efforts.map((e) => (
+                <SelectItem key={e} value={e} className='text-xs capitalize'>{e}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      ) : null}
+      <div className='flex flex-col gap-1'>
+        <Label className='text-xs'>Base URL</Label>
+        <Input
+          className='h-8 text-xs'
+          value={data.baseUrl ?? ''}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ baseUrl: e.target.value })}
+          placeholder='Provider default'
+        />
+        <p className='text-[10px] text-muted-foreground'>
+          Optional OpenAI-compatible endpoint override.
+        </p>
+      </div>
+      {isNative ? <NativeProfileFields data={data} updateData={updateData} /> : null}
       <p className='text-[10px] text-muted-foreground'>
         Runs in a persistent per-agent workspace: <code>data/agent-workspace/&lt;agent-slug&gt;</code>.
       </p>
+    </div>
+  );
+}
+
+// System prompt + temperature only apply to the in-process Custom (native)
+// harness; ACP agents carry their own prompt and manage their own sampling.
+function NativeProfileFields({
+  data, updateData,
+}: {
+  data: AgentData;
+  updateData: (p: Partial<AgentData>) => void;
+}) {
+  return (
+    <div className='flex flex-col gap-3'>
+      <div className='flex flex-col gap-1'>
+        <Label className='text-xs'>System prompt</Label>
+        <Textarea
+          className='text-xs'
+          rows={4}
+          value={data.systemPrompt ?? ''}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateData({ systemPrompt: e.target.value })}
+          placeholder='Custom harness system prompt…'
+        />
+      </div>
+      <div className='flex flex-col gap-1'>
+        <Label className='text-xs'>Temperature</Label>
+        <Input
+          className='h-8 text-xs'
+          type='number'
+          min={0}
+          max={2}
+          step={0.1}
+          value={data.temperature ?? ''}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            updateData({ temperature: e.target.value === '' ? undefined : Number(e.target.value) })}
+          placeholder='Provider default'
+        />
+      </div>
     </div>
   );
 }

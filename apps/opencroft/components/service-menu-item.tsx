@@ -1,5 +1,5 @@
-import { Flex } from '@opencroft/ui-kit/layout/flex'
-import { StatusIndicator, type StatusVariant } from '@opencroft/ui-kit/utils/status-indicator'
+import { Flex } from 'ui/layout/flex'
+import { StatusIndicator, type StatusVariant } from 'ui/utils/status-indicator'
 
 interface ServiceMenuItemProps extends React.HTMLAttributes<HTMLDivElement> {
   iconSrc: string

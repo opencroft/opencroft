@@ -1,7 +1,7 @@
 import host from '@ext/host';
 
 import { runHandler, type HandlerResult } from './script';
-import { type TerminalContext } from './terminal';
+import type { TerminalContext } from '@opencroft/server';
 
 interface GraphNodeRecord {
   id: string;

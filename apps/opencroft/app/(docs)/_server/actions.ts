@@ -136,7 +136,7 @@ export const deleteDoc = createServerFn({ method: 'POST' })
 
 async function findDocNodeId(namespace?: string): Promise<string | null> {
   try {
-    const mod = await getExtensionModule('builtin/core')
+    const mod = await getExtensionModule('local/documentation')
     const fn = mod.actions?.['docs.findDocNodeId']
     if (!fn) {
       return null
@@ -148,7 +148,7 @@ async function findDocNodeId(namespace?: string): Promise<string | null> {
 }
 
 async function callDocsAction(action: string, params: Record<string, unknown>) {
-  const mod = await getExtensionModule('builtin/core')
+  const mod = await getExtensionModule('local/documentation')
   const fn = mod.actions?.[action]
   if (!fn) {
     throw new Error(`Action ${action} not found`)

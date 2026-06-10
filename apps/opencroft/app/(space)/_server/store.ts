@@ -1,5 +1,7 @@
-import { prisma } from '@opencroft/db'
+import { db, space } from '@opencroft/db'
+import { asc, eq } from 'drizzle-orm'
 import { ACTIVE_SPACE_SETTING_ID, DEFAULT_SPACE_NAME, DEFAULT_SPACE_SLUG, type GraphData, LEGACY_GRAPH_SETTING_ID, type SpaceSummary } from '@/app/(space)/_server/types'
+import { getSetting, upsertSetting } from '@/server/data'
 
 interface SpaceRuntime {
   id: string
@@ -39,7 +41,7 @@ class SpacesRegistry {
 
   private async load(): Promise<void> {
     await this.migrateLegacyGraph()
-    const rows = await prisma.space.findMany({ orderBy: { createdAt: 'asc' } })
+    const rows = await db.query.space.findMany({ orderBy: asc(space.createdAt) })
     for (const row of rows) {
       const runtime: SpaceRuntime = {
         id: row.id,
@@ -60,28 +62,30 @@ class SpacesRegistry {
   }
 
   private async migrateLegacyGraph(): Promise<void> {
-    const existing = await prisma.space.findFirst()
+    const existing = await db.query.space.findFirst()
     if (existing) {
       return
     }
-    const legacy = await prisma.setting.findUnique({ where: { id: LEGACY_GRAPH_SETTING_ID } })
+    const legacy = await getSetting(LEGACY_GRAPH_SETTING_ID)
     if (!legacy) {
       return
     }
     const graph = parseGraph(legacy.data)
-    await prisma.space.create({
-      data: {
+    db.insert(space)
+      .values({
         slug: DEFAULT_SPACE_SLUG,
         name: DEFAULT_SPACE_NAME,
         data: JSON.stringify(graph),
-      },
-    })
+      })
+      .run()
   }
 
   private async createInternal(name: string, slug: string, graph: GraphData): Promise<SpaceRuntime> {
-    const row = await prisma.space.create({
-      data: { name, slug, data: JSON.stringify(graph) },
-    })
+    const row = db
+      .insert(space)
+      .values({ name, slug, data: JSON.stringify(graph) })
+      .returning()
+      .get()
     const runtime: SpaceRuntime = {
       id: row.id,
       slug: row.slug,
@@ -144,10 +148,7 @@ class SpacesRegistry {
       return null
     }
     const runtime = this.spaces.get(id)!
-    const row = await prisma.space.update({
-      where: { id },
-      data: { pinned },
-    })
+    const row = db.update(space).set({ pinned }).where(eq(space.id, id)).returning().get()
     runtime.pinned = row.pinned
     runtime.updatedAt = row.updatedAt
     return runtime
@@ -159,10 +160,7 @@ class SpacesRegistry {
       return null
     }
     const runtime = this.spaces.get(id)!
-    const row = await prisma.space.update({
-      where: { id },
-      data: { name },
-    })
+    const row = db.update(space).set({ name }).where(eq(space.id, id)).returning().get()
     runtime.name = row.name
     runtime.updatedAt = row.updatedAt
     return runtime
@@ -173,7 +171,7 @@ class SpacesRegistry {
     if (!id) {
       return false
     }
-    await prisma.space.delete({ where: { id } })
+    db.delete(space).where(eq(space.id, id)).run()
     this.spaces.delete(id)
     this.bySlug.delete(slug)
     return true
@@ -185,25 +183,23 @@ class SpacesRegistry {
       return null
     }
     const runtime = this.spaces.get(id)!
-    const row = await prisma.space.update({
-      where: { id },
-      data: { data: JSON.stringify(graph) },
-    })
+    const row = db
+      .update(space)
+      .set({ data: JSON.stringify(graph) })
+      .where(eq(space.id, id))
+      .returning()
+      .get()
     runtime.graph = graph
     runtime.updatedAt = row.updatedAt
     return runtime
   }
 
   async setActiveSlug(slug: string): Promise<void> {
-    await prisma.setting.upsert({
-      where: { id: ACTIVE_SPACE_SETTING_ID },
-      create: { id: ACTIVE_SPACE_SETTING_ID, data: JSON.stringify({ slug }) },
-      update: { data: JSON.stringify({ slug }) },
-    })
+    await upsertSetting(ACTIVE_SPACE_SETTING_ID, JSON.stringify({ slug }))
   }
 
   async getActiveSlug(): Promise<string | null> {
-    const row = await prisma.setting.findUnique({ where: { id: ACTIVE_SPACE_SETTING_ID } })
+    const row = await getSetting(ACTIVE_SPACE_SETTING_ID)
     if (!row) {
       return null
     }

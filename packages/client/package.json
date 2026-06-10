@@ -1,0 +1,16 @@
+{
+  "name": "@opencroft/client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@opencroft/core": "*",
+    "ui": "*"
+  },
+  "devDependencies": {
+    "@types/react": "^19"
+  }
+}

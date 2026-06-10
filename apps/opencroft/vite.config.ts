@@ -12,8 +12,11 @@ export default defineConfig({
     // agent-client persists these JSON files next to the app cwd at runtime;
     // writing them must not trigger a dev reload (otherwise creating a session
     // reloads the page, which re-triggers session creation in a loop).
+    // The extension compiler writes built bundles to <ext>/dist on activation;
+    // watching those writes tears down the SSR environment mid-request
+    // ("Vite environment ssr is unavailable"), so ignore them too.
     watch: {
-      ignored: ['**/agent-profiles.json', '**/agent-config.json', '**/mcp-config.json'],
+      ignored: ['**/agent-profiles.json', '**/agent-config.json', '**/mcp-config.json', '**/dist/**'],
     },
   },
   resolve: {

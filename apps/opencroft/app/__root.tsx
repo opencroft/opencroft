@@ -1,5 +1,5 @@
-import { Toaster } from '@opencroft/ui-kit/sonner'
-import { ThemeProvider } from '@opencroft/ui-kit/theme-provider'
+import { Toaster } from 'ui/sonner'
+import { ThemeProvider } from 'ui/theme-provider'
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
 import { AppShell } from '@/app/_shell/app-shell'
 import { listSpaces } from '@/app/(space)/_server/actions'

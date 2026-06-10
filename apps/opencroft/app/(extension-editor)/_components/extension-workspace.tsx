@@ -1,6 +1,6 @@
 'use client'
 
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@opencroft/ui-kit/resizable'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from 'ui/resizable'
 import { Loader2 } from 'lucide-react'
 import { CodePanel } from '@/app/(extension-editor)/_components/code-panel'
 import { type EditorFile, FileTabs, fileLanguage } from '@/app/(extension-editor)/_components/file-tabs'

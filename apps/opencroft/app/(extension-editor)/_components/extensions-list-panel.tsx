@@ -1,9 +1,9 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { Input } from '@opencroft/ui-kit/input'
-import { ScrollArea } from '@opencroft/ui-kit/layout/scroll-area'
-import { Separator } from '@opencroft/ui-kit/separator'
+import { Button } from 'ui/button'
+import { Input } from 'ui/input'
+import { ScrollArea } from 'ui/layout/scroll-area'
+import { Separator } from 'ui/separator'
 import { ArrowDownToLine, Box, Download, Loader2, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'

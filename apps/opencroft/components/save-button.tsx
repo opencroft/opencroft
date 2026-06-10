@@ -1,4 +1,4 @@
-import { Button } from '@opencroft/ui-kit/button'
+import { Button } from 'ui/button'
 import { useState } from 'react'
 
 interface SaveButtonProps {

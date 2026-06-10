@@ -1,6 +1,6 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
+import { Button } from 'ui/button'
 import { ArrowLeft } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'

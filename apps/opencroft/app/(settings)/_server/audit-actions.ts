@@ -1,5 +1,6 @@
-import { prisma } from '@opencroft/db'
+import { db, mcpAuditLog } from '@opencroft/db'
 import { createServerFn } from '@tanstack/react-start'
+import { and, asc, desc, eq, type SQL } from 'drizzle-orm'
 import type { AuditStatus } from '@/app/(mcp)/_server/audit'
 import { getYoloModeInfo, setYoloMode as setYolo } from '@/app/(mcp)/_server/yolo'
 
@@ -38,32 +39,28 @@ function toEntry(row: { id: string; tool: string; args: string; result: string |
 export const listAuditEntries = createServerFn({ method: 'POST' })
   .inputValidator((query: AuditQuery = {}) => query)
   .handler(async ({ data: query }): Promise<McpAuditEntry[]> => {
-    const where: { tool?: string; status?: string } = {}
+    const conds: SQL[] = []
     if (query.tool) {
-      where.tool = query.tool
+      conds.push(eq(mcpAuditLog.tool, query.tool))
     }
     if (query.status && query.status !== 'all') {
-      where.status = query.status
+      conds.push(eq(mcpAuditLog.status, query.status))
     }
-    const rows = await prisma.mcpAuditLog.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: query.limit ?? DEFAULT_LIMIT,
+    const rows = await db.query.mcpAuditLog.findMany({
+      where: conds.length ? and(...conds) : undefined,
+      orderBy: desc(mcpAuditLog.createdAt),
+      limit: query.limit ?? DEFAULT_LIMIT,
     })
     return rows.map(toEntry)
   })
 
 export const listAuditTools = createServerFn().handler(async (): Promise<string[]> => {
-  const rows = await prisma.mcpAuditLog.findMany({
-    distinct: ['tool'],
-    select: { tool: true },
-    orderBy: { tool: 'asc' },
-  })
+  const rows = db.selectDistinct({ tool: mcpAuditLog.tool }).from(mcpAuditLog).orderBy(asc(mcpAuditLog.tool)).all()
   return rows.map((r) => r.tool)
 })
 
 export const clearAuditLog = createServerFn().handler(async (): Promise<void> => {
-  await prisma.mcpAuditLog.deleteMany({})
+  db.delete(mcpAuditLog).run()
 })
 
 // ── YOLO Mode ──────────────────────────────────────────────────────────────

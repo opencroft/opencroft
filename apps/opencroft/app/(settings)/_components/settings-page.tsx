@@ -1,7 +1,7 @@
 'use client'
 
-import { MenuLayout } from '@opencroft/ui-kit/layout/menulayout'
-import { ScrollContent, ScrollPage } from '@opencroft/ui-kit/layout/scrollpage'
+import { MenuLayout } from 'ui/layout/menulayout'
+import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
 import { ExternalLink, ScrollText, Sparkles } from 'lucide-react'
 import type React from 'react'
 import { Suspense, useCallback } from 'react'

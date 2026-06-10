@@ -7,7 +7,8 @@ import {
   invoke,
   useReactFlow,
 } from '@ext/host';
-import { PinButton, StatsList, PinnedBody, InspectorTerminalBody, InspectorFilesBody } from '../shared';
+import { PinButton, StatsList, PinnedBody, InspectorFilesBody } from '../shared';
+import { InspectorTerminalBody } from '@ext/ui';
 
 const { useCallback, useEffect, useState } = React;
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
+import { Button } from 'ui/button'
 import { MessageSquare, X } from 'lucide-react'
 import { cloneElement, type ReactElement } from 'react'
 import { useAskAI } from '@/components/providers/ask-ai-provider'

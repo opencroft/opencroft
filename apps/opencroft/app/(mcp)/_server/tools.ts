@@ -7,7 +7,6 @@
  * UI feedback (toasts, focus, comments) is broadcast via SSE.
  */
 
-import { prisma } from '@opencroft/db'
 import fs from 'fs/promises'
 import path from 'path'
 import { ApprovalRejectedError, awaitApproval, getApprovalMeta, withApprovalRequired } from '@/app/(approvals)/_server/with-approval'
@@ -36,7 +35,7 @@ import { getSpacesRegistry } from '@/app/(space)/_server/store'
 import type { GraphData } from '@/app/(space)/_server/types'
 import { askUserStore } from '@/lib/ask-user-store'
 import { toastStore } from '@/lib/toast-store'
-import { decrypt } from '@/server/crypto'
+import { secrets } from '@/server/secrets'
 
 const SPACE_PARAM = {
   space: {
@@ -907,14 +906,11 @@ export async function executeAgentTool(toolName: string, args: Record<string, un
       .map((s) => s.trim())
       .filter(Boolean)
     for (const name of secretNames) {
-      const row = await prisma.secret.findFirst({
-        where: { key: name },
-        orderBy: { updatedAt: 'desc' },
-      })
-      if (!row) {
+      const value = await secrets.resolve(name)
+      if (value === null) {
         return { result: textResult(`Agent tool "${toolName}" error: secret "${name}" not found in any Secrets Store.`), requiredApproval }
       }
-      env[name] = decrypt(row.value)
+      env[name] = value
     }
 
     // Execute handler
@@ -1084,7 +1080,7 @@ async function expandDynamicHandles(node: GraphNode, declared: ExtensionHandle[]
   }
   const service = (node.data?.['name'] as string) || node.id
   try {
-    const containers = (await invokeExtensionAction({ data: { extensionId: 'builtin/core', actionName: 'docker.ps', args: [{ dockerNodeId, service }] } })) as Array<{
+    const containers = (await invokeExtensionAction({ data: { extensionId: 'local/docker', actionName: 'docker.ps', args: [{ dockerNodeId, service }] } })) as Array<{
       id: string
       name: string
       running: boolean
@@ -1273,15 +1269,11 @@ async function resolveSecretsForExec(names: string[] | undefined): Promise<strin
   }
   const lines: string[] = []
   for (const name of names) {
-    const row = await prisma.secret.findFirst({
-      where: { key: name },
-      orderBy: { updatedAt: 'desc' },
-    })
-    if (!row) {
+    const value = await secrets.resolve(name)
+    if (value === null) {
       fail(-32602, `Secret "${name}" not found in any Secrets Store`)
     }
-    const decrypted = decrypt(row.value)
-    const b64 = Buffer.from(decrypted, 'utf8').toString('base64')
+    const b64 = Buffer.from(value, 'utf8').toString('base64')
     lines.push(`export ${name}=$(echo ${b64} | base64 -d)`)
   }
   const prefix = lines.join('; ') + '; '
@@ -1326,7 +1318,7 @@ async function resolveDocPath(namespace: string, relative: string): Promise<stri
 
 async function findDocNodeIdForNamespace(namespace: string): Promise<string | null> {
   try {
-    const mod = await getExtensionModule('builtin/core')
+    const mod = await getExtensionModule('local/documentation')
     const fn = mod.actions?.['docs.findDocNodeId']
     if (!fn) {
       return null
@@ -1344,7 +1336,7 @@ async function docsGitAdd(namespace: string, relativePath: string): Promise<void
     if (!nodeId) {
       return
     }
-    const mod = await getExtensionModule('builtin/core')
+    const mod = await getExtensionModule('local/documentation')
     const addFn = mod.actions?.['docs.addFile']
     if (!addFn) {
       return
@@ -2013,7 +2005,7 @@ function buildHandlers(): Record<string, ToolHandler> {
 
     // ── doc_list_namespaces ─────────────────────────────────────────
     doc_list_namespaces: async () => {
-      const mod = await getExtensionModule('builtin/core')
+      const mod = await getExtensionModule('local/documentation')
       const fn = mod.actions?.['docs.listNamespaces']
       if (!fn) {
         return textResult('[]')
@@ -2148,7 +2140,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!nodeId) {
         fail(-32602, `No Documentation node found for namespace "${namespace}".`)
       }
-      const mod = await getExtensionModule('builtin/core')
+      const mod = await getExtensionModule('local/documentation')
       const publishFn = mod.actions?.['docs.publish']
       if (!publishFn) {
         fail(-32602, 'docs.publish action not found in builtin/core extension.')

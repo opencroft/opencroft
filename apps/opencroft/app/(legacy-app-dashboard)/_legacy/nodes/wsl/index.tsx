@@ -1,8 +1,8 @@
 'use client'
 
-import { Badge } from '@opencroft/ui-kit/badge'
-import { Input } from '@opencroft/ui-kit/input'
-import { Label } from '@opencroft/ui-kit/label'
+import { Badge } from 'ui/badge'
+import { Input } from 'ui/input'
+import { Label } from 'ui/label'
 import { type Node, type NodeProps, useReactFlow } from '@xyflow/react'
 import { Cpu, FolderOpen, HardDrive, MemoryStick, Monitor, TerminalSquare } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'

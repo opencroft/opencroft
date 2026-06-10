@@ -1,7 +1,7 @@
 'use client'
 
-import { Flex } from '@opencroft/ui-kit/layout/flex'
-import { StatusIndicator } from '@opencroft/ui-kit/utils/status-indicator'
+import { Flex } from 'ui/layout/flex'
+import { StatusIndicator } from 'ui/utils/status-indicator'
 import { Apple, Monitor, Server as ServerIcon, TerminalSquare } from 'lucide-react'
 import { type Server, ServerOS } from '@/app/(server)/_server/types'
 

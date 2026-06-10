@@ -1,8 +1,8 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@opencroft/ui-kit/dialog'
-import { HorizontalBox } from '@opencroft/ui-kit/layout/horizontal-box'
+import { Button } from 'ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
+import { HorizontalBox } from 'ui/layout/horizontal-box'
 import { type ComponentType, forwardRef, type ReactNode, type Ref, useImperativeHandle, useState } from 'react'
 
 export interface EditPopupFormProps<T> {

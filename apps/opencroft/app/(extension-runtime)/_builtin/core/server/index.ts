@@ -1,47 +1,14 @@
 import host from '@ext/host';
 
-import { type ServerConfig, sshExec, resolveKeyContent } from './ssh';
-import { type TerminalContext, terminalRun, terminalExec } from './terminal';
+import type { ServerConfig, TerminalContext } from '@opencroft/server';
 import { type ScriptRunParams, runScript, type HandlerRunParams, runHandler } from './script';
-import {
-  type DockerCheckParams, dockerCheck,
-  type DockerPsParams, dockerPs,
-  type DockerUpParams, dockerUp,
-  type DockerDownParams, dockerDown,
-  type DockerStopServiceParams, dockerStopService,
-  type DockerRestartServiceParams, dockerRestartService,
-  type DockerTerminalConfigParams, dockerTerminalConfig,
-  type DockerListParams, dockerListContainers, dockerListImages,
-  type DockerContainerActionParams, dockerStartContainer, dockerStopContainer,
-  dockerRestartContainer, dockerRemoveContainer,
-  type DockerImageActionParams, dockerRemoveImage,
-  type DockerImagePullParams, dockerPullImage,
-  type DockerCheckImageUpdateParams, dockerCheckImageUpdate,
-} from './docker';
 import {
   type OpenAIChatParams, openaiChat,
 } from './openai';
-import {
-  docsStatus as docsStatusAction,
-  docsClone,
-  docsPull,
-  docsChangedFiles,
-  docsLog,
-  docsShow,
-  docsPublishFile,
-  docsAddFile,
-  docsDeleteFile,
-  findActiveDocsRoot,
-  findDocNodeId,
-  listDocNamespaces,
-  docsDiscardFile,
-  type DocsStatusResult,
-  type DocsChangedFile,
-  type DocsLogEntry,
-} from './docs-git';
 import { nodeActions } from './node-actions';
 import { AGENT_PROVIDERS } from 'agent-client/agent-providers';
 import { HARNESS_ADAPTERS } from 'agent-client/harness-adapters';
+import { reasoningEfforts } from 'agent-client/reasoning';
 
 export { nodeActions };
 
@@ -50,20 +17,58 @@ export { nodeActions };
 // ═══════════════════════════════════════════════════════════════════
 
 interface AgentCatalog {
-  adapters: { id: string; label: string; protocol: string }[];
+  adapters: { id: string; label: string; protocol: string; kind: 'acp' | 'native' }[];
   providers: { id: string; label: string; models: string[]; protocols: string[] }[];
+  // model id -> supported reasoning-effort levels ([] when the model has none).
+  reasoning: Record<string, string[]>;
 }
 
 function listAgentCatalog(): AgentCatalog {
+  const reasoning: Record<string, string[]> = {};
+  for (const provider of AGENT_PROVIDERS) {
+    for (const model of provider.models) {
+      reasoning[model] = reasoningEfforts(model);
+    }
+  }
   return {
-    adapters: HARNESS_ADAPTERS.map((a) => ({ id: a.id, label: a.label, protocol: a.protocol })),
+    adapters: HARNESS_ADAPTERS.map((a) => ({
+      id: a.id,
+      label: a.label,
+      protocol: a.protocol,
+      kind: a.kind ?? 'acp',
+    })),
     providers: AGENT_PROVIDERS.map((p) => ({
       id: p.id,
       label: p.label,
       models: p.models,
       protocols: Object.keys(p.endpoints),
     })),
+    reasoning,
   };
+}
+
+// Discover models from an OpenAI-compatible endpoint (`<baseUrl>/models`),
+// resolving the agent's API key from the Secrets Store server-side. Mirrors
+// agent-client's model discovery so the profile's model list stays live.
+async function listModels(params: { baseUrl?: string; apiKeySecret?: string }): Promise<string[]> {
+  const base = (params.baseUrl ?? '').replace(/\/+$/, '');
+  if (!base) {
+    return [];
+  }
+  const key = params.apiKeySecret ? (await host.secrets.resolve(params.apiKeySecret)) ?? '' : '';
+  const headers: Record<string, string> = {};
+  if (key) {
+    headers['Authorization'] = `Bearer ${key}`;
+  }
+  const res = await fetch(`${base}/models`, { headers });
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} ${res.statusText}`);
+  }
+  const body = await res.json() as { data?: { id?: string }[] };
+  return (body.data ?? [])
+    .map((m) => m.id)
+    .filter((id): id is string => Boolean(id))
+    .sort();
 }
 
 const isWindows = host.os.platform() === 'win32';
@@ -288,60 +293,45 @@ async function keyStoreRemoveKeyFromWsl(name: string): Promise<void> {
 interface SecretRowOut { id: string; key: string; value: string; updatedAt: string; }
 
 async function secretsStoreGetSecrets(storeId: string): Promise<SecretRowOut[]> {
-  const rows = await host.prisma.secret.findMany({
-    where: { storeId },
-    orderBy: { createdAt: 'asc' },
-  });
-  return rows.map((r: { id: string; key: string; value: string; updatedAt: Date }) => ({
+  const rows = await host.secrets.list(storeId);
+  return rows.map((r) => ({
     id: r.id,
     key: r.key,
-    value: host.crypto.decrypt(r.value),
+    value: r.value,
     updatedAt: r.updatedAt.toISOString(),
   }));
 }
 
 async function secretsStoreSetSecret(storeId: string, key: string, value: string): Promise<void> {
-  const encrypted = host.crypto.encrypt(value);
-  await host.prisma.secret.upsert({
-    where: { storeId_key: { storeId, key } },
-    create: { storeId, key, value: encrypted },
-    update: { value: encrypted },
-  });
+  await host.secrets.set(storeId, key, value);
 }
 
 async function secretsStoreDeleteSecret(storeId: string, key: string): Promise<void> {
-  await host.prisma.secret
-    .delete({ where: { storeId_key: { storeId, key } } })
-    .catch(() => null);
+  await host.secrets.delete(storeId, key);
 }
 
 async function secretsStoreRotateSecret(storeId: string, key: string): Promise<string> {
   const value = host.crypto.randomToken();
-  const encrypted = host.crypto.encrypt(value);
-  await host.prisma.secret.update({
-    where: { storeId_key: { storeId, key } },
-    data: { value: encrypted },
-  });
+  await host.secrets.set(storeId, key, value);
   return value;
 }
 
 interface OrphanRow { id: string; storeId: string; key: string; updatedAt: string; }
 
 async function secretsStoreListOrphans(currentStoreId: string): Promise<OrphanRow[]> {
-  const rows = await host.prisma.secret.findMany({
-    where: { storeId: { not: currentStoreId } },
-    orderBy: { updatedAt: 'desc' },
-  });
-  return rows.map((r: { id: string; storeId: string; key: string; updatedAt: Date }) => ({
-    id: r.id,
-    storeId: r.storeId,
-    key: r.key,
-    updatedAt: r.updatedAt.toISOString(),
-  }));
+  const rows = await host.secrets.listAll();
+  return rows
+    .filter((r) => r.storeId !== currentStoreId)
+    .map((r) => ({
+      id: r.id,
+      storeId: r.storeId,
+      key: r.key,
+      updatedAt: r.updatedAt.toISOString(),
+    }));
 }
 
 async function secretsStoreDeleteOrphan(id: string): Promise<void> {
-  await host.prisma.secret.delete({ where: { id } }).catch(() => null);
+  await host.secrets.deleteById(id);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -516,7 +506,7 @@ async function serverGetStats(config: ServerConfig): Promise<ServerStats> {
     'echo "MEMORY=$(free -h 2>/dev/null | awk \'/^Mem:/{print $3"/"$2}\' || echo unknown)"',
     'echo "STORAGE=$(df -h / 2>/dev/null | awk \'NR==2{print $3"/"$2}\' || echo unknown)"',
   ].join(' && ');
-  const out = await sshExec(config, script);
+  const out = await host.ssh.exec(config, script);
   const lines: Record<string, string> = {};
   for (const line of out.trim().split('\n')) {
     const [key, ...rest] = line.split('=');
@@ -552,41 +542,12 @@ export const actions = {
   'secretsStore.listOrphans': (storeId: string) => secretsStoreListOrphans(storeId),
   'secretsStore.deleteOrphan': (id: string) => secretsStoreDeleteOrphan(id),
   'server.getStats': (config: ServerConfig) => serverGetStats(config),
-  'server.resolveKey': (keyPath: string) => resolveKeyContent(keyPath),
-  'terminal.run': (ctx: TerminalContext, args: string[]) => terminalRun(ctx, args),
-  'terminal.exec': (ctx: TerminalContext, command: string) => terminalExec(ctx, command),
+  'server.resolveKey': (keyPath: string) => host.ssh.resolveKey(keyPath),
+  'terminal.run': (ctx: TerminalContext, args: string[]) => host.terminal.run(ctx, args),
+  'terminal.exec': (ctx: TerminalContext, command: string) => host.terminal.exec(ctx, command),
   'script.run': (params: ScriptRunParams) => runScript(params),
   'handler.run': (params: HandlerRunParams) => runHandler(params),
-  'docker.check': (params: DockerCheckParams) => dockerCheck(params),
-  'docker.ps': (params: DockerPsParams) => dockerPs(params),
-  'docker.up': (params: DockerUpParams) => dockerUp(params),
-  'docker.down': (params: DockerDownParams) => dockerDown(params),
-  'docker.stopService': (params: DockerStopServiceParams) => dockerStopService(params),
-  'docker.restartService': (params: DockerRestartServiceParams) => dockerRestartService(params),
-  'docker.terminalConfig': (params: DockerTerminalConfigParams) => dockerTerminalConfig(params),
-  'docker.listContainers': (params: DockerListParams) => dockerListContainers(params),
-  'docker.listImages': (params: DockerListParams) => dockerListImages(params),
-  'docker.startContainer': (params: DockerContainerActionParams) => dockerStartContainer(params),
-  'docker.stopContainer': (params: DockerContainerActionParams) => dockerStopContainer(params),
-  'docker.restartContainer': (params: DockerContainerActionParams) => dockerRestartContainer(params),
-  'docker.removeContainer': (params: DockerContainerActionParams) => dockerRemoveContainer(params),
-  'docker.removeImage': (params: DockerImageActionParams) => dockerRemoveImage(params),
-  'docker.pullImage': (params: DockerImagePullParams) => dockerPullImage(params),
-  'docker.checkImageUpdate': (params: DockerCheckImageUpdateParams) => dockerCheckImageUpdate(params),
   'openai.chat': (params: OpenAIChatParams) => openaiChat(params),
-  'docs.status': (params: { nodeId: string }) => docsStatusAction(params.nodeId),
-  'docs.clone': (params: { nodeId: string }) => docsClone(params.nodeId),
-  'docs.pull': (params: { nodeId: string }) => docsPull(params.nodeId),
-  'docs.changedFiles': (params: { nodeId: string }) => docsChangedFiles(params.nodeId),
-  'docs.log': (params: { nodeId: string; filePath?: string; count?: number }) => docsLog(params.nodeId, params.filePath, params.count),
-  'docs.show': (params: { nodeId: string; filePath: string; ref?: string }) => docsShow(params.nodeId, params.filePath, params.ref),
-  'docs.publish': (params: { nodeId: string; filePath: string; message: string }) => docsPublishFile(params.nodeId, params.filePath, params.message),
-  'docs.addFile': (params: { nodeId: string; filePath: string }) => docsAddFile(params.nodeId, params.filePath),
-  'docs.deleteFile': (params: { nodeId: string; filePath: string }) => docsDeleteFile(params.nodeId, params.filePath),
-  'docs.discardFile': (params: { nodeId: string; filePath: string }) => docsDiscardFile(params.nodeId, params.filePath),
-  'docs.findActiveDocsRoot': (params?: { namespace?: string }) => findActiveDocsRoot(params?.namespace),
-  'docs.findDocNodeId': (params?: { namespace?: string }) => findDocNodeId(params?.namespace),
-  'docs.listNamespaces': () => listDocNamespaces(),
   'agent.getOpenclawConnection': () => getOpenclawConnection(),
   'agent.lookupOpenclaw': (name: string) => lookupOpenclawAgent(name),
   'agent.createOpenclaw': (name: string, workspace?: string) => createOpenclawAgent(name, workspace),
@@ -596,6 +557,7 @@ export const actions = {
   'agent.setOpenclawFile': (agentId: string, name: string, content: string) => setOpenclawFile(agentId, name, content),
   'agent.deleteOpenclaw': (agentId: string) => deleteOpenclawAgent(agentId),
   'agent.listAgentCatalog': () => listAgentCatalog(),
+  'agent.listModels': (params: { baseUrl?: string; apiKeySecret?: string }) => listModels(params),
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -641,43 +603,6 @@ export const exposeOutput = (
       };
     }
     return undefined;
-  }
-
-  if (typeId === 'docker') {
-    if (handleId !== 'docker-out') {
-      return undefined;
-    }
-    const resolved = nodeData['__resolvedContexts'] as Record<string, { value?: Record<string, unknown> }> | undefined;
-    const target = resolved?.['context-in']?.value;
-    const exec = resolved?.['ctx-in']?.value ?? { type: 'local' };
-    const base = target ?? exec;
-    return { ...base, contextName: (nodeData.contextName as string) || '' };
-  }
-
-  if (typeId === 'application') {
-    if (!handleId.startsWith('instance-terminal-')) {
-      return undefined;
-    }
-    const containerId = handleId.slice('instance-terminal-'.length);
-    const resolved = nodeData['__resolvedContexts'] as Record<string, { value?: Record<string, unknown> }> | undefined;
-    const docker = resolved?.['docker-in']?.value;
-    if (!docker) {
-      return undefined;
-    }
-    const { contextName, ...via } = docker as { contextName?: string } & Record<string, unknown>;
-    return { type: 'docker-exec', via, contextName, containerId };
-  }
-
-  if (typeId === 'volume') {
-    if (handleId !== 'vol-out') {
-      return undefined;
-    }
-    const hostPath = nodeData.hostPath as string | undefined;
-    const containerPath = nodeData.containerPath as string | undefined;
-    if (!hostPath || !containerPath) {
-      return undefined;
-    }
-    return { hostPath, containerPath, readOnly: Boolean(nodeData.readOnly) };
   }
 
   return undefined;

@@ -1,7 +1,7 @@
 'use client'
 
-import { MenuLayout, type MenuLayoutProps } from '@opencroft/ui-kit/layout/menulayout'
-import { ScrollContent, ScrollFooter, ScrollPage } from '@opencroft/ui-kit/layout/scrollpage'
+import { MenuLayout, type MenuLayoutProps } from 'ui/layout/menulayout'
+import { ScrollContent, ScrollFooter, ScrollPage } from 'ui/layout/scrollpage'
 import React, { useCallback } from 'react'
 import { useUrlState } from '@/components/hooks/use-url-state'
 import { cn } from '@/lib/utils'

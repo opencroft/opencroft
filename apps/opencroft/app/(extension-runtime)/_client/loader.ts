@@ -3,7 +3,7 @@
 import { type ExtensionDeclaration, installClientHost } from '@/app/(extension-runtime)/_client/host'
 import { extensionRegistry } from '@/app/(extension-runtime)/_client/registry'
 import { listExtensionManifests } from '@/app/(extension-runtime)/_server/actions'
-import type { ExtensionManifest } from '@/app/(extension-runtime)/_types'
+import type { ExtensionManifest, ExtensionManifestInfo } from '@/app/(extension-runtime)/_types'
 
 interface LoadedModule {
   default?: ExtensionDeclaration
@@ -25,7 +25,7 @@ export async function loadExtension(manifest: ExtensionManifest): Promise<Extens
   try {
     const mod = await importBundle(url)
     const decl = mod.default ?? mod.extension
-    if (!decl || !decl.manifest) {
+    if (!decl?.manifest) {
       console.error(`[ext] ${manifest.id}: bundle default export is not a valid ExtensionDeclaration`)
       return null
     }
@@ -42,9 +42,12 @@ export async function loadExtension(manifest: ExtensionManifest): Promise<Extens
 }
 
 export async function loadAllExtensions(): Promise<ExtensionDeclaration[]> {
-  const manifests = await listExtensionManifests()
+  const manifests: ExtensionManifestInfo[] = await listExtensionManifests()
   const loaded: ExtensionDeclaration[] = []
   for (const manifest of manifests) {
+    if (!manifest.hasClient) {
+      continue
+    }
     const decl = await loadExtension(manifest)
     if (decl) {
       loaded.push(decl)

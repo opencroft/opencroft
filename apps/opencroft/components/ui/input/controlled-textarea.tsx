@@ -1,6 +1,6 @@
 'use client'
 
-import { Textarea } from '@opencroft/ui-kit/textarea'
+import { Textarea } from 'ui/textarea'
 import { useEffect, useRef, useState } from 'react'
 import { useDebounce } from '@/components/hooks/use-debounce'
 import { useIsMobile } from '@/hooks/use-mobile'

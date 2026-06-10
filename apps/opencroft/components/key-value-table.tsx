@@ -1,7 +1,7 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@opencroft/ui-kit/table'
+import { Button } from 'ui/button'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'ui/table'
 import { Trash } from 'lucide-react'
 import { ControlledInput } from '@/components/ui/input/controlled-input'
 

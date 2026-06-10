@@ -17,7 +17,7 @@ client bundle into the browser and `eval`s the server bundle inside Next.js.
 | Scope | Folder | Notes |
 | --- | --- | --- |
 | `builtin/<slug>` | `app/(extension-runtime)/_builtin/<slug>/` | Shipped with the app. Currently only `core`. |
-| `local/<slug>` | `data/extensions/local/<slug>/` (or `OPENCROFT_EXT_ROOT`) | User-authored. Created by the editor or by MCP. |
+| `local/<slug>` | `data/extensions/local/<slug>/` (or `OPENCROFT_LOCAL_EXTENSIONS`) | User-authored. Created by the editor or by MCP. |
 
 Extension IDs are always `<scope>/<slug>` and must match the folder name; the
 manifest validator rejects any mismatch

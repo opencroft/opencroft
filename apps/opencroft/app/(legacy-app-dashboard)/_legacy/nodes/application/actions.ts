@@ -1,9 +1,9 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { prisma } from '@opencroft/db'
 import { createServerFn } from '@tanstack/react-start'
 import * as yaml from 'js-yaml'
 import { cacheDir } from '@/server/cache'
+import { deleteSetting, getSetting, upsertSetting } from '@/server/data'
 
 export interface AppService {
   name: string
@@ -57,7 +57,7 @@ function serviceToYaml(service: AppService): Record<string, unknown> {
 export const loadApp = createServerFn({ method: 'POST' })
   .inputValidator((appId: string) => appId)
   .handler(async ({ data: appId }): Promise<AppData | null> => {
-    const row = await prisma.setting.findUnique({ where: { id: SETTING_PREFIX + appId } })
+    const row = await getSetting(SETTING_PREFIX + appId)
     if (!row) {
       return null
     }
@@ -68,11 +68,7 @@ export const saveApp = createServerFn({ method: 'POST' })
   .inputValidator((data: { appId: string; data: AppData }) => data)
   .handler(async ({ data }): Promise<void> => {
     const { appId, data: appData } = data
-    await prisma.setting.upsert({
-      where: { id: SETTING_PREFIX + appId },
-      create: { id: SETTING_PREFIX + appId, data: JSON.stringify(appData) },
-      update: { data: JSON.stringify(appData) },
-    })
+    await upsertSetting(SETTING_PREFIX + appId, JSON.stringify(appData))
 
     const dir = appDir(appId)
     await fs.mkdir(dir, { recursive: true })
@@ -86,7 +82,7 @@ export const saveApp = createServerFn({ method: 'POST' })
 export const deleteApp = createServerFn({ method: 'POST' })
   .inputValidator((appId: string) => appId)
   .handler(async ({ data: appId }): Promise<void> => {
-    await prisma.setting.delete({ where: { id: SETTING_PREFIX + appId } }).catch(() => {})
+    await deleteSetting(SETTING_PREFIX + appId)
     const dir = appDir(appId)
     await fs.rm(dir, { recursive: true, force: true })
   })

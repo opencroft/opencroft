@@ -1,6 +1,6 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
+import { Button } from 'ui/button'
 import { useReactFlow } from '@xyflow/react'
 import { GitCompare } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'

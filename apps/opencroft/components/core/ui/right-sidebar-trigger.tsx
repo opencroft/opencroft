@@ -1,7 +1,7 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { useSidebar } from '@opencroft/ui-kit/sidebar'
+import { Button } from 'ui/button'
+import { useSidebar } from 'ui/sidebar'
 import { PanelRightIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 

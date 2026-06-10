@@ -1,7 +1,7 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { Separator } from '@opencroft/ui-kit/separator'
+import { Button } from 'ui/button'
+import { Separator } from 'ui/separator'
 import { type Node, useReactFlow } from '@xyflow/react'
 import { Loader2, Pencil, Save, X } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'

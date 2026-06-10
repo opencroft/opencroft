@@ -1,6 +1,6 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
+import { Button } from 'ui/button'
 import { type NodeProps, useReactFlow } from '@xyflow/react'
 import { AppWindow, FolderOpen, TerminalSquare, X } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'

@@ -63,7 +63,7 @@ function sortContainers(list: DockerContainerSnapshot[]): DockerContainerSnapsho
 }
 
 async function callDockerPs(dockerNodeId: string): Promise<DockerContainerSnapshot[]> {
-  const mod = await getExtensionModule('builtin/core')
+  const mod = await getExtensionModule('local/docker')
   const fn = mod.actions['docker.ps']
   if (!fn) {
     return []

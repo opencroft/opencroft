@@ -1,6 +1,6 @@
 'use client'
 
-import { Flex } from '@opencroft/ui-kit/layout/flex'
+import { Flex } from 'ui/layout/flex'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {

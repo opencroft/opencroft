@@ -1,7 +1,7 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { Separator } from '@opencroft/ui-kit/separator'
+import { Button } from 'ui/button'
+import { Separator } from 'ui/separator'
 import Link from '@tiptap/extension-link'
 import { Table } from '@tiptap/extension-table'
 import { TableCell } from '@tiptap/extension-table-cell'

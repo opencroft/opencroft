@@ -1,8 +1,8 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { Input } from '@opencroft/ui-kit/input'
-import { Label } from '@opencroft/ui-kit/label'
+import { Button } from 'ui/button'
+import { Input } from 'ui/input'
+import { Label } from 'ui/label'
 import type { Node, NodeProps } from '@xyflow/react'
 import { Eye, EyeOff, Plus, ShieldCheck, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'

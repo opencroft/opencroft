@@ -190,7 +190,7 @@ async function installNodeDeps(dir: string): Promise<void> {
     return
   }
   try {
-    await execFile('npm', ['install', '--no-audit', '--no-fund', '--no-progress'], {
+    await execFile('npm', ['install', '--omit=dev', '--legacy-peer-deps', '--no-audit', '--no-fund', '--no-progress'], {
       cwd: dir,
       maxBuffer: 32 * 1024 * 1024,
       shell: true,

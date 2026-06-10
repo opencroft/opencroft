@@ -1,9 +1,9 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@opencroft/ui-kit/dialog'
-import { Input } from '@opencroft/ui-kit/input'
-import { Label } from '@opencroft/ui-kit/label'
+import { Button } from 'ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from 'ui/dialog'
+import { Input } from 'ui/input'
+import { Label } from 'ui/label'
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { ControlledTextarea } from '@/components/ui/input/controlled-textarea'

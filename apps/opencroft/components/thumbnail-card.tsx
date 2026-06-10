@@ -1,6 +1,6 @@
 'use client'
 
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@opencroft/ui-kit/context-menu'
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from 'ui/context-menu'
 import React from 'react'
 
 interface ThumbnailCardProps {

@@ -1,7 +1,7 @@
 'use client'
 
-import { Flex, type FlexProps } from '@opencroft/ui-kit/layout/flex'
-import { ScrollArea } from '@opencroft/ui-kit/scroll-area'
+import { Flex, type FlexProps } from 'ui/layout/flex'
+import { ScrollArea } from 'ui/scroll-area'
 import { ChevronRight } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 import { StickySection } from '@/components/experimental/sticky-section'

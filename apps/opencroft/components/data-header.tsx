@@ -1,6 +1,6 @@
-import { Button } from '@opencroft/ui-kit/button'
-import { Input } from '@opencroft/ui-kit/input'
-import { Flex } from '@opencroft/ui-kit/layout/flex'
+import { Button } from 'ui/button'
+import { Input } from 'ui/input'
+import { Flex } from 'ui/layout/flex'
 import { Plus, Search, Settings } from 'lucide-react'
 
 interface EDataHeaderProps {

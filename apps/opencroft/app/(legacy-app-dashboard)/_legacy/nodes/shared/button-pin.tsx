@@ -1,6 +1,6 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
+import { Button } from 'ui/button'
 import { Handle, Position } from '@xyflow/react'
 import type { LucideIcon } from 'lucide-react'
 

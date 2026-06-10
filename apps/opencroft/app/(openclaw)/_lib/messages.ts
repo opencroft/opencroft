@@ -1,5 +1,6 @@
 export type OpenclawPart =
   | { type: 'text'; text: string }
+  | { type: 'thinking'; text: string }
   | {
       type: 'tool-call'
       id: string
@@ -71,7 +72,7 @@ export function normalizeHistory(raw: RawChatMessage[]): OpenclawMessage[] {
 }
 
 function isVisiblePart(part: OpenclawPart): boolean {
-  if (part.type === 'text') {
+  if (part.type === 'text' || part.type === 'thinking') {
     return part.text.trim().length > 0
   }
   return true
@@ -122,6 +123,9 @@ function toPart(raw: RawContentPart, results: Map<string, { text: string; isErro
       args: raw.arguments,
       result: results.get(id),
     }
+  }
+  if (raw.type === 'thinking' || raw.type === 'reasoning') {
+    return { type: 'thinking', text: raw.text ?? '' }
   }
   return { type: 'text', text: raw.text ?? '' }
 }

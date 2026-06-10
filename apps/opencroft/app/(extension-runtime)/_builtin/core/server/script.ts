@@ -1,4 +1,5 @@
-import { type TerminalContext, terminalRun } from './terminal';
+import host from '@ext/host';
+import type { TerminalContext } from '@opencroft/server';
 
 export interface ScriptRunParams {
   script: string;
@@ -28,7 +29,7 @@ const LANG_FLAG: Record<string, string> = {
 export async function runScript(params: ScriptRunParams): Promise<ScriptResult> {
   const { script, language, context, env } = params;
   try {
-    const stdout = await terminalRun(context, [LANG_CMD[language], LANG_FLAG[language], script], env);
+    const stdout = await host.terminal.run(context, [LANG_CMD[language], LANG_FLAG[language], script], env);
     return { stdout, stderr: '', exitCode: 0 };
   } catch (err) {
     const msg = (err as Error).message || String(err);
@@ -114,10 +115,10 @@ export async function runHandler(params: HandlerRunParams): Promise<HandlerResul
     let stdout: string;
     if (language === 'python') {
       fullScript = script + pythonHandlerBootstrap(eventB64);
-      stdout = await terminalRun(context, ['python', '-c', fullScript], env);
+      stdout = await host.terminal.run(context, ['python', '-c', fullScript], env);
     } else if (language === 'node') {
       fullScript = script + nodeHandlerBootstrap(eventB64);
-      stdout = await terminalRun(context, ['node', '-e', fullScript], env);
+      stdout = await host.terminal.run(context, ['node', '-e', fullScript], env);
     } else {
       return { status: 500, body: { error: `Unsupported language: ${language}` } };
     }

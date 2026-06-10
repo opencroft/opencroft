@@ -140,7 +140,7 @@ Outside the SQLite file, OpenCroft writes a few other things into `data/`:
 | `data/extensions/local/<slug>/` | Local extension folders. |
 | `.cache/extensions/<id>/` | Per-extension cache directory exposed via `host.cacheDir(...)`. Holds e.g. SSH keys for the Key Store node. |
 
-`OPENCROFT_EXT_ROOT` overrides `data/extensions/local/`. Nothing overrides
+`OPENCROFT_LOCAL_EXTENSIONS` overrides `data/extensions/local/`. Nothing overrides
 the DB path or the cache path.
 
 ## Backup and restore

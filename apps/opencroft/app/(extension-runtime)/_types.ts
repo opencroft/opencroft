@@ -82,6 +82,12 @@ export interface ExtensionManifest {
   activationEvents?: string[]
 }
 
+/** A manifest plus runtime-computed flags, as sent to the client loader. */
+export interface ExtensionManifestInfo extends ExtensionManifest {
+  /** Whether the extension ships a client bundle the browser should import. */
+  hasClient: boolean
+}
+
 export interface ExtensionRecord {
   manifest: ExtensionManifest
   sourceDir: string

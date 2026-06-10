@@ -1,6 +1,6 @@
 'use client'
 
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from '@opencroft/ui-kit/command'
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from 'ui/command'
 import { Plus } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import type { NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'

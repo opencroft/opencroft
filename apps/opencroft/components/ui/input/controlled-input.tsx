@@ -1,6 +1,6 @@
 'use client'
 
-import { Input } from '@opencroft/ui-kit/input'
+import { Input } from 'ui/input'
 import { useEffect, useRef, useState } from 'react'
 import { useDebounce } from '@/components/hooks/use-debounce'
 

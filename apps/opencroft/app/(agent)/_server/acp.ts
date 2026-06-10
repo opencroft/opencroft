@@ -1,13 +1,13 @@
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { prisma } from '@opencroft/db'
 import { createServerFn } from '@tanstack/react-start'
+import { findAdapter } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
 import { agentClient } from '@/app/(agent)/_server/agent-client-instance'
 import { slug } from '@/app/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
-import { decrypt } from '@/server/crypto'
+import { secrets } from '@/server/secrets'
 
 interface AgentNodeData {
   name?: string
@@ -17,6 +17,10 @@ interface AgentNodeData {
   model?: string
   apiKeySecret?: string
   defaultModeId?: string
+  baseUrl?: string
+  systemPrompt?: string
+  reasoningEffort?: string
+  temperature?: number
 }
 
 async function findNodeData<T>(nodeId: string): Promise<T | null> {
@@ -39,8 +43,13 @@ async function resolveSecret(key: string): Promise<string> {
   if (!key) {
     return ''
   }
-  const row = await prisma.secret.findFirst({ where: { key } })
-  return row ? decrypt(row.value) : ''
+  return (await secrets.resolve(key)) ?? ''
+}
+
+interface TabSession {
+  id: string
+  // Whether this tab's agent can fork its history (native harness only).
+  canFork: boolean
 }
 
 // ACP sessions live only in agentClient's memory, so they don't survive a dev
@@ -48,7 +57,7 @@ async function resolveSecret(key: string): Promise<string> {
 // re-create lazily — this keeps session creation idempotent per tab (no loops)
 // and self-heals after a restart, without persisting fragile ids to the client.
 const globalRef = globalThis as typeof globalThis & {
-  __acpTabSessions?: Map<string, string>
+  __acpTabSessions?: Map<string, TabSession>
 }
 if (!globalRef.__acpTabSessions) {
   globalRef.__acpTabSessions = new Map()
@@ -59,10 +68,10 @@ const tabSessions = globalRef.__acpTabSessions
 // (no on-disk profile store), and open (or reuse) the ACP session for this tab.
 export const ensureLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { agentNodeId: string; jobNodeId: string; tabKey: string }) => data)
-  .handler(async ({ data }): Promise<{ sessionId: string }> => {
+  .handler(async ({ data }): Promise<{ sessionId: string; canFork: boolean }> => {
     const known = tabSessions.get(data.tabKey)
-    if (known && agentClient.listSessions().some((s) => s.id === known)) {
-      return { sessionId: known }
+    if (known && agentClient.listSessions().some((s) => s.id === known.id)) {
+      return { sessionId: known.id, canFork: known.canFork }
     }
     const agent = await findNodeData<AgentNodeData>(data.agentNodeId)
     if (!agent) {
@@ -71,18 +80,26 @@ export const ensureLocalSession = createServerFn({ method: 'POST', strict: { out
     // Each agent gets a persistent workspace next to the DB in the data volume,
     // keyed by slug: <cwd>/data/agent-workspace/<agent-slug>.
     const workspaceSlug = slug(agent.name ?? '') || data.agentNodeId
+    const adapterId = agent.adapterId ?? 'claude'
     const selection: AgentSelection = {
       providerId: agent.providerId ?? '',
-      adapterId: agent.adapterId ?? 'claude',
+      adapterId,
       model: agent.model ?? '',
       apiKey: await resolveSecret(agent.apiKeySecret ?? ''),
       cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
+      baseUrl: agent.baseUrl,
+      systemPrompt: agent.systemPrompt,
+      reasoningEffort: agent.reasoningEffort,
+      temperature: agent.temperature,
     }
     // Spawn cwd must exist or spawn fails with ENOENT.
     await mkdir(selection.cwd, { recursive: true })
     const meta = await agentClient.createSession(selection, agent.defaultModeId)
-    tabSessions.set(data.tabKey, meta.id)
-    return { sessionId: meta.id }
+    // Forking rewinds an agent's own message history, which only the in-process
+    // (native) harness owns — external ACP agents can't truncate it.
+    const canFork = findAdapter(adapterId)?.kind === 'native'
+    tabSessions.set(data.tabKey, { id: meta.id, canFork })
+    return { sessionId: meta.id, canFork }
   })
 
 export const promptLocal = createServerFn({ method: 'POST', strict: { output: false } })
@@ -106,11 +123,25 @@ export const cancelLocal = createServerFn({ method: 'POST', strict: { output: fa
 export const forgetLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((tabKey: string) => tabKey)
   .handler(async ({ data: tabKey }): Promise<void> => {
-    const id = tabSessions.get(tabKey)
-    if (id) {
-      agentClient.deleteSession(id)
+    const entry = tabSessions.get(tabKey)
+    if (entry) {
+      agentClient.deleteSession(entry.id)
       tabSessions.delete(tabKey)
     }
+  })
+
+// Branch the tab's session into a new one rewound to a user turn (0-based;
+// drops that turn and everything after). Re-point the tab at the fork so a
+// remount resumes the branch instead of re-creating the original.
+export const forkLocal = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { tabKey: string; sessionId: string; dropFromTurn: number }) => data)
+  .handler(async ({ data }): Promise<{ sessionId: string } | null> => {
+    const meta = await agentClient.forkSession(data.sessionId, data.dropFromTurn)
+    if (!meta) {
+      return null
+    }
+    tabSessions.set(data.tabKey, { id: meta.id, canFork: true })
+    return { sessionId: meta.id }
   })
 
 export const respondLocal = createServerFn({ method: 'POST', strict: { output: false } })

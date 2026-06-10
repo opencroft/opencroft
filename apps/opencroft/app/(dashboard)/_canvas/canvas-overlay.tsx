@@ -1,7 +1,7 @@
 'use client'
 
-import { Flex } from '@opencroft/ui-kit/layout/flex'
-import { ScrollArea } from '@opencroft/ui-kit/scroll-area'
+import { Flex } from 'ui/layout/flex'
+import { ScrollArea } from 'ui/scroll-area'
 import { useLocation, useRouter } from '@tanstack/react-router'
 import { X } from 'lucide-react'
 import type * as React from 'react'

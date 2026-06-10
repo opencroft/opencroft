@@ -1,20 +1,6 @@
 'use client'
 
-import { Badge } from '@opencroft/ui-kit/badge'
-import { Button } from '@opencroft/ui-kit/button'
-import { ChatInput } from '@opencroft/ui-kit/chat/chat-input'
-import { ChatMessage } from '@opencroft/ui-kit/chat/chat-message'
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@opencroft/ui-kit/dialog'
-import { Input as TextInput } from '@opencroft/ui-kit/input'
-import { Label } from '@opencroft/ui-kit/label'
-import { Flex } from '@opencroft/ui-kit/layout/flex'
-import { ScrollArea } from '@opencroft/ui-kit/layout/scroll-area'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@opencroft/ui-kit/select'
-import { Separator } from '@opencroft/ui-kit/separator'
-import { Slider } from '@opencroft/ui-kit/slider'
-import { Textarea } from '@opencroft/ui-kit/textarea'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@opencroft/ui-kit/tooltip'
-import { StatusIndicator } from '@opencroft/ui-kit/utils/status-indicator'
+import * as uiKit from 'ui/ext'
 import { Handle, NodeResizer, Position, useEdges, useNodeId, useNodes, useReactFlow, useUpdateNodeInternals } from '@xyflow/react'
 import * as icons from 'lucide-react'
 import * as React from 'react'
@@ -34,6 +20,7 @@ import type { ExtensionContextType, ExtensionHandle } from '@/app/(extension-run
 import { FileBrowser } from '@/app/(filemanager)/_components/file-browser'
 import { FileManagerProvider } from '@/app/(filemanager)/_components/filemanager-provider'
 import { useDockerContainers, useDockerSnapshotReceived, useSeedDockerContainers } from '@/app/(sse)/_lib/sse-events-store'
+import { InspectorTerminalBody } from '@/components/inspector-terminal'
 import { ControlledInput } from '@/components/ui/input/controlled-input'
 
 export interface ExtensionComponentProps<D = Record<string, unknown>> {
@@ -257,38 +244,14 @@ function createStorageFor(extensionId: string, namespace?: string): ExtensionSto
 }
 
 export const extensionUiApi = {
-  Badge,
-  Button,
-  Input: TextInput,
+  // Every component from the `ui` package (Badge, Button, Select, Dialog,
+  // SearchableDropdown, Popover, Command, Combobox, …) — see `ui/ext`.
+  ...uiKit,
+  // App-provided components that live outside the `ui` package (or override it).
   ControlledInput,
-  Label,
-  Flex,
-  ScrollArea,
-  Select,
-  SelectTrigger,
-  SelectContent,
-  SelectItem,
-  SelectValue,
-  Separator,
-  Textarea,
-  ChatMessage,
-  ChatInput,
-  Slider,
-  StatusIndicator,
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
   FileBrowser,
   FileManagerProvider,
+  InspectorTerminalBody,
   CommandBar,
   CommandBarMenu,
   CommandBarMenuItem,

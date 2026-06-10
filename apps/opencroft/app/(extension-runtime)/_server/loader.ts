@@ -2,6 +2,8 @@ import { promises as fs } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
+import type * as opencroft from '@opencroft/server'
+
 import { buildExtension } from '@/app/(extension-runtime)/_server/compiler'
 import { createHost } from '@/app/(extension-runtime)/_server/host'
 import { listAllExtensionIds, readManifest } from '@/app/(extension-runtime)/_server/manifest'
@@ -11,6 +13,8 @@ import { toastStore } from '@/lib/toast-store'
 
 export type NodeActionHandler = (ctx: unknown) => Promise<unknown>
 
+type ExtensionLifecycle = (context: opencroft.ExtensionContext) => void | Promise<void>
+
 interface CachedModule {
   updatedAt: number
   manifest: ExtensionManifest
@@ -18,6 +22,32 @@ interface CachedModule {
   exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
   nodeActions?: Record<string, Record<string, NodeActionHandler>>
   routes?: Record<string, ExtensionRouteHandler>
+  load?: ExtensionLifecycle
+  unload?: ExtensionLifecycle
+  context: opencroft.ExtensionContext
+  registeredTypes: opencroft.Type[]
+  registeredNodes: opencroft.Node[]
+}
+
+interface ExtensionRegistrations {
+  context: opencroft.ExtensionContext
+  types: opencroft.Type[]
+  nodes: opencroft.Node[]
+}
+
+function createRegistrations(extensionId: string): ExtensionRegistrations {
+  const types: opencroft.Type[] = []
+  const nodes: opencroft.Node[] = []
+  const context: opencroft.ExtensionContext = {
+    extensionId,
+    registerType: (type) => {
+      types.push(type)
+    },
+    registerNode: (node) => {
+      nodes.push(node)
+    },
+  }
+  return { context, types, nodes }
 }
 
 declare global {
@@ -51,7 +81,14 @@ async function statMaybe(file: string): Promise<number> {
 
 async function sourceMtime(extensionId: string): Promise<number> {
   const dir = extDir(extensionId)
-  const candidates = [path.join(dir, 'extension.json'), path.join(dir, 'package.json'), path.join(dir, 'src'), path.join(dir, 'server')]
+  const candidates = [
+    path.join(dir, 'extension.json'),
+    path.join(dir, 'package.json'),
+    path.join(dir, 'src'),
+    path.join(dir, 'server'),
+    path.join(dir, 'extension.ts'),
+    path.join(dir, 'extension.tsx'),
+  ]
   let max = 0
   for (const p of candidates) {
     max = Math.max(max, await walkMtime(p))
@@ -114,21 +151,26 @@ interface ExtensionServerModule {
   exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
   nodeActions?: Record<string, Record<string, NodeActionHandler>>
   routes?: Record<string, ExtensionRouteHandler>
+  load?: ExtensionLifecycle
+  unload?: ExtensionLifecycle
   default?: {
     actions?: Record<string, (...args: unknown[]) => Promise<unknown>>
     exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
     nodeActions?: Record<string, Record<string, NodeActionHandler>>
     routes?: Record<string, ExtensionRouteHandler>
+    load?: ExtensionLifecycle
+    unload?: ExtensionLifecycle
   }
 }
 
 async function evalServerBundle(extensionId: string, manifest: ExtensionManifest): Promise<CachedModule> {
   const bundleFile = extDistFile(extensionId, 'server.js')
   let code: string
+  const reg = createRegistrations(extensionId)
   try {
     code = await fs.readFile(bundleFile, 'utf-8')
   } catch {
-    return { updatedAt: Date.now(), manifest, actions: {} }
+    return { updatedAt: Date.now(), manifest, actions: {}, context: reg.context, registeredTypes: reg.types, registeredNodes: reg.nodes }
   }
 
   const host = createHost(extensionId)
@@ -163,7 +205,9 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
     const exposeOutput = exported.exposeOutput ?? exported.default?.exposeOutput
     const nodeActions = exported.nodeActions ?? exported.default?.nodeActions
     const routes = exported.routes ?? exported.default?.routes
-    return { updatedAt: Date.now(), manifest, actions, exposeOutput, nodeActions, routes }
+    const load = exported.load ?? exported.default?.load
+    const unload = exported.unload ?? exported.default?.unload
+    return { updatedAt: Date.now(), manifest, actions, exposeOutput, nodeActions, routes, load, unload, context: reg.context, registeredTypes: reg.types, registeredNodes: reg.nodes }
   } finally {
     ;(globalThis as { __extensionServerApi?: unknown }).__extensionServerApi = prevGlobal
   }
@@ -180,6 +224,7 @@ async function activate(extensionId: string): Promise<CachedModule> {
   await ensureBuilt(extensionId, manifest)
   const mod = await evalServerBundle(extensionId, manifest)
   moduleCache().set(extensionId, mod)
+  await mod.load?.(mod.context)
   return mod
 }
 
@@ -190,6 +235,7 @@ export async function getExtensionModule(extensionId: string): Promise<CachedMod
     if (srcMtime <= cached.updatedAt) {
       return cached
     }
+    runUnload(extensionId)
   }
   return activate(extensionId)
 }
@@ -225,17 +271,62 @@ export async function loadAllManifests(): Promise<ExtensionManifest[]> {
   return manifests
 }
 
+const CLIENT_ENTRIES = ['src/client.tsx', 'src/client.ts', 'src/index.tsx', 'src/index.ts']
+const LIFECYCLE_ENTRIES = ['extension.ts', 'extension.tsx']
+
+async function hasEntry(extensionId: string, names: string[]): Promise<boolean> {
+  const dir = extDir(extensionId)
+  for (const name of names) {
+    if ((await statMaybe(path.join(dir, name))) > 0) {
+      return true
+    }
+  }
+  return false
+}
+
+/** Whether the extension ships a client bundle the browser should import. */
+export async function extensionHasClient(extensionId: string): Promise<boolean> {
+  return hasEntry(extensionId, CLIENT_ENTRIES)
+}
+
+/** Activate every extension that exposes a lifecycle entry, so its `load` runs. */
+export async function activateLifecycleExtensions(): Promise<void> {
+  const ids = await listAllExtensionIds()
+  for (const id of ids) {
+    if (!(await hasEntry(id, LIFECYCLE_ENTRIES))) {
+      continue
+    }
+    try {
+      await getExtensionModule(id)
+    } catch (err) {
+      console.error(`[ext] ${id} activation failed`, err)
+    }
+  }
+}
+
 export async function ensureExtensionBuilt(extensionId: string): Promise<void> {
   const manifest = await readManifest(extensionId)
   await ensureBuilt(extensionId, manifest)
 }
 
+function runUnload(extensionId: string): void {
+  const mod = moduleCache().get(extensionId)
+  if (!mod?.unload) {
+    return
+  }
+  void mod.unload(mod.context)
+}
+
 export function flushCache(extensionId?: string): void {
   if (extensionId) {
+    runUnload(extensionId)
     moduleCache().delete(extensionId)
     manifestCache().delete(extensionId)
     manifestMtimeCache.delete(extensionId)
     return
+  }
+  for (const id of moduleCache().keys()) {
+    runUnload(id)
   }
   moduleCache().clear()
   manifestCache().clear()

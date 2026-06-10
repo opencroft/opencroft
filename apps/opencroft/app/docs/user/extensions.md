@@ -9,7 +9,7 @@ more, or write your own.
 - **Built-in:** `app/(extension-runtime)/_builtin/<slug>/`: shipped with
   the app, read-only.
 - **Local:** `data/extensions/local/<slug>/`: your stuff. Override the
-  path with `OPENCROFT_EXT_ROOT`.
+  path with `OPENCROFT_LOCAL_EXTENSIONS`.
 
 Extension IDs are `<scope>/<slug>` (e.g. `local/my-thing`). The folder
 name must match the slug.

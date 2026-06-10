@@ -1,7 +1,7 @@
 'use client'
 
-import { Input } from '@opencroft/ui-kit/input'
-import { Label } from '@opencroft/ui-kit/label'
+import { Input } from 'ui/input'
+import { Label } from 'ui/label'
 import type { Node, NodeProps } from '@xyflow/react'
 import { Boxes, Globe } from 'lucide-react'
 import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'

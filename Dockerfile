@@ -4,11 +4,12 @@
 FROM node:24-slim AS build
 WORKDIR /repo
 
-# Install all workspaces from the root lockfile. Copy the root manifest + every
-# workspace manifest first so the install layer caches independently of source.
+# Install all workspaces from the root lockfile. Copy the workspace sources first
+# so npm ci sees every workspace manifest regardless of how packages are added or
+# renamed; the --mount cache keeps installs warm across builds.
 COPY package.json package-lock.json ./
-COPY apps/opencroft/package.json ./apps/opencroft/package.json
-COPY packages/ui-kit/package.json ./packages/ui-kit/package.json
+COPY apps ./apps
+COPY packages ./packages
 RUN --mount=type=cache,target=/root/.npm npm ci
 
 COPY . .

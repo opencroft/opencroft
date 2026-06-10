@@ -35,7 +35,7 @@ export async function getDocsRoot(namespace?: string): Promise<string | null> {
   let resolved: string | null = null
   try {
     const { getExtensionModule } = await import('@/app/(extension-runtime)/_server/loader')
-    const mod = await getExtensionModule('builtin/core')
+    const mod = await getExtensionModule('local/documentation')
     const findRoot = mod.actions?.['docs.findActiveDocsRoot']
     if (findRoot) {
       const r = (await findRoot({ namespace })) as string | null

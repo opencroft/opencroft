@@ -10,7 +10,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
-} from '@opencroft/ui-kit/dropdown-menu'
+} from 'ui/dropdown-menu'
 import { useLocation } from '@tanstack/react-router'
 import { Briefcase, MessageSquare, Plus, Trash2, User } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'

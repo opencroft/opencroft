@@ -214,5 +214,5 @@ There are no `.env`-driven feature flags. Configuration is stored in the
 | `ai-settings` | OpenAI base URL, model defaults | `(settings)/settings/ai`. |
 
 The only environment variable consulted at runtime is
-`OPENCROFT_EXT_ROOT` (override for the local-extension folder, defaults to
+`OPENCROFT_LOCAL_EXTENSIONS` (override for the local-extension folder, defaults to
 `./data/extensions/local`).

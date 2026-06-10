@@ -1,9 +1,9 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { Flex } from '@opencroft/ui-kit/layout/flex'
-import { ScrollArea } from '@opencroft/ui-kit/layout/scroll-area'
-import { Separator } from '@opencroft/ui-kit/separator'
+import { Button } from 'ui/button'
+import { Flex } from 'ui/layout/flex'
+import { ScrollArea } from 'ui/layout/scroll-area'
+import { Separator } from 'ui/separator'
 import type { Node } from '@xyflow/react'
 import * as lucideIcons from 'lucide-react'
 import { Box, GripVertical, List, Maximize2, Minimize2, Pencil, X } from 'lucide-react'

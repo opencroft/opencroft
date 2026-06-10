@@ -20,7 +20,8 @@ import {
   SelectValue,
   Separator,
 } from '@ext/ui';
-import { PinButton, StatsList, PinnedBody, InspectorTerminalBody, InspectorFilesBody } from '../shared';
+import { PinButton, StatsList, PinnedBody, InspectorFilesBody } from '../shared';
+import { InspectorTerminalBody } from '@ext/ui';
 
 void Badge;
 

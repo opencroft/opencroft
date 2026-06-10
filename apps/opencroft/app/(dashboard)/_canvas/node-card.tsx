@@ -4,7 +4,7 @@ import type { LucideIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import '@/app/(dashboard)/_canvas/node-card.css'
-import { StatusIndicator, type StatusVariant } from '@opencroft/ui-kit/utils/status-indicator'
+import { StatusIndicator, type StatusVariant } from 'ui/utils/status-indicator'
 import { cn } from '@/lib/utils'
 
 interface NodeCardProps {

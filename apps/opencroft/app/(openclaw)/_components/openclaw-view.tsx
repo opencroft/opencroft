@@ -1,9 +1,9 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { Flex } from '@opencroft/ui-kit/layout/flex'
-import { MenuLayout } from '@opencroft/ui-kit/layout/menulayout'
-import { Separator } from '@opencroft/ui-kit/separator'
+import { Button } from 'ui/button'
+import { Flex } from 'ui/layout/flex'
+import { MenuLayout } from 'ui/layout/menulayout'
+import { Separator } from 'ui/separator'
 import { useRouter } from '@tanstack/react-router'
 import { Bot, KeyRound, MessageSquare, RotateCw } from 'lucide-react'
 import { useState, useTransition } from 'react'

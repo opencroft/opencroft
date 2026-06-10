@@ -1,4 +1,4 @@
-import { Flex, type FlexProps } from '@opencroft/ui-kit/layout/flex'
+import { Flex, type FlexProps } from 'ui/layout/flex'
 import { cn } from '@/lib/utils'
 
 type Side = 'top' | 'bottom' | 'left' | 'right'

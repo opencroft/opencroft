@@ -2,7 +2,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { createPrismaCompat } from './prisma-compat'
 import { schema } from './schema'
 
 // SQLite lives under the app's working directory. On a fresh data volume, seed
@@ -23,9 +22,6 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 export const db = drizzle({ client: sqlite, schema })
-
-/** Deprecated Prisma-compatible facade — kept for the `host.prisma` extension API. */
-export const prisma = createPrismaCompat(db)
 
 export * from './schema'
 export { schema }

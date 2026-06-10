@@ -1,8 +1,8 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@opencroft/ui-kit/tooltip'
-import type { StatusVariant as IndicatorVariant } from '@opencroft/ui-kit/utils/status-indicator'
+import { Button } from 'ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from 'ui/tooltip'
+import type { StatusVariant as IndicatorVariant } from 'ui/utils/status-indicator'
 import { useEdges as useConnections, useInternalNode, useNodeId } from '@xyflow/react'
 import { AlertTriangle, Copy, type LucideIcon } from 'lucide-react'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react'

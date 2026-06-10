@@ -1,9 +1,9 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { Input } from '@opencroft/ui-kit/input'
-import { Label } from '@opencroft/ui-kit/label'
-import { Separator } from '@opencroft/ui-kit/separator'
+import { Button } from 'ui/button'
+import { Input } from 'ui/input'
+import { Label } from 'ui/label'
+import { Separator } from 'ui/separator'
 import type { Node, NodeProps } from '@xyflow/react'
 import { AppWindow, Circle, Play, Plus, Square, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'

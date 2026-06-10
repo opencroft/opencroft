@@ -1,7 +1,7 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { ScrollArea } from '@opencroft/ui-kit/layout/scroll-area'
+import { Button } from 'ui/button'
+import { ScrollArea } from 'ui/layout/scroll-area'
 import { Pencil, Plus } from 'lucide-react'
 import type { DragEvent } from 'react'
 import type { ResolvedNode } from '@/app/(extension-runtime)/_client/registry'

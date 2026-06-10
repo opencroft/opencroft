@@ -1,6 +1,6 @@
 'use client'
 
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@opencroft/ui-kit/collapsible'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/collapsible'
 import { ChevronRight, Puzzle } from 'lucide-react'
 import React, { useEffect, useState } from 'react'
 import type { SettingsPageDefinition } from '@/app/(extension-runtime)/_client/host'

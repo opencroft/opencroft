@@ -1,7 +1,8 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { Input } from '@opencroft/ui-kit/input'
+import { PermissionRequest } from 'agent-chat/messages'
+import { Button } from 'ui/button'
+import { Input } from 'ui/input'
 import { type ReactNode, useMemo, useState } from 'react'
 import { type AcpSession, type LocalSource, type PendingAsk, useAcpSession } from '@/app/(agent)/_components/use-acp-session'
 import { useOverlayContent } from '@/app/(dashboard)/_canvas/overlay-context'
@@ -77,19 +78,12 @@ function Approvals({ acp }: { acp: AcpSession }) {
   return (
     <div className='flex flex-col gap-2 px-4 pb-2'>
       {acp.permissions.map((p) => (
-        <div key={p.requestId} className='flex flex-col gap-1.5 rounded-md border bg-muted/40 p-2.5'>
-          <div className='text-xs font-medium'>{p.title}</div>
-          <div className='flex flex-wrap gap-1.5'>
-            {p.options.map((o) => (
-              <Button key={o.id} size='sm' variant={o.kind.startsWith('reject') ? 'outline' : 'default'} className='h-7 text-xs' onClick={() => acp.resolvePermission(p.requestId, o.id)}>
-                {o.label}
-              </Button>
-            ))}
-            <Button size='sm' variant='ghost' className='h-7 text-xs' onClick={() => acp.resolvePermission(p.requestId)}>
-              Cancel
-            </Button>
-          </div>
-        </div>
+        <PermissionRequest
+          key={p.requestId}
+          message={{ id: p.requestId, kind: 'permission', requestId: p.requestId, title: p.title, options: p.options, resolved: false }}
+          onRespond={acp.resolvePermission}
+          onRespondText={acp.respondPermissionText}
+        />
       ))}
       {acp.asks.map((a) => (
         <AskPrompt key={a.requestId} ask={a} onAnswer={acp.resolveAsk} />

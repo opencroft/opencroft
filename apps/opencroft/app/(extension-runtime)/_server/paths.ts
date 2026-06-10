@@ -3,7 +3,7 @@ import path from 'node:path'
 const PROJECT_ROOT = process.cwd()
 
 export function localExtRoot(): string {
-  return process.env.OPENCROFT_EXT_ROOT ?? path.join(PROJECT_ROOT, 'data', 'extensions', 'local')
+  return process.env.OPENCROFT_LOCAL_EXTENSIONS ?? path.join(PROJECT_ROOT, 'data', 'extensions', 'local')
 }
 
 export function installedExtRoot(): string {

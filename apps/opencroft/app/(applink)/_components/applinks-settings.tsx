@@ -1,9 +1,9 @@
 'use client'
 
 import type { AppLink } from '@opencroft/db'
-import { Button } from '@opencroft/ui-kit/button'
-import { Input } from '@opencroft/ui-kit/input'
-import { Flex } from '@opencroft/ui-kit/layout/flex'
+import { Button } from 'ui/button'
+import { Input } from 'ui/input'
+import { Flex } from 'ui/layout/flex'
 import { Pencil, Plus, Trash2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { createAppLink, deleteAppLink, getAppLinks, updateAppLink } from '@/app/(applink)/_server/actions'

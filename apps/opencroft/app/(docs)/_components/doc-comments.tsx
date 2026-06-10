@@ -1,8 +1,8 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { Popover, PopoverAnchor, PopoverContent } from '@opencroft/ui-kit/popover'
-import { Textarea } from '@opencroft/ui-kit/textarea'
+import { Button } from 'ui/button'
+import { Popover, PopoverAnchor, PopoverContent } from 'ui/popover'
+import { Textarea } from 'ui/textarea'
 import { Bot, Loader2, MessageCircle, Send, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'

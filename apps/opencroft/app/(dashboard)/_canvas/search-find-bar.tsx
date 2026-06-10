@@ -1,7 +1,7 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { Input } from '@opencroft/ui-kit/input'
+import { Button } from 'ui/button'
+import { Input } from 'ui/input'
 import { ArrowUp, type LucideIcon, Search, Target } from 'lucide-react'
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
 import type { CommandNodeEntry } from '@/app/(dashboard)/_canvas/canvas-command-bar'

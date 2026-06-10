@@ -96,46 +96,10 @@
       ]
     },
     {
-      "typeId": "docker",
-      "name": "Docker",
-      "category": "Infrastructure",
-      "icon": "Container",
-      "handles": [
-        { "id": "ctx-in", "contextType": "terminal-context", "role": "target", "label": "Host" },
-        { "id": "context-in", "contextType": "terminal-context", "role": "target", "label": "Context" },
-        { "id": "docker-out", "contextType": "docker-context", "role": "source", "label": "Docker" }
-      ]
-    },
-    {
-      "typeId": "volume",
-      "name": "Volume",
-      "category": "Applications",
-      "icon": "HardDrive",
-      "handles": [
-        { "id": "vol-out", "contextType": "volume-mount", "role": "source", "label": "Volume" }
-      ]
-    },
-    {
       "typeId": "network",
       "name": "Network",
       "category": "Applications",
       "icon": "Network"
-    },
-    {
-      "typeId": "application",
-      "name": "Application",
-      "category": "Applications",
-      "icon": "AppWindow",
-      "handles": [
-        { "id": "docker-in", "contextType": "docker-context", "role": "target", "label": "Docker" },
-        { "id": "volumes-in", "contextType": "volume-mount", "role": "target", "label": "Volumes" },
-        { "id": "instance-terminal-", "contextType": "terminal-context", "role": "source", "label": "Terminal", "dynamic": true }
-      ],
-      "actions": [
-        { "id": "start", "label": "Start", "icon": "Play", "description": "Bring the service up via docker compose." },
-        { "id": "stop", "label": "Stop", "icon": "Square", "description": "Stop the service and remove its container from the compose project." },
-        { "id": "restart", "label": "Restart", "icon": "RotateCw", "description": "Restart the service in place." }
-      ]
     },
     {
       "typeId": "send-message",
@@ -167,20 +131,12 @@
         { "id": "run", "label": "Run", "icon": "Play", "description": "Fire the connected handler immediately." }
       ]
     },
-    { "typeId": "documentation", "name": "Documentation", "category": "Storage", "icon": "BookOpen", "actions": [
-      { "id": "clone", "label": "Clone", "icon": "Download", "description": "Clone the documentation repository." },
-      { "id": "pull", "label": "Pull", "icon": "ArrowDown", "description": "Pull latest changes from the remote." },
-      { "id": "publish", "label": "Publish", "icon": "Upload", "description": "Commit all changes and push to the remote." },
-      { "id": "discardFile", "label": "Discard", "icon": "Undo2", "description": "Discard changes for a file, reverting to the last committed version." }
-    ] },
     { "typeId": "section", "name": "Section", "category": "Organization", "icon": "Boxes" },
     { "typeId": "domain", "name": "Domain", "category": "Organization", "icon": "Globe" }
   ],
   "contexts": [
     { "id": "terminal-context", "label": "Terminal Context", "color": "oklch(0.7 0.18 300)", "description": "Terminal execution context (local, WSL, or SSH)" },
     { "id": "filesystem-target", "label": "Filesystem Target", "color": "oklch(0.7 0.17 140)" },
-    { "id": "execution-context", "label": "Execution Context", "color": "oklch(0.72 0.17 30)", "description": "Async execution context for request/response handlers" },
-    { "id": "docker-context", "label": "Docker Context", "color": "oklch(0.75 0.14 240)" },
-    { "id": "volume-mount", "label": "Volume Mount", "color": "oklch(0.7 0.15 50)" }
+    { "id": "execution-context", "label": "Execution Context", "color": "oklch(0.72 0.17 30)", "description": "Async execution context for request/response handlers" }
   ]
 }

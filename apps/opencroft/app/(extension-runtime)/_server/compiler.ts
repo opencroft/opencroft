@@ -10,6 +10,10 @@ const PROJECT_NODE_MODULES = path.join(projectRoot(), 'node_modules')
 
 const SERVER_EXTERNAL_PACKAGES = ['node:*', 'fs', 'path', 'os', 'child_process', 'crypto', 'stream', 'util', 'events', 'ssh2']
 
+// Workspace packages that ship TypeScript source (no built JS) must be bundled
+// into the extension, never externalized — Node cannot `require` their `.ts` entry.
+const ALWAYS_BUNDLED_PACKAGES = ['@opencroft/core', '@opencroft/client', '@opencroft/server']
+
 function toCompileErrors(messages: esbuild.Message[]): CompileError[] {
   return messages.map((m) => ({
     file: m.location?.file ?? '(unknown)',
@@ -27,8 +31,16 @@ function hostVirtualPlugin(side: 'client' | 'server', extensionId: string): esbu
         path: '@ext/host',
         namespace: 'ext-host',
       }))
+      build.onResolve({ filter: /^@opencroft\/server$/ }, () => ({
+        path: '@ext/host',
+        namespace: 'ext-host',
+      }))
       build.onResolve({ filter: /^@ext\/ui$/ }, () => ({
         path: '@ext/ui',
+        namespace: 'ext-host',
+      }))
+      build.onResolve({ filter: /^@opencroft\/client$/ }, () => ({
+        path: '@opencroft/client',
         namespace: 'ext-host',
       }))
       // Redirect react imports to host's React (prevents duplicate React copies)
@@ -143,10 +155,40 @@ export const DialogTitle = ui.DialogTitle;
 export const DialogTrigger = ui.DialogTrigger;
 export const FileBrowser = ui.FileBrowser;
 export const FileManagerProvider = ui.FileManagerProvider;
+export const InspectorTerminalBody = ui.InspectorTerminalBody;
 export const CommandBar = ui.CommandBar;
 export const CommandBarMenu = ui.CommandBarMenu;
 export const CommandBarMenuItem = ui.CommandBarMenuItem;
 export default ui;
+`,
+      loader: 'js',
+    }
+  }
+  if (specifier === '@opencroft/client') {
+    return {
+      contents: `
+const api = globalThis.__extHost;
+if (!api) { throw new Error('Extension API not installed'); }
+const host = api.host;
+const ui = api.ui;
+const assetUrl = (p) => {
+  const [scope, slug] = ${quoted}.split('/');
+  return '/api/ext/' + scope + '/' + slug + '/assets/' + String(p).replace(/^\\/+/, '');
+};
+const routeUrl = (p) => {
+  const [scope, slug] = ${quoted}.split('/');
+  return '/api/ext/' + scope + '/' + slug + '/http/' + String(p).replace(/^\\/+/, '');
+};
+export const legacy = {
+  ...host,
+  ...ui,
+  extensionId: ${quoted},
+  assetUrl,
+  routeUrl,
+  invoke: (name, ...args) => host.callAction(${quoted}, name, args),
+  dispatch: (nodeId, actionId, params) => host.callNodeAction(nodeId, actionId, params),
+  createStorage: (key) => host.createStorage(${quoted}, key),
+};
 `,
       loader: 'js',
     }
@@ -206,8 +248,8 @@ export default host;
 }
 
 function serverHostShim(specifier: string): esbuild.OnLoadResult {
-  if (specifier === '@ext/ui') {
-    return { contents: 'throw new Error("@ext/ui is only available on the client");', loader: 'js' }
+  if (specifier === '@ext/ui' || specifier === '@opencroft/client') {
+    return { contents: `throw new Error("${specifier} is only available on the client");`, loader: 'js' }
   }
   return {
     contents: `
@@ -222,7 +264,7 @@ export const exec = host.exec;
 export const execFile = host.execFile;
 export const cacheDir = host.cacheDir;
 export const crypto = host.crypto;
-export const prisma = host.prisma;
+export const secrets = host.secrets;
 export const settings = host.settings;
 export const graph = host.graph;
 export const storage = host.storage;
@@ -231,6 +273,8 @@ export const secretsStore = host.secretsStore;
 export const localhost = host.localhost;
 export const wsl = host.wsl;
 export const openclaw = host.openclaw;
+export const terminal = host.terminal;
+export const ssh = host.ssh;
 export const extensionId = host.extensionId;
 `,
     loader: 'js',
@@ -265,7 +309,7 @@ async function compileSide(extensionId: string, manifest: ExtensionManifest, sid
   const outDir = extDistDir(extensionId)
   await fs.mkdir(outDir, { recursive: true })
 
-  const entries = side === 'client' ? ['src/client.tsx', 'src/client.ts', 'src/index.tsx', 'src/index.ts'] : ['server/index.ts', 'server/index.tsx']
+  const entries = side === 'client' ? ['src/client.tsx', 'src/client.ts', 'src/index.tsx', 'src/index.ts'] : ['server/index.ts', 'server/index.tsx', 'extension.ts', 'extension.tsx']
   const entry = manifest.main && side === 'server' ? path.join(src, manifest.main) : await pickEntry(src, entries)
   if (!entry) {
     return { errors: [], warnings: [] }
@@ -280,7 +324,7 @@ async function compileSide(extensionId: string, manifest: ExtensionManifest, sid
   // then run against a different copy of the same package in the app's
   // node_modules causes version/ABI clashes. Keep them as runtime requires,
   // resolved from the extension's node_modules by the loader.
-  const serverExternals = side === 'server' ? [...SERVER_EXTERNAL_PACKAGES, ...(await readDependencyNames(extensionId))] : []
+  const serverExternals = side === 'server' ? [...SERVER_EXTERNAL_PACKAGES, ...(await readDependencyNames(extensionId)).filter((name) => !ALWAYS_BUNDLED_PACKAGES.includes(name))] : []
 
   try {
     const result = await esbuild.build({

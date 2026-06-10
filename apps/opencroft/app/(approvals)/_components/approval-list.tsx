@@ -1,6 +1,6 @@
 'use client'
 
-import { Badge } from '@opencroft/ui-kit/badge'
+import { Badge } from 'ui/badge'
 import { ShieldQuestion } from 'lucide-react'
 import { useEffect } from 'react'
 import { listPendingApprovals } from '@/app/(approvals)/_server/actions'
