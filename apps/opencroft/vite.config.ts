@@ -4,6 +4,7 @@ import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
 import { nitro } from 'nitro/vite'
 import { defineConfig } from 'vite'
+import { ssrWatchdog } from './vite-ssr-watchdog'
 
 export default defineConfig({
   server: {
@@ -34,6 +35,7 @@ export default defineConfig({
     noExternal: ['agent-client', '@opencroft/terminal'],
   },
   plugins: [
+    ssrWatchdog(),
     devtools(),
     // Nitro builds the production server into .output/ and, in dev, serves the app
     // plus the extra server routes under serverDir. The terminal WebSocket lives at
