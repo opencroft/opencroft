@@ -5,6 +5,8 @@ import nodeOs from 'node:os'
 import nodePath from 'node:path'
 import { db } from '@opencroft/db'
 import type { HostSecretsApi } from '@opencroft/server'
+import type { ServerConfig, TerminalContext } from '@opencroft/terminal'
+import { exec, resolveKeyContent, sshExec, terminalExec, terminalRun } from '@opencroft/terminal/server'
 import { gateway } from '@/app/(openclaw)/_server/gateway-client'
 import { getSetting, setSetting } from '@/app/(settings)/_server/actions'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
@@ -12,9 +14,6 @@ import type { GraphData } from '@/app/(space)/_server/types'
 import { cacheDir } from '@/server/cache'
 import { decrypt, encrypt } from '@/server/crypto'
 import { secrets } from '@/server/secrets'
-import { exec } from '@/server/shell'
-import { resolveKeyContent, type ServerConfig, sshExec } from '@/server/ssh'
-import { type TerminalContext, terminalExec, terminalRun } from '@/server/terminal'
 
 function randomToken(bytes = 32): string {
   return randomBytes(bytes).toString('hex')

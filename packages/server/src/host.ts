@@ -2,32 +2,13 @@
  * Server-side host API available to an extension's server module. The runtime
  * is injected by the host; these are the type declarations.
  */
+
 import type * as nodeFs from 'node:fs'
 import type * as nodeOs from 'node:os'
 import type * as nodePath from 'node:path'
+import type { ServerConfig, TerminalContext } from '@opencroft/terminal'
 
-/** A terminal execution context (local, WSL, SSH, or docker-exec). */
-export interface TerminalContext {
-  type: string
-  distro?: string
-  host?: string
-  port?: number
-  username?: string
-  password?: string
-  keyPath?: string
-  via?: TerminalContext
-  contextName?: string
-  containerId?: string
-  [key: string]: unknown
-}
-
-export interface ServerConfig {
-  address: string
-  port: number
-  username: string
-  keyPath?: string
-  password?: string
-}
+export type { ServerConfig, TerminalContext }
 
 export interface GraphNodeRecord {
   id: string

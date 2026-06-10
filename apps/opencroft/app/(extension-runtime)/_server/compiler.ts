@@ -155,6 +155,7 @@ export const DialogTitle = ui.DialogTitle;
 export const DialogTrigger = ui.DialogTrigger;
 export const FileBrowser = ui.FileBrowser;
 export const FileManagerProvider = ui.FileManagerProvider;
+export const Terminal = ui.Terminal;
 export const InspectorTerminalBody = ui.InspectorTerminalBody;
 export const CommandBar = ui.CommandBar;
 export const CommandBarMenu = ui.CommandBarMenu;
@@ -179,6 +180,7 @@ const routeUrl = (p) => {
   const [scope, slug] = ${quoted}.split('/');
   return '/api/ext/' + scope + '/' + slug + '/http/' + String(p).replace(/^\\/+/, '');
 };
+export const Terminal = ui.Terminal;
 export const legacy = {
   ...host,
   ...ui,

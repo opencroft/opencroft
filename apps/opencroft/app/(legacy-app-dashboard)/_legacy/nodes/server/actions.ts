@@ -1,13 +1,10 @@
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import pathLib from 'node:path'
-
+import { exec, setPermissions } from '@opencroft/terminal/server'
 import { createServerFn } from '@tanstack/react-start'
-
-import { setPermissions } from '@/app/(server)/_server/ssh-utils'
 import { getSshFeature, type Server, slug } from '@/app/(server)/_server/types'
 import { cacheDir } from '@/server/cache'
-import { exec } from '@/server/shell'
 
 interface SshConfigEntry {
   host: string

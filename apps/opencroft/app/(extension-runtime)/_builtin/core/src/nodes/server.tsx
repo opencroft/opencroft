@@ -21,7 +21,7 @@ import {
   Separator,
 } from '@ext/ui';
 import { PinButton, StatsList, PinnedBody, InspectorFilesBody } from '../shared';
-import { InspectorTerminalBody } from '@ext/ui';
+import { Terminal } from '@ext/ui';
 
 void Badge;
 
@@ -253,7 +253,7 @@ export function ServerTerminalTab({
     );
   }
   return (
-    <InspectorTerminalBody
+    <Terminal
       connection={{
         type: 'ssh',
         config: {

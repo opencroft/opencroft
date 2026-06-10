@@ -1,10 +1,9 @@
-import { execFile } from 'child_process'
-import { promises as fs } from 'fs'
-import os from 'os'
-import path from 'path'
+import { execFile } from 'node:child_process'
+import { promises as fs } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 
-import { setPermissions } from '@/app/(server)/_server/ssh-utils'
-import { exec } from '@/server/shell'
+import { exec } from './shell'
 
 export interface SshKey {
   name: string
@@ -18,6 +17,21 @@ export interface SshKey {
 const isWindows = os.platform() === 'win32'
 const sshDir = path.join(os.homedir(), '.ssh')
 const keysDir = path.join(sshDir, 'keys')
+
+export function setPermissions(filePath: string): Promise<void> {
+  if (!isWindows) {
+    return fs.chmod(filePath, 0o600)
+  }
+  return new Promise((resolve, reject) => {
+    execFile('icacls', [filePath, '/inheritance:r', '/grant:r', `${os.userInfo().username}:F`], (err) => {
+      if (err) {
+        reject(err)
+        return
+      }
+      resolve()
+    })
+  })
+}
 
 // --- Helpers ---
 

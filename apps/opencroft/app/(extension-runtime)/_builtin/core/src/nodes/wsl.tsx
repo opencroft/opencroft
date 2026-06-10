@@ -12,7 +12,7 @@ import {
   Label,
 } from '@ext/ui';
 import { PinButton, StatsList, PinnedBody, InspectorFilesBody } from '../shared';
-import { InspectorTerminalBody } from '@ext/ui';
+import { Terminal } from '@ext/ui';
 
 const { useCallback, useEffect, useState } = React;
 
@@ -108,7 +108,7 @@ export function WslTerminalTab({
     );
   }
   return (
-    <InspectorTerminalBody connection={{ type: 'wsl', config: { distro: data.distro } }} />
+    <Terminal connection={{ type: 'wsl', config: { distro: data.distro } }} />
   );
 }
 

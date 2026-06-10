@@ -1,7 +1,8 @@
 import { execFile, spawn } from 'node:child_process'
 
-import { exec } from '@/server/shell'
-import { sshExec } from '@/server/ssh'
+import type { TerminalContext } from '../types'
+import { exec } from './shell'
+import { sshExec } from './ssh'
 
 function execFilePromise(cmd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -36,20 +37,6 @@ function execViaStdin(cmd: string, args: string[], script: string): Promise<stri
     })
     proc.stdin.end(script)
   })
-}
-
-export interface TerminalContext {
-  type: string
-  distro?: string
-  host?: string
-  port?: number
-  username?: string
-  password?: string
-  keyPath?: string
-  via?: TerminalContext
-  contextName?: string
-  containerId?: string
-  [key: string]: unknown
 }
 
 function shellJoin(args: string[]): string {

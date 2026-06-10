@@ -128,16 +128,6 @@ export interface ExtensionStorage {
   clear(): Promise<void>
 }
 
-export interface InspectorTerminalConnection {
-  type: 'ssh' | 'local' | 'wsl'
-  config: Record<string, unknown>
-}
-
-export interface InspectorTerminalBodyProps {
-  connection: InspectorTerminalConnection
-  command?: string
-}
-
 // ── Extension authoring ─────────────────────────────────────────────────────
 
 export declare const defineExtension: (decl: ExtensionDeclaration) => ExtensionDeclaration
@@ -197,7 +187,9 @@ export * from 'ui/ext'
 // App-provided components that live outside the `ui` package.
 export declare const FileBrowser: ComponentType<Record<string, unknown>>
 export declare const FileManagerProvider: ComponentType<Record<string, unknown>>
-export declare const InspectorTerminalBody: FC<InspectorTerminalBodyProps>
+export declare const Terminal: FC<import('@opencroft/terminal/client').TerminalProps>
+/** Pre-@opencroft/terminal name for the `Terminal` component. */
+export declare const InspectorTerminalBody: typeof Terminal
 export declare const CommandBar: ComponentType<Record<string, unknown>>
 export declare const CommandBarMenu: ComponentType<Record<string, unknown>>
 export declare const CommandBarMenuItem: ComponentType<Record<string, unknown>>

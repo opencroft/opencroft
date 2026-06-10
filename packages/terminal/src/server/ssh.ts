@@ -1,20 +1,9 @@
-import { spawn } from 'child_process'
-import { promises as fs } from 'fs'
-import path from 'path'
-import { Client, type SFTPWrapper } from 'ssh2'
-import type { Readable } from 'stream'
+import { spawn } from 'node:child_process'
+import type { Readable } from 'node:stream'
+import { Client, type ClientChannel, type SFTPWrapper } from 'ssh2'
 
-import { cacheDir } from '@/server/cache'
-
-// --- Types ---
-
-export interface SshCredentials {
-  host: string
-  port?: number
-  username: string
-  password?: string
-  keyPath?: string
-}
+import type { ServerConfig, SshCredentials } from '../types'
+import { resolveKeyContent } from './keys'
 
 export interface SftpEntry {
   name: string
@@ -24,62 +13,6 @@ export interface SftpEntry {
 }
 
 type SshTarget = string | SshCredentials
-
-// --- Key ref resolver ---
-
-function parseKeyRef(keyPath?: string): { storeId: string; name: string } | null {
-  if (!keyPath || keyPath.includes('/') || /^[A-Z]:\\/i.test(keyPath)) {
-    return null
-  }
-  const colon = keyPath.indexOf(':')
-  if (colon < 0) {
-    return null
-  }
-  return { storeId: keyPath.slice(0, colon), name: keyPath.slice(colon + 1) }
-}
-
-async function resolveKeyContent(keyPath?: string): Promise<string | undefined> {
-  if (!keyPath) {
-    return undefined
-  }
-  const parsed = parseKeyRef(keyPath)
-  if (parsed) {
-    // Search all extension cache dirs for the key
-    const baseCache = cacheDir('extensions')
-    const candidates = [path.join(baseCache, 'local', 'core', 'key-store', parsed.storeId, parsed.name), path.join(baseCache, 'builtin', 'core', 'key-store', parsed.storeId, parsed.name)]
-    for (const candidate of candidates) {
-      try {
-        return await fs.readFile(candidate, 'utf-8')
-      } catch {
-        /* try next */
-      }
-    }
-    // Brute-force scan
-    try {
-      const scopes = await fs.readdir(baseCache)
-      for (const scope of scopes) {
-        const scopeDir = path.join(baseCache, scope)
-        const stat = await fs.stat(scopeDir).catch(() => null)
-        if (!stat?.isDirectory()) {
-          continue
-        }
-        const exts = await fs.readdir(scopeDir).catch(() => [])
-        for (const ext of exts) {
-          const candidate = path.join(scopeDir, ext, 'key-store', parsed.storeId, parsed.name)
-          try {
-            return await fs.readFile(candidate, 'utf-8')
-          } catch {
-            /* try next */
-          }
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-    throw new Error(`SSH key not found: ${parsed.name} (store: ${parsed.storeId})`)
-  }
-  return fs.readFile(keyPath, 'utf-8')
-}
 
 // --- ssh2 connection ---
 
@@ -147,13 +80,10 @@ function nativeExec(alias: string, command: string): Promise<string> {
   })
 }
 
-function ssh2Exec(creds: SshCredentials, command: string): Promise<string> {
-  return new Promise(async (resolve, reject) => {
-    const client = await connectSsh2(creds).catch(reject)
-    if (!client) {
-      return
-    }
+async function ssh2Exec(creds: SshCredentials, command: string): Promise<string> {
+  const client = await connectSsh2(creds)
 
+  return new Promise((resolve, reject) => {
     client.exec(command, (err, channel) => {
       if (err) {
         client.end()
@@ -188,6 +118,56 @@ export async function exec(target: SshTarget, command: string): Promise<string> 
     return nativeExec(target, command)
   }
   return ssh2Exec(target, command)
+}
+
+/**
+ * One-shot exec against a `ServerConfig`. Unlike `exec`, it tolerates non-zero
+ * exit codes and only rejects when the command produced stderr with no stdout.
+ */
+export async function sshExec(config: ServerConfig, command: string): Promise<string> {
+  const privateKey = await resolveKeyContent(config.keyPath)
+  return new Promise<string>((resolve, reject) => {
+    const client = new Client()
+    let stdout = ''
+    let stderr = ''
+    client.on('ready', () => {
+      client.exec(command, (err, stream) => {
+        if (err) {
+          client.end()
+          reject(err)
+          return
+        }
+        stream.on('data', (chunk: Buffer) => {
+          stdout += chunk.toString()
+        })
+        stream.stderr.on('data', (chunk: Buffer) => {
+          stderr += chunk.toString()
+        })
+        stream.on('close', () => {
+          client.end()
+          if (stderr && !stdout) {
+            reject(new Error(stderr))
+            return
+          }
+          resolve(stdout)
+        })
+      })
+    })
+    client.on('error', reject)
+    const connectOptions: Record<string, unknown> = {
+      host: config.address,
+      port: config.port || 22,
+      username: config.username || 'root',
+      readyTimeout: 10000,
+    }
+    if (config.password) {
+      connectOptions.password = config.password
+    }
+    if (privateKey) {
+      connectOptions.privateKey = privateKey
+    }
+    client.connect(connectOptions)
+  })
 }
 
 export async function upload(target: SshTarget, remotePath: string, stream: Readable): Promise<void> {
@@ -390,7 +370,7 @@ export async function shell(creds: SshCredentials, cols: number, rows: number, c
   const client = await connectSsh2(creds)
 
   return new Promise((resolve, reject) => {
-    const onChannel = (err: Error | undefined, channel: import('ssh2').ClientChannel) => {
+    const onChannel = (err: Error | undefined, channel: ClientChannel) => {
       if (err) {
         client.end()
         reject(err)

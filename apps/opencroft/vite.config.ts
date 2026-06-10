@@ -29,9 +29,9 @@ export default defineConfig({
   },
   ssr: {
     external: ['ssh2', 'cpu-features', '@lydell/node-pty', 'esbuild', 'esbuild-wasm', 'better-sqlite3'],
-    // agent-client ships TS source and must be transpiled for SSR (it spawns the
-    // ACP harness via node:child_process, so it only ever runs server-side).
-    noExternal: ['agent-client'],
+    // agent-client and @opencroft/terminal ship TS source and must be transpiled
+    // for SSR; their native deps (ssh2, node-pty) stay external via the list above.
+    noExternal: ['agent-client', '@opencroft/terminal'],
   },
   plugins: [
     devtools(),

@@ -42,7 +42,7 @@ function hasDocker(features: ServerFeature[] | undefined): boolean {
   return features?.some((f) => f.type === 'docker') ?? false
 }
 
-function buildTerminalConfig(data: ServerData): import('@/app/(terminal)/_lib/types').TerminalConfig | null {
+function buildTerminalConfig(data: ServerData): import('@opencroft/terminal').TerminalConfig | null {
   const ssh = getSsh(data.features)
   if (!ssh) {
     return null

@@ -1,5 +1,6 @@
 'use client'
 
+import { Terminal } from '@opencroft/terminal/client'
 import { Handle, NodeResizer, Position, useEdges, useNodeId, useNodes, useReactFlow, useUpdateNodeInternals } from '@xyflow/react'
 import * as icons from 'lucide-react'
 import * as React from 'react'
@@ -20,7 +21,6 @@ import type { ExtensionContextType, ExtensionHandle } from '@/app/(extension-run
 import { FileBrowser } from '@/app/(filemanager)/_components/file-browser'
 import { FileManagerProvider } from '@/app/(filemanager)/_components/filemanager-provider'
 import { useDockerContainers, useDockerSnapshotReceived, useSeedDockerContainers } from '@/app/(sse)/_lib/sse-events-store'
-import { InspectorTerminalBody } from '@/components/inspector-terminal'
 import { ControlledInput } from '@/components/ui/input/controlled-input'
 
 export interface ExtensionComponentProps<D = Record<string, unknown>> {
@@ -251,7 +251,9 @@ export const extensionUiApi = {
   ControlledInput,
   FileBrowser,
   FileManagerProvider,
-  InspectorTerminalBody,
+  Terminal,
+  // Pre-@opencroft/terminal name for already-compiled extensions.
+  InspectorTerminalBody: Terminal,
   CommandBar,
   CommandBarMenu,
   CommandBarMenuItem,

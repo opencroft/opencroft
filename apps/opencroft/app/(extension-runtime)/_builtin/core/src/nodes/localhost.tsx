@@ -8,7 +8,7 @@ import {
   useReactFlow,
 } from '@ext/host';
 import { PinButton, StatsList, PinnedBody, InspectorFilesBody } from '../shared';
-import { InspectorTerminalBody } from '@ext/ui';
+import { Terminal } from '@ext/ui';
 
 const { useCallback, useEffect, useState } = React;
 
@@ -107,7 +107,7 @@ export function LocalhostInspector() {
 
 export function LocalhostTerminalTab() {
   return (
-    <InspectorTerminalBody connection={{ type: 'local', config: {} }} />
+    <Terminal connection={{ type: 'local', config: {} }} />
   );
 }
 

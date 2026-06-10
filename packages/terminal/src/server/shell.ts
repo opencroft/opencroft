@@ -1,6 +1,6 @@
-import { execFile, spawn as nodeSpawn, type SpawnOptions } from 'child_process'
-import os from 'os'
-import type { Readable } from 'stream'
+import { execFile, spawn as nodeSpawn, type SpawnOptions } from 'node:child_process'
+import os from 'node:os'
+import type { Readable } from 'node:stream'
 
 const isWindows = os.platform() === 'win32'
 

@@ -1,11 +1,10 @@
+import type { SshCredentials } from '@opencroft/terminal'
+import { ssh as sshClient } from '@opencroft/terminal/server'
 import { createServerFn } from '@tanstack/react-start'
 import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import path from 'path'
-
 import { getSshFeature, type Server, ServerOS, slug } from '@/app/(server)/_server/types'
-import type { SshCredentials } from '@/app/(ssh)/_server/ssh-client'
-import * as sshClient from '@/app/(ssh)/_server/ssh-client'
 import * as sshConfig from '@/app/(ssh)/_server/ssh-config'
 
 // --- SSH target resolution ---

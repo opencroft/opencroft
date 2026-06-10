@@ -18,7 +18,6 @@ import {
 } from '@xyflow/react'
 import { SelectionMode } from '@xyflow/system'
 import '@xyflow/react/dist/style.css'
-import '@xterm/xterm/css/xterm.css'
 import { Box, GripVertical, Lock, LockOpen, PanelLeft, Trash2, Wrench } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
