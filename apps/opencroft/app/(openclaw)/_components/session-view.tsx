@@ -2,7 +2,7 @@
 
 import { Flex } from 'ui/layout/flex'
 import { CommandBar, CommandBarMenu } from '@/app/(dashboard)/_canvas/command-bar'
-import { OverlayContext, useOverlayState } from '@/app/(dashboard)/_canvas/overlay-context'
+import { OverlayProvider, useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
 import { AgentChat, AgentChatInput, useAgentSession } from '@/app/(openclaw)/_components/agent-chat'
 import type { OpenclawSession } from '@/app/(openclaw)/_server/actions'
 import { ChatArea, ChatBar, ChatContent } from '@/components/experimental/chat'
@@ -12,32 +12,40 @@ interface Props {
 }
 
 export function SessionView({ session: sessionInfo }: Props) {
-  const session = useAgentSession(sessionInfo.key)
-  const slots = useOverlayState()
   const title = sessionInfo.title ?? shortKey(sessionInfo.key)
   return (
     <Flex expanded className='min-h-0 min-w-0'>
       <SessionHeader title={title} sessionKey={sessionInfo.key} />
-      <OverlayContext.Provider value={{ setSlot: slots.setSlot }}>
-        <AgentChatInput session={session} placeholder={`Message ${title}…`} />
-        <ChatArea>
-          <ChatContent compact>
-            <AgentChat session={session} />
-            {slots.content}
-          </ChatContent>
-          <ChatBar compact>
-            <div className='w-full relative'>
-              {slots.menu && (
-                <div className='absolute bottom-full left-0 right-0 mb-2 z-20'>
-                  <CommandBarMenu>{slots.menu}</CommandBarMenu>
-                </div>
-              )}
-              {slots.bar && <CommandBar>{slots.bar}</CommandBar>}
-            </div>
-          </ChatBar>
-        </ChatArea>
-      </OverlayContext.Provider>
+      <OverlayProvider>
+        <SessionBody sessionKey={sessionInfo.key} title={title} />
+      </OverlayProvider>
     </Flex>
+  )
+}
+
+function SessionBody({ sessionKey, title }: { sessionKey: string; title: string }) {
+  const session = useAgentSession(sessionKey)
+  const { slots } = useOverlay()
+  return (
+    <>
+      <AgentChatInput session={session} placeholder={`Message ${title}…`} />
+      <ChatArea>
+        <ChatContent compact>
+          <AgentChat session={session} />
+          {slots.content}
+        </ChatContent>
+        <ChatBar compact>
+          <div className='w-full relative'>
+            {slots.menu && (
+              <div className='absolute bottom-full left-0 right-0 mb-2 z-20'>
+                <CommandBarMenu>{slots.menu}</CommandBarMenu>
+              </div>
+            )}
+            {slots.bar && <CommandBar>{slots.bar}</CommandBar>}
+          </div>
+        </ChatBar>
+      </ChatArea>
+    </>
   )
 }
 

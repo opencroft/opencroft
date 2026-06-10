@@ -163,9 +163,7 @@ export declare const useNodeAccent: (...args: unknown[]) => unknown
 export declare const useNodeContext: (...args: unknown[]) => unknown
 export declare const inspectorIntent: (...args: unknown[]) => unknown
 export declare const useInspectorIntent: (...args: unknown[]) => unknown
-export declare const useOverlayBar: (...args: unknown[]) => unknown
-export declare const useOverlayMenu: (...args: unknown[]) => unknown
-export declare const useOverlayContent: (...args: unknown[]) => unknown
+export declare const useOverlay: (...args: unknown[]) => unknown
 
 // ── Streaming ────────────────────────────────────────────────────────────────
 

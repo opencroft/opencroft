@@ -11,7 +11,7 @@ import { CommandBar, CommandBarMenu, CommandBarMenuItem } from '@/app/(dashboard
 import { inspectorIntent, useInspectorIntent } from '@/app/(dashboard)/_canvas/inspector-intent'
 import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/(dashboard)/_canvas/node-card'
 import { NodeFrame, useNodeAccent } from '@/app/(dashboard)/_canvas/node-frame'
-import { useOverlayBar, useOverlayContent, useOverlayMenu } from '@/app/(dashboard)/_canvas/overlay-context'
+import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
 import { useNodeContext } from '@/app/(dashboard)/_extension-system/use-node-context'
 import { extensionRegistry } from '@/app/(extension-runtime)/_client/registry'
 import { broadcast, getStream, type Stream, subscribe, type TextChunk } from '@/app/(extension-runtime)/_client/stream'
@@ -102,6 +102,8 @@ export interface CommandModeDefinition {
   icon?: string
   description?: string
   shortcut?: CommandModeShortcut
+  /** Render the overlay content across the full canvas width instead of the compact chat column. */
+  fullWidth?: boolean
   component: React.ComponentType<CommandModeProps>
 }
 
@@ -273,9 +275,7 @@ export const extensionHostApi = {
   useNodeContext,
   inspectorIntent,
   useInspectorIntent,
-  useOverlayBar,
-  useOverlayMenu,
-  useOverlayContent,
+  useOverlay,
   useGraphNodes: useNodes,
   useGraphEdges: useEdges,
   useReactFlow,

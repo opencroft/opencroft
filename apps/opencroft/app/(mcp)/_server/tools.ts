@@ -853,7 +853,13 @@ async function hasHandleNodeAction(typeId: string | undefined): Promise<boolean>
   return Boolean(mod.nodeActions?.[typeId]?.handle)
 }
 
-export async function executeAgentTool(toolName: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<AgentToolExecResult> {
+export interface ToolCallOptions {
+  signal?: AbortSignal
+  /** Call made by the internal agent: skip the MCP approval queue (the agent chat has its own permission flow). */
+  internal?: boolean
+}
+
+export async function executeAgentTool(toolName: string, args: Record<string, unknown>, opts: ToolCallOptions = {}): Promise<AgentToolExecResult> {
   const registry = getSpacesRegistry()
   await registry.ensureLoaded()
 
@@ -874,9 +880,9 @@ export async function executeAgentTool(toolName: string, args: Record<string, un
 
     // Check requireApproval
     const d = (toolNode.data ?? {}) as unknown as AgentToolNodeData
-    const requiredApproval = d.requireApproval && !isYoloMode()
+    const requiredApproval = d.requireApproval && !isYoloMode() && !opts.internal
     if (requiredApproval) {
-      await awaitApproval({ tool: toolName, args, view: 'default', signal, spaceId: space.slug })
+      await awaitApproval({ tool: toolName, args, view: 'default', signal: opts.signal, spaceId: space.slug })
     }
 
     // Find connected handler via exec-out edge
@@ -2329,12 +2335,12 @@ function rejectionResult(reason: string): Record<string, unknown> {
   return { content: [{ type: 'text' as const, text }], isError: true }
 }
 
-export async function handleToolCall(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+export async function handleToolCall(name: string, args: Record<string, unknown>, opts: ToolCallOptions = {}): Promise<Record<string, unknown>> {
   const start = Date.now()
   const handler = handlers[name]
   if (!handler) {
     // Fall back to graph-defined agent tools
-    const execResult = await executeAgentTool(name, args, signal)
+    const execResult = await executeAgentTool(name, args, opts)
     await recordAudit({
       tool: name,
       args,
@@ -2345,18 +2351,18 @@ export async function handleToolCall(name: string, args: Record<string, unknown>
     return execResult.result as Record<string, unknown>
   }
   const meta = getApprovalMeta(handler)
-  const yolo = isYoloMode()
+  const approvalRequired = Boolean(meta) && !isYoloMode() && !opts.internal
   try {
-    if (meta && !yolo) {
+    if (approvalRequired) {
       const spaceId = typeof args.space === 'string' ? await resolveSpace(args) : undefined
-      await awaitApproval({ tool: name, args, view: meta.view, signal, spaceId })
+      await awaitApproval({ tool: name, args, view: meta?.view, signal: opts.signal, spaceId })
     }
     const result = await handler(args)
     await recordAudit({
       tool: name,
       args,
       result,
-      status: yolo && meta ? 'auto-approved' : meta ? 'approved' : 'auto-approved',
+      status: approvalRequired ? 'approved' : 'auto-approved',
       durationMs: Date.now() - start,
     })
     return result

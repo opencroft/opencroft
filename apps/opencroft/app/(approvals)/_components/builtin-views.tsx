@@ -8,7 +8,7 @@ import { type ApprovalViewProps, registerApprovalView } from '@/app/(approvals)/
 import { NodeDiffEditor } from '@/app/(approvals)/_components/node-diff-editor'
 import { readRemoteFile } from '@/app/(approvals)/_server/actions'
 import { NodeCard } from '@/app/(dashboard)/_canvas/node-card'
-import { useOverlayContent } from '@/app/(dashboard)/_canvas/overlay-context'
+import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
 import { cn } from '@/lib/utils'
 
 function FieldRow({ label, value }: { label: string; value: string }) {
@@ -42,6 +42,7 @@ function useRemoteFileContent(target: string | undefined, space: string | undefi
   const [content, setContent] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(requestId): re-read the file for every new approval request
   useEffect(() => {
     if (!target || !path) {
       return
@@ -92,7 +93,7 @@ function RemoteWriteView({ request }: ApprovalViewProps) {
     )
   }, [content, newContent, filePath])
 
-  useOverlayContent(diffNode)
+  useOverlay({ content: diffNode })
 
   return (
     <div className='space-y-3 px-3 py-2'>
@@ -130,7 +131,7 @@ function RemoteEditView({ request }: ApprovalViewProps) {
     )
   }, [content, oldString, newString, replaceAll, filePath])
 
-  useOverlayContent(diffNode)
+  useOverlay({ content: diffNode })
 
   return (
     <div className='space-y-3 px-3 py-2'>
@@ -191,7 +192,7 @@ function WriteNodePropertyView({ request }: ApprovalViewProps) {
     return <NodePropertyDiff nodeId={nodeId} path={propPath} current={current} next={value} />
   }, [nodeId, propPath, current, value])
 
-  useOverlayContent(diffNode)
+  useOverlay({ content: diffNode })
 
   return (
     <div className='space-y-3 px-3 py-2'>
@@ -220,7 +221,7 @@ function EditNodePropertyView({ request }: ApprovalViewProps) {
     return <NodePropertyDiff nodeId={nodeId} path={propPath} current={current} next={next} />
   }, [nodeId, propPath, current, oldString, newString, replaceAll])
 
-  useOverlayContent(diffNode)
+  useOverlay({ content: diffNode })
 
   return (
     <div className='space-y-3 px-3 py-2'>
@@ -323,8 +324,9 @@ function UpdateNodesView({ request }: ApprovalViewProps) {
     )
   }, [openUpdate])
 
-  useOverlayContent(diffNode)
+  useOverlay({ content: diffNode })
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(request.id): collapse the open diff when a new request arrives
   useEffect(() => {
     setOpenId(null)
   }, [request.id])

@@ -5,7 +5,7 @@ import { type ReactNode, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 import { type AcpSession, type LocalSource, type PendingAsk, useAcpSession } from '@/app/(agent)/_components/use-acp-session'
-import { useOverlayContent } from '@/app/(dashboard)/_canvas/overlay-context'
+import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
 import { AgentChat, AgentChatInput, type AgentSession, useAgentSession } from '@/app/(openclaw)/_components/agent-chat'
 
 interface AgentMeta {
@@ -53,7 +53,7 @@ function ChatHost({
     )
   }, [showChat, session, activeAgent, approvals])
 
-  useOverlayContent(contentNode)
+  useOverlay({ content: contentNode })
 
   return <AgentChatInput session={session} placeholder='Ask AI...' onSlashOpenChange={setSlashOpen} onFocus={() => onFocusChange(true)} leadingBarContent={createButton} />
 }
@@ -65,8 +65,8 @@ export function OpenclawAgentHost({ sessionKey, transformOutgoing, activeAgent, 
 
 export function LocalAgentHost({ source, transformOutgoing, activeAgent, createButton, focused, onFocusChange }: HostProps & { source: LocalSource }) {
   const acp = useAcpSession(source, transformOutgoing, activeAgent?.name)
-  // Stable element identity so ChatHost's memoized content (and useOverlayContent)
-  // don't re-fire every render — that would be an infinite update loop.
+  // Stable element identity so ChatHost's memoized content (and the published
+  // overlay slot) don't re-fire every render — that would be an infinite update loop.
   const approvals = useMemo(() => <Approvals acp={acp} />, [acp])
   return <ChatHost session={acp.session} activeAgent={activeAgent} createButton={createButton} focused={focused} onFocusChange={onFocusChange} approvals={approvals} />
 }

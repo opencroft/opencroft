@@ -180,6 +180,19 @@ class SSEEventsStore {
     this.emit()
   }
 
+  /** Replace the pending-AskUsers snapshot (used after an initial fetch). */
+  setPendingAskUsers = (requests: PendingAskUser[]): void => {
+    const next = new Map<string, PendingAskUser>()
+    for (const r of requests) {
+      next.set(r.id, r)
+    }
+    const stillValid = this.state.selectedAskUserId && next.has(this.state.selectedAskUserId) ? this.state.selectedAskUserId : null
+    const first = requests[0]?.id ?? null
+    const selected = stillValid ?? first
+    this.state = { ...this.state, pendingAskUsers: next, selectedAskUserId: selected }
+    this.emit()
+  }
+
   /** Select (or clear) a pending AskUser request. */
   setSelectedAskUser = (id: string | null): void => {
     if (this.state.selectedAskUserId === id) {

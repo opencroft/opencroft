@@ -13,7 +13,7 @@ import { Flex } from 'ui/layout/flex'
 import { Textarea } from 'ui/textarea'
 import { getAutoApprove, setAutoApprove } from '@/app/(approvals)/_server/actions'
 import { CommandBarMenuItem } from '@/app/(dashboard)/_canvas/command-bar'
-import { useOverlayBar, useOverlayMenu } from '@/app/(dashboard)/_canvas/overlay-context'
+import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
 import { messageId, normalizeHistory, type OpenclawMessage, type RawChatMessage } from '@/app/(openclaw)/_lib/messages'
 import { listCommands, loadSession, type OpenclawCommand, sendMessage } from '@/app/(openclaw)/_server/actions'
 import { cn } from '@/lib/utils'
@@ -194,6 +194,7 @@ function useStickToBottom(resetKey: string) {
     }
   }, [])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(resetKey): re-pin the scroll to the bottom when the session changes
   useLayoutEffect(() => {
     const root = rootRef.current
     const viewport = root?.closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null
@@ -252,7 +253,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName }: AgentC
           ),
         )
       )}
-      {session.waiting && <ThinkingIndicator botName={displayName} />}
+      {session.waiting && <ThinkingIndicator />}
     </Flex>
   )
 }
@@ -540,7 +541,7 @@ const THINKING_PHRASES = [
   'Working...',
 ] as const
 
-export function ThinkingIndicator({ botName }: { botName: string }) {
+export function ThinkingIndicator() {
   const [phrase, setPhrase] = useState(() => THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)])
   const prevPhrase = useRef(phrase)
   const [visible, setVisible] = useState(0)
@@ -785,8 +786,7 @@ export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlu
     [leadingBarContent, text, session.sending, session.waiting, session.stop, inputPlaceholder, autoFocus, autoApprove],
   )
 
-  useOverlayMenu(menuNode)
-  useOverlayBar(barNode)
+  useOverlay({ menu: menuNode, bar: barNode })
 
   return null
 }

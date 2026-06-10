@@ -24,7 +24,7 @@ function mcpErr(id: number | string | null, code: number, message: string): MCPR
   return { jsonrpc: '2.0', id, error: { code, message } }
 }
 
-async function handleMethod(method: string, params: Record<string, unknown> | undefined, signal?: AbortSignal) {
+async function handleMethod(method: string, params: Record<string, unknown> | undefined, opts: { signal?: AbortSignal; internal?: boolean }) {
   switch (method) {
     case 'initialize':
       return {
@@ -48,7 +48,7 @@ async function handleMethod(method: string, params: Record<string, unknown> | un
       }
 
       const args = (params?.arguments as Record<string, unknown>) ?? {}
-      return handleToolCall(name, args, signal)
+      return handleToolCall(name, args, opts)
     }
 
     default:
@@ -72,7 +72,8 @@ export const Route = createFileRoute('/(mcp)/api/mcp')({
         }
 
         try {
-          const result = await handleMethod(body.method, body.params as Record<string, unknown> | undefined, request.signal)
+          const internal = request.headers.get('x-opencroft-internal') === '1'
+          const result = await handleMethod(body.method, body.params as Record<string, unknown> | undefined, { signal: request.signal, internal })
 
           // Notifications have no id and no response body
           if (body.id === null || body.id === undefined) {
