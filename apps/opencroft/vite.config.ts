@@ -25,11 +25,13 @@ export default defineConfig({
   },
   // Native / server-only modules must never be pulled into client dep optimization
   // or bundled for SSR — they are resolved from node_modules at runtime.
+  // @tailwindcss/node + oxide + lightningcss back the runtime extension CSS
+  // compiler and ship native binaries that break the bundler.
   optimizeDeps: {
-    exclude: ['ssh2', 'cpu-features', '@lydell/node-pty', 'esbuild', 'esbuild-wasm', 'better-sqlite3'],
+    exclude: ['ssh2', 'cpu-features', '@lydell/node-pty', 'esbuild', 'esbuild-wasm', 'better-sqlite3', '@tailwindcss/node', '@tailwindcss/oxide', 'lightningcss'],
   },
   ssr: {
-    external: ['ssh2', 'cpu-features', '@lydell/node-pty', 'esbuild', 'esbuild-wasm', 'better-sqlite3'],
+    external: ['ssh2', 'cpu-features', '@lydell/node-pty', 'esbuild', 'esbuild-wasm', 'better-sqlite3', '@tailwindcss/node', '@tailwindcss/oxide', 'lightningcss'],
     // agent-client and @opencroft/terminal ship TS source and must be transpiled
     // for SSR; their native deps (ssh2, node-pty) stay external via the list above.
     noExternal: ['agent-client', '@opencroft/terminal'],
@@ -48,8 +50,8 @@ export default defineConfig({
       // the bundled copy can't resolve its conpty worker script or per-platform
       // native binary at runtime. traceDeps copies the package (+ its platform
       // binary subpackage) into .output so the build stays self-contained.
-      rollupConfig: { external: [/^@sentry\//, /^@lydell\/node-pty/] },
-      traceDeps: ['@lydell/node-pty*'],
+      rollupConfig: { external: [/^@sentry\//, /^@lydell\/node-pty/, /^@tailwindcss\/(node|oxide)/, /^lightningcss/] },
+      traceDeps: ['@lydell/node-pty*', 'tailwindcss', '@tailwindcss/node', '@tailwindcss/oxide*', 'lightningcss*', 'tw-animate-css'],
     }),
     tailwindcss(),
     tanstackStart({
