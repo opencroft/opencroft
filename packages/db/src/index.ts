@@ -5,7 +5,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { schema } from './schema'
 
 // SQLite lives under the app's working directory. On a fresh data volume, seed
-// it from the baked schema copy (mirrors the previous Prisma setup).
+// it from the baked schema copy.
 const dataDir = path.join(process.cwd(), 'data')
 const dbFile = path.join(dataDir, 'opencroft.db')
 const seedFile = path.join(process.cwd(), 'seed.db')
