@@ -1836,7 +1836,16 @@ function buildHandlers(): Record<string, ToolHandler> {
     // ── list_extensions ─────────────────────────────────────────────
     list_extensions: async () => {
       const records = await listLocalExtensions()
-      return textResult(JSON.stringify(records, null, 2))
+      // Summaries only — full file contents (get_extension) would make the
+      // response several MB and break the MCP transport.
+      const summaries = records.map((record) => ({
+        id: record.id,
+        slug: record.slug,
+        manifest: record.manifest,
+        files: Object.keys(record.files),
+        updatedAt: record.updatedAt,
+      }))
+      return textResult(JSON.stringify(summaries, null, 2))
     },
 
     // ── get_extension ───────────────────────────────────────────────
