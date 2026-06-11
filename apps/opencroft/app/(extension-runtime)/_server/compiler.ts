@@ -1,6 +1,8 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 
+import { compile as compileTailwind } from '@tailwindcss/node'
+import { Scanner } from '@tailwindcss/oxide'
 import * as esbuild from 'esbuild'
 
 import { extDir, extDistDir, projectRoot } from '@/app/(extension-runtime)/_server/paths'
@@ -356,10 +358,44 @@ async function compileSide(extensionId: string, manifest: ExtensionManifest, sid
   }
 }
 
+// Extensions compile at runtime, long after the host CSS was built — so each
+// extension gets its own Tailwind pass over its client sources. The entry
+// references the host theme without re-emitting tokens or preflight, and the
+// utilities land in the host's `utilities` cascade layer so both sheets merge
+// predictably (identical classes compile to identical rules).
+//
+// The explicit layer statement matters: extension sheets are injected BEFORE
+// the host stylesheet (see _client/loader.ts), so the first sheet to load must
+// establish the same layer order the host expects, and duplicated utilities
+// resolve to the host's canonical ordering.
+const EXT_CSS_ENTRY = `
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' theme(reference);
+@import 'ui/theme.css' theme(reference);
+@import 'tw-animate-css';
+@import 'tailwindcss/utilities.css' layer(utilities);
+`
+
+async function compileClientCss(extensionId: string): Promise<CompileError[]> {
+  const srcDir = path.join(extDir(extensionId), 'src')
+  try {
+    const compiler = await compileTailwind(EXT_CSS_ENTRY, { base: projectRoot(), onDependency: () => {} })
+    const scanner = new Scanner({ sources: [{ base: srcDir, pattern: '**/*', negated: false }] })
+    const css = compiler.build(scanner.scan())
+    await fs.writeFile(path.join(extDistDir(extensionId), 'client.css'), css)
+    return []
+  } catch (err) {
+    return [{ file: 'client.css', message: String(err) }]
+  }
+}
+
 export async function buildExtension(extensionId: string, manifest: ExtensionManifest): Promise<BuildResult> {
   const [client, server] = await Promise.all([compileSide(extensionId, manifest, 'client'), compileSide(extensionId, manifest, 'server')])
   const errors = [...client.errors, ...server.errors]
   const warnings = [...client.warnings, ...server.warnings]
+  if (errors.length === 0) {
+    errors.push(...(await compileClientCss(extensionId)))
+  }
   return {
     success: errors.length === 0,
     errors,

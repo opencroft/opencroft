@@ -19,9 +19,33 @@ async function importBundle(url: string): Promise<LoadedModule> {
   return import(/* webpackIgnore: true */ /* @vite-ignore */ url) as Promise<LoadedModule>
 }
 
+// Each extension ships a runtime-compiled stylesheet (utilities for the
+// classes its client code uses, referencing the host theme). Inserted BEFORE
+// the host styles: when both sheets define the same utility, the host's
+// canonical Tailwind ordering must win the cascade — an extension sheet loaded
+// after the host would e.g. let its `.hidden` override the host's `md:block`.
+function injectStyles(extensionId: string, cacheKey: number): void {
+  const [scope, slug] = extensionId.split('/')
+  const href = `/api/ext/${scope}/${slug}/client.css?v=${cacheKey}`
+  const id = `ext-css-${scope}-${slug}`
+  const existing = document.getElementById(id)
+  if (existing instanceof HTMLLinkElement) {
+    existing.href = href
+    return
+  }
+  const link = document.createElement('link')
+  link.id = id
+  link.rel = 'stylesheet'
+  link.href = href
+  const hostStyles = document.head.querySelector('link[rel="stylesheet"]:not([id^="ext-css-"]), style')
+  document.head.insertBefore(link, hostStyles)
+}
+
 export async function loadExtension(manifest: ExtensionManifest): Promise<ExtensionDeclaration | null> {
   installClientHost()
-  const url = bundleUrl(manifest.id, Date.now())
+  const cacheKey = Date.now()
+  const url = bundleUrl(manifest.id, cacheKey)
+  injectStyles(manifest.id, cacheKey)
   try {
     const mod = await importBundle(url)
     const decl = mod.default ?? mod.extension
