@@ -10,7 +10,7 @@ export const DEFAULT_SELECTION: AgentSelection = {
   adapterId: 'claude',
   model: 'glm-4.6',
   apiKey: '',
-  cwd: '/app',
+  cwd: process.cwd(),
 }
 
 export async function readSelection(): Promise<AgentSelection> {

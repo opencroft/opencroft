@@ -96,12 +96,12 @@ export function AgentChat({ eventsUrl, toolViews = DEFAULT_TOOL_VIEWS, className
         )}
 
         <Flex row align='center' className='gap-3 text-xs text-muted-foreground'>
-          <label className='flex items-center gap-1.5 cursor-pointer'>
-            <Switch size='sm' checked={showThinking} onCheckedChange={setShowThinking} />
+          <label htmlFor='agent-chat-thinking' className='flex items-center gap-1.5 cursor-pointer'>
+            <Switch id='agent-chat-thinking' size='sm' checked={showThinking} onCheckedChange={setShowThinking} />
             Thinking
           </label>
-          <label className='flex items-center gap-1.5 cursor-pointer'>
-            <Switch size='sm' checked={showTools} onCheckedChange={setShowTools} />
+          <label htmlFor='agent-chat-tools' className='flex items-center gap-1.5 cursor-pointer'>
+            <Switch id='agent-chat-tools' size='sm' checked={showTools} onCheckedChange={setShowTools} />
             Tools
           </label>
         </Flex>

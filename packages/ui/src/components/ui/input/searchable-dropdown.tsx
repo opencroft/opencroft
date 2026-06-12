@@ -42,6 +42,8 @@ interface SearchableDropdownProps {
   placeholder?: string;
   className?: string;
   keepOpenOnSelect?: boolean;
+  // Allow committing a typed value that isn't in the options list.
+  allowCustom?: boolean;
 }
 
 export function SearchableDropdown({
@@ -54,13 +56,26 @@ export function SearchableDropdown({
   placeholder = 'Select...',
   className,
   keepOpenOnSelect = false,
+  allowCustom = false,
 }: SearchableDropdownProps) {
   const [open, setOpen] = React.useState(false);
+  const [query, setQuery] = React.useState('');
 
   const handleClear = (e: React.MouseEvent) => {
     e.stopPropagation();
     onChange('');
   };
+
+  const commit = (next: string) => {
+    onChange(next === value ? '' : next);
+    if (!keepOpenOnSelect) {
+      setOpen(false);
+    }
+  };
+
+  const trimmed = query.trim();
+  const showCustom =
+    allowCustom && trimmed.length > 0 && !options.includes(trimmed);
 
   return (
     <div className={cn('grid gap-2', className)}>
@@ -92,9 +107,16 @@ export function SearchableDropdown({
         </div>
         <PopoverContent className="w-auto min-w-[250px] max-w-[600px] p-0" align="start">
           <Command defaultValue={value}>
-            <CommandInput placeholder="Search..." />
+            <CommandInput placeholder="Search..." value={query} onValueChange={setQuery} />
             <CommandList>
               <CommandEmpty>No results found.</CommandEmpty>
+              {showCustom && (
+                <CommandGroup>
+                  <CommandItem value={trimmed} keywords={[trimmed]} onSelect={() => commit(trimmed)}>
+                    Use “{trimmed}”
+                  </CommandItem>
+                </CommandGroup>
+              )}
               {groups.length > 0 ? (
                 groups.flatMap((group) => {
                   const items = [];
@@ -107,12 +129,7 @@ export function SearchableDropdown({
                             key={option}
                             value={option}
                             keywords={[option, group.label]}
-                            onSelect={() => {
-                              onChange(option === value ? '' : option);
-                              if (!keepOpenOnSelect) {
-                                setOpen(false);
-                              }
-                            }}
+                            onSelect={() => commit(option)}
                             style={group.color ? { color: group.color } : {}}
                           >
                             {option}
@@ -137,12 +154,7 @@ export function SearchableDropdown({
                               key={option}
                               value={option}
                               keywords={[option, subgroup.label, group.label]}
-                              onSelect={() => {
-                                onChange(option === value ? '' : option);
-                                if (!keepOpenOnSelect) {
-                                  setOpen(false);
-                                }
-                              }}
+                              onSelect={() => commit(option)}
                               style={group.color ? { color: group.color } : {}}
                             >
                               {option}
@@ -167,12 +179,7 @@ export function SearchableDropdown({
                     <CommandItem
                       key={option}
                       value={option}
-                      onSelect={() => {
-                        onChange(option === value ? '' : option);
-                        if (!keepOpenOnSelect) {
-                          setOpen(false);
-                        }
-                      }}
+                      onSelect={() => commit(option)}
                       style={optionColors[option] ? { color: optionColors[option] } : {}}
                     >
                       {option}

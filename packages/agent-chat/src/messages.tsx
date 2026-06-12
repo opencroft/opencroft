@@ -86,8 +86,8 @@ export function MessageView({
 export function PlanView({ message }: { message: PlanMessage }) {
   return (
     <Flex withGaps className='rounded-md border p-2 text-sm gap-1'>
-      {message.entries.map((entry, index) => (
-        <Flex row key={index} align='center' className='gap-2'>
+      {message.entries.map((entry) => (
+        <Flex row key={entry.content} align='center' className='gap-2'>
           <Badge variant={statusVariant(entry.status)} className='shrink-0'>
             {entry.status}
           </Badge>

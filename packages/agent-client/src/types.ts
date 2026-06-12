@@ -31,6 +31,8 @@ export interface SessionMeta {
   title: string
   createdAt: number
   profileId?: string
+  // Whether this session's agent can fork its history (native harness only).
+  canFork?: boolean
 }
 
 export interface PlanItem {

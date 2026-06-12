@@ -1,7 +1,7 @@
 import type { AgentSelection } from './types'
 
 // Client-safe module: pure data/types, no node:* imports, so it can be
-// imported in the browser via "@demo/agent-client/profiles".
+// imported in the browser via "agent-client/profiles".
 
 export interface AgentProfile {
   id: string // stable slug
@@ -9,6 +9,7 @@ export interface AgentProfile {
   selection: AgentSelection // providerId / adapterId / model / apiKey / cwd
   mcpServerIds?: string[] // optional subset of mcp-config servers
   defaultModeId?: string // initial approval mode
+  roleIds?: string[] // assigned roles (tool/skill permissions); empty = default access
 }
 
 export interface ProfilesFile {
@@ -27,7 +28,7 @@ export const DEFAULT_PROFILES: AgentProfile[] = [
       adapterId: 'claude',
       model: 'glm-4.6',
       apiKey: '',
-      cwd: '/app',
+      cwd: '.',
     },
     defaultModeId: 'default',
   },
@@ -39,7 +40,7 @@ export const DEFAULT_PROFILES: AgentProfile[] = [
       adapterId: 'codex',
       model: 'gpt-5-codex',
       apiKey: '',
-      cwd: '/app',
+      cwd: '.',
     },
   },
   {
@@ -50,7 +51,7 @@ export const DEFAULT_PROFILES: AgentProfile[] = [
       adapterId: 'gemini',
       model: 'gemini-2.5-pro',
       apiKey: '',
-      cwd: '/app',
+      cwd: '.',
     },
   },
 ]

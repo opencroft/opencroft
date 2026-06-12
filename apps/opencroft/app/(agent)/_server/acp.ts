@@ -2,7 +2,6 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { createServerFn } from '@tanstack/react-start'
-import { findAdapter } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
 import { agentClient } from '@/app/(agent)/_server/agent-client-instance'
 import { slug } from '@/app/(server)/_server/types'
@@ -97,7 +96,7 @@ export const ensureLocalSession = createServerFn({ method: 'POST', strict: { out
     const meta = await agentClient.createSession(selection, agent.defaultModeId)
     // Forking rewinds an agent's own message history, which only the in-process
     // (native) harness owns — external ACP agents can't truncate it.
-    const canFork = findAdapter(adapterId)?.kind === 'native'
+    const canFork = meta.canFork ?? false
     tabSessions.set(data.tabKey, { id: meta.id, canFork })
     return { sessionId: meta.id, canFork }
   })

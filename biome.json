@@ -40,5 +40,10 @@
       "arrowParentheses": "always",
       "bracketSpacing": true
     }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
   }
 }

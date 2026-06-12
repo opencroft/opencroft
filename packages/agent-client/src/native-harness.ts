@@ -1,13 +1,16 @@
 import { randomUUID } from 'node:crypto'
-import type { Client } from '@agentclientprotocol/sdk'
+import type { McpServer as AcpMcpServer, Client } from '@agentclientprotocol/sdk'
 import { PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { type LanguageModel, type ModelMessage, stepCountIs, streamText, type ToolSet, tool } from 'ai'
 import { z } from 'zod'
 
 import type { AgentConnection } from './connection'
-import type { LocalTool, SkillHandler, SkillsInput } from './mcp-server'
+import { connectMcpToolset } from './mcp-client'
+import { type LocalTool, SKILL_INPUT_SCHEMA, SKILL_TOOL_NAME, type SkillHandler, type SkillsInput, skillToolDescription } from './mcp-server'
+import { accessFor, type PermissionValue, type ResolvedPermissions, skillKey, toolKey } from './permissions'
 import { findProvider } from './resolve'
+import { findTurnBoundary } from './turns'
 import type { AgentSelection } from './types'
 
 const DEFAULT_MAX_STEPS = 24
@@ -18,6 +21,10 @@ export interface NativeHarnessConfig {
   skillHandler?: SkillHandler
   systemPrompt?: string
   maxSteps?: number
+  // Resolve the real MCP servers (configured + extra) to attach in-process.
+  // Excludes the built-in local server: its tools/skills already run here.
+  // Re-evaluated per turn so refreshes apply without a session restart.
+  loadMcpServers?: () => Promise<AcpMcpServer[]>
 }
 
 // The harness reaches every provider through its OpenAI-compatible endpoint.
@@ -76,55 +83,102 @@ function mapStopReason(reason: string): 'end_turn' | 'max_tokens' | 'max_turn_re
   }
 }
 
+interface ToolGate {
+  sessionId: string
+  client: Client
+  getMode: () => string
+}
+
+// Gate a tool call through the ACP permission flow. 'AlwaysAllow' skips the
+// prompt; otherwise (an 'Allow' grant or an MCP/ungranted tool) the prompt is
+// shown unless the session is in bypass mode. Returns a denial string when the
+// user rejects, else null to proceed.
+async function gateToolCall(gate: ToolGate, name: string, input: unknown, toolCallId: string, access: PermissionValue): Promise<string | null> {
+  if (access === 'AlwaysAllow' || gate.getMode() === 'bypass') {
+    return null
+  }
+  const response = await gate.client.requestPermission({
+    sessionId: gate.sessionId,
+    toolCall: { toolCallId, title: name, rawInput: input },
+    options: [
+      { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+      { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+    ],
+  })
+  if (response.outcome.outcome !== 'selected' || response.outcome.optionId !== 'allow') {
+    return 'Permission denied by user.'
+  }
+  return null
+}
+
 // Convert the host's LocalTool[] (the same ones served to ACP agents over MCP)
-// into native AI SDK tools — no MCP server, no HTTP round-trip. Each tool gates
-// itself through the ACP permission flow unless the session is in bypass mode.
-async function buildToolset(config: NativeHarnessConfig, sessionId: string, client: Client, getMode: () => string): Promise<ToolSet> {
+// into native AI SDK tools, plus the skill tool and any configured MCP servers'
+// tools. Each tool gates itself through the ACP permission flow per its grant.
+// Returns the toolset and a closer for the MCP connections opened this turn.
+async function buildToolset(config: NativeHarnessConfig, gate: ToolGate, permissions: ResolvedPermissions | undefined): Promise<{ toolset: ToolSet; close: () => Promise<void> }> {
   const toolset: ToolSet = {}
 
   for (const local of config.tools) {
+    // Hidden tools never enter the session; AlwaysAllow tools skip the prompt.
+    const access = accessFor(permissions, toolKey(local.name))
+    if (access === null) {
+      continue
+    }
     toolset[local.name] = tool({
       description: local.description,
       inputSchema: z.object(local.inputSchema),
       execute: async (input, { toolCallId }) => {
-        if (getMode() !== 'bypass') {
-          const response = await client.requestPermission({
-            sessionId,
-            toolCall: { toolCallId, title: local.name, rawInput: input },
-            options: [
-              { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
-              { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
-            ],
-          })
-          if (response.outcome.outcome !== 'selected' || response.outcome.optionId !== 'allow') {
-            return 'Permission denied by user.'
-          }
+        const denied = await gateToolCall(gate, local.name, input, toolCallId, access)
+        if (denied) {
+          return denied
         }
         return await local.handler(input as Record<string, unknown>)
       },
     })
   }
 
-  const skills = typeof config.skills === 'function' ? await config.skills() : config.skills
+  const allSkills = typeof config.skills === 'function' ? await config.skills() : config.skills
+  // Only permitted skills appear in the catalog; the rest stay hidden.
+  const skills = allSkills.filter((skill) => accessFor(permissions, skillKey(skill.name)) !== null)
   const skillHandler = config.skillHandler
   if (skills.length > 0 && skillHandler) {
-    const catalog = skills.map((skill) => `- ${skill.name}: ${skill.description}`).join('\n')
-    toolset.skill = tool({
-      description: `Load a skill to learn how to perform a task. Available skills:\n${catalog}`,
-      inputSchema: z.object({
-        skill: z.string().describe('Name of the skill to load'),
-      }),
-      execute: async ({ skill }) => skillHandler(skill),
+    toolset[SKILL_TOOL_NAME] = tool({
+      description: skillToolDescription(skills),
+      inputSchema: z.object(SKILL_INPUT_SCHEMA),
+      // Guard the handler too: a model could still name a non-permitted skill.
+      execute: async ({ skill }) => (accessFor(permissions, skillKey(skill)) === null ? `Skill "${skill}" is not available.` : skillHandler(skill)),
     })
   }
 
-  return toolset
+  // Real MCP servers (configured + extra). Role grants don't cover them, so they
+  // gate like an 'Allow' tool: prompt unless bypass.
+  const mcpServers = config.loadMcpServers ? await config.loadMcpServers() : []
+  const mcp = await connectMcpToolset(mcpServers, { clientName: 'agent-client-native' })
+  for (const [name, mcpTool] of Object.entries(mcp.tools)) {
+    const execute = mcpTool.execute
+    if (!execute) {
+      continue
+    }
+    toolset[name] = {
+      ...mcpTool,
+      execute: async (input: unknown, callOptions) => {
+        const denied = await gateToolCall(gate, name, input, callOptions.toolCallId, 'Allow')
+        if (denied) {
+          return denied
+        }
+        return execute(input, callOptions)
+      },
+    }
+  }
+
+  return { toolset, close: mcp.closeAll }
 }
 
 export interface NativeSession {
   messages: ModelMessage[]
   mode: string
   abort?: AbortController
+  permissions?: ResolvedPermissions
 }
 
 // Rewind to a branch point: drop everything from the `dropFromTurn`-th user
@@ -137,17 +191,15 @@ function truncateMessages(messages: ModelMessage[], dropFromTurn?: number): Mode
       userIndices.push(index)
     }
   })
-  if (userIndices.length === 0) {
+  const boundary = findTurnBoundary(userIndices, dropFromTurn)
+  if (boundary === null) {
     return []
   }
-  const turn = dropFromTurn ?? userIndices.length - 1
-  const clamped = Math.max(0, Math.min(turn, userIndices.length - 1))
-  return messages.slice(0, userIndices[clamped])
+  return messages.slice(0, boundary)
 }
 
 const AVAILABLE_MODES = [
   { id: 'default', name: 'Ask every time' },
-  { id: 'accept-edits', name: 'Accept edits' },
   { id: 'bypass', name: 'Bypass permissions' },
 ]
 
@@ -205,6 +257,7 @@ export function createNativeHarness(client: Client, selection: AgentSelection, c
       sessions.set(forkId, {
         messages: source ? truncateMessages(source.messages, dropFromTurn) : [],
         mode: source?.mode ?? 'default',
+        permissions: source?.permissions,
       })
       return {
         sessionId: forkId,
@@ -224,12 +277,25 @@ export function createNativeHarness(client: Client, selection: AgentSelection, c
       if (!session) {
         return { stopReason: 'cancelled' }
       }
+      // A native session runs one turn at a time. A prompt arriving mid-turn is
+      // refused rather than interleaved (which would corrupt the message store).
+      if (session.abort) {
+        await client.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'A turn is already in progress.' },
+          },
+        })
+        return { stopReason: 'refusal' }
+      }
       const abort = new AbortController()
       session.abort = abort
       const text = prompt.map((block) => (block.type === 'text' ? block.text : '')).join('')
       session.messages.push({ role: 'user', content: text })
 
-      const tools = await buildToolset(config, sessionId, client, () => session.mode)
+      const gate: ToolGate = { sessionId, client, getMode: () => session.mode }
+      const { toolset, close } = await buildToolset(config, gate, session.permissions)
       // Reasoning effort goes to the OpenAI-compatible provider, keyed by the
       // provider name used in resolveModel (selection.providerId).
       const providerOptions = selection.reasoningEffort
@@ -243,7 +309,7 @@ export function createNativeHarness(client: Client, selection: AgentSelection, c
         model: resolveModel(selection),
         system: systemPrompt || undefined,
         messages: session.messages,
-        tools,
+        tools: toolset,
         stopWhen: stepCountIs(maxSteps),
         abortSignal: abort.signal,
         temperature: selection.temperature,
@@ -311,13 +377,24 @@ export function createNativeHarness(client: Client, selection: AgentSelection, c
         }
       } catch (error) {
         if (abort.signal.aborted) {
+          session.abort = undefined
           return { stopReason: 'cancelled' }
         }
+        session.abort = undefined
         throw error
+      } finally {
+        await close()
       }
 
+      // Persist this turn's assistant/tool messages BEFORE clearing the in-flight
+      // marker. Clearing it earlier would let a concurrently-dispatched prompt pass
+      // the guard and push its user message between this turn's user message and
+      // its assistant reply, corrupting the message store.
       const response = await result.response
       session.messages.push(...response.messages)
+      // The turn is fully recorded; a late cancel() is now a clean no-op and the
+      // next prompt is accepted.
+      session.abort = undefined
 
       // Report context usage like an ACP agent would. The last step's input
       // tokens are the full conversation sent this turn; add its output for the
