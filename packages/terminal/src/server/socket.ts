@@ -89,7 +89,7 @@ function spawnPty(peer: SocketPeer, file: string, args: string[], cols: number, 
 }
 
 function handleLocal(peer: SocketPeer, payload: LocalPayload) {
-  const defaultShell = os.platform() === 'win32' ? 'powershell.exe' : 'bash'
+  const defaultShell = os.platform() === 'win32' ? 'cmd.exe' : 'bash'
   const exe = payload.command || payload.shell || defaultShell
   spawnPty(peer, exe, payload.args || [], payload.cols, payload.rows, 'local')
 }
