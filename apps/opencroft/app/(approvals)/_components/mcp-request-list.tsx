@@ -33,16 +33,17 @@ export interface PendingRequestEntry {
   select: () => void
 }
 
-/** Seed pending approval and ask-user requests from the server (e.g. on canvas mount). */
-export function useSeedPendingRequests(spaceId?: string) {
+/** Seed all pending approval and ask-user requests from the server (e.g. on canvas
+ * mount). Unscoped: requests surface on every space, not just the one that raised them. */
+export function useSeedPendingRequests() {
   useEffect(() => {
-    listPendingApprovals({ data: spaceId }).then((rows) => {
+    listPendingApprovals({ data: undefined }).then((rows) => {
       sseEventsStore.setPendingApprovals(rows)
     })
-    listPendingAskUsers({ data: spaceId }).then((rows) => {
+    listPendingAskUsers({ data: undefined }).then((rows) => {
       sseEventsStore.setPendingAskUsers(rows)
     })
-  }, [spaceId])
+  }, [])
 }
 
 /** All pending MCP requests (approvals + ask-users) as uniform display entries, oldest first. */

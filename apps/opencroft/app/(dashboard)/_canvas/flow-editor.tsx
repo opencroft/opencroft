@@ -138,7 +138,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const { screenToFlowPosition, setCenter } = useReactFlow()
   const debouncedSave = useDebouncedSave(slug, 500)
   const sse = useSSEEvents()
-  useSeedPendingRequests(slug)
+  useSeedPendingRequests()
 
   const allNodes = useMemo(() => {
     void extensionsVersion
