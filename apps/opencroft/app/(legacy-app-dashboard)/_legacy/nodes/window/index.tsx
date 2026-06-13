@@ -6,6 +6,7 @@ import { type NodeProps, useReactFlow } from '@xyflow/react'
 import { AppWindow, FolderOpen, TerminalSquare, X } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
 import { Button } from 'ui/button'
+
 import { FileBrowser } from '@/app/(filemanager)/_components/file-browser'
 import { FileManagerProvider } from '@/app/(filemanager)/_components/filemanager-provider'
 import type { StorageConnection } from '@/app/(filemanager)/_lib/types'

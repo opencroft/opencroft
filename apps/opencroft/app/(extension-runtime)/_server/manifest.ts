@@ -47,7 +47,11 @@ async function listScoped(root: string, scope: string): Promise<string[]> {
 }
 
 export async function listAllExtensionIds(): Promise<string[]> {
-  const [builtin, local, installed] = await Promise.all([listScoped(builtinExtRoot(), 'builtin'), listScoped(localExtRoot(), 'local'), listScoped(installedExtRoot(), 'installed')])
+  const [builtin, local, installed] = await Promise.all([
+    listScoped(builtinExtRoot(), 'builtin'),
+    listScoped(localExtRoot(), 'local'),
+    listScoped(installedExtRoot(), 'installed'),
+  ])
   return [...builtin, ...local, ...installed]
 }
 

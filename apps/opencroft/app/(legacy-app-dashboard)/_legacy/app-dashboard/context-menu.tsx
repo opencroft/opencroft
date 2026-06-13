@@ -2,7 +2,16 @@
 
 import { Plus } from 'lucide-react'
 import { useEffect, useRef } from 'react'
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from 'ui/command'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+} from 'ui/command'
+
 import type { NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 
 interface FlowContextMenuProps {
@@ -60,7 +69,11 @@ export function FlowContextMenu({ position, definitions, onSelect, onNewCustomTy
   }, [onClose])
 
   return (
-    <div ref={ref} className='fixed z-50 w-[240px] rounded-md border bg-popover shadow-md' style={{ left: clamped.x, top: clamped.y }}>
+    <div
+      ref={ref}
+      className='fixed z-50 w-[240px] rounded-md border bg-popover shadow-md'
+      style={{ left: clamped.x, top: clamped.y }}
+    >
       <Command>
         <CommandInput placeholder='Add node...' autoFocus />
         <CommandList>

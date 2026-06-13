@@ -5,10 +5,15 @@ import type React from 'react'
 import { Suspense, useCallback } from 'react'
 import { MenuLayout } from 'ui/layout/menulayout'
 import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
+
 import AppLinksSettings from '@/app/(applink)/_components/applinks-settings'
 import AiSettings from '@/app/(settings)/_components/ai-settings'
 import AuditSettings from '@/app/(settings)/_components/audit-settings'
-import { ExtensionSettingsMenu, findExtensionPage, useExtensionSettings } from '@/app/(settings)/_components/extension-settings'
+import {
+  ExtensionSettingsMenu,
+  findExtensionPage,
+  useExtensionSettings,
+} from '@/app/(settings)/_components/extension-settings'
 import { useUrlState } from '@/components/hooks/use-url-state'
 import { cn } from '@/lib/utils'
 
@@ -43,7 +48,10 @@ function SettingsContent() {
           <button
             key={page.id}
             onClick={() => setSection(page.id)}
-            className={cn('w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors', value === page.id ? 'bg-accent font-medium' : 'hover:bg-accent/50')}
+            className={cn(
+              'w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors',
+              value === page.id ? 'bg-accent font-medium' : 'hover:bg-accent/50',
+            )}
           >
             <Icon className='h-4 w-4 shrink-0' />
             {page.label}

@@ -21,7 +21,10 @@ export interface SkillsManagerProps {
   // The current skill catalog (the host loads this, e.g. via getSkills()).
   skills: SkillRecord[]
   onCreate: (input: { name: string; description?: string; content?: string }) => Promise<SkillRecord>
-  onUpdate: (name: string, updates: { name?: string; description?: string; content?: string }) => Promise<SkillRecord | null>
+  onUpdate: (
+    name: string,
+    updates: { name?: string; description?: string; content?: string },
+  ) => Promise<SkillRecord | null>
   onDelete: (name: string) => Promise<boolean>
 }
 
@@ -159,7 +162,11 @@ export function SkillsManager({ skills: incoming, onCreate, onUpdate, onDelete }
           <ScrollContent className='p-3 gap-3'>
             <Field>
               <FieldLabel>Description</FieldLabel>
-              <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder='One-line summary shown to the agent in the skill catalog' />
+              <Input
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder='One-line summary shown to the agent in the skill catalog'
+              />
             </Field>
             <Field className='flex-1 min-h-0'>
               <FieldLabel>Instructions</FieldLabel>

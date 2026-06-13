@@ -29,7 +29,12 @@ export function canStartSelection(selection: AgentSelection): boolean {
   const provider = findProvider(selection.providerId)
   const isCustomEndpoint = selection.providerId === 'openai-compatible'
   const needsModel = Boolean(provider && (provider.models.length || isCustomEndpoint))
-  return Boolean(selection.providerId && selection.adapterId && (!needsModel || selection.model) && (!isCustomEndpoint || selection.baseUrl))
+  return Boolean(
+    selection.providerId &&
+      selection.adapterId &&
+      (!needsModel || selection.model) &&
+      (!isCustomEndpoint || selection.baseUrl),
+  )
 }
 
 export interface AgentProfilePickerProps {
@@ -106,14 +111,19 @@ export function AgentPresetForm({
   onRoleIdsChange,
   onSave,
 }: AgentPresetFormProps) {
-  const toggleRole = (id: string) => onRoleIdsChange?.(roleIds.includes(id) ? roleIds.filter((r) => r !== id) : [...roleIds, id])
+  const toggleRole = (id: string) =>
+    onRoleIdsChange?.(roleIds.includes(id) ? roleIds.filter((r) => r !== id) : [...roleIds, id])
   const provider = findProvider(selection.providerId)
   const adapters = adaptersForProvider(selection.providerId)
   const isCustomEndpoint = selection.providerId === 'openai-compatible'
   const isNative = selection.adapterId === 'native'
   // Reasoning support: detected from the model for the native harness; for ACP
   // agents it's advertised at session start, so offer a generic scale.
-  const reasoningOptions = isNative ? reasoningEfforts(selection.model) : selection.adapterId ? ['low', 'medium', 'high'] : []
+  const reasoningOptions = isNative
+    ? reasoningEfforts(selection.model)
+    : selection.adapterId
+      ? ['low', 'medium', 'high']
+      : []
 
   return (
     <Flex withGaps>
@@ -124,7 +134,10 @@ export function AgentPresetForm({
 
       <Field>
         <FieldLabel>Provider</FieldLabel>
-        <Select value={selection.providerId} onValueChange={(value) => onSelectionChange({ providerId: value, adapterId: '', model: '' })}>
+        <Select
+          value={selection.providerId}
+          onValueChange={(value) => onSelectionChange({ providerId: value, adapterId: '', model: '' })}
+        >
           <SelectTrigger className='w-full'>
             <SelectValue placeholder='Select provider' />
           </SelectTrigger>
@@ -140,7 +153,11 @@ export function AgentPresetForm({
 
       <Field>
         <FieldLabel>Harness</FieldLabel>
-        <Select value={selection.adapterId} onValueChange={(value) => onSelectionChange({ adapterId: value })} disabled={!adapters.length}>
+        <Select
+          value={selection.adapterId}
+          onValueChange={(value) => onSelectionChange({ adapterId: value })}
+          disabled={!adapters.length}
+        >
           <SelectTrigger className='w-full'>
             <SelectValue placeholder='Select harness' />
           </SelectTrigger>
@@ -158,7 +175,11 @@ export function AgentPresetForm({
         <>
           <Field>
             <FieldLabel>Base URL</FieldLabel>
-            <ControlledInput value={selection.baseUrl ?? ''} onValueChanged={(value) => onSelectionChange({ baseUrl: value })} placeholder='https://api.openai.com/v1' />
+            <ControlledInput
+              value={selection.baseUrl ?? ''}
+              onValueChanged={(value) => onSelectionChange({ baseUrl: value })}
+              placeholder='https://api.openai.com/v1'
+            />
           </Field>
           <Field>
             <FieldLabel>Model</FieldLabel>
@@ -171,7 +192,13 @@ export function AgentPresetForm({
                 allowCustom
                 placeholder={loadedModels.length ? 'Select or type model' : 'Type a model…'}
               />
-              <Button variant='outline' size='icon' onClick={onLoadModels} disabled={!selection.baseUrl || loadingModels || !onLoadModels} title='Load models from /models'>
+              <Button
+                variant='outline'
+                size='icon'
+                onClick={onLoadModels}
+                disabled={!selection.baseUrl || loadingModels || !onLoadModels}
+                title='Load models from /models'
+              >
                 {loadingModels ? <Loader2 className='animate-spin' /> : <RefreshCw />}
               </Button>
             </Flex>
@@ -181,14 +208,25 @@ export function AgentPresetForm({
         !!provider?.models.length && (
           <Field>
             <FieldLabel>Model</FieldLabel>
-            <SearchableDropdown value={selection.model} onChange={(value) => onSelectionChange({ model: value })} options={provider.models} allowCustom placeholder='Select or type model' />
+            <SearchableDropdown
+              value={selection.model}
+              onChange={(value) => onSelectionChange({ model: value })}
+              options={provider.models}
+              allowCustom
+              placeholder='Select or type model'
+            />
           </Field>
         )
       )}
 
       <Field>
         <FieldLabel>API key</FieldLabel>
-        <ControlledInput type='password' value={selection.apiKey} onValueChanged={(value) => onSelectionChange({ apiKey: value })} placeholder='Provider / harness auth token' />
+        <ControlledInput
+          type='password'
+          value={selection.apiKey}
+          onValueChanged={(value) => onSelectionChange({ apiKey: value })}
+          placeholder='Provider / harness auth token'
+        />
       </Field>
 
       {roles.length > 0 && (
@@ -196,7 +234,13 @@ export function AgentPresetForm({
           <FieldLabel>Roles</FieldLabel>
           <Flex row className='flex-wrap gap-1.5'>
             {roles.map((role) => (
-              <Button key={role.id} type='button' size='sm' variant={roleIds.includes(role.id) ? 'default' : 'outline'} onClick={() => toggleRole(role.id)}>
+              <Button
+                key={role.id}
+                type='button'
+                size='sm'
+                variant={roleIds.includes(role.id) ? 'default' : 'outline'}
+                onClick={() => toggleRole(role.id)}
+              >
                 {role.name}
               </Button>
             ))}
@@ -220,7 +264,10 @@ export function AgentPresetForm({
       {reasoningOptions.length > 0 && (
         <Field>
           <FieldLabel>Reasoning</FieldLabel>
-          <Select value={selection.reasoningEffort || 'off'} onValueChange={(value) => onSelectionChange({ reasoningEffort: value === 'off' ? '' : value })}>
+          <Select
+            value={selection.reasoningEffort || 'off'}
+            onValueChange={(value) => onSelectionChange({ reasoningEffort: value === 'off' ? '' : value })}
+          >
             <SelectTrigger className='w-full'>
               <SelectValue />
             </SelectTrigger>

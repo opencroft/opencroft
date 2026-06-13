@@ -23,7 +23,10 @@ interface EditPopupProps<T> {
   onDelete?: (data: T) => Promise<void>
 }
 
-function EditPopup<T>({ form: FormComponent, onCreate, onSave, onDelete }: EditPopupProps<T>, ref: Ref<EditPopupRef<T>>) {
+function EditPopup<T>(
+  { form: FormComponent, onCreate, onSave, onDelete }: EditPopupProps<T>,
+  ref: Ref<EditPopupRef<T>>,
+) {
   const [isOpen, setIsOpen] = useState(false)
   const [title, setTitle] = useState('Edit')
   const [data, setData] = useState<T | undefined>()

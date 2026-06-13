@@ -32,7 +32,10 @@ function resolvePath(config: WslConfig, path: string) {
 
 export async function listFiles(config: WslConfig, path: string): Promise<FileEntry[]> {
   const fullPath = resolvePath(config, path)
-  const output = await run(config.distro, `find '${fullPath}' -maxdepth 1 -mindepth 1 -printf '%y|%f|%s|%T@\\n' 2>/dev/null | sort`)
+  const output = await run(
+    config.distro,
+    `find '${fullPath}' -maxdepth 1 -mindepth 1 -printf '%y|%f|%s|%T@\\n' 2>/dev/null | sort`,
+  )
 
   if (!output.trim()) {
     return []

@@ -33,7 +33,14 @@ const variantClasses: Record<Variant, string> = {
 
 const isHorizontal = (side: Side) => side === 'left' || side === 'right'
 
-export function StickySection({ side = 'top', fade, variant = 'ghost', className, children, ...props }: StickySectionProps) {
+export function StickySection({
+  side = 'top',
+  fade,
+  variant = 'ghost',
+  className,
+  children,
+  ...props
+}: StickySectionProps) {
   const horizontal = isHorizontal(side)
   const content =
     variant !== 'ghost' ? (

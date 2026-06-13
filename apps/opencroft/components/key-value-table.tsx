@@ -3,6 +3,7 @@
 import { Trash } from 'lucide-react'
 import { Button } from 'ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'ui/table'
+
 import { ControlledInput } from '@/components/ui/input/controlled-input'
 
 interface KeyValuePair {
@@ -66,11 +67,21 @@ export default function KeyValueTable({
           {data.map((item, index) => (
             <TableRow key={index}>
               <TableCell>
-                <ControlledInput value={item.key} onValueChanged={(value) => updateKey(index, value)} placeholder={keyPlaceholder} className='border-0 shadow-none focus-visible:ring-0' />
+                <ControlledInput
+                  value={item.key}
+                  onValueChanged={(value) => updateKey(index, value)}
+                  placeholder={keyPlaceholder}
+                  className='border-0 shadow-none focus-visible:ring-0'
+                />
               </TableCell>
               {!hideValue && (
                 <TableCell>
-                  <ControlledInput value={item.value} onValueChanged={(value) => updateValue(index, value)} placeholder={valuePlaceholder} className='border-0 shadow-none focus-visible:ring-0' />
+                  <ControlledInput
+                    value={item.value}
+                    onValueChanged={(value) => updateValue(index, value)}
+                    placeholder={valuePlaceholder}
+                    className='border-0 shadow-none focus-visible:ring-0'
+                  />
                 </TableCell>
               )}
               <TableCell className='w-0'>

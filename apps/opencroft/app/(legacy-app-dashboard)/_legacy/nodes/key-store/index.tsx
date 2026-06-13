@@ -9,8 +9,18 @@ import { Button } from 'ui/button'
 import { Flex } from 'ui/layout/flex'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
 import { Separator } from 'ui/separator'
+
 import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
-import { copyKeyToWsl, createKey, deleteKey, importKey, type KeyEntry, listKeys, readPublicKey, removeKeyFromWsl } from '@/app/(legacy-app-dashboard)/_legacy/nodes/key-store/actions'
+import {
+  copyKeyToWsl,
+  createKey,
+  deleteKey,
+  importKey,
+  type KeyEntry,
+  listKeys,
+  readPublicKey,
+  removeKeyFromWsl,
+} from '@/app/(legacy-app-dashboard)/_legacy/nodes/key-store/actions'
 import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
 import { ControlledInput } from '@/components/ui/input/controlled-input'
 
@@ -25,7 +35,12 @@ function KeyStoreComponent({ data, selected }: NodeProps<KeyStoreNode>) {
 
   return (
     <NodeCard selected={selected} accent='oklch(0.8 0.15 80)'>
-      <NodeCardHeader icon={KeyRound} iconClassName='text-amber-400' title='Key Store' extra={<span className='text-[10px] text-muted-foreground tabular-nums'>{names.length}</span>} />
+      <NodeCardHeader
+        icon={KeyRound}
+        iconClassName='text-amber-400'
+        title='Key Store'
+        extra={<span className='text-[10px] text-muted-foreground tabular-nums'>{names.length}</span>}
+      />
       {names.length > 0 && (
         <NodeCardContent>
           <div className='flex flex-col gap-0.5'>
@@ -42,7 +57,17 @@ function KeyStoreComponent({ data, selected }: NodeProps<KeyStoreNode>) {
   )
 }
 
-function KeyItem({ entry, onCopyPublic, onDelete, onToggleWsl }: { entry: KeyEntry; onCopyPublic: () => void; onDelete: () => void; onToggleWsl: () => void }) {
+function KeyItem({
+  entry,
+  onCopyPublic,
+  onDelete,
+  onToggleWsl,
+}: {
+  entry: KeyEntry
+  onCopyPublic: () => void
+  onDelete: () => void
+  onToggleWsl: () => void
+}) {
   return (
     <div className='flex flex-col gap-1 rounded border p-2'>
       <div className='flex items-center gap-1.5'>
@@ -203,7 +228,13 @@ function KeyStoreSettings({ id, updateData, onDirtyChange, onLoadingChange }: No
   return (
     <div className='flex flex-col gap-3'>
       <Flex row className='gap-1'>
-        <ControlledInput value={newName} onValueChanged={setNewName} onAccepted={handleCreate} placeholder='Key name' className='flex-1 h-7 text-xs' />
+        <ControlledInput
+          value={newName}
+          onValueChanged={setNewName}
+          onAccepted={handleCreate}
+          placeholder='Key name'
+          className='flex-1 h-7 text-xs'
+        />
         <Select value={newType} onValueChange={setNewType}>
           <SelectTrigger className='h-7 text-xs w-24'>
             <SelectValue />
@@ -224,7 +255,13 @@ function KeyStoreSettings({ id, updateData, onDirtyChange, onLoadingChange }: No
       {keys.length > 0 && (
         <Flex className='gap-1.5'>
           {keys.map((k) => (
-            <KeyItem key={k.name} entry={k} onCopyPublic={() => handleCopyPublic(k.name)} onDelete={() => handleDelete(k.name)} onToggleWsl={() => handleToggleWsl(k)} />
+            <KeyItem
+              key={k.name}
+              entry={k}
+              onCopyPublic={() => handleCopyPublic(k.name)}
+              onDelete={() => handleDelete(k.name)}
+              onToggleWsl={() => handleToggleWsl(k)}
+            />
           ))}
         </Flex>
       )}

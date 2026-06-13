@@ -6,6 +6,7 @@
 import type * as nodeFs from 'node:fs'
 import type * as nodeOs from 'node:os'
 import type * as nodePath from 'node:path'
+
 import type { ServerConfig, TerminalContext } from '@opencroft/terminal'
 
 export type { ServerConfig, TerminalContext }
@@ -23,7 +24,11 @@ export interface HostGraphApi {
   listNodesByType(typeId: string): Promise<GraphNodeRecord[]>
   listEdges(): Promise<unknown[]>
   updateNode(nodeId: string, patch: Partial<GraphNodeRecord>): Promise<GraphNodeRecord | null>
-  createNode(typeId: string, data: Record<string, unknown>, position: { x: number; y: number }): Promise<GraphNodeRecord>
+  createNode(
+    typeId: string,
+    data: Record<string, unknown>,
+    position: { x: number; y: number },
+  ): Promise<GraphNodeRecord>
   deleteNode(nodeId: string): Promise<void>
 }
 

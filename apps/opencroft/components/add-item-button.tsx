@@ -3,9 +3,18 @@
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from 'ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from 'ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from 'ui/dialog'
 import { Input } from 'ui/input'
 import { Label } from 'ui/label'
+
 import { ControlledTextarea } from '@/components/ui/input/controlled-textarea'
 import type { BasePrompt } from '@/lib/ai-utils'
 
@@ -73,11 +82,25 @@ export function AddItemButton({ buttonText, placeholder, onAdd }: AddItemButtonP
           </div>
           <div className='grid gap-2'>
             <Label htmlFor='positive'>Positive Prompt</Label>
-            <ControlledTextarea id='positive' value={positivePrompt} onValueChanged={(value) => setPositivePrompt(value)} placeholder='Positive prompt...' rows={4} className='font-mono' />
+            <ControlledTextarea
+              id='positive'
+              value={positivePrompt}
+              onValueChanged={(value) => setPositivePrompt(value)}
+              placeholder='Positive prompt...'
+              rows={4}
+              className='font-mono'
+            />
           </div>
           <div className='grid gap-2'>
             <Label htmlFor='negative'>Negative Prompt</Label>
-            <ControlledTextarea id='negative' value={negativePrompt} onValueChanged={(value) => setNegativePrompt(value)} placeholder='Negative prompt...' rows={3} className='font-mono' />
+            <ControlledTextarea
+              id='negative'
+              value={negativePrompt}
+              onValueChanged={(value) => setNegativePrompt(value)}
+              placeholder='Negative prompt...'
+              rows={3}
+              className='font-mono'
+            />
           </div>
         </div>
         <DialogFooter>

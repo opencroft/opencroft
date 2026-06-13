@@ -1,7 +1,18 @@
 'use client'
 
 import type * as React from 'react'
-import { createContext, createElement, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import {
+  createContext,
+  createElement,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
+
 import type { CommandMode } from '@/app/(dashboard)/_canvas/canvas-command-bar'
 
 type Slot = 'header' | 'content' | 'menu' | 'bar'
@@ -91,7 +102,16 @@ export function OverlayProvider({ children }: { children: ReactNode }) {
     }
   }, [slots.setSlot])
 
-  const manager: OverlayManager = { mode, focusTick, commandFocused, slots, activate, dismiss, setMode, setCommandFocused }
+  const manager: OverlayManager = {
+    mode,
+    focusTick,
+    commandFocused,
+    slots,
+    activate,
+    dismiss,
+    setMode,
+    setCommandFocused,
+  }
 
   return createElement(OverlayManagerContext.Provider, { value: manager }, children)
 }

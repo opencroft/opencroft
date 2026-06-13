@@ -10,7 +10,15 @@ import { Flex } from 'ui/layout/flex'
 import { ScrollContent, ScrollHeader, ScrollPage } from 'ui/layout/scrollpage'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'ui/table'
 import { Toggle } from 'ui/toggle'
-import { createSpace, deleteSpace, importSpace, listSpaces, renameSpace, setSpacePinned } from '@/app/(space)/_server/actions'
+
+import {
+  createSpace,
+  deleteSpace,
+  importSpace,
+  listSpaces,
+  renameSpace,
+  setSpacePinned,
+} from '@/app/(space)/_server/actions'
 import type { SpaceExport, SpaceSummary } from '@/app/(space)/_server/types'
 
 interface Props {
@@ -140,7 +148,11 @@ export function SpacesTable({ initialSpaces }: Props) {
                   </Link>
                 </TableCell>
                 <TableCell>
-                  <Button variant='ghost' size='icon' onClick={() => setRenameState({ slug: space.slug, name: space.name })}>
+                  <Button
+                    variant='ghost'
+                    size='icon'
+                    onClick={() => setRenameState({ slug: space.slug, name: space.name })}
+                  >
                     <Pencil />
                   </Button>
                 </TableCell>
@@ -149,13 +161,22 @@ export function SpacesTable({ initialSpaces }: Props) {
                 <TableCell className='text-muted-foreground'>{formatDate(space.createdAt)}</TableCell>
                 <TableCell>
                   <Flex row align='center' justify='end'>
-                    <Toggle pressed={space.pinned} onPressedChange={() => handleTogglePin(space.slug, space.pinned)} aria-label={space.pinned ? 'Unpin' : 'Pin'}>
+                    <Toggle
+                      pressed={space.pinned}
+                      onPressedChange={() => handleTogglePin(space.slug, space.pinned)}
+                      aria-label={space.pinned ? 'Unpin' : 'Pin'}
+                    >
                       <Pin />
                     </Toggle>
                     <Button variant='ghost' size='icon' onClick={() => handleExport(space.slug)}>
                       <Download />
                     </Button>
-                    <Button variant='ghost' size='icon' disabled={spaces.length <= 1} onClick={() => handleDelete(space.slug)}>
+                    <Button
+                      variant='ghost'
+                      size='icon'
+                      disabled={spaces.length <= 1}
+                      onClick={() => handleDelete(space.slug)}
+                    >
                       <Trash2 />
                     </Button>
                   </Flex>

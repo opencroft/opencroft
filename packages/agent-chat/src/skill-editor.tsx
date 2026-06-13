@@ -3,10 +3,27 @@
 import Link from '@tiptap/extension-link'
 import { type Editor, EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
-import { Bold, Code, Heading1, Heading2, Heading3, Italic, Link as LinkIcon, List, ListOrdered, Minus, Quote, Redo2, RemoveFormatting, SquareCode, Strikethrough, Undo2, Unlink } from 'lucide-react'
+import {
+  Bold,
+  Code,
+  Heading1,
+  Heading2,
+  Heading3,
+  Italic,
+  Link as LinkIcon,
+  List,
+  ListOrdered,
+  Minus,
+  Quote,
+  Redo2,
+  RemoveFormatting,
+  SquareCode,
+  Strikethrough,
+  Undo2,
+  Unlink,
+} from 'lucide-react'
 import { useEffect } from 'react'
 import { Markdown } from 'tiptap-markdown'
-
 import { Button } from 'ui/components/ui/button'
 import { Flex } from 'ui/components/ui/layout/flex'
 import { Separator } from 'ui/components/ui/separator'
@@ -97,40 +114,80 @@ function Toolbar({ editor }: { editor: Editor }) {
       <TB active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()} title='Italic'>
         <Italic />
       </TB>
-      <TB active={editor.isActive('strike')} onClick={() => editor.chain().focus().toggleStrike().run()} title='Strikethrough'>
+      <TB
+        active={editor.isActive('strike')}
+        onClick={() => editor.chain().focus().toggleStrike().run()}
+        title='Strikethrough'
+      >
         <Strikethrough />
       </TB>
-      <TB active={editor.isActive('code')} onClick={() => editor.chain().focus().toggleCode().run()} title='Inline code'>
+      <TB
+        active={editor.isActive('code')}
+        onClick={() => editor.chain().focus().toggleCode().run()}
+        title='Inline code'
+      >
         <Code />
       </TB>
       <Sep />
-      <TB active={editor.isActive('heading', { level: 1 })} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()} title='Heading 1'>
+      <TB
+        active={editor.isActive('heading', { level: 1 })}
+        onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+        title='Heading 1'
+      >
         <Heading1 />
       </TB>
-      <TB active={editor.isActive('heading', { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} title='Heading 2'>
+      <TB
+        active={editor.isActive('heading', { level: 2 })}
+        onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+        title='Heading 2'
+      >
         <Heading2 />
       </TB>
-      <TB active={editor.isActive('heading', { level: 3 })} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()} title='Heading 3'>
+      <TB
+        active={editor.isActive('heading', { level: 3 })}
+        onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+        title='Heading 3'
+      >
         <Heading3 />
       </TB>
       <Sep />
-      <TB active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()} title='Bullet list'>
+      <TB
+        active={editor.isActive('bulletList')}
+        onClick={() => editor.chain().focus().toggleBulletList().run()}
+        title='Bullet list'
+      >
         <List />
       </TB>
-      <TB active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()} title='Numbered list'>
+      <TB
+        active={editor.isActive('orderedList')}
+        onClick={() => editor.chain().focus().toggleOrderedList().run()}
+        title='Numbered list'
+      >
         <ListOrdered />
       </TB>
-      <TB active={editor.isActive('blockquote')} onClick={() => editor.chain().focus().toggleBlockquote().run()} title='Blockquote'>
+      <TB
+        active={editor.isActive('blockquote')}
+        onClick={() => editor.chain().focus().toggleBlockquote().run()}
+        title='Blockquote'
+      >
         <Quote />
       </TB>
-      <TB active={editor.isActive('codeBlock')} onClick={() => editor.chain().focus().toggleCodeBlock().run()} title='Code block'>
+      <TB
+        active={editor.isActive('codeBlock')}
+        onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+        title='Code block'
+      >
         <SquareCode />
       </TB>
       <Sep />
       <TB active={editor.isActive('link')} onClick={setLink} title='Link'>
         <LinkIcon />
       </TB>
-      <TB onClick={() => editor.chain().focus().unsetLink().run()} disabled={!editor.isActive('link')} title='Remove link'>
+      <TB
+        onClick={() => editor.chain().focus().unsetLink().run()}
+        disabled={!editor.isActive('link')}
+        title='Remove link'
+      >
         <Unlink />
       </TB>
       <TB onClick={() => editor.chain().focus().setHorizontalRule().run()} title='Horizontal rule'>
@@ -148,9 +205,28 @@ function Sep() {
   return <Separator orientation='vertical' className='mx-0.5 h-5' />
 }
 
-function TB({ active, disabled, onClick, title, children }: { active?: boolean; disabled?: boolean; onClick: () => void; title?: string; children: React.ReactNode }) {
+function TB({
+  active,
+  disabled,
+  onClick,
+  title,
+  children,
+}: {
+  active?: boolean
+  disabled?: boolean
+  onClick: () => void
+  title?: string
+  children: React.ReactNode
+}) {
   return (
-    <Button type='button' size='icon-sm' variant={active ? 'secondary' : 'ghost'} disabled={disabled} onClick={onClick} title={title}>
+    <Button
+      type='button'
+      size='icon-sm'
+      variant={active ? 'secondary' : 'ghost'}
+      disabled={disabled}
+      onClick={onClick}
+      title={title}
+    >
       {children}
     </Button>
   )

@@ -1,72 +1,58 @@
+import { oneDark } from '@codemirror/theme-one-dark'
+import { InputHandle, icons, invoke, NodeFrame, React, toast, useGraphNodes } from '@ext/host'
 import {
-  React,
-  NodeFrame,
-  InputHandle,
-  icons,
-  invoke,
-  useGraphNodes,
-  toast,
-} from '@ext/host';
-import {
+  Badge,
   Button,
   Input,
-  Textarea,
   Label,
-  Badge,
-  Separator,
   ScrollArea,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@ext/ui';
-import CodeMirror from '@uiw/react-codemirror';
-import { oneDark } from '@codemirror/theme-one-dark';
+  Separator,
+  Textarea,
+} from '@ext/ui'
+import CodeMirror from '@uiw/react-codemirror'
 
-import { slug } from './send-message-helpers';
-import { useSecretKeys } from './secrets';
+import { useSecretKeys } from './secrets'
+import { slug } from './send-message-helpers'
 
-const { useCallback, useRef, useState, useEffect, useMemo } = React;
+const { useCallback, useRef, useState, useEffect, useMemo } = React
 
 export interface AgentData {
-  name: string;
-  avatar?: string;
+  name: string
+  avatar?: string
   /** Chat transport: OpenClaw gateway (default) or a local agent-client harness. */
-  backend?: 'openclaw' | 'local';
+  backend?: 'openclaw' | 'local'
   /** Local agent-client profile (used when backend === 'local'). */
-  providerId?: string;
-  adapterId?: string;
-  model?: string;
-  apiKeySecret?: string;
-  defaultModeId?: string;
+  providerId?: string
+  adapterId?: string
+  model?: string
+  apiKeySecret?: string
+  defaultModeId?: string
   /** Optional OpenAI-compatible base-URL override (wins over the provider endpoint). */
-  baseUrl?: string;
+  baseUrl?: string
   /** System prompt for the Custom (native) harness; ignored by ACP agents. */
-  systemPrompt?: string;
+  systemPrompt?: string
   /** Reasoning effort (e.g. 'low' | 'medium' | 'high'); empty = off. */
-  reasoningEffort?: string;
+  reasoningEffort?: string
   /** Sampling temperature for the Custom (native) harness. */
-  temperature?: number;
+  temperature?: number
 }
 
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.readAsDataURL(file);
-  });
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.readAsDataURL(file)
+  })
 }
 
-export function AgentNode({
-  data, selected,
-}: { id: string; data: AgentData; selected?: boolean }) {
+export function AgentNode({ data, selected }: { id: string; data: AgentData; selected?: boolean }) {
   return (
-    <NodeFrame
-      icon={icons.User}
-      title={data.name || 'Agent'}
-      selected={selected ?? false}
-    >
+    <NodeFrame icon={icons.User} title={data.name || 'Agent'} selected={selected ?? false}>
       <div className='flex flex-col gap-1.5'>
         <InputHandle type='agent-instruction' id='instructions-in'>
           <span className='text-[10px] text-muted-foreground'>Instructions</span>
@@ -76,23 +62,31 @@ export function AgentNode({
         </InputHandle>
       </div>
     </NodeFrame>
-  );
+  )
 }
 
 export function AgentInspector({
-  data, updateData,
-}: { nodeId: string; data: AgentData; updateData: (p: Partial<AgentData>) => void }) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  data,
+  updateData,
+}: {
+  nodeId: string
+  data: AgentData
+  updateData: (p: Partial<AgentData>) => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
 
-  const handlePick = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) {
-      return;
-    }
-    const url = await readAsDataUrl(file);
-    updateData({ avatar: url });
-    e.target.value = '';
-  }, [updateData]);
+  const handlePick = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0]
+      if (!file) {
+        return
+      }
+      const url = await readAsDataUrl(file)
+      updateData({ avatar: url })
+      e.target.value = ''
+    },
+    [updateData],
+  )
 
   return (
     <div className='flex flex-col gap-3'>
@@ -106,30 +100,16 @@ export function AgentInspector({
               <icons.User className='h-5 w-5 text-muted-foreground' />
             )}
           </div>
-          <Button
-            variant='outline'
-            size='sm'
-            onClick={() => inputRef.current?.click()}
-          >
+          <Button variant='outline' size='sm' onClick={() => inputRef.current?.click()}>
             <icons.Upload className='h-3 w-3 mr-1' />
             {data.avatar ? 'Change' : 'Upload'}
           </Button>
           {data.avatar ? (
-            <Button
-              variant='ghost'
-              size='sm'
-              onClick={() => updateData({ avatar: undefined })}
-            >
+            <Button variant='ghost' size='sm' onClick={() => updateData({ avatar: undefined })}>
               <icons.Trash2 className='h-3 w-3' />
             </Button>
           ) : null}
-          <input
-            ref={inputRef}
-            type='file'
-            accept='image/*'
-            className='hidden'
-            onChange={handlePick}
-          />
+          <input ref={inputRef} type='file' accept='image/*' className='hidden' onChange={handlePick} />
         </div>
       </div>
       <div className='flex flex-col gap-1'>
@@ -141,33 +121,38 @@ export function AgentInspector({
         />
       </div>
     </div>
-  );
+  )
 }
 
 // ─── Agent Profile Tab (local agent-client backend) ─────────────────
 
 interface AgentCatalog {
-  adapters: { id: string; label: string; protocol: string; kind: 'acp' | 'native' }[];
-  providers: { id: string; label: string; models: string[]; protocols: string[] }[];
-  reasoning: Record<string, string[]>;
+  adapters: { id: string; label: string; protocol: string; kind: 'acp' | 'native' }[]
+  providers: { id: string; label: string; models: string[]; protocols: string[] }[]
+  reasoning: Record<string, string[]>
 }
 
-const NO_SECRET = '__none__';
-const NO_REASONING = '__default__';
+const NO_SECRET = '__none__'
+const NO_REASONING = '__default__'
 
 export function AgentProfileTab({
-  data, updateData,
-}: { nodeId: string; data: AgentData; updateData: (p: Partial<AgentData>) => void }) {
-  const [catalog, setCatalog] = useState<AgentCatalog | null>(null);
-  const secretKeys = useSecretKeys();
+  data,
+  updateData,
+}: {
+  nodeId: string
+  data: AgentData
+  updateData: (p: Partial<AgentData>) => void
+}) {
+  const [catalog, setCatalog] = useState<AgentCatalog | null>(null)
+  const secretKeys = useSecretKeys()
 
   useEffect(() => {
     invoke<AgentCatalog>('agent.listAgentCatalog')
       .then(setCatalog)
-      .catch(() => setCatalog(null));
-  }, []);
+      .catch(() => setCatalog(null))
+  }, [])
 
-  const backend = data.backend ?? 'openclaw';
+  const backend = data.backend ?? 'openclaw'
 
   return (
     <ScrollArea className='h-full'>
@@ -196,53 +181,58 @@ export function AgentProfileTab({
         ) : null}
       </div>
     </ScrollArea>
-  );
+  )
 }
 
 function LocalProfileFields({
-  data, updateData, catalog, secretKeys,
+  data,
+  updateData,
+  catalog,
+  secretKeys,
 }: {
-  data: AgentData;
-  updateData: (p: Partial<AgentData>) => void;
-  catalog: AgentCatalog;
-  secretKeys: string[];
+  data: AgentData
+  updateData: (p: Partial<AgentData>) => void
+  catalog: AgentCatalog
+  secretKeys: string[]
 }) {
-  const provider = catalog.providers.find((p) => p.id === data.providerId);
-  const adapter = catalog.adapters.find((a) => a.id === data.adapterId);
+  const provider = catalog.providers.find((p) => p.id === data.providerId)
+  const adapter = catalog.adapters.find((a) => a.id === data.adapterId)
   const adapters = catalog.adapters.filter(
     (a) => a.protocol === 'native' || (provider ? provider.protocols.includes(a.protocol) : true),
-  );
-  const models = provider?.models ?? [];
-  const efforts = catalog.reasoning[data.model ?? ''] ?? [];
-  const isNative = adapter?.kind === 'native';
+  )
+  const models = provider?.models ?? []
+  const efforts = catalog.reasoning[data.model ?? ''] ?? []
+  const isNative = adapter?.kind === 'native'
 
-  const [discovered, setDiscovered] = useState<string[]>([]);
-  const [loadingModels, setLoadingModels] = useState(false);
-  const modelOptions = Array.from(new Set([...(data.model ? [data.model] : []), ...models, ...discovered]));
+  const [discovered, setDiscovered] = useState<string[]>([])
+  const [loadingModels, setLoadingModels] = useState(false)
+  const modelOptions = Array.from(new Set([...(data.model ? [data.model] : []), ...models, ...discovered]))
 
   const loadModels = useCallback(async () => {
     if (!data.baseUrl) {
-      return;
+      return
     }
-    setLoadingModels(true);
+    setLoadingModels(true)
     try {
-      setDiscovered(await invoke<string[]>('agent.listModels', { baseUrl: data.baseUrl, apiKeySecret: data.apiKeySecret }));
+      setDiscovered(
+        await invoke<string[]>('agent.listModels', { baseUrl: data.baseUrl, apiKeySecret: data.apiKeySecret }),
+      )
     } catch {
-      setDiscovered([]);
+      setDiscovered([])
     } finally {
-      setLoadingModels(false);
+      setLoadingModels(false)
     }
-  }, [data.baseUrl, data.apiKeySecret]);
+  }, [data.baseUrl, data.apiKeySecret])
 
   // OpenAI-compatible endpoints expose no static catalog, so read
   // `<baseUrl>/models` and refresh whenever the endpoint or key changes.
   useEffect(() => {
     if (data.baseUrl?.startsWith('http')) {
-      loadModels();
+      loadModels()
     } else {
-      setDiscovered([]);
+      setDiscovered([])
     }
-  }, [data.baseUrl, loadModels]);
+  }, [data.baseUrl, loadModels])
 
   return (
     <div className='flex flex-col gap-3'>
@@ -282,7 +272,9 @@ function LocalProfileFields({
           </SelectTrigger>
           <SelectContent>
             {modelOptions.map((m) => (
-              <SelectItem key={m} value={m} className='text-xs'>{m}</SelectItem>
+              <SelectItem key={m} value={m} className='text-xs'>
+                {m}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -299,7 +291,9 @@ function LocalProfileFields({
           <SelectContent>
             <SelectItem value={NO_SECRET}>None</SelectItem>
             {secretKeys.map((k) => (
-              <SelectItem key={k} value={k} className='font-mono text-xs'>{k}</SelectItem>
+              <SelectItem key={k} value={k} className='font-mono text-xs'>
+                {k}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -322,7 +316,9 @@ function LocalProfileFields({
             <SelectContent>
               <SelectItem value={NO_REASONING}>Default</SelectItem>
               {efforts.map((e) => (
-                <SelectItem key={e} value={e} className='text-xs capitalize'>{e}</SelectItem>
+                <SelectItem key={e} value={e} className='text-xs capitalize'>
+                  {e}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -336,26 +332,19 @@ function LocalProfileFields({
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ baseUrl: e.target.value })}
           placeholder='Provider default'
         />
-        <p className='text-[10px] text-muted-foreground'>
-          Optional OpenAI-compatible endpoint override.
-        </p>
+        <p className='text-[10px] text-muted-foreground'>Optional OpenAI-compatible endpoint override.</p>
       </div>
       {isNative ? <NativeProfileFields data={data} updateData={updateData} /> : null}
       <p className='text-[10px] text-muted-foreground'>
         Runs in a persistent per-agent workspace: <code>data/agent-workspace/&lt;agent-slug&gt;</code>.
       </p>
     </div>
-  );
+  )
 }
 
 // System prompt + temperature only apply to the in-process Custom (native)
 // harness; ACP agents carry their own prompt and manage their own sampling.
-function NativeProfileFields({
-  data, updateData,
-}: {
-  data: AgentData;
-  updateData: (p: Partial<AgentData>) => void;
-}) {
+function NativeProfileFields({ data, updateData }: { data: AgentData; updateData: (p: Partial<AgentData>) => void }) {
   return (
     <div className='flex flex-col gap-3'>
       <div className='flex flex-col gap-1'>
@@ -378,22 +367,27 @@ function NativeProfileFields({
           step={0.1}
           value={data.temperature ?? ''}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            updateData({ temperature: e.target.value === '' ? undefined : Number(e.target.value) })}
+            updateData({ temperature: e.target.value === '' ? undefined : Number(e.target.value) })
+          }
           placeholder='Provider default'
         />
       </div>
     </div>
-  );
+  )
 }
 
 function ProfileSelect({
-  label, value, placeholder, options, onChange,
+  label,
+  value,
+  placeholder,
+  options,
+  onChange,
 }: {
-  label: string;
-  value: string | undefined;
-  placeholder: string;
-  options: { value: string; label: string }[];
-  onChange: (v: string) => void;
+  label: string
+  value: string | undefined
+  placeholder: string
+  options: { value: string; label: string }[]
+  onChange: (v: string) => void
 }) {
   return (
     <div className='flex flex-col gap-1'>
@@ -404,97 +398,103 @@ function ProfileSelect({
         </SelectTrigger>
         <SelectContent>
           {options.map((o) => (
-            <SelectItem key={o.value} value={o.value} className='text-xs'>{o.label}</SelectItem>
+            <SelectItem key={o.value} value={o.value} className='text-xs'>
+              {o.label}
+            </SelectItem>
           ))}
         </SelectContent>
       </Select>
     </div>
-  );
+  )
 }
 
 // ─── OpenClaw Tab Types ──────────────────────────────────────────────
 
 interface AgentInfo {
-  agentId: string;
-  name: string;
-  isDefault: boolean;
-  workspace?: string;
-  exists: true;
+  agentId: string
+  name: string
+  isDefault: boolean
+  workspace?: string
+  exists: true
 }
 
 interface AgentNotFound {
-  exists: false;
+  exists: false
 }
 
-type AgentLookup = AgentInfo | AgentNotFound;
+type AgentLookup = AgentInfo | AgentNotFound
 
 interface ConnectionState {
-  connected: boolean;
-  reason?: string;
+  connected: boolean
+  reason?: string
 }
 
 interface FileMeta {
-  name: string;
-  path?: string;
-  missing: boolean;
-  size?: number;
-  updatedAtMs?: number;
+  name: string
+  path?: string
+  missing: boolean
+  size?: number
+  updatedAtMs?: number
 }
 
 interface FilesList {
-  workspace: string;
-  files: FileMeta[];
+  workspace: string
+  files: FileMeta[]
 }
 
 interface FileContent extends FileMeta {
-  content: string;
+  content: string
 }
 
 // ─── OpenClaw Tab Component ──────────────────────────────────────────
 
 export function AgentOpenClawTab({
   data,
-}: { nodeId: string; data: AgentData; updateData: (p: Partial<AgentData>) => void }) {
-  const agentName = data.name?.trim() ?? '';
-  const agentSlug = slug(agentName);
-  const [connection, setConnection] = useState<ConnectionState | null>(null);
-  const [lookup, setLookup] = useState<AgentLookup | null>(null);
-  const [externalAgents, setExternalAgents] = useState<AgentInfo[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [workspace, setWorkspace] = useState('');
+}: {
+  nodeId: string
+  data: AgentData
+  updateData: (p: Partial<AgentData>) => void
+}) {
+  const agentName = data.name?.trim() ?? ''
+  const agentSlug = slug(agentName)
+  const [connection, setConnection] = useState<ConnectionState | null>(null)
+  const [lookup, setLookup] = useState<AgentLookup | null>(null)
+  const [externalAgents, setExternalAgents] = useState<AgentInfo[]>([])
+  const [loading, setLoading] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [workspace, setWorkspace] = useState('')
 
   // Auto-suggest workspace when agent slug changes
   useEffect(() => {
     if (agentSlug) {
-      setWorkspace(`~/.openclaw/workspace-${agentSlug}`);
+      setWorkspace(`~/.openclaw/workspace-${agentSlug}`)
     } else {
-      setWorkspace('');
+      setWorkspace('')
     }
-  }, [agentSlug]);
+  }, [agentSlug])
 
   // Get all agent node slugs on the graph to compute external agents
-  const graphNodes = useGraphNodes();
+  const graphNodes = useGraphNodes()
   const agentNodeSlugs = useMemo(() => {
-    const slugs: string[] = [];
+    const slugs: string[] = []
     for (const node of graphNodes) {
       if ((node as { type?: string }).type !== 'agent') {
-        continue;
+        continue
       }
-      const nodeData = (node as { data?: { name?: string } }).data;
-      const s = slug(nodeData?.name ?? '');
+      const nodeData = (node as { data?: { name?: string } }).data
+      const s = slug(nodeData?.name ?? '')
       if (s) {
-        slugs.push(s);
+        slugs.push(s)
       }
     }
-    return slugs;
-  }, [graphNodes]);
+    return slugs
+  }, [graphNodes])
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
+    let cancelled = false
+    setLoading(true)
+    setError(null)
 
     Promise.all([
       invoke<ConnectionState>('agent.getOpenclawConnection'),
@@ -504,76 +504,78 @@ export function AgentOpenClawTab({
       invoke<AgentInfo[]>('agent.listOpenclawExternal', agentNodeSlugs),
     ])
       .then(([conn, agentResult, external]) => {
-        if (cancelled) return;
-        setConnection(conn);
-        setLookup(agentResult);
-        setExternalAgents(external);
+        if (cancelled) return
+        setConnection(conn)
+        setLookup(agentResult)
+        setExternalAgents(external)
       })
       .catch((err: unknown) => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Failed to load OpenClaw data');
+        if (cancelled) return
+        setError(err instanceof Error ? err.message : 'Failed to load OpenClaw data')
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+        if (!cancelled) setLoading(false)
+      })
 
-    return () => { cancelled = true; };
-  }, [agentName, agentNodeSlugs]);
+    return () => {
+      cancelled = true
+    }
+  }, [agentName, agentNodeSlugs])
 
   const handleCreate = useCallback(async () => {
-    if (!agentName) return;
-    setCreating(true);
-    setError(null);
+    if (!agentName) return
+    setCreating(true)
+    setError(null)
     try {
-      const result = await invoke<AgentLookup>('agent.createOpenclaw', agentName, workspace || undefined);
+      const result = await invoke<AgentLookup>('agent.createOpenclaw', agentName, workspace || undefined)
       if (result.exists) {
-        setLookup(result);
-        toast.success(`Agent "${result.name}" created in OpenClaw`);
+        setLookup(result)
+        toast.success(`Agent "${result.name}" created in OpenClaw`)
       } else {
-        setError('Agent creation returned no result. Check gateway logs.');
+        setError('Agent creation returned no result. Check gateway logs.')
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to create agent';
-      setError(msg);
-      toast.error(msg);
+      const msg = err instanceof Error ? err.message : 'Failed to create agent'
+      setError(msg)
+      toast.error(msg)
     } finally {
-      setCreating(false);
+      setCreating(false)
     }
-  }, [agentName, workspace]);
+  }, [agentName, workspace])
 
   const handleRefresh = useCallback(() => {
-    setLoading(true);
-    setError(null);
+    setLoading(true)
+    setError(null)
     Promise.all([
       invoke<AgentLookup>('agent.lookupOpenclaw', agentName),
       invoke<AgentInfo[]>('agent.listOpenclawExternal', agentNodeSlugs),
     ])
       .then(([agentResult, external]) => {
-        setLookup(agentResult);
-        setExternalAgents(external);
+        setLookup(agentResult)
+        setExternalAgents(external)
       })
       .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : 'Failed to refresh');
+        setError(err instanceof Error ? err.message : 'Failed to refresh')
       })
-      .finally(() => setLoading(false));
-  }, [agentName, agentNodeSlugs]);
+      .finally(() => setLoading(false))
+  }, [agentName, agentNodeSlugs])
 
   const handleDelete = useCallback(async () => {
     if (!lookup?.exists) {
-      return;
+      return
     }
-    setError(null);
+    setError(null)
     try {
-      await invoke('agent.deleteOpenclaw', lookup.agentId);
-      toast.success(`Agent "${lookup.name}" deleted from OpenClaw`);
-      setLookup({ exists: false });
-      handleRefresh();
+      await invoke('agent.deleteOpenclaw', lookup.agentId)
+      toast.success(`Agent "${lookup.name}" deleted from OpenClaw`)
+      setLookup({ exists: false })
+      handleRefresh()
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to delete agent';
-      setError(msg);
-      toast.error(msg);
+      const msg = err instanceof Error ? err.message : 'Failed to delete agent'
+      setError(msg)
+      toast.error(msg)
     }
-  }, [lookup, handleRefresh]);
+  }, [lookup, handleRefresh])
 
   // Not connected
   if (connection && !connection.connected) {
@@ -587,7 +589,7 @@ export function AgentOpenClawTab({
           {connection.reason || 'Configure the OpenClaw gateway in Settings → AI to connect your agents.'}
         </p>
       </div>
-    );
+    )
   }
 
   // Loading state
@@ -596,7 +598,7 @@ export function AgentOpenClawTab({
       <div className='flex items-center justify-center py-8'>
         <icons.Loader2 className='size-5 animate-spin text-muted-foreground' />
       </div>
-    );
+    )
   }
 
   const header = (
@@ -611,9 +613,7 @@ export function AgentOpenClawTab({
       </div>
       <Separator />
       {!agentName ? (
-        <p className='text-xs text-muted-foreground italic'>
-          Set an agent name in the Details tab first.
-        </p>
+        <p className='text-xs text-muted-foreground italic'>Set an agent name in the Details tab first.</p>
       ) : lookup?.exists ? (
         <AgentInfoCard agent={lookup} onDelete={handleDelete} />
       ) : (
@@ -625,21 +625,17 @@ export function AgentOpenClawTab({
           onCreate={handleCreate}
         />
       )}
-      {error && (
-        <p className='text-xs text-destructive'>{error}</p>
-      )}
+      {error && <p className='text-xs text-destructive'>{error}</p>}
     </>
-  );
+  )
 
   if (lookup?.exists) {
     return (
       <div className='flex flex-col h-full'>
-        <div className='flex flex-col gap-3 p-1 shrink-0'>
-          {header}
-        </div>
+        <div className='flex flex-col gap-3 p-1 shrink-0'>{header}</div>
         <FilesSection agentId={lookup.agentId} />
       </div>
-    );
+    )
   }
 
   return (
@@ -656,9 +652,7 @@ export function AgentOpenClawTab({
                 {externalAgents.length}
               </Badge>
             </div>
-            <p className='text-[10px] text-muted-foreground'>
-              Agents in OpenClaw not registered via any Agent node.
-            </p>
+            <p className='text-[10px] text-muted-foreground'>Agents in OpenClaw not registered via any Agent node.</p>
             <div className='flex flex-col gap-1'>
               {externalAgents.map((ext) => (
                 <ExternalAgentCard key={ext.agentId} agent={ext} />
@@ -668,77 +662,80 @@ export function AgentOpenClawTab({
         )}
       </div>
     </ScrollArea>
-  );
+  )
 }
 
 // ─── Files Section ───────────────────────────────────────────────────
 
 function FilesSection({ agentId }: { agentId: string }) {
-  const [files, setFiles] = useState<FileMeta[]>([]);
-  const [filesLoading, setFilesLoading] = useState(false);
-  const [filesError, setFilesError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [content, setContent] = useState('');
-  const [original, setOriginal] = useState('');
-  const [fileLoading, setFileLoading] = useState(false);
-  const [fileError, setFileError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [files, setFiles] = useState<FileMeta[]>([])
+  const [filesLoading, setFilesLoading] = useState(false)
+  const [filesError, setFilesError] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string | null>(null)
+  const [content, setContent] = useState('')
+  const [original, setOriginal] = useState('')
+  const [fileLoading, setFileLoading] = useState(false)
+  const [fileError, setFileError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
 
   const reloadList = useCallback(async () => {
-    setFilesLoading(true);
-    setFilesError(null);
+    setFilesLoading(true)
+    setFilesError(null)
     try {
-      const r = await invoke<FilesList>('agent.listOpenclawFiles', agentId);
-      setFiles(r.files);
+      const r = await invoke<FilesList>('agent.listOpenclawFiles', agentId)
+      setFiles(r.files)
     } catch (err) {
-      setFilesError(err instanceof Error ? err.message : 'Failed to list files');
+      setFilesError(err instanceof Error ? err.message : 'Failed to list files')
     } finally {
-      setFilesLoading(false);
+      setFilesLoading(false)
     }
-  }, [agentId]);
+  }, [agentId])
 
   useEffect(() => {
-    reloadList();
-  }, [reloadList]);
+    reloadList()
+  }, [reloadList])
 
-  const loadFile = useCallback(async (name: string) => {
-    setSelected(name);
-    setFileLoading(true);
-    setFileError(null);
-    try {
-      const r = await invoke<FileContent>('agent.getOpenclawFile', agentId, name);
-      setContent(r.content);
-      setOriginal(r.content);
-    } catch (err) {
-      setFileError(err instanceof Error ? err.message : 'Failed to read file');
-      setContent('');
-      setOriginal('');
-    } finally {
-      setFileLoading(false);
-    }
-  }, [agentId]);
+  const loadFile = useCallback(
+    async (name: string) => {
+      setSelected(name)
+      setFileLoading(true)
+      setFileError(null)
+      try {
+        const r = await invoke<FileContent>('agent.getOpenclawFile', agentId, name)
+        setContent(r.content)
+        setOriginal(r.content)
+      } catch (err) {
+        setFileError(err instanceof Error ? err.message : 'Failed to read file')
+        setContent('')
+        setOriginal('')
+      } finally {
+        setFileLoading(false)
+      }
+    },
+    [agentId],
+  )
 
   const save = useCallback(async () => {
     if (!selected) {
-      return;
+      return
     }
-    setSaving(true);
-    setFileError(null);
+    setSaving(true)
+    setFileError(null)
     try {
-      await invoke('agent.setOpenclawFile', agentId, selected, content);
-      setOriginal(content);
-      toast.success(`Saved ${selected}`);
-      reloadList();
+      await invoke('agent.setOpenclawFile', agentId, selected, content)
+      setOriginal(content)
+      toast.success(`Saved ${selected}`)
+      reloadList()
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to save';
-      setFileError(msg);
-      toast.error(msg);
+      const msg = err instanceof Error ? err.message : 'Failed to save'
+      setFileError(msg)
+      toast.error(msg)
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  }, [agentId, selected, content, reloadList]);
+  }, [agentId, selected, content, reloadList])
 
-  const dirty = content !== original;
+  const dirty = content !== original
 
   return (
     <div className='flex-1 min-h-0 flex flex-col gap-2 p-1 border-t'>
@@ -753,9 +750,7 @@ function FilesSection({ agentId }: { agentId: string }) {
           <icons.RefreshCw className={`size-3 ${filesLoading ? 'animate-spin' : ''}`} />
         </Button>
       </div>
-      {filesError && (
-        <p className='text-xs text-destructive'>{filesError}</p>
-      )}
+      {filesError && <p className='text-xs text-destructive'>{filesError}</p>}
       <Select value={selected ?? ''} onValueChange={loadFile}>
         <SelectTrigger className='h-7 text-xs'>
           <SelectValue placeholder='Select a file…' />
@@ -798,9 +793,7 @@ function FilesSection({ agentId }: { agentId: string }) {
               />
             </div>
           )}
-          {fileError && (
-            <p className='text-xs text-destructive'>{fileError}</p>
-          )}
+          {fileError && <p className='text-xs text-destructive'>{fileError}</p>}
           <div className='flex items-center gap-2'>
             <Button
               variant='outline'
@@ -824,18 +817,16 @@ function FilesSection({ agentId }: { agentId: string }) {
           </div>
         </div>
       ) : (
-        <p className='text-xs text-muted-foreground italic'>
-          Pick a file to view or edit.
-        </p>
+        <p className='text-xs text-muted-foreground italic'>Pick a file to view or edit.</p>
       )}
     </div>
-  );
+  )
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────
 
 function AgentInfoCard({ agent, onDelete }: { agent: AgentInfo; onDelete: () => void }) {
-  const [confirming, setConfirming] = useState(false);
+  const [confirming, setConfirming] = useState(false)
   return (
     <div className='flex flex-col gap-2'>
       <div className='flex items-center gap-2'>
@@ -849,19 +840,17 @@ function AgentInfoCard({ agent, onDelete }: { agent: AgentInfo; onDelete: () => 
         <div className='flex-1' />
         {confirming ? (
           <>
-            <Button
-              variant='ghost'
-              size='sm'
-              className='h-6 px-2 text-[10px]'
-              onClick={() => setConfirming(false)}
-            >
+            <Button variant='ghost' size='sm' className='h-6 px-2 text-[10px]' onClick={() => setConfirming(false)}>
               Cancel
             </Button>
             <Button
               variant='destructive'
               size='sm'
               className='h-6 px-2 text-[10px]'
-              onClick={() => { setConfirming(false); onDelete(); }}
+              onClick={() => {
+                setConfirming(false)
+                onDelete()
+              }}
             >
               Confirm
             </Button>
@@ -881,16 +870,14 @@ function AgentInfoCard({ agent, onDelete }: { agent: AgentInfo; onDelete: () => 
       <div className='rounded-md border p-2.5 flex flex-col gap-1.5'>
         <InfoRow icon={<icons.Hash className='size-3' />} label='ID' value={agent.agentId} />
         <InfoRow icon={<icons.User className='size-3' />} label='Name' value={agent.name} />
-        {agent.workspace && (
-          <InfoRow icon={<icons.Folder className='size-3' />} label='Path' value={agent.workspace} />
-        )}
+        {agent.workspace && <InfoRow icon={<icons.Folder className='size-3' />} label='Path' value={agent.workspace} />}
       </div>
     </div>
-  );
+  )
 }
 
 function ExternalAgentCard({ agent }: { agent: AgentInfo }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(false)
   return (
     <div className='rounded-md border'>
       <button
@@ -905,7 +892,9 @@ function ExternalAgentCard({ agent }: { agent: AgentInfo }) {
             default
           </Badge>
         )}
-        <icons.ChevronRight className={`size-3 text-muted-foreground shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+        <icons.ChevronRight
+          className={`size-3 text-muted-foreground shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
+        />
       </button>
       {expanded && (
         <div className='px-2.5 pb-2 pt-0 flex flex-col gap-1 border-t'>
@@ -916,7 +905,7 @@ function ExternalAgentCard({ agent }: { agent: AgentInfo }) {
         </div>
       )}
     </div>
-  );
+  )
 }
 
 function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
@@ -924,9 +913,11 @@ function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string;
     <div className='flex items-center gap-2'>
       <span className='text-muted-foreground'>{icon}</span>
       <span className='text-[10px] text-muted-foreground uppercase tracking-wide w-10'>{label}</span>
-      <span className='text-xs font-mono truncate flex-1' title={value}>{value}</span>
+      <span className='text-xs font-mono truncate flex-1' title={value}>
+        {value}
+      </span>
     </div>
-  );
+  )
 }
 
 function AgentCreateCard({
@@ -936,11 +927,11 @@ function AgentCreateCard({
   creating,
   onCreate,
 }: {
-  agentSlug: string;
-  workspace: string;
-  onWorkspaceChange: (v: string) => void;
-  creating: boolean;
-  onCreate: () => void;
+  agentSlug: string
+  workspace: string
+  onWorkspaceChange: (v: string) => void
+  creating: boolean
+  onCreate: () => void
 }) {
   return (
     <div className='flex flex-col gap-2'>
@@ -949,7 +940,8 @@ function AgentCreateCard({
         <span className='text-xs font-medium'>Not found in OpenClaw</span>
       </div>
       <p className='text-xs text-muted-foreground'>
-        No agent <code className='font-mono text-[11px]'>{agentSlug}</code> exists in OpenClaw. Create one to enable chat sessions from this node.
+        No agent <code className='font-mono text-[11px]'>{agentSlug}</code> exists in OpenClaw. Create one to enable
+        chat sessions from this node.
       </p>
       <div className='flex flex-col gap-1'>
         <Label className='text-xs'>Workspace</Label>
@@ -959,17 +951,9 @@ function AgentCreateCard({
           placeholder='~/.openclaw/workspace-name'
           className='text-xs font-mono'
         />
-        <p className='text-[10px] text-muted-foreground'>
-          Directory for agent files (AGENTS.md, MEMORY.md, etc.)
-        </p>
+        <p className='text-[10px] text-muted-foreground'>Directory for agent files (AGENTS.md, MEMORY.md, etc.)</p>
       </div>
-      <Button
-        variant='outline'
-        size='sm'
-        onClick={onCreate}
-        disabled={creating}
-        className='w-full'
-      >
+      <Button variant='outline' size='sm' onClick={onCreate} disabled={creating} className='w-full'>
         {creating ? (
           <>
             <icons.Loader2 className='size-3 mr-1 animate-spin' />
@@ -983,5 +967,5 @@ function AgentCreateCard({
         )}
       </Button>
     </div>
-  );
+  )
 }

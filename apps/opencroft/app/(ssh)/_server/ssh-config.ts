@@ -1,4 +1,5 @@
 import os from 'node:os'
+
 import { type SshConfigEntry, sshConfig, sshKeys } from '@opencroft/terminal/server'
 
 import { getSshFeature, type Server, slug } from '@/app/(server)/_server/types'

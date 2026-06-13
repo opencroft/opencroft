@@ -1,13 +1,4 @@
-import {
-  React,
-  NodeFrame,
-  OutputHandle,
-  icons,
-  inspectorIntent,
-  invoke,
-  useReactFlow,
-  useGraphNodes,
-} from '@ext/host';
+import { icons, inspectorIntent, invoke, NodeFrame, OutputHandle, React, useGraphNodes, useReactFlow } from '@ext/host'
 import {
   Badge,
   Button,
@@ -19,25 +10,29 @@ import {
   SelectTrigger,
   SelectValue,
   Separator,
-} from '@ext/ui';
-import { PinButton, StatsList, PinnedBody, InspectorFilesBody } from '../shared';
-import { Terminal } from '@ext/ui';
+  Terminal,
+} from '@ext/ui'
 
-void Badge;
+import { InspectorFilesBody, PinButton, PinnedBody, StatsList } from '../shared'
 
-const { useCallback, useEffect, useState } = React;
+void Badge
+
+const { useCallback, useEffect, useState } = React
 
 export interface ServerData {
-  name: string;
-  address: string;
-  username: string;
-  port: number;
-  password?: string;
-  keyPath?: string;
+  name: string
+  address: string
+  username: string
+  port: number
+  password?: string
+  keyPath?: string
 }
 
 interface ServerStats {
-  os: string; cpu: string; memory: string; storage: string;
+  os: string
+  cpu: string
+  memory: string
+  storage: string
 }
 
 function serverConfigFrom(data: ServerData) {
@@ -47,49 +42,53 @@ function serverConfigFrom(data: ServerData) {
     username: data.username || 'root',
     password: data.password,
     keyPath: data.keyPath,
-  };
+  }
 }
 
 function useServerStats(data: ServerData) {
-  const [stats, setStats] = useState<ServerStats | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [stats, setStats] = useState<ServerStats | null>(null)
+  const [loading, setLoading] = useState(false)
   const refresh = useCallback(async () => {
     if (!data.address) {
-      setStats(null);
-      return;
+      setStats(null)
+      return
     }
-    setLoading(true);
+    setLoading(true)
     try {
-      const out = await invoke<ServerStats>('server.getStats', serverConfigFrom(data));
-      setStats(out);
+      const out = await invoke<ServerStats>('server.getStats', serverConfigFrom(data))
+      setStats(out)
     } catch {
-      setStats(null);
+      setStats(null)
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [data.address, data.port, data.username, data.password, data.keyPath]);
-  return { stats, loading, refresh };
+  }, [data.address, data.port, data.username, data.password, data.keyPath])
+  return { stats, loading, refresh }
 }
 
-interface KeyRef { ref: string; name: string; type: string; }
+interface KeyRef {
+  ref: string
+  name: string
+  type: string
+}
 
-function KeyStoreKeySelector({
-  value, onChange,
-}: { value: string; onChange: (v: string) => void }) {
-  const nodes = useGraphNodes();
-  const [keys, setKeys] = useState<KeyRef[] | null>(null);
+function KeyStoreKeySelector({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const nodes = useGraphNodes()
+  const [keys, setKeys] = useState<KeyRef[] | null>(null)
 
   useEffect(() => {
-    const stores = nodes.filter((n) => n.type === 'core-key-store');
+    const stores = nodes.filter((n) => n.type === 'core-key-store')
     if (stores.length === 0) {
-      setKeys([]);
-      return;
+      setKeys([])
+      return
     }
-    Promise.all(stores.map(async (store) => {
-      const list = await invoke<{ name: string; type: string }[]>('keyStore.listKeys', store.id);
-      return list.map((k) => ({ ref: `${store.id}:${k.name}`, name: k.name, type: k.type }));
-    })).then((results) => setKeys(results.flat()));
-  }, [nodes]);
+    Promise.all(
+      stores.map(async (store) => {
+        const list = await invoke<{ name: string; type: string }[]>('keyStore.listKeys', store.id)
+        return list.map((k) => ({ ref: `${store.id}:${k.name}`, name: k.name, type: k.type }))
+      }),
+    ).then((results) => setKeys(results.flat()))
+  }, [nodes])
 
   if (!keys) {
     return (
@@ -97,7 +96,7 @@ function KeyStoreKeySelector({
         <icons.Loader2 className='h-3 w-3 animate-spin mr-1.5' />
         Loading keys…
       </div>
-    );
+    )
   }
 
   return (
@@ -114,37 +113,38 @@ function KeyStoreKeySelector({
         ))}
       </SelectContent>
     </Select>
-  );
+  )
 }
 
-export function ServerNode({
-  id, data, selected,
-}: { id: string; data: ServerData; selected?: boolean }) {
-  const { stats, loading, refresh } = useServerStats(data);
-  const rf = useReactFlow();
-  const [loaded, setLoaded] = useState(false);
+export function ServerNode({ id, data, selected }: { id: string; data: ServerData; selected?: boolean }) {
+  const { stats, loading, refresh } = useServerStats(data)
+  const rf = useReactFlow()
+  const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
     if (!data.address) {
-      setLoaded(true);
-      return;
+      setLoaded(true)
+      return
     }
-    refresh().finally(() => setLoaded(true));
-  }, [refresh, data.address]);
+    refresh().finally(() => setLoaded(true))
+  }, [refresh, data.address])
 
-  const openInspector = useCallback((tab: string) => {
-    if (!data.address) {
-      return;
-    }
-    rf.setNodes((nds) => nds.map((n: { id: string }) => ({ ...n, selected: n.id === id })));
-    inspectorIntent.open(id, tab);
-  }, [id, rf, data.address]);
+  const openInspector = useCallback(
+    (tab: string) => {
+      if (!data.address) {
+        return
+      }
+      rf.setNodes((nds) => nds.map((n: { id: string }) => ({ ...n, selected: n.id === id })))
+      inspectorIntent.open(id, tab)
+    },
+    [id, rf, data.address],
+  )
 
-  const openTerminal = useCallback(() => openInspector('terminal'), [openInspector]);
-  const openFiles = useCallback(() => openInspector('files'), [openInspector]);
+  const openTerminal = useCallback(() => openInspector('terminal'), [openInspector])
+  const openFiles = useCallback(() => openInspector('files'), [openInspector])
 
-  const title = data.name || 'Server';
-  const subtitle = `${data.username || 'root'}@${data.address || '?'}:${data.port || 22}`;
+  const title = data.name || 'Server'
+  const subtitle = `${data.username || 'root'}@${data.address || '?'}:${data.port || 22}`
   return (
     <NodeFrame
       icon={icons.Server}
@@ -181,13 +181,18 @@ export function ServerNode({
         }
       />
     </NodeFrame>
-  );
+  )
 }
 
 export function ServerInspector({
-  data, updateData,
-}: { nodeId: string; data: ServerData; updateData: (p: Partial<ServerData>) => void }) {
-  const { stats, loading, refresh } = useServerStats(data);
+  data,
+  updateData,
+}: {
+  nodeId: string
+  data: ServerData
+  updateData: (p: Partial<ServerData>) => void
+}) {
+  const { stats, loading, refresh } = useServerStats(data)
 
   return (
     <div className='flex flex-col gap-3'>
@@ -205,26 +210,15 @@ export function ServerInspector({
       </div>
       <div className='flex flex-col gap-1'>
         <Label>Port</Label>
-        <Input
-          type='number'
-          value={data.port ?? 22}
-          onChange={(e) => updateData({ port: Number(e.target.value) })}
-        />
+        <Input type='number' value={data.port ?? 22} onChange={(e) => updateData({ port: Number(e.target.value) })} />
       </div>
       <div className='flex flex-col gap-1'>
         <Label>Password (optional)</Label>
-        <Input
-          type='password'
-          value={data.password ?? ''}
-          onChange={(e) => updateData({ password: e.target.value })}
-        />
+        <Input type='password' value={data.password ?? ''} onChange={(e) => updateData({ password: e.target.value })} />
       </div>
       <div className='flex flex-col gap-1'>
         <Label>SSH Key</Label>
-        <KeyStoreKeySelector
-          value={data.keyPath ?? ''}
-          onChange={(v) => updateData({ keyPath: v || undefined })}
-        />
+        <KeyStoreKeySelector value={data.keyPath ?? ''} onChange={(v) => updateData({ keyPath: v || undefined })} />
       </div>
       <Separator />
       <Button size='sm' className='h-7 text-xs' onClick={refresh} disabled={!data.address || loading}>
@@ -239,18 +233,18 @@ export function ServerInspector({
         </div>
       ) : null}
     </div>
-  );
+  )
 }
 
 export function ServerTerminalTab({
   data,
-}: { nodeId: string; data: ServerData; updateData: (p: Partial<ServerData>) => void }) {
+}: {
+  nodeId: string
+  data: ServerData
+  updateData: (p: Partial<ServerData>) => void
+}) {
   if (!data.address) {
-    return (
-      <div className='p-3 text-xs text-muted-foreground italic'>
-        Configure server address to use the terminal.
-      </div>
-    );
+    return <div className='p-3 text-xs text-muted-foreground italic'>Configure server address to use the terminal.</div>
   }
   return (
     <Terminal
@@ -265,18 +259,18 @@ export function ServerTerminalTab({
         },
       }}
     />
-  );
+  )
 }
 
 export function ServerFilesTab({
   data,
-}: { nodeId: string; data: ServerData; updateData: (p: Partial<ServerData>) => void }) {
+}: {
+  nodeId: string
+  data: ServerData
+  updateData: (p: Partial<ServerData>) => void
+}) {
   if (!data.address) {
-    return (
-      <div className='p-3 text-xs text-muted-foreground italic'>
-        Configure server address to browse files.
-      </div>
-    );
+    return <div className='p-3 text-xs text-muted-foreground italic'>Configure server address to browse files.</div>
   }
   return (
     <InspectorFilesBody
@@ -294,5 +288,5 @@ export function ServerFilesTab({
         },
       }}
     />
-  );
+  )
 }

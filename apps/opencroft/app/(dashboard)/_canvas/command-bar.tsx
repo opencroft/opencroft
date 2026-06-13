@@ -2,6 +2,7 @@
 
 import { type ReactNode, useEffect, useRef } from 'react'
 import { ScrollArea } from 'ui/scroll-area'
+
 import { NodeCard } from '@/app/(dashboard)/_canvas/node-card'
 import { cn } from '@/lib/utils'
 

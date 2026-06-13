@@ -7,8 +7,17 @@ import { Button } from 'ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
 import { Spinner } from 'ui/spinner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'ui/table'
+
 import type { AuditStatus } from '@/app/(mcp)/_server/audit'
-import { type AuditQuery, clearAuditLog, getYoloMode, listAuditEntries, listAuditTools, type McpAuditEntry, updateYoloMode } from '@/app/(settings)/_server/audit-actions'
+import {
+  type AuditQuery,
+  clearAuditLog,
+  getYoloMode,
+  listAuditEntries,
+  listAuditTools,
+  type McpAuditEntry,
+  updateYoloMode,
+} from '@/app/(settings)/_server/audit-actions'
 
 const ALL = '__all__'
 
@@ -22,7 +31,10 @@ const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
   { value: 'error', label: 'Error' },
 ]
 
-const STATUS_BADGE: Record<AuditStatus, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
+const STATUS_BADGE: Record<
+  AuditStatus,
+  { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }
+> = {
   'auto-approved': { label: 'auto', variant: 'secondary' },
   approved: { label: 'approved', variant: 'default' },
   rejected: { label: 'rejected', variant: 'outline' },
@@ -57,7 +69,9 @@ function PayloadBlock({ title, body }: { title: string; body: string | null }) {
   return (
     <div className='space-y-1'>
       <div className='text-xs font-medium text-muted-foreground'>{title}</div>
-      <pre className='text-xs whitespace-pre-wrap break-all bg-muted/50 rounded-md p-2 max-h-60 overflow-auto font-mono'>{formatted}</pre>
+      <pre className='text-xs whitespace-pre-wrap break-all bg-muted/50 rounded-md p-2 max-h-60 overflow-auto font-mono'>
+        {formatted}
+      </pre>
     </div>
   )
 }
@@ -228,7 +242,9 @@ export default function AuditSettings() {
           }}
           className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${yoloEnabled ? 'bg-red-500' : 'bg-input'}`}
         >
-          <span className={`pointer-events-none block size-5 rounded-full bg-background shadow ring-0 transition-transform ${yoloEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+          <span
+            className={`pointer-events-none block size-5 rounded-full bg-background shadow ring-0 transition-transform ${yoloEnabled ? 'translate-x-5' : 'translate-x-0'}`}
+          />
         </button>
       </div>
 
@@ -258,7 +274,14 @@ export default function AuditSettings() {
                 </TableCell>
               </TableRow>
             ) : (
-              entries.map((entry) => <AuditRow key={entry.id} entry={entry} expanded={expandedId === entry.id} onToggle={() => toggle(entry.id)} />)
+              entries.map((entry) => (
+                <AuditRow
+                  key={entry.id}
+                  entry={entry}
+                  expanded={expandedId === entry.id}
+                  onToggle={() => toggle(entry.id)}
+                />
+              ))
             )}
           </TableBody>
         </Table>

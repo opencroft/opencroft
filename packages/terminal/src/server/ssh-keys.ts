@@ -113,7 +113,14 @@ export const sshKeys = {
       }
 
       for (const name of entries) {
-        if (name.endsWith('.pub') || name === 'known_hosts' || name === 'known_hosts.old' || name === 'config' || name === 'authorized_keys' || name.endsWith('.Identifier')) {
+        if (
+          name.endsWith('.pub') ||
+          name === 'known_hosts' ||
+          name === 'known_hosts.old' ||
+          name === 'config' ||
+          name === 'authorized_keys' ||
+          name.endsWith('.Identifier')
+        ) {
           continue
         }
 

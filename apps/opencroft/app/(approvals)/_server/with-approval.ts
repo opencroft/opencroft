@@ -30,7 +30,13 @@ export class ApprovalRejectedError extends Error {
   }
 }
 
-export async function awaitApproval(input: { tool: string; args: Record<string, unknown>; view?: string; signal?: AbortSignal; spaceId?: string }): Promise<void> {
+export async function awaitApproval(input: {
+  tool: string
+  args: Record<string, unknown>
+  view?: string
+  signal?: AbortSignal
+  spaceId?: string
+}): Promise<void> {
   const request: PendingApproval = {
     id: nextRequestId(),
     tool: input.tool,

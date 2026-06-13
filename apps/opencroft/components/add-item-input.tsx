@@ -1,6 +1,7 @@
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from 'ui/button'
+
 import { ControlledInput } from '@/components/ui/input/controlled-input'
 
 interface AddItemProps {
@@ -22,7 +23,12 @@ export function AddItemInput({ buttonText, placeholder, onAdd }: AddItemProps) {
 
   return (
     <div className='flex gap-2'>
-      <ControlledInput placeholder={placeholder} value={itemName} onValueChanged={(value) => setItemName(value)} onAccepted={handleAdd} />
+      <ControlledInput
+        placeholder={placeholder}
+        value={itemName}
+        onValueChanged={(value) => setItemName(value)}
+        onAccepted={handleAdd}
+      />
       <Button onClick={handleAdd} disabled={!itemName.trim()}>
         <Plus className='h-4 w-4 mr-2' />
         {buttonText}

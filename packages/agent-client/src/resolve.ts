@@ -15,7 +15,9 @@ export function adaptersForProvider(providerId: string): HarnessAdapter[] {
   if (!provider) {
     return []
   }
-  return HARNESS_ADAPTERS.filter((adapter) => adapter.protocol === 'native' || provider.endpoints[adapter.protocol] !== undefined)
+  return HARNESS_ADAPTERS.filter(
+    (adapter) => adapter.protocol === 'native' || provider.endpoints[adapter.protocol] !== undefined,
+  )
 }
 
 export function buildSpawnConfig(selection: AgentSelection): SpawnConfig {

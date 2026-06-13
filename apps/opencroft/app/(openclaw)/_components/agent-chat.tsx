@@ -3,14 +3,35 @@
 import { ChainDot, type ChainDotVariant, Chained } from 'agent-chat/chain'
 import { ThinkingBlock } from 'agent-chat/thinking-block'
 import { ToolCallBlock } from 'agent-chat/tool-block'
-import { Maximize2, Minimize2, Pencil, SendIcon, ShieldAlert, ShieldCheck, ShieldCog, Sparkles, Square } from 'lucide-react'
-import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react'
+import {
+  Maximize2,
+  Minimize2,
+  Pencil,
+  SendIcon,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldCog,
+  Sparkles,
+  Square,
+} from 'lucide-react'
+import {
+  type FormEvent,
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Button } from 'ui/button'
 import { TypingDots } from 'ui/chat/typing-dots'
 import { Flex } from 'ui/layout/flex'
 import { Textarea } from 'ui/textarea'
+
 import { getAutoApprove, setAutoApprove } from '@/app/(approvals)/_server/actions'
 import { CommandBarMenuItem } from '@/app/(dashboard)/_canvas/command-bar'
 import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
@@ -36,7 +57,10 @@ export interface AgentSession {
   draft?: { text: string; key: number }
 }
 
-export function useAgentSession(sessionKey: string, transformOutgoing?: (text: string, isFirstMessage: boolean) => string): AgentSession {
+export function useAgentSession(
+  sessionKey: string,
+  transformOutgoing?: (text: string, isFirstMessage: boolean) => string,
+): AgentSession {
   const [raw, setRaw] = useState<RawChatMessage[]>([])
   const [loading, setLoading] = useState(true)
   const [sending, startSending] = useTransition()
@@ -156,7 +180,10 @@ export function useAgentSession(sessionKey: string, transformOutgoing?: (text: s
     [sessionKey, transformOutgoing, isFirstMessage],
   )
 
-  return useMemo(() => ({ sessionKey, messages, loading, sending, waiting, botName, send }), [sessionKey, messages, loading, sending, waiting, botName, send])
+  return useMemo(
+    () => ({ sessionKey, messages, loading, sending, waiting, botName, send }),
+    [sessionKey, messages, loading, sending, waiting, botName, send],
+  )
 }
 
 interface AgentChatProps {
@@ -239,7 +266,12 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName }: AgentC
       ) : (
         blocks.map((b, i) =>
           b.kind === 'user' ? (
-            <UserMessage key={i} text={b.text} editDisabled={session.waiting} onEdit={edit ? () => edit(turnByBlock.get(i) ?? 0, b.text) : undefined} />
+            <UserMessage
+              key={i}
+              text={b.text}
+              editDisabled={session.waiting}
+              onEdit={edit ? () => edit(turnByBlock.get(i) ?? 0, b.text) : undefined}
+            />
           ) : (
             <Chain
               key={i}
@@ -258,7 +290,10 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName }: AgentC
   )
 }
 
-type ChainItem = { kind: 'assistant-text'; text: string } | { kind: 'thinking'; text: string } | { kind: 'tool'; name: string; args: unknown; result?: { text: string; isError?: boolean } }
+type ChainItem =
+  | { kind: 'assistant-text'; text: string }
+  | { kind: 'thinking'; text: string }
+  | { kind: 'tool'; name: string; args: unknown; result?: { text: string; isError?: boolean } }
 
 type Block = { kind: 'user'; text: string } | { kind: 'chain'; items: ChainItem[] }
 
@@ -407,7 +442,11 @@ function Chain({
     }
 
     const hasAvatar = !!agentAvatar
-    const marker = hasAvatar ? <img src={agentAvatar} alt='' className='size-8 rounded-full object-cover' /> : <ChainDot />
+    const marker = hasAvatar ? (
+      <img src={agentAvatar} alt='' className='size-8 rounded-full object-cover' />
+    ) : (
+      <ChainDot />
+    )
 
     return (
       <Flex className='min-w-0 w-full'>
@@ -417,17 +456,28 @@ function Chain({
               <div className='text-xs font-medium text-foreground'>{botName}</div>
               {toggle}
             </Flex>
-            {items.map((it, idx) => (it.kind === 'thinking' ? <ThinkingBlock key={idx} text={it.text} pending={pending && idx === items.length - 1} /> : null))}
-            {/* Text — no animation, stable */}
-            {lastTextEntry && lastTextEntry.kind === 'item' && lastTextEntry.item.kind === 'assistant-text' && lastTextEntry.item.text.trim() && (
-              <div className='prose-chat'>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{lastTextEntry.item.text}</ReactMarkdown>
-              </div>
+            {items.map((it, idx) =>
+              it.kind === 'thinking' ? (
+                <ThinkingBlock key={idx} text={it.text} pending={pending && idx === items.length - 1} />
+              ) : null,
             )}
+            {/* Text — no animation, stable */}
+            {lastTextEntry &&
+              lastTextEntry.kind === 'item' &&
+              lastTextEntry.item.kind === 'assistant-text' &&
+              lastTextEntry.item.text.trim() && (
+                <div className='prose-chat'>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{lastTextEntry.item.text}</ReactMarkdown>
+                </div>
+              )}
             {/* Tool call — animate on changes */}
             {lastToolAfterText && (
               <div key={lastToolAfterText.name}>
-                <ToolCallBlock name={lastToolAfterText.name} args={lastToolAfterText.args} result={lastToolAfterText.result} />
+                <ToolCallBlock
+                  name={lastToolAfterText.name}
+                  args={lastToolAfterText.args}
+                  result={lastToolAfterText.result}
+                />
               </div>
             )}
             {/* If no text entry found, show the very last entry */}
@@ -460,9 +510,19 @@ function Chain({
         const isFirst = i === 0
         const isLast = i === entries.length - 1
         const hasAvatar = isFirst && !!agentAvatar
-        const marker = hasAvatar ? <img src={agentAvatar} alt='' className='size-8 rounded-full object-cover' /> : <ChainDot variant={entry.kind === 'item' ? toolDotVariant(entry.item) : 'default'} />
+        const marker = hasAvatar ? (
+          <img src={agentAvatar} alt='' className='size-8 rounded-full object-cover' />
+        ) : (
+          <ChainDot variant={entry.kind === 'item' ? toolDotVariant(entry.item) : 'default'} />
+        )
         return (
-          <Chained key={i} marker={marker} lineAbove={!isFirst} lineBelow={!isLast} align={hasAvatar ? 'start' : 'center'}>
+          <Chained
+            key={i}
+            marker={marker}
+            lineAbove={!isFirst}
+            lineBelow={!isLast}
+            align={hasAvatar ? 'start' : 'center'}
+          >
             {renderEntry(entry, isFirst ? botName : undefined, isFirst ? toggle : undefined, isLast && pending)}
           </Chained>
         )
@@ -479,7 +539,9 @@ function ChainToggleButton({ collapsed, onToggle }: { collapsed: boolean; onTogg
       onClick={onToggle}
       className={cn(
         'shrink-0 size-6 inline-flex items-center justify-center rounded-md transition-colors',
-        collapsed ? 'text-muted-foreground hover:text-foreground hover:bg-accent' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+        collapsed
+          ? 'text-muted-foreground hover:text-foreground hover:bg-accent'
+          : 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
       )}
       title={collapsed ? 'Show chain' : 'Collapse chain'}
     >
@@ -606,7 +668,15 @@ interface AgentChatInputProps {
   leadingBarContent?: React.ReactNode
 }
 
-export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlur, onSlashOpenChange, leadingBarContent }: AgentChatInputProps) {
+export function AgentChatInput({
+  session,
+  placeholder,
+  autoFocus,
+  onFocus,
+  onBlur,
+  onSlashOpenChange,
+  leadingBarContent,
+}: AgentChatInputProps) {
   const [text, setText] = useState('')
   const [commands, setCommands] = useState<OpenclawCommand[]>([])
   const [highlight, setHighlight] = useState(0)
@@ -719,7 +789,12 @@ export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlu
       return null
     }
     return matches.map((m, i) => (
-      <CommandBarMenuItem key={m.name} active={i === highlight} onSelect={() => pick(m)} onHover={() => setHighlight(i)}>
+      <CommandBarMenuItem
+        key={m.name}
+        active={i === highlight}
+        onSelect={() => pick(m)}
+        onHover={() => setHighlight(i)}
+      >
         <div className='flex items-center gap-2 text-sm'>
           <span className='font-mono'>{m.textAliases[0] ?? `/${m.name}`}</span>
           <span className='ml-auto text-[10px] uppercase tracking-wide text-muted-foreground'>{m.category}</span>
@@ -772,11 +847,27 @@ export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlu
           )}
         </Button>
         {session.waiting && session.stop ? (
-          <Button type='button' size='icon' variant='ghost' className='h-7 w-7 shrink-0 mt-0.5' onMouseDown={(e) => e.preventDefault()} onClick={session.stop} title='Stop'>
+          <Button
+            type='button'
+            size='icon'
+            variant='ghost'
+            className='h-7 w-7 shrink-0 mt-0.5'
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={session.stop}
+            title='Stop'
+          >
             <Square className='h-4 w-4' />
           </Button>
         ) : (
-          <Button type='button' size='icon' variant='ghost' className='h-7 w-7 shrink-0 mt-0.5' onMouseDown={(e) => e.preventDefault()} onClick={submit} disabled={!text.trim() || session.sending}>
+          <Button
+            type='button'
+            size='icon'
+            variant='ghost'
+            className='h-7 w-7 shrink-0 mt-0.5'
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={submit}
+            disabled={!text.trim() || session.sending}
+          >
             <SendIcon className='h-4 w-4' />
           </Button>
         )}

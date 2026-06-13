@@ -58,11 +58,15 @@ function watch(server: ViteDevServer, port: number) {
     }
     clearInterval(timer)
     if (state().restarts >= MAX_RESTARTS) {
-      server.config.logger.error('[ssr-watchdog] SSR environment still wedged after restarts — restart the dev server manually')
+      server.config.logger.error(
+        '[ssr-watchdog] SSR environment still wedged after restarts — restart the dev server manually',
+      )
       return
     }
     state().restarts += 1
-    server.config.logger.warn(`[ssr-watchdog] SSR dev worker is wedged (dead vite transport) — restarting dev server (${state().restarts}/${MAX_RESTARTS})`)
+    server.config.logger.warn(
+      `[ssr-watchdog] SSR dev worker is wedged (dead vite transport) — restarting dev server (${state().restarts}/${MAX_RESTARTS})`,
+    )
     await server.restart()
   }, PROBE_INTERVAL)
   timer.unref()

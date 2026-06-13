@@ -1,6 +1,7 @@
 'use client'
 
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react'
+
 import type { FileEntry, StorageConnection } from '@/app/(filemanager)/_lib/types'
 import * as actions from '@/app/(filemanager)/_server/actions'
 import * as connectionActions from '@/app/(filemanager)/_server/connection-actions'
@@ -48,7 +49,13 @@ function triggerDownload(blob: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
-export function FileManagerProvider({ children, initialConnection }: { children: ReactNode; initialConnection?: StorageConnection }) {
+export function FileManagerProvider({
+  children,
+  initialConnection,
+}: {
+  children: ReactNode
+  initialConnection?: StorageConnection
+}) {
   const [connections, setConnections] = useState<StorageConnection[]>(initialConnection ? [initialConnection] : [])
   const [activeConnection, setActiveConnection] = useState<StorageConnection | null>(initialConnection || null)
   const [currentPath, setCurrentPath] = useState('/')
@@ -218,7 +225,11 @@ export function FileManagerProvider({ children, initialConnection }: { children:
       setUploads((prev) => [...prev, ...entries])
 
       const promises = items.map((item, i) => {
-        const dir = item.relativePath ? (base.endsWith('/') ? base + item.relativePath : base + '/' + item.relativePath) : base
+        const dir = item.relativePath
+          ? base.endsWith('/')
+            ? base + item.relativePath
+            : base + '/' + item.relativePath
+          : base
         return uploadOne(item.file, dir, entries[i])
       })
 

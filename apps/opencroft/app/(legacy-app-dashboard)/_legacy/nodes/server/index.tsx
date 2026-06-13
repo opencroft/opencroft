@@ -2,7 +2,23 @@
 
 import { Link } from '@tanstack/react-router'
 import { type Node, type NodeProps, useReactFlow } from '@xyflow/react'
-import { Check, Container, Cpu, Download, FolderOpen, HardDrive, Loader2, MemoryStick, Monitor, RefreshCw, Server, Terminal, TerminalSquare, Trash2, X } from 'lucide-react'
+import {
+  Check,
+  Container,
+  Cpu,
+  Download,
+  FolderOpen,
+  HardDrive,
+  Loader2,
+  MemoryStick,
+  Monitor,
+  RefreshCw,
+  Server,
+  Terminal,
+  TerminalSquare,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from 'ui/button'
@@ -12,13 +28,21 @@ import { Flex } from 'ui/layout/flex'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
 import { Separator } from 'ui/separator'
 import { Spinner } from 'ui/spinner'
+
 import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 import { useSettingsDraft } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/use-settings-draft'
 import { type KeyEntry, listKeys } from '@/app/(legacy-app-dashboard)/_legacy/nodes/key-store/actions'
 import { applyServerConfig, resolveServer } from '@/app/(legacy-app-dashboard)/_legacy/nodes/server/actions'
-import { ButtonPin, HANDLE_EXECUTION, HANDLE_FILESYSTEM } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/button-pin'
+import {
+  ButtonPin,
+  HANDLE_EXECUTION,
+  HANDLE_FILESYSTEM,
+} from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/button-pin'
 import { PinnedNode, StatsList } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/pinned-node'
-import { spawnFileBrowserWindow, spawnTerminalWindow } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/spawn-window'
+import {
+  spawnFileBrowserWindow,
+  spawnTerminalWindow,
+} from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/spawn-window'
 import { checkDocker, getServerStats, installDockerUbuntu, type ServerStats } from '@/app/(server)/_server/remote'
 import { type DockerFeature, type ServerFeature, type SshFeature, slug } from '@/app/(server)/_server/types'
 
@@ -52,7 +76,15 @@ function buildTerminalConfig(data: ServerData): import('@opencroft/terminal').Te
       type: 'local',
       config: {
         shell: 'ssh',
-        args: ['-i', ssh.keyPath, '-o', 'StrictHostKeyChecking=no', '-p', String(ssh.port ?? 22), `${ssh.username || 'root'}@${data.address}`],
+        args: [
+          '-i',
+          ssh.keyPath,
+          '-o',
+          'StrictHostKeyChecking=no',
+          '-p',
+          String(ssh.port ?? 22),
+          `${ssh.username || 'root'}@${data.address}`,
+        ],
       },
     }
   }
@@ -94,19 +126,26 @@ function ServerComponent({ data, selected, positionAbsoluteX, positionAbsoluteY 
     if (!ssh || !data.name) {
       return
     }
-    const resolved = await resolveServer({ data: { name: data.name, address: data.address, features: data.features ?? [] } })
+    const resolved = await resolveServer({
+      data: { name: data.name, address: data.address, features: data.features ?? [] },
+    })
     const termConfig = buildTerminalConfig({ ...data, features: resolved.features })
     if (!termConfig) {
       return
     }
-    setNodes((nds) => [...nds, spawnTerminalWindow({ title: data.name, x: positionAbsoluteX, y: positionAbsoluteY }, termConfig)])
+    setNodes((nds) => [
+      ...nds,
+      spawnTerminalWindow({ title: data.name, x: positionAbsoluteX, y: positionAbsoluteY }, termConfig),
+    ])
   }, [data, ssh, positionAbsoluteX, positionAbsoluteY, setNodes])
 
   const openFiles = useCallback(async () => {
     if (!ssh || !data.name) {
       return
     }
-    const resolved = await resolveServer({ data: { name: data.name, address: data.address, features: data.features ?? [] } })
+    const resolved = await resolveServer({
+      data: { name: data.name, address: data.address, features: data.features ?? [] },
+    })
     const rSsh = getSsh(resolved.features)
     if (!rSsh) {
       return
@@ -132,7 +171,13 @@ function ServerComponent({ data, selected, positionAbsoluteX, positionAbsoluteY 
     ])
   }, [data, ssh, positionAbsoluteX, positionAbsoluteY, setNodes])
 
-  const status = loading ? ('warning' as const) : error ? ('destructive' as const) : stats ? ('success' as const) : undefined
+  const status = loading
+    ? ('warning' as const)
+    : error
+      ? ('destructive' as const)
+      : stats
+        ? ('success' as const)
+        : undefined
 
   return (
     <PinnedNode
@@ -159,7 +204,13 @@ function ServerComponent({ data, selected, positionAbsoluteX, positionAbsoluteY 
       output={
         ssh && data.name ? (
           <>
-            <ButtonPin handleId={HANDLE_EXECUTION} icon={TerminalSquare} label='Terminal' side='right' onClick={openTerminal} />
+            <ButtonPin
+              handleId={HANDLE_EXECUTION}
+              icon={TerminalSquare}
+              label='Terminal'
+              side='right'
+              onClick={openTerminal}
+            />
             <ButtonPin handleId={HANDLE_FILESYSTEM} icon={FolderOpen} label='Files' side='right' onClick={openFiles} />
             {hasDocker(data.features) && (
               <div className='nodrag nopan'>
@@ -229,14 +280,24 @@ function KeyStoreKeySelector({ value, onChange }: { value: string; onChange: (v:
 
 // --- Docker sub-section ---
 
-function DockerSubSection({ feature, serverData, onUpdate }: { feature: DockerFeature; serverData: ServerData; onUpdate: (f: DockerFeature) => void }) {
+function DockerSubSection({
+  feature,
+  serverData,
+  onUpdate,
+}: {
+  feature: DockerFeature
+  serverData: ServerData
+  onUpdate: (f: DockerFeature) => void
+}) {
   const [checking, setChecking] = useState(false)
   const [installing, setInstalling] = useState(false)
   const busy = checking || installing
 
   const handleCheck = async () => {
     setChecking(true)
-    const server = await resolveServer({ data: { name: serverData.name, address: serverData.address, features: serverData.features } })
+    const server = await resolveServer({
+      data: { name: serverData.name, address: serverData.address, features: serverData.features },
+    })
     const installed = await checkDocker({ data: server })
     onUpdate({ ...feature, installed })
     setChecking(false)
@@ -245,7 +306,9 @@ function DockerSubSection({ feature, serverData, onUpdate }: { feature: DockerFe
 
   const handleInstall = async () => {
     setInstalling(true)
-    const server = await resolveServer({ data: { name: serverData.name, address: serverData.address, features: serverData.features } })
+    const server = await resolveServer({
+      data: { name: serverData.name, address: serverData.address, features: serverData.features },
+    })
     await installDockerUbuntu({ data: server })
     onUpdate({ ...feature, installed: true })
     setInstalling(false)
@@ -254,14 +317,21 @@ function DockerSubSection({ feature, serverData, onUpdate }: { feature: DockerFe
 
   const StatusIcon = feature.installed === true ? Check : feature.installed === false ? X : null
 
-  const statusText = feature.installed === undefined ? 'Status unknown' : feature.installed ? 'Docker is installed' : 'Docker not installed'
+  const statusText =
+    feature.installed === undefined
+      ? 'Status unknown'
+      : feature.installed
+        ? 'Docker is installed'
+        : 'Docker not installed'
 
   return (
     <>
       <Flex row align='center' className='gap-1.5'>
         <Container className='h-3.5 w-3.5 text-muted-foreground' />
         <span className='text-xs flex-1'>{statusText}</span>
-        {StatusIcon && <StatusIcon className={`h-3.5 w-3.5 ${feature.installed ? 'text-green-500' : 'text-red-500'}`} />}
+        {StatusIcon && (
+          <StatusIcon className={`h-3.5 w-3.5 ${feature.installed ? 'text-green-500' : 'text-red-500'}`} />
+        )}
       </Flex>
       <Flex row className='gap-1'>
         <Button variant='outline' size='sm' className='h-6 text-[10px]' onClick={handleCheck} disabled={busy}>
@@ -295,7 +365,9 @@ function StatsSubSection({ serverData }: { serverData: ServerData }) {
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
-      const server = await resolveServer({ data: { name: serverData.name, address: serverData.address, features: serverData.features } })
+      const server = await resolveServer({
+        data: { name: serverData.name, address: serverData.address, features: serverData.features },
+      })
       setStats(await getServerStats({ data: server }))
     } catch {
       toast.error('Failed to fetch stats')
@@ -384,7 +456,11 @@ function ServerSettings(props: NodeSettingsProps<ServerData>) {
       </div>
       <div className='flex flex-col gap-1'>
         <Label className='text-xs'>Address</Label>
-        <Input value={draft.address ?? ''} onChange={(e) => update({ address: e.target.value })} className='h-7 text-xs font-mono' />
+        <Input
+          value={draft.address ?? ''}
+          onChange={(e) => update({ address: e.target.value })}
+          className='h-7 text-xs font-mono'
+        />
       </div>
 
       <Separator />
@@ -417,7 +493,9 @@ function ServerSettings(props: NodeSettingsProps<ServerData>) {
             <Label className='text-xs'>Port</Label>
             <Input
               value={ssh.port || ''}
-              onChange={(e) => update({ features: updateFeature(features, 'ssh', { port: parseInt(e.target.value) || undefined }) })}
+              onChange={(e) =>
+                update({ features: updateFeature(features, 'ssh', { port: parseInt(e.target.value) || undefined }) })
+              }
               placeholder='22'
               className='h-7 text-xs font-mono'
             />
@@ -434,7 +512,10 @@ function ServerSettings(props: NodeSettingsProps<ServerData>) {
           </div>
           <div className='flex flex-col gap-1'>
             <Label className='text-xs'>SSH Key</Label>
-            <KeyStoreKeySelector value={ssh.keyPath || ''} onChange={(v) => update({ features: updateFeature(features, 'ssh', { keyPath: v || undefined }) })} />
+            <KeyStoreKeySelector
+              value={ssh.keyPath || ''}
+              onChange={(v) => update({ features: updateFeature(features, 'ssh', { keyPath: v || undefined }) })}
+            />
           </div>
 
           <Separator />
@@ -454,7 +535,11 @@ function ServerSettings(props: NodeSettingsProps<ServerData>) {
                   <Trash2 className='h-3 w-3' />
                 </Button>
               </div>
-              <DockerSubSection feature={docker} serverData={draft} onUpdate={(f) => update({ features: updateFeature(features, 'docker', f) })} />
+              <DockerSubSection
+                feature={docker}
+                serverData={draft}
+                onUpdate={(f) => update({ features: updateFeature(features, 'docker', f) })}
+              />
             </>
           ) : (
             <Button

@@ -4,6 +4,7 @@ import { Pencil, Plus } from 'lucide-react'
 import type { DragEvent } from 'react'
 import { Button } from 'ui/button'
 import { ScrollArea } from 'ui/layout/scroll-area'
+
 import type { ResolvedNode } from '@/app/(extension-runtime)/_client/registry'
 
 interface NodePaletteProps {
@@ -63,7 +64,13 @@ export function NodePalette({ extensions, onAdd, onNewExtension, onEditExtension
                       <span className='truncate'>{node.name}</span>
                     </button>
                     {isLocal && (
-                      <Button size='icon' variant='ghost' className='size-5 mr-1 opacity-0 group-hover:opacity-100' title='Edit extension' onClick={() => onEditExtension(node.extension.manifest.id)}>
+                      <Button
+                        size='icon'
+                        variant='ghost'
+                        className='size-5 mr-1 opacity-0 group-hover:opacity-100'
+                        title='Edit extension'
+                        onClick={() => onEditExtension(node.extension.manifest.id)}
+                      >
                         <Pencil className='size-3' />
                       </Button>
                     )}

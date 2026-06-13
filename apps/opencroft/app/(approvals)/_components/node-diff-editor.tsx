@@ -10,6 +10,7 @@ import { Columns2, Rows2 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from 'ui/button'
+
 import { cn } from '@/lib/utils'
 
 type DiffMode = 'unified' | 'split'
@@ -21,7 +22,14 @@ interface NodeDiffEditorProps {
 
 function UnifiedDiff({ current, next }: { current: string; next: string }) {
   const { resolvedTheme } = useTheme()
-  const extensions = useMemo(() => [json(), unifiedMergeView({ original: current, mergeControls: false, highlightChanges: true }), EditorView.editable.of(false)], [current])
+  const extensions = useMemo(
+    () => [
+      json(),
+      unifiedMergeView({ original: current, mergeControls: false, highlightChanges: true }),
+      EditorView.editable.of(false),
+    ],
+    [current],
+  )
 
   return (
     <CodeMirror
@@ -44,7 +52,13 @@ function SplitDiff({ current, next }: { current: string; next: string }) {
       return
     }
     const themeExt = resolvedTheme === 'dark' ? [oneDark] : []
-    const baseExtensions = [lineNumbers(), syntaxHighlighting(defaultHighlightStyle, { fallback: true }), json(), EditorView.editable.of(false), ...themeExt]
+    const baseExtensions = [
+      lineNumbers(),
+      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+      json(),
+      EditorView.editable.of(false),
+      ...themeExt,
+    ]
     const view = new MergeView({
       parent: host,
       a: { doc: current, extensions: baseExtensions },
@@ -62,10 +76,22 @@ function SplitDiff({ current, next }: { current: string; next: string }) {
 function ModeToggle({ mode, onChange }: { mode: DiffMode; onChange: (mode: DiffMode) => void }) {
   return (
     <div className='flex gap-0.5 rounded-md border p-0.5'>
-      <Button variant='ghost' size='icon' className={cn('h-6 w-6', mode === 'unified' && 'bg-accent')} onClick={() => onChange('unified')} title='Unified'>
+      <Button
+        variant='ghost'
+        size='icon'
+        className={cn('h-6 w-6', mode === 'unified' && 'bg-accent')}
+        onClick={() => onChange('unified')}
+        title='Unified'
+      >
         <Rows2 className='h-3 w-3' />
       </Button>
-      <Button variant='ghost' size='icon' className={cn('h-6 w-6', mode === 'split' && 'bg-accent')} onClick={() => onChange('split')} title='Side by side'>
+      <Button
+        variant='ghost'
+        size='icon'
+        className={cn('h-6 w-6', mode === 'split' && 'bg-accent')}
+        onClick={() => onChange('split')}
+        title='Side by side'
+      >
         <Columns2 className='h-3 w-3' />
       </Button>
     </div>
@@ -90,7 +116,13 @@ export function NodeDiffEditor({ current, next }: NodeDiffEditorProps) {
       <div className='flex justify-end'>
         <ModeToggle mode={mode} onChange={setMode} />
       </div>
-      <div className='rounded-md border overflow-auto text-xs'>{mode === 'unified' ? <UnifiedDiff current={current} next={next} /> : <SplitDiff current={current} next={next} />}</div>
+      <div className='rounded-md border overflow-auto text-xs'>
+        {mode === 'unified' ? (
+          <UnifiedDiff current={current} next={next} />
+        ) : (
+          <SplitDiff current={current} next={next} />
+        )}
+      </div>
     </div>
   )
 }

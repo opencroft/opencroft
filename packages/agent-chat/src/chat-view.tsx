@@ -43,7 +43,12 @@ export interface ChatViewProps {
   className?: string
 }
 
-function isItemVisible(message: ChatMessage, hideThinking: boolean, hideToolCalls: boolean, toolViews: ToolViewRegistry): boolean {
+function isItemVisible(
+  message: ChatMessage,
+  hideThinking: boolean,
+  hideToolCalls: boolean,
+  toolViews: ToolViewRegistry,
+): boolean {
   if (message.kind === 'thought') return !hideThinking
   if (message.kind === 'tool') return !hideToolCalls || hasToolView(message, toolViews)
   // Pending permissions must stay actionable even with tools hidden.
@@ -101,7 +106,8 @@ export function ChatView({
   // The last item while a turn is running — marked pending so a streaming
   // thought shows its spinner.
   const lastBlock = visibleBlocks[visibleBlocks.length - 1]
-  const activeItemId = turnActive && lastBlock && lastBlock.kind !== 'user' ? lastBlock.items[lastBlock.items.length - 1]?.id : undefined
+  const activeItemId =
+    turnActive && lastBlock && lastBlock.kind !== 'user' ? lastBlock.items[lastBlock.items.length - 1]?.id : undefined
 
   return (
     <Flex expanded className={className ?? 'min-h-0 justify-end'}>
@@ -119,7 +125,13 @@ export function ChatView({
           <Flex withGaps className='w-full max-w-2xl gap-4 px-4 py-4'>
             {visibleBlocks.map((block) =>
               block.kind === 'user' ? (
-                <UserBubble key={block.id} text={block.text} canFork={canFork} forkDisabled={turnActive} onFork={onFork ? () => onFork(turnIndexById.get(block.id) ?? 0) : undefined} />
+                <UserBubble
+                  key={block.id}
+                  text={block.text}
+                  canFork={canFork}
+                  forkDisabled={turnActive}
+                  onFork={onFork ? () => onFork(turnIndexById.get(block.id) ?? 0) : undefined}
+                />
               ) : (
                 <Flex key={block.id} withGaps className='gap-2'>
                   {block.items.map((message) => (
@@ -158,7 +170,17 @@ export function ChatView({
   )
 }
 
-function UserBubble({ text, canFork, forkDisabled, onFork }: { text: string; canFork?: boolean; forkDisabled?: boolean; onFork?: () => void }) {
+function UserBubble({
+  text,
+  canFork,
+  forkDisabled,
+  onFork,
+}: {
+  text: string
+  canFork?: boolean
+  forkDisabled?: boolean
+  onFork?: () => void
+}) {
   const isMobile = useIsMobile()
   const wrapperRef = useRef<HTMLDivElement>(null)
 
@@ -186,7 +208,9 @@ function UserBubble({ text, canFork, forkDisabled, onFork }: { text: string; can
       document.getSelection()?.removeAllRanges()
       return
     }
-    event.currentTarget.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: event.clientX, clientY: event.clientY }))
+    event.currentTarget.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, clientX: event.clientX, clientY: event.clientY }),
+    )
   }
 
   return (

@@ -1,4 +1,5 @@
 import { createServerFn } from '@tanstack/react-start'
+
 import { loadOpenclaw, type OpenclawAgent } from '@/app/(openclaw)/_server/actions'
 import { clearDeviceToken } from '@/app/(openclaw)/_server/device-identity'
 import { resetGateway } from '@/app/(openclaw)/_server/gateway-client'
@@ -10,7 +11,10 @@ export interface AiSettings {
   gatewayToken: string | null
 }
 
-export type AiConnectionStatus = { status: 'ok' } | { status: 'not-configured'; reason: string } | { status: 'needs-pairing'; reason: string }
+export type AiConnectionStatus =
+  | { status: 'ok' }
+  | { status: 'not-configured'; reason: string }
+  | { status: 'needs-pairing'; reason: string }
 
 export interface AiSettingsState {
   settings: AiSettings

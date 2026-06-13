@@ -1,5 +1,6 @@
-import { createServerFn } from '@tanstack/react-start'
 import { parseArgs } from 'util'
+
+import { createServerFn } from '@tanstack/react-start'
 
 export interface ParsedDockerCommand {
   name?: string
@@ -19,7 +20,9 @@ export const parseDockerRunCommand = createServerFn({ method: 'POST' })
     const cleanCommand = command.replaceAll('\\', '').trim()
     const parts = cleanCommand.split(' ')
 
-    const runIndex = parts.findIndex((part, index) => part === 'run' && (index === 0 || parts[index - 1].includes('docker')))
+    const runIndex = parts.findIndex(
+      (part, index) => part === 'run' && (index === 0 || parts[index - 1].includes('docker')),
+    )
 
     const result: ParsedDockerCommand = {
       portMappings: [],

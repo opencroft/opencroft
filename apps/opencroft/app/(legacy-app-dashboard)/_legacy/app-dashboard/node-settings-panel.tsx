@@ -5,6 +5,7 @@ import { Loader2, Pencil, Save, X } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
 import { Button } from 'ui/button'
 import { Separator } from 'ui/separator'
+
 import { useCustomTemplates } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/custom-templates-context'
 import { nodeDefinitions } from '@/app/(legacy-app-dashboard)/_legacy/nodes'
 import type { CustomTemplate } from '@/app/(legacy-app-dashboard)/_legacy/nodes/custom/types'
@@ -18,7 +19,9 @@ export function NodeSettingsPanel({ node, onEditTemplate }: NodeSettingsPanelPro
   const { updateNodeData, setNodes } = useReactFlow()
   const { templates, definitions: customDefinitions } = useCustomTemplates()
   const def = nodeDefinitions.find((d) => d.type === node.type) ?? customDefinitions.find((d) => d.type === node.type)
-  const customTemplate = node.type?.startsWith('custom-') ? templates.find((t) => `custom-${t.id}` === node.type) : undefined
+  const customTemplate = node.type?.startsWith('custom-')
+    ? templates.find((t) => `custom-${t.id}` === node.type)
+    : undefined
   const [dirty, setDirty] = useState(false)
   const [loading, setLoading] = useState(true)
   const saveRef = useRef<(() => void | Promise<void>) | null>(null)
@@ -76,7 +79,13 @@ export function NodeSettingsPanel({ node, onEditTemplate }: NodeSettingsPanelPro
             <Loader2 className='h-5 w-5 animate-spin text-muted-foreground' />
           </div>
         )}
-        <Settings id={node.id} data={node.data} updateData={updateData} onDirtyChange={onDirtyChange} onLoadingChange={onLoadingChange} />
+        <Settings
+          id={node.id}
+          data={node.data}
+          updateData={updateData}
+          onDirtyChange={onDirtyChange}
+          onLoadingChange={onLoadingChange}
+        />
       </div>
       <Separator />
       <div className='p-3'>

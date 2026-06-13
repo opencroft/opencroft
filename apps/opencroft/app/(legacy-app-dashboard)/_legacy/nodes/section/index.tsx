@@ -4,6 +4,7 @@ import type { Node, NodeProps } from '@xyflow/react'
 import { Boxes, Globe } from 'lucide-react'
 import { Input } from 'ui/input'
 import { Label } from 'ui/label'
+
 import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 import { useSettingsDraft } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/use-settings-draft'
 import { InvisibleResizer } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/invisible-resizer'
@@ -15,7 +16,13 @@ export type SectionData = {
 
 export type SectionNode = Node<SectionData, 'section'>
 
-const COLORS = ['oklch(0.6 0.15 250)', 'oklch(0.6 0.15 150)', 'oklch(0.6 0.15 30)', 'oklch(0.6 0.15 320)', 'oklch(0.6 0.15 60)']
+const COLORS = [
+  'oklch(0.6 0.15 250)',
+  'oklch(0.6 0.15 150)',
+  'oklch(0.6 0.15 30)',
+  'oklch(0.6 0.15 320)',
+  'oklch(0.6 0.15 60)',
+]
 
 function SectionComponent({ id, data }: NodeProps<SectionNode>) {
   return (

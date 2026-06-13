@@ -1,6 +1,14 @@
 import { db, space } from '@opencroft/db'
 import { asc, eq } from 'drizzle-orm'
-import { ACTIVE_SPACE_SETTING_ID, DEFAULT_SPACE_NAME, DEFAULT_SPACE_SLUG, type GraphData, LEGACY_GRAPH_SETTING_ID, type SpaceSummary } from '@/app/(space)/_server/types'
+
+import {
+  ACTIVE_SPACE_SETTING_ID,
+  DEFAULT_SPACE_NAME,
+  DEFAULT_SPACE_SLUG,
+  type GraphData,
+  LEGACY_GRAPH_SETTING_ID,
+  type SpaceSummary,
+} from '@/app/(space)/_server/types'
 import { getSetting, upsertSetting } from '@/server/data'
 
 interface SpaceRuntime {

@@ -1,39 +1,24 @@
-import {
-  React,
-  NodeFrame,
-  icons,
-  useGraphNodes,
-} from '@ext/host';
-import {
-  Input,
-  Label,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Slider,
-  Textarea,
-} from '@ext/ui';
+import { icons, NodeFrame, type React, useGraphNodes } from '@ext/host'
+import { Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Slider, Textarea } from '@ext/ui'
 
-const VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'onyx', 'nova', 'sage', 'shimmer'];
+const VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'onyx', 'nova', 'sage', 'shimmer']
 
 export interface OpenAIAssistantData {
-  name: string;
-  chatApiBase: string;
-  chatApiKey: string;
-  chatModel: string;
-  temperature: number;
-  ttsApiBase: string;
-  ttsApiKey: string;
-  ttsModel: string;
-  voice: string;
-  ttsSpeed: number;
-  ttsInstructions: string;
-  pcmSampleRate: number;
-  pcmBitDepth: 16 | 32;
-  trimStartSamples: number;
-  trimEndSamples: number;
+  name: string
+  chatApiBase: string
+  chatApiKey: string
+  chatModel: string
+  temperature: number
+  ttsApiBase: string
+  ttsApiKey: string
+  ttsModel: string
+  voice: string
+  ttsSpeed: number
+  ttsInstructions: string
+  pcmSampleRate: number
+  pcmBitDepth: 16 | 32
+  trimStartSamples: number
+  trimEndSamples: number
 }
 
 export function OpenAIAssistantNode({ data, selected }: { data: OpenAIAssistantData; selected?: boolean }) {
@@ -49,12 +34,17 @@ export function OpenAIAssistantNode({ data, selected }: { data: OpenAIAssistantD
         {data.ttsApiBase ? <div className='truncate'>tts: {data.ttsApiBase}</div> : null}
       </div>
     </NodeFrame>
-  );
+  )
 }
 
 export function OpenAIAssistantInspector({
-  data, updateData,
-}: { nodeId: string; data: OpenAIAssistantData; updateData: (p: Partial<OpenAIAssistantData>) => void }) {
+  data,
+  updateData,
+}: {
+  nodeId: string
+  data: OpenAIAssistantData
+  updateData: (p: Partial<OpenAIAssistantData>) => void
+}) {
   return (
     <div className='flex flex-col gap-3'>
       <div className='flex flex-col gap-1'>
@@ -139,7 +129,9 @@ export function OpenAIAssistantInspector({
           list='openai-assistant-voices'
         />
         <datalist id='openai-assistant-voices'>
-          {VOICES.map((v) => <option key={v} value={v} />)}
+          {VOICES.map((v) => (
+            <option key={v} value={v} />
+          ))}
         </datalist>
       </div>
       <div className='flex flex-col gap-1'>
@@ -170,7 +162,9 @@ export function OpenAIAssistantInspector({
           min='8000'
           max='48000'
           value={data.pcmSampleRate ?? 24000}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ pcmSampleRate: Number(e.target.value) || 24000 })}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            updateData({ pcmSampleRate: Number(e.target.value) || 24000 })
+          }
         />
       </div>
       <div className='flex flex-col gap-1'>
@@ -179,7 +173,9 @@ export function OpenAIAssistantInspector({
           value={String(data.pcmBitDepth ?? 16)}
           onValueChange={(v: string) => updateData({ pcmBitDepth: Number(v) === 32 ? 32 : 16 })}
         >
-          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value='16'>int16 LE (OpenAI)</SelectItem>
             <SelectItem value='32'>float32 LE (Qwen)</SelectItem>
@@ -207,41 +203,43 @@ export function OpenAIAssistantInspector({
         />
       </div>
     </div>
-  );
+  )
 }
 
 interface AssistantNode {
-  id: string;
-  type?: string;
-  data: OpenAIAssistantData;
+  id: string
+  type?: string
+  data: OpenAIAssistantData
 }
 
 export function useAssistantsList(): AssistantNode[] {
-  const nodes = useGraphNodes();
-  return nodes.filter((n: { type?: string }) => n.type === 'openai-assistant') as AssistantNode[];
+  const nodes = useGraphNodes()
+  return nodes.filter((n: { type?: string }) => n.type === 'openai-assistant') as AssistantNode[]
 }
 
 export function useAssistant(assistantId?: string): OpenAIAssistantData | null {
-  const list = useAssistantsList();
+  const list = useAssistantsList()
   if (!assistantId) {
-    return null;
+    return null
   }
-  return list.find((n) => n.id === assistantId)?.data ?? null;
+  return list.find((n) => n.id === assistantId)?.data ?? null
 }
 
-export function AssistantSelector({
-  value, onChange,
-}: { value: string; onChange: (v: string) => void }) {
-  const list = useAssistantsList();
+export function AssistantSelector({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const list = useAssistantsList()
   return (
     <Select value={value || '__none'} onValueChange={(v: string) => onChange(v === '__none' ? '' : v)}>
-      <SelectTrigger><SelectValue placeholder='No assistant' /></SelectTrigger>
+      <SelectTrigger>
+        <SelectValue placeholder='No assistant' />
+      </SelectTrigger>
       <SelectContent>
         <SelectItem value='__none'>No assistant</SelectItem>
         {list.map((a) => (
-          <SelectItem key={a.id} value={a.id}>{a.data.name || a.id}</SelectItem>
+          <SelectItem key={a.id} value={a.id}>
+            {a.data.name || a.id}
+          </SelectItem>
         ))}
       </SelectContent>
     </Select>
-  );
+  )
 }

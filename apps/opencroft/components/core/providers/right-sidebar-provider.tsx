@@ -29,7 +29,13 @@ function RightSidebarProviderContent({ children }: { children: React.ReactNode }
   return <RightSidebarContext.Provider value={sidebarValue}>{children}</RightSidebarContext.Provider>
 }
 
-export function RightSidebarProvider({ children, defaultOpen = false, className, style, ...props }: RightSidebarProviderProps) {
+export function RightSidebarProvider({
+  children,
+  defaultOpen = false,
+  className,
+  style,
+  ...props
+}: RightSidebarProviderProps) {
   return (
     <SidebarProvider defaultOpen={defaultOpen} className={className} style={style} {...props}>
       <RightSidebarProviderContent>{children}</RightSidebarProviderContent>

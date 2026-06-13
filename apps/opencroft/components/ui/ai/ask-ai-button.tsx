@@ -3,6 +3,7 @@
 import { MessageSquare, X } from 'lucide-react'
 import { cloneElement, type ReactElement } from 'react'
 import { Button } from 'ui/button'
+
 import { useAskAI } from '@/components/providers/ask-ai-provider'
 import { cn } from '@/lib/utils'
 
@@ -16,7 +17,15 @@ interface AskAIButtonProps {
   className?: string
 }
 
-export function AskAIButton({ value, onResult, instruction = 'Help me improve this text', disabled = false, variant = 'icon', size = 'sm', className }: AskAIButtonProps) {
+export function AskAIButton({
+  value,
+  onResult,
+  instruction = 'Help me improve this text',
+  disabled = false,
+  variant = 'icon',
+  size = 'sm',
+  className,
+}: AskAIButtonProps) {
   const { openChat } = useAskAI()
 
   const handleClick = () => {
@@ -40,7 +49,14 @@ export function AskAIButton({ value, onResult, instruction = 'Help me improve th
   }
 
   return (
-    <Button type='button' variant='outline' size={size === 'md' ? 'default' : size} onClick={handleClick} disabled={disabled} className={cn('gap-2', className)}>
+    <Button
+      type='button'
+      variant='outline'
+      size={size === 'md' ? 'default' : size}
+      onClick={handleClick}
+      disabled={disabled}
+      className={cn('gap-2', className)}
+    >
       <MessageSquare className='h-4 w-4' />
       Ask AI
     </Button>
@@ -80,9 +96,24 @@ export function AskAIWrapper({
     <div className={cn('relative', className)}>
       {clonedChild}
       <div className='absolute right-2 top-2 bottom-2 flex flex-col-reverse justify-between items-end'>
-        <AskAIButton value={value} onResult={onResult} instruction={instruction} disabled={disabled} variant={variant} size={size} className={buttonClassName} />
+        <AskAIButton
+          value={value}
+          onResult={onResult}
+          instruction={instruction}
+          disabled={disabled}
+          variant={variant}
+          size={size}
+          className={buttonClassName}
+        />
         {onClear && value && (
-          <Button type='button' variant='ghost' size={size === 'sm' ? 'sm' : 'default'} onClick={onClear} className={cn('h-6 w-6 p-0 hover:bg-muted/50', size !== 'sm' && 'h-8 w-8')} title='Clear'>
+          <Button
+            type='button'
+            variant='ghost'
+            size={size === 'sm' ? 'sm' : 'default'}
+            onClick={onClear}
+            className={cn('h-6 w-6 p-0 hover:bg-muted/50', size !== 'sm' && 'h-8 w-8')}
+            title='Clear'
+          >
             <X className='h-3 w-3' />
           </Button>
         )}

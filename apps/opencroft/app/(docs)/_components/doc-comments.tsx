@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom'
 import { Button } from 'ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from 'ui/popover'
 import { Textarea } from 'ui/textarea'
+
 import { listDocComments, postDocComment } from '@/app/(docs)/_server/actions'
 import type { Anchor, Comment } from '@/app/(docs)/_server/comments'
 import { useSSEEvents } from '@/app/(sse)/_lib/sse-events-store'
@@ -116,7 +117,12 @@ function findOccurrenceIndex(text: string, anchor: Anchor): number {
   return text.indexOf(anchor.quote)
 }
 
-function wrapTextRange(container: HTMLElement, startOffset: number, length: number, commentId: string): HTMLElement | null {
+function wrapTextRange(
+  container: HTMLElement,
+  startOffset: number,
+  length: number,
+  commentId: string,
+): HTMLElement | null {
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
   let consumed = 0
   let node: Text | null
@@ -309,7 +315,9 @@ export function DocCommentsOverlay({ namespace, docPath, renderKey }: DocComment
       ...(composerAnchor.prefix ? { prefix: composerAnchor.prefix } : {}),
       ...(composerAnchor.suffix ? { suffix: composerAnchor.suffix } : {}),
     }
-    await postDocComment({ data: { namespace, filePath: docPath, message: message.trim(), parentId: undefined, anchor } })
+    await postDocComment({
+      data: { namespace, filePath: docPath, message: message.trim(), parentId: undefined, anchor },
+    })
     setMessage('')
     setComposerAnchor(null)
     setBusy(false)
@@ -354,7 +362,10 @@ export function DocCommentsOverlay({ namespace, docPath, renderKey }: DocComment
       {selectedThread && selectedIcon && (
         <Popover open onOpenChange={(o) => !o && setOpenThread(null)}>
           <PopoverAnchor asChild>
-            <div className='absolute pointer-events-none' style={{ top: selectedIcon.top, right: -36, width: 1, height: 24 }} />
+            <div
+              className='absolute pointer-events-none'
+              style={{ top: selectedIcon.top, right: -36, width: 1, height: 24 }}
+            />
           </PopoverAnchor>
           <PopoverContent side='right' align='start' sideOffset={8} className='w-80 pointer-events-auto'>
             <ThreadView
@@ -404,8 +415,14 @@ export function DocCommentsOverlay({ namespace, docPath, renderKey }: DocComment
             className='pointer-events-auto bg-background border rounded-lg shadow-xl p-3 flex flex-col gap-2'
           >
             <div className='flex items-start gap-2'>
-              <blockquote className='flex-1 text-xs text-muted-foreground border-l-2 border-primary pl-2 line-clamp-3 m-0'>{composerAnchor.quote}</blockquote>
-              <button onClick={handleCancelComposer} className='text-muted-foreground hover:text-foreground shrink-0' aria-label='Cancel'>
+              <blockquote className='flex-1 text-xs text-muted-foreground border-l-2 border-primary pl-2 line-clamp-3 m-0'>
+                {composerAnchor.quote}
+              </blockquote>
+              <button
+                onClick={handleCancelComposer}
+                className='text-muted-foreground hover:text-foreground shrink-0'
+                aria-label='Cancel'
+              >
                 <X className='size-4' />
               </button>
             </div>
@@ -458,7 +475,11 @@ function ThreadView({ thread, replyMessage, setReplyMessage, onSendReply, onClos
           <X className='size-4' />
         </button>
       </div>
-      {thread.anchor?.quote && <blockquote className='text-xs text-muted-foreground border-l-2 border-primary pl-2 line-clamp-3 m-0'>{thread.anchor.quote}</blockquote>}
+      {thread.anchor?.quote && (
+        <blockquote className='text-xs text-muted-foreground border-l-2 border-primary pl-2 line-clamp-3 m-0'>
+          {thread.anchor.quote}
+        </blockquote>
+      )}
       <div className='flex flex-col gap-2 max-h-60 overflow-y-auto pr-1'>
         <CommentRow comment={thread} />
         {replies.map((r) => (
@@ -491,7 +512,9 @@ function CommentRow({ comment, indented }: { comment: Comment; indented?: boolea
   return (
     <div className={cn('flex flex-col gap-0.5', indented && 'pl-3 border-l border-border ml-1')}>
       <div className='flex items-center gap-1 text-xs'>
-        <span className={cn('font-medium', isAgent ? 'text-primary' : 'text-foreground')}>{isAgent ? `@${comment.author}` : 'You'}</span>
+        <span className={cn('font-medium', isAgent ? 'text-primary' : 'text-foreground')}>
+          {isAgent ? `@${comment.author}` : 'You'}
+        </span>
         <span className='text-muted-foreground'>·</span>
         <span className='text-muted-foreground'>{relativeTime(comment.timestamp)}</span>
       </div>

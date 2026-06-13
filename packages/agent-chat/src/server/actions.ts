@@ -1,10 +1,14 @@
 import { createServerFn } from '@tanstack/react-start'
-
 import { writeSelection } from 'agent-client/config'
 import { checkMcpServer, type McpCheckResult } from 'agent-client/mcp-check'
 import { readMcpConfig, writeMcpConfig } from 'agent-client/mcp-config'
 import type { McpServerConfig } from 'agent-client/mcp-types'
-import { type DefaultAccess, type PermissionValue, type ResolvedPermissions, resolveSessionPermissions } from 'agent-client/permissions'
+import {
+  type DefaultAccess,
+  type PermissionValue,
+  type ResolvedPermissions,
+  resolveSessionPermissions,
+} from 'agent-client/permissions'
 import type { AgentProfile, ProfilesFile } from 'agent-client/profiles'
 import type { AgentSelection, SessionMeta } from 'agent-client/types'
 
@@ -37,7 +41,9 @@ export const saveAgentConfig = (selection: AgentSelection) => _saveAgentConfig({
 
 // ---- Agent profiles (multiple saved selections + system prompts) ----
 
-const _listAgentProfiles = createServerFn({ method: 'GET' }).handler(async (): Promise<ProfilesFile> => getRuntime().profiles.read())
+const _listAgentProfiles = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<ProfilesFile> => getRuntime().profiles.read(),
+)
 export const listAgentProfiles = () => _listAgentProfiles()
 
 const _saveAgentProfile = createServerFn({ method: 'POST' })
@@ -62,7 +68,8 @@ const _saveAgentProfile = createServerFn({ method: 'POST' })
     await store.write(file)
     return file
   })
-export const saveAgentProfile = (profile: AgentProfile, setActive?: boolean) => _saveAgentProfile({ data: { profile, setActive } })
+export const saveAgentProfile = (profile: AgentProfile, setActive?: boolean) =>
+  _saveAgentProfile({ data: { profile, setActive } })
 
 const _deleteAgentProfile = createServerFn({ method: 'POST' })
   .inputValidator((id: string) => id)
@@ -111,7 +118,9 @@ export const listOpenAiModels = (baseUrl: string, apiKey?: string) => _listOpenA
 
 // ---- Sessions (single-session model: starting one drops the rest) ----
 
-const _listAgentSessions = createServerFn({ method: 'GET' }).handler(async (): Promise<SessionMeta[]> => getRuntime().agent.listSessions())
+const _listAgentSessions = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<SessionMeta[]> => getRuntime().agent.listSessions(),
+)
 export const listAgentSessions = () => _listAgentSessions()
 
 // Resolve the active profile's roles into the session's effective permissions.
@@ -156,8 +165,11 @@ export const deleteAgentSession = (sessionId: string) => _deleteAgentSession({ d
 
 const _forkAgentSession = createServerFn({ method: 'POST' })
   .inputValidator((data: { sessionId: string; dropFromTurn?: number }) => data)
-  .handler(async ({ data }): Promise<SessionMeta | null> => getRuntime().agent.forkSession(data.sessionId, data.dropFromTurn))
-export const forkAgentSession = (sessionId: string, dropFromTurn?: number) => _forkAgentSession({ data: { sessionId, dropFromTurn } })
+  .handler(
+    async ({ data }): Promise<SessionMeta | null> => getRuntime().agent.forkSession(data.sessionId, data.dropFromTurn),
+  )
+export const forkAgentSession = (sessionId: string, dropFromTurn?: number) =>
+  _forkAgentSession({ data: { sessionId, dropFromTurn } })
 
 // ---- Turn control ----
 
@@ -188,8 +200,10 @@ const _respondAgent = createServerFn({ method: 'POST' })
     }
     return { ok: true }
   })
-export const respondPermission = (requestId: string, optionId?: string) => _respondAgent({ data: { type: 'permission', requestId, optionId } })
-export const respondAsk = (requestId: string, answer?: string) => _respondAgent({ data: { type: 'ask', requestId, answer } })
+export const respondPermission = (requestId: string, optionId?: string) =>
+  _respondAgent({ data: { type: 'permission', requestId, optionId } })
+export const respondAsk = (requestId: string, answer?: string) =>
+  _respondAgent({ data: { type: 'ask', requestId, answer } })
 
 const _setAgentMode = createServerFn({ method: 'POST' })
   .inputValidator((data: { sessionId: string; modeId: string }) => data)
@@ -201,7 +215,9 @@ export const setAgentMode = (sessionId: string, modeId: string) => _setAgentMode
 
 // ---- MCP server (single optional server, edited via dialog) ----
 
-const _getMcpServers = createServerFn({ method: 'GET' }).handler(async (): Promise<McpServerConfig[]> => readMcpConfig())
+const _getMcpServers = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<McpServerConfig[]> => readMcpConfig(),
+)
 export const getMcpServers = () => _getMcpServers()
 
 const _saveMcpServers = createServerFn({ method: 'POST' })
@@ -223,13 +239,16 @@ export const checkMcpServerConfig = (config: McpServerConfig) => _checkMcpServer
 
 export type { SkillRecord }
 
-const _getSkills = createServerFn({ method: 'GET' }).handler(async (): Promise<SkillRecord[]> => getRuntime().skills.list())
+const _getSkills = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<SkillRecord[]> => getRuntime().skills.list(),
+)
 export const getSkills = () => _getSkills()
 
 const _createSkill = createServerFn({ method: 'POST' })
   .inputValidator((data: { name: string; description?: string; content?: string }) => data)
   .handler(async ({ data }): Promise<SkillRecord> => getRuntime().skills.create(data))
-export const createSkill = (input: { name: string; description?: string; content?: string }) => _createSkill({ data: input })
+export const createSkill = (input: { name: string; description?: string; content?: string }) =>
+  _createSkill({ data: input })
 
 const _updateSkill = createServerFn({ method: 'POST' })
   .inputValidator((data: { name: string; updates: { name?: string; description?: string; content?: string } }) => data)
@@ -241,7 +260,8 @@ const _updateSkill = createServerFn({ method: 'POST' })
       return null
     }
   })
-export const updateSkill = (name: string, updates: { name?: string; description?: string; content?: string }) => _updateSkill({ data: { name, updates } })
+export const updateSkill = (name: string, updates: { name?: string; description?: string; content?: string }) =>
+  _updateSkill({ data: { name, updates } })
 
 const _deleteSkill = createServerFn({ method: 'POST' })
   .inputValidator((name: string) => name)
@@ -257,7 +277,9 @@ export const deleteSkill = (name: string) => _deleteSkill({ data: name })
 
 // ---- Agent tools (the local tool catalog, for the roles editor) ----
 
-const _getAgentTools = createServerFn({ method: 'GET' }).handler(async (): Promise<{ name: string; description: string }[]> => getRuntime().agent.listTools())
+const _getAgentTools = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<{ name: string; description: string }[]> => getRuntime().agent.listTools(),
+)
 export const getAgentTools = () => _getAgentTools()
 
 // ---- Agent roles (per-tool / per-skill permissions) ----
@@ -278,7 +300,11 @@ export const getAgentRoles = () => _getAgentRoles()
 const _createAgentRole = createServerFn({ method: 'POST' })
   .inputValidator((data: { name: string; description?: string; permissions?: Record<string, PermissionValue> }) => data)
   .handler(async ({ data }): Promise<RoleRecord> => rolesLayer().create(data))
-export const createAgentRole = (input: { name: string; description?: string; permissions?: Record<string, PermissionValue> }) => _createAgentRole({ data: input })
+export const createAgentRole = (input: {
+  name: string
+  description?: string
+  permissions?: Record<string, PermissionValue>
+}) => _createAgentRole({ data: input })
 
 const _updateAgentRole = createServerFn({ method: 'POST' })
   .inputValidator(
@@ -320,7 +346,9 @@ const _deleteAgentRole = createServerFn({ method: 'POST' })
   })
 export const deleteAgentRole = (id: string) => _deleteAgentRole({ data: id })
 
-const _getDefaultAccess = createServerFn({ method: 'GET' }).handler(async (): Promise<DefaultAccess> => rolesLayer().getDefaultAccess())
+const _getDefaultAccess = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<DefaultAccess> => rolesLayer().getDefaultAccess(),
+)
 export const getDefaultAccess = () => _getDefaultAccess()
 
 const _setDefaultAccess = createServerFn({ method: 'POST' })

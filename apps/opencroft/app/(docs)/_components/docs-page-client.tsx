@@ -5,15 +5,33 @@ import { ArrowLeft, ChevronDown, FileText, History, Loader2, Menu, Pencil, Plus,
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from 'ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from 'ui/alert-dialog'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Input } from 'ui/input'
 import { ScrollArea } from 'ui/layout/scroll-area'
 import { ScrollHeader } from 'ui/layout/scrollpage'
+
 import { DocCommentsOverlay } from '@/app/(docs)/_components/doc-comments'
 import { DocEditor } from '@/app/(docs)/_components/doc-editor'
-import { createDoc, deleteDoc, getGitChangedFiles, getGitFileAtRef, getGitFileLog, readDocWorking, searchDocs } from '@/app/(docs)/_server/actions'
+import {
+  createDoc,
+  deleteDoc,
+  getGitChangedFiles,
+  getGitFileAtRef,
+  getGitFileLog,
+  readDocWorking,
+  searchDocs,
+} from '@/app/(docs)/_server/actions'
 import type { DocSearchResult } from '@/app/(docs)/_server/search'
 import { cn } from '@/lib/utils'
 
@@ -157,7 +175,8 @@ function SidebarNav({
           top: 0,
           height: 0,
           opacity: 0,
-          transition: 'top 350ms cubic-bezier(0.22, 1, 0.36, 1), height 350ms cubic-bezier(0.22, 1, 0.36, 1), opacity 150ms',
+          transition:
+            'top 350ms cubic-bezier(0.22, 1, 0.36, 1), height 350ms cubic-bezier(0.22, 1, 0.36, 1), opacity 150ms',
         }}
       />
       {entries.map((entry) => {
@@ -171,7 +190,14 @@ function SidebarNav({
                 className='flex items-center gap-1 w-full text-left text-sm py-1.5 px-2 rounded-sm hover:bg-accent/50 transition-colors'
                 style={{ paddingLeft: `${depth * 12 + 4}px` }}
               >
-                {hasChildren && <ChevronDown className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', !isExpanded && '-rotate-90')} />}
+                {hasChildren && (
+                  <ChevronDown
+                    className={cn(
+                      'size-3.5 shrink-0 text-muted-foreground transition-transform',
+                      !isExpanded && '-rotate-90',
+                    )}
+                  />
+                )}
                 {!hasChildren && <span className='w-3.5 shrink-0' />}
                 <span className='truncate font-medium'>{entry.name}</span>
               </button>
@@ -233,7 +259,15 @@ function SidebarNav({
 
 // ─── Search Results ─────────────────────────────────────────────────────────
 
-function DocSearchResultsList({ results, loading, onSelect }: { results: DocSearchResult[]; loading: boolean; onSelect: (path: string) => void }) {
+function DocSearchResultsList({
+  results,
+  loading,
+  onSelect,
+}: {
+  results: DocSearchResult[]
+  loading: boolean
+  onSelect: (path: string) => void
+}) {
   if (loading && results.length === 0) {
     return (
       <div className='flex items-center justify-center py-6'>
@@ -248,7 +282,10 @@ function DocSearchResultsList({ results, loading, onSelect }: { results: DocSear
     <ul className='m-0 list-none px-1 py-1'>
       {results.map((r) => (
         <li key={r.path} className='mb-1'>
-          <button onClick={() => onSelect(r.path)} className='w-full text-left rounded-sm px-2 py-1.5 hover:bg-accent/50 transition-colors'>
+          <button
+            onClick={() => onSelect(r.path)}
+            className='w-full text-left rounded-sm px-2 py-1.5 hover:bg-accent/50 transition-colors'
+          >
             <div className='flex items-center gap-1.5 text-sm font-medium'>
               <FileText className='size-3.5 shrink-0 opacity-50' />
               <span className='truncate'>{r.title ?? r.path.replace(/\.md$/, '')}</span>
@@ -260,7 +297,9 @@ function DocSearchResultsList({ results, loading, onSelect }: { results: DocSear
                 <span className='opacity-60'>L{m.line}</span> <span>{m.text.trim().slice(0, 80)}</span>
               </div>
             ))}
-            {r.matches.length > 3 ? <div className='mt-0.5 ml-5 text-[10px] text-muted-foreground italic'>+{r.matches.length - 3} more</div> : null}
+            {r.matches.length > 3 ? (
+              <div className='mt-0.5 ml-5 text-[10px] text-muted-foreground italic'>+{r.matches.length - 3} more</div>
+            ) : null}
           </button>
         </li>
       ))}
@@ -293,7 +332,8 @@ function TocList({ items, onActiveChange }: { items: TocItem[]; onActiveChange: 
           top: 0,
           height: 0,
           opacity: 0,
-          transition: 'top 350ms cubic-bezier(0.22, 1, 0.36, 1), height 350ms cubic-bezier(0.22, 1, 0.36, 1), opacity 150ms',
+          transition:
+            'top 350ms cubic-bezier(0.22, 1, 0.36, 1), height 350ms cubic-bezier(0.22, 1, 0.36, 1), opacity 150ms',
         }}
       />
       {groups.map(({ h2, children }) => (
@@ -354,7 +394,17 @@ function resolveRelativeDoc(currentPath: string | null, href: string): string {
   return out.join('/')
 }
 
-function MarkdownContent({ content, currentPath, onNavigate, onRendered }: { content: string; currentPath: string | null; onNavigate: (p: string) => void; onRendered: (html: string) => void }) {
+function MarkdownContent({
+  content,
+  currentPath,
+  onNavigate,
+  onRendered,
+}: {
+  content: string
+  currentPath: string | null
+  onNavigate: (p: string) => void
+  onRendered: (html: string) => void
+}) {
   const ref = useCallback(
     (n: HTMLDivElement | null) => {
       if (n) {
@@ -927,7 +977,13 @@ export default function DocsPage() {
         </div>
       )}
       {editing && editContent !== null && selectedPath && namespace && (
-        <DocEditor namespace={namespace} filePath={selectedPath} initialContent={editContent} onPublish={handlePublish} onDiscard={handleDiscard} />
+        <DocEditor
+          namespace={namespace}
+          filePath={selectedPath}
+          initialContent={editContent}
+          onPublish={handlePublish}
+          onDiscard={handleDiscard}
+        />
       )}
       {selectedPath && docContent !== null && !loading && !editing && !error && (
         <>
@@ -944,8 +1000,15 @@ export default function DocsPage() {
             )}
           </div>
           <div className='relative'>
-            <MarkdownContent content={viewingRef ? (refContent ?? 'Loading...') : docContent} currentPath={selectedPath} onNavigate={setSelectedPath} onRendered={setRenderedHtml} />
-            {!viewingRef && namespace && <DocCommentsOverlay namespace={namespace} docPath={selectedPath} renderKey={renderedHtml} />}
+            <MarkdownContent
+              content={viewingRef ? (refContent ?? 'Loading...') : docContent}
+              currentPath={selectedPath}
+              onNavigate={setSelectedPath}
+              onRendered={setRenderedHtml}
+            />
+            {!viewingRef && namespace && (
+              <DocCommentsOverlay namespace={namespace} docPath={selectedPath} renderKey={renderedHtml} />
+            )}
           </div>
         </>
       )}
@@ -1046,7 +1109,9 @@ export default function DocsPage() {
           <aside className='shrink-0 overflow-hidden w-60'>
             <ScrollArea className='h-full'>
               <div className='flex flex-col h-full'>
-                <ScrollHeader className='px-4 py-2.5 shrink-0 sticky top-0 z-10 bg-background'>{sidebarHeader}</ScrollHeader>
+                <ScrollHeader className='px-4 py-2.5 shrink-0 sticky top-0 z-10 bg-background'>
+                  {sidebarHeader}
+                </ScrollHeader>
                 <div className='flex-1 min-h-0'>{sidebarNav}</div>
               </div>
             </ScrollArea>
@@ -1069,7 +1134,10 @@ export default function DocsPage() {
                       <div className='flex items-center gap-2'>
                         <button
                           onClick={() => setRightTab('toc')}
-                          className={cn('text-[10px] font-semibold uppercase tracking-wider transition-colors', rightTab === 'toc' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground')}
+                          className={cn(
+                            'text-[10px] font-semibold uppercase tracking-wider transition-colors',
+                            rightTab === 'toc' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+                          )}
                         >
                           On this page
                         </button>
@@ -1095,7 +1163,10 @@ export default function DocsPage() {
                       ) : (
                         <div className='px-3 py-1'>
                           {viewingRef && (
-                            <button onClick={handleBackToCurrent} className='flex items-center gap-1 text-xs text-primary hover:underline mb-2'>
+                            <button
+                              onClick={handleBackToCurrent}
+                              className='flex items-center gap-1 text-xs text-primary hover:underline mb-2'
+                            >
                               <ArrowLeft className='size-3' /> Back to current
                             </button>
                           )}
@@ -1107,7 +1178,11 @@ export default function DocsPage() {
                                 <li key={entry.sha}>
                                   <button
                                     onClick={() => handleViewRef(entry.sha)}
-                                    className={cn('w-full text-left px-2 py-1.5 rounded-md text-xs transition-colors', 'hover:bg-accent/50', viewingRef === entry.sha && 'bg-accent')}
+                                    className={cn(
+                                      'w-full text-left px-2 py-1.5 rounded-md text-xs transition-colors',
+                                      'hover:bg-accent/50',
+                                      viewingRef === entry.sha && 'bg-accent',
+                                    )}
                                   >
                                     <p className='font-medium truncate'>{entry.message}</p>
                                     <p className='text-muted-foreground text-[10px]'>
@@ -1132,7 +1207,10 @@ export default function DocsPage() {
       {/* ── Mobile ── */}
       <div className='md:hidden flex-1 min-h-0 flex flex-col'>
         <ScrollHeader className='px-3 py-2'>
-          <button onClick={() => setSidebarOpen(true)} className='inline-flex items-center justify-center h-7 w-7 rounded-md hover:bg-accent transition-colors'>
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className='inline-flex items-center justify-center h-7 w-7 rounded-md hover:bg-accent transition-colors'
+          >
             <Menu className='size-4' />
           </button>
           <span className='text-sm text-muted-foreground truncate'>{selectedPath?.replace(/\.md$/, '') ?? 'Docs'}</span>
@@ -1147,7 +1225,9 @@ export default function DocsPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>New document</DialogTitle>
-            <DialogDescription>Enter a relative path. Nested folders will be created as needed. The .md extension is optional.</DialogDescription>
+            <DialogDescription>
+              Enter a relative path. Nested folders will be created as needed. The .md extension is optional.
+            </DialogDescription>
           </DialogHeader>
           <Input
             autoFocus
@@ -1205,7 +1285,10 @@ export default function DocsPage() {
           <div className='relative w-72 bg-background border-r shadow-lg h-full flex flex-col overflow-hidden'>
             <ScrollHeader className='px-4 py-2'>
               {sidebarHeader}
-              <button onClick={() => setSidebarOpen(false)} className='inline-flex items-center justify-center h-7 w-7 rounded-md hover:bg-accent transition-colors'>
+              <button
+                onClick={() => setSidebarOpen(false)}
+                className='inline-flex items-center justify-center h-7 w-7 rounded-md hover:bg-accent transition-colors'
+              >
                 <X className='size-4' />
               </button>
             </ScrollHeader>

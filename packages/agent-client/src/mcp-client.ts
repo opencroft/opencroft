@@ -97,7 +97,11 @@ export async function connectMcpToolset(servers: AcpMcpServer[], opts: ConnectMc
           description: remote.description ?? '',
           inputSchema: jsonSchema(remote.inputSchema),
           execute: async (input) => {
-            const result = await client.callTool({ name: remote.name, arguments: input as Record<string, unknown> }, undefined, { timeout: MCP_CALL_TIMEOUT })
+            const result = await client.callTool(
+              { name: remote.name, arguments: input as Record<string, unknown> },
+              undefined,
+              { timeout: MCP_CALL_TIMEOUT },
+            )
             return flattenResult((result.content ?? []) as CallToolContent[])
           },
         })

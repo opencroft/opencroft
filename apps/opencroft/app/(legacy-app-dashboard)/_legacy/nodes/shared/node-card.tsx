@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/node-card.css'
 import { Flex } from 'ui/layout/flex'
 import { StatusIndicator, type StatusVariant } from 'ui/utils/status-indicator'
+
 import { cn } from '@/lib/utils'
 
 interface NodeCardProps {
@@ -16,7 +17,17 @@ interface NodeCardProps {
   className?: string
 }
 
-function TravelingDot({ accent, dots = 8, dotSize = 4, className }: { accent: string; dots?: number; dotSize?: number; className?: string }) {
+function TravelingDot({
+  accent,
+  dots = 8,
+  dotSize = 4,
+  className,
+}: {
+  accent: string
+  dots?: number
+  dotSize?: number
+  className?: string
+}) {
   const ref = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
 
@@ -78,7 +89,11 @@ export function NodeCard({ children, selected, loading, accent, className }: Nod
         (loading || selected) && accent && 'ring-1 ring-inset',
         className,
       )}
-      style={(loading || selected) && accent ? ({ '--tw-ring-color': `color-mix(in oklch, ${accent} 20%, transparent)` } as React.CSSProperties) : undefined}
+      style={
+        (loading || selected) && accent
+          ? ({ '--tw-ring-color': `color-mix(in oklch, ${accent} 20%, transparent)` } as React.CSSProperties)
+          : undefined
+      }
     >
       {accent && (
         <>
@@ -108,7 +123,15 @@ interface NodeCardHeaderProps {
   className?: string
 }
 
-export function NodeCardHeader({ icon: Icon, iconClassName, status, title, subtitle, extra, className }: NodeCardHeaderProps) {
+export function NodeCardHeader({
+  icon: Icon,
+  iconClassName,
+  status,
+  title,
+  subtitle,
+  extra,
+  className,
+}: NodeCardHeaderProps) {
   return (
     <Flex row withGaps withSpacing className={cn('items-center', className)}>
       <div className='relative'>

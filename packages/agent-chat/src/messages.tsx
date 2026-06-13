@@ -76,7 +76,11 @@ export function MessageView({
       return <AskPrompt message={message} onRespond={onRespondAsk} />
 
     case 'error':
-      return <div className='rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive whitespace-pre-wrap wrap-break-word'>{message.text}</div>
+      return (
+        <div className='rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive whitespace-pre-wrap wrap-break-word'>
+          {message.text}
+        </div>
+      )
 
     default:
       return null
@@ -91,7 +95,9 @@ export function PlanView({ message }: { message: PlanMessage }) {
           <Badge variant={statusVariant(entry.status)} className='shrink-0'>
             {entry.status}
           </Badge>
-          <span className={cn(entry.status === 'completed' && 'line-through text-muted-foreground')}>{entry.content}</span>
+          <span className={cn(entry.status === 'completed' && 'line-through text-muted-foreground')}>
+            {entry.content}
+          </span>
         </Flex>
       ))}
     </Flex>
@@ -123,7 +129,9 @@ export function PermissionRequest({
     <Flex withGaps className='rounded-md border p-3 text-sm gap-2'>
       <span className='font-medium'>Permission: {message.title}</span>
       {message.resolved ? (
-        <span className='text-xs text-muted-foreground'>Resolved{message.resolvedOptionId ? ` · ${message.resolvedOptionId}` : ' · cancelled'}</span>
+        <span className='text-xs text-muted-foreground'>
+          Resolved{message.resolvedOptionId ? ` · ${message.resolvedOptionId}` : ' · cancelled'}
+        </span>
       ) : (
         <Flex className='gap-1.5'>
           {allow && (
@@ -132,11 +140,21 @@ export function PermissionRequest({
             </Button>
           )}
           {allowAlways && (
-            <Button size='sm' variant='secondary' onClick={() => onRespond(message.requestId, allowAlways.id)} className='justify-start w-full'>
+            <Button
+              size='sm'
+              variant='secondary'
+              onClick={() => onRespond(message.requestId, allowAlways.id)}
+              className='justify-start w-full'
+            >
               <CheckCheck /> {allowAlways.label}
             </Button>
           )}
-          <Button size='sm' variant='outline' onClick={() => onRespond(message.requestId, reject?.id)} className='justify-start w-full'>
+          <Button
+            size='sm'
+            variant='outline'
+            onClick={() => onRespond(message.requestId, reject?.id)}
+            className='justify-start w-full'
+          >
             <X /> Reject
           </Button>
           {onRespondText && (
@@ -159,7 +177,13 @@ export function PermissionRequest({
   )
 }
 
-export function AskPrompt({ message, onRespond }: { message: AskMessage; onRespond: (requestId: string, answer?: string) => void }) {
+export function AskPrompt({
+  message,
+  onRespond,
+}: {
+  message: AskMessage
+  onRespond: (requestId: string, answer?: string) => void
+}) {
   const [answer, setAnswer] = useState('')
   return (
     <Flex withGaps className='rounded-md border p-3 text-sm gap-2'>
@@ -188,7 +212,15 @@ export function AskPrompt({ message, onRespond }: { message: AskMessage; onRespo
   )
 }
 
-export function ToolView({ message, toolViews, hideToolCall }: { message: ToolMessage; toolViews: ToolViewRegistry; hideToolCall?: boolean }) {
+export function ToolView({
+  message,
+  toolViews,
+  hideToolCall,
+}: {
+  message: ToolMessage
+  toolViews: ToolViewRegistry
+  hideToolCall?: boolean
+}) {
   const view = toolViews[message.title]
   const custom = view?.render(message) ?? null
 
@@ -226,7 +258,10 @@ export function ToolCallCard({ message }: { message: ToolMessage }) {
   const hasDetails = message.input !== undefined || message.output !== undefined
   return (
     <Collapsible className='rounded-md border text-sm'>
-      <CollapsibleTrigger disabled={!hasDetails} className='flex w-full items-center gap-2 px-3 py-2 text-left disabled:cursor-default'>
+      <CollapsibleTrigger
+        disabled={!hasDetails}
+        className='flex w-full items-center gap-2 px-3 py-2 text-left disabled:cursor-default'
+      >
         <span className='flex-1 truncate font-medium'>{message.title}</span>
         <Badge variant={statusVariant(message.status)} className='shrink-0'>
           {message.status}
@@ -234,8 +269,12 @@ export function ToolCallCard({ message }: { message: ToolMessage }) {
       </CollapsibleTrigger>
       {hasDetails && (
         <CollapsibleContent className='border-t px-3 py-2'>
-          {message.input !== undefined && <pre className='overflow-x-auto text-xs text-muted-foreground'>{formatValue(message.input)}</pre>}
-          {message.output !== undefined && <pre className='mt-2 overflow-x-auto text-xs'>{formatValue(message.output)}</pre>}
+          {message.input !== undefined && (
+            <pre className='overflow-x-auto text-xs text-muted-foreground'>{formatValue(message.input)}</pre>
+          )}
+          {message.output !== undefined && (
+            <pre className='mt-2 overflow-x-auto text-xs'>{formatValue(message.output)}</pre>
+          )}
         </CollapsibleContent>
       )}
     </Collapsible>

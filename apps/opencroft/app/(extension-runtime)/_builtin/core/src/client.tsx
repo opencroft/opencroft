@@ -1,28 +1,44 @@
-import { defineExtension } from '@ext/host';
-import { TERMINAL_SOURCE, TERMINAL_CONSUMER, FS_TARGET_CONSUMER, SCRIPT_CONSUMER, SCRIPT_CONSUMER_PYTHON, SCRIPT_CONSUMER_NODEJS, AGENT_HANDLES, AGENT_JOB_HANDLES, AGENT_INSTRUCTION_HANDLES } from './shared';
-import { LocalhostNode, LocalhostInspector, LocalhostTerminalTab, LocalhostFilesTab } from './nodes/localhost';
-import { WslNode, WslInspector, WslData, WslTerminalTab, WslFilesTab } from './nodes/wsl';
-import { ServerNode, ServerInspector, ServerTerminalTab, ServerFilesTab, ServerData } from './nodes/server';
-import { KeyStoreNode, KeyStoreInspector } from './nodes/key-store';
-import { SecretsStoreNode, SecretsStoreInspector } from './nodes/secrets-store';
-import { TerminalWindowNode, TerminalWindowInspector } from './nodes/terminal';
-import { FileManagerWindowNode, FileManagerWindowInspector } from './nodes/file-manager';
-import { SectionNode, DomainNode, SectionInspector, randomSectionColor } from './nodes/section';
-import { makeBashNode, makePythonNode, makeNodeJsNode, scriptExposeOutput } from './nodes/script';
-import { NetworkNode, NetworkInspector } from './nodes/network';
-import { OpenAIClientNode, OpenAIClientInspector } from './nodes/openai-client';
-import { OpenAIAssistantNode, OpenAIAssistantInspector } from './nodes/openai-assistant';
-import { PromptNode, PromptInspector, PROMPT_HANDLES, promptExposeOutput } from './nodes/prompt';
-import { TextGenerationNode, TextGenerationInspector, TEXT_GENERATION_HANDLES, textGenerationExposeOutput } from './nodes/text-generation';
-import { LogNode, LogInspector, LogOutputTab, LOG_HANDLES } from './nodes/log';
-import { SendMessageNode, SendMessageInspector, SEND_MESSAGE_HANDLES } from './nodes/send-message';
-import { ApiRouteNode, ApiRouteInspector, API_ROUTE_HANDLES, apiRouteExposeOutput } from './nodes/api-route';
-import { EventNode, EventInspector, EVENT_HANDLES, eventExposeOutput } from './nodes/event';
-import { AgentNode, AgentInspector, AgentOpenClawTab, AgentProfileTab } from './nodes/agent';
-import { AgentMcpTab } from './nodes/agent-mcp';
-import { AgentToolNode, AgentToolInspector, AGENT_TOOL_HANDLES, agentToolExposeOutput } from './nodes/agent-tool';
-import { AgentJobNode, AgentJobInspector } from './nodes/agent-job';
-import { AgentInstructionNode, AgentInstructionInspector } from './nodes/agent-instruction';
+import { defineExtension } from '@ext/host'
+
+import { AgentInspector, AgentNode, AgentOpenClawTab, AgentProfileTab } from './nodes/agent'
+import { AgentInstructionInspector, AgentInstructionNode } from './nodes/agent-instruction'
+import { AgentJobInspector, AgentJobNode } from './nodes/agent-job'
+import { AgentMcpTab } from './nodes/agent-mcp'
+import { AGENT_TOOL_HANDLES, AgentToolInspector, AgentToolNode, agentToolExposeOutput } from './nodes/agent-tool'
+import { API_ROUTE_HANDLES, ApiRouteInspector, ApiRouteNode, apiRouteExposeOutput } from './nodes/api-route'
+import { EVENT_HANDLES, EventInspector, EventNode, eventExposeOutput } from './nodes/event'
+import { FileManagerWindowInspector, FileManagerWindowNode } from './nodes/file-manager'
+import { KeyStoreInspector, KeyStoreNode } from './nodes/key-store'
+import { LocalhostFilesTab, LocalhostInspector, LocalhostNode, LocalhostTerminalTab } from './nodes/localhost'
+import { LOG_HANDLES, LogInspector, LogNode, LogOutputTab } from './nodes/log'
+import { NetworkInspector, NetworkNode } from './nodes/network'
+import { OpenAIAssistantInspector, OpenAIAssistantNode } from './nodes/openai-assistant'
+import { OpenAIClientInspector, OpenAIClientNode } from './nodes/openai-client'
+import { PROMPT_HANDLES, PromptInspector, PromptNode, promptExposeOutput } from './nodes/prompt'
+import { makeBashNode, makeNodeJsNode, makePythonNode, scriptExposeOutput } from './nodes/script'
+import { SecretsStoreInspector, SecretsStoreNode } from './nodes/secrets-store'
+import { DomainNode, randomSectionColor, SectionInspector, SectionNode } from './nodes/section'
+import { SEND_MESSAGE_HANDLES, SendMessageInspector, SendMessageNode } from './nodes/send-message'
+import { type ServerData, ServerFilesTab, ServerInspector, ServerNode, ServerTerminalTab } from './nodes/server'
+import { TerminalWindowInspector, TerminalWindowNode } from './nodes/terminal'
+import {
+  TEXT_GENERATION_HANDLES,
+  TextGenerationInspector,
+  TextGenerationNode,
+  textGenerationExposeOutput,
+} from './nodes/text-generation'
+import { type WslData, WslFilesTab, WslInspector, WslNode, WslTerminalTab } from './nodes/wsl'
+import {
+  AGENT_HANDLES,
+  AGENT_INSTRUCTION_HANDLES,
+  AGENT_JOB_HANDLES,
+  FS_TARGET_CONSUMER,
+  SCRIPT_CONSUMER,
+  SCRIPT_CONSUMER_NODEJS,
+  SCRIPT_CONSUMER_PYTHON,
+  TERMINAL_CONSUMER,
+  TERMINAL_SOURCE,
+} from './shared'
 
 export default defineExtension({
   manifest: {
@@ -51,17 +67,29 @@ export default defineExtension({
       component: LocalhostNode as unknown as never,
       inspector: LocalhostInspector as unknown as never,
       inspectorTabs: [
-        { id: 'terminal', label: 'Terminal', icon: 'TerminalSquare', fullHeight: true, component: LocalhostTerminalTab as unknown as never },
-        { id: 'files', label: 'Files', icon: 'FolderOpen', fullHeight: true, component: LocalhostFilesTab as unknown as never },
+        {
+          id: 'terminal',
+          label: 'Terminal',
+          icon: 'TerminalSquare',
+          fullHeight: true,
+          component: LocalhostTerminalTab as unknown as never,
+        },
+        {
+          id: 'files',
+          label: 'Files',
+          icon: 'FolderOpen',
+          fullHeight: true,
+          component: LocalhostFilesTab as unknown as never,
+        },
       ],
       exposeOutput: (handleId: string) => {
         if (handleId === 'terminal') {
-          return { type: 'local' };
+          return { type: 'local' }
         }
         if (handleId === 'fs-out') {
-          return { type: 'local' };
+          return { type: 'local' }
         }
-        return undefined;
+        return undefined
       },
     },
     {
@@ -75,21 +103,33 @@ export default defineExtension({
       component: WslNode as unknown as never,
       inspector: WslInspector as unknown as never,
       inspectorTabs: [
-        { id: 'terminal', label: 'Terminal', icon: 'TerminalSquare', fullHeight: true, component: WslTerminalTab as unknown as never },
-        { id: 'files', label: 'Files', icon: 'FolderOpen', fullHeight: true, component: WslFilesTab as unknown as never },
+        {
+          id: 'terminal',
+          label: 'Terminal',
+          icon: 'TerminalSquare',
+          fullHeight: true,
+          component: WslTerminalTab as unknown as never,
+        },
+        {
+          id: 'files',
+          label: 'Files',
+          icon: 'FolderOpen',
+          fullHeight: true,
+          component: WslFilesTab as unknown as never,
+        },
       ],
       exposeOutput: (handleId: string, data: unknown) => {
-        const d = data as WslData;
+        const d = data as WslData
         if (!d.distro) {
-          return undefined;
+          return undefined
         }
         if (handleId === 'terminal') {
-          return { type: 'wsl', distro: d.distro };
+          return { type: 'wsl', distro: d.distro }
         }
         if (handleId === 'fs-out') {
-          return { type: 'wsl', distro: d.distro };
+          return { type: 'wsl', distro: d.distro }
         }
-        return undefined;
+        return undefined
       },
     },
     {
@@ -103,21 +143,47 @@ export default defineExtension({
       component: ServerNode as unknown as never,
       inspector: ServerInspector as unknown as never,
       inspectorTabs: [
-        { id: 'terminal', label: 'Terminal', icon: 'TerminalSquare', fullHeight: true, component: ServerTerminalTab as unknown as never },
-        { id: 'files', label: 'Files', icon: 'FolderOpen', fullHeight: true, component: ServerFilesTab as unknown as never },
+        {
+          id: 'terminal',
+          label: 'Terminal',
+          icon: 'TerminalSquare',
+          fullHeight: true,
+          component: ServerTerminalTab as unknown as never,
+        },
+        {
+          id: 'files',
+          label: 'Files',
+          icon: 'FolderOpen',
+          fullHeight: true,
+          component: ServerFilesTab as unknown as never,
+        },
       ],
       exposeOutput: (handleId: string, data: unknown) => {
-        const d = data as ServerData;
+        const d = data as ServerData
         if (!d.address) {
-          return undefined;
+          return undefined
         }
         if (handleId === 'terminal') {
-          return { type: 'ssh', host: d.address, port: d.port, username: d.username, password: d.password, keyPath: d.keyPath };
+          return {
+            type: 'ssh',
+            host: d.address,
+            port: d.port,
+            username: d.username,
+            password: d.password,
+            keyPath: d.keyPath,
+          }
         }
         if (handleId === 'fs-out') {
-          return { type: 'ssh', host: d.address, port: d.port, username: d.username, password: d.password, keyPath: d.keyPath };
+          return {
+            type: 'ssh',
+            host: d.address,
+            port: d.port,
+            username: d.username,
+            password: d.password,
+            keyPath: d.keyPath,
+          }
         }
-        return undefined;
+        return undefined
       },
     },
     {
@@ -175,8 +241,20 @@ export default defineExtension({
       component: makeBashNode().component as unknown as never,
       inspector: makeBashNode().inspector as unknown as never,
       inspectorTabs: [
-        { id: 'editor', label: 'Editor', icon: 'Code', fullHeight: true, component: makeBashNode().editorTab as unknown as never },
-        { id: 'output', label: 'Output', icon: 'ScrollText', fullHeight: true, component: makeBashNode().outputTab as unknown as never },
+        {
+          id: 'editor',
+          label: 'Editor',
+          icon: 'Code',
+          fullHeight: true,
+          component: makeBashNode().editorTab as unknown as never,
+        },
+        {
+          id: 'output',
+          label: 'Output',
+          icon: 'ScrollText',
+          fullHeight: true,
+          component: makeBashNode().outputTab as unknown as never,
+        },
       ],
       exposeOutput: scriptExposeOutput as unknown as never,
     },
@@ -191,8 +269,20 @@ export default defineExtension({
       component: makePythonNode().component as unknown as never,
       inspector: makePythonNode().inspector as unknown as never,
       inspectorTabs: [
-        { id: 'editor', label: 'Editor', icon: 'Code', fullHeight: true, component: makePythonNode().editorTab as unknown as never },
-        { id: 'output', label: 'Output', icon: 'ScrollText', fullHeight: true, component: makePythonNode().outputTab as unknown as never },
+        {
+          id: 'editor',
+          label: 'Editor',
+          icon: 'Code',
+          fullHeight: true,
+          component: makePythonNode().editorTab as unknown as never,
+        },
+        {
+          id: 'output',
+          label: 'Output',
+          icon: 'ScrollText',
+          fullHeight: true,
+          component: makePythonNode().outputTab as unknown as never,
+        },
       ],
       exposeOutput: scriptExposeOutput as unknown as never,
     },
@@ -207,8 +297,20 @@ export default defineExtension({
       component: makeNodeJsNode().component as unknown as never,
       inspector: makeNodeJsNode().inspector as unknown as never,
       inspectorTabs: [
-        { id: 'editor', label: 'Editor', icon: 'Code', fullHeight: true, component: makeNodeJsNode().editorTab as unknown as never },
-        { id: 'output', label: 'Output', icon: 'ScrollText', fullHeight: true, component: makeNodeJsNode().outputTab as unknown as never },
+        {
+          id: 'editor',
+          label: 'Editor',
+          icon: 'Code',
+          fullHeight: true,
+          component: makeNodeJsNode().editorTab as unknown as never,
+        },
+        {
+          id: 'output',
+          label: 'Output',
+          icon: 'ScrollText',
+          fullHeight: true,
+          component: makeNodeJsNode().outputTab as unknown as never,
+        },
       ],
       exposeOutput: scriptExposeOutput as unknown as never,
     },
@@ -223,9 +325,21 @@ export default defineExtension({
       component: AgentNode as unknown as never,
       inspector: AgentInspector as unknown as never,
       inspectorTabs: [
-        { id: 'profile', label: 'Profile', icon: 'Bot', fullHeight: true, component: AgentProfileTab as unknown as never },
+        {
+          id: 'profile',
+          label: 'Profile',
+          icon: 'Bot',
+          fullHeight: true,
+          component: AgentProfileTab as unknown as never,
+        },
         { id: 'mcp', label: 'MCP', icon: 'Wrench', fullHeight: true, component: AgentMcpTab as unknown as never },
-        { id: 'openclaw', label: 'OpenClaw', icon: 'Globe', fullHeight: true, component: AgentOpenClawTab as unknown as never },
+        {
+          id: 'openclaw',
+          label: 'OpenClaw',
+          icon: 'Globe',
+          fullHeight: true,
+          component: AgentOpenClawTab as unknown as never,
+        },
       ],
     },
     {
@@ -327,7 +441,13 @@ export default defineExtension({
       component: LogNode as unknown as never,
       inspector: LogInspector as unknown as never,
       inspectorTabs: [
-        { id: 'output', label: 'Output', icon: 'ScrollText', fullHeight: true, component: LogOutputTab as unknown as never },
+        {
+          id: 'output',
+          label: 'Output',
+          icon: 'ScrollText',
+          fullHeight: true,
+          component: LogOutputTab as unknown as never,
+        },
       ],
     },
     {
@@ -360,7 +480,12 @@ export default defineExtension({
       icon: 'Wrench',
       accent: 'oklch(0.65 0.24 25)',
       handles: AGENT_TOOL_HANDLES as unknown as never[],
-      defaultData: { name: '', description: '', inputSchema: '{"type":"object","properties":{}}', requireApproval: true },
+      defaultData: {
+        name: '',
+        description: '',
+        inputSchema: '{"type":"object","properties":{}}',
+        requireApproval: true,
+      },
       component: AgentToolNode as unknown as never,
       inspector: AgentToolInspector as unknown as never,
       exposeOutput: agentToolExposeOutput as unknown as never,
@@ -417,4 +542,4 @@ export default defineExtension({
       inspector: SectionInspector as unknown as never,
     },
   ],
-});
+})

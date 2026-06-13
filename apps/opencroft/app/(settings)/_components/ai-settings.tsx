@@ -4,7 +4,14 @@ import { useEffect, useState, useTransition } from 'react'
 import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
-import { type AiSettingsState, loadAiSettingsState, rePairGateway, saveDefaultAgent, saveGatewayConfig } from '@/app/(settings)/_server/ai-actions'
+
+import {
+  type AiSettingsState,
+  loadAiSettingsState,
+  rePairGateway,
+  saveDefaultAgent,
+  saveGatewayConfig,
+} from '@/app/(settings)/_server/ai-actions'
 
 function buildNodesUrl(gatewayUrl: string | null | undefined): string | null {
   if (!gatewayUrl) {
@@ -70,7 +77,8 @@ export default function AiSettings() {
   }
 
   const agentValue = state.settings.defaultAgentId ?? ''
-  const gatewayDirty = (url ?? '') !== (state.settings.gatewayUrl ?? '') || (token ?? '') !== (state.settings.gatewayToken ?? '')
+  const gatewayDirty =
+    (url ?? '') !== (state.settings.gatewayUrl ?? '') || (token ?? '') !== (state.settings.gatewayToken ?? '')
   const nodesUrl = buildNodesUrl(state.settings.gatewayUrl)
 
   return (
@@ -82,13 +90,24 @@ export default function AiSettings() {
         <p className='text-sm text-muted-foreground'>
           WebSocket URL of the OpenClaw gateway. Leave empty to use the <code>OPENCLAW_GATEWAY_URL</code> env var.
         </p>
-        <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder='ws://host:port' disabled={gatewayPending} />
+        <Input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder='ws://host:port'
+          disabled={gatewayPending}
+        />
 
         <label className='text-sm font-medium pt-3 block'>OpenClaw gateway token</label>
         <p className='text-sm text-muted-foreground'>
           Pairing token for the gateway. Leave empty to use the <code>OPENCLAW_GATEWAY_TOKEN</code> env var.
         </p>
-        <Input value={token} onChange={(e) => setToken(e.target.value)} placeholder='paste pairing token' type='password' disabled={gatewayPending} />
+        <Input
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          placeholder='paste pairing token'
+          type='password'
+          disabled={gatewayPending}
+        />
 
         <div className='pt-2 flex gap-2'>
           <Button onClick={onSaveGateway} disabled={gatewayPending || !gatewayDirty}>
@@ -98,7 +117,9 @@ export default function AiSettings() {
             Re-pair device
           </Button>
         </div>
-        <p className='text-xs text-muted-foreground'>Clears the cached device token so OpenClaw can issue a fresh one on the next connect.</p>
+        <p className='text-xs text-muted-foreground'>
+          Clears the cached device token so OpenClaw can issue a fresh one on the next connect.
+        </p>
       </section>
 
       <section className='space-y-2 max-w-md'>
@@ -123,7 +144,11 @@ export default function AiSettings() {
           </div>
         ) : (
           <>
-            <Select value={agentValue} onValueChange={onAgentChange} disabled={agentPending || state.agents.length === 0}>
+            <Select
+              value={agentValue}
+              onValueChange={onAgentChange}
+              disabled={agentPending || state.agents.length === 0}
+            >
               <SelectTrigger className='w-full'>
                 <SelectValue placeholder='Select an agent...' />
               </SelectTrigger>

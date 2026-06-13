@@ -2,7 +2,6 @@
 
 import { Check, MessageCircleQuestion, X } from 'lucide-react'
 import { type KeyboardEvent, useCallback, useEffect, useState } from 'react'
-
 import { Button } from 'ui/components/ui/button'
 import { Checkbox } from 'ui/components/ui/checkbox'
 import { Input } from 'ui/components/ui/input'
@@ -30,7 +29,11 @@ export interface AskUserProps {
 const CUSTOM_VALUE = '__custom__'
 
 // Check if a question has an answer (options selected or custom text typed).
-function isQuestionAnswered(title: string, answers: Record<string, string[]>, customTexts: Record<string, string>): boolean {
+function isQuestionAnswered(
+  title: string,
+  answers: Record<string, string[]>,
+  customTexts: Record<string, string>,
+): boolean {
   return (answers[title] ?? []).length > 0 || (customTexts[title] ?? '').trim() !== ''
 }
 
@@ -68,7 +71,9 @@ export function AskUser({ questions, onSubmit, onCancel, pending = false, onCurr
       setAnswers((prev) => {
         const current = prev[title] ?? []
         if (question.multiple) {
-          return current.includes(option) ? { ...prev, [title]: current.filter((o) => o !== option) } : { ...prev, [title]: [...current, option] }
+          return current.includes(option)
+            ? { ...prev, [title]: current.filter((o) => o !== option) }
+            : { ...prev, [title]: [...current, option] }
         }
         return { ...prev, [title]: [option] }
       })
@@ -100,7 +105,9 @@ export function AskUser({ questions, onSubmit, onCancel, pending = false, onCurr
   const buildFinalAnswers = useCallback((): Record<string, string> => {
     const result: Record<string, string> = {}
     for (const q of questions) {
-      const sel = (answers[q.title] ?? []).map((s) => (s === CUSTOM_VALUE ? (customTexts[q.title] ?? '').trim() : s)).filter(Boolean)
+      const sel = (answers[q.title] ?? [])
+        .map((s) => (s === CUSTOM_VALUE ? (customTexts[q.title] ?? '').trim() : s))
+        .filter(Boolean)
       result[q.title] = sel.join(', ')
     }
     return result
@@ -156,7 +163,9 @@ export function AskUser({ questions, onSubmit, onCancel, pending = false, onCurr
             onClick={() => setCurrentIdx(idx)}
             className={[
               'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border-b-2 transition-colors',
-              currentIdx === idx ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground/80',
+              currentIdx === idx
+                ? 'border-primary text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground/80',
             ].join(' ')}
           >
             {isQuestionAnswered(q.title, answers, customTexts) && <Check className='size-3 text-primary' />}
@@ -173,7 +182,11 @@ export function AskUser({ questions, onSubmit, onCancel, pending = false, onCurr
         <div className='flex flex-col gap-1.5'>
           {question.options.map((option) => (
             <div key={option} className='flex items-center gap-2'>
-              <Checkbox id={`opt-${option}`} checked={selected.includes(option)} onCheckedChange={() => toggleOption(option)} />
+              <Checkbox
+                id={`opt-${option}`}
+                checked={selected.includes(option)}
+                onCheckedChange={() => toggleOption(option)}
+              />
               <Label htmlFor={`opt-${option}`} className='text-sm cursor-pointer'>
                 {option}
               </Label>
@@ -187,7 +200,13 @@ export function AskUser({ questions, onSubmit, onCancel, pending = false, onCurr
                 <Label className='text-sm'>{custom}</Label>
               </div>
             ))}
-          <Input value={customText} onChange={(e) => updateCustomText(e.target.value)} onKeyDown={onCustomKeyDown} placeholder='Custom answer (Enter to add)' className='h-8 mt-1' />
+          <Input
+            value={customText}
+            onChange={(e) => updateCustomText(e.target.value)}
+            onKeyDown={onCustomKeyDown}
+            placeholder='Custom answer (Enter to add)'
+            className='h-8 mt-1'
+          />
         </div>
       ) : (
         <RadioGroup

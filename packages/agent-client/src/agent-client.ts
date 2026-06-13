@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { Readable, Writable } from 'node:stream'
+
 import type {
   McpServer as AcpMcpServer,
   Client,
@@ -263,7 +264,9 @@ function isAlwaysAllowed(perms: ResolvedPermissions | undefined, title: string):
   if (perms.allow[toolKey(title)] === 'AlwaysAllow') {
     return true
   }
-  return Object.entries(perms.allow).some(([key, value]) => value === 'AlwaysAllow' && key.startsWith('tool:') && title.includes(key.slice('tool:'.length)))
+  return Object.entries(perms.allow).some(
+    ([key, value]) => value === 'AlwaysAllow' && key.startsWith('tool:') && title.includes(key.slice('tool:'.length)),
+  )
 }
 
 // Pick the option that grants the call (kind starts with "allow"), falling back
@@ -328,7 +331,10 @@ function buildClient(getElicitationSession: () => string | null): Client {
   }
 }
 
-function toSessionModes(modes: { availableModes: { id: string; name: string; description?: string | null }[]; currentModeId: string }): SessionModes {
+function toSessionModes(modes: {
+  availableModes: { id: string; name: string; description?: string | null }[]
+  currentModeId: string
+}): SessionModes {
   return {
     available: modes.availableModes.map((mode) => ({
       id: mode.id,
@@ -359,7 +365,11 @@ function matchReasoningValue(options: unknown, effort: string): string | undefin
     }
   }
   const wanted = effort.toLowerCase()
-  const hit = flat.find((option) => typeof option.value === 'string' && (option.value.toLowerCase().includes(wanted) || (option.name ?? '').toLowerCase().includes(wanted)))
+  const hit = flat.find(
+    (option) =>
+      typeof option.value === 'string' &&
+      (option.value.toLowerCase().includes(wanted) || (option.name ?? '').toLowerCase().includes(wanted)),
+  )
   return hit?.value
 }
 
@@ -476,7 +486,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     child.on('exit', () => {
       store.connections.delete(key)
     })
-    const stream = ndJsonStream(Writable.toWeb(child.stdin) as WritableStream<Uint8Array>, Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>)
+    const stream = ndJsonStream(
+      Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
+      Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+    )
     // The client factory closes over `entry.lastSessionId` to scope elicitations
     // to this connection. The factory only runs lazily (on the first message),
     // by which point `entry` is assigned — so the forward reference is safe.
@@ -532,7 +545,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return (options.tools ?? []).map((tool) => ({ name: tool.name, description: tool.description }))
     },
 
-    async createSession(selection: AgentSelection, defaultModeId?: string, permissions?: ResolvedPermissions): Promise<SessionMeta> {
+    async createSession(
+      selection: AgentSelection,
+      defaultModeId?: string,
+      permissions?: ResolvedPermissions,
+    ): Promise<SessionMeta> {
       const connection = await ensureConnection(selection)
       const native = isNativeSelection(selection)
       // ACP: mint a token before newSession so the built-in MCP server can apply
@@ -580,7 +597,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         emitSessionModes(sessionId)
       }
       // Apply the requested initial approval mode, when offered.
-      if (defaultModeId && response.modes && response.modes.currentModeId !== defaultModeId && response.modes.availableModes.some((mode) => mode.id === defaultModeId)) {
+      if (
+        defaultModeId &&
+        response.modes &&
+        response.modes.currentModeId !== defaultModeId &&
+        response.modes.availableModes.some((mode) => mode.id === defaultModeId)
+      ) {
         await connection
           .setSessionMode({ sessionId, modeId: defaultModeId })
           .then(() => {
@@ -595,10 +617,17 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // Apply the reasoning preference to ACP agents that expose a thought_level
       // config option (the native harness handles reasoning via providerOptions).
       if (!native && selection.reasoningEffort && response.configOptions) {
-        const option = response.configOptions.find((entry) => entry.category === 'thought_level' && entry.type === 'select')
-        const value = option && option.type === 'select' ? matchReasoningValue(option.options, selection.reasoningEffort) : undefined
+        const option = response.configOptions.find(
+          (entry) => entry.category === 'thought_level' && entry.type === 'select',
+        )
+        const value =
+          option && option.type === 'select'
+            ? matchReasoningValue(option.options, selection.reasoningEffort)
+            : undefined
         if (option && value) {
-          await connection.setSessionConfigOption({ sessionId, configId: option.id, value }).catch((error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }))
+          await connection
+            .setSessionConfigOption({ sessionId, configId: option.id, value })
+            .catch((error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }))
         }
       }
       return meta
@@ -630,7 +659,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
 
     async refreshMcpServers(): Promise<void> {
       for (const sessionId of store.sessions.keys()) {
-        await this.resumeSession(sessionId).catch((error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }))
+        await this.resumeSession(sessionId).catch((error: unknown) =>
+          emit(sessionId, { kind: 'error', message: errorMessage(error) }),
+        )
       }
     },
 
@@ -682,7 +713,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         }
       })
       const boundary = findTurnBoundary(userEvents, dropFromTurn)
-      const forkedEvents = boundary === null ? session.events.filter((event) => event.kind === 'modes') : session.events.slice(0, boundary)
+      const forkedEvents =
+        boundary === null ? session.events.filter((event) => event.kind === 'modes') : session.events.slice(0, boundary)
       const meta: SessionMeta = {
         id: response.sessionId,
         title: `${session.meta.title} (fork)`,

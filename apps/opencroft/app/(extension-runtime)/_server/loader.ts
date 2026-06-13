@@ -170,7 +170,14 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
   try {
     code = await fs.readFile(bundleFile, 'utf-8')
   } catch {
-    return { updatedAt: Date.now(), manifest, actions: {}, context: reg.context, registeredTypes: reg.types, registeredNodes: reg.nodes }
+    return {
+      updatedAt: Date.now(),
+      manifest,
+      actions: {},
+      context: reg.context,
+      registeredTypes: reg.types,
+      registeredNodes: reg.nodes,
+    }
   }
 
   const host = createHost(extensionId)
@@ -207,7 +214,19 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
     const routes = exported.routes ?? exported.default?.routes
     const load = exported.load ?? exported.default?.load
     const unload = exported.unload ?? exported.default?.unload
-    return { updatedAt: Date.now(), manifest, actions, exposeOutput, nodeActions, routes, load, unload, context: reg.context, registeredTypes: reg.types, registeredNodes: reg.nodes }
+    return {
+      updatedAt: Date.now(),
+      manifest,
+      actions,
+      exposeOutput,
+      nodeActions,
+      routes,
+      load,
+      unload,
+      context: reg.context,
+      registeredTypes: reg.types,
+      registeredNodes: reg.nodes,
+    }
   } finally {
     ;(globalThis as { __extensionServerApi?: unknown }).__extensionServerApi = prevGlobal
   }

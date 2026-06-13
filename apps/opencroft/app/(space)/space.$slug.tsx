@@ -1,5 +1,6 @@
 import { createFileRoute, notFound, redirect } from '@tanstack/react-router'
 import { ReactFlowProvider } from '@xyflow/react'
+
 import { SpaceCanvas } from '@/app/(space)/_components/space-canvas'
 import { listSpaces, setActiveSpaceSlug } from '@/app/(space)/_server/actions'
 

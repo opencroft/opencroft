@@ -1,6 +1,7 @@
 import { db, mcpAuditLog } from '@opencroft/db'
 import { createServerFn } from '@tanstack/react-start'
 import { and, asc, desc, eq, type SQL } from 'drizzle-orm'
+
 import type { AuditStatus } from '@/app/(mcp)/_server/audit'
 import { getYoloModeInfo, setYoloMode as setYolo } from '@/app/(mcp)/_server/yolo'
 
@@ -23,7 +24,16 @@ export interface AuditQuery {
 
 const DEFAULT_LIMIT = 100
 
-function toEntry(row: { id: string; tool: string; args: string; result: string | null; error: string | null; status: string; durationMs: number; createdAt: Date }): McpAuditEntry {
+function toEntry(row: {
+  id: string
+  tool: string
+  args: string
+  result: string | null
+  error: string | null
+  status: string
+  durationMs: number
+  createdAt: Date
+}): McpAuditEntry {
   return {
     id: row.id,
     tool: row.tool,
@@ -65,9 +75,11 @@ export const clearAuditLog = createServerFn().handler(async (): Promise<void> =>
 
 // ── YOLO Mode ──────────────────────────────────────────────────────────────
 
-export const getYoloMode = createServerFn().handler(async (): Promise<{ enabled: boolean; source: 'env' | 'runtime' }> => {
-  return getYoloModeInfo()
-})
+export const getYoloMode = createServerFn().handler(
+  async (): Promise<{ enabled: boolean; source: 'env' | 'runtime' }> => {
+    return getYoloModeInfo()
+  },
+)
 
 export const updateYoloMode = createServerFn({ method: 'POST' })
   .inputValidator((enabled: boolean) => enabled)

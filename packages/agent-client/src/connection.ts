@@ -11,4 +11,14 @@ import type { ClientSideConnection } from '@agentclientprotocol/sdk'
  * Deriving it via `Pick` guarantees `ClientSideConnection` satisfies it and the
  * native harness can't drift from the methods the engine relies on.
  */
-export type AgentConnection = Pick<ClientSideConnection, 'initialize' | 'newSession' | 'resumeSession' | 'setSessionMode' | 'setSessionConfigOption' | 'prompt' | 'cancel' | 'unstable_forkSession'>
+export type AgentConnection = Pick<
+  ClientSideConnection,
+  | 'initialize'
+  | 'newSession'
+  | 'resumeSession'
+  | 'setSessionMode'
+  | 'setSessionConfigOption'
+  | 'prompt'
+  | 'cancel'
+  | 'unstable_forkSession'
+>

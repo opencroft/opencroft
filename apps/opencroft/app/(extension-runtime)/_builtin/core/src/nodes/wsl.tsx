@@ -1,45 +1,44 @@
-import {
-  React,
-  NodeFrame,
-  OutputHandle,
-  icons,
-  inspectorIntent,
-  invoke,
-  useReactFlow,
-} from '@ext/host';
-import {
-  Input,
-  Label,
-} from '@ext/ui';
-import { PinButton, StatsList, PinnedBody, InspectorFilesBody } from '../shared';
-import { Terminal } from '@ext/ui';
+import { icons, inspectorIntent, invoke, NodeFrame, OutputHandle, React, useReactFlow } from '@ext/host'
+import { Input, Label, Terminal } from '@ext/ui'
 
-const { useCallback, useEffect, useState } = React;
+import { InspectorFilesBody, PinButton, PinnedBody, StatsList } from '../shared'
 
-interface WslStats { os: string; cpu: string; memory: string; storage: string; }
-export interface WslData { distro: string; }
+const { useCallback, useEffect, useState } = React
 
-export function WslNode({
-  id, data, selected,
-}: { id: string; data: WslData; selected?: boolean }) {
-  const [stats, setStats] = useState<WslStats | null>(null);
-  const rf = useReactFlow();
+interface WslStats {
+  os: string
+  cpu: string
+  memory: string
+  storage: string
+}
+export interface WslData {
+  distro: string
+}
+
+export function WslNode({ id, data, selected }: { id: string; data: WslData; selected?: boolean }) {
+  const [stats, setStats] = useState<WslStats | null>(null)
+  const rf = useReactFlow()
 
   useEffect(() => {
     if (!data.distro) {
-      setStats(null);
-      return;
+      setStats(null)
+      return
     }
-    invoke<WslStats>('wsl.getStats', data.distro).then(setStats).catch(() => setStats(null));
-  }, [data.distro]);
+    invoke<WslStats>('wsl.getStats', data.distro)
+      .then(setStats)
+      .catch(() => setStats(null))
+  }, [data.distro])
 
-  const openInspector = useCallback((tab: string) => {
-    rf.setNodes((nds) => nds.map((n: { id: string }) => ({ ...n, selected: n.id === id })));
-    inspectorIntent.open(id, tab);
-  }, [id, rf]);
+  const openInspector = useCallback(
+    (tab: string) => {
+      rf.setNodes((nds) => nds.map((n: { id: string }) => ({ ...n, selected: n.id === id })))
+      inspectorIntent.open(id, tab)
+    },
+    [id, rf],
+  )
 
-  const openTerminal = useCallback(() => openInspector('terminal'), [openInspector]);
-  const openFiles = useCallback(() => openInspector('files'), [openInspector]);
+  const openTerminal = useCallback(() => openInspector('terminal'), [openInspector])
+  const openFiles = useCallback(() => openInspector('files'), [openInspector])
 
   return (
     <NodeFrame
@@ -77,12 +76,17 @@ export function WslNode({
         }
       />
     </NodeFrame>
-  );
+  )
 }
 
 export function WslInspector({
-  data, updateData,
-}: { nodeId: string; data: WslData; updateData: (p: Partial<WslData>) => void }) {
+  data,
+  updateData,
+}: {
+  nodeId: string
+  data: WslData
+  updateData: (p: Partial<WslData>) => void
+}) {
   return (
     <div className='flex flex-col gap-3'>
       <div className='flex flex-col gap-1'>
@@ -94,33 +98,19 @@ export function WslInspector({
         />
       </div>
     </div>
-  );
+  )
 }
 
-export function WslTerminalTab({
-  data,
-}: { nodeId: string; data: WslData; updateData: (p: Partial<WslData>) => void }) {
+export function WslTerminalTab({ data }: { nodeId: string; data: WslData; updateData: (p: Partial<WslData>) => void }) {
   if (!data.distro) {
-    return (
-      <div className='p-3 text-xs text-muted-foreground italic'>
-        Set a distro name to use the terminal.
-      </div>
-    );
+    return <div className='p-3 text-xs text-muted-foreground italic'>Set a distro name to use the terminal.</div>
   }
-  return (
-    <Terminal connection={{ type: 'wsl', config: { distro: data.distro } }} />
-  );
+  return <Terminal connection={{ type: 'wsl', config: { distro: data.distro } }} />
 }
 
-export function WslFilesTab({
-  data,
-}: { nodeId: string; data: WslData; updateData: (p: Partial<WslData>) => void }) {
+export function WslFilesTab({ data }: { nodeId: string; data: WslData; updateData: (p: Partial<WslData>) => void }) {
   if (!data.distro) {
-    return (
-      <div className='p-3 text-xs text-muted-foreground italic'>
-        Set a distro name to browse files.
-      </div>
-    );
+    return <div className='p-3 text-xs text-muted-foreground italic'>Set a distro name to browse files.</div>
   }
   return (
     <InspectorFilesBody
@@ -131,5 +121,5 @@ export function WslFilesTab({
         config: { distro: data.distro, basePath: '/' },
       }}
     />
-  );
+  )
 }

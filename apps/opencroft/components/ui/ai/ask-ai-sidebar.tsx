@@ -7,6 +7,7 @@ import { ChatInput } from 'ui/chat/chat-input'
 import { ChatMessage } from 'ui/chat/chat-message'
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from 'ui/sidebar'
 import { Textarea } from 'ui/textarea'
+
 import { useAskAI } from '@/components/core/providers/ask-ai-provider'
 import { enhancePrompt } from '@/lib/ai-utils'
 
@@ -97,7 +98,12 @@ export function AskAISidebar() {
       <SidebarContent className='flex flex-col gap-4 p-4'>
         <div className='space-y-2'>
           <label className='text-sm font-medium'>Current Content</label>
-          <Textarea value={content} onChange={(e) => setContent(e.target.value)} className='min-h-[100px] resize-none' placeholder='Content to modify...' />
+          <Textarea
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            className='min-h-[100px] resize-none'
+            placeholder='Content to modify...'
+          />
         </div>
 
         <div className='flex-1 flex flex-col gap-2 overflow-y-auto'>
@@ -105,14 +111,26 @@ export function AskAISidebar() {
           <div className='flex flex-col gap-2'>
             {messages.map((msg, index) => (
               <div key={index} className='flex flex-col gap-1'>
-                <ChatMessage text={msg.content} className={msg.role === 'user' ? 'bg-primary text-primary-foreground ml-auto max-w-[85%]' : 'bg-muted max-w-[85%]'} />
+                <ChatMessage
+                  text={msg.content}
+                  className={
+                    msg.role === 'user'
+                      ? 'bg-primary text-primary-foreground ml-auto max-w-[85%]'
+                      : 'bg-muted max-w-[85%]'
+                  }
+                />
                 {msg.role === 'assistant' && msg.content !== '...' && (
                   <div className='flex gap-1'>
                     <Button variant='ghost' size='sm' onClick={() => handleApply(msg.content)} className='h-7 text-xs'>
                       <Check className='h-3 w-3 mr-1' />
                       Apply
                     </Button>
-                    <Button variant='ghost' size='sm' onClick={() => handleCopy(msg.content, index)} className='h-7 text-xs'>
+                    <Button
+                      variant='ghost'
+                      size='sm'
+                      onClick={() => handleCopy(msg.content, index)}
+                      className='h-7 text-xs'
+                    >
                       {copiedIndex === index ? (
                         <>
                           <Check className='h-3 w-3 mr-1' />
@@ -134,7 +152,12 @@ export function AskAISidebar() {
       </SidebarContent>
 
       <SidebarFooter className='p-4'>
-        <ChatInput value={userMessage} onValueChange={setUserMessage} onSend={handleSend} placeholder='Ask AI to modify the content...' />
+        <ChatInput
+          value={userMessage}
+          onValueChange={setUserMessage}
+          onSend={handleSend}
+          placeholder='Ask AI to modify the content...'
+        />
       </SidebarFooter>
     </Sidebar>
   )

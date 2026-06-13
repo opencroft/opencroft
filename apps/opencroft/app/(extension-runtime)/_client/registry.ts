@@ -3,7 +3,11 @@
 import * as lucideIcons from 'lucide-react'
 import type { ComponentType } from 'react'
 
-import type { CommandModeDefinition, ExtensionDeclaration, SettingsPageDefinition } from '@/app/(extension-runtime)/_client/host'
+import type {
+  CommandModeDefinition,
+  ExtensionDeclaration,
+  SettingsPageDefinition,
+} from '@/app/(extension-runtime)/_client/host'
 import type { ExtensionContextType, ExtensionHandle } from '@/app/(extension-runtime)/_types'
 
 /** Resolved icon: LucideIcon component or fallback Box. */

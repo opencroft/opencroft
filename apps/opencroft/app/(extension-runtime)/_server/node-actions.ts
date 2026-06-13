@@ -4,7 +4,14 @@ import { resolveGraphContexts } from '@/app/(extension-runtime)/_server/graph-co
 import type { GraphSnapshot } from '@/app/(extension-runtime)/_server/host'
 import { getExtensionModule, loadAllManifests } from '@/app/(extension-runtime)/_server/loader'
 import { getStream } from '@/app/(extension-runtime)/_server/stream'
-import type { ConnectedSource, NodeActionCtx, NodeActionCtxNode, NodeActionDescriptor, ResolvedInput, Stream } from '@/app/(extension-runtime)/_types'
+import type {
+  ConnectedSource,
+  NodeActionCtx,
+  NodeActionCtxNode,
+  NodeActionDescriptor,
+  ResolvedInput,
+  Stream,
+} from '@/app/(extension-runtime)/_types'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
 import type { GraphData } from '@/app/(space)/_server/types'
 
@@ -73,7 +80,12 @@ function edgesAsLike(graph: GraphData): GraphEdgeLike[] {
   return graph.edges as unknown as GraphEdgeLike[]
 }
 
-function buildCtx(graph: GraphData, node: GraphNodeLike, params: Record<string, unknown>, spaceId: string): NodeActionCtx {
+function buildCtx(
+  graph: GraphData,
+  node: GraphNodeLike,
+  params: Record<string, unknown>,
+  spaceId: string,
+): NodeActionCtx {
   const data = node.data ?? {}
   const resolved = (data['__resolvedContexts'] as Record<string, ResolvedHandle> | undefined) ?? {}
   const allNodes = nodesAsLike(graph)
@@ -190,7 +202,9 @@ async function persistErrors(found: FoundNode, errors: string[]): Promise<void> 
   if (!space) {
     return
   }
-  const node = space.graph.nodes.find((n) => (n as unknown as GraphNodeLike).id === found.node.id) as unknown as GraphNodeLike | undefined
+  const node = space.graph.nodes.find((n) => (n as unknown as GraphNodeLike).id === found.node.id) as unknown as
+    | GraphNodeLike
+    | undefined
   if (!node) {
     return
   }

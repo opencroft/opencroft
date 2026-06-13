@@ -2,7 +2,6 @@
 
 import { Send, Square } from 'lucide-react'
 import type { ReactNode } from 'react'
-
 import { Button } from 'ui/components/ui/button'
 import { Flex } from 'ui/components/ui/layout/flex'
 import { Textarea } from 'ui/components/ui/textarea'
@@ -28,7 +27,17 @@ export interface AgentChatInputProps {
 // trailing action button that sends a message, then switches to a stop button
 // while the agent is working. Designed to sit inside a `StickySection` card
 // (which provides the surface). Enter sends; Shift+Enter inserts a newline.
-export function AgentChatInput({ value, onValueChange, onSend, busy = false, onStop, disabled = false, placeholder = 'Message the agent…', menu, className }: AgentChatInputProps) {
+export function AgentChatInput({
+  value,
+  onValueChange,
+  onSend,
+  busy = false,
+  onStop,
+  disabled = false,
+  placeholder = 'Message the agent…',
+  menu,
+  className,
+}: AgentChatInputProps) {
   const canSend = !disabled && value.trim().length > 0
 
   const send = () => {
@@ -56,11 +65,27 @@ export function AgentChatInput({ value, onValueChange, onSend, busy = false, onS
         className='flex-1 resize-none min-h-0 border-0 bg-transparent shadow-none focus-visible:ring-0 max-h-48'
       />
       {busy ? (
-        <Button type='button' size='icon' variant='ghost' onClick={onStop} disabled={!onStop} title='Stop' aria-label='Stop'>
+        <Button
+          type='button'
+          size='icon'
+          variant='ghost'
+          onClick={onStop}
+          disabled={!onStop}
+          title='Stop'
+          aria-label='Stop'
+        >
           <Square />
         </Button>
       ) : (
-        <Button type='button' size='icon' variant='ghost' onClick={send} disabled={!canSend} title='Send' aria-label='Send'>
+        <Button
+          type='button'
+          size='icon'
+          variant='ghost'
+          onClick={send}
+          disabled={!canSend}
+          title='Send'
+          aria-label='Send'
+        >
           <Send />
         </Button>
       )}

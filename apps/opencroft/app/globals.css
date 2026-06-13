@@ -1,10 +1,10 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 /* shadcn/ui design system: tokens, theme map, base layer, tw-animate-css, and
    the component @source (all owned by ui). */
-@import "ui/styles.css";
+@import 'ui/styles.css';
 /* Register agent-chat's components so Tailwind generates the classes they use
    (it skips node_modules packages otherwise). */
-@import "agent-chat/styles.css";
+@import 'agent-chat/styles.css';
 
 @utility no-scrollbar {
   @apply [scrollbar-width:none] [&::-webkit-scrollbar]:hidden;
@@ -255,7 +255,7 @@
 }
 
 .doc-comment-anchor:hover,
-.doc-comment-anchor[data-active="true"] {
+.doc-comment-anchor[data-active='true'] {
   background: color-mix(in oklab, var(--primary) 26%, transparent);
 }
 

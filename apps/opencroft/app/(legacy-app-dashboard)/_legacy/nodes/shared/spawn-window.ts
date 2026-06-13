@@ -1,5 +1,6 @@
 import type { TerminalConfig } from '@opencroft/terminal'
 import type { Node } from '@xyflow/react'
+
 import type { StorageConnection } from '@/app/(filemanager)/_lib/types'
 
 interface SpawnOptions {

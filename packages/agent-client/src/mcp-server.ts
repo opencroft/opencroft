@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { type ZodRawShape, z } from 'zod'
@@ -74,12 +75,17 @@ async function resolveSkills(skills: SkillsInput): Promise<SkillDef[]> {
 // Build a request-scoped server. When permissions are resolved for the request,
 // tools and skills the session can't reach are withheld from both tools/list
 // and tools/call.
-async function buildServer(options: McpServerOptions, permissions: ResolvedPermissions | undefined): Promise<McpServer> {
+async function buildServer(
+  options: McpServerOptions,
+  permissions: ResolvedPermissions | undefined,
+): Promise<McpServer> {
   const server = new McpServer({
     name: `agent-client-${options.name}`,
     version: '0.1.0',
   })
-  const skills = (await resolveSkills(options.skills)).filter((skill) => accessFor(permissions, skillKey(skill.name)) !== null)
+  const skills = (await resolveSkills(options.skills)).filter(
+    (skill) => accessFor(permissions, skillKey(skill.name)) !== null,
+  )
   const skillHandler = options.skillHandler
   if (skills.length > 0 && skillHandler) {
     server.registerTool(
@@ -101,7 +107,9 @@ async function buildServer(options: McpServerOptions, permissions: ResolvedPermi
     if (accessFor(permissions, toolKey(tool.name)) === null) {
       continue
     }
-    server.registerTool(tool.name, { description: tool.description, inputSchema: tool.inputSchema }, async (args) => textResult(await tool.handler(args)))
+    server.registerTool(tool.name, { description: tool.description, inputSchema: tool.inputSchema }, async (args) =>
+      textResult(await tool.handler(args)),
+    )
   }
   return server
 }

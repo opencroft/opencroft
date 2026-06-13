@@ -7,6 +7,7 @@ import type * as React from 'react'
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Flex } from 'ui/layout/flex'
 import { ScrollArea } from 'ui/scroll-area'
+
 import { AiPanel } from '@/app/(dashboard)/_canvas/ai-panel'
 import type { CommandNodeEntry } from '@/app/(dashboard)/_canvas/canvas-command-bar'
 import { CommandBar, CommandBarMenu } from '@/app/(dashboard)/_canvas/command-bar'
@@ -29,8 +30,25 @@ interface CanvasOverlayProps {
   onActiveChange?: (active: boolean) => void
 }
 
-export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, mcpRequestsActive, onFocusNode, onActiveChange }: CanvasOverlayProps) {
-  const { mode, focusTick, commandFocused, slots, activate: activateMode, dismiss: dismissOverlay, setMode, setCommandFocused } = useOverlay()
+export function CanvasOverlay({
+  nodes,
+  spaceName,
+  spaceSlug,
+  selectedNodeId,
+  mcpRequestsActive,
+  onFocusNode,
+  onActiveChange,
+}: CanvasOverlayProps) {
+  const {
+    mode,
+    focusTick,
+    commandFocused,
+    slots,
+    activate: activateMode,
+    dismiss: dismissOverlay,
+    setMode,
+    setCommandFocused,
+  } = useOverlay()
   const [agentId, setAgentId] = useState<string | null>(null)
   const initialized = useRef(false)
   const searchParams = new URLSearchParams(useLocation({ select: (l) => l.searchStr }))
@@ -158,16 +176,53 @@ export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, mcp
 
   const activeMode = (() => {
     if (mode === 'ai' && agentId) {
-      return <AiPanel agentId={agentId} spaceName={spaceName} spaceSlug={spaceSlug} selectedNodeId={selectedNodeId} focused={commandFocused} onFocusChange={setCommandFocused} />
+      return (
+        <AiPanel
+          agentId={agentId}
+          spaceName={spaceName}
+          spaceSlug={spaceSlug}
+          selectedNodeId={selectedNodeId}
+          focused={commandFocused}
+          onFocusChange={setCommandFocused}
+        />
+      )
     }
     if (mode === 'search' || mode === 'find') {
-      return <SearchFindBar mode={mode} nodes={nodes} focusTick={focusTick} onFocusNode={onFocusNode} onFocusChange={setCommandFocused} onReset={resetToAI} />
+      return (
+        <SearchFindBar
+          mode={mode}
+          nodes={nodes}
+          focusTick={focusTick}
+          onFocusNode={onFocusNode}
+          onFocusChange={setCommandFocused}
+          onReset={resetToAI}
+        />
+      )
     }
     if (activeExtMode) {
       const ModeComponent = activeExtMode.component
-      return <ModeComponent nodes={nodes} spaceName={spaceName} selectedNodeId={selectedNodeId} focusTick={focusTick} onFocusNode={onFocusNode} onClose={resetToAI} onFocusChange={setCommandFocused} />
+      return (
+        <ModeComponent
+          nodes={nodes}
+          spaceName={spaceName}
+          selectedNodeId={selectedNodeId}
+          focusTick={focusTick}
+          onFocusNode={onFocusNode}
+          onClose={resetToAI}
+          onFocusChange={setCommandFocused}
+        />
+      )
     }
-    return <SearchFindBar mode='find' nodes={nodes} focusTick={focusTick} onFocusNode={onFocusNode} onFocusChange={setCommandFocused} onReset={resetToAI} />
+    return (
+      <SearchFindBar
+        mode='find'
+        nodes={nodes}
+        focusTick={focusTick}
+        onFocusNode={onFocusNode}
+        onFocusChange={setCommandFocused}
+        onReset={resetToAI}
+      />
+    )
   })()
 
   return (
@@ -179,11 +234,25 @@ export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, mcp
         tabIndex={-1}
         onMouseDown={onOverlayMouseDown}
         onKeyDown={onOverlayKeyDown}
-        className={cn('absolute inset-0 z-10', (slots.content && !aiChatActive) || slots.menu ? 'pointer-events-auto' : 'pointer-events-none')}
+        className={cn(
+          'absolute inset-0 z-10',
+          (slots.content && !aiChatActive) || slots.menu ? 'pointer-events-auto' : 'pointer-events-none',
+        )}
       >
-        <div className={cn('pointer-events-none absolute inset-0', 'bg-background/80 transition-opacity duration-200', slots.content && !aiChatActive ? 'opacity-100' : 'opacity-0')} />
+        <div
+          className={cn(
+            'pointer-events-none absolute inset-0',
+            'bg-background/80 transition-opacity duration-200',
+            slots.content && !aiChatActive ? 'opacity-100' : 'opacity-0',
+          )}
+        />
         <div className='absolute top-3 left-3 z-20'>
-          <ExtensionModeLaunchers modes={extensionModes} activeId={mode} onActivate={activateMode} onDeactivate={dismiss} />
+          <ExtensionModeLaunchers
+            modes={extensionModes}
+            activeId={mode}
+            onActivate={activateMode}
+            onDeactivate={dismiss}
+          />
         </div>
         {slots.content && !aiChatActive && (
           <button
@@ -203,7 +272,11 @@ export function CanvasOverlay({ nodes, spaceName, spaceSlug, selectedNodeId, mcp
           </ChatHeader>
           <ChatContent
             compact={!activeExtMode?.fullWidth}
-            className={cn('bg-background rounded-xl', 'transition-opacity duration-200', slots.content && !aiChatActive ? 'opacity-100' : 'opacity-0')}
+            className={cn(
+              'bg-background rounded-xl',
+              'transition-opacity duration-200',
+              slots.content && !aiChatActive ? 'opacity-100' : 'opacity-0',
+            )}
             onMouseDown={stopOverlayClose}
           >
             {aiChatActive ? null : slots.content}
@@ -225,7 +298,17 @@ function modeIcon(name?: string): LucideIcon {
 
 // Launcher buttons for extension command modes, pinned to the overlay's top-left corner.
 // Clicking the active mode's button closes it again (toggle).
-function ExtensionModeLaunchers({ modes, activeId, onActivate, onDeactivate }: { modes: CommandModeDefinition[]; activeId: string; onActivate: (id: string) => void; onDeactivate: () => void }) {
+function ExtensionModeLaunchers({
+  modes,
+  activeId,
+  onActivate,
+  onDeactivate,
+}: {
+  modes: CommandModeDefinition[]
+  activeId: string
+  onActivate: (id: string) => void
+  onDeactivate: () => void
+}) {
   if (modes.length === 0) {
     return null
   }
@@ -241,7 +324,10 @@ function ExtensionModeLaunchers({ modes, activeId, onActivate, onDeactivate }: {
             title={m.label}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={() => (active ? onDeactivate() : onActivate(m.id))}
-            className={cn('size-7 inline-flex items-center justify-center rounded-md border bg-background/90 hover:bg-accent cursor-pointer', active && 'bg-accent')}
+            className={cn(
+              'size-7 inline-flex items-center justify-center rounded-md border bg-background/90 hover:bg-accent cursor-pointer',
+              active && 'bg-accent',
+            )}
           >
             <Icon className='size-4' />
           </button>
@@ -252,12 +338,25 @@ function ExtensionModeLaunchers({ modes, activeId, onActivate, onDeactivate }: {
 }
 
 // The active chat conversation, docked inside the node inspector panel.
-function InspectorChat({ header, onClose, children }: { header: React.ReactNode; onClose: () => void; children: React.ReactNode }) {
+function InspectorChat({
+  header,
+  onClose,
+  children,
+}: {
+  header: React.ReactNode
+  onClose: () => void
+  children: React.ReactNode
+}) {
   return (
     <Flex expanded className='w-full h-full min-h-0 bg-card'>
       <Flex row align='center' className='gap-2 px-3 py-2 border-b shrink-0'>
         <span className='text-sm font-semibold flex-1'>Chat</span>
-        <button type='button' onClick={onClose} className='size-6 inline-flex items-center justify-center rounded-md hover:bg-accent cursor-pointer' aria-label='Close chat'>
+        <button
+          type='button'
+          onClick={onClose}
+          className='size-6 inline-flex items-center justify-center rounded-md hover:bg-accent cursor-pointer'
+          aria-label='Close chat'
+        >
           <X className='size-3.5' />
         </button>
       </Flex>

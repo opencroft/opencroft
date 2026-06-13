@@ -14,6 +14,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from 'ui/dropdown-menu'
+
 import { LocalAgentHost, OpenclawAgentHost } from '@/app/(agent)/_components/chat-hosts'
 import { forgetLocalSession } from '@/app/(agent)/_server/acp'
 import { useChatTabsMaybe } from '@/app/(openclaw)/_lib/chat-tabs-context'
@@ -54,7 +55,11 @@ function loadStoredSessions(): SessionEntry[] {
   return Array.isArray(parsed) ? parsed : []
 }
 
-function resolveJobForSession(sessionKey: string, sessions: SessionEntry[], agents: AgentNodeRef[]): { job: AgentJobRef | null; agent: AgentNodeRef | null } {
+function resolveJobForSession(
+  sessionKey: string,
+  sessions: SessionEntry[],
+  agents: AgentNodeRef[],
+): { job: AgentJobRef | null; agent: AgentNodeRef | null } {
   const local = sessions.find((s) => s.key === sessionKey)
   if (local) {
     const agent = agents.find((a) => a.nodeId === local.agentNodeId)
@@ -264,7 +269,11 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
     }
     const parts = activeSessionKey.split(':')
     const jobSlug = parts.length >= 3 ? parts.slice(2).join(':') : undefined
-    const label = activeAgent ? (jobSlug && jobSlug !== 'dashboard' ? `${activeAgent.name}: ${jobSlug}` : activeAgent.name) : (parts[parts.length - 1] ?? activeSessionKey)
+    const label = activeAgent
+      ? jobSlug && jobSlug !== 'dashboard'
+        ? `${activeAgent.name}: ${jobSlug}`
+        : activeAgent.name
+      : (parts[parts.length - 1] ?? activeSessionKey)
     chatTabs.updateTabMeta(activeSessionKey, {
       label,
       agentName: activeAgent?.name,
@@ -286,7 +295,17 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
         onSelectExternalAgent={selectExternalAgent}
       />
     ),
-    [agents, unmatchedExternalAgents, externalById, sessions, createSession, permanentlyDeleteSession, deleteLocalSessionEntry, selectExternalAgent, chatTabs],
+    [
+      agents,
+      unmatchedExternalAgents,
+      externalById,
+      sessions,
+      createSession,
+      permanentlyDeleteSession,
+      deleteLocalSessionEntry,
+      selectExternalAgent,
+      chatTabs,
+    ],
   )
 
   const activeEntry = sessions.find((s) => s.key === activeSessionKey)
@@ -302,7 +321,16 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
       />
     )
   }
-  return <OpenclawAgentHost sessionKey={activeSessionKey} transformOutgoing={transformOutgoing} activeAgent={activeAgent} createButton={createButton} focused={focused} onFocusChange={onFocusChange} />
+  return (
+    <OpenclawAgentHost
+      sessionKey={activeSessionKey}
+      transformOutgoing={transformOutgoing}
+      activeAgent={activeAgent}
+      createButton={createButton}
+      focused={focused}
+      onFocusChange={onFocusChange}
+    />
+  )
 }
 
 interface ExistingSession {
@@ -322,7 +350,11 @@ interface CreateChatMenuProps {
   onSelectExternalAgent: (agent: OpenclawAgent) => void
 }
 
-function agentExistingSessions(agent: AgentNodeRef, externalAgent: OpenclawAgent | undefined, localSessions: SessionEntry[]): ExistingSession[] {
+function agentExistingSessions(
+  agent: AgentNodeRef,
+  externalAgent: OpenclawAgent | undefined,
+  localSessions: SessionEntry[],
+): ExistingSession[] {
   if (agent.backend === 'local') {
     return localSessions.filter((s) => s.agentNodeId === agent.nodeId).map((s) => ({ key: s.key, title: s.jobName }))
   }
@@ -343,7 +375,11 @@ function CreateChatMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type='button' className='flex items-center justify-center size-7 shrink-0 rounded-md hover:bg-accent/50 transition-colors cursor-pointer' aria-label='New chat'>
+        <button
+          type='button'
+          className='flex items-center justify-center size-7 shrink-0 rounded-md hover:bg-accent/50 transition-colors cursor-pointer'
+          aria-label='New chat'
+        >
           <Plus className='size-4' />
         </button>
       </DropdownMenuTrigger>
@@ -354,7 +390,11 @@ function CreateChatMenu({
           <AgentMenuItem
             key={agent.nodeId}
             agent={agent}
-            existingSessions={agentExistingSessions(agent, existingSessionsByAgent.get(slug(agent.name)), localSessions)}
+            existingSessions={agentExistingSessions(
+              agent,
+              existingSessionsByAgent.get(slug(agent.name)),
+              localSessions,
+            )}
             onCreateSession={onCreateSession}
             onOpenSession={onOpenSession}
             onDeleteSession={agent.backend === 'local' ? onDeleteLocalSession : onDeleteSession}
@@ -368,7 +408,9 @@ function CreateChatMenu({
               <DropdownMenuItem key={agent.agentId} onSelect={() => onSelectExternalAgent(agent)}>
                 <User className='size-4 shrink-0' />
                 <span className='truncate'>{agent.name}</span>
-                {agent.isDefault && <span className='ml-auto text-[10px] uppercase tracking-wide text-muted-foreground'>default</span>}
+                {agent.isDefault && (
+                  <span className='ml-auto text-[10px] uppercase tracking-wide text-muted-foreground'>default</span>
+                )}
               </DropdownMenuItem>
             ))}
           </>
@@ -386,11 +428,21 @@ interface AgentMenuItemProps {
   onDeleteSession: (key: string) => void
 }
 
-function AgentMenuItem({ agent, existingSessions, onCreateSession, onOpenSession, onDeleteSession }: AgentMenuItemProps) {
+function AgentMenuItem({
+  agent,
+  existingSessions,
+  onCreateSession,
+  onOpenSession,
+  onDeleteSession,
+}: AgentMenuItemProps) {
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger>
-        {agent.avatar ? <img src={agent.avatar} alt='' className='size-4 shrink-0 rounded-full object-cover' /> : <User className='size-4 shrink-0' />}
+        {agent.avatar ? (
+          <img src={agent.avatar} alt='' className='size-4 shrink-0 rounded-full object-cover' />
+        ) : (
+          <User className='size-4 shrink-0' />
+        )}
         <span className='truncate'>{agent.name}</span>
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent className='w-[260px]'>

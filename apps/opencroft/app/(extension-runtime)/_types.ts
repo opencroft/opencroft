@@ -22,7 +22,11 @@ export interface ExtensionHandle {
 }
 
 /** Resolve a runtime handle id against a node's static handle declarations, supporting prefix-matched dynamic handles. */
-export function findExtensionHandle(handles: ExtensionHandle[], handleId: string, role: 'source' | 'target'): ExtensionHandle | undefined {
+export function findExtensionHandle(
+  handles: ExtensionHandle[],
+  handleId: string,
+  role: 'source' | 'target',
+): ExtensionHandle | undefined {
   return handles.find((h) => {
     if (h.role !== role) {
       return false

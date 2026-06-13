@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 import { Label } from 'ui/label'
+
 import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
 import { deleteSecret, getSecrets, setSecret } from '@/app/(secrets-store)/_server/actions'
@@ -21,7 +22,12 @@ function SecretsStoreComponent({ data, selected }: NodeProps<SecretsStoreNode>) 
 
   return (
     <NodeCard selected={selected} accent='oklch(0.75 0.18 160)'>
-      <NodeCardHeader icon={ShieldCheck} iconClassName='text-emerald-400' title='Secrets Store' extra={<span className='text-[10px] text-muted-foreground tabular-nums'>{keys.length}</span>} />
+      <NodeCardHeader
+        icon={ShieldCheck}
+        iconClassName='text-emerald-400'
+        title='Secrets Store'
+        extra={<span className='text-[10px] text-muted-foreground tabular-nums'>{keys.length}</span>}
+      />
       {keys.length > 0 && (
         <NodeCardContent>
           <div className='flex flex-col gap-0.5'>
@@ -44,12 +50,26 @@ interface SecretRow {
   dirty: boolean
 }
 
-function SecretRowEditor({ row, onChange, onRemove }: { row: SecretRow; onChange: (field: 'key' | 'value', val: string) => void; onRemove: () => void }) {
+function SecretRowEditor({
+  row,
+  onChange,
+  onRemove,
+}: {
+  row: SecretRow
+  onChange: (field: 'key' | 'value', val: string) => void
+  onRemove: () => void
+}) {
   const [visible, setVisible] = useState(false)
 
   return (
     <div className='flex items-center gap-1'>
-      <Input value={row.key} onChange={(e) => onChange('key', e.target.value)} placeholder='KEY' autoComplete='one-time-code' className='h-7 text-xs font-mono flex-1' />
+      <Input
+        value={row.key}
+        onChange={(e) => onChange('key', e.target.value)}
+        placeholder='KEY'
+        autoComplete='one-time-code'
+        className='h-7 text-xs font-mono flex-1'
+      />
       <Input
         value={row.value}
         onChange={(e) => onChange('value', e.target.value)}
@@ -126,7 +146,12 @@ function SecretsStoreSettings({ id, updateData, onDirtyChange, onLoadingChange }
       <Label className='text-xs'>Secrets</Label>
       <div className='flex flex-col gap-1'>
         {rows.map((r, i) => (
-          <SecretRowEditor key={i} row={r} onChange={(field, val) => updateRow(i, field, val)} onRemove={() => removeRow(i)} />
+          <SecretRowEditor
+            key={i}
+            row={r}
+            onChange={(field, val) => updateRow(i, field, val)}
+            onRemove={() => removeRow(i)}
+          />
         ))}
       </div>
       <Button variant='outline' size='sm' className='h-7 text-xs' onClick={addRow}>

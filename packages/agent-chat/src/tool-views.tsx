@@ -59,7 +59,12 @@ export const imageToolView: ToolViewDef = {
     const prompt = (message.input as { prompt?: unknown } | undefined)?.prompt
     return (
       <a href={url} target='_blank' rel='noreferrer' className='block w-full overflow-hidden'>
-        <img src={url} alt={typeof prompt === 'string' ? prompt : 'Generated image'} decoding='async' className='w-full max-w-full rounded-lg border shadow-sm' />
+        <img
+          src={url}
+          alt={typeof prompt === 'string' ? prompt : 'Generated image'}
+          decoding='async'
+          className='w-full max-w-full rounded-lg border shadow-sm'
+        />
       </a>
     )
   },

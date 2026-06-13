@@ -1,7 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
+
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
+
 import { schema } from './schema'
 
 // SQLite lives under the app's working directory. On a fresh data volume, seed

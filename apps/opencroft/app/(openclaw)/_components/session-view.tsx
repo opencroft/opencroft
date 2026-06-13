@@ -1,6 +1,7 @@
 'use client'
 
 import { Flex } from 'ui/layout/flex'
+
 import { CommandBar, CommandBarMenu } from '@/app/(dashboard)/_canvas/command-bar'
 import { OverlayProvider, useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
 import { AgentChat, AgentChatInput, useAgentSession } from '@/app/(openclaw)/_components/agent-chat'

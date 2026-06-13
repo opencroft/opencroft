@@ -7,6 +7,7 @@ import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 import { Label } from 'ui/label'
 import { Textarea } from 'ui/textarea'
+
 import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 import { useSettingsDraft } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/use-settings-draft'
 import { runScript } from '@/app/(legacy-app-dashboard)/_legacy/nodes/script/actions'
@@ -68,13 +69,25 @@ function ScriptComponent({ id, data, selected }: NodeProps<ScriptNode>) {
       input={<ButtonPin handleId={HANDLE_EXECUTION} icon={TerminalSquare} label='Exec' side='left' />}
       output={
         <div className='nodrag nopan'>
-          <Button variant='ghost' size='sm' className='h-5 text-[10px] px-1.5' onClick={run} disabled={running || !data.code}>
+          <Button
+            variant='ghost'
+            size='sm'
+            className='h-5 text-[10px] px-1.5'
+            onClick={run}
+            disabled={running || !data.code}
+          >
             <Play className='h-2.5 w-2.5 mr-0.5' />
             {running ? 'Running...' : 'Run'}
           </Button>
         </div>
       }
-      preview={output ? <pre className='mt-1 text-[9px] font-mono text-muted-foreground bg-black/20 rounded p-1 max-h-20 overflow-auto whitespace-pre-wrap'>{output}</pre> : undefined}
+      preview={
+        output ? (
+          <pre className='mt-1 text-[9px] font-mono text-muted-foreground bg-black/20 rounded p-1 max-h-20 overflow-auto whitespace-pre-wrap'>
+            {output}
+          </pre>
+        ) : undefined
+      }
     />
   )
 }
@@ -90,7 +103,13 @@ function ScriptSettings(props: NodeSettingsProps<ScriptData>) {
       </div>
       <div className='flex flex-col gap-1'>
         <Label className='text-xs'>Code</Label>
-        <Textarea value={draft.code ?? ''} onChange={(e) => update({ code: e.target.value })} className='min-h-[120px] text-xs font-mono resize-y' placeholder='#!/bin/bash' spellCheck={false} />
+        <Textarea
+          value={draft.code ?? ''}
+          onChange={(e) => update({ code: e.target.value })}
+          className='min-h-[120px] text-xs font-mono resize-y'
+          placeholder='#!/bin/bash'
+          spellCheck={false}
+        />
       </div>
     </div>
   )

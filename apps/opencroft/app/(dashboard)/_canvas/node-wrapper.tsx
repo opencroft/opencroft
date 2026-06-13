@@ -59,7 +59,11 @@ interface NodeWrapperProps extends NodeProps<Node<NodeData>> {
 function NodeWrapperImpl(props: NodeWrapperProps) {
   const resolved = extensionRegistry.resolveNode(props.type)
   if (!resolved) {
-    return <div className='rounded-md border border-destructive bg-destructive/10 text-destructive px-2 py-1 text-xs'>Unknown extension: {props.type}</div>
+    return (
+      <div className='rounded-md border border-destructive bg-destructive/10 text-destructive px-2 py-1 text-xs'>
+        Unknown extension: {props.type}
+      </div>
+    )
   }
   const Component = resolved.component
   return (

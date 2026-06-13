@@ -3,10 +3,12 @@ import { randomBytes } from 'node:crypto'
 import { promises as fsPromises } from 'node:fs'
 import nodeOs from 'node:os'
 import nodePath from 'node:path'
+
 import { db } from '@opencroft/db'
 import type { HostSecretsApi } from '@opencroft/server'
 import type { ServerConfig, TerminalContext } from '@opencroft/terminal'
 import { exec, resolveKeyContent, sshExec, terminalExec, terminalRun } from '@opencroft/terminal/server'
+
 import { gateway } from '@/app/(openclaw)/_server/gateway-client'
 import { getSetting, setSetting } from '@/app/(settings)/_server/actions'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
@@ -49,7 +51,10 @@ async function loadAllSpaces(): Promise<{ slug: string; graph: GraphData }[]> {
   })
 }
 
-function findNodeAcrossSpaces(spaces: { slug: string; graph: GraphData }[], nodeId: string): { slug: string; node: GraphNodeRecord } | null {
+function findNodeAcrossSpaces(
+  spaces: { slug: string; graph: GraphData }[],
+  nodeId: string,
+): { slug: string; node: GraphNodeRecord } | null {
   for (const s of spaces) {
     const node = s.graph.nodes.find((n) => (n as { id?: string }).id === nodeId)
     if (node) {
@@ -94,7 +99,11 @@ export interface HostGraphApi {
   listNodesByType(typeId: string): Promise<GraphNodeRecord[]>
   listEdges(): Promise<GraphEdgeRecord[]>
   updateNode(nodeId: string, patch: Partial<GraphNodeRecord>): Promise<GraphNodeRecord | null>
-  createNode(typeId: string, data: Record<string, unknown>, position: { x: number; y: number }): Promise<GraphNodeRecord>
+  createNode(
+    typeId: string,
+    data: Record<string, unknown>,
+    position: { x: number; y: number },
+  ): Promise<GraphNodeRecord>
   deleteNode(nodeId: string): Promise<void>
 }
 
@@ -116,7 +125,9 @@ const graphApi: HostGraphApi = {
   async updateNode(nodeId, patch) {
     let updated: GraphNodeRecord | null = null
     await writeNodePatch(nodeId, (graph) => {
-      const node = graph.nodes.find((n) => (n as { id?: string }).id === nodeId) as unknown as GraphNodeRecord | undefined
+      const node = graph.nodes.find((n) => (n as { id?: string }).id === nodeId) as unknown as
+        | GraphNodeRecord
+        | undefined
       if (!node) {
         return false
       }

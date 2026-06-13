@@ -8,8 +8,17 @@ import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 import { Label } from 'ui/label'
 import { Separator } from 'ui/separator'
+
 import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
-import { type AppData, type AppService, composeDown, composeUp, getContainerStatuses, loadApp, saveApp } from '@/app/(legacy-app-dashboard)/_legacy/nodes/application/actions'
+import {
+  type AppData,
+  type AppService,
+  composeDown,
+  composeUp,
+  getContainerStatuses,
+  loadApp,
+  saveApp,
+} from '@/app/(legacy-app-dashboard)/_legacy/nodes/application/actions'
 import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
 
 export type ApplicationNodeData = {
@@ -43,7 +52,9 @@ function ApplicationComponent({ id, data, selected }: NodeProps<ApplicationNode>
               const st = statuses[name]
               return (
                 <div key={name} className='flex items-center gap-1.5 text-[10px]'>
-                  <Circle className={`h-2 w-2 ${st === 'running' ? 'fill-green-500 text-green-500' : 'fill-muted-foreground/30 text-muted-foreground/30'}`} />
+                  <Circle
+                    className={`h-2 w-2 ${st === 'running' ? 'fill-green-500 text-green-500' : 'fill-muted-foreground/30 text-muted-foreground/30'}`}
+                  />
                   <span className='font-mono text-muted-foreground'>{name}</span>
                 </div>
               )
@@ -59,16 +70,34 @@ function emptyService(): AppService {
   return { name: '', image: '', ports: [], env: [], volumes: [], restart: 'unless-stopped', command: '' }
 }
 
-function ServiceEditor({ service, onChange, onRemove }: { service: AppService; onChange: (s: AppService) => void; onRemove: () => void }) {
+function ServiceEditor({
+  service,
+  onChange,
+  onRemove,
+}: {
+  service: AppService
+  onChange: (s: AppService) => void
+  onRemove: () => void
+}) {
   return (
     <div className='flex flex-col gap-2 rounded border p-2'>
       <div className='flex items-center gap-1'>
-        <Input value={service.name} onChange={(e) => onChange({ ...service, name: e.target.value })} placeholder='service name' className='h-7 text-xs font-mono flex-1' />
+        <Input
+          value={service.name}
+          onChange={(e) => onChange({ ...service, name: e.target.value })}
+          placeholder='service name'
+          className='h-7 text-xs font-mono flex-1'
+        />
         <Button variant='ghost' size='icon' className='h-6 w-6 text-destructive' onClick={onRemove}>
           <Trash2 className='h-3 w-3' />
         </Button>
       </div>
-      <Input value={service.image} onChange={(e) => onChange({ ...service, image: e.target.value })} placeholder='image' className='h-7 text-xs font-mono' />
+      <Input
+        value={service.image}
+        onChange={(e) => onChange({ ...service, image: e.target.value })}
+        placeholder='image'
+        className='h-7 text-xs font-mono'
+      />
 
       <Label className='text-[10px] text-muted-foreground'>Ports</Label>
       {service.ports.map((p, i) => (
@@ -108,7 +137,12 @@ function ServiceEditor({ service, onChange, onRemove }: { service: AppService; o
           </Button>
         </div>
       ))}
-      <Button variant='ghost' size='sm' className='h-5 text-[10px]' onClick={() => onChange({ ...service, ports: [...service.ports, { host: '', container: '' }] })}>
+      <Button
+        variant='ghost'
+        size='sm'
+        className='h-5 text-[10px]'
+        onClick={() => onChange({ ...service, ports: [...service.ports, { host: '', container: '' }] })}
+      >
         <Plus className='h-2.5 w-2.5 mr-0.5' /> Port
       </Button>
 
@@ -149,7 +183,12 @@ function ServiceEditor({ service, onChange, onRemove }: { service: AppService; o
           </Button>
         </div>
       ))}
-      <Button variant='ghost' size='sm' className='h-5 text-[10px]' onClick={() => onChange({ ...service, env: [...service.env, { key: '', value: '' }] })}>
+      <Button
+        variant='ghost'
+        size='sm'
+        className='h-5 text-[10px]'
+        onClick={() => onChange({ ...service, env: [...service.env, { key: '', value: '' }] })}
+      >
         <Plus className='h-2.5 w-2.5 mr-0.5' /> Env
       </Button>
 
@@ -191,14 +230,24 @@ function ServiceEditor({ service, onChange, onRemove }: { service: AppService; o
           </Button>
         </div>
       ))}
-      <Button variant='ghost' size='sm' className='h-5 text-[10px]' onClick={() => onChange({ ...service, volumes: [...service.volumes, { host: '', container: '' }] })}>
+      <Button
+        variant='ghost'
+        size='sm'
+        className='h-5 text-[10px]'
+        onClick={() => onChange({ ...service, volumes: [...service.volumes, { host: '', container: '' }] })}
+      >
         <Plus className='h-2.5 w-2.5 mr-0.5' /> Volume
       </Button>
     </div>
   )
 }
 
-function ApplicationSettings({ id, updateData, onDirtyChange, onLoadingChange }: NodeSettingsProps<ApplicationNodeData>) {
+function ApplicationSettings({
+  id,
+  updateData,
+  onDirtyChange,
+  onLoadingChange,
+}: NodeSettingsProps<ApplicationNodeData>) {
   const [appData, setAppData] = useState<AppData>({ name: '', services: [], context: 'default' })
   const [dirty, setDirty] = useState(false)
 
@@ -288,9 +337,19 @@ function ApplicationSettings({ id, updateData, onDirtyChange, onLoadingChange }:
 
       <Label className='text-xs'>Services</Label>
       {appData.services.map((s, i) => (
-        <ServiceEditor key={i} service={s} onChange={(updated) => updateService(i, updated)} onRemove={() => removeService(i)} />
+        <ServiceEditor
+          key={i}
+          service={s}
+          onChange={(updated) => updateService(i, updated)}
+          onRemove={() => removeService(i)}
+        />
       ))}
-      <Button variant='outline' size='sm' className='h-7 text-xs' onClick={() => updateApp({ services: [...appData.services, emptyService()] })}>
+      <Button
+        variant='outline'
+        size='sm'
+        className='h-7 text-xs'
+        onClick={() => updateApp({ services: [...appData.services, emptyService()] })}
+      >
         <Plus className='h-3 w-3 mr-1' /> Add Service
       </Button>
     </div>

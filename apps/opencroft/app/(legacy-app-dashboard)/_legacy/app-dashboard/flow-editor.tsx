@@ -167,7 +167,12 @@ export function FlowEditor() {
         }
         const nw = (isSectionType(n.type) ? (n.style?.width as number) : n.measured?.width) ?? 200
         const nh = (isSectionType(n.type) ? (n.style?.height as number) : n.measured?.height) ?? 60
-        if (n.position.x >= node.position.x && n.position.x + nw <= node.position.x + sw && n.position.y >= node.position.y && n.position.y + nh <= node.position.y + sh) {
+        if (
+          n.position.x >= node.position.x &&
+          n.position.x + nw <= node.position.x + sw &&
+          n.position.y >= node.position.y &&
+          n.position.y + nh <= node.position.y + sh
+        ) {
           childIds.add(n.id)
         }
       }
@@ -290,8 +295,14 @@ export function FlowEditor() {
           />
         )}
       </div>
-      {selected && selected.type !== 'window' && <NodeSettingsPanel node={selected} onEditTemplate={setEditingTemplate} />}
-      <TemplateEditorDialog open={editingTemplate !== undefined} template={editingTemplate ?? null} onClose={() => setEditingTemplate(undefined)} />
+      {selected && selected.type !== 'window' && (
+        <NodeSettingsPanel node={selected} onEditTemplate={setEditingTemplate} />
+      )}
+      <TemplateEditorDialog
+        open={editingTemplate !== undefined}
+        template={editingTemplate ?? null}
+        onClose={() => setEditingTemplate(undefined)}
+      />
     </div>
   )
 }

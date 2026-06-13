@@ -9,12 +9,23 @@
 
 import fs from 'fs/promises'
 import path from 'path'
-import { ApprovalRejectedError, awaitApproval, getApprovalMeta, withApprovalRequired } from '@/app/(approvals)/_server/with-approval'
+
+import {
+  ApprovalRejectedError,
+  awaitApproval,
+  getApprovalMeta,
+  withApprovalRequired,
+} from '@/app/(approvals)/_server/with-approval'
 import { getGitFileAtRef } from '@/app/(docs)/_server/actions'
 import { appendComment, createComment, readComments } from '@/app/(docs)/_server/comments'
 import { getDocsRoot } from '@/app/(docs)/_server/docs-root'
 import { searchDocsAtRoot } from '@/app/(docs)/_server/search'
-import { type InstallAuth, installExtensionFromUrl, uninstallExtension, updateInstalledExtension } from '@/app/(extension-editor)/_actions/installed-extensions-actions'
+import {
+  type InstallAuth,
+  installExtensionFromUrl,
+  uninstallExtension,
+  updateInstalledExtension,
+} from '@/app/(extension-editor)/_actions/installed-extensions-actions'
 import {
   compileLocalExtension,
   createLocalExtension,
@@ -30,7 +41,16 @@ import { resolveExtensionRepo, searchRegistries } from '@/app/(extension-runtime
 import type { ExtensionHandle } from '@/app/(extension-runtime)/_types'
 import { recordAudit } from '@/app/(mcp)/_server/audit'
 import { isYoloMode } from '@/app/(mcp)/_server/yolo'
-import { createSpace, deleteSpace, findSpaceByNode, getActiveSpaceSlug, listSpaces, loadSpaceGraph, renameSpace, saveSpaceGraph } from '@/app/(space)/_server/actions'
+import {
+  createSpace,
+  deleteSpace,
+  findSpaceByNode,
+  getActiveSpaceSlug,
+  listSpaces,
+  loadSpaceGraph,
+  renameSpace,
+  saveSpaceGraph,
+} from '@/app/(space)/_server/actions'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
 import type { GraphData } from '@/app/(space)/_server/types'
 import { askUserStore } from '@/lib/ask-user-store'
@@ -125,7 +145,8 @@ export const toolDefinitions = [
   },
   {
     name: 'find_nodes',
-    description: 'Find nodes whose name, type, or data fields match any of the given glob patterns (case-insensitive). Use `*` and `?` wildcards.',
+    description:
+      'Find nodes whose name, type, or data fields match any of the given glob patterns (case-insensitive). Use `*` and `?` wildcards.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -160,7 +181,8 @@ export const toolDefinitions = [
   },
   {
     name: 'create_nodes',
-    description: 'Create one or more nodes in a space. Each `type` must match a registered extension typeId (e.g. "server", "docker-service", "application").',
+    description:
+      'Create one or more nodes in a space. Each `type` must match a registered extension typeId (e.g. "server", "docker-service", "application").',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -184,7 +206,8 @@ export const toolDefinitions = [
   },
   {
     name: 'update_nodes',
-    description: "Update nodes' data and/or position (shallow merge). For long or multi-line string fields, prefer write_node_property / edit_node_property.",
+    description:
+      "Update nodes' data and/or position (shallow merge). For long or multi-line string fields, prefer write_node_property / edit_node_property.",
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -208,7 +231,8 @@ export const toolDefinitions = [
   },
   {
     name: 'write_node_property',
-    description: 'Overwrite a string property on a node by dot path (e.g. "script"). Preferred over update_nodes for multi-line strings.',
+    description:
+      'Overwrite a string property on a node by dot path (e.g. "script"). Preferred over update_nodes for multi-line strings.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -324,7 +348,8 @@ export const toolDefinitions = [
   },
   {
     name: 'comment_nodes',
-    description: 'Attach floating comment bubbles to one or more nodes. Each node has at most one comment — subsequent calls replace the previous message.',
+    description:
+      'Attach floating comment bubbles to one or more nodes. Each node has at most one comment — subsequent calls replace the previous message.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -372,7 +397,8 @@ export const toolDefinitions = [
   },
   {
     name: 'get_extension',
-    description: 'Get a single local extension by its id (e.g. "local/my-node"). Returns the parsed manifest plus all source files.',
+    description:
+      'Get a single local extension by its id (e.g. "local/my-node"). Returns the parsed manifest plus all source files.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -400,7 +426,8 @@ export const toolDefinitions = [
   },
   {
     name: 'update_extension',
-    description: 'Update files of an existing local extension. Replaces all provided files. Omitted files are left unchanged.',
+    description:
+      'Update files of an existing local extension. Replaces all provided files. Omitted files are left unchanged.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -417,7 +444,8 @@ export const toolDefinitions = [
   },
   {
     name: 'delete_extension',
-    description: 'Uninstall a local extension by removing its folder under data/extensions/local/. Nodes on the canvas that reference its typeId will render as "Unknown extension" until refreshed.',
+    description:
+      'Uninstall a local extension by removing its folder under data/extensions/local/. Nodes on the canvas that reference its typeId will render as "Unknown extension" until refreshed.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -445,11 +473,19 @@ export const toolDefinitions = [
     inputSchema: {
       type: 'object' as const,
       properties: {
-        url: { type: 'string', description: 'Repository: "owner/repo" (assumes github.com) or full URL (e.g. https://gitlab.com/group/repo).' },
-        ref: { type: 'string', description: 'Optional tag or branch to install. Defaults to latest semver tag, or default branch HEAD.' },
+        url: {
+          type: 'string',
+          description:
+            'Repository: "owner/repo" (assumes github.com) or full URL (e.g. https://gitlab.com/group/repo).',
+        },
+        ref: {
+          type: 'string',
+          description: 'Optional tag or branch to install. Defaults to latest semver tag, or default branch HEAD.',
+        },
         auth: {
           type: 'object',
-          description: 'Optional auth for private repos. Pulls "token" (required) and "username" (optional, defaults to x-access-token) from the named Secrets Store.',
+          description:
+            'Optional auth for private repos. Pulls "token" (required) and "username" (optional, defaults to x-access-token) from the named Secrets Store.',
           properties: {
             storeId: { type: 'string', description: 'Secrets Store node id holding the credentials.' },
             tokenKey: { type: 'string', description: 'Secret key for the token. Defaults to "token".' },
@@ -463,12 +499,16 @@ export const toolDefinitions = [
   },
   {
     name: 'extension_update',
-    description: 'Re-install an installed extension at a new (or same) ref. Pulls the latest tag from the remote unless a ref is given. Reuses the auth originally configured at install time.',
+    description:
+      'Re-install an installed extension at a new (or same) ref. Pulls the latest tag from the remote unless a ref is given. Reuses the auth originally configured at install time.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         extensionId: { type: 'string', description: 'The installed extension id (must start with "installed/").' },
-        ref: { type: 'string', description: 'Optional tag or branch. Defaults to the latest semver tag from the remote.' },
+        ref: {
+          type: 'string',
+          description: 'Optional tag or branch. Defaults to the latest semver tag from the remote.',
+        },
       },
       required: ['extensionId'],
     },
@@ -489,21 +529,29 @@ export const toolDefinitions = [
   // ── Registry ─────────────────────────────────────────────────────
   {
     name: 'registry_list',
-    description: 'List extensions from all connected extension registries. Registries are Git repos with a registry.json file listing available extensions.',
+    description:
+      'List extensions from all connected extension registries. Registries are Git repos with a registry.json file listing available extensions.',
     inputSchema: {
       type: 'object' as const,
       properties: {
-        query: { type: 'string', description: 'Optional search query to filter extensions by name, description, author, or tags.' },
+        query: {
+          type: 'string',
+          description: 'Optional search query to filter extensions by name, description, author, or tags.',
+        },
       },
     },
   },
   {
     name: 'registry_install',
-    description: 'Install an extension by its registry ID. Resolves the repository URL from connected registries, then installs it. Use registry_list to discover available extensions.',
+    description:
+      'Install an extension by its registry ID. Resolves the repository URL from connected registries, then installs it. Use registry_list to discover available extensions.',
     inputSchema: {
       type: 'object' as const,
       properties: {
-        extensionId: { type: 'string', description: 'Extension ID from the registry (e.g. "opencroft/demo-extension").' },
+        extensionId: {
+          type: 'string',
+          description: 'Extension ID from the registry (e.g. "opencroft/demo-extension").',
+        },
         ref: { type: 'string', description: 'Optional tag or branch to install. Defaults to latest semver tag.' },
       },
       required: ['extensionId'],
@@ -511,7 +559,8 @@ export const toolDefinitions = [
   },
   {
     name: 'registry_uninstall',
-    description: 'Uninstall a previously installed extension that was installed from a registry. Removes the extension folder and clears caches.',
+    description:
+      'Uninstall a previously installed extension that was installed from a registry. Removes the extension folder and clears caches.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -524,7 +573,8 @@ export const toolDefinitions = [
   // ── Docs ──────────────────────────────────────────────────────────
   {
     name: 'doc_list_namespaces',
-    description: 'List every Documentation node available as a namespace. Use to discover which `namespace` value to pass to other doc_* tools.',
+    description:
+      'List every Documentation node available as a namespace. Use to discover which `namespace` value to pass to other doc_* tools.',
     inputSchema: {
       type: 'object' as const,
       properties: {},
@@ -532,11 +582,15 @@ export const toolDefinitions = [
   },
   {
     name: 'doc_search',
-    description: 'Search committed (HEAD) markdown content in a documentation namespace. Returns matching files with line snippets.',
+    description:
+      'Search committed (HEAD) markdown content in a documentation namespace. Returns matching files with line snippets.',
     inputSchema: {
       type: 'object' as const,
       properties: {
-        namespace: { type: 'string', description: 'Documentation namespace (slug). Use doc_list_namespaces to discover.' },
+        namespace: {
+          type: 'string',
+          description: 'Documentation namespace (slug). Use doc_list_namespaces to discover.',
+        },
         pattern: { type: 'string', description: 'Regex pattern (case-insensitive).' },
         maxResults: { type: 'number', description: 'Maximum matches to return (default 50).' },
       },
@@ -545,7 +599,8 @@ export const toolDefinitions = [
   },
   {
     name: 'doc_read',
-    description: 'Read the content of a doc by its relative path within a namespace (e.g. "guides/intro.md"). Paths must end with .md. Optional offset/limit slice the result by 1-indexed line.',
+    description:
+      'Read the content of a doc by its relative path within a namespace (e.g. "guides/intro.md"). Paths must end with .md. Optional offset/limit slice the result by 1-indexed line.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -559,7 +614,8 @@ export const toolDefinitions = [
   },
   {
     name: 'doc_edit',
-    description: 'Replace an exact string in a doc within a namespace. Fails if oldString is not unique unless replaceAll is true. Mirrors the behavior of the regular Edit tool.',
+    description:
+      'Replace an exact string in a doc within a namespace. Fails if oldString is not unique unless replaceAll is true. Mirrors the behavior of the regular Edit tool.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -574,7 +630,8 @@ export const toolDefinitions = [
   },
   {
     name: 'doc_write',
-    description: 'Create or overwrite a doc within a namespace. Creates parent directories as needed. Path must end with .md.',
+    description:
+      'Create or overwrite a doc within a namespace. Creates parent directories as needed. Path must end with .md.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -587,7 +644,8 @@ export const toolDefinitions = [
   },
   {
     name: 'doc_reply',
-    description: 'Post a reply to a comment thread anchored on a doc within a namespace. Use when responding to a user comment the agent was mentioned in.',
+    description:
+      'Post a reply to a comment thread anchored on a doc within a namespace. Use when responding to a user comment the agent was mentioned in.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -602,7 +660,8 @@ export const toolDefinitions = [
   },
   {
     name: 'doc_publish',
-    description: 'Commit and push a single file in a documentation namespace. Other staged changes are not pulled into the commit.',
+    description:
+      'Commit and push a single file in a documentation namespace. Other staged changes are not pulled into the commit.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -636,7 +695,8 @@ export const toolDefinitions = [
   },
   {
     name: 'remote_write',
-    description: 'Write or overwrite a file on a remote node. The target is a terminal-context output handle in "node-id/handle-id" format.',
+    description:
+      'Write or overwrite a file on a remote node. The target is a terminal-context output handle in "node-id/handle-id" format.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -653,7 +713,8 @@ export const toolDefinitions = [
   },
   {
     name: 'remote_edit',
-    description: 'Replace an exact string in a remote file. Fails if oldString is not unique unless replaceAll is true.',
+    description:
+      'Replace an exact string in a remote file. Fails if oldString is not unique unless replaceAll is true.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -690,7 +751,8 @@ export const toolDefinitions = [
         },
         description: {
           type: 'string',
-          description: 'Short, human-readable description of what the command does (5-10 words). Shown in the permission prompt UI.',
+          description:
+            'Short, human-readable description of what the command does (5-10 words). Shown in the permission prompt UI.',
         },
         ...SPACE_PARAM,
       },
@@ -701,7 +763,8 @@ export const toolDefinitions = [
   // ── Node Actions ────────────────────────────────────────────────────
   {
     name: 'list_actions',
-    description: 'List the actions available on a node (e.g. start/stop/restart on Application, run on Script). Use this to discover what actions a node exposes before calling them.',
+    description:
+      'List the actions available on a node (e.g. start/stop/restart on Application, run on Script). Use this to discover what actions a node exposes before calling them.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -712,7 +775,8 @@ export const toolDefinitions = [
   },
   {
     name: 'call',
-    description: 'Invoke an action on a node — equivalent to clicking the corresponding button in the UI. Same code path, no duplication. Use list_actions first to discover available action IDs.',
+    description:
+      'Invoke an action on a node — equivalent to clicking the corresponding button in the UI. Same code path, no duplication. Use list_actions first to discover available action IDs.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -730,7 +794,8 @@ export const toolDefinitions = [
   // ── AskUser ────────────────────────────────────────────────────────────
   {
     name: 'ask_user',
-    description: 'Ask the user structured questions with predefined options. Returns answers in "title"="answer" format. Up to 5 questions, each with up to 5 options plus a custom text input.',
+    description:
+      'Ask the user structured questions with predefined options. Returns answers in "title"="answer" format. Up to 5 questions, each with up to 5 options plus a custom text input.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -859,7 +924,11 @@ export interface ToolCallOptions {
   internal?: boolean
 }
 
-export async function executeAgentTool(toolName: string, args: Record<string, unknown>, opts: ToolCallOptions = {}): Promise<AgentToolExecResult> {
+export async function executeAgentTool(
+  toolName: string,
+  args: Record<string, unknown>,
+  opts: ToolCallOptions = {},
+): Promise<AgentToolExecResult> {
   const registry = getSpacesRegistry()
   await registry.ensureLoaded()
 
@@ -873,7 +942,9 @@ export async function executeAgentTool(toolName: string, args: Record<string, un
     const nodes = runtime.graph.nodes as unknown as GraphNode[]
     const edges = runtime.graph.edges as unknown as StoredEdge[]
 
-    const toolNode = nodes.find((n) => n.type === 'agent-tool' && ((n.data ?? {}) as Record<string, unknown>).name === toolName)
+    const toolNode = nodes.find(
+      (n) => n.type === 'agent-tool' && ((n.data ?? {}) as Record<string, unknown>).name === toolName,
+    )
     if (!toolNode) {
       continue
     }
@@ -888,7 +959,10 @@ export async function executeAgentTool(toolName: string, args: Record<string, un
     // Find connected handler via exec-out edge
     const handlerEdge = edges.find((e) => e.source === toolNode.id && e.sourceHandle === 'exec-out')
     if (!handlerEdge) {
-      return { result: textResult(`Agent tool "${toolName}" has no connected handler script.`), requiredApproval: false }
+      return {
+        result: textResult(`Agent tool "${toolName}" has no connected handler script.`),
+        requiredApproval: false,
+      }
     }
 
     const handlerNode = nodes.find((n) => n.id === handlerEdge.target)
@@ -902,23 +976,35 @@ export async function executeAgentTool(toolName: string, args: Record<string, un
     // Extension-implemented handler: the node's extension exports a "handle" node action
     if (await hasHandleNodeAction(handlerNode.type)) {
       try {
-        const result = (await dispatchNodeAction({ data: { nodeId: handlerNode.id, actionId: 'handle', params: event } })) as { body?: unknown } | undefined
+        const result = (await dispatchNodeAction({
+          data: { nodeId: handlerNode.id, actionId: 'handle', params: event },
+        })) as { body?: unknown } | undefined
         const body = result?.body
         if (typeof body === 'object' && body !== null) {
           return { result: textResult(JSON.stringify(body)), requiredApproval }
         }
         return { result: textResult(String(body ?? '')), requiredApproval }
       } catch (e) {
-        return { result: textResult(`Agent tool "${toolName}" error: ${e instanceof Error ? e.message : String(e)}`), requiredApproval }
+        return {
+          result: textResult(`Agent tool "${toolName}" error: ${e instanceof Error ? e.message : String(e)}`),
+          requiredApproval,
+        }
       }
     }
 
     const language = (handlerNode.data as Record<string, unknown>)?.language as string | undefined
     if (language !== 'python' && language !== 'node') {
-      return { result: textResult(`Agent tool "${toolName}": handler must be Python or Node.js script, got ${language ?? 'none'}.`), requiredApproval: false }
+      return {
+        result: textResult(
+          `Agent tool "${toolName}": handler must be Python or Node.js script, got ${language ?? 'none'}.`,
+        ),
+        requiredApproval: false,
+      }
     }
 
-    const resolvedContexts = (handlerNode.data as Record<string, unknown>)?.__resolvedContexts as Record<string, { value?: Record<string, unknown> }> | undefined
+    const resolvedContexts = (handlerNode.data as Record<string, unknown>)?.__resolvedContexts as
+      | Record<string, { value?: Record<string, unknown> }>
+      | undefined
     const terminalContext = resolvedContexts?.['ctx-in']?.value ?? { type: 'local' }
 
     // Resolve env: parse data.env (KEY=value lines) + decrypt data.secrets (key names)
@@ -941,7 +1027,10 @@ export async function executeAgentTool(toolName: string, args: Record<string, un
     for (const name of secretNames) {
       const value = await secrets.resolve(name)
       if (value === null) {
-        return { result: textResult(`Agent tool "${toolName}" error: secret "${name}" not found in any Secrets Store.`), requiredApproval }
+        return {
+          result: textResult(`Agent tool "${toolName}" error: secret "${name}" not found in any Secrets Store.`),
+          requiredApproval,
+        }
       }
       env[name] = value
     }
@@ -1113,7 +1202,9 @@ async function expandDynamicHandles(node: GraphNode, declared: ExtensionHandle[]
   }
   const service = (node.data?.['name'] as string) || node.id
   try {
-    const containers = (await invokeExtensionAction({ data: { extensionId: 'local/docker', actionName: 'docker.ps', args: [{ dockerNodeId, service }] } })) as Array<{
+    const containers = (await invokeExtensionAction({
+      data: { extensionId: 'local/docker', actionName: 'docker.ps', args: [{ dockerNodeId, service }] },
+    })) as Array<{
       id: string
       name: string
       running: boolean
@@ -1125,7 +1216,11 @@ async function expandDynamicHandles(node: GraphNode, declared: ExtensionHandle[]
   }
 }
 
-async function nodeHandles(node: GraphNode, edges: StoredEdge[], typeHandles: Map<string, ExtensionHandle[]>): Promise<NodeHandlesView> {
+async function nodeHandles(
+  node: GraphNode,
+  edges: StoredEdge[],
+  typeHandles: Map<string, ExtensionHandle[]>,
+): Promise<NodeHandlesView> {
   const input: Record<string, string | null> = {}
   const output: Record<string, string[]> = {}
   const declared = node.type ? (typeHandles.get(node.type) ?? []) : []
@@ -1245,7 +1340,9 @@ function requireArray<T = unknown>(value: unknown, name: string): T[] {
 
 const CORE_EXTENSION_ID = 'builtin/core'
 
-export async function resolveTerminalContext(args: Record<string, unknown>): Promise<{ ctx: Record<string, unknown>; slug: string }> {
+export async function resolveTerminalContext(
+  args: Record<string, unknown>,
+): Promise<{ ctx: Record<string, unknown>; slug: string }> {
   const target = args.target as string | undefined
   if (!target) {
     fail(-32602, 'Missing required param: target')
@@ -1767,7 +1864,9 @@ function buildHandlers(): Record<string, ToolHandler> {
         }
         const source = parseEndpoint(it.source as string)
         const target = parseEndpoint(it.target as string)
-        const idx = (graph.edges as StoredEdge[]).findIndex((e, i) => !indices.includes(i) && edgeMatches(e, { source, target }))
+        const idx = (graph.edges as StoredEdge[]).findIndex(
+          (e, i) => !indices.includes(i) && edgeMatches(e, { source, target }),
+        )
         if (idx === -1) {
           fail(-32602, `Edge not found: ${it.source} -> ${it.target}`)
         }
@@ -2031,7 +2130,9 @@ function buildHandlers(): Record<string, ToolHandler> {
       }
       const record = await installExtensionFromUrl({ data: { url: resolved.repository, ref, auth: resolved.auth } })
       broadcastExtensionsUpdated()
-      return textResult(`Installed ${record.manifest.name ?? record.id} (${record.sidecar.ref}) from ${resolved.repository}`)
+      return textResult(
+        `Installed ${record.manifest.name ?? record.id} (${record.sidecar.ref}) from ${resolved.repository}`,
+      )
     }),
 
     // ── registry_uninstall ──────────────────────────────────────────
@@ -2340,11 +2441,17 @@ function buildHandlers(): Record<string, ToolHandler> {
 const handlers = buildHandlers()
 
 function rejectionResult(reason: string): Record<string, unknown> {
-  const text = reason ? `The tool use was rejected. The user provided the following reason for the rejection: ${reason}` : 'The tool use was rejected by the user.'
+  const text = reason
+    ? `The tool use was rejected. The user provided the following reason for the rejection: ${reason}`
+    : 'The tool use was rejected by the user.'
   return { content: [{ type: 'text' as const, text }], isError: true }
 }
 
-export async function handleToolCall(name: string, args: Record<string, unknown>, opts: ToolCallOptions = {}): Promise<Record<string, unknown>> {
+export async function handleToolCall(
+  name: string,
+  args: Record<string, unknown>,
+  opts: ToolCallOptions = {},
+): Promise<Record<string, unknown>> {
   const start = Date.now()
   const handler = handlers[name]
   if (!handler) {

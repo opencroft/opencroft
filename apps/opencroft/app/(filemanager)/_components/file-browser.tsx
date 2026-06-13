@@ -1,12 +1,32 @@
 'use client'
 
-import { ArrowUp, Check, Download, File, Folder, FolderPlus, Loader2, Pencil, RefreshCw, Trash2, Upload, X } from 'lucide-react'
+import {
+  ArrowUp,
+  Check,
+  Download,
+  File,
+  Folder,
+  FolderPlus,
+  Loader2,
+  Pencil,
+  RefreshCw,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
 import { Button } from 'ui/button'
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from 'ui/context-menu'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from 'ui/context-menu'
 import { Input } from 'ui/input'
 import { Flex } from 'ui/layout/flex'
 import { ScrollContent } from 'ui/layout/scrollpage'
+
 import { type UploadEntry, useFileManager } from '@/app/(filemanager)/_components/filemanager-provider'
 import type { FileEntry } from '@/app/(filemanager)/_lib/types'
 
@@ -53,7 +73,15 @@ function useFocusRef() {
   }, [])
 }
 
-function InlineInput({ initial, onSubmit, onCancel }: { initial: string; onSubmit: (value: string) => void; onCancel: () => void }) {
+function InlineInput({
+  initial,
+  onSubmit,
+  onCancel,
+}: {
+  initial: string
+  onSubmit: (value: string) => void
+  onCancel: () => void
+}) {
   const [value, setValue] = useState(initial)
   const focusRef = useFocusRef()
 
@@ -115,7 +143,11 @@ function FileRow({
           onClick={() => isDir && !isRenaming && onNavigate(entry.path)}
           onContextMenu={(e) => e.stopPropagation()}
         >
-          {isDir ? <Folder className='h-4 w-4 text-muted-foreground shrink-0' /> : <File className='h-4 w-4 text-muted-foreground shrink-0' />}
+          {isDir ? (
+            <Folder className='h-4 w-4 text-muted-foreground shrink-0' />
+          ) : (
+            <File className='h-4 w-4 text-muted-foreground shrink-0' />
+          )}
           {isRenaming ? (
             <InlineInput initial={entry.name} onSubmit={onRenameSubmit} onCancel={onRenameCancel} />
           ) : (
@@ -130,7 +162,9 @@ function FileRow({
             </span>
           )}
           <span className='text-muted-foreground w-20 text-right'>{formatSize(entry.size)}</span>
-          <span className='text-muted-foreground w-40 text-right hidden md:block'>{entry.modified ? new Date(entry.modified).toLocaleString() : '-'}</span>
+          <span className='text-muted-foreground w-40 text-right hidden md:block'>
+            {entry.modified ? new Date(entry.modified).toLocaleString() : '-'}
+          </span>
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
@@ -164,13 +198,24 @@ function UploadRow({ entry, onCancel }: { entry: UploadEntry; onCancel: () => vo
       <Upload className='h-4 w-4 text-muted-foreground shrink-0' />
       <div className='flex-1 min-w-0'>
         <div className='flex items-center justify-between gap-2 mb-0.5'>
-          <span className={`truncate ${entry.cancelled ? 'text-muted-foreground line-through' : 'text-muted-foreground'}`}>{label}</span>
+          <span
+            className={`truncate ${entry.cancelled ? 'text-muted-foreground line-through' : 'text-muted-foreground'}`}
+          >
+            {label}
+          </span>
           <span className='text-muted-foreground shrink-0'>
-            {entry.cancelled ? 'Cancelled' : entry.done ? formatSize(entry.total) : `${formatSize(entry.loaded)} / ${formatSize(entry.total)} — ${formatSize(entry.speed)}/s`}
+            {entry.cancelled
+              ? 'Cancelled'
+              : entry.done
+                ? formatSize(entry.total)
+                : `${formatSize(entry.loaded)} / ${formatSize(entry.total)} — ${formatSize(entry.speed)}/s`}
           </span>
         </div>
         <div className='h-1 bg-accent rounded-full overflow-hidden'>
-          <div className={`h-full rounded-full transition-all duration-200 ${entry.cancelled ? 'bg-destructive' : entry.done ? 'bg-green-500' : 'bg-primary'}`} style={{ width: `${pct}%` }} />
+          <div
+            className={`h-full rounded-full transition-all duration-200 ${entry.cancelled ? 'bg-destructive' : entry.done ? 'bg-green-500' : 'bg-primary'}`}
+            style={{ width: `${pct}%` }}
+          />
         </div>
       </div>
       {active && (
@@ -262,7 +307,8 @@ export function FileBrowser() {
     return null
   }
 
-  const parentPath = fm.currentPath === '/' ? null : '/' + fm.currentPath.split('/').filter(Boolean).slice(0, -1).join('/') || '/'
+  const parentPath =
+    fm.currentPath === '/' ? null : '/' + fm.currentPath.split('/').filter(Boolean).slice(0, -1).join('/') || '/'
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = Array.from(e.target.files ?? [])
@@ -337,7 +383,13 @@ export function FileBrowser() {
   })
 
   return (
-    <Flex onDragEnter={handleDragEnter} onDragLeave={handleDragLeave} onDragOver={handleDragOver} onDrop={handleDrop} className='relative flex-1 min-h-0 overflow-hidden'>
+    <Flex
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+      className='relative flex-1 min-h-0 overflow-hidden'
+    >
       {dragging && (
         <div className='absolute inset-0 z-10 flex items-center justify-center bg-background/80 border-2 border-dashed border-primary rounded-md'>
           <div className='flex flex-col items-center gap-2 text-primary'>
@@ -347,7 +399,13 @@ export function FileBrowser() {
         </div>
       )}
       <Flex row withSpacing align='center' className='border-b px-3 shrink-0'>
-        <Button variant='ghost' size='icon' className='h-8 w-8 shrink-0' disabled={parentPath === null} onClick={() => parentPath && fm.navigate(parentPath)}>
+        <Button
+          variant='ghost'
+          size='icon'
+          className='h-8 w-8 shrink-0'
+          disabled={parentPath === null}
+          onClick={() => parentPath && fm.navigate(parentPath)}
+        >
           <ArrowUp className='h-4 w-4' />
         </Button>
         <Breadcrumbs path={fm.currentPath} onNavigate={fm.navigate} />
@@ -394,7 +452,9 @@ export function FileBrowser() {
                     onRenameCancel={() => setRenamingPath(null)}
                   />
                 ))}
-                {sorted.length === 0 && !creatingFolder && <div className='text-center text-muted-foreground py-12'>Empty directory</div>}
+                {sorted.length === 0 && !creatingFolder && (
+                  <div className='text-center text-muted-foreground py-12'>Empty directory</div>
+                )}
               </div>
             )}
           </ScrollContent>

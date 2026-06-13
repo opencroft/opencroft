@@ -23,7 +23,12 @@ interface DockerComposeActions {
   deleteCompose: (name: string) => Promise<void>
   renameCompose: (oldName: string, newName: string) => Promise<void>
   addService: (composeName: string, serviceName: string, serviceData: CreateDockerContainerData) => Promise<void>
-  updateService: (composeName: string, oldServiceName: string, newServiceName: string, serviceData: CreateDockerContainerData) => Promise<void>
+  updateService: (
+    composeName: string,
+    oldServiceName: string,
+    newServiceName: string,
+    serviceData: CreateDockerContainerData,
+  ) => Promise<void>
   removeService: (composeName: string, serviceName: string) => Promise<void>
   upCompose: (name: string) => Promise<void>
   deployCompose: (name: string) => Promise<void>
@@ -84,22 +89,45 @@ export function DockerComposeProvider({ children }: { children: React.ReactNode 
       loadComposes,
       switchContext,
       createCompose: (name) => withReload(() => docker.createDockerCompose({ data: { context: withContext(), name } })),
-      updateCompose: (name, content) => withReload(() => docker.updateDockerCompose({ data: { context: withContext(), name, content } })),
+      updateCompose: (name, content) =>
+        withReload(() => docker.updateDockerCompose({ data: { context: withContext(), name, content } })),
       deleteCompose,
-      renameCompose: (oldName, newName) => withReload(() => docker.renameDockerCompose({ data: { context: withContext(), oldName, newName } })),
-      addService: (composeName, serviceName, serviceData) => withReload(() => docker.addServiceToCompose({ data: { context: withContext(), composeName, serviceName, serviceData } })),
+      renameCompose: (oldName, newName) =>
+        withReload(() => docker.renameDockerCompose({ data: { context: withContext(), oldName, newName } })),
+      addService: (composeName, serviceName, serviceData) =>
+        withReload(() =>
+          docker.addServiceToCompose({ data: { context: withContext(), composeName, serviceName, serviceData } }),
+        ),
       updateService: (composeName, oldName, newName, serviceData) =>
-        withReload(() => docker.updateServiceInCompose({ data: { context: withContext(), composeName, oldServiceName: oldName, newServiceName: newName, serviceData } })),
-      removeService: (composeName, serviceName) => withReload(() => docker.removeServiceFromCompose({ data: { context: withContext(), composeName, serviceName } })),
+        withReload(() =>
+          docker.updateServiceInCompose({
+            data: {
+              context: withContext(),
+              composeName,
+              oldServiceName: oldName,
+              newServiceName: newName,
+              serviceData,
+            },
+          }),
+        ),
+      removeService: (composeName, serviceName) =>
+        withReload(() =>
+          docker.removeServiceFromCompose({ data: { context: withContext(), composeName, serviceName } }),
+        ),
       upCompose: (name) => withReload(() => docker.upCompose({ data: { context: withContext(), name } })),
       deployCompose: (name) => withReload(() => docker.deployCompose({ data: { context: withContext(), name } })),
       stopCompose: (name) => withReload(() => docker.stopCompose({ data: { context: withContext(), name } })),
       downCompose: (name) => withReload(() => docker.downCompose({ data: { context: withContext(), name } })),
-      startService: (composeName, serviceName) => withReload(() => docker.startService({ data: { context: withContext(), composeName, serviceName } })),
-      stopService: (composeName, serviceName) => withReload(() => docker.stopService({ data: { context: withContext(), composeName, serviceName } })),
-      terminateService: (composeName, serviceName) => withReload(() => docker.terminateService({ data: { context: withContext(), composeName, serviceName } })),
-      rebootService: (composeName, serviceName) => withReload(() => docker.rebootService({ data: { context: withContext(), composeName, serviceName } })),
-      deployService: (composeName, serviceName) => withReload(() => docker.deployService({ data: { context: withContext(), composeName, serviceName } })),
+      startService: (composeName, serviceName) =>
+        withReload(() => docker.startService({ data: { context: withContext(), composeName, serviceName } })),
+      stopService: (composeName, serviceName) =>
+        withReload(() => docker.stopService({ data: { context: withContext(), composeName, serviceName } })),
+      terminateService: (composeName, serviceName) =>
+        withReload(() => docker.terminateService({ data: { context: withContext(), composeName, serviceName } })),
+      rebootService: (composeName, serviceName) =>
+        withReload(() => docker.rebootService({ data: { context: withContext(), composeName, serviceName } })),
+      deployService: (composeName, serviceName) =>
+        withReload(() => docker.deployService({ data: { context: withContext(), composeName, serviceName } })),
     }),
     [loadComposes, switchContext, deleteCompose, withContext, withReload],
   )

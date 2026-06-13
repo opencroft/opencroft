@@ -81,7 +81,11 @@ export const mcpAuditLog = sqliteTable(
       .notNull()
       .$defaultFn(() => new Date()),
   },
-  (t) => [index('McpAuditLog_tool_idx').on(t.tool), index('McpAuditLog_status_idx').on(t.status), index('McpAuditLog_createdAt_idx').on(t.createdAt)],
+  (t) => [
+    index('McpAuditLog_tool_idx').on(t.tool),
+    index('McpAuditLog_status_idx').on(t.status),
+    index('McpAuditLog_createdAt_idx').on(t.createdAt),
+  ],
 )
 
 export const schema = { setting, secret, appLink, space, mcpAuditLog }

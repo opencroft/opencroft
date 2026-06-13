@@ -1,39 +1,48 @@
-import {
-  React,
-  NodeFrame,
-  OutputHandle,
-  icons,
-  inspectorIntent,
-  invoke,
-  useReactFlow,
-} from '@ext/host';
-import { PinButton, StatsList, PinnedBody, InspectorFilesBody } from '../shared';
-import { Terminal } from '@ext/ui';
+import { icons, inspectorIntent, invoke, NodeFrame, OutputHandle, React, useReactFlow } from '@ext/host'
+import { Terminal } from '@ext/ui'
 
-const { useCallback, useEffect, useState } = React;
+import { InspectorFilesBody, PinButton, PinnedBody, StatsList } from '../shared'
+
+const { useCallback, useEffect, useState } = React
 
 interface LocalhostStats {
-  os: string; cpu: string; memory: string; storage: string; hostname: string; platform: string;
+  os: string
+  cpu: string
+  memory: string
+  storage: string
+  hostname: string
+  platform: string
 }
 
 export function LocalhostNode({
-  id, data, selected,
-}: { id: string; data: Record<string, unknown>; selected?: boolean }) {
-  void data;
-  const [stats, setStats] = useState<LocalhostStats | null>(null);
-  const rf = useReactFlow();
+  id,
+  data,
+  selected,
+}: {
+  id: string
+  data: Record<string, unknown>
+  selected?: boolean
+}) {
+  void data
+  const [stats, setStats] = useState<LocalhostStats | null>(null)
+  const rf = useReactFlow()
 
   useEffect(() => {
-    invoke<LocalhostStats>('localhost.getStats').then(setStats).catch(() => null);
-  }, []);
+    invoke<LocalhostStats>('localhost.getStats')
+      .then(setStats)
+      .catch(() => null)
+  }, [])
 
-  const openInspector = useCallback((tab: string) => {
-    rf.setNodes((nds) => nds.map((n: { id: string }) => ({ ...n, selected: n.id === id })));
-    inspectorIntent.open(id, tab);
-  }, [id, rf]);
+  const openInspector = useCallback(
+    (tab: string) => {
+      rf.setNodes((nds) => nds.map((n: { id: string }) => ({ ...n, selected: n.id === id })))
+      inspectorIntent.open(id, tab)
+    },
+    [id, rf],
+  )
 
-  const openTerminal = useCallback(() => openInspector('terminal'), [openInspector]);
-  const openFiles = useCallback(() => openInspector('files'), [openInspector]);
+  const openTerminal = useCallback(() => openInspector('terminal'), [openInspector])
+  const openFiles = useCallback(() => openInspector('files'), [openInspector])
 
   return (
     <NodeFrame
@@ -70,18 +79,20 @@ export function LocalhostNode({
         }
       />
     </NodeFrame>
-  );
+  )
 }
 
 export function LocalhostInspector() {
-  const [stats, setStats] = useState<LocalhostStats | null>(null);
+  const [stats, setStats] = useState<LocalhostStats | null>(null)
 
   useEffect(() => {
-    invoke<LocalhostStats>('localhost.getStats').then(setStats).catch(() => null);
-  }, []);
+    invoke<LocalhostStats>('localhost.getStats')
+      .then(setStats)
+      .catch(() => null)
+  }, [])
 
   if (!stats) {
-    return <div className='text-xs text-muted-foreground italic'>Loading…</div>;
+    return <div className='text-xs text-muted-foreground italic'>Loading…</div>
   }
 
   const rows = [
@@ -91,7 +102,7 @@ export function LocalhostInspector() {
     ['CPU', stats.cpu],
     ['Memory', stats.memory],
     ['Storage', stats.storage],
-  ];
+  ]
 
   return (
     <div className='flex flex-col gap-2'>
@@ -102,13 +113,11 @@ export function LocalhostInspector() {
         </div>
       ))}
     </div>
-  );
+  )
 }
 
 export function LocalhostTerminalTab() {
-  return (
-    <Terminal connection={{ type: 'local', config: {} }} />
-  );
+  return <Terminal connection={{ type: 'local', config: {} }} />
 }
 
 export function LocalhostFilesTab() {
@@ -121,5 +130,5 @@ export function LocalhostFilesTab() {
         config: { host: 'localhost', port: 22, username: 'root', basePath: '/' },
       }}
     />
-  );
+  )
 }

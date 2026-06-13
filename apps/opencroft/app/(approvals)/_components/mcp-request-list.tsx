@@ -8,8 +8,16 @@ import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 import { Flex } from 'ui/layout/flex'
 import { ScrollArea } from 'ui/layout/scroll-area'
+
 import { resolveApprovalView } from '@/app/(approvals)/_components/approval-views'
-import { answerAskUser, approveRequest, cancelAskUser, listPendingApprovals, listPendingAskUsers, rejectRequest } from '@/app/(approvals)/_server/actions'
+import {
+  answerAskUser,
+  approveRequest,
+  cancelAskUser,
+  listPendingApprovals,
+  listPendingAskUsers,
+  rejectRequest,
+} from '@/app/(approvals)/_server/actions'
 import { sseEventsStore, useSSEEvents } from '@/app/(sse)/_lib/sse-events-store'
 import type { PendingApproval, PendingAskUser } from '@/lib/sse-events'
 import { cn } from '@/lib/utils'
@@ -109,7 +117,13 @@ function ApprovalDetail({ request }: { request: PendingApproval }) {
         <ShieldQuestion className='h-4 w-4 shrink-0 text-primary' />
         <span className='font-mono text-sm truncate flex-1'>{request.tool}</span>
         {focusNodeId && (
-          <Button variant='ghost' size='sm' className='h-7' onClick={() => sseEventsStore.dispatch({ type: 'focus_node', nodeId: focusNodeId, panToNode: true })} title={focusNodeId}>
+          <Button
+            variant='ghost'
+            size='sm'
+            className='h-7'
+            onClick={() => sseEventsStore.dispatch({ type: 'focus_node', nodeId: focusNodeId, panToNode: true })}
+            title={focusNodeId}
+          >
             <Crosshair /> View node
           </Button>
         )}
@@ -121,10 +135,23 @@ function ApprovalDetail({ request }: { request: PendingApproval }) {
         <Button size='sm' onClick={onApprove} disabled={pending} className='justify-start w-full'>
           <Check /> Approve
         </Button>
-        <Button size='sm' variant='outline' onClick={() => onReject('')} disabled={pending} className='justify-start w-full'>
+        <Button
+          size='sm'
+          variant='outline'
+          onClick={() => onReject('')}
+          disabled={pending}
+          className='justify-start w-full'
+        >
           <X /> Reject
         </Button>
-        <Input value={reason} onChange={(e) => setReason(e.target.value)} onKeyDown={onInputKeyDown} placeholder='Tell what to do different (Enter)' disabled={pending} className='h-8' />
+        <Input
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          onKeyDown={onInputKeyDown}
+          placeholder='Tell what to do different (Enter)'
+          disabled={pending}
+          className='h-8'
+        />
       </div>
     </div>
   )
@@ -181,7 +208,10 @@ export function McpRequestList() {
                 <button
                   type='button'
                   onClick={entry.select}
-                  className={cn('w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-accent/50 transition-colors rounded-sm', entry.active && 'bg-accent/50')}
+                  className={cn(
+                    'w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-accent/50 transition-colors rounded-sm',
+                    entry.active && 'bg-accent/50',
+                  )}
                 >
                   <Icon className='size-4 shrink-0 text-primary' />
                   <span className={cn('truncate flex-1', entry.mono && 'font-mono text-xs')}>{entry.label}</span>

@@ -1,23 +1,19 @@
-import {
-  React,
-  NodeFrame,
-  OutputHandle,
-  icons,
-} from '@ext/host';
-import {
-  Input,
-  Label,
-  Textarea,
-} from '@ext/ui';
+import { icons, NodeFrame, OutputHandle, type React } from '@ext/host'
+import { Input, Label, Textarea } from '@ext/ui'
 
 export interface AgentInstructionData {
-  name: string;
-  instruction: string;
+  name: string
+  instruction: string
 }
 
 export function AgentInstructionNode({
-  data, selected,
-}: { id: string; data: AgentInstructionData; selected?: boolean }) {
+  data,
+  selected,
+}: {
+  id: string
+  data: AgentInstructionData
+  selected?: boolean
+}) {
   return (
     <NodeFrame
       icon={icons.BookOpen}
@@ -25,12 +21,17 @@ export function AgentInstructionNode({
       selected={selected ?? false}
       output={<OutputHandle type='agent-instruction' id='instruction-out' />}
     />
-  );
+  )
 }
 
 export function AgentInstructionInspector({
-  data, updateData,
-}: { nodeId: string; data: AgentInstructionData; updateData: (p: Partial<AgentInstructionData>) => void }) {
+  data,
+  updateData,
+}: {
+  nodeId: string
+  data: AgentInstructionData
+  updateData: (p: Partial<AgentInstructionData>) => void
+}) {
   return (
     <div className='flex flex-col gap-3'>
       <div className='flex flex-col gap-1'>
@@ -51,5 +52,5 @@ export function AgentInstructionInspector({
         />
       </div>
     </div>
-  );
+  )
 }

@@ -54,7 +54,15 @@ export interface RolesManagerProps {
 }
 
 // One permission row: a tool/skill label + a tri-state access select.
-function PermissionRow({ label, value, onChange }: { label: string; value: AccessChoice; onChange: (value: AccessChoice) => void }) {
+function PermissionRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: AccessChoice
+  onChange: (value: AccessChoice) => void
+}) {
   return (
     <Flex row align='center' className='gap-2'>
       <span className='flex-1 truncate text-sm' title={label}>
@@ -68,7 +76,16 @@ function PermissionRow({ label, value, onChange }: { label: string; value: Acces
 // A two-pane manager for agent roles: a list on the left (with the global
 // default-access control), a name/description form + a tool/skill permission
 // matrix on the right. Data-driven — the host supplies the data and callbacks.
-export function RolesManager({ roles: incoming, tools, skills, defaultAccess: incomingDefault, onCreate, onUpdate, onDelete, onDefaultAccessChange }: RolesManagerProps) {
+export function RolesManager({
+  roles: incoming,
+  tools,
+  skills,
+  defaultAccess: incomingDefault,
+  onCreate,
+  onUpdate,
+  onDelete,
+  onDefaultAccessChange,
+}: RolesManagerProps) {
   const [roles, setRoles] = useState<RoleRecord[]>(incoming)
   const [selected, setSelected] = useState<RoleRecord | null>(null)
   const [name, setName] = useState('')
@@ -172,7 +189,12 @@ export function RolesManager({ roles: incoming, tools, skills, defaultAccess: in
         <Flex className='gap-1 p-1'>
           <Field className='px-1 pb-2'>
             <FieldLabel>Default access (no roles)</FieldLabel>
-            <SegmentedButton size='sm' value={defaultAccess} onChange={handleDefaultAccess} options={DEFAULT_ACCESS_OPTIONS} />
+            <SegmentedButton
+              size='sm'
+              value={defaultAccess}
+              onChange={handleDefaultAccess}
+              options={DEFAULT_ACCESS_OPTIONS}
+            />
           </Field>
           {roles.map((role) => (
             <SidebarMenuButton key={role.id} isActive={selected?.id === role.id} onClick={() => setSelected(role)}>
@@ -203,14 +225,23 @@ export function RolesManager({ roles: incoming, tools, skills, defaultAccess: in
           <ScrollContent className='p-3 gap-4'>
             <Field>
               <FieldLabel>Description</FieldLabel>
-              <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder='What this role is for' />
+              <Input
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder='What this role is for'
+              />
             </Field>
             <Field>
               <FieldLabel>Tools</FieldLabel>
               <Flex className='gap-1.5'>
                 {tools.length === 0 && <span className='text-sm text-muted-foreground'>No tools available.</span>}
                 {tools.map((t) => (
-                  <PermissionRow key={t.name} label={t.name} value={permissions[toolKey(t.name)] ?? 'none'} onChange={(choice) => setAccess(toolKey(t.name), choice)} />
+                  <PermissionRow
+                    key={t.name}
+                    label={t.name}
+                    value={permissions[toolKey(t.name)] ?? 'none'}
+                    onChange={(choice) => setAccess(toolKey(t.name), choice)}
+                  />
                 ))}
               </Flex>
             </Field>
@@ -219,7 +250,12 @@ export function RolesManager({ roles: incoming, tools, skills, defaultAccess: in
               <Flex className='gap-1.5'>
                 {skills.length === 0 && <span className='text-sm text-muted-foreground'>No skills available.</span>}
                 {skills.map((s) => (
-                  <PermissionRow key={s.name} label={s.name} value={permissions[skillKey(s.name)] ?? 'none'} onChange={(choice) => setAccess(skillKey(s.name), choice)} />
+                  <PermissionRow
+                    key={s.name}
+                    label={s.name}
+                    value={permissions[skillKey(s.name)] ?? 'none'}
+                    onChange={(choice) => setAccess(skillKey(s.name), choice)}
+                  />
                 ))}
               </Flex>
             </Field>

@@ -1,8 +1,4 @@
-import {
-  React,
-  icons,
-  toast,
-} from '@ext/host';
+import { icons, React, toast } from '@ext/host'
 import {
   Badge,
   Button,
@@ -14,108 +10,116 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@ext/ui';
+} from '@ext/ui'
 
-const { useCallback, useEffect, useState } = React;
+const { useCallback, useEffect, useState } = React
 
-type McpTransport = 'http' | 'sse' | 'stdio';
+type McpTransport = 'http' | 'sse' | 'stdio'
 
 interface KeyValue {
-  name: string;
-  value: string;
+  name: string
+  value: string
 }
 
 interface McpServerConfig {
-  name: string;
-  transport: McpTransport;
-  url?: string;
-  command?: string;
-  args?: string[];
-  headers?: KeyValue[];
-  env?: KeyValue[];
+  name: string
+  transport: McpTransport
+  url?: string
+  command?: string
+  args?: string[]
+  headers?: KeyValue[]
+  env?: KeyValue[]
 }
 
 interface McpRow {
-  id: string;
-  config: McpServerConfig;
+  id: string
+  config: McpServerConfig
 }
 
 interface CheckState {
-  status: 'checking' | 'ok' | 'failed';
-  tools?: number;
-  error?: string;
+  status: 'checking' | 'ok' | 'failed'
+  tools?: number
+  error?: string
 }
 
-const TRANSPORTS: McpTransport[] = ['http', 'sse', 'stdio'];
+const TRANSPORTS: McpTransport[] = ['http', 'sse', 'stdio']
 
-const JSON_HEADERS = { 'content-type': 'application/json' };
+const JSON_HEADERS = { 'content-type': 'application/json' }
 
 export function AgentMcpTab() {
-  const [rows, setRows] = useState<McpRow[]>([]);
-  const [checks, setChecks] = useState<Record<string, CheckState>>({});
-  const [saving, setSaving] = useState(false);
+  const [rows, setRows] = useState<McpRow[]>([])
+  const [checks, setChecks] = useState<Record<string, CheckState>>({})
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     fetch('/api/acp/mcp')
       .then((r) => r.json())
       .then((servers: McpServerConfig[]) => setRows(servers.map((config) => ({ id: crypto.randomUUID(), config }))))
-      .catch(() => setRows([]));
-  }, []);
+      .catch(() => setRows([]))
+  }, [])
 
   const update = useCallback((id: string, patch: Partial<McpServerConfig>) => {
-    setRows((current) => current.map((row) => (row.id === id ? { ...row, config: { ...row.config, ...patch } } : row)));
-  }, []);
+    setRows((current) => current.map((row) => (row.id === id ? { ...row, config: { ...row.config, ...patch } } : row)))
+  }, [])
 
   const add = useCallback(() => {
-    setRows((current) => [...current, { id: crypto.randomUUID(), config: { name: '', transport: 'http', url: '' } }]);
-  }, []);
+    setRows((current) => [...current, { id: crypto.randomUUID(), config: { name: '', transport: 'http', url: '' } }])
+  }, [])
 
   const remove = useCallback((id: string) => {
-    setRows((current) => current.filter((row) => row.id !== id));
+    setRows((current) => current.filter((row) => row.id !== id))
     setChecks((current) => {
-      const next = { ...current };
-      delete next[id];
-      return next;
-    });
-  }, []);
+      const next = { ...current }
+      delete next[id]
+      return next
+    })
+  }, [])
 
   const test = useCallback(async (row: McpRow) => {
-    setChecks((current) => ({ ...current, [row.id]: { status: 'checking' } }));
+    setChecks((current) => ({ ...current, [row.id]: { status: 'checking' } }))
     try {
       const result = await fetch('/api/acp/mcp-check', {
         method: 'POST',
         headers: JSON_HEADERS,
         body: JSON.stringify(row.config),
-      }).then((r) => r.json());
+      }).then((r) => r.json())
       setChecks((current) => ({
         ...current,
         [row.id]: result.ok ? { status: 'ok', tools: result.tools } : { status: 'failed', error: result.error },
-      }));
+      }))
     } catch (err) {
-      setChecks((current) => ({ ...current, [row.id]: { status: 'failed', error: err instanceof Error ? err.message : String(err) } }));
+      setChecks((current) => ({
+        ...current,
+        [row.id]: { status: 'failed', error: err instanceof Error ? err.message : String(err) },
+      }))
     }
-  }, []);
+  }, [])
 
   const save = useCallback(async () => {
-    setSaving(true);
+    setSaving(true)
     try {
-      await fetch('/api/acp/mcp', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(rows.map((row) => row.config)) });
-      toast.success('MCP servers saved');
+      await fetch('/api/acp/mcp', {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(rows.map((row) => row.config)),
+      })
+      toast.success('MCP servers saved')
     } catch {
-      toast.error('Failed to save MCP servers');
+      toast.error('Failed to save MCP servers')
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  }, [rows]);
+  }, [rows])
 
-  const names = rows.map((row) => row.config.name).filter(Boolean);
-  const hasConflict = new Set(names).size !== names.length;
+  const names = rows.map((row) => row.config.name).filter(Boolean)
+  const hasConflict = new Set(names).size !== names.length
 
   return (
     <ScrollArea className='h-full'>
       <div className='flex flex-col gap-3 p-1'>
         <p className='text-[10px] text-muted-foreground'>
-          MCP servers are shared by every local agent in this workspace (not per node). opencroft's own tools are always available; add custom servers here.
+          MCP servers are shared by every local agent in this workspace (not per node). opencroft's own tools are always
+          available; add custom servers here.
         </p>
         {rows.map((row) => (
           <McpServerRow
@@ -137,7 +141,7 @@ export function AgentMcpTab() {
         </Button>
       </div>
     </ScrollArea>
-  );
+  )
 }
 
 function McpServerRow({
@@ -148,12 +152,12 @@ function McpServerRow({
   onTest,
   onRemove,
 }: {
-  config: McpServerConfig;
-  check: CheckState | undefined;
-  duplicate: boolean;
-  onChange: (patch: Partial<McpServerConfig>) => void;
-  onTest: () => void;
-  onRemove: () => void;
+  config: McpServerConfig
+  check: CheckState | undefined
+  duplicate: boolean
+  onChange: (patch: Partial<McpServerConfig>) => void
+  onTest: () => void
+  onRemove: () => void
 }) {
   return (
     <div className='flex flex-col gap-2 rounded-md border p-2.5'>
@@ -193,7 +197,9 @@ function McpServerRow({
             value={(config.args ?? []).join(' ')}
             placeholder='args'
             className='h-7 text-xs font-mono'
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ args: e.target.value.split(' ').filter(Boolean) })}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              onChange({ args: e.target.value.split(' ').filter(Boolean) })
+            }
           />
           <KeyValueEditor label='Environment' entries={config.env ?? []} onChange={(env) => onChange({ env })} />
         </>
@@ -205,35 +211,45 @@ function McpServerRow({
             className='h-7 text-xs font-mono'
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ url: e.target.value })}
           />
-          <KeyValueEditor label='Headers (e.g. Authorization: Bearer …)' entries={config.headers ?? []} onChange={(headers) => onChange({ headers })} />
+          <KeyValueEditor
+            label='Headers (e.g. Authorization: Bearer …)'
+            entries={config.headers ?? []}
+            onChange={(headers) => onChange({ headers })}
+          />
         </>
       )}
       <div className='flex items-center gap-2'>
-        <Button variant='outline' size='sm' className='h-6 text-[10px]' onClick={onTest} disabled={check?.status === 'checking'}>
+        <Button
+          variant='outline'
+          size='sm'
+          className='h-6 text-[10px]'
+          onClick={onTest}
+          disabled={check?.status === 'checking'}
+        >
           {check?.status === 'checking' ? <icons.Loader2 className='size-3 animate-spin' /> : 'Test'}
         </Button>
         <CheckBadge check={check} />
       </div>
     </div>
-  );
+  )
 }
 
 function CheckBadge({ check }: { check: CheckState | undefined }) {
   if (!check || check.status === 'checking') {
-    return null;
+    return null
   }
   if (check.status === 'ok') {
     return (
       <Badge variant='secondary' className='text-[10px]'>
         {check.tools ?? 0} tools
       </Badge>
-    );
+    )
   }
   return (
     <span className='text-[10px] text-destructive truncate' title={check.error}>
       {check.error ?? 'failed'}
     </span>
-  );
+  )
 }
 
 function KeyValueEditor({
@@ -241,13 +257,13 @@ function KeyValueEditor({
   entries,
   onChange,
 }: {
-  label: string;
-  entries: KeyValue[];
-  onChange: (entries: KeyValue[]) => void;
+  label: string
+  entries: KeyValue[]
+  onChange: (entries: KeyValue[]) => void
 }) {
   const set = (index: number, patch: Partial<KeyValue>) => {
-    onChange(entries.map((entry, i) => (i === index ? { ...entry, ...patch } : entry)));
-  };
+    onChange(entries.map((entry, i) => (i === index ? { ...entry, ...patch } : entry)))
+  }
 
   return (
     <div className='flex flex-col gap-1.5'>
@@ -266,15 +282,25 @@ function KeyValueEditor({
             className='h-7 text-xs font-mono'
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => set(index, { value: e.target.value })}
           />
-          <Button variant='ghost' size='sm' className='size-7 p-0' onClick={() => onChange(entries.filter((_, i) => i !== index))}>
+          <Button
+            variant='ghost'
+            size='sm'
+            className='size-7 p-0'
+            onClick={() => onChange(entries.filter((_, i) => i !== index))}
+          >
             <icons.X className='size-3' />
           </Button>
         </div>
       ))}
-      <Button variant='outline' size='sm' className='h-6 self-start text-[10px]' onClick={() => onChange([...entries, { name: '', value: '' }])}>
+      <Button
+        variant='outline'
+        size='sm'
+        className='h-6 self-start text-[10px]'
+        onClick={() => onChange([...entries, { name: '', value: '' }])}
+      >
         <icons.Plus className='size-3 mr-1' />
         Add
       </Button>
     </div>
-  );
+  )
 }

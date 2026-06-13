@@ -2,6 +2,7 @@
 
 import type { ChatEvent, PermissionOpt } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
+
 import { cancelLocal, ensureLocalSession, forkLocal, promptLocal, respondLocal } from '@/app/(agent)/_server/acp'
 import type { AgentSession } from '@/app/(openclaw)/_components/agent-chat'
 import type { OpenclawMessage, OpenclawPart } from '@/app/(openclaw)/_lib/messages'
@@ -155,7 +156,11 @@ function fold(events: ChatEvent[]): Folded {
   }
 }
 
-export function useAcpSession(source: LocalSource, transformOutgoing?: (text: string, isFirstMessage: boolean) => string, botName = 'assistant'): AcpSession {
+export function useAcpSession(
+  source: LocalSource,
+  transformOutgoing?: (text: string, isFirstMessage: boolean) => string,
+  botName = 'assistant',
+): AcpSession {
   const { agentNodeId, jobNodeId, tabKey } = source
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [events, setEvents] = useState<ChatEvent[]>([])
@@ -345,11 +350,31 @@ export function useAcpSession(source: LocalSource, transformOutgoing?: (text: st
       editMessage,
       draft,
     }),
-    [tabKey, folded.messages, folded.waiting, loading, sending, localWaiting, botName, send, stop, canFork, editMessage, draft],
+    [
+      tabKey,
+      folded.messages,
+      folded.waiting,
+      loading,
+      sending,
+      localWaiting,
+      botName,
+      send,
+      stop,
+      canFork,
+      editMessage,
+      draft,
+    ],
   )
 
   return useMemo(
-    () => ({ session, permissions: folded.permissions, asks: folded.asks, resolvePermission, resolveAsk, respondPermissionText }),
+    () => ({
+      session,
+      permissions: folded.permissions,
+      asks: folded.asks,
+      resolvePermission,
+      resolveAsk,
+      respondPermissionText,
+    }),
     [session, folded.permissions, folded.asks, resolvePermission, resolveAsk, respondPermissionText],
   )
 }

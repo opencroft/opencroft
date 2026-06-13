@@ -25,7 +25,12 @@ function createWebSocket(path: string): WebSocket {
   return new WebSocket(`${protocol}//${window.location.host}${path}`)
 }
 
-function connectMessage(connection: TerminalConfig, command: string | undefined, cols: number, rows: number): ClientMessage {
+function connectMessage(
+  connection: TerminalConfig,
+  command: string | undefined,
+  cols: number,
+  rows: number,
+): ClientMessage {
   const extra = command ? { command } : undefined
   if (connection.type === 'ssh') {
     return { type: 'connect', payload: { ...connection.config, ...extra, cols, rows } }
@@ -216,9 +221,15 @@ export function Terminal({ connection, command, readOnly, fontSize = 12, onStatu
       {status !== 'connected' ? (
         <div className='absolute inset-0 flex items-center justify-center pointer-events-none'>
           <div className='flex flex-col items-center gap-2 px-3 py-2 rounded-md bg-black/70 text-xs text-muted-foreground pointer-events-auto'>
-            <span>{status === 'connecting' ? 'connecting…' : status === 'error' ? `error: ${errorMsg}` : 'disconnected'}</span>
+            <span>
+              {status === 'connecting' ? 'connecting…' : status === 'error' ? `error: ${errorMsg}` : 'disconnected'}
+            </span>
             {status !== 'connecting' ? (
-              <button type='button' onClick={reconnect} className='px-2 py-0.5 rounded-sm bg-muted text-foreground hover:bg-muted/80'>
+              <button
+                type='button'
+                onClick={reconnect}
+                className='px-2 py-0.5 rounded-sm bg-muted text-foreground hover:bg-muted/80'
+              >
                 reconnect
               </button>
             ) : null}

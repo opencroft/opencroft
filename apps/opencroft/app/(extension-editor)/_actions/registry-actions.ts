@@ -1,6 +1,9 @@
 import { createServerFn } from '@tanstack/react-start'
 
-import { type InstalledExtensionRecord, installExtensionFromUrl } from '@/app/(extension-editor)/_actions/installed-extensions-actions'
+import {
+  type InstalledExtensionRecord,
+  installExtensionFromUrl,
+} from '@/app/(extension-editor)/_actions/installed-extensions-actions'
 import type { RegistryExtension, ResolvedRegistry } from '@/app/(extension-runtime)/_server/registry'
 import { fetchAllRegistries, resolveExtensionRepo, searchRegistries } from '@/app/(extension-runtime)/_server/registry'
 
@@ -21,10 +24,14 @@ export const installRegistryExtension = createServerFn({ method: 'POST', strict:
     return installExtensionFromUrl({ data: { url: resolved.repository, ref, auth: resolved.auth } })
   })
 
-export const getRegistries = createServerFn({ strict: { output: false } }).handler(async (): Promise<ResolvedRegistry[]> => {
-  return fetchAllRegistries()
-})
+export const getRegistries = createServerFn({ strict: { output: false } }).handler(
+  async (): Promise<ResolvedRegistry[]> => {
+    return fetchAllRegistries()
+  },
+)
 
-export const refreshRegistries = createServerFn({ strict: { output: false } }).handler(async (): Promise<ResolvedRegistry[]> => {
-  return fetchAllRegistries(true)
-})
+export const refreshRegistries = createServerFn({ strict: { output: false } }).handler(
+  async (): Promise<ResolvedRegistry[]> => {
+    return fetchAllRegistries(true)
+  },
+)

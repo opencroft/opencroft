@@ -164,7 +164,8 @@ class SSEEventsStore {
     for (const r of requests) {
       next.set(r.id, r)
     }
-    const stillValid = this.state.selectedApprovalId && next.has(this.state.selectedApprovalId) ? this.state.selectedApprovalId : null
+    const stillValid =
+      this.state.selectedApprovalId && next.has(this.state.selectedApprovalId) ? this.state.selectedApprovalId : null
     const first = requests[0]?.id ?? null
     const selected = stillValid ?? first
     this.state = { ...this.state, pendingApprovals: next, selectedApprovalId: selected }
@@ -186,7 +187,8 @@ class SSEEventsStore {
     for (const r of requests) {
       next.set(r.id, r)
     }
-    const stillValid = this.state.selectedAskUserId && next.has(this.state.selectedAskUserId) ? this.state.selectedAskUserId : null
+    const stillValid =
+      this.state.selectedAskUserId && next.has(this.state.selectedAskUserId) ? this.state.selectedAskUserId : null
     const first = requests[0]?.id ?? null
     const selected = stillValid ?? first
     this.state = { ...this.state, pendingAskUsers: next, selectedAskUserId: selected }
@@ -291,7 +293,10 @@ const EMPTY_CONTAINERS: DockerContainerSnapshot[] = []
  * filtered by compose service name. Returns an empty array when no snapshot
  * has been received yet.
  */
-export function useDockerContainers(dockerNodeId: string | null | undefined, service?: string): DockerContainerSnapshot[] {
+export function useDockerContainers(
+  dockerNodeId: string | null | undefined,
+  service?: string,
+): DockerContainerSnapshot[] {
   const { dockerContainers } = useSSEEvents()
   if (!dockerNodeId) {
     return EMPTY_CONTAINERS

@@ -20,7 +20,10 @@ function parseKeyRef(keyPath?: string): { storeId: string; name: string } | null
 
 async function readStoreKey(ref: { storeId: string; name: string }): Promise<string> {
   const base = extensionsCacheDir()
-  const candidates = [path.join(base, 'local', 'core', 'key-store', ref.storeId, ref.name), path.join(base, 'builtin', 'core', 'key-store', ref.storeId, ref.name)]
+  const candidates = [
+    path.join(base, 'local', 'core', 'key-store', ref.storeId, ref.name),
+    path.join(base, 'builtin', 'core', 'key-store', ref.storeId, ref.name),
+  ]
   for (const candidate of candidates) {
     try {
       return await fs.readFile(candidate, 'utf-8')

@@ -1,6 +1,7 @@
 'use client'
 
 import { Badge } from 'ui/badge'
+
 import { usePendingRequestEntries } from '@/app/(approvals)/_components/mcp-request-list'
 import { cn } from '@/lib/utils'
 

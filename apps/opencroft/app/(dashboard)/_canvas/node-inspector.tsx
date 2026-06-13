@@ -9,6 +9,7 @@ import { Button } from 'ui/button'
 import { Flex } from 'ui/layout/flex'
 import { ScrollArea } from 'ui/layout/scroll-area'
 import { Separator } from 'ui/separator'
+
 import { McpRequestList } from '@/app/(approvals)/_components/mcp-request-list'
 import { useInspectorIntent } from '@/app/(dashboard)/_canvas/inspector-intent'
 import { extensionRegistry, type ResolvedNode } from '@/app/(extension-runtime)/_client/registry'
@@ -98,7 +99,16 @@ export function NodeInspector({
   }
 
   if (!node) {
-    return <NodeBrowser tab={browserTab} extensions={extensions} graphNodes={graphNodes} onTabChange={onBrowserTabChange} onEditExtension={onEditExtension} onFocusNode={onFocusNode} />
+    return (
+      <NodeBrowser
+        tab={browserTab}
+        extensions={extensions}
+        graphNodes={graphNodes}
+        onTabChange={onBrowserTabChange}
+        onEditExtension={onEditExtension}
+        onFocusNode={onFocusNode}
+      />
+    )
   }
 
   const resolved = node.type ? extensionRegistry.resolveNode(node.type) : undefined
@@ -117,7 +127,10 @@ export function NodeInspector({
   const hasTabs = inspectorTabs && inspectorTabs.length > 0
 
   const tabs = hasTabs
-    ? [{ id: 'details', label: 'Details', icon: 'Settings' as const, fullHeight: false, component: Inspector }, ...inspectorTabs.map((tab) => ({ ...tab, fullHeight: Boolean(tab.fullHeight) }))]
+    ? [
+        { id: 'details', label: 'Details', icon: 'Settings' as const, fullHeight: false, component: Inspector },
+        ...inspectorTabs.map((tab) => ({ ...tab, fullHeight: Boolean(tab.fullHeight) })),
+      ]
     : []
 
   const activeEntry = hasTabs ? tabs.find((t) => t.id === activeTab) : null
@@ -132,11 +145,21 @@ export function NodeInspector({
 
   const body = fillHeight ? (
     <Flex expanded className='w-full min-h-0'>
-      {ActiveComponent ? <ActiveComponent {...inspectorProps} /> : <p className='text-xs text-muted-foreground italic p-2'>This extension has no editable properties.</p>}
+      {ActiveComponent ? (
+        <ActiveComponent {...inspectorProps} />
+      ) : (
+        <p className='text-xs text-muted-foreground italic p-2'>This extension has no editable properties.</p>
+      )}
     </Flex>
   ) : (
     <ScrollArea className='flex-1 min-h-0'>
-      <div className='py-2 px-4'>{ActiveComponent ? <ActiveComponent {...inspectorProps} /> : <p className='text-xs text-muted-foreground italic'>This extension has no editable properties.</p>}</div>
+      <div className='py-2 px-4'>
+        {ActiveComponent ? (
+          <ActiveComponent {...inspectorProps} />
+        ) : (
+          <p className='text-xs text-muted-foreground italic'>This extension has no editable properties.</p>
+        )}
+      </div>
     </ScrollArea>
   )
 
@@ -158,11 +181,23 @@ export function NodeInspector({
           </button>
         </div>
         {isLocal && (
-          <Button variant='ghost' size='icon' className='size-6' title='Edit extension source' onClick={() => onEditExtension(resolved.extension.manifest.id)}>
+          <Button
+            variant='ghost'
+            size='icon'
+            className='size-6'
+            title='Edit extension source'
+            onClick={() => onEditExtension(resolved.extension.manifest.id)}
+          >
             <Pencil className='size-3.5' />
           </Button>
         )}
-        <Button variant='ghost' size='icon' className='size-6' onClick={() => onExpandedChange(!expanded)} title={expanded ? 'Collapse' : 'Expand'}>
+        <Button
+          variant='ghost'
+          size='icon'
+          className='size-6'
+          onClick={() => onExpandedChange(!expanded)}
+          title={expanded ? 'Collapse' : 'Expand'}
+        >
           <ExpandIcon className='size-3.5' />
         </Button>
         <Button variant='ghost' size='icon' className='size-6' onClick={onDeselect} title='Close'>
@@ -183,7 +218,9 @@ export function NodeInspector({
                   onClick={() => setActiveTab(tab.id)}
                   className={[
                     'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border-b-2 transition-colors',
-                    isActive ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground/80',
+                    isActive
+                      ? 'border-primary text-foreground'
+                      : 'border-transparent text-muted-foreground hover:text-foreground/80',
                   ].join(' ')}
                 >
                   <TabIcon className='size-3' />
@@ -235,12 +272,16 @@ function NodeBrowser({ tab, extensions, graphNodes, onTabChange, onEditExtension
               onClick={() => onTabChange(entry.id)}
               className={[
                 'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border-b-2 transition-colors',
-                tab === entry.id ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground/80',
+                tab === entry.id
+                  ? 'border-primary text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground/80',
               ].join(' ')}
             >
               <TabIcon className='size-3' />
               {entry.label}
-              {entry.id === 'mcp' && pendingCount > 0 && <span className='rounded-full bg-primary/15 px-1.5 text-[10px] text-primary'>{pendingCount}</span>}
+              {entry.id === 'mcp' && pendingCount > 0 && (
+                <span className='rounded-full bg-primary/15 px-1.5 text-[10px] text-primary'>{pendingCount}</span>
+              )}
             </button>
           )
         })}
@@ -253,7 +294,13 @@ function NodeBrowser({ tab, extensions, graphNodes, onTabChange, onEditExtension
   )
 }
 
-function OutlineTab({ graphNodes, onFocusNode }: { graphNodes: Node<NodeData>[]; onFocusNode: (nodeId: string) => void }) {
+function OutlineTab({
+  graphNodes,
+  onFocusNode,
+}: {
+  graphNodes: Node<NodeData>[]
+  onFocusNode: (nodeId: string) => void
+}) {
   if (graphNodes.length === 0) {
     return (
       <Flex expanded align='center' justify='center' className='p-4'>
@@ -274,10 +321,16 @@ function OutlineTab({ graphNodes, onFocusNode }: { graphNodes: Node<NodeData>[];
 
           return (
             <li key={node.id}>
-              <button type='button' onClick={() => onFocusNode(node.id)} className='w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-accent/50 transition-colors rounded-sm'>
+              <button
+                type='button'
+                onClick={() => onFocusNode(node.id)}
+                className='w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-accent/50 transition-colors rounded-sm'
+              >
                 <NodeIcon className='size-4 shrink-0' style={accent ? { color: accent } : undefined} />
                 <span className='truncate flex-1'>{label}</span>
-                {resolved && <span className='text-[10px] text-muted-foreground truncate max-w-24'>{resolved.name}</span>}
+                {resolved && (
+                  <span className='text-[10px] text-muted-foreground truncate max-w-24'>{resolved.name}</span>
+                )}
               </button>
             </li>
           )
@@ -287,7 +340,13 @@ function OutlineTab({ graphNodes, onFocusNode }: { graphNodes: Node<NodeData>[];
   )
 }
 
-function PaletteTab({ extensions, onEditExtension }: { extensions: ResolvedNode[]; onEditExtension: (extensionId: string) => void }) {
+function PaletteTab({
+  extensions,
+  onEditExtension,
+}: {
+  extensions: ResolvedNode[]
+  onEditExtension: (extensionId: string) => void
+}) {
   const groups = groupByCategory(extensions)
 
   if (extensions.length === 0) {
@@ -319,7 +378,13 @@ function PaletteTab({ extensions, onEditExtension }: { extensions: ResolvedNode[
                   <span className='truncate'>{node.name}</span>
                 </button>
                 {isLocal && (
-                  <Button size='icon' variant='ghost' className='size-5 mr-1 opacity-0 group-hover:opacity-100' title='Edit extension' onClick={() => onEditExtension(node.extension.manifest.id)}>
+                  <Button
+                    size='icon'
+                    variant='ghost'
+                    className='size-5 mr-1 opacity-0 group-hover:opacity-100'
+                    title='Edit extension'
+                    onClick={() => onEditExtension(node.extension.manifest.id)}
+                  >
                     <Pencil className='size-3' />
                   </Button>
                 )}

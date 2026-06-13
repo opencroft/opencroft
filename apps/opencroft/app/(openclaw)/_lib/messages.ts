@@ -103,7 +103,10 @@ function stripMetadata(text: string): string {
   return out.trim()
 }
 
-function toParts(content: RawContentPart[] | string | undefined, results: Map<string, { text: string; isError?: boolean }>): OpenclawPart[] {
+function toParts(
+  content: RawContentPart[] | string | undefined,
+  results: Map<string, { text: string; isError?: boolean }>,
+): OpenclawPart[] {
   if (typeof content === 'string') {
     return [{ type: 'text', text: content }]
   }

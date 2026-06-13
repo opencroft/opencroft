@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from 'ui/button'
+
 import {
   checkInstalledForUpdates,
   type InstalledExtensionRecord,
@@ -101,7 +102,10 @@ export function ExtensionEditor({ initialExtensionId, onBack, onExtensionChanged
     })
   }, [refresh, checkAllUpdates])
 
-  const selected = useMemo(() => records.find((r) => r.id === selectedId) ?? installed.find((r) => r.id === selectedId) ?? null, [records, installed, selectedId])
+  const selected = useMemo(
+    () => records.find((r) => r.id === selectedId) ?? installed.find((r) => r.id === selectedId) ?? null,
+    [records, installed, selectedId],
+  )
 
   // Load files when selection changes
   useEffect(() => {
@@ -339,7 +343,11 @@ export function ExtensionEditor({ initialExtensionId, onBack, onExtensionChanged
           onUpdate={handleUpdate}
           onUninstall={handleUninstall}
         />
-        <InstallExtensionDialog open={installDialogOpen} onOpenChange={setInstallDialogOpen} onInstalled={handleInstalled} />
+        <InstallExtensionDialog
+          open={installDialogOpen}
+          onOpenChange={setInstallDialogOpen}
+          onInstalled={handleInstalled}
+        />
         {selectedId && Object.keys(files).length > 0 ? (
           <ExtensionWorkspace
             title={title}
@@ -356,7 +364,9 @@ export function ExtensionEditor({ initialExtensionId, onBack, onExtensionChanged
             onChange={handleChange}
           />
         ) : (
-          <div className='flex-1 flex items-center justify-center text-sm text-muted-foreground'>Select a local extension from the list, or click + to create a new one.</div>
+          <div className='flex-1 flex items-center justify-center text-sm text-muted-foreground'>
+            Select a local extension from the list, or click + to create a new one.
+          </div>
         )}
       </div>
     </div>

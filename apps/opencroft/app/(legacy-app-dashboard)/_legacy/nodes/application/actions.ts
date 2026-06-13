@@ -1,7 +1,9 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+
 import { createServerFn } from '@tanstack/react-start'
 import * as yaml from 'js-yaml'
+
 import { cacheDir } from '@/server/cache'
 import { deleteSetting, getSetting, upsertSetting } from '@/server/data'
 
@@ -99,22 +101,27 @@ export const getContainerStatuses = createServerFn({ method: 'POST' })
 
     const { execFile } = await import('node:child_process')
     return new Promise((resolve) => {
-      execFile('wsl', ['docker', 'compose', '-f', file, 'ps', '--format', 'json'], { windowsHide: true }, (err, stdout) => {
-        if (err) {
-          resolve({})
-          return
-        }
-        const statuses: Record<string, string> = {}
-        for (const line of stdout.trim().split('\n')) {
-          try {
-            const obj = JSON.parse(line)
-            statuses[obj.Service || obj.Name] = obj.State || 'unknown'
-          } catch {
-            // skip
+      execFile(
+        'wsl',
+        ['docker', 'compose', '-f', file, 'ps', '--format', 'json'],
+        { windowsHide: true },
+        (err, stdout) => {
+          if (err) {
+            resolve({})
+            return
           }
-        }
-        resolve(statuses)
-      })
+          const statuses: Record<string, string> = {}
+          for (const line of stdout.trim().split('\n')) {
+            try {
+              const obj = JSON.parse(line)
+              statuses[obj.Service || obj.Name] = obj.State || 'unknown'
+            } catch {
+              // skip
+            }
+          }
+          resolve(statuses)
+        },
+      )
     })
   })
 

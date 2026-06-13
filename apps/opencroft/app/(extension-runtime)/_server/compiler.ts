@@ -10,7 +10,18 @@ import type { BuildResult, CompileError, ExtensionManifest } from '@/app/(extens
 
 const PROJECT_NODE_MODULES = path.join(projectRoot(), 'node_modules')
 
-const SERVER_EXTERNAL_PACKAGES = ['node:*', 'fs', 'path', 'os', 'child_process', 'crypto', 'stream', 'util', 'events', 'ssh2']
+const SERVER_EXTERNAL_PACKAGES = [
+  'node:*',
+  'fs',
+  'path',
+  'os',
+  'child_process',
+  'crypto',
+  'stream',
+  'util',
+  'events',
+  'ssh2',
+]
 
 // Workspace packages that ship TypeScript source (no built JS) must be bundled
 // into the extension, never externalized — Node cannot `require` their `.ts` entry.
@@ -306,12 +317,19 @@ async function pickEntry(dir: string, candidates: string[]): Promise<string | nu
   return null
 }
 
-async function compileSide(extensionId: string, manifest: ExtensionManifest, side: 'client' | 'server'): Promise<{ errors: CompileError[]; warnings: CompileError[] }> {
+async function compileSide(
+  extensionId: string,
+  manifest: ExtensionManifest,
+  side: 'client' | 'server',
+): Promise<{ errors: CompileError[]; warnings: CompileError[] }> {
   const src = extDir(extensionId)
   const outDir = extDistDir(extensionId)
   await fs.mkdir(outDir, { recursive: true })
 
-  const entries = side === 'client' ? ['src/client.tsx', 'src/client.ts', 'src/index.tsx', 'src/index.ts'] : ['server/index.ts', 'server/index.tsx', 'extension.ts', 'extension.tsx']
+  const entries =
+    side === 'client'
+      ? ['src/client.tsx', 'src/client.ts', 'src/index.tsx', 'src/index.ts']
+      : ['server/index.ts', 'server/index.tsx', 'extension.ts', 'extension.tsx']
   const entry = manifest.main && side === 'server' ? path.join(src, manifest.main) : await pickEntry(src, entries)
   if (!entry) {
     return { errors: [], warnings: [] }
@@ -326,7 +344,13 @@ async function compileSide(extensionId: string, manifest: ExtensionManifest, sid
   // then run against a different copy of the same package in the app's
   // node_modules causes version/ABI clashes. Keep them as runtime requires,
   // resolved from the extension's node_modules by the loader.
-  const serverExternals = side === 'server' ? [...SERVER_EXTERNAL_PACKAGES, ...(await readDependencyNames(extensionId)).filter((name) => !ALWAYS_BUNDLED_PACKAGES.includes(name))] : []
+  const serverExternals =
+    side === 'server'
+      ? [
+          ...SERVER_EXTERNAL_PACKAGES,
+          ...(await readDependencyNames(extensionId)).filter((name) => !ALWAYS_BUNDLED_PACKAGES.includes(name)),
+        ]
+      : []
 
   try {
     const result = await esbuild.build({
@@ -390,7 +414,10 @@ async function compileClientCss(extensionId: string): Promise<CompileError[]> {
 }
 
 export async function buildExtension(extensionId: string, manifest: ExtensionManifest): Promise<BuildResult> {
-  const [client, server] = await Promise.all([compileSide(extensionId, manifest, 'client'), compileSide(extensionId, manifest, 'server')])
+  const [client, server] = await Promise.all([
+    compileSide(extensionId, manifest, 'client'),
+    compileSide(extensionId, manifest, 'server'),
+  ])
   const errors = [...client.errors, ...server.errors]
   const warnings = [...client.warnings, ...server.warnings]
   if (errors.length === 0) {

@@ -24,7 +24,11 @@ function mcpErr(id: number | string | null, code: number, message: string): MCPR
   return { jsonrpc: '2.0', id, error: { code, message } }
 }
 
-async function handleMethod(method: string, params: Record<string, unknown> | undefined, opts: { signal?: AbortSignal; internal?: boolean }) {
+async function handleMethod(
+  method: string,
+  params: Record<string, unknown> | undefined,
+  opts: { signal?: AbortSignal; internal?: boolean },
+) {
   switch (method) {
     case 'initialize':
       return {
@@ -73,7 +77,10 @@ export const Route = createFileRoute('/(mcp)/api/mcp')({
 
         try {
           const internal = request.headers.get('x-opencroft-internal') === '1'
-          const result = await handleMethod(body.method, body.params as Record<string, unknown> | undefined, { signal: request.signal, internal })
+          const result = await handleMethod(body.method, body.params as Record<string, unknown> | undefined, {
+            signal: request.signal,
+            internal,
+          })
 
           // Notifications have no id and no response body
           if (body.id === null || body.id === undefined) {
@@ -90,16 +97,21 @@ export const Route = createFileRoute('/(mcp)/api/mcp')({
           })
         } catch (e: unknown) {
           const err = e as { code?: number; message?: string }
-          return Response.json(mcpErr(body.id ?? null, err.code ?? -32603, err.message ?? 'Internal error'), { status: 500 })
+          return Response.json(mcpErr(body.id ?? null, err.code ?? -32603, err.message ?? 'Internal error'), {
+            status: 500,
+          })
         }
       },
 
       // Streamable HTTP: GET — session info (405 for stateless implementation)
       GET: () => {
-        return new Response(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not supported' } }), {
-          status: 405,
-          headers: { 'Content-Type': 'application/json', Allow: 'POST, DELETE' },
-        })
+        return new Response(
+          JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not supported' } }),
+          {
+            status: 405,
+            headers: { 'Content-Type': 'application/json', Allow: 'POST, DELETE' },
+          },
+        )
       },
 
       // Streamable HTTP: DELETE — terminate session (200 for stateless implementation)

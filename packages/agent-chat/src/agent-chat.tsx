@@ -2,7 +2,6 @@
 
 import { Bot, Loader2, Plug, Settings2, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-
 import { Button } from 'ui/components/ui/button'
 import { Flex } from 'ui/components/ui/layout/flex'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
@@ -54,7 +53,13 @@ export function AgentChat({ eventsUrl, toolViews = DEFAULT_TOOL_VIEWS, className
           </PopoverTrigger>
           <PopoverContent align='start' className='w-96'>
             <Flex withGaps>
-              <AgentProfilePicker profiles={session.profiles} activeId={session.activeId} onSelect={session.switchProfile} onCreate={session.newProfile} onDelete={session.deleteProfile} />
+              <AgentProfilePicker
+                profiles={session.profiles}
+                activeId={session.activeId}
+                onSelect={session.switchProfile}
+                onCreate={session.newProfile}
+                onDelete={session.deleteProfile}
+              />
               <AgentPresetForm
                 name={session.name}
                 onNameChange={session.setName}
@@ -146,7 +151,9 @@ export function AgentChat({ eventsUrl, toolViews = DEFAULT_TOOL_VIEWS, className
         emptyState={
           <>
             <Bot className='size-8 opacity-40' />
-            {session.sessionId ? 'Send a message to start the conversation.' : 'Configure an agent and start a new chat.'}
+            {session.sessionId
+              ? 'Send a message to start the conversation.'
+              : 'Configure an agent and start a new chat.'}
           </>
         }
         footer={

@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+
 import { createFileRoute } from '@tanstack/react-router'
+
 import { getGitFileAtRef } from '@/app/(docs)/_server/actions'
 import { getDocsRoot } from '@/app/(docs)/_server/docs-root'
 
@@ -38,7 +40,9 @@ async function readDirRecursive(root: string, dirPath: string): Promise<DocEntry
           continue
         }
         const children = await readDirRecursive(root, relativePath)
-        if (children.some((c) => c.type === 'file' || (c.type === 'directory' && c.children && c.children.length > 0))) {
+        if (
+          children.some((c) => c.type === 'file' || (c.type === 'directory' && c.children && c.children.length > 0))
+        ) {
           results.push({ name: entry.name, path: relativePath, type: 'directory', children })
         }
       } else if (entry.isFile() && entry.name.endsWith('.md')) {

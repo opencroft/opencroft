@@ -1,6 +1,12 @@
 import { createServerFn } from '@tanstack/react-start'
 
-import { activateLifecycleExtensions, ensureExtensionBuilt, extensionHasClient, getExtensionModule, loadAllManifests } from '@/app/(extension-runtime)/_server/loader'
+import {
+  activateLifecycleExtensions,
+  ensureExtensionBuilt,
+  extensionHasClient,
+  getExtensionModule,
+  loadAllManifests,
+} from '@/app/(extension-runtime)/_server/loader'
 import type { ExtensionManifestInfo } from '@/app/(extension-runtime)/_types'
 
 export const invokeExtensionAction = createServerFn({ method: 'POST', strict: { output: false } })
@@ -15,11 +21,15 @@ export const invokeExtensionAction = createServerFn({ method: 'POST', strict: { 
     return fn(...args)
   })
 
-export const listExtensionManifests = createServerFn({ strict: { output: false } }).handler(async (): Promise<ExtensionManifestInfo[]> => {
-  await activateLifecycleExtensions()
-  const manifests = await loadAllManifests()
-  return Promise.all(manifests.map(async (manifest) => ({ ...manifest, hasClient: await extensionHasClient(manifest.id) })))
-})
+export const listExtensionManifests = createServerFn({ strict: { output: false } }).handler(
+  async (): Promise<ExtensionManifestInfo[]> => {
+    await activateLifecycleExtensions()
+    const manifests = await loadAllManifests()
+    return Promise.all(
+      manifests.map(async (manifest) => ({ ...manifest, hasClient: await extensionHasClient(manifest.id) })),
+    )
+  },
+)
 
 export const rebuildExtension = createServerFn({ method: 'POST' })
   .inputValidator((extensionId: string) => extensionId)

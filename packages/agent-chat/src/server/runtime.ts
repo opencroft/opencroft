@@ -32,7 +32,10 @@ export interface SkillsDataLayer {
   list(): SkillRecord[] | Promise<SkillRecord[]>
   getByName(name: string): SkillRecord | null | Promise<SkillRecord | null>
   create(input: { name: string; description?: string; content?: string }): SkillRecord | Promise<SkillRecord>
-  update(name: string, updates: { name?: string; description?: string; content?: string }): SkillRecord | null | Promise<SkillRecord | null>
+  update(
+    name: string,
+    updates: { name?: string; description?: string; content?: string },
+  ): SkillRecord | null | Promise<SkillRecord | null>
   remove(name: string): void | Promise<void>
 }
 
@@ -58,7 +61,11 @@ export interface RoleRecord {
 export interface RolesDataLayer {
   list(): RoleRecord[] | Promise<RoleRecord[]>
   getById(id: string): RoleRecord | null | Promise<RoleRecord | null>
-  create(input: { name: string; description?: string; permissions?: Record<string, PermissionValue> }): RoleRecord | Promise<RoleRecord>
+  create(input: {
+    name: string
+    description?: string
+    permissions?: Record<string, PermissionValue>
+  }): RoleRecord | Promise<RoleRecord>
   update(
     id: string,
     updates: {

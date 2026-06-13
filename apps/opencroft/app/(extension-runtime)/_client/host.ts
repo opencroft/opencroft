@@ -1,12 +1,22 @@
 'use client'
 
 import { Terminal } from '@opencroft/terminal/client'
-import { Handle, NodeResizer, Position, useEdges, useNodeId, useNodes, useReactFlow, useUpdateNodeInternals } from '@xyflow/react'
+import {
+  Handle,
+  NodeResizer,
+  Position,
+  useEdges,
+  useNodeId,
+  useNodes,
+  useReactFlow,
+  useUpdateNodeInternals,
+} from '@xyflow/react'
 import * as icons from 'lucide-react'
 import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
 import * as uiKit from 'ui/ext'
+
 import { CommandBar, CommandBarMenu, CommandBarMenuItem } from '@/app/(dashboard)/_canvas/command-bar'
 import { inspectorIntent, useInspectorIntent } from '@/app/(dashboard)/_canvas/inspector-intent'
 import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/(dashboard)/_canvas/node-card'
@@ -20,7 +30,11 @@ import { dispatchNodeAction } from '@/app/(extension-runtime)/_server/node-actio
 import type { ExtensionContextType, ExtensionHandle } from '@/app/(extension-runtime)/_types'
 import { FileBrowser } from '@/app/(filemanager)/_components/file-browser'
 import { FileManagerProvider } from '@/app/(filemanager)/_components/filemanager-provider'
-import { useDockerContainers, useDockerSnapshotReceived, useSeedDockerContainers } from '@/app/(sse)/_lib/sse-events-store'
+import {
+  useDockerContainers,
+  useDockerSnapshotReceived,
+  useSeedDockerContainers,
+} from '@/app/(sse)/_lib/sse-events-store'
 import { ControlledInput } from '@/components/ui/input/controlled-input'
 
 export interface ExtensionComponentProps<D = Record<string, unknown>> {
@@ -127,7 +141,9 @@ export function defineExtension(decl: ExtensionDeclaration): ExtensionDeclaratio
   const modes = decl.commandModes ?? []
   const settings = decl.settings ?? []
   if (nodes.length === 0 && modes.length === 0 && settings.length === 0) {
-    throw new Error(`Extension ${decl.manifest.id}: defineExtension requires at least one node, command mode, or settings page`)
+    throw new Error(
+      `Extension ${decl.manifest.id}: defineExtension requires at least one node, command mode, or settings page`,
+    )
   }
   return { ...decl, nodes, commandModes: modes, settings }
 }

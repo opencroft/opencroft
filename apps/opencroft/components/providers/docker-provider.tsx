@@ -107,7 +107,12 @@ export function DockerProvider({ children }: { children: React.ReactNode }) {
     if (!term) {
       return state.containers
     }
-    return state.containers.filter((c) => c.names.toLowerCase().includes(term) || c.id.toLowerCase().includes(term) || c.image.toLowerCase().includes(term))
+    return state.containers.filter(
+      (c) =>
+        c.names.toLowerCase().includes(term) ||
+        c.id.toLowerCase().includes(term) ||
+        c.image.toLowerCase().includes(term),
+    )
   }, [state.containers, state.searchTerm])
 
   useEffect(() => {

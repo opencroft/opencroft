@@ -6,11 +6,19 @@ import { useCallback, useEffect, useState } from 'react'
 import { Badge } from 'ui/badge'
 import { Input } from 'ui/input'
 import { Label } from 'ui/label'
+
 import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 import { useSettingsDraft } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/use-settings-draft'
-import { ButtonPin, HANDLE_EXECUTION, HANDLE_FILESYSTEM } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/button-pin'
+import {
+  ButtonPin,
+  HANDLE_EXECUTION,
+  HANDLE_FILESYSTEM,
+} from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/button-pin'
 import { PinnedNode, StatsList } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/pinned-node'
-import { spawnFileBrowserWindow, spawnTerminalWindow } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/spawn-window'
+import {
+  spawnFileBrowserWindow,
+  spawnTerminalWindow,
+} from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/spawn-window'
 import { getWslStats, type WslStats } from '@/app/(legacy-app-dashboard)/_legacy/nodes/wsl/actions'
 
 export type WslData = {
@@ -46,7 +54,13 @@ function WslComponent({ data, selected, positionAbsoluteX, positionAbsoluteY }: 
     if (!data.distro) {
       return
     }
-    setNodes((nds) => [...nds, spawnTerminalWindow({ title: data.distro, x: positionAbsoluteX, y: positionAbsoluteY }, { type: 'wsl', config: { distro: data.distro } })])
+    setNodes((nds) => [
+      ...nds,
+      spawnTerminalWindow(
+        { title: data.distro, x: positionAbsoluteX, y: positionAbsoluteY },
+        { type: 'wsl', config: { distro: data.distro } },
+      ),
+    ])
   }, [data.distro, positionAbsoluteX, positionAbsoluteY, setNodes])
 
   const openFiles = useCallback(() => {
@@ -67,7 +81,13 @@ function WslComponent({ data, selected, positionAbsoluteX, positionAbsoluteY }: 
     ])
   }, [data.distro, positionAbsoluteX, positionAbsoluteY, setNodes])
 
-  const status = loading ? ('warning' as const) : error ? ('destructive' as const) : stats ? ('success' as const) : undefined
+  const status = loading
+    ? ('warning' as const)
+    : error
+      ? ('destructive' as const)
+      : stats
+        ? ('success' as const)
+        : undefined
 
   return (
     <PinnedNode
@@ -98,7 +118,13 @@ function WslComponent({ data, selected, positionAbsoluteX, positionAbsoluteY }: 
       output={
         data.distro ? (
           <>
-            <ButtonPin handleId={HANDLE_EXECUTION} icon={TerminalSquare} label='Terminal' side='right' onClick={openTerminal} />
+            <ButtonPin
+              handleId={HANDLE_EXECUTION}
+              icon={TerminalSquare}
+              label='Terminal'
+              side='right'
+              onClick={openTerminal}
+            />
             <ButtonPin handleId={HANDLE_FILESYSTEM} icon={FolderOpen} label='Files' side='right' onClick={openFiles} />
           </>
         ) : undefined
@@ -114,7 +140,12 @@ function WslSettings(props: NodeSettingsProps<WslData>) {
     <div className='flex flex-col gap-3'>
       <div className='flex flex-col gap-1'>
         <Label className='text-xs'>Distro</Label>
-        <Input value={draft.distro ?? ''} onChange={(e) => update({ distro: e.target.value })} placeholder='Ubuntu' className='h-7 text-xs font-mono' />
+        <Input
+          value={draft.distro ?? ''}
+          onChange={(e) => update({ distro: e.target.value })}
+          placeholder='Ubuntu'
+          className='h-7 text-xs font-mono'
+        />
       </div>
     </div>
   )

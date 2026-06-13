@@ -1,4 +1,5 @@
 import { createAgentClient } from 'agent-client/agent-client'
+
 import { readMcpServers } from '@/app/(agent)/_server/mcp-store'
 
 // Single shared agent-client engine for the opencroft app. Every ACP route and
@@ -14,6 +15,13 @@ import { readMcpServers } from '@/app/(agent)/_server/mcp-store'
 const OPENCROFT_MCP_URL = process.env.OPENCROFT_MCP_URL ?? 'http://127.0.0.1:9999/api/mcp'
 
 export const agentClient = createAgentClient({
-  extraMcpServers: [{ type: 'http', name: 'opencroft', url: OPENCROFT_MCP_URL, headers: [{ name: 'x-opencroft-internal', value: '1' }] }],
+  extraMcpServers: [
+    {
+      type: 'http',
+      name: 'opencroft',
+      url: OPENCROFT_MCP_URL,
+      headers: [{ name: 'x-opencroft-internal', value: '1' }],
+    },
+  ],
   loadMcpServers: readMcpServers,
 })

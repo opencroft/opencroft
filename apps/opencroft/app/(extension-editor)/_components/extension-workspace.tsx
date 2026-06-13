@@ -2,6 +2,7 @@
 
 import { Loader2 } from 'lucide-react'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from 'ui/resizable'
+
 import { CodePanel } from '@/app/(extension-editor)/_components/code-panel'
 import { type EditorFile, FileTabs, fileLanguage } from '@/app/(extension-editor)/_components/file-tabs'
 import { PreviewPanel } from '@/app/(extension-editor)/_components/preview-panel'
@@ -22,7 +23,20 @@ interface ExtensionWorkspaceProps {
   onChange: (file: EditorFile, value: string) => void
 }
 
-export function ExtensionWorkspace({ title, files, activeFile, busy, errors, warnings, previewTypeId, previewVersion, onFileSelect, onCreateFile, onDeleteFile, onChange }: ExtensionWorkspaceProps) {
+export function ExtensionWorkspace({
+  title,
+  files,
+  activeFile,
+  busy,
+  errors,
+  warnings,
+  previewTypeId,
+  previewVersion,
+  onFileSelect,
+  onCreateFile,
+  onDeleteFile,
+  onChange,
+}: ExtensionWorkspaceProps) {
   const content = files[activeFile] ?? ''
   const language = fileLanguage(activeFile) as 'tsx' | 'json'
 
@@ -32,7 +46,13 @@ export function ExtensionWorkspace({ title, files, activeFile, busy, errors, war
         <span className='text-sm font-semibold flex-1 truncate'>{title}</span>
         {busy ? <Loader2 className='size-3.5 animate-spin text-muted-foreground' /> : null}
       </div>
-      <FileTabs files={files} active={activeFile} onSelect={onFileSelect} onCreate={onCreateFile} onDelete={onDeleteFile} />
+      <FileTabs
+        files={files}
+        active={activeFile}
+        onSelect={onFileSelect}
+        onCreate={onCreateFile}
+        onDelete={onDeleteFile}
+      />
       <div className='flex-1 min-h-0 flex'>
         <ResizablePanelGroup orientation='horizontal'>
           <ResizablePanel defaultSize={65} minSize={30}>

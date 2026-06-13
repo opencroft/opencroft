@@ -129,7 +129,10 @@ async function resolveAuth(auth?: InstallAuth): Promise<ResolvedAuth | null> {
   }
   const tokenKey = auth.tokenKey ?? 'token'
   const usernameKey = auth.usernameKey ?? 'username'
-  const [token, username] = await Promise.all([getSecretValue({ data: { storeId: auth.storeId, key: tokenKey } }), getSecretValue({ data: { storeId: auth.storeId, key: usernameKey } })])
+  const [token, username] = await Promise.all([
+    getSecretValue({ data: { storeId: auth.storeId, key: tokenKey } }),
+    getSecretValue({ data: { storeId: auth.storeId, key: usernameKey } }),
+  ])
   if (!token) {
     throw new Error(`Secret ${auth.storeId}/${tokenKey} not found or empty`)
   }
@@ -203,11 +206,20 @@ async function installNodeDeps(dir: string): Promise<void> {
   }
 }
 
-async function gitClone(url: string, refKind: 'tag' | 'head', ref: string, dest: string, creds: ResolvedAuth | null): Promise<string> {
+async function gitClone(
+  url: string,
+  refKind: 'tag' | 'head',
+  ref: string,
+  dest: string,
+  creds: ResolvedAuth | null,
+): Promise<string> {
   await fs.mkdir(path.dirname(dest), { recursive: true })
   await fs.rm(dest, { recursive: true, force: true })
   const authedUrl = applyAuthToUrl(url, creds)
-  const args = refKind === 'tag' ? ['clone', '--depth', '1', '--branch', ref, '--single-branch', authedUrl, dest] : ['clone', '--depth', '1', authedUrl, dest]
+  const args =
+    refKind === 'tag'
+      ? ['clone', '--depth', '1', '--branch', ref, '--single-branch', authedUrl, dest]
+      : ['clone', '--depth', '1', authedUrl, dest]
   await execFile('git', args, { maxBuffer: GIT_BUFFER })
   const { stdout } = await execFile('git', ['-C', dest, 'rev-parse', 'HEAD'], {})
   const sha = stdout.trim().slice(0, 7)
@@ -320,7 +332,12 @@ async function pickFreshSlug(owner: string, repo: string): Promise<string> {
   return `${base}-${i}`
 }
 
-async function performInstall(slug: string, parsed: ParsedRepo, auth: InstallAuth | undefined, refSpec?: string): Promise<InstalledExtensionRecord> {
+async function performInstall(
+  slug: string,
+  parsed: ParsedRepo,
+  auth: InstallAuth | undefined,
+  refSpec?: string,
+): Promise<InstalledExtensionRecord> {
   const id = `installed/${slug}`
   const dir = path.join(installedExtRoot(), slug)
   const creds = await resolveAuth(auth)
@@ -362,22 +379,24 @@ export const installExtensionFromUrl = createServerFn({ method: 'POST', strict: 
     return performInstall(slug, parsed, input.auth, input.ref)
   })
 
-export const listInstalledExtensions = createServerFn({ strict: { output: false } }).handler(async (): Promise<InstalledExtensionRecord[]> => {
-  let entries: string[]
-  try {
-    entries = await fs.readdir(installedExtRoot())
-  } catch {
-    return []
-  }
-  const records: InstalledExtensionRecord[] = []
-  for (const slug of entries) {
-    const record = await readRecord(slug)
-    if (record) {
-      records.push(record)
+export const listInstalledExtensions = createServerFn({ strict: { output: false } }).handler(
+  async (): Promise<InstalledExtensionRecord[]> => {
+    let entries: string[]
+    try {
+      entries = await fs.readdir(installedExtRoot())
+    } catch {
+      return []
     }
-  }
-  return records
-})
+    const records: InstalledExtensionRecord[] = []
+    for (const slug of entries) {
+      const record = await readRecord(slug)
+      if (record) {
+        records.push(record)
+      }
+    }
+    return records
+  },
+)
 
 function slugFromInstalledId(extensionId: string): string {
   const [scope, slug] = extensionId.split('/')

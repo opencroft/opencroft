@@ -26,7 +26,12 @@ export function DevBuildBadge() {
     return null
   }
 
-  const label = [info.branch !== 'unknown' ? info.branch : null, info.commit !== 'unknown' ? info.commit.slice(0, 7) : null].filter(Boolean).join('@')
+  const label = [
+    info.branch !== 'unknown' ? info.branch : null,
+    info.commit !== 'unknown' ? info.commit.slice(0, 7) : null,
+  ]
+    .filter(Boolean)
+    .join('@')
 
   if (!label) {
     return null

@@ -1,20 +1,14 @@
-import {
-  React,
-  InputHandle,
-  icons,
-  useNodeContext,
-} from '@ext/host';
-import { WindowShell } from '../shared';
+import { InputHandle, icons, React, useNodeContext } from '@ext/host'
+
+import { WindowShell } from '../shared'
 
 interface WindowData {
-  title: string;
-  connection?: Record<string, unknown>;
+  title: string
+  connection?: Record<string, unknown>
 }
 
-export function FileManagerWindowNode({
-  id, data, selected,
-}: { id: string; data: WindowData; selected?: boolean }) {
-  const ctx = useNodeContext<unknown>(id, 'fs-in');
+export function FileManagerWindowNode({ id, data, selected }: { id: string; data: WindowData; selected?: boolean }) {
+  const ctx = useNodeContext<unknown>(id, 'fs-in')
   return (
     <WindowShell
       id={id}
@@ -23,23 +17,21 @@ export function FileManagerWindowNode({
       iconClassName='text-amber-400'
       title={data.title || 'File Manager'}
       bodyClassName='bg-card'
-      input={(
+      input={
         <InputHandle type='filesystem-target' id='fs-in'>
           <span className='text-[10px] text-muted-foreground'>Files</span>
         </InputHandle>
-      )}
+      }
     >
       {ctx || data.connection ? (
         <div className='text-[11px] text-muted-foreground italic p-2'>
           File browser body lands next (SFTP / WSL / local storage adapters).
         </div>
       ) : (
-        <div className='text-[11px] text-muted-foreground italic p-2'>
-          Connect a filesystem target to this window.
-        </div>
+        <div className='text-[11px] text-muted-foreground italic p-2'>Connect a filesystem target to this window.</div>
       )}
     </WindowShell>
-  );
+  )
 }
 
 export function FileManagerWindowInspector() {
@@ -51,5 +43,5 @@ export function FileManagerWindowInspector() {
         <code> /app/(filemanager) </code> storage adapters.
       </p>
     </div>
-  );
+  )
 }

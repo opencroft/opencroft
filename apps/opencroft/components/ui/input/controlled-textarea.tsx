@@ -1,11 +1,13 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { useIsMobile } from 'ui/hooks/use-mobile'
 import { Textarea } from 'ui/textarea'
-import { useDebounce } from '@/components/hooks/use-debounce'
-import { useIsMobile } from '@/hooks/use-mobile'
 
-export interface ControlledTextareaProps extends Omit<React.ComponentProps<typeof Textarea>, 'onChange' | 'onBlur' | 'onKeyDown'> {
+import { useDebounce } from '@/components/hooks/use-debounce'
+
+export interface ControlledTextareaProps
+  extends Omit<React.ComponentProps<typeof Textarea>, 'onChange' | 'onBlur' | 'onKeyDown'> {
   onValueChanged?: (value: string) => void
   onAccepted?: (value: string) => void
   value?: string

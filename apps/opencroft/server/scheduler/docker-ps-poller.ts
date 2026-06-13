@@ -51,7 +51,13 @@ function containersEqual(a: DockerContainerSnapshot[], b: DockerContainerSnapsho
   for (let i = 0; i < a.length; i++) {
     const x = a[i]
     const y = b[i]
-    if (x.id !== y.id || x.name !== y.name || x.service !== y.service || x.status !== y.status || x.running !== y.running) {
+    if (
+      x.id !== y.id ||
+      x.name !== y.name ||
+      x.service !== y.service ||
+      x.status !== y.status ||
+      x.running !== y.running
+    ) {
       return false
     }
   }

@@ -1,60 +1,54 @@
-import {
-  React,
-  InputHandle,
-  icons,
-  useNodeContext,
-} from '@ext/host';
-import { Terminal } from '@ext/ui';
-import { WindowShell } from '../shared';
+import { InputHandle, icons, React, useNodeContext } from '@ext/host'
+import { Terminal } from '@ext/ui'
 
-const { useState } = React;
+import { WindowShell } from '../shared'
+
+const { useState } = React
 
 interface WindowData {
-  title: string;
-  connection?: TerminalConnection;
+  title: string
+  connection?: TerminalConnection
 }
 
 interface TerminalConnection {
-  type: 'ssh' | 'local' | 'wsl';
-  config: Record<string, unknown>;
+  type: 'ssh' | 'local' | 'wsl'
+  config: Record<string, unknown>
 }
 
 function flattenDockerExec(value: Record<string, unknown>): TerminalConnection {
-  const via = (value.via as Record<string, unknown> | undefined) ?? { type: 'local' };
-  const contextName = value.contextName as string | undefined;
-  const containerId = value.containerId as string;
-  const ctxArgs = contextName ? ['--context', contextName] : [];
-  const execArgs = [...ctxArgs, 'exec', '-it', containerId, 'bash'];
+  const via = (value.via as Record<string, unknown> | undefined) ?? { type: 'local' }
+  const contextName = value.contextName as string | undefined
+  const containerId = value.containerId as string
+  const ctxArgs = contextName ? ['--context', contextName] : []
+  const execArgs = [...ctxArgs, 'exec', '-it', containerId, 'bash']
   if (via.type === 'ssh') {
-    const { type: _t, ...config } = via;
-    return { type: 'ssh', config: { ...config, command: `docker ${execArgs.join(' ')}` } };
+    const { type: _t, ...config } = via
+    return { type: 'ssh', config: { ...config, command: `docker ${execArgs.join(' ')}` } }
   }
   if (via.type === 'wsl') {
-    const { type: _t, ...config } = via;
-    return { type: 'wsl', config: { ...config, command: 'docker', args: execArgs } };
+    const { type: _t, ...config } = via
+    return { type: 'wsl', config: { ...config, command: 'docker', args: execArgs } }
   }
-  return { type: 'local', config: { command: 'docker', args: execArgs } };
+  return { type: 'local', config: { command: 'docker', args: execArgs } }
 }
 
 function connectionFromContext(value: Record<string, unknown> | undefined): TerminalConnection | null {
   if (!value) {
-    return null;
+    return null
   }
   if (value.type === 'docker-exec') {
-    return flattenDockerExec(value);
+    return flattenDockerExec(value)
   }
-  const { type, ...config } = value;
-  return { type: (type as TerminalConnection['type']) ?? 'local', config };
+  const { type, ...config } = value
+  return { type: (type as TerminalConnection['type']) ?? 'local', config }
 }
 
-type TerminalStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
+type TerminalStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
 
-export function TerminalWindowNode({
-  id, data, selected,
-}: { id: string; data: WindowData; selected?: boolean }) {
-  const ctx = useNodeContext<Record<string, unknown>>(id, 'ssh-in');
-  const connection: TerminalConnection | null = data.connection ?? connectionFromContext(ctx?.value);
-  const [status, setStatus] = useState<TerminalStatus>('connecting');
+export function TerminalWindowNode({ id, data, selected }: { id: string; data: WindowData; selected?: boolean }) {
+  const ctx = useNodeContext<Record<string, unknown>>(id, 'ssh-in')
+  const connection: TerminalConnection | null = data.connection ?? connectionFromContext(ctx?.value)
+  const [status, setStatus] = useState<TerminalStatus>('connecting')
 
   return (
     <WindowShell
@@ -65,9 +59,7 @@ export function TerminalWindowNode({
       iconClassName='text-green-400'
       title={data.title || 'Terminal'}
       bodyClassName='bg-black'
-      input={(
-        <InputHandle type='terminal-context' id='ssh-in' />
-      )}
+      input={<InputHandle type='terminal-context' id='ssh-in' />}
     >
       {connection ? (
         <Terminal connection={connection} fontSize={13} onStatusChange={setStatus} />
@@ -77,10 +69,16 @@ export function TerminalWindowNode({
         </div>
       )}
     </WindowShell>
-  );
+  )
 }
 
-export function TerminalWindowInspector({ data }: { nodeId: string; data: WindowData; updateData: (p: Partial<WindowData>) => void }) {
+export function TerminalWindowInspector({
+  data,
+}: {
+  nodeId: string
+  data: WindowData
+  updateData: (p: Partial<WindowData>) => void
+}) {
   return (
     <div className='flex flex-col gap-2 text-xs'>
       <div className='font-medium'>{data.title || 'Terminal'}</div>
@@ -92,5 +90,5 @@ export function TerminalWindowInspector({ data }: { nodeId: string; data: Window
         <div className='text-muted-foreground italic'>No connection configured.</div>
       )}
     </div>
-  );
+  )
 }

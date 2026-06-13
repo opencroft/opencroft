@@ -1,6 +1,7 @@
 import { Readable } from 'node:stream'
 
 import { createFileRoute } from '@tanstack/react-router'
+
 import type { DockerConfig, S3Config, SshConfig, StorageConnection, WslConfig } from '@/app/(filemanager)/_lib/types'
 import * as dockerStorage from '@/app/(filemanager)/_server/storage-docker'
 import * as s3Storage from '@/app/(filemanager)/_server/storage-s3'
@@ -19,7 +20,9 @@ export const Route = createFileRoute('/(filemanager)/api/files/upload')({
           return Response.json({ error: 'Missing fields' }, { status: 400 })
         }
 
-        const stream = request.body ? Readable.fromWeb(request.body as Parameters<typeof Readable.fromWeb>[0]) : Readable.from([])
+        const stream = request.body
+          ? Readable.fromWeb(request.body as Parameters<typeof Readable.fromWeb>[0])
+          : Readable.from([])
 
         try {
           const connection: StorageConnection = JSON.parse(connectionJson)

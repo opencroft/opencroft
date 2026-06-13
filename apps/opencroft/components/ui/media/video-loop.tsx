@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+
 import { useVideoLoop } from '@/components/hooks/use-video-loop'
 import { cn } from '@/lib/utils'
 
@@ -13,7 +14,14 @@ export interface VideoLoopProps {
   playsInline?: boolean
 }
 
-export function VideoLoop({ videos, repeatCount = 2, className, showDebug = false, enableVolumeWithMouseHover = false, playsInline = true }: VideoLoopProps) {
+export function VideoLoop({
+  videos,
+  repeatCount = 2,
+  className,
+  showDebug = false,
+  enableVolumeWithMouseHover = false,
+  playsInline = true,
+}: VideoLoopProps) {
   const { videoRef, currentIndex, currentRepeat } = useVideoLoop(videos, repeatCount)
   const [isHovered, setIsHovered] = useState(false)
 
@@ -38,7 +46,16 @@ export function VideoLoop({ videos, repeatCount = 2, className, showDebug = fals
           <div className='absolute top-0 left-0 right-0 bg-black/70 text-white text-sm'>
             <div className='space-y-1'>
               {videos.map((video, i) => (
-                <a key={i} href={video} target='_blank' rel='noopener noreferrer' className={cn('block text-xs hover:underline truncate', i !== currentIndex ? 'text-muted-foreground' : '')}>
+                <a
+                  key={i}
+                  href={video}
+                  target='_blank'
+                  rel='noopener noreferrer'
+                  className={cn(
+                    'block text-xs hover:underline truncate',
+                    i !== currentIndex ? 'text-muted-foreground' : '',
+                  )}
+                >
                   {video}
                 </a>
               ))}

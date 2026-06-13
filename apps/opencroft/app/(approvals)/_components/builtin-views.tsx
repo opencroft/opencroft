@@ -4,6 +4,7 @@ import { useReactFlow } from '@xyflow/react'
 import { GitCompare } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
+
 import { type ApprovalViewProps, registerApprovalView } from '@/app/(approvals)/_components/approval-views'
 import { NodeDiffEditor } from '@/app/(approvals)/_components/node-diff-editor'
 import { readRemoteFile } from '@/app/(approvals)/_server/actions'
@@ -15,7 +16,9 @@ function FieldRow({ label, value }: { label: string; value: string }) {
   return (
     <div className='space-y-0.5'>
       <div className='text-xs font-medium text-muted-foreground'>{label}</div>
-      <pre className='text-xs whitespace-pre-wrap break-all bg-muted/50 rounded-md p-2 max-h-40 overflow-auto font-mono'>{value}</pre>
+      <pre className='text-xs whitespace-pre-wrap break-all bg-muted/50 rounded-md p-2 max-h-40 overflow-auto font-mono'>
+        {value}
+      </pre>
     </div>
   )
 }
@@ -38,7 +41,12 @@ function TargetRow({ target }: { target: string }) {
   return <FieldRow label='Target' value={value} />
 }
 
-function useRemoteFileContent(target: string | undefined, space: string | undefined, path: string | undefined, requestId: string) {
+function useRemoteFileContent(
+  target: string | undefined,
+  space: string | undefined,
+  path: string | undefined,
+  requestId: string,
+) {
   const [content, setContent] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -158,7 +166,17 @@ function getByPath(obj: Record<string, unknown>, path: string): unknown {
   return cur
 }
 
-function NodePropertyDiff({ nodeId, path, current, next }: { nodeId: string; path: string; current: string; next: string }) {
+function NodePropertyDiff({
+  nodeId,
+  path,
+  current,
+  next,
+}: {
+  nodeId: string
+  path: string
+  current: string
+  next: string
+}) {
   const { getNode } = useReactFlow()
   const node = getNode(nodeId) as { data?: { name?: string } } | undefined
   const name = node?.data?.name ?? nodeId
@@ -284,7 +302,9 @@ function changeSummary(update: NodeUpdate): string {
 
 function NodeDiff({ update }: { update: NodeUpdate }) {
   const { getNode } = useReactFlow()
-  const node = getNode(update.nodeId) as { data?: Record<string, unknown>; position?: { x: number; y: number } } | undefined
+  const node = getNode(update.nodeId) as
+    | { data?: Record<string, unknown>; position?: { x: number; y: number } }
+    | undefined
   const name = (node?.data?.name as string | undefined) ?? update.nodeId
   const current = {
     ...(update.data ? { data: node?.data ?? {} } : {}),

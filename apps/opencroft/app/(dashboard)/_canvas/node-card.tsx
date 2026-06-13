@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import '@/app/(dashboard)/_canvas/node-card.css'
 import { StatusIndicator, type StatusVariant } from 'ui/utils/status-indicator'
+
 import { cn } from '@/lib/utils'
 
 interface NodeCardProps {
@@ -16,7 +17,17 @@ interface NodeCardProps {
   className?: string
 }
 
-function TravelingDot({ accent, dots = 8, dotSize = 4, className }: { accent: string; dots?: number; dotSize?: number; className?: string }) {
+function TravelingDot({
+  accent,
+  dots = 8,
+  dotSize = 4,
+  className,
+}: {
+  accent: string
+  dots?: number
+  dotSize?: number
+  className?: string
+}) {
   const ref = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
 
@@ -70,10 +81,20 @@ function TravelingDot({ accent, dots = 8, dotSize = 4, className }: { accent: st
 export function NodeCard({ children, selected, loading, accent, error, className }: NodeCardProps) {
   const lineAccent = error ? 'var(--destructive)' : accent
   const showRing = error || ((loading || selected) && accent)
-  const ringColor = error ? 'var(--destructive)' : accent ? `color-mix(in oklch, ${accent} 20%, transparent)` : undefined
+  const ringColor = error
+    ? 'var(--destructive)'
+    : accent
+      ? `color-mix(in oklch, ${accent} 20%, transparent)`
+      : undefined
   return (
     <div
-      className={cn('relative min-w-[200px] rounded-md p-px', 'shadow-lg shadow-black/50 bg-card', selected ? 'brightness-100' : 'brightness-90', showRing && 'ring-1 ring-inset', className)}
+      className={cn(
+        'relative min-w-[200px] rounded-md p-px',
+        'shadow-lg shadow-black/50 bg-card',
+        selected ? 'brightness-100' : 'brightness-90',
+        showRing && 'ring-1 ring-inset',
+        className,
+      )}
       style={showRing && ringColor ? ({ '--tw-ring-color': ringColor } as React.CSSProperties) : undefined}
     >
       {lineAccent && (
@@ -107,7 +128,18 @@ interface NodeCardHeaderProps {
   className?: string
 }
 
-export function NodeCardHeader({ icon: Icon, iconClassName, status, title, titleClassName, subtitle, extra, input, output, className }: NodeCardHeaderProps) {
+export function NodeCardHeader({
+  icon: Icon,
+  iconClassName,
+  status,
+  title,
+  titleClassName,
+  subtitle,
+  extra,
+  input,
+  output,
+  className,
+}: NodeCardHeaderProps) {
   return (
     <div className={cn('flex items-center gap-2 px-4 py-2', className)}>
       {input}

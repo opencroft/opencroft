@@ -1,6 +1,7 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
 import { Toaster } from 'ui/sonner'
 import { ThemeProvider } from 'ui/theme-provider'
+
 import { AppShell } from '@/app/_shell/app-shell'
 import { listSpaces } from '@/app/(space)/_server/actions'
 import { SSEProvider } from '@/app/(sse)/_components/sse-provider'
@@ -8,7 +9,12 @@ import appCss from '@/app/globals.css?url'
 
 export const Route = createRootRoute({
   head: () => ({
-    meta: [{ charSet: 'utf-8' }, { name: 'viewport', content: 'width=device-width, initial-scale=1' }, { title: 'OpenCroft' }, { name: 'description', content: 'Platform for your home lab' }],
+    meta: [
+      { charSet: 'utf-8' },
+      { name: 'viewport', content: 'width=device-width, initial-scale=1' },
+      { title: 'OpenCroft' },
+      { name: 'description', content: 'Platform for your home lab' },
+    ],
     links: [
       { rel: 'stylesheet', href: appCss },
       { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' },

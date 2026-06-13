@@ -10,6 +10,7 @@ import type { FC } from 'react'
 
 export * from '@opencroft/core'
 export type { TerminalConfig, TerminalProps, TerminalStatus } from '@opencroft/terminal/client'
+
 export * as legacy from './legacy'
 
 /** Embeddable xterm terminal connected to the host's terminal WebSocket. */

@@ -7,7 +7,11 @@ import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 import { ScrollArea } from 'ui/layout/scroll-area'
 import { Separator } from 'ui/separator'
-import type { InstalledExtensionRecord, UpdateCheck } from '@/app/(extension-editor)/_actions/installed-extensions-actions'
+
+import type {
+  InstalledExtensionRecord,
+  UpdateCheck,
+} from '@/app/(extension-editor)/_actions/installed-extensions-actions'
 import type { LocalExtensionRecord } from '@/app/(extension-editor)/_actions/local-extensions-actions'
 import { installRegistryExtension, listRegistryExtensions } from '@/app/(extension-editor)/_actions/registry-actions'
 import type { RegistryExtension } from '@/app/(extension-runtime)/_server/registry'
@@ -27,7 +31,19 @@ interface ExtensionsListPanelProps {
   onInstalled: (record: InstalledExtensionRecord) => void
 }
 
-export function ExtensionsListPanel({ records, installed, updateChecks, selectedId, onSelect, onNew, onInstall, onDelete, onUpdate, onUninstall, onInstalled }: ExtensionsListPanelProps) {
+export function ExtensionsListPanel({
+  records,
+  installed,
+  updateChecks,
+  selectedId,
+  onSelect,
+  onNew,
+  onInstall,
+  onDelete,
+  onUpdate,
+  onUninstall,
+  onInstalled,
+}: ExtensionsListPanelProps) {
   const [query, setQuery] = useState('')
   const [registryResults, setRegistryResults] = useState<(RegistryExtension & { registryName: string })[]>([])
   const [searching, setSearching] = useState(false)
@@ -87,7 +103,12 @@ export function ExtensionsListPanel({ records, installed, updateChecks, selected
       <div className='flex items-center gap-1 px-2 pb-2'>
         <div className='relative flex-1'>
           <Search className='absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground' />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder='Search extensions...' className='h-7 text-xs pl-7' />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder='Search extensions...'
+            className='h-7 text-xs pl-7'
+          />
         </div>
         {searching && <Loader2 className='size-3.5 animate-spin shrink-0 text-muted-foreground' />}
       </div>
@@ -100,13 +121,18 @@ export function ExtensionsListPanel({ records, installed, updateChecks, selected
           /* Registry search results */
           <>
             <div className='px-3 pt-2 text-[10px] uppercase tracking-wider text-muted-foreground'>Registry</div>
-            {registryResults.length === 0 && !searching && <div className='px-3 py-2 text-xs text-muted-foreground italic'>No extensions found.</div>}
+            {registryResults.length === 0 && !searching && (
+              <div className='px-3 py-2 text-xs text-muted-foreground italic'>No extensions found.</div>
+            )}
             {registryResults.map((ext) => {
               const isInstalled = installedRepos.has(ext.repository)
               const isBusy = installing === ext.id
 
               return (
-                <div key={`${ext.registryName}/${ext.id}`} className='group flex items-center px-3 py-1.5 text-xs hover:bg-accent/50 transition-colors'>
+                <div
+                  key={`${ext.registryName}/${ext.id}`}
+                  className='group flex items-center px-3 py-1.5 text-xs hover:bg-accent/50 transition-colors'
+                >
                   <div className='flex-1 flex items-center gap-2 min-w-0'>
                     <Box className='size-3.5 shrink-0' />
                     <span className='truncate'>{ext.name}</span>
@@ -114,7 +140,14 @@ export function ExtensionsListPanel({ records, installed, updateChecks, selected
                   {isInstalled ? (
                     <span className='text-[10px] text-muted-foreground shrink-0'>installed</span>
                   ) : (
-                    <Button size='icon' variant='ghost' className='size-5 opacity-60' onClick={() => handleInstallFromRegistry(ext)} disabled={isBusy} title={`Install ${ext.name}`}>
+                    <Button
+                      size='icon'
+                      variant='ghost'
+                      className='size-5 opacity-60'
+                      onClick={() => handleInstallFromRegistry(ext)}
+                      disabled={isBusy}
+                      title={`Install ${ext.name}`}
+                    >
                       {isBusy ? <Loader2 className='size-3 animate-spin' /> : <Download className='size-3' />}
                     </Button>
                   )}
@@ -131,8 +164,17 @@ export function ExtensionsListPanel({ records, installed, updateChecks, selected
                 {records.map((record) => {
                   const isSelected = selectedId === record.id
                   return (
-                    <div key={record.id} className={cn('group flex items-center px-3 py-1.5 text-xs hover:bg-accent/50 transition-colors', isSelected && 'bg-accent/60')}>
-                      <button onClick={() => onSelect(record.id)} className='flex-1 flex items-center gap-2 text-left min-w-0'>
+                    <div
+                      key={record.id}
+                      className={cn(
+                        'group flex items-center px-3 py-1.5 text-xs hover:bg-accent/50 transition-colors',
+                        isSelected && 'bg-accent/60',
+                      )}
+                    >
+                      <button
+                        onClick={() => onSelect(record.id)}
+                        className='flex-1 flex items-center gap-2 text-left min-w-0'
+                      >
                         <Box className='size-3.5 shrink-0' />
                         <span className='truncate'>{record.manifest.name}</span>
                       </button>
@@ -161,11 +203,28 @@ export function ExtensionsListPanel({ records, installed, updateChecks, selected
                   const check = updateChecks[record.id]
                   const hasUpdate = check?.hasUpdate ?? false
                   return (
-                    <div key={record.id} className={cn('group flex items-center px-3 py-1.5 text-xs hover:bg-accent/50 transition-colors', isSelected && 'bg-accent/60')}>
-                      <button onClick={() => onSelect(record.id)} className='flex-1 flex items-center gap-2 text-left min-w-0' title={record.sidecar.source.name}>
+                    <div
+                      key={record.id}
+                      className={cn(
+                        'group flex items-center px-3 py-1.5 text-xs hover:bg-accent/50 transition-colors',
+                        isSelected && 'bg-accent/60',
+                      )}
+                    >
+                      <button
+                        onClick={() => onSelect(record.id)}
+                        className='flex-1 flex items-center gap-2 text-left min-w-0'
+                        title={record.sidecar.source.name}
+                      >
                         <Box className='size-3.5 shrink-0' />
                         <span className='truncate flex-1'>{record.manifest.name}</span>
-                        <span className={cn('shrink-0 text-[10px] tabular-nums', hasUpdate ? 'text-amber-500' : 'text-muted-foreground')}>{record.sidecar.ref}</span>
+                        <span
+                          className={cn(
+                            'shrink-0 text-[10px] tabular-nums',
+                            hasUpdate ? 'text-amber-500' : 'text-muted-foreground',
+                          )}
+                        >
+                          {record.sidecar.ref}
+                        </span>
                       </button>
                       {hasUpdate ? (
                         <Button
@@ -212,7 +271,9 @@ export function ExtensionsListPanel({ records, installed, updateChecks, selected
               </div>
             ) : null}
             {records.length === 0 && installed.length === 0 ? (
-              <div className='px-3 py-4 text-xs text-muted-foreground italic'>No extensions yet. Click + to create or search to find extensions.</div>
+              <div className='px-3 py-4 text-xs text-muted-foreground italic'>
+                No extensions yet. Click + to create or search to find extensions.
+              </div>
             ) : null}
           </>
         )}

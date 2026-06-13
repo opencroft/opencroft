@@ -4,6 +4,7 @@ import { ArrowUp, type LucideIcon, Search, Target } from 'lucide-react'
 import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from 'ui/button'
 import { Input } from 'ui/input'
+
 import type { CommandNodeEntry } from '@/app/(dashboard)/_canvas/canvas-command-bar'
 import { CommandBarMenuItem } from '@/app/(dashboard)/_canvas/command-bar'
 import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
@@ -195,7 +196,15 @@ export function SearchFindBar({ mode, nodes, focusTick, onFocusNode, onFocusChan
           placeholder={config.placeholder}
           className='border-0 shadow-none focus-visible:ring-0 focus-visible:border-0 bg-transparent h-8'
         />
-        <Button type='button' size='icon' variant='ghost' className='h-7 w-7 shrink-0 mt-0.5' onMouseDown={(e) => e.preventDefault()} onClick={submit} disabled={results.length === 0}>
+        <Button
+          type='button'
+          size='icon'
+          variant='ghost'
+          className='h-7 w-7 shrink-0 mt-0.5'
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={submit}
+          disabled={results.length === 0}
+        >
           <ArrowUp className='h-4 w-4' />
         </Button>
       </>
@@ -210,11 +219,18 @@ export function SearchFindBar({ mode, nodes, focusTick, onFocusNode, onFocusChan
     return results.map((result, i) => {
       const EntryIcon = result.entry.icon
       return (
-        <CommandBarMenuItem key={result.key} active={i === highlight} onSelect={() => pickResult(result)} onHover={() => setHighlight(i)}>
+        <CommandBarMenuItem
+          key={result.key}
+          active={i === highlight}
+          onSelect={() => pickResult(result)}
+          onHover={() => setHighlight(i)}
+        >
           <div className='flex items-center gap-2 text-sm'>
             <EntryIcon className='h-4 w-4 shrink-0' style={{ color: result.entry.accent }} />
             <span className='truncate'>{result.entry.label}</span>
-            <span className='ml-auto text-[10px] font-mono text-muted-foreground truncate'>{result.entry.subtitle}</span>
+            <span className='ml-auto text-[10px] font-mono text-muted-foreground truncate'>
+              {result.entry.subtitle}
+            </span>
           </div>
           {result.match && (
             <div className='pl-6 font-mono text-[11px] leading-tight'>

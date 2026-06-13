@@ -21,7 +21,13 @@ interface SegmentedButtonProps<T extends string> {
   className?: string
 }
 
-export function SegmentedButton<T extends string>({ value, onChange, options, size = 'default', className }: SegmentedButtonProps<T>) {
+export function SegmentedButton<T extends string>({
+  value,
+  onChange,
+  options,
+  size = 'default',
+  className,
+}: SegmentedButtonProps<T>) {
   const s = sizeClasses[size]
   return (
     <div className={cn('flex items-center gap-0.5 rounded-md border p-0.5 bg-muted', s.container, className)}>
@@ -32,7 +38,9 @@ export function SegmentedButton<T extends string>({ value, onChange, options, si
           className={cn(
             'h-full rounded-[calc(var(--radius)-2px)] transition-colors cursor-pointer whitespace-nowrap',
             s.button,
-            value === opt.value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+            value === opt.value
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground',
           )}
         >
           {opt.label}

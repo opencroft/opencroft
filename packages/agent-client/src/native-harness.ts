@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+
 import type { McpServer as AcpMcpServer, Client } from '@agentclientprotocol/sdk'
 import { PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
@@ -7,7 +8,14 @@ import { z } from 'zod'
 
 import type { AgentConnection } from './connection'
 import { connectMcpToolset } from './mcp-client'
-import { type LocalTool, SKILL_INPUT_SCHEMA, SKILL_TOOL_NAME, type SkillHandler, type SkillsInput, skillToolDescription } from './mcp-server'
+import {
+  type LocalTool,
+  SKILL_INPUT_SCHEMA,
+  SKILL_TOOL_NAME,
+  type SkillHandler,
+  type SkillsInput,
+  skillToolDescription,
+} from './mcp-server'
 import { accessFor, type PermissionValue, type ResolvedPermissions, skillKey, toolKey } from './permissions'
 import { findProvider } from './resolve'
 import { findTurnBoundary } from './turns'
@@ -43,7 +51,9 @@ function resolveBaseUrl(selection: AgentSelection): string {
   if (provider && 'openai' in provider.endpoints) {
     return 'https://api.openai.com/v1'
   }
-  throw new Error(`Provider "${selection.providerId}" has no OpenAI-compatible endpoint; the native harness only reaches OpenAI-compatible models.`)
+  throw new Error(
+    `Provider "${selection.providerId}" has no OpenAI-compatible endpoint; the native harness only reaches OpenAI-compatible models.`,
+  )
 }
 
 function resolveModel(selection: AgentSelection): LanguageModel {
@@ -93,7 +103,13 @@ interface ToolGate {
 // prompt; otherwise (an 'Allow' grant or an MCP/ungranted tool) the prompt is
 // shown unless the session is in bypass mode. Returns a denial string when the
 // user rejects, else null to proceed.
-async function gateToolCall(gate: ToolGate, name: string, input: unknown, toolCallId: string, access: PermissionValue): Promise<string | null> {
+async function gateToolCall(
+  gate: ToolGate,
+  name: string,
+  input: unknown,
+  toolCallId: string,
+  access: PermissionValue,
+): Promise<string | null> {
   if (access === 'AlwaysAllow' || gate.getMode() === 'bypass') {
     return null
   }
@@ -115,7 +131,11 @@ async function gateToolCall(gate: ToolGate, name: string, input: unknown, toolCa
 // into native AI SDK tools, plus the skill tool and any configured MCP servers'
 // tools. Each tool gates itself through the ACP permission flow per its grant.
 // Returns the toolset and a closer for the MCP connections opened this turn.
-async function buildToolset(config: NativeHarnessConfig, gate: ToolGate, permissions: ResolvedPermissions | undefined): Promise<{ toolset: ToolSet; close: () => Promise<void> }> {
+async function buildToolset(
+  config: NativeHarnessConfig,
+  gate: ToolGate,
+  permissions: ResolvedPermissions | undefined,
+): Promise<{ toolset: ToolSet; close: () => Promise<void> }> {
   const toolset: ToolSet = {}
 
   for (const local of config.tools) {
@@ -146,7 +166,8 @@ async function buildToolset(config: NativeHarnessConfig, gate: ToolGate, permiss
       description: skillToolDescription(skills),
       inputSchema: z.object(SKILL_INPUT_SCHEMA),
       // Guard the handler too: a model could still name a non-permitted skill.
-      execute: async ({ skill }) => (accessFor(permissions, skillKey(skill)) === null ? `Skill "${skill}" is not available.` : skillHandler(skill)),
+      execute: async ({ skill }) =>
+        accessFor(permissions, skillKey(skill)) === null ? `Skill "${skill}" is not available.` : skillHandler(skill),
     })
   }
 
@@ -212,7 +233,12 @@ const AVAILABLE_MODES = [
 // `sessions` is owned by the engine (kept in its global store) so it survives
 // dev hot-reloads: the harness object is rebuilt fresh on every call — always
 // with the latest code — while conversation state persists across reloads.
-export function createNativeHarness(client: Client, selection: AgentSelection, config: NativeHarnessConfig, sessions: Map<string, NativeSession>): AgentConnection {
+export function createNativeHarness(
+  client: Client,
+  selection: AgentSelection,
+  config: NativeHarnessConfig,
+  sessions: Map<string, NativeSession>,
+): AgentConnection {
   // Per-profile prompt (from the selection) wins over the host default; empty by
   // default — no system prompt is injected unless one is configured.
   const systemPrompt = selection.systemPrompt?.trim() || config.systemPrompt || ''

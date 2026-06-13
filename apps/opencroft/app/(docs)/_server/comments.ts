@@ -79,7 +79,12 @@ export function createComment(author: string, message: string, anchor?: Anchor):
   }
 }
 
-export async function appendComment(namespace: string, docPath: string, comment: Comment, parentId?: string): Promise<void> {
+export async function appendComment(
+  namespace: string,
+  docPath: string,
+  comment: Comment,
+  parentId?: string,
+): Promise<void> {
   const comments = await readComments(namespace, docPath)
   if (parentId) {
     if (!findAndPush(comments, parentId, comment)) {

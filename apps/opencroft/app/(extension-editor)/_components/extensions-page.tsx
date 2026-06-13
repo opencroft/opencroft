@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Flex } from 'ui/layout/flex'
+
 import {
   checkInstalledForUpdates,
   type InstalledExtensionRecord,
@@ -94,7 +95,10 @@ export default function ExtensionsPage() {
     })
   }, [refresh, checkAllUpdates])
 
-  const selected = useMemo(() => records.find((r) => r.id === selectedId) ?? installed.find((r) => r.id === selectedId) ?? null, [records, installed, selectedId])
+  const selected = useMemo(
+    () => records.find((r) => r.id === selectedId) ?? installed.find((r) => r.id === selectedId) ?? null,
+    [records, installed, selectedId],
+  )
 
   // Load files when selection changes
   useEffect(() => {
@@ -320,7 +324,11 @@ export default function ExtensionsPage() {
           onUninstall={handleUninstall}
           onInstalled={handleInstalled}
         />
-        <InstallExtensionDialog open={installDialogOpen} onOpenChange={setInstallDialogOpen} onInstalled={handleInstalled} />
+        <InstallExtensionDialog
+          open={installDialogOpen}
+          onOpenChange={setInstallDialogOpen}
+          onInstalled={handleInstalled}
+        />
         {selectedId && Object.keys(files).length > 0 ? (
           <ExtensionWorkspace
             title={title}

@@ -4,6 +4,7 @@ import { ChevronRight } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 import { Flex, type FlexProps } from 'ui/layout/flex'
 import { ScrollArea } from 'ui/scroll-area'
+
 import { StickySection } from '@/components/experimental/sticky-section'
 import { cn } from '@/lib/utils'
 
@@ -106,23 +107,35 @@ export function ChatTool({ name, description, args, result }: ChatToolProps) {
   const [open, setOpen] = useState(false)
   return (
     <Flex className='gap-1.5'>
-      <button type='button' onClick={() => setOpen((v) => !v)} className='flex items-center gap-2 text-xs text-left cursor-pointer'>
-        <ChevronRight className={cn('h-3 w-3 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} />
+      <button
+        type='button'
+        onClick={() => setOpen((v) => !v)}
+        className='flex items-center gap-2 text-xs text-left cursor-pointer'
+      >
+        <ChevronRight
+          className={cn('h-3 w-3 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')}
+        />
         <span className='font-mono font-medium shrink-0'>{name}</span>
         {description && <span className='font-mono text-muted-foreground'>{description}</span>}
         {!result && <span className='text-muted-foreground shrink-0'>running…</span>}
         {isError && <span className='text-destructive shrink-0'>error</span>}
       </button>
       {open && (
-        <div className={cn('rounded-md border bg-muted/30 text-xs overflow-hidden', isError && 'border-destructive/60')}>
+        <div
+          className={cn('rounded-md border bg-muted/30 text-xs overflow-hidden', isError && 'border-destructive/60')}
+        >
           <ChatToolRow label='args'>
-            <pre className='max-h-48 overflow-y-auto whitespace-pre-wrap break-all text-[11px] text-muted-foreground'>{JSON.stringify(args, null, 2)}</pre>
+            <pre className='max-h-48 overflow-y-auto whitespace-pre-wrap break-all text-[11px] text-muted-foreground'>
+              {JSON.stringify(args, null, 2)}
+            </pre>
           </ChatToolRow>
           {result && (
             <>
               <div className='border-t' />
               <ChatToolRow label='output'>
-                <pre className='overflow-y-auto whitespace-pre-wrap break-all text-[11px] text-muted-foreground'>{result.text}</pre>
+                <pre className='overflow-y-auto whitespace-pre-wrap break-all text-[11px] text-muted-foreground'>
+                  {result.text}
+                </pre>
               </ChatToolRow>
             </>
           )}

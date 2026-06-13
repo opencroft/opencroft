@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Input } from 'ui/input'
 import { Label } from 'ui/label'
 import { Textarea } from 'ui/textarea'
+
 import { useCustomTemplates } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/custom-templates-context'
 import type { CustomTemplate } from '@/app/(legacy-app-dashboard)/_legacy/nodes/custom/types'
 
@@ -84,11 +85,21 @@ export function TemplateEditorDialog({ template, open, onClose }: TemplateEditor
         <div className='flex flex-col gap-3 flex-1 overflow-hidden'>
           <div className='flex flex-col gap-1'>
             <Label className='text-xs'>Name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} className='h-7 text-xs' placeholder='My Custom Node' />
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className='h-7 text-xs'
+              placeholder='My Custom Node'
+            />
           </div>
           <div className='flex flex-col gap-1 flex-1 overflow-hidden'>
             <Label className='text-xs'>Code</Label>
-            <Textarea value={code} onChange={(e) => setCode(e.target.value)} className='flex-1 text-xs font-mono resize-none' spellCheck={false} />
+            <Textarea
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              className='flex-1 text-xs font-mono resize-none'
+              spellCheck={false}
+            />
           </div>
         </div>
         <div className='flex gap-2 justify-end pt-2'>

@@ -4,7 +4,13 @@ import { PermissionRequest } from 'agent-chat/messages'
 import { type ReactNode, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
 import { Input } from 'ui/input'
-import { type AcpSession, type LocalSource, type PendingAsk, useAcpSession } from '@/app/(agent)/_components/use-acp-session'
+
+import {
+  type AcpSession,
+  type LocalSource,
+  type PendingAsk,
+  useAcpSession,
+} from '@/app/(agent)/_components/use-acp-session'
 import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
 import { AgentChat, AgentChatInput, type AgentSession, useAgentSession } from '@/app/(openclaw)/_components/agent-chat'
 
@@ -55,20 +61,59 @@ function ChatHost({
 
   useOverlay({ content: contentNode })
 
-  return <AgentChatInput session={session} placeholder='Ask AI...' onSlashOpenChange={setSlashOpen} onFocus={() => onFocusChange(true)} leadingBarContent={createButton} />
+  return (
+    <AgentChatInput
+      session={session}
+      placeholder='Ask AI...'
+      onSlashOpenChange={setSlashOpen}
+      onFocus={() => onFocusChange(true)}
+      leadingBarContent={createButton}
+    />
+  )
 }
 
-export function OpenclawAgentHost({ sessionKey, transformOutgoing, activeAgent, createButton, focused, onFocusChange }: HostProps & { sessionKey: string }) {
+export function OpenclawAgentHost({
+  sessionKey,
+  transformOutgoing,
+  activeAgent,
+  createButton,
+  focused,
+  onFocusChange,
+}: HostProps & { sessionKey: string }) {
   const session = useAgentSession(sessionKey, transformOutgoing)
-  return <ChatHost session={session} activeAgent={activeAgent} createButton={createButton} focused={focused} onFocusChange={onFocusChange} />
+  return (
+    <ChatHost
+      session={session}
+      activeAgent={activeAgent}
+      createButton={createButton}
+      focused={focused}
+      onFocusChange={onFocusChange}
+    />
+  )
 }
 
-export function LocalAgentHost({ source, transformOutgoing, activeAgent, createButton, focused, onFocusChange }: HostProps & { source: LocalSource }) {
+export function LocalAgentHost({
+  source,
+  transformOutgoing,
+  activeAgent,
+  createButton,
+  focused,
+  onFocusChange,
+}: HostProps & { source: LocalSource }) {
   const acp = useAcpSession(source, transformOutgoing, activeAgent?.name)
   // Stable element identity so ChatHost's memoized content (and the published
   // overlay slot) don't re-fire every render — that would be an infinite update loop.
   const approvals = useMemo(() => <Approvals acp={acp} />, [acp])
-  return <ChatHost session={acp.session} activeAgent={activeAgent} createButton={createButton} focused={focused} onFocusChange={onFocusChange} approvals={approvals} />
+  return (
+    <ChatHost
+      session={acp.session}
+      activeAgent={activeAgent}
+      createButton={createButton}
+      focused={focused}
+      onFocusChange={onFocusChange}
+      approvals={approvals}
+    />
+  )
 }
 
 function Approvals({ acp }: { acp: AcpSession }) {
@@ -80,7 +125,14 @@ function Approvals({ acp }: { acp: AcpSession }) {
       {acp.permissions.map((p) => (
         <PermissionRequest
           key={p.requestId}
-          message={{ id: p.requestId, kind: 'permission', requestId: p.requestId, title: p.title, options: p.options, resolved: false }}
+          message={{
+            id: p.requestId,
+            kind: 'permission',
+            requestId: p.requestId,
+            title: p.title,
+            options: p.options,
+            resolved: false,
+          }}
           onRespond={acp.resolvePermission}
           onRespondText={acp.respondPermissionText}
         />
@@ -98,7 +150,12 @@ function AskPrompt({ ask, onAnswer }: { ask: PendingAsk; onAnswer: (requestId: s
     <div className='flex flex-col gap-1.5 rounded-md border bg-muted/40 p-2.5'>
       <div className='text-xs font-medium'>{ask.message}</div>
       <div className='flex gap-1.5'>
-        <Input value={value} onChange={(e) => setValue(e.target.value)} className='h-7 text-xs' placeholder='Your answer…' />
+        <Input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          className='h-7 text-xs'
+          placeholder='Your answer…'
+        />
         <Button size='sm' className='h-7 text-xs' onClick={() => onAnswer(ask.requestId, value)}>
           Send
         </Button>

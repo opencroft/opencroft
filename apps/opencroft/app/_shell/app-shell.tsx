@@ -2,7 +2,17 @@
 
 import type { AppLink } from '@opencroft/db'
 import { Link, useLocation, useNavigate, useSearch } from '@tanstack/react-router'
-import { BookOpen, ChevronRight, ExternalLink, Globe, MessageSquare, Network, Puzzle, SettingsIcon, X } from 'lucide-react'
+import {
+  BookOpen,
+  ChevronRight,
+  ExternalLink,
+  Globe,
+  MessageSquare,
+  Network,
+  Puzzle,
+  SettingsIcon,
+  X,
+} from 'lucide-react'
 import { Suspense, useEffect, useState } from 'react'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/collapsible'
 import { TitlebarProvider } from 'ui/layout/titlebar'
@@ -24,6 +34,7 @@ import {
   SidebarRail,
   SidebarTrigger,
 } from 'ui/sidebar'
+
 import { DevBuildBadge } from '@/app/_components/dev-build-badge'
 import { getAppLinks } from '@/app/(applink)/_server/actions'
 import { type DocNamespace, listDocNamespaces } from '@/app/(docs)/_server/actions'
@@ -132,7 +143,15 @@ function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
                               }}
                             >
                               <button className='flex items-center gap-2 w-full min-w-0'>
-                                {tab.agentAvatar ? <img src={tab.agentAvatar} alt='' className='size-4 shrink-0 rounded-full object-cover' /> : <MessageSquare className='size-4 shrink-0' />}
+                                {tab.agentAvatar ? (
+                                  <img
+                                    src={tab.agentAvatar}
+                                    alt=''
+                                    className='size-4 shrink-0 rounded-full object-cover'
+                                  />
+                                ) : (
+                                  <MessageSquare className='size-4 shrink-0' />
+                                )}
                                 <span className='truncate'>{tab.label}</span>
                                 <span
                                   role='button'

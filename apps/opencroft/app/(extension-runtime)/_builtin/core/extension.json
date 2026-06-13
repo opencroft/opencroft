@@ -41,18 +41,14 @@
       "name": "Terminal Window",
       "category": "Windows",
       "icon": "TerminalSquare",
-      "handles": [
-        { "id": "ssh-in", "contextType": "terminal-context", "role": "target", "label": "Terminal" }
-      ]
+      "handles": [{ "id": "ssh-in", "contextType": "terminal-context", "role": "target", "label": "Terminal" }]
     },
     {
       "typeId": "file-manager",
       "name": "File Manager Window",
       "category": "Windows",
       "icon": "FolderOpen",
-      "handles": [
-        { "id": "fs-in", "contextType": "filesystem-target", "role": "target", "label": "Files" }
-      ]
+      "handles": [{ "id": "fs-in", "contextType": "filesystem-target", "role": "target", "label": "Files" }]
     },
     {
       "typeId": "script-bash",
@@ -64,7 +60,12 @@
         { "id": "stdout-out", "contextType": "text-stream", "role": "source", "label": "Output" }
       ],
       "actions": [
-        { "id": "run", "label": "Run", "icon": "Play", "description": "Execute the script in the connected terminal context (or local if none)." }
+        {
+          "id": "run",
+          "label": "Run",
+          "icon": "Play",
+          "description": "Execute the script in the connected terminal context (or local if none)."
+        }
       ]
     },
     {
@@ -78,7 +79,12 @@
         { "id": "stdout-out", "contextType": "text-stream", "role": "source", "label": "Output" }
       ],
       "actions": [
-        { "id": "run", "label": "Run", "icon": "Play", "description": "Execute the script in the connected terminal context (or local if none)." }
+        {
+          "id": "run",
+          "label": "Run",
+          "icon": "Play",
+          "description": "Execute the script in the connected terminal context (or local if none)."
+        }
       ]
     },
     {
@@ -92,7 +98,12 @@
         { "id": "stdout-out", "contextType": "text-stream", "role": "source", "label": "Output" }
       ],
       "actions": [
-        { "id": "run", "label": "Run", "icon": "Play", "description": "Execute the script in the connected terminal context (or local if none)." }
+        {
+          "id": "run",
+          "label": "Run",
+          "icon": "Play",
+          "description": "Execute the script in the connected terminal context (or local if none)."
+        }
       ]
     },
     {
@@ -106,27 +117,21 @@
       "name": "Send Message",
       "category": "Integration",
       "icon": "Send",
-      "handles": [
-        { "id": "text-in", "contextType": "text-stream", "role": "target", "label": "Text" }
-      ]
+      "handles": [{ "id": "text-in", "contextType": "text-stream", "role": "target", "label": "Text" }]
     },
     {
       "typeId": "api-route",
       "name": "API Route",
       "category": "Integration",
       "icon": "Route",
-      "handles": [
-        { "id": "exec-out", "contextType": "execution-context", "role": "source", "label": "Handler" }
-      ]
+      "handles": [{ "id": "exec-out", "contextType": "execution-context", "role": "source", "label": "Handler" }]
     },
     {
       "typeId": "event",
       "name": "Event",
       "category": "Integration",
       "icon": "AlarmClock",
-      "handles": [
-        { "id": "exec-out", "contextType": "execution-context", "role": "source", "label": "Handler" }
-      ],
+      "handles": [{ "id": "exec-out", "contextType": "execution-context", "role": "source", "label": "Handler" }],
       "actions": [
         { "id": "run", "label": "Run", "icon": "Play", "description": "Fire the connected handler immediately." }
       ]
@@ -135,8 +140,18 @@
     { "typeId": "domain", "name": "Domain", "category": "Organization", "icon": "Globe" }
   ],
   "contexts": [
-    { "id": "terminal-context", "label": "Terminal Context", "color": "oklch(0.7 0.18 300)", "description": "Terminal execution context (local, WSL, or SSH)" },
+    {
+      "id": "terminal-context",
+      "label": "Terminal Context",
+      "color": "oklch(0.7 0.18 300)",
+      "description": "Terminal execution context (local, WSL, or SSH)"
+    },
     { "id": "filesystem-target", "label": "Filesystem Target", "color": "oklch(0.7 0.17 140)" },
-    { "id": "execution-context", "label": "Execution Context", "color": "oklch(0.72 0.17 30)", "description": "Async execution context for request/response handlers" }
+    {
+      "id": "execution-context",
+      "label": "Execution Context",
+      "color": "oklch(0.72 0.17 30)",
+      "description": "Async execution context for request/response handlers"
+    }
   ]
 }

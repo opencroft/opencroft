@@ -3,9 +3,14 @@
 import { ChevronRight, Puzzle } from 'lucide-react'
 import React, { useEffect, useState } from 'react'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/collapsible'
+
 import type { SettingsPageDefinition } from '@/app/(extension-runtime)/_client/host'
 import { loadAllExtensions } from '@/app/(extension-runtime)/_client/loader'
-import { extensionRegistry, type ResolvedExtensionSettings, resolveIcon } from '@/app/(extension-runtime)/_client/registry'
+import {
+  extensionRegistry,
+  type ResolvedExtensionSettings,
+  resolveIcon,
+} from '@/app/(extension-runtime)/_client/registry'
 import { cn } from '@/lib/utils'
 
 interface MenuButtonProps {
@@ -18,7 +23,13 @@ interface MenuButtonProps {
 function MenuButton({ active, icon, label, onClick }: MenuButtonProps) {
   const Icon = icon
   return (
-    <button onClick={onClick} className={cn('w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors', active ? 'bg-accent font-medium' : 'hover:bg-accent/50')}>
+    <button
+      onClick={onClick}
+      className={cn(
+        'w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors',
+        active ? 'bg-accent font-medium' : 'hover:bg-accent/50',
+      )}
+    >
       <Icon className='h-4 w-4 shrink-0' />
       {label}
     </button>
@@ -34,11 +45,23 @@ interface ExtensionMenuProps {
   onSelect: (id: string) => void
 }
 
-function ExtensionGroup({ settings, activeId, onSelect }: { settings: ResolvedExtensionSettings; activeId: string; onSelect: (id: string) => void }) {
+function ExtensionGroup({
+  settings,
+  activeId,
+  onSelect,
+}: {
+  settings: ResolvedExtensionSettings
+  activeId: string
+  onSelect: (id: string) => void
+}) {
   const containsActive = settings.pages.some((p) => pageMenuId(settings.extensionId, p.id) === activeId)
   return (
     <Collapsible defaultOpen={containsActive} className='group/ext'>
-      <CollapsibleTrigger className={cn('w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors hover:bg-accent/50')}>
+      <CollapsibleTrigger
+        className={cn(
+          'w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors hover:bg-accent/50',
+        )}
+      >
         <Puzzle className='h-4 w-4 shrink-0' />
         <span className='flex-1 text-left'>{settings.extensionName}</span>
         <ChevronRight className='h-4 w-4 transition-transform duration-200 group-data-[state=open]/ext:rotate-90' />
@@ -47,7 +70,15 @@ function ExtensionGroup({ settings, activeId, onSelect }: { settings: ResolvedEx
         <div className='pl-4 mt-1 space-y-1'>
           {settings.pages.map((page) => {
             const id = pageMenuId(settings.extensionId, page.id)
-            return <MenuButton key={id} active={activeId === id} icon={resolveIcon(page.icon)} label={page.label} onClick={() => onSelect(id)} />
+            return (
+              <MenuButton
+                key={id}
+                active={activeId === id}
+                icon={resolveIcon(page.icon)}
+                label={page.label}
+                onClick={() => onSelect(id)}
+              />
+            )
           })}
         </div>
       </CollapsibleContent>
@@ -63,7 +94,15 @@ export function ExtensionSettingsMenu({ activeId, onSelect }: ExtensionMenuProps
         if (entry.pages.length === 1) {
           const page = entry.pages[0]
           const id = pageMenuId(entry.extensionId, page.id)
-          return <MenuButton key={id} active={activeId === id} icon={resolveIcon(page.icon)} label={entry.extensionName} onClick={() => onSelect(id)} />
+          return (
+            <MenuButton
+              key={id}
+              active={activeId === id}
+              icon={resolveIcon(page.icon)}
+              label={entry.extensionName}
+              onClick={() => onSelect(id)}
+            />
+          )
         }
         return <ExtensionGroup key={entry.extensionId} settings={entry} activeId={activeId} onSelect={onSelect} />
       })}
@@ -71,7 +110,10 @@ export function ExtensionSettingsMenu({ activeId, onSelect }: ExtensionMenuProps
   )
 }
 
-export function findExtensionPage(settings: ResolvedExtensionSettings[], activeId: string): SettingsPageDefinition | null {
+export function findExtensionPage(
+  settings: ResolvedExtensionSettings[],
+  activeId: string,
+): SettingsPageDefinition | null {
   for (const entry of settings) {
     for (const page of entry.pages) {
       if (pageMenuId(entry.extensionId, page.id) === activeId) {

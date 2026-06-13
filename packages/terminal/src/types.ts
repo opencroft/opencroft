@@ -49,7 +49,10 @@ export interface WslConfig {
 }
 
 /** What a Terminal session connects to: an SSH host, a local shell, or a WSL distro. */
-export type TerminalConfig = { type: 'ssh'; config: SshConnectionConfig } | { type: 'local'; config: LocalConfig } | { type: 'wsl'; config: WslConfig }
+export type TerminalConfig =
+  | { type: 'ssh'; config: SshConnectionConfig }
+  | { type: 'local'; config: LocalConfig }
+  | { type: 'wsl'; config: WslConfig }
 
 export interface ConnectPayload extends SshConnectionConfig {
   cols: number

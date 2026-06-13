@@ -7,6 +7,7 @@ import { Button } from 'ui/button'
 import { Flex } from 'ui/layout/flex'
 import { MenuLayout } from 'ui/layout/menulayout'
 import { Separator } from 'ui/separator'
+
 import { SessionView } from '@/app/(openclaw)/_components/session-view'
 import type { OpenclawAgent, OpenclawSession, OpenclawState } from '@/app/(openclaw)/_server/actions'
 import { cn } from '@/lib/utils'
@@ -26,13 +27,25 @@ function SessionsView({ agents }: { agents: OpenclawAgent[] }) {
   const [selected, setSelected] = useState<OpenclawSession | null>(null)
 
   return (
-    <MenuLayout isOpened={!!selected} onClosed={() => setSelected(null)} menu={<AgentList agents={agents} selectedKey={selected?.key ?? null} onSelect={setSelected} />}>
+    <MenuLayout
+      isOpened={!!selected}
+      onClosed={() => setSelected(null)}
+      menu={<AgentList agents={agents} selectedKey={selected?.key ?? null} onSelect={setSelected} />}
+    >
       {selected ? <SessionView session={selected} /> : <EmptyState />}
     </MenuLayout>
   )
 }
 
-function AgentList({ agents, selectedKey, onSelect }: { agents: OpenclawAgent[]; selectedKey: string | null; onSelect: (s: OpenclawSession) => void }) {
+function AgentList({
+  agents,
+  selectedKey,
+  onSelect,
+}: {
+  agents: OpenclawAgent[]
+  selectedKey: string | null
+  onSelect: (s: OpenclawSession) => void
+}) {
   return (
     <Flex withPadding className='gap-3'>
       {agents.map((agent, i) => (
@@ -41,7 +54,12 @@ function AgentList({ agents, selectedKey, onSelect }: { agents: OpenclawAgent[];
           <AgentHeader agent={agent} />
           {agent.sessions.length === 0 && <div className='px-3 py-2 text-xs text-muted-foreground'>no sessions</div>}
           {agent.sessions.map((session) => (
-            <SessionRow key={session.key} session={session} active={selectedKey === session.key} onClick={() => onSelect(session)} />
+            <SessionRow
+              key={session.key}
+              session={session}
+              active={selectedKey === session.key}
+              onClick={() => onSelect(session)}
+            />
           ))}
         </div>
       ))}
@@ -65,7 +83,15 @@ function AgentHeader({ agent }: { agent: OpenclawAgent }) {
 function SessionRow({ session, active, onClick }: { session: OpenclawSession; active: boolean; onClick: () => void }) {
   const title = session.title ?? shortKey(session.key)
   return (
-    <Flex row align='center' className={cn('gap-2 px-3 py-2 rounded-md cursor-pointer text-sm', active ? 'bg-accent font-medium' : 'hover:bg-accent/50')} onClick={onClick}>
+    <Flex
+      row
+      align='center'
+      className={cn(
+        'gap-2 px-3 py-2 rounded-md cursor-pointer text-sm',
+        active ? 'bg-accent font-medium' : 'hover:bg-accent/50',
+      )}
+      onClick={onClick}
+    >
       <MessageSquare className='h-3.5 w-3.5 text-muted-foreground shrink-0' />
       <Flex className='min-w-0 gap-0.5'>
         <span className='truncate'>{title}</span>
@@ -99,7 +125,10 @@ function PairingRequired({ state }: { state: PairingState }) {
           <KeyRound className='h-5 w-5' />
           This app isn&apos;t approved yet
         </Flex>
-        <p className='text-muted-foreground'>OpenCroft connected to OpenClaw and asked for permission. OpenClaw needs to approve this app once — it will then remember it.</p>
+        <p className='text-muted-foreground'>
+          OpenCroft connected to OpenClaw and asked for permission. OpenClaw needs to approve this app once — it will
+          then remember it.
+        </p>
 
         <div className='font-medium'>How to approve</div>
         <ol className='flex flex-col gap-3'>
@@ -148,7 +177,9 @@ function IdRow({ label, value }: { label: string; value: string }) {
 function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
   return (
     <li className='flex gap-3'>
-      <span className='flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium'>{n}</span>
+      <span className='flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium'>
+        {n}
+      </span>
       <div className='flex flex-col gap-1 pt-0.5'>
         <div className='font-medium'>{title}</div>
         <div className='text-muted-foreground'>{children}</div>

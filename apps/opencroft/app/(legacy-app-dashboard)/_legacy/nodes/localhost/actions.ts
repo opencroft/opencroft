@@ -38,20 +38,25 @@ export const getLocalhostStats = createServerFn().handler(async (): Promise<Loca
 function getDiskUsage(): Promise<string> {
   if (os.platform() === 'win32') {
     return new Promise((resolve) => {
-      execFile('wmic', ['logicaldisk', 'where', 'DeviceID="C:"', 'get', 'Size,FreeSpace', '/format:csv'], { windowsHide: true }, (err, stdout) => {
-        if (err) {
-          resolve('unknown')
-          return
-        }
-        const lines = stdout.trim().split('\n').filter(Boolean)
-        const last = lines[lines.length - 1]
-        const parts = last.split(',')
-        const free = parseInt(parts[1] || '0')
-        const total = parseInt(parts[2] || '0')
-        const used = total - free
-        const gb = (n: number) => `${(n / 1024 ** 3).toFixed(0)}G`
-        resolve(`${gb(used)}/${gb(total)}`)
-      })
+      execFile(
+        'wmic',
+        ['logicaldisk', 'where', 'DeviceID="C:"', 'get', 'Size,FreeSpace', '/format:csv'],
+        { windowsHide: true },
+        (err, stdout) => {
+          if (err) {
+            resolve('unknown')
+            return
+          }
+          const lines = stdout.trim().split('\n').filter(Boolean)
+          const last = lines[lines.length - 1]
+          const parts = last.split(',')
+          const free = parseInt(parts[1] || '0')
+          const total = parseInt(parts[2] || '0')
+          const used = total - free
+          const gb = (n: number) => `${(n / 1024 ** 3).toFixed(0)}G`
+          resolve(`${gb(used)}/${gb(total)}`)
+        },
+      )
     })
   }
   return new Promise((resolve) => {

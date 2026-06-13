@@ -1,6 +1,8 @@
+import type { Readable } from 'stream'
+
 import type { SshCredentials } from '@opencroft/terminal'
 import { ssh as sshClient } from '@opencroft/terminal/server'
-import type { Readable } from 'stream'
+
 import type { FileEntry, SshConfig } from '@/app/(filemanager)/_lib/types'
 
 function toCreds(config: SshConfig): SshCredentials {
