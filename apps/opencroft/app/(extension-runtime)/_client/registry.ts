@@ -8,6 +8,7 @@ import type {
   ExtensionDeclaration,
   SettingsPageDefinition,
 } from '@/app/(extension-runtime)/_client/host'
+import { providerRegistry } from '@/app/(extension-runtime)/_client/provides'
 import type { ExtensionContextType, ExtensionHandle } from '@/app/(extension-runtime)/_types'
 
 /** Resolved icon: LucideIcon component or fallback Box. */
@@ -72,6 +73,7 @@ class ExtensionRegistry {
     for (const mode of decl.commandModes ?? []) {
       this.commandModes.set(mode.id, mode)
     }
+    providerRegistry.register(decl.manifest.id, decl.provides ?? {})
   }
 
   allCommandModes(): CommandModeDefinition[] {
@@ -159,6 +161,7 @@ class ExtensionRegistry {
     this.byTypeId.clear()
     this.contextTypes.clear()
     this.commandModes.clear()
+    providerRegistry.clear()
   }
 }
 

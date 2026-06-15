@@ -53,9 +53,10 @@ export default defineConfig({
       '@tailwindcss/oxide',
       'lightningcss',
     ],
-    // agent-client and @opencroft/terminal ship TS source and must be transpiled
-    // for SSR; their native deps (ssh2, node-pty) stay external via the list above.
-    noExternal: ['agent-client', '@opencroft/terminal'],
+    // agent-client, @opencroft/terminal, and @opencroft/dashboards ship TS source
+    // and must be transpiled for SSR; their native deps (ssh2, node-pty,
+    // better-sqlite3) stay external via the list above.
+    noExternal: ['agent-client', '@opencroft/terminal', '@opencroft/dashboards'],
   },
   plugins: [
     ssrWatchdog(),

@@ -134,18 +134,23 @@ export interface ExtensionDeclaration {
   nodes?: NodeDefinition[]
   commandModes?: CommandModeDefinition[]
   settings?: SettingsPageDefinition[]
+  /** Generic, feature-defined provider points (e.g. `dashboards`). The runtime
+   *  forwards these to the provider registry untouched. */
+  provides?: Record<string, unknown[]>
 }
 
 export function defineExtension(decl: ExtensionDeclaration): ExtensionDeclaration {
   const nodes = decl.nodes ?? []
   const modes = decl.commandModes ?? []
   const settings = decl.settings ?? []
-  if (nodes.length === 0 && modes.length === 0 && settings.length === 0) {
+  const provides = decl.provides ?? {}
+  const hasProvided = Object.values(provides).some((items) => items.length > 0)
+  if (nodes.length === 0 && modes.length === 0 && settings.length === 0 && !hasProvided) {
     throw new Error(
-      `Extension ${decl.manifest.id}: defineExtension requires at least one node, command mode, or settings page`,
+      `Extension ${decl.manifest.id}: defineExtension requires at least one node, command mode, settings page, or provided entry`,
     )
   }
-  return { ...decl, nodes, commandModes: modes, settings }
+  return { ...decl, nodes, commandModes: modes, settings, provides }
 }
 
 // ── Node handle pins ───────────────────────────────────────────────────

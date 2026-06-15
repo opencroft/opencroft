@@ -1,5 +1,7 @@
 'use client'
 
+import type { DashboardMeta } from '@opencroft/dashboards'
+import { DashboardsSidebarSection } from '@opencroft/dashboards/client'
 import type { AppLink } from '@opencroft/db'
 import { Link, useLocation, useNavigate, useSearch } from '@tanstack/react-router'
 import {
@@ -43,10 +45,18 @@ import type { SpaceSummary } from '@/app/(space)/_server/types'
 
 interface Props {
   pinnedSpaces: SpaceSummary[]
+  dashboards: DashboardMeta[]
+  pinnedDashboardSlugs: string[]
   children: React.ReactNode
 }
 
-function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
+interface SidebarProps {
+  pinnedSpaces: SpaceSummary[]
+  dashboards: DashboardMeta[]
+  pinnedDashboardSlugs: string[]
+}
+
+function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarProps) {
   const pathname = useLocation({ select: (l) => l.pathname })
   const navigate = useNavigate()
   const search = useSearch({ strict: false }) as { namespace?: string }
@@ -56,6 +66,7 @@ function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
   const inSpace = pathname.startsWith('/space/')
   const currentSpaceSlug = inSpace ? pathname.split('/')[2] : ''
   const chatTabs = useChatTabs()
+  const pinnedDashboards = dashboards.filter((d) => pinnedDashboardSlugs.includes(d.slug))
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
@@ -114,6 +125,7 @@ function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
             </Collapsible>
           </SidebarMenu>
         </SidebarGroup>
+        <DashboardsSidebarSection dashboards={pinnedDashboards} />
         {inSpace && (
           <SidebarGroup>
             <SidebarMenu>
@@ -263,13 +275,17 @@ function AppSidebar({ pinnedSpaces }: { pinnedSpaces: SpaceSummary[] }) {
   )
 }
 
-export function AppShell({ pinnedSpaces, children }: Props) {
+export function AppShell({ pinnedSpaces, dashboards, pinnedDashboardSlugs, children }: Props) {
   return (
     <TitlebarProvider>
       <ChatTabsProvider>
         <SidebarProvider>
           <Suspense fallback={null}>
-            <AppSidebar pinnedSpaces={pinnedSpaces} />
+            <AppSidebar
+              pinnedSpaces={pinnedSpaces}
+              dashboards={dashboards}
+              pinnedDashboardSlugs={pinnedDashboardSlugs}
+            />
           </Suspense>
           <main className='flex flex-col w-full h-dvh'>{children}</main>
         </SidebarProvider>

@@ -111,6 +111,8 @@ export interface ExtensionDeclaration {
   nodes?: NodeDefinition[]
   commandModes?: CommandModeDefinition[]
   settings?: SettingsPageDefinition[]
+  /** Generic, feature-defined provider points (e.g. `dashboards`). */
+  provides?: Record<string, unknown[]>
 }
 
 export interface HandlePinProps {

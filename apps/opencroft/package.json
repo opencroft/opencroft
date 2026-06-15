@@ -25,6 +25,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@hookform/resolvers": "^5.2.2",
     "@opencroft/core": "*",
+    "@opencroft/dashboards": "*",
     "@opencroft/server": "*",
     "@opencroft/terminal": "*",
     "@opencroft/db": "*",

@@ -1,0 +1,25 @@
+{
+  "name": "@opencroft/dashboards",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client/index.ts",
+    "./server": "./src/server/index.ts"
+  },
+  "dependencies": {
+    "@opencroft/db": "*",
+    "drizzle-orm": "^0.45.2",
+    "ui": "*"
+  },
+  "peerDependencies": {
+    "@tanstack/react-router": "*",
+    "@tanstack/react-start": "*",
+    "lucide-react": "*",
+    "react": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19"
+  }
+}
