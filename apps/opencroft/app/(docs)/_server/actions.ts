@@ -1,8 +1,16 @@
-import { createServerFn } from '@tanstack/react-start'
-import fs from 'fs/promises'
-import path from 'path'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 
-import { type Anchor, appendComment, type Comment, createComment, findThreadRoot, readComments } from '@/app/(docs)/_server/comments'
+import { createServerFn } from '@tanstack/react-start'
+
+import {
+  type Anchor,
+  appendComment,
+  type Comment,
+  createComment,
+  findThreadRoot,
+  readComments,
+} from '@/app/(docs)/_server/comments'
 import { getDocsRoot } from '@/app/(docs)/_server/docs-root'
 import { type DocSearchResult, searchDocsAtRoot } from '@/app/(docs)/_server/search'
 import { getExtensionModule } from '@/app/(extension-runtime)/_server/loader'
@@ -136,7 +144,7 @@ export const deleteDoc = createServerFn({ method: 'POST' })
 
 async function findDocNodeId(namespace?: string): Promise<string | null> {
   try {
-    const mod = await getExtensionModule('builtin/core')
+    const mod = await getExtensionModule('local/documentation')
     const fn = mod.actions?.['docs.findDocNodeId']
     if (!fn) {
       return null
@@ -148,7 +156,7 @@ async function findDocNodeId(namespace?: string): Promise<string | null> {
 }
 
 async function callDocsAction(action: string, params: Record<string, unknown>) {
-  const mod = await getExtensionModule('builtin/core')
+  const mod = await getExtensionModule('local/documentation')
   const fn = mod.actions?.[action]
   if (!fn) {
     throw new Error(`Action ${action} not found`)
@@ -164,7 +172,12 @@ export const getGitFileLog = createServerFn()
       return []
     }
     try {
-      return (await callDocsAction('docs.log', { nodeId, filePath: data.filePath, count: data.count ?? 20 })) as Array<{ sha: string; message: string; author: string; date: string }>
+      return (await callDocsAction('docs.log', { nodeId, filePath: data.filePath, count: data.count ?? 20 })) as Array<{
+        sha: string
+        message: string
+        author: string
+        date: string
+      }>
     } catch {
       return []
     }
@@ -206,7 +219,10 @@ export const gitPublishDocs = createServerFn({ method: 'POST' })
     if (!nodeId) {
       throw new Error(`No documentation node found for namespace "${data.namespace}"`)
     }
-    return (await callDocsAction('docs.publish', { nodeId, filePath: data.filePath, message: data.message })) as { sha: string; message: string }
+    return (await callDocsAction('docs.publish', { nodeId, filePath: data.filePath, message: data.message })) as {
+      sha: string
+      message: string
+    }
   })
 
 export const gitDiscardFile = createServerFn({ method: 'POST' })
@@ -234,11 +250,13 @@ function formatAgentPrompt(docPath: string, comment: Comment, isReply: boolean, 
   const kind = isReply ? 'reply' : 'comment'
   const lines = [`A user ${kind} was posted on doc "${docPath}" (commentId: ${comment.id}):`]
   if (comment.anchor?.quote) {
-    lines.push('', `Anchored to the following passage in the doc:`, '> ' + comment.anchor.quote.replace(/\n/g, '\n> '))
+    lines.push('', 'Anchored to the following passage in the doc:', `> ${comment.anchor.quote.replace(/\n/g, '\n> ')}`)
   }
   lines.push('', comment.message, '')
   const replyId = threadRootId ?? comment.id
-  lines.push(`Use the \`doc_reply\` MCP tool with docPath="${docPath}" and commentId="${replyId}" to respond in this thread.`)
+  lines.push(
+    `Use the \`doc_reply\` MCP tool with docPath="${docPath}" and commentId="${replyId}" to respond in this thread.`,
+  )
   return lines.join('\n')
 }
 
@@ -271,7 +289,9 @@ export const listDocComments = createServerFn()
   })
 
 export const postDocComment = createServerFn({ method: 'POST' })
-  .inputValidator((data: { namespace: string; filePath: string; message: string; parentId?: string; anchor?: Anchor }) => data)
+  .inputValidator(
+    (data: { namespace: string; filePath: string; message: string; parentId?: string; anchor?: Anchor }) => data,
+  )
   .handler(async ({ data }): Promise<Comment> => {
     const trimmed = data.message.trim()
     if (!trimmed) {

@@ -1,4 +1,5 @@
 import type { McpServerConfig } from 'agent-client/mcp-types'
+
 import { getSetting, upsertSetting } from '@/server/data'
 
 // Global MCP server list for local agents, stored in the settings table (the

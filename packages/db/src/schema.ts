@@ -1,8 +1,8 @@
 import { customType, index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
-// Prisma's better-sqlite3 adapter stored DateTime as ISO-8601 text. Preserve
-// that on-disk format while surfacing JS `Date` objects, matching what the app
-// expects (it calls `.toISOString()` / `.getTime()` on these fields).
+// Timestamps are stored on disk as ISO-8601 text while surfacing JS `Date`
+// objects, matching what the app expects (it calls `.toISOString()` /
+// `.getTime()` on these fields).
 const timestamp = customType<{ data: Date; driverData: string }>({
   dataType: () => 'text',
   toDriver: (value) => value.toISOString(),
@@ -81,12 +81,15 @@ export const mcpAuditLog = sqliteTable(
       .notNull()
       .$defaultFn(() => new Date()),
   },
-  (t) => [index('McpAuditLog_tool_idx').on(t.tool), index('McpAuditLog_status_idx').on(t.status), index('McpAuditLog_createdAt_idx').on(t.createdAt)],
+  (t) => [
+    index('McpAuditLog_tool_idx').on(t.tool),
+    index('McpAuditLog_status_idx').on(t.status),
+    index('McpAuditLog_createdAt_idx').on(t.createdAt),
+  ],
 )
 
 export const schema = { setting, secret, appLink, space, mcpAuditLog }
 
-// Row types inferred from the schema (replacements for the old `@prisma/client` model types).
 export type Setting = typeof setting.$inferSelect
 export type Secret = typeof secret.$inferSelect
 export type AppLink = typeof appLink.$inferSelect

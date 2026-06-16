@@ -1,6 +1,5 @@
+import { sshKeys } from '@opencroft/terminal/server'
 import { createServerFn } from '@tanstack/react-start'
-
-import { sshKeys } from '@/app/(server)/_server/ssh-key'
 
 export const listSshKeys = createServerFn().handler(async () => {
   return sshKeys.list()

@@ -161,7 +161,10 @@ async function resolveAuth(source: RegistrySource): Promise<{ username: string; 
   if (!source.authStoreId) {
     return null
   }
-  const [token, username] = await Promise.all([getSecretValue({ data: { storeId: source.authStoreId, key: 'token' } }), getSecretValue({ data: { storeId: source.authStoreId, key: 'username' } })])
+  const [token, username] = await Promise.all([
+    getSecretValue({ data: { storeId: source.authStoreId, key: 'token' } }),
+    getSecretValue({ data: { storeId: source.authStoreId, key: 'username' } }),
+  ])
   if (!token) {
     return null
   }
@@ -258,7 +261,9 @@ async function fetchRegistryManifest(source: RegistrySource): Promise<ResolvedRe
     const tmpDir = path.join(process.cwd(), '.cache', 'registry-tmp', `reg-${Date.now()}`)
     try {
       await fs.mkdir(tmpDir, { recursive: true })
-      const cloneArgs = source.ref ? ['clone', '--depth', '1', '--branch', source.ref, '--single-branch', authedUrl, tmpDir] : ['clone', '--depth', '1', authedUrl, tmpDir]
+      const cloneArgs = source.ref
+        ? ['clone', '--depth', '1', '--branch', source.ref, '--single-branch', authedUrl, tmpDir]
+        : ['clone', '--depth', '1', authedUrl, tmpDir]
       await execFile('git', cloneArgs, { maxBuffer: 4 * 1024 * 1024 })
       manifestJson = await fs.readFile(path.join(tmpDir, 'registry.json'), 'utf-8')
     } finally {
@@ -326,7 +331,9 @@ export async function searchRegistries(query?: string): Promise<(RegistryExtensi
         all.push({ ...ext, registryName: reg.source.name })
         continue
       }
-      const searchable = [ext.name, ext.description ?? '', ext.author ?? '', ...(ext.tags ?? [])].join(' ').toLowerCase()
+      const searchable = [ext.name, ext.description ?? '', ext.author ?? '', ...(ext.tags ?? [])]
+        .join(' ')
+        .toLowerCase()
       if (searchable.includes(q)) {
         all.push({ ...ext, registryName: reg.source.name })
       }
@@ -383,7 +390,9 @@ function sourceInstallAuth(source: RegistrySource): InstallAuth | undefined {
  * Resolve extension spec to repository URL using registries.
  * Returns the repository URL and the owning registry's auth if found, or null.
  */
-export async function resolveExtensionRepo(spec: ExtensionSpec): Promise<{ repository: string; auth?: InstallAuth } | null> {
+export async function resolveExtensionRepo(
+  spec: ExtensionSpec,
+): Promise<{ repository: string; auth?: InstallAuth } | null> {
   const registries = await fetchAllRegistries()
   for (const reg of registries) {
     for (const ext of reg.manifest.extensions) {

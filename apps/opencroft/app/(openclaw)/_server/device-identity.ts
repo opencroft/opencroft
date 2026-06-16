@@ -141,7 +141,10 @@ function derivePublicKeyRaw(publicKeyPem: string): Buffer {
     type: 'spki',
     format: 'der',
   })
-  if (spki.length === ED25519_SPKI_PREFIX.length + 32 && spki.subarray(0, ED25519_SPKI_PREFIX.length).equals(ED25519_SPKI_PREFIX)) {
+  if (
+    spki.length === ED25519_SPKI_PREFIX.length + 32 &&
+    spki.subarray(0, ED25519_SPKI_PREFIX.length).equals(ED25519_SPKI_PREFIX)
+  ) {
     return spki.subarray(ED25519_SPKI_PREFIX.length)
   }
   return spki

@@ -1,4 +1,4 @@
-import { prisma } from '@opencroft/db'
+import { db, mcpAuditLog } from '@opencroft/db'
 
 const MAX_PAYLOAD = 16384
 
@@ -22,14 +22,14 @@ export interface AuditEntryInput {
 }
 
 export async function recordAudit(input: AuditEntryInput): Promise<void> {
-  await prisma.mcpAuditLog.create({
-    data: {
+  db.insert(mcpAuditLog)
+    .values({
       tool: input.tool,
       args: serialize(input.args),
       result: input.result === undefined ? null : serialize(input.result),
       error: input.error ?? null,
       status: input.status,
       durationMs: input.durationMs,
-    },
-  })
+    })
+    .run()
 }

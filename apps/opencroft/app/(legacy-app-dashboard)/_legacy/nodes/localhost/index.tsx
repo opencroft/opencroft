@@ -6,9 +6,16 @@ import { useCallback, useEffect, useState } from 'react'
 
 import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 import { getLocalhostStats, type LocalhostStats } from '@/app/(legacy-app-dashboard)/_legacy/nodes/localhost/actions'
-import { ButtonPin, HANDLE_EXECUTION, HANDLE_FILESYSTEM } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/button-pin'
+import {
+  ButtonPin,
+  HANDLE_EXECUTION,
+  HANDLE_FILESYSTEM,
+} from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/button-pin'
 import { PinnedNode, StatsList } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/pinned-node'
-import { spawnFileBrowserWindow, spawnTerminalWindow } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/spawn-window'
+import {
+  spawnFileBrowserWindow,
+  spawnTerminalWindow,
+} from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/spawn-window'
 
 export type LocalhostData = Record<string, never>
 export type LocalhostNode = Node<LocalhostData, 'localhost'>
@@ -28,7 +35,13 @@ function LocalhostComponent({ selected, positionAbsoluteX, positionAbsoluteY }: 
   }, [])
 
   const openTerminal = useCallback(() => {
-    setNodes((nds) => [...nds, spawnTerminalWindow({ title: 'Localhost', x: positionAbsoluteX, y: positionAbsoluteY }, { type: 'local', config: {} })])
+    setNodes((nds) => [
+      ...nds,
+      spawnTerminalWindow(
+        { title: 'Localhost', x: positionAbsoluteX, y: positionAbsoluteY },
+        { type: 'local', config: {} },
+      ),
+    ])
   }, [positionAbsoluteX, positionAbsoluteY, setNodes])
 
   const openFiles = useCallback(() => {
@@ -36,7 +49,12 @@ function LocalhostComponent({ selected, positionAbsoluteX, positionAbsoluteY }: 
       ...nds,
       spawnFileBrowserWindow(
         { title: 'Localhost', x: positionAbsoluteX, y: positionAbsoluteY },
-        { id: 'localhost', name: 'Localhost', type: 'ssh', config: { host: 'localhost', port: 22, username: 'root', basePath: '/' } },
+        {
+          id: 'localhost',
+          name: 'Localhost',
+          type: 'ssh',
+          config: { host: 'localhost', port: 22, username: 'root', basePath: '/' },
+        },
       ),
     ])
   }, [positionAbsoluteX, positionAbsoluteY, setNodes])
@@ -67,7 +85,13 @@ function LocalhostComponent({ selected, positionAbsoluteX, positionAbsoluteY }: 
       }
       output={
         <>
-          <ButtonPin handleId={HANDLE_EXECUTION} icon={TerminalSquare} label='Terminal' side='right' onClick={openTerminal} />
+          <ButtonPin
+            handleId={HANDLE_EXECUTION}
+            icon={TerminalSquare}
+            label='Terminal'
+            side='right'
+            onClick={openTerminal}
+          />
           <ButtonPin handleId={HANDLE_FILESYSTEM} icon={FolderOpen} label='Files' side='right' onClick={openFiles} />
         </>
       }

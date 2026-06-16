@@ -5,7 +5,11 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 export interface RecyclingProviderProps<T> {
   items: T[]
   itemsPerPage: number
-  children: (props: { visibleItems: T[]; scrollRef: React.RefObject<HTMLDivElement | null>; onScroll: () => void }) => ReactNode
+  children: (props: {
+    visibleItems: T[]
+    scrollRef: React.RefObject<HTMLDivElement | null>
+    onScroll: () => void
+  }) => ReactNode
 }
 
 export const RecyclingProvider = <T,>({ items, itemsPerPage, children }: RecyclingProviderProps<T>) => {

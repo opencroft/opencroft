@@ -1,6 +1,7 @@
-import { createServerFn } from '@tanstack/react-start'
 import { spawn } from 'child_process'
 import { networkInterfaces } from 'os'
+
+import { createServerFn } from '@tanstack/react-start'
 
 import { resolveServer } from '@/app/(docker)/_server/context-actions'
 
@@ -350,7 +351,9 @@ export const getContainerMounts = createServerFn({ method: 'POST' })
   .inputValidator((containerId: string) => containerId)
   .handler(async ({ data: containerId }): Promise<VolumeMount[]> => {
     return new Promise((resolve, reject) => {
-      const child = spawn('wsl', ['--exec', 'docker', 'inspect', containerId, '--format={{json .Mounts}}'], { windowsHide: true })
+      const child = spawn('wsl', ['--exec', 'docker', 'inspect', containerId, '--format={{json .Mounts}}'], {
+        windowsHide: true,
+      })
       let stdout = ''
       let stderr = ''
 

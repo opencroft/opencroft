@@ -1,4 +1,5 @@
 import { createServerFn } from '@tanstack/react-start'
+
 import type { RawChatMessage } from '@/app/(openclaw)/_lib/messages'
 import { GatewayNotConfiguredError, gateway, PairingPendingError } from '@/app/(openclaw)/_server/gateway-client'
 import { getSetting } from '@/app/(settings)/_server/actions'
@@ -176,10 +177,12 @@ interface CommandsListPayload {
   commands?: OpenclawCommand[]
 }
 
-export const listCommands = createServerFn({ strict: { output: false } }).handler(async (): Promise<OpenclawCommand[]> => {
-  const payload = await gateway().call<CommandsListPayload>('commands.list', {})
-  return payload.commands ?? []
-})
+export const listCommands = createServerFn({ strict: { output: false } }).handler(
+  async (): Promise<OpenclawCommand[]> => {
+    const payload = await gateway().call<CommandsListPayload>('commands.list', {})
+    return payload.commands ?? []
+  },
+)
 
 export const sendMessage = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { key: string; text: string }) => data)

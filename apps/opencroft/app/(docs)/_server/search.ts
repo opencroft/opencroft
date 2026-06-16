@@ -23,7 +23,11 @@ interface RawMatch {
 
 async function runGitGrep(root: string, pattern: string): Promise<string> {
   try {
-    const r = await exec('git', ['-c', 'safe.directory=*', '-C', root, 'grep', '-n', '-i', '-E', '--', pattern, 'HEAD', '--', '*.md'], { maxBuffer: 10 * 1024 * 1024 })
+    const r = await exec(
+      'git',
+      ['-c', 'safe.directory=*', '-C', root, 'grep', '-n', '-i', '-E', '--', pattern, 'HEAD', '--', '*.md'],
+      { maxBuffer: 10 * 1024 * 1024 },
+    )
     return r.stdout
   } catch (err) {
     const e = err as { code?: number; stdout?: string }
@@ -36,7 +40,9 @@ async function runGitGrep(root: string, pattern: string): Promise<string> {
 
 async function runGitShow(root: string, filePath: string): Promise<string> {
   try {
-    const r = await exec('git', ['-c', 'safe.directory=*', '-C', root, 'show', `HEAD:${filePath}`], { maxBuffer: 10 * 1024 * 1024 })
+    const r = await exec('git', ['-c', 'safe.directory=*', '-C', root, 'show', `HEAD:${filePath}`], {
+      maxBuffer: 10 * 1024 * 1024,
+    })
     return r.stdout
   } catch {
     return ''

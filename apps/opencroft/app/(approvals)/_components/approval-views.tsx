@@ -19,7 +19,9 @@ export function DefaultApprovalView({ request }: ApprovalViewProps) {
   return (
     <div className='space-y-1 px-3 py-2'>
       <div className='text-xs font-medium text-muted-foreground'>Arguments</div>
-      <pre className='text-xs whitespace-pre-wrap break-all bg-muted/50 rounded-md p-2 max-h-72 overflow-auto font-mono'>{formatArgs(request.args)}</pre>
+      <pre className='text-xs whitespace-pre-wrap break-all bg-muted/50 rounded-md p-2 max-h-72 overflow-auto font-mono'>
+        {formatArgs(request.args)}
+      </pre>
     </div>
   )
 }

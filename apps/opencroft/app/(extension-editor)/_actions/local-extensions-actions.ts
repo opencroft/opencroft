@@ -94,23 +94,25 @@ async function loadExtension(slug: string): Promise<LocalExtensionRecord | null>
   }
 }
 
-export const listLocalExtensions = createServerFn({ strict: { output: false } }).handler(async (): Promise<LocalExtensionRecord[]> => {
-  const root = localExtRoot()
-  let entries: string[]
-  try {
-    entries = await fs.readdir(root)
-  } catch {
-    return []
-  }
-  const records: LocalExtensionRecord[] = []
-  for (const slug of entries) {
-    const record = await loadExtension(slug)
-    if (record) {
-      records.push(record)
+export const listLocalExtensions = createServerFn({ strict: { output: false } }).handler(
+  async (): Promise<LocalExtensionRecord[]> => {
+    const root = localExtRoot()
+    let entries: string[]
+    try {
+      entries = await fs.readdir(root)
+    } catch {
+      return []
     }
-  }
-  return records
-})
+    const records: LocalExtensionRecord[] = []
+    for (const slug of entries) {
+      const record = await loadExtension(slug)
+      if (record) {
+        records.push(record)
+      }
+    }
+    return records
+  },
+)
 
 export const getLocalExtension = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((extensionId: string) => extensionId)

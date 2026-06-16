@@ -5,7 +5,11 @@ interface UseAutoScrollOptions {
   threshold?: number
 }
 
-export function useAutoScroll<T>(scrollRef: React.RefObject<HTMLDivElement | null>, dependencies: T[], options: UseAutoScrollOptions = {}) {
+export function useAutoScroll<T>(
+  scrollRef: React.RefObject<HTMLDivElement | null>,
+  dependencies: T[],
+  options: UseAutoScrollOptions = {},
+) {
   const { threshold = 50 } = options
   const isAtBottomRef = useRef(true)
   const isInitialMount = useRef(true)

@@ -2,7 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 
 import type { NodeSettingsProps } from '@/app/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 
-export function useSettingsDraft<T extends Record<string, unknown>>({ id, data, updateData, onDirtyChange, onLoadingChange }: NodeSettingsProps<T>, onSave?: (draft: T) => void | Promise<void>) {
+export function useSettingsDraft<T extends Record<string, unknown>>(
+  { id, data, updateData, onDirtyChange, onLoadingChange }: NodeSettingsProps<T>,
+  onSave?: (draft: T) => void | Promise<void>,
+) {
   const [draft, setDraft] = useState<T>(data as T)
   const [dirty, setDirty] = useState(false)
 

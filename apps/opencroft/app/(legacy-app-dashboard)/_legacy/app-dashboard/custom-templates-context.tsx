@@ -56,7 +56,11 @@ export function CustomTemplatesProvider({ children }: { children: React.ReactNod
     [templates],
   )
 
-  return <CustomTemplatesContext.Provider value={{ templates, definitions, upsertTemplate, deleteTemplate }}>{children}</CustomTemplatesContext.Provider>
+  return (
+    <CustomTemplatesContext.Provider value={{ templates, definitions, upsertTemplate, deleteTemplate }}>
+      {children}
+    </CustomTemplatesContext.Provider>
+  )
 }
 
 export function useCustomTemplates() {

@@ -1,17 +1,9 @@
-import {
-  React,
-  NodeResizer,
-  icons,
-  useReactFlow,
-} from '@ext/host';
-import {
-  Input,
-  Label,
-} from '@ext/ui';
+import { icons, NodeResizer, type React, useReactFlow } from '@ext/host'
+import { Input, Label } from '@ext/ui'
 
 export interface SectionData {
-  label: string;
-  color: string;
+  label: string
+  color: string
 }
 
 const SECTION_COLORS = [
@@ -20,19 +12,29 @@ const SECTION_COLORS = [
   'oklch(0.6 0.15 30)',
   'oklch(0.6 0.15 320)',
   'oklch(0.6 0.15 60)',
-];
+]
 
 export function randomSectionColor(): string {
-  return SECTION_COLORS[Math.floor(Math.random() * SECTION_COLORS.length)];
+  return SECTION_COLORS[Math.floor(Math.random() * SECTION_COLORS.length)]
 }
 
-const SECTION_GRID = 10;
-const snapSection = (v: number) => Math.round(v / SECTION_GRID) * SECTION_GRID;
+const SECTION_GRID = 10
+const snapSection = (v: number) => Math.round(v / SECTION_GRID) * SECTION_GRID
 
 export function ResizableContainer({
-  id, selected, color, icon: Icon, label,
-}: { id: string; selected?: boolean; color: string; icon: React.ComponentType<{ className?: string }>; label: string }) {
-  const { setNodes } = useReactFlow();
+  id,
+  selected,
+  color,
+  icon: Icon,
+  label,
+}: {
+  id: string
+  selected?: boolean
+  color: string
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+}) {
+  const { setNodes } = useReactFlow()
   return (
     <>
       <NodeResizer
@@ -40,11 +42,11 @@ export function ResizableContainer({
         minWidth={200}
         minHeight={160}
         onResizeEnd={(_event, { width, height }) => {
-          setNodes((nds) => nds.map((n) => (
-            n.id === id
-              ? { ...n, style: { ...n.style, width: snapSection(width), height: snapSection(height) } }
-              : n
-          )));
+          setNodes((nds) =>
+            nds.map((n) =>
+              n.id === id ? { ...n, style: { ...n.style, width: snapSection(width), height: snapSection(height) } } : n,
+            ),
+          )
         }}
         lineStyle={{ border: '8px solid transparent', zIndex: 1 }}
         handleStyle={{ background: 'transparent', border: 'none', width: 16, height: 16, zIndex: 1 }}
@@ -64,12 +66,10 @@ export function ResizableContainer({
         </div>
       </div>
     </>
-  );
+  )
 }
 
-export function SectionNode({
-  id, data, selected,
-}: { id: string; data: SectionData; selected?: boolean }) {
+export function SectionNode({ id, data, selected }: { id: string; data: SectionData; selected?: boolean }) {
   return (
     <ResizableContainer
       id={id}
@@ -78,12 +78,10 @@ export function SectionNode({
       icon={icons.Boxes}
       label={data.label || 'Section'}
     />
-  );
+  )
 }
 
-export function DomainNode({
-  id, data, selected,
-}: { id: string; data: SectionData; selected?: boolean }) {
+export function DomainNode({ id, data, selected }: { id: string; data: SectionData; selected?: boolean }) {
   return (
     <ResizableContainer
       id={id}
@@ -92,12 +90,17 @@ export function DomainNode({
       icon={icons.Globe}
       label={data.label || 'Domain'}
     />
-  );
+  )
 }
 
 export function SectionInspector({
-  data, updateData,
-}: { nodeId: string; data: SectionData; updateData: (p: Partial<SectionData>) => void }) {
+  data,
+  updateData,
+}: {
+  nodeId: string
+  data: SectionData
+  updateData: (p: Partial<SectionData>) => void
+}) {
   return (
     <div className='flex flex-col gap-3'>
       <div className='flex flex-col gap-1'>
@@ -125,5 +128,5 @@ export function SectionInspector({
         </div>
       </div>
     </div>
-  );
+  )
 }

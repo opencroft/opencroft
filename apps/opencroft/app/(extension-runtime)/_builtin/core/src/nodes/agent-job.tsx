@@ -1,24 +1,13 @@
-import {
-  React,
-  NodeFrame,
-  OutputHandle,
-  icons,
-} from '@ext/host';
-import {
-  Input,
-  Label,
-  Textarea,
-} from '@ext/ui';
+import { icons, NodeFrame, OutputHandle, type React } from '@ext/host'
+import { Input, Label, Textarea } from '@ext/ui'
 
 export interface AgentJobData {
-  name: string;
-  workingDirectory: string;
-  context: string;
+  name: string
+  workingDirectory: string
+  context: string
 }
 
-export function AgentJobNode({
-  data, selected,
-}: { id: string; data: AgentJobData; selected?: boolean }) {
+export function AgentJobNode({ data, selected }: { id: string; data: AgentJobData; selected?: boolean }) {
   return (
     <NodeFrame
       icon={icons.Briefcase}
@@ -26,12 +15,17 @@ export function AgentJobNode({
       selected={selected ?? false}
       output={<OutputHandle type='agent-job' id='job-out' />}
     />
-  );
+  )
 }
 
 export function AgentJobInspector({
-  data, updateData,
-}: { nodeId: string; data: AgentJobData; updateData: (p: Partial<AgentJobData>) => void }) {
+  data,
+  updateData,
+}: {
+  nodeId: string
+  data: AgentJobData
+  updateData: (p: Partial<AgentJobData>) => void
+}) {
   return (
     <div className='flex flex-col gap-3'>
       <div className='flex flex-col gap-1'>
@@ -60,5 +54,5 @@ export function AgentJobInspector({
         />
       </div>
     </div>
-  );
+  )
 }

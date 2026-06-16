@@ -20,13 +20,18 @@ function localExec(cmd: string): Promise<string> {
 
 function wslExec(distro: string, cmd: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile('wsl', ['-d', distro, '--exec', 'bash', '-c', cmd], { windowsHide: true, timeout: 30000 }, (err, stdout, stderr) => {
-      if (err) {
-        reject(new Error(stderr || err.message))
-        return
-      }
-      resolve(stdout)
-    })
+    execFile(
+      'wsl',
+      ['-d', distro, '--exec', 'bash', '-c', cmd],
+      { windowsHide: true, timeout: 30000 },
+      (err, stdout, stderr) => {
+        if (err) {
+          reject(new Error(stderr || err.message))
+          return
+        }
+        resolve(stdout)
+      },
+    )
   })
 }
 

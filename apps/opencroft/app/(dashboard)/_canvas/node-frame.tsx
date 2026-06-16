@@ -1,12 +1,13 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@opencroft/ui-kit/tooltip'
-import type { StatusVariant as IndicatorVariant } from '@opencroft/ui-kit/utils/status-indicator'
 import { useEdges as useConnections, useInternalNode, useNodeId } from '@xyflow/react'
 import { AlertTriangle, Copy, type LucideIcon } from 'lucide-react'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { Button } from 'ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from 'ui/tooltip'
+import type { StatusVariant as IndicatorVariant } from 'ui/utils/status-indicator'
+
 import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/(dashboard)/_canvas/node-card'
 import { InputHandle, OutputHandle } from '@/app/(extension-runtime)/_client/host'
 
@@ -115,7 +116,10 @@ function useStaleHandles(role: 'source' | 'target'): StaleHandle[] {
 
 function StaleHandleLabel({ id }: { id: string }) {
   return (
-    <span className='text-[10px] font-mono text-destructive truncate max-w-[120px]' title={`Stale handle "${id}" — double-click handle to remove the connection`}>
+    <span
+      className='text-[10px] font-mono text-destructive truncate max-w-[120px]'
+      title={`Stale handle "${id}" — double-click handle to remove the connection`}
+    >
       {id}
     </span>
   )
@@ -195,7 +199,10 @@ function NodeErrorTooltip({ errors, children }: { errors: string[]; children: Re
         <TooltipTrigger asChild>
           <div>{children}</div>
         </TooltipTrigger>
-        <TooltipContent side='top' className='nodrag nopan max-w-sm bg-destructive text-destructive-foreground p-2 pointer-events-auto select-text'>
+        <TooltipContent
+          side='top'
+          className='nodrag nopan max-w-sm bg-destructive text-destructive-foreground p-2 pointer-events-auto select-text'
+        >
           <div className='flex flex-col gap-1'>
             {errors.map((msg, i) => (
               <div key={i} className='flex items-start gap-2'>
@@ -225,7 +232,19 @@ export function NodeFrame(props: NodeFrameProps) {
   )
 }
 
-function NodeFrameInner({ icon, title, subtitle, status, extra, selected, loading, errors, input, output, children }: NodeFrameProps) {
+function NodeFrameInner({
+  icon,
+  title,
+  subtitle,
+  status,
+  extra,
+  selected,
+  loading,
+  errors,
+  input,
+  output,
+  children,
+}: NodeFrameProps) {
   const accent = useContext(NodeAccentContext)
   const hasErrors = !!errors && errors.length > 0
   const displayIcon = hasErrors ? AlertTriangle : icon

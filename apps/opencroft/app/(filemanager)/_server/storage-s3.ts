@@ -1,4 +1,11 @@
-import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, ListObjectsCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import {
+  CopyObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  ListObjectsCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3'
 import { Upload } from '@aws-sdk/lib-storage'
 
 import type { FileEntry, S3Config } from '@/app/(filemanager)/_lib/types'
@@ -108,7 +115,12 @@ export async function uploadFile(config: S3Config, path: string, data: string, f
   await uploadStream(config, path, Buffer.from(data, 'base64'), filename)
 }
 
-export async function uploadStream(config: S3Config, path: string, body: Buffer | ReadableStream | import('stream').Readable, filename: string): Promise<void> {
+export async function uploadStream(
+  config: S3Config,
+  path: string,
+  body: Buffer | ReadableStream | import('stream').Readable,
+  filename: string,
+): Promise<void> {
   const client = createClient(config)
   const dir = path.replace(/^\/+/, '')
   const key = dir ? `${dir}${filename}` : filename

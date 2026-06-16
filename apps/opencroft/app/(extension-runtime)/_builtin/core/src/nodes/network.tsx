@@ -1,19 +1,14 @@
-import {
-  React,
-  icons,
-} from '@ext/host';
-import {
-  Input,
-  Label,
-} from '@ext/ui';
-import { ResizableContainer } from './section';
+import { icons, type React } from '@ext/host'
+import { Input, Label } from '@ext/ui'
+
+import { ResizableContainer } from './section'
 
 export interface NetworkData {
-  label: string;
-  color: string;
-  networkName: string;
-  driver: string;
-  external: boolean;
+  label: string
+  color: string
+  networkName: string
+  driver: string
+  external: boolean
 }
 
 const NETWORK_COLORS = [
@@ -22,33 +17,28 @@ const NETWORK_COLORS = [
   'oklch(0.6 0.18 280)',
   'oklch(0.6 0.18 30)',
   'oklch(0.6 0.18 60)',
-];
+]
 
-export function NetworkNode({
-  id, data, selected,
-}: { id: string; data: NetworkData; selected?: boolean }) {
-  const color = data.color || NETWORK_COLORS[0];
-  const parts = [data.label || data.networkName || 'Network'];
+export function NetworkNode({ id, data, selected }: { id: string; data: NetworkData; selected?: boolean }) {
+  const color = data.color || NETWORK_COLORS[0]
+  const parts = [data.label || data.networkName || 'Network']
   if (data.external) {
-    parts.push('(external)');
+    parts.push('(external)')
   }
   if (data.driver) {
-    parts.push(`[${data.driver}]`);
+    parts.push(`[${data.driver}]`)
   }
-  return (
-    <ResizableContainer
-      id={id}
-      selected={selected}
-      color={color}
-      icon={icons.Network}
-      label={parts.join(' ')}
-    />
-  );
+  return <ResizableContainer id={id} selected={selected} color={color} icon={icons.Network} label={parts.join(' ')} />
 }
 
 export function NetworkInspector({
-  data, updateData,
-}: { nodeId: string; data: NetworkData; updateData: (p: Partial<NetworkData>) => void }) {
+  data,
+  updateData,
+}: {
+  nodeId: string
+  data: NetworkData
+  updateData: (p: Partial<NetworkData>) => void
+}) {
   return (
     <div className='flex flex-col gap-3'>
       <div className='flex flex-col gap-1'>
@@ -102,5 +92,5 @@ export function NetworkInspector({
         </div>
       </div>
     </div>
-  );
+  )
 }

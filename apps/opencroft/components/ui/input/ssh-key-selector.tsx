@@ -1,10 +1,11 @@
 'use client'
 
-import { Flex } from '@opencroft/ui-kit/layout/flex'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@opencroft/ui-kit/select'
+import type { SshKey } from '@opencroft/terminal/server'
 import { Loader2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import type { SshKey } from '@/app/(server)/_server/ssh-key'
+import { Flex } from 'ui/layout/flex'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
+
 import { listSshKeys } from '@/app/(ssh)/_server/ssh-keys-actions'
 
 interface SshKeySelectorProps {

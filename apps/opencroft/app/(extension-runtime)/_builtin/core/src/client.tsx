@@ -1,33 +1,44 @@
-import { defineExtension } from '@ext/host';
-import { TERMINAL_SOURCE, TERMINAL_CONSUMER, FS_TARGET_CONSUMER, SCRIPT_CONSUMER, SCRIPT_CONSUMER_PYTHON, SCRIPT_CONSUMER_NODEJS, DOCKER_HANDLES, APP_HANDLES, VOLUME_HANDLES, GIT_WORKSPACE_HANDLES, AGENT_HANDLES, AGENT_JOB_HANDLES, AGENT_INSTRUCTION_HANDLES } from './shared';
-import { LocalhostNode, LocalhostInspector, LocalhostTerminalTab, LocalhostFilesTab } from './nodes/localhost';
-import { WslNode, WslInspector, WslData, WslTerminalTab, WslFilesTab } from './nodes/wsl';
-import { ServerNode, ServerInspector, ServerTerminalTab, ServerFilesTab, ServerData } from './nodes/server';
-import { KeyStoreNode, KeyStoreInspector } from './nodes/key-store';
-import { SecretsStoreNode, SecretsStoreInspector } from './nodes/secrets-store';
-import { TerminalWindowNode, TerminalWindowInspector } from './nodes/terminal';
-import { FileManagerWindowNode, FileManagerWindowInspector } from './nodes/file-manager';
-import { SectionNode, DomainNode, SectionInspector, randomSectionColor } from './nodes/section';
-import { makeBashNode, makePythonNode, makeNodeJsNode, scriptExposeOutput } from './nodes/script';
-import { DockerNode, DockerInspector, DockerInventoryTab, DockerData } from './nodes/docker';
-import { ApplicationNode, ApplicationInspector, ApplicationLogsTab, ApplicationTerminalTab } from './nodes/application';
-import { VolumeNode, VolumeInspector, VolumeData } from './nodes/volume';
-import { NetworkNode, NetworkInspector } from './nodes/network';
-import { OpenAIClientNode, OpenAIClientInspector } from './nodes/openai-client';
-import { OpenAIAssistantNode, OpenAIAssistantInspector } from './nodes/openai-assistant';
-import { PromptNode, PromptInspector, PROMPT_HANDLES, promptExposeOutput } from './nodes/prompt';
-import { TextGenerationNode, TextGenerationInspector, TEXT_GENERATION_HANDLES, textGenerationExposeOutput } from './nodes/text-generation';
-import { LogNode, LogInspector, LogOutputTab, LOG_HANDLES } from './nodes/log';
-import { SendMessageNode, SendMessageInspector, SEND_MESSAGE_HANDLES } from './nodes/send-message';
-import { ApiRouteNode, ApiRouteInspector, API_ROUTE_HANDLES, apiRouteExposeOutput } from './nodes/api-route';
-import { EventNode, EventInspector, EVENT_HANDLES, eventExposeOutput } from './nodes/event';
-import { GitWorkspaceNode, GitWorkspaceInspector } from './nodes/git-workspace';
-import { DocumentationNode, DocumentationDetailsTab, DocumentationKeysTab } from './nodes/documentation';
-import { AgentNode, AgentInspector, AgentOpenClawTab, AgentProfileTab } from './nodes/agent';
-import { AgentMcpTab } from './nodes/agent-mcp';
-import { AgentToolNode, AgentToolInspector, AGENT_TOOL_HANDLES, agentToolExposeOutput } from './nodes/agent-tool';
-import { AgentJobNode, AgentJobInspector } from './nodes/agent-job';
-import { AgentInstructionNode, AgentInstructionInspector } from './nodes/agent-instruction';
+import { defineExtension } from '@ext/host'
+
+import { AgentInspector, AgentNode, AgentOpenClawTab, AgentProfileTab } from './nodes/agent'
+import { AgentInstructionInspector, AgentInstructionNode } from './nodes/agent-instruction'
+import { AgentJobInspector, AgentJobNode } from './nodes/agent-job'
+import { AgentMcpTab } from './nodes/agent-mcp'
+import { AGENT_TOOL_HANDLES, AgentToolInspector, AgentToolNode, agentToolExposeOutput } from './nodes/agent-tool'
+import { API_ROUTE_HANDLES, ApiRouteInspector, ApiRouteNode, apiRouteExposeOutput } from './nodes/api-route'
+import { EVENT_HANDLES, EventInspector, EventNode, eventExposeOutput } from './nodes/event'
+import { FileManagerWindowInspector, FileManagerWindowNode } from './nodes/file-manager'
+import { KeyStoreInspector, KeyStoreNode } from './nodes/key-store'
+import { LocalhostFilesTab, LocalhostInspector, LocalhostNode, LocalhostTerminalTab } from './nodes/localhost'
+import { LOG_HANDLES, LogInspector, LogNode, LogOutputTab } from './nodes/log'
+import { NetworkInspector, NetworkNode } from './nodes/network'
+import { OpenAIAssistantInspector, OpenAIAssistantNode } from './nodes/openai-assistant'
+import { OpenAIClientInspector, OpenAIClientNode } from './nodes/openai-client'
+import { PROMPT_HANDLES, PromptInspector, PromptNode, promptExposeOutput } from './nodes/prompt'
+import { makeBashNode, makeNodeJsNode, makePythonNode, scriptExposeOutput } from './nodes/script'
+import { SecretsStoreInspector, SecretsStoreNode } from './nodes/secrets-store'
+import { DomainNode, randomSectionColor, SectionInspector, SectionNode } from './nodes/section'
+import { SEND_MESSAGE_HANDLES, SendMessageInspector, SendMessageNode } from './nodes/send-message'
+import { type ServerData, ServerFilesTab, ServerInspector, ServerNode, ServerTerminalTab } from './nodes/server'
+import { TerminalWindowInspector, TerminalWindowNode } from './nodes/terminal'
+import {
+  TEXT_GENERATION_HANDLES,
+  TextGenerationInspector,
+  TextGenerationNode,
+  textGenerationExposeOutput,
+} from './nodes/text-generation'
+import { type WslData, WslFilesTab, WslInspector, WslNode, WslTerminalTab } from './nodes/wsl'
+import {
+  AGENT_HANDLES,
+  AGENT_INSTRUCTION_HANDLES,
+  AGENT_JOB_HANDLES,
+  FS_TARGET_CONSUMER,
+  SCRIPT_CONSUMER,
+  SCRIPT_CONSUMER_NODEJS,
+  SCRIPT_CONSUMER_PYTHON,
+  TERMINAL_CONSUMER,
+  TERMINAL_SOURCE,
+} from './shared'
 
 export default defineExtension({
   manifest: {
@@ -39,8 +50,6 @@ export default defineExtension({
   contexts: [
     { id: 'terminal-context', label: 'Terminal Context', color: 'oklch(0.7 0.18 300)' },
     { id: 'filesystem-target', label: 'Filesystem Target', color: 'oklch(0.7 0.17 140)' },
-    { id: 'docker-context', label: 'Docker Context', color: 'oklch(0.75 0.14 240)' },
-    { id: 'volume-mount', label: 'Volume Mount', color: 'oklch(0.7 0.15 50)' },
     { id: 'text-stream', label: 'Text Stream', color: 'oklch(0.75 0.17 100)' },
     { id: 'execution-context', label: 'Execution Context', color: 'oklch(0.65 0.24 25)' },
     { id: 'agent-job', label: 'Agent Job', color: 'oklch(0.7 0.17 60)' },
@@ -58,17 +67,29 @@ export default defineExtension({
       component: LocalhostNode as unknown as never,
       inspector: LocalhostInspector as unknown as never,
       inspectorTabs: [
-        { id: 'terminal', label: 'Terminal', icon: 'TerminalSquare', fullHeight: true, component: LocalhostTerminalTab as unknown as never },
-        { id: 'files', label: 'Files', icon: 'FolderOpen', fullHeight: true, component: LocalhostFilesTab as unknown as never },
+        {
+          id: 'terminal',
+          label: 'Terminal',
+          icon: 'TerminalSquare',
+          fullHeight: true,
+          component: LocalhostTerminalTab as unknown as never,
+        },
+        {
+          id: 'files',
+          label: 'Files',
+          icon: 'FolderOpen',
+          fullHeight: true,
+          component: LocalhostFilesTab as unknown as never,
+        },
       ],
       exposeOutput: (handleId: string) => {
         if (handleId === 'terminal') {
-          return { type: 'local' };
+          return { type: 'local' }
         }
         if (handleId === 'fs-out') {
-          return { type: 'local' };
+          return { type: 'local' }
         }
-        return undefined;
+        return undefined
       },
     },
     {
@@ -82,21 +103,33 @@ export default defineExtension({
       component: WslNode as unknown as never,
       inspector: WslInspector as unknown as never,
       inspectorTabs: [
-        { id: 'terminal', label: 'Terminal', icon: 'TerminalSquare', fullHeight: true, component: WslTerminalTab as unknown as never },
-        { id: 'files', label: 'Files', icon: 'FolderOpen', fullHeight: true, component: WslFilesTab as unknown as never },
+        {
+          id: 'terminal',
+          label: 'Terminal',
+          icon: 'TerminalSquare',
+          fullHeight: true,
+          component: WslTerminalTab as unknown as never,
+        },
+        {
+          id: 'files',
+          label: 'Files',
+          icon: 'FolderOpen',
+          fullHeight: true,
+          component: WslFilesTab as unknown as never,
+        },
       ],
       exposeOutput: (handleId: string, data: unknown) => {
-        const d = data as WslData;
+        const d = data as WslData
         if (!d.distro) {
-          return undefined;
+          return undefined
         }
         if (handleId === 'terminal') {
-          return { type: 'wsl', distro: d.distro };
+          return { type: 'wsl', distro: d.distro }
         }
         if (handleId === 'fs-out') {
-          return { type: 'wsl', distro: d.distro };
+          return { type: 'wsl', distro: d.distro }
         }
-        return undefined;
+        return undefined
       },
     },
     {
@@ -110,21 +143,47 @@ export default defineExtension({
       component: ServerNode as unknown as never,
       inspector: ServerInspector as unknown as never,
       inspectorTabs: [
-        { id: 'terminal', label: 'Terminal', icon: 'TerminalSquare', fullHeight: true, component: ServerTerminalTab as unknown as never },
-        { id: 'files', label: 'Files', icon: 'FolderOpen', fullHeight: true, component: ServerFilesTab as unknown as never },
+        {
+          id: 'terminal',
+          label: 'Terminal',
+          icon: 'TerminalSquare',
+          fullHeight: true,
+          component: ServerTerminalTab as unknown as never,
+        },
+        {
+          id: 'files',
+          label: 'Files',
+          icon: 'FolderOpen',
+          fullHeight: true,
+          component: ServerFilesTab as unknown as never,
+        },
       ],
       exposeOutput: (handleId: string, data: unknown) => {
-        const d = data as ServerData;
+        const d = data as ServerData
         if (!d.address) {
-          return undefined;
+          return undefined
         }
         if (handleId === 'terminal') {
-          return { type: 'ssh', host: d.address, port: d.port, username: d.username, password: d.password, keyPath: d.keyPath };
+          return {
+            type: 'ssh',
+            host: d.address,
+            port: d.port,
+            username: d.username,
+            password: d.password,
+            keyPath: d.keyPath,
+          }
         }
         if (handleId === 'fs-out') {
-          return { type: 'ssh', host: d.address, port: d.port, username: d.username, password: d.password, keyPath: d.keyPath };
+          return {
+            type: 'ssh',
+            host: d.address,
+            port: d.port,
+            username: d.username,
+            password: d.password,
+            keyPath: d.keyPath,
+          }
         }
-        return undefined;
+        return undefined
       },
     },
     {
@@ -182,8 +241,20 @@ export default defineExtension({
       component: makeBashNode().component as unknown as never,
       inspector: makeBashNode().inspector as unknown as never,
       inspectorTabs: [
-        { id: 'editor', label: 'Editor', icon: 'Code', fullHeight: true, component: makeBashNode().editorTab as unknown as never },
-        { id: 'output', label: 'Output', icon: 'ScrollText', fullHeight: true, component: makeBashNode().outputTab as unknown as never },
+        {
+          id: 'editor',
+          label: 'Editor',
+          icon: 'Code',
+          fullHeight: true,
+          component: makeBashNode().editorTab as unknown as never,
+        },
+        {
+          id: 'output',
+          label: 'Output',
+          icon: 'ScrollText',
+          fullHeight: true,
+          component: makeBashNode().outputTab as unknown as never,
+        },
       ],
       exposeOutput: scriptExposeOutput as unknown as never,
     },
@@ -198,8 +269,20 @@ export default defineExtension({
       component: makePythonNode().component as unknown as never,
       inspector: makePythonNode().inspector as unknown as never,
       inspectorTabs: [
-        { id: 'editor', label: 'Editor', icon: 'Code', fullHeight: true, component: makePythonNode().editorTab as unknown as never },
-        { id: 'output', label: 'Output', icon: 'ScrollText', fullHeight: true, component: makePythonNode().outputTab as unknown as never },
+        {
+          id: 'editor',
+          label: 'Editor',
+          icon: 'Code',
+          fullHeight: true,
+          component: makePythonNode().editorTab as unknown as never,
+        },
+        {
+          id: 'output',
+          label: 'Output',
+          icon: 'ScrollText',
+          fullHeight: true,
+          component: makePythonNode().outputTab as unknown as never,
+        },
       ],
       exposeOutput: scriptExposeOutput as unknown as never,
     },
@@ -214,93 +297,22 @@ export default defineExtension({
       component: makeNodeJsNode().component as unknown as never,
       inspector: makeNodeJsNode().inspector as unknown as never,
       inspectorTabs: [
-        { id: 'editor', label: 'Editor', icon: 'Code', fullHeight: true, component: makeNodeJsNode().editorTab as unknown as never },
-        { id: 'output', label: 'Output', icon: 'ScrollText', fullHeight: true, component: makeNodeJsNode().outputTab as unknown as never },
+        {
+          id: 'editor',
+          label: 'Editor',
+          icon: 'Code',
+          fullHeight: true,
+          component: makeNodeJsNode().editorTab as unknown as never,
+        },
+        {
+          id: 'output',
+          label: 'Output',
+          icon: 'ScrollText',
+          fullHeight: true,
+          component: makeNodeJsNode().outputTab as unknown as never,
+        },
       ],
       exposeOutput: scriptExposeOutput as unknown as never,
-    },
-    {
-      typeId: 'docker',
-      name: 'Docker',
-      category: 'Infrastructure',
-      icon: 'Container',
-      accent: 'oklch(0.75 0.14 240)',
-      handles: DOCKER_HANDLES as unknown as never[],
-      defaultData: { contextName: '', registries: [] },
-      component: DockerNode as unknown as never,
-      inspector: DockerInspector as unknown as never,
-      inspectorTabs: [
-        { id: 'inventory', label: 'Containers', icon: 'Container', component: DockerInventoryTab as unknown as never },
-      ],
-      exposeOutput: (handleId: string, data: unknown) => {
-        if (handleId !== 'docker-out') {
-          return undefined;
-        }
-        const d = data as DockerData & { __resolvedContexts?: Record<string, { value: Record<string, unknown> }> };
-        const target = d.__resolvedContexts?.['context-in']?.value;
-        const exec = d.__resolvedContexts?.['ctx-in']?.value ?? { type: 'local' };
-        const base = target ?? exec;
-        return { ...base, contextName: d.contextName };
-      },
-    },
-    {
-      typeId: 'application',
-      name: 'Application',
-      category: 'Applications',
-      icon: 'AppWindow',
-      accent: 'var(--primary)',
-      handles: APP_HANDLES as unknown as never[],
-      defaultData: {
-        name: '', image: '', ports: '', env: '', command: '', restart: '', replicas: 1,
-        containerName: '', workingDir: '', buildContext: '', buildDockerfile: '',
-        gpu: false, requirementMemory: '', requirementCpu: '', init: false, readOnly: false,
-        dependsOn: '', groupAdd: '', securityOpts: '', tmpfs: '',
-        healthcheckTest: '', healthcheckInterval: '', healthcheckTimeout: '',
-        healthcheckRetries: 0, healthcheckStartPeriod: '',
-        proxyDomain: '', proxyEntrypoint: '', proxyTls: false, proxyBasicAuth: '', proxyPort: 0,
-        exposeHostDocker: false, copyDockerBinaries: false,
-        secrets: '',
-      },
-      component: ApplicationNode as unknown as never,
-      inspector: ApplicationInspector as unknown as never,
-      inspectorTabs: [
-        { id: 'logs', label: 'Logs', icon: 'ScrollText', fullHeight: true, component: ApplicationLogsTab as unknown as never },
-        { id: 'terminal', label: 'Terminal', icon: 'TerminalSquare', fullHeight: true, component: ApplicationTerminalTab as unknown as never },
-      ],
-      exposeOutput: (handleId: string, data: unknown) => {
-        if (!handleId.startsWith('instance-terminal-')) {
-          return undefined;
-        }
-        const containerId = handleId.slice('instance-terminal-'.length);
-        const d = data as { __resolvedContexts?: Record<string, { value: Record<string, unknown> }> };
-        const docker = d.__resolvedContexts?.['docker-in']?.value;
-        if (!docker) {
-          return undefined;
-        }
-        const { contextName, ...via } = docker as { contextName?: string } & Record<string, unknown>;
-        return { type: 'docker-exec', via, contextName, containerId };
-      },
-    },
-    {
-      typeId: 'volume',
-      name: 'Volume',
-      category: 'Applications',
-      icon: 'HardDrive',
-      accent: 'oklch(0.7 0.15 50)',
-      handles: VOLUME_HANDLES as unknown as never[],
-      defaultData: { name: '', hostPath: '', containerPath: '', readOnly: false },
-      component: VolumeNode as unknown as never,
-      inspector: VolumeInspector as unknown as never,
-      exposeOutput: (handleId: string, data: unknown) => {
-        if (handleId !== 'vol-out') {
-          return undefined;
-        }
-        const d = data as VolumeData;
-        if (!d.hostPath || !d.containerPath) {
-          return undefined;
-        }
-        return { hostPath: d.hostPath, containerPath: d.containerPath, readOnly: d.readOnly };
-      },
     },
     {
       typeId: 'agent',
@@ -313,9 +325,21 @@ export default defineExtension({
       component: AgentNode as unknown as never,
       inspector: AgentInspector as unknown as never,
       inspectorTabs: [
-        { id: 'profile', label: 'Profile', icon: 'Bot', fullHeight: true, component: AgentProfileTab as unknown as never },
+        {
+          id: 'profile',
+          label: 'Profile',
+          icon: 'Bot',
+          fullHeight: true,
+          component: AgentProfileTab as unknown as never,
+        },
         { id: 'mcp', label: 'MCP', icon: 'Wrench', fullHeight: true, component: AgentMcpTab as unknown as never },
-        { id: 'openclaw', label: 'OpenClaw', icon: 'Globe', fullHeight: true, component: AgentOpenClawTab as unknown as never },
+        {
+          id: 'openclaw',
+          label: 'OpenClaw',
+          icon: 'Globe',
+          fullHeight: true,
+          component: AgentOpenClawTab as unknown as never,
+        },
       ],
     },
     {
@@ -417,7 +441,13 @@ export default defineExtension({
       component: LogNode as unknown as never,
       inspector: LogInspector as unknown as never,
       inspectorTabs: [
-        { id: 'output', label: 'Output', icon: 'ScrollText', fullHeight: true, component: LogOutputTab as unknown as never },
+        {
+          id: 'output',
+          label: 'Output',
+          icon: 'ScrollText',
+          fullHeight: true,
+          component: LogOutputTab as unknown as never,
+        },
       ],
     },
     {
@@ -450,7 +480,12 @@ export default defineExtension({
       icon: 'Wrench',
       accent: 'oklch(0.65 0.24 25)',
       handles: AGENT_TOOL_HANDLES as unknown as never[],
-      defaultData: { name: '', description: '', inputSchema: '{"type":"object","properties":{}}', requireApproval: true },
+      defaultData: {
+        name: '',
+        description: '',
+        inputSchema: '{"type":"object","properties":{}}',
+        requireApproval: true,
+      },
       component: AgentToolNode as unknown as never,
       inspector: AgentToolInspector as unknown as never,
       exposeOutput: agentToolExposeOutput as unknown as never,
@@ -472,31 +507,6 @@ export default defineExtension({
       component: EventNode as unknown as never,
       inspector: EventInspector as unknown as never,
       exposeOutput: eventExposeOutput as unknown as never,
-    },
-    {
-      typeId: 'git-workspace',
-      name: 'Git Workspace',
-      category: 'Infrastructure',
-      icon: 'GitBranch',
-      accent: 'oklch(0.7 0.18 30)',
-      handles: GIT_WORKSPACE_HANDLES as unknown as never[],
-      defaultData: { folder: '' },
-      component: GitWorkspaceNode as unknown as never,
-      inspector: GitWorkspaceInspector as unknown as never,
-    },
-    {
-      typeId: 'documentation',
-      name: 'Documentation',
-      category: 'Storage',
-      icon: 'BookOpen',
-      accent: 'oklch(0.7 0.17 180)',
-      handles: [],
-      defaultData: { name: '', repoUrl: '', branch: 'main', secretId: null },
-      component: DocumentationNode as unknown as never,
-      inspector: DocumentationDetailsTab as unknown as never,
-      inspectorTabs: [
-        { id: 'keys', label: 'Keys', icon: 'KeyRound', component: DocumentationKeysTab as unknown as never },
-      ],
     },
     {
       typeId: 'network',
@@ -532,4 +542,4 @@ export default defineExtension({
       inspector: SectionInspector as unknown as never,
     },
   ],
-});
+})

@@ -1,11 +1,13 @@
 'use client'
 
-import { Textarea } from '@opencroft/ui-kit/textarea'
 import { useEffect, useRef, useState } from 'react'
-import { useDebounce } from '@/components/hooks/use-debounce'
-import { useIsMobile } from '@/hooks/use-mobile'
+import { useIsMobile } from 'ui/hooks/use-mobile'
+import { Textarea } from 'ui/textarea'
 
-export interface ControlledTextareaProps extends Omit<React.ComponentProps<typeof Textarea>, 'onChange' | 'onBlur' | 'onKeyDown'> {
+import { useDebounce } from '@/components/hooks/use-debounce'
+
+export interface ControlledTextareaProps
+  extends Omit<React.ComponentProps<typeof Textarea>, 'onChange' | 'onBlur' | 'onKeyDown'> {
   onValueChanged?: (value: string) => void
   onAccepted?: (value: string) => void
   value?: string

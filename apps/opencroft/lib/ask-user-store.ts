@@ -18,11 +18,9 @@ class AskUserStore {
   add(request: PendingAskUser): Promise<Record<string, string>> {
     return new Promise((resolve, reject) => {
       this.pending.set(request.id, { request, resolve, reject })
-      toastStore.broadcast({
-        type: 'ask_user_pending',
-        request,
-        spaceId: request.spaceId,
-      })
+      // Broadcast globally (no event spaceId): pending requests must surface on
+      // every space, not just the one that raised them.
+      toastStore.broadcast({ type: 'ask_user_pending', request })
     })
   }
 
@@ -32,7 +30,7 @@ class AskUserStore {
       return false
     }
     this.pending.delete(id)
-    toastStore.broadcast({ type: 'ask_user_resolved', id, spaceId: entry.request.spaceId })
+    toastStore.broadcast({ type: 'ask_user_resolved', id })
     entry.resolve(answers)
     return true
   }
@@ -43,7 +41,7 @@ class AskUserStore {
       return false
     }
     this.pending.delete(id)
-    toastStore.broadcast({ type: 'ask_user_resolved', id, spaceId: entry.request.spaceId })
+    toastStore.broadcast({ type: 'ask_user_resolved', id })
     entry.reject('cancelled')
     return true
   }

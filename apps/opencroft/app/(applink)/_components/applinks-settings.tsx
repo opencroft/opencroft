@@ -1,14 +1,23 @@
 'use client'
 
 import type { AppLink } from '@opencroft/db'
-import { Button } from '@opencroft/ui-kit/button'
-import { Input } from '@opencroft/ui-kit/input'
-import { Flex } from '@opencroft/ui-kit/layout/flex'
 import { Pencil, Plus, Trash2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { Button } from 'ui/button'
+import { Input } from 'ui/input'
+import { Flex } from 'ui/layout/flex'
+
 import { createAppLink, deleteAppLink, getAppLinks, updateAppLink } from '@/app/(applink)/_server/actions'
 
-function AppLinkRow({ link, onDelete, onUpdate }: { link: AppLink; onDelete: (id: string) => void; onUpdate: (data: { id: string; title: string; url: string }) => void }) {
+function AppLinkRow({
+  link,
+  onDelete,
+  onUpdate,
+}: {
+  link: AppLink
+  onDelete: (id: string) => void
+  onUpdate: (data: { id: string; title: string; url: string }) => void
+}) {
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState(link.title)
   const [url, setUrl] = useState(link.url)

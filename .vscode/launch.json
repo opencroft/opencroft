@@ -18,9 +18,6 @@
       "type": "node-terminal",
       "request": "launch",
       "command": "npm run dev",
-      "env": {
-        "NO_COLOR": "1"
-      },
       "serverReadyAction": {
         "action": "debugWithChrome",
         "killOnServerStop": true,
@@ -28,14 +25,6 @@
         "uriFormat": "%s",
         "webRoot": "${workspaceFolder}"
       }
-    },
-    {
-      "name": "Prod server (dist/prod.mjs)",
-      "type": "node",
-      "request": "launch",
-      "program": "${workspaceFolder}/dist/prod.mjs",
-      "skipFiles": ["<node_internals>/**"],
-      "console": "integratedTerminal"
     }
   ]
 }

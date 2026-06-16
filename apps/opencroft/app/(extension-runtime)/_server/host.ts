@@ -3,14 +3,19 @@ import { randomBytes } from 'node:crypto'
 import { promises as fsPromises } from 'node:fs'
 import nodeOs from 'node:os'
 import nodePath from 'node:path'
-import { db, prisma } from '@opencroft/db'
+
+import { db } from '@opencroft/db'
+import type { HostSecretsApi } from '@opencroft/server'
+import type { ServerConfig, TerminalContext } from '@opencroft/terminal'
+import { exec, resolveKeyContent, sshExec, terminalExec, terminalRun } from '@opencroft/terminal/server'
+
 import { gateway } from '@/app/(openclaw)/_server/gateway-client'
 import { getSetting, setSetting } from '@/app/(settings)/_server/actions'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
 import type { GraphData } from '@/app/(space)/_server/types'
 import { cacheDir } from '@/server/cache'
 import { decrypt, encrypt } from '@/server/crypto'
-import { exec } from '@/server/shell'
+import { secrets } from '@/server/secrets'
 
 function randomToken(bytes = 32): string {
   return randomBytes(bytes).toString('hex')
@@ -46,7 +51,10 @@ async function loadAllSpaces(): Promise<{ slug: string; graph: GraphData }[]> {
   })
 }
 
-function findNodeAcrossSpaces(spaces: { slug: string; graph: GraphData }[], nodeId: string): { slug: string; node: GraphNodeRecord } | null {
+function findNodeAcrossSpaces(
+  spaces: { slug: string; graph: GraphData }[],
+  nodeId: string,
+): { slug: string; node: GraphNodeRecord } | null {
   for (const s of spaces) {
     const node = s.graph.nodes.find((n) => (n as { id?: string }).id === nodeId)
     if (node) {
@@ -91,7 +99,11 @@ export interface HostGraphApi {
   listNodesByType(typeId: string): Promise<GraphNodeRecord[]>
   listEdges(): Promise<GraphEdgeRecord[]>
   updateNode(nodeId: string, patch: Partial<GraphNodeRecord>): Promise<GraphNodeRecord | null>
-  createNode(typeId: string, data: Record<string, unknown>, position: { x: number; y: number }): Promise<GraphNodeRecord>
+  createNode(
+    typeId: string,
+    data: Record<string, unknown>,
+    position: { x: number; y: number },
+  ): Promise<GraphNodeRecord>
   deleteNode(nodeId: string): Promise<void>
 }
 
@@ -113,7 +125,9 @@ const graphApi: HostGraphApi = {
   async updateNode(nodeId, patch) {
     let updated: GraphNodeRecord | null = null
     await writeNodePatch(nodeId, (graph) => {
-      const node = graph.nodes.find((n) => (n as { id?: string }).id === nodeId) as unknown as GraphNodeRecord | undefined
+      const node = graph.nodes.find((n) => (n as { id?: string }).id === nodeId) as unknown as
+        | GraphNodeRecord
+        | undefined
       if (!node) {
         return false
       }
@@ -233,12 +247,19 @@ export interface ExtensionHost {
   cacheDir: (...parts: string[]) => string
   crypto: { encrypt: typeof encrypt; decrypt: typeof decrypt; randomToken: typeof randomToken }
   db: typeof db
-  /** @deprecated Prisma-compatible facade over Drizzle; prefer `db`. */
-  prisma: typeof prisma
+  secrets: HostSecretsApi
   settings: { get: typeof getSetting; set: typeof setSetting }
   graph: HostGraphApi
   storage: ExtensionStorageApi
   openclaw: OpenclawApi
+  terminal: {
+    exec(ctx: TerminalContext, command: string): Promise<string>
+    run(ctx: TerminalContext, args: string[], env?: Record<string, string>): Promise<string>
+  }
+  ssh: {
+    exec(config: ServerConfig, command: string): Promise<string>
+    resolveKey(keyPath?: string): Promise<string | undefined>
+  }
 }
 
 export function createHost(extensionId: string): ExtensionHost {
@@ -252,10 +273,12 @@ export function createHost(extensionId: string): ExtensionHost {
     cacheDir: (...parts) => cacheDir('extensions', extensionId, ...parts),
     crypto: { encrypt, decrypt, randomToken },
     db,
-    prisma,
+    secrets,
     settings: { get: getSetting, set: setSetting },
     graph: graphApi,
     storage: storageApi(extensionId),
     openclaw: openclawApi,
+    terminal: { exec: terminalExec, run: terminalRun },
+    ssh: { exec: sshExec, resolveKey: resolveKeyContent },
   }
 }

@@ -111,7 +111,10 @@ async function handleRequest(request: Request, params: { _splat?: string }) {
   const rawMethods = matchedRouteNode.data.methods ?? matchedRouteNode.data.method ?? ['GET']
   const allowedMethods = (Array.isArray(rawMethods) ? rawMethods : [rawMethods]) as string[]
   if (!allowedMethods.includes(method)) {
-    return Response.json({ error: 'Method Not Allowed' }, { status: 405, headers: { Allow: allowedMethods.join(', ') } })
+    return Response.json(
+      { error: 'Method Not Allowed' },
+      { status: 405, headers: { Allow: allowedMethods.join(', ') } },
+    )
   }
 
   // Find edges from the api-route node's exec-out handle
@@ -120,7 +123,9 @@ async function handleRequest(request: Request, params: { _splat?: string }) {
     return Response.json({ error: 'Space not found' }, { status: 500 })
   }
 
-  const handlerEdge = (space.graph.edges as unknown as GraphEdge[]).find((e) => e.source === matchedRouteNode!.id && e.sourceHandle === 'exec-out')
+  const handlerEdge = (space.graph.edges as unknown as GraphEdge[]).find(
+    (e) => e.source === matchedRouteNode!.id && e.sourceHandle === 'exec-out',
+  )
 
   if (!handlerEdge) {
     return Response.json({ error: 'API Route has no connected handler' }, { status: 502 })
@@ -135,10 +140,17 @@ async function handleRequest(request: Request, params: { _splat?: string }) {
 
   const language = handlerNode.data.language as string | undefined
   if (language !== 'python' && language !== 'node') {
-    return Response.json({ error: `Unsupported handler language: ${language ?? 'none'}. Only Python and Node.js scripts support ExecutionContext.` }, { status: 400 })
+    return Response.json(
+      {
+        error: `Unsupported handler language: ${language ?? 'none'}. Only Python and Node.js scripts support ExecutionContext.`,
+      },
+      { status: 400 },
+    )
   }
 
-  const resolvedContexts = handlerNode.data.__resolvedContexts as Record<string, { value?: Record<string, unknown> }> | undefined
+  const resolvedContexts = handlerNode.data.__resolvedContexts as
+    | Record<string, { value?: Record<string, unknown> }>
+    | undefined
   const terminalContext = resolvedContexts?.['ctx-in']?.value ?? { type: 'local' }
 
   // Build request event

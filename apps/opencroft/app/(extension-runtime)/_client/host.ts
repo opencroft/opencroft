@@ -1,30 +1,27 @@
 'use client'
 
-import { Badge } from '@opencroft/ui-kit/badge'
-import { Button } from '@opencroft/ui-kit/button'
-import { ChatInput } from '@opencroft/ui-kit/chat/chat-input'
-import { ChatMessage } from '@opencroft/ui-kit/chat/chat-message'
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@opencroft/ui-kit/dialog'
-import { Input as TextInput } from '@opencroft/ui-kit/input'
-import { Label } from '@opencroft/ui-kit/label'
-import { Flex } from '@opencroft/ui-kit/layout/flex'
-import { ScrollArea } from '@opencroft/ui-kit/layout/scroll-area'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@opencroft/ui-kit/select'
-import { Separator } from '@opencroft/ui-kit/separator'
-import { Slider } from '@opencroft/ui-kit/slider'
-import { Textarea } from '@opencroft/ui-kit/textarea'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@opencroft/ui-kit/tooltip'
-import { StatusIndicator } from '@opencroft/ui-kit/utils/status-indicator'
-import { Handle, NodeResizer, Position, useEdges, useNodeId, useNodes, useReactFlow, useUpdateNodeInternals } from '@xyflow/react'
+import { Terminal } from '@opencroft/terminal/client'
+import {
+  Handle,
+  NodeResizer,
+  Position,
+  useEdges,
+  useNodeId,
+  useNodes,
+  useReactFlow,
+  useUpdateNodeInternals,
+} from '@xyflow/react'
 import * as icons from 'lucide-react'
 import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
+import * as uiKit from 'ui/ext'
+
 import { CommandBar, CommandBarMenu, CommandBarMenuItem } from '@/app/(dashboard)/_canvas/command-bar'
 import { inspectorIntent, useInspectorIntent } from '@/app/(dashboard)/_canvas/inspector-intent'
 import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/(dashboard)/_canvas/node-card'
 import { NodeFrame, useNodeAccent } from '@/app/(dashboard)/_canvas/node-frame'
-import { useOverlayBar, useOverlayContent, useOverlayMenu } from '@/app/(dashboard)/_canvas/overlay-context'
+import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
 import { useNodeContext } from '@/app/(dashboard)/_extension-system/use-node-context'
 import { extensionRegistry } from '@/app/(extension-runtime)/_client/registry'
 import { broadcast, getStream, type Stream, subscribe, type TextChunk } from '@/app/(extension-runtime)/_client/stream'
@@ -33,7 +30,11 @@ import { dispatchNodeAction } from '@/app/(extension-runtime)/_server/node-actio
 import type { ExtensionContextType, ExtensionHandle } from '@/app/(extension-runtime)/_types'
 import { FileBrowser } from '@/app/(filemanager)/_components/file-browser'
 import { FileManagerProvider } from '@/app/(filemanager)/_components/filemanager-provider'
-import { useDockerContainers, useDockerSnapshotReceived, useSeedDockerContainers } from '@/app/(sse)/_lib/sse-events-store'
+import {
+  useDockerContainers,
+  useDockerSnapshotReceived,
+  useSeedDockerContainers,
+} from '@/app/(sse)/_lib/sse-events-store'
 import { ControlledInput } from '@/components/ui/input/controlled-input'
 
 export interface ExtensionComponentProps<D = Record<string, unknown>> {
@@ -115,6 +116,8 @@ export interface CommandModeDefinition {
   icon?: string
   description?: string
   shortcut?: CommandModeShortcut
+  /** Render the overlay content across the full canvas width instead of the compact chat column. */
+  fullWidth?: boolean
   component: React.ComponentType<CommandModeProps>
 }
 
@@ -131,16 +134,23 @@ export interface ExtensionDeclaration {
   nodes?: NodeDefinition[]
   commandModes?: CommandModeDefinition[]
   settings?: SettingsPageDefinition[]
+  /** Generic, feature-defined provider points (e.g. `dashboards`). The runtime
+   *  forwards these to the provider registry untouched. */
+  provides?: Record<string, unknown[]>
 }
 
 export function defineExtension(decl: ExtensionDeclaration): ExtensionDeclaration {
   const nodes = decl.nodes ?? []
   const modes = decl.commandModes ?? []
   const settings = decl.settings ?? []
-  if (nodes.length === 0 && modes.length === 0 && settings.length === 0) {
-    throw new Error(`Extension ${decl.manifest.id}: defineExtension requires at least one node, command mode, or settings page`)
+  const provides = decl.provides ?? {}
+  const hasProvided = Object.values(provides).some((items) => items.length > 0)
+  if (nodes.length === 0 && modes.length === 0 && settings.length === 0 && !hasProvided) {
+    throw new Error(
+      `Extension ${decl.manifest.id}: defineExtension requires at least one node, command mode, settings page, or provided entry`,
+    )
   }
-  return { ...decl, nodes, commandModes: modes, settings }
+  return { ...decl, nodes, commandModes: modes, settings, provides }
 }
 
 // ── Node handle pins ───────────────────────────────────────────────────
@@ -257,38 +267,16 @@ function createStorageFor(extensionId: string, namespace?: string): ExtensionSto
 }
 
 export const extensionUiApi = {
-  Badge,
-  Button,
-  Input: TextInput,
+  // Every component from the `ui` package (Badge, Button, Select, Dialog,
+  // SearchableDropdown, Popover, Command, Combobox, …) — see `ui/ext`.
+  ...uiKit,
+  // App-provided components that live outside the `ui` package (or override it).
   ControlledInput,
-  Label,
-  Flex,
-  ScrollArea,
-  Select,
-  SelectTrigger,
-  SelectContent,
-  SelectItem,
-  SelectValue,
-  Separator,
-  Textarea,
-  ChatMessage,
-  ChatInput,
-  Slider,
-  StatusIndicator,
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
   FileBrowser,
   FileManagerProvider,
+  Terminal,
+  // Pre-@opencroft/terminal name for already-compiled extensions.
+  InspectorTerminalBody: Terminal,
   CommandBar,
   CommandBarMenu,
   CommandBarMenuItem,
@@ -308,9 +296,7 @@ export const extensionHostApi = {
   useNodeContext,
   inspectorIntent,
   useInspectorIntent,
-  useOverlayBar,
-  useOverlayMenu,
-  useOverlayContent,
+  useOverlay,
   useGraphNodes: useNodes,
   useGraphEdges: useEdges,
   useReactFlow,

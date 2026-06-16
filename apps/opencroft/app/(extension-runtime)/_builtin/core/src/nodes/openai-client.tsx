@@ -1,56 +1,36 @@
-import {
-  React,
-  NodeFrame,
-  icons,
-  invoke,
-  toast,
-  createPortal,
-  useNodeAccent,
-} from '@ext/host';
-import {
-  Button,
-  Label,
-  Textarea,
-} from '@ext/ui';
+import { createPortal, icons, invoke, NodeFrame, React, toast, useNodeAccent } from '@ext/host'
+import { Button, Label, Textarea } from '@ext/ui'
 
-import { AssistantSelector, useAssistant } from './openai-assistant';
+import { AssistantSelector, useAssistant } from './openai-assistant'
 
-const { useCallback, useRef, useState } = React;
+const { useCallback, useRef, useState } = React
 
 export interface OpenAIClientData {
-  assistantId: string;
-  systemPrompt: string;
-  userPrompt: string;
+  assistantId: string
+  systemPrompt: string
+  userPrompt: string
 }
 
 interface ChatResult {
-  content: string;
-  model: string;
-  promptTokens: number;
-  completionTokens: number;
+  content: string
+  model: string
+  promptTokens: number
+  completionTokens: number
 }
 
-function ResponseOverlay({
-  title,
-  content,
-  onClose,
-}: {
-  title: string;
-  content: string;
-  onClose: () => void;
-}) {
-  const accent = useNodeAccent();
+function ResponseOverlay({ title, content, onClose }: { title: string; content: string; onClose: () => void }) {
+  const accent = useNodeAccent()
   const copy = useCallback(async () => {
-    await navigator.clipboard.writeText(content);
-    toast.success('Copied');
-  }, [content]);
+    await navigator.clipboard.writeText(content)
+    toast.success('Copied')
+  }, [content])
 
   return createPortal(
     <div
       className='fixed inset-0 z-[9999] flex flex-col bg-background/95 backdrop-blur-sm'
       onClick={(e) => {
         if (e.target === e.currentTarget) {
-          onClose();
+          onClose()
         }
       }}
     >
@@ -70,26 +50,26 @@ function ResponseOverlay({
       </div>
     </div>,
     document.body,
-  );
+  )
 }
 
 export function OpenAIClientNode({ data, selected }: { data: OpenAIClientData; selected?: boolean }) {
-  const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<ChatResult | null>(null);
-  const [error, setError] = useState('');
-  const [viewerOpen, setViewerOpen] = useState(false);
-  const genRef = useRef(0);
-  const assistant = useAssistant(data.assistantId);
+  const [running, setRunning] = useState(false)
+  const [result, setResult] = useState<ChatResult | null>(null)
+  const [error, setError] = useState('')
+  const [viewerOpen, setViewerOpen] = useState(false)
+  const genRef = useRef(0)
+  const assistant = useAssistant(data.assistantId)
 
-  const canRun = !!assistant?.chatModel?.trim() && !!data.userPrompt?.trim();
+  const canRun = !!assistant?.chatModel?.trim() && !!data.userPrompt?.trim()
 
   const run = useCallback(async () => {
     if (!canRun || !assistant) {
-      return;
+      return
     }
-    const gen = ++genRef.current;
-    setRunning(true);
-    setError('');
+    const gen = ++genRef.current
+    setRunning(true)
+    setError('')
     try {
       const res = await invoke<ChatResult>('openai.chat', {
         apiBase: assistant.chatApiBase || 'https://api.openai.com/v1',
@@ -98,33 +78,33 @@ export function OpenAIClientNode({ data, selected }: { data: OpenAIClientData; s
         systemPrompt: data.systemPrompt || '',
         userPrompt: data.userPrompt,
         temperature: typeof assistant.temperature === 'number' ? assistant.temperature : 0.7,
-      });
+      })
       if (gen !== genRef.current) {
-        return;
+        return
       }
-      setResult(res);
+      setResult(res)
     } catch (err) {
       if (gen !== genRef.current) {
-        return;
+        return
       }
-      const msg = (err as Error).message || String(err);
-      setError(msg);
-      toast.error(`OpenAI request failed: ${msg}`);
+      const msg = (err as Error).message || String(err)
+      setError(msg)
+      toast.error(`OpenAI request failed: ${msg}`)
     } finally {
       if (gen === genRef.current) {
-        setRunning(false);
+        setRunning(false)
       }
     }
-  }, [canRun, data, assistant]);
+  }, [canRun, data, assistant])
 
   const stop = useCallback(() => {
-    genRef.current += 1;
-    setRunning(false);
-  }, []);
+    genRef.current += 1
+    setRunning(false)
+  }, [])
 
-  const status = error ? 'error' : result ? 'success' : 'neutral';
-  const preview = result?.content.slice(0, 240) ?? '';
-  const truncated = (result?.content.length ?? 0) > 240;
+  const status = error ? 'error' : result ? 'success' : 'neutral'
+  const preview = result?.content.slice(0, 240) ?? ''
+  const truncated = (result?.content.length ?? 0) > 240
 
   return (
     <>
@@ -169,7 +149,8 @@ export function OpenAIClientNode({ data, selected }: { data: OpenAIClientData; s
           ) : result ? (
             <>
               <pre className='text-[10px] font-mono whitespace-pre-wrap line-clamp-6 text-muted-foreground'>
-                {preview}{truncated ? '…' : ''}
+                {preview}
+                {truncated ? '…' : ''}
               </pre>
               <div className='text-[9px] text-muted-foreground'>
                 {result.model} · {result.promptTokens}+{result.completionTokens} tokens
@@ -191,20 +172,22 @@ export function OpenAIClientNode({ data, selected }: { data: OpenAIClientData; s
         />
       ) : null}
     </>
-  );
+  )
 }
 
 export function OpenAIClientInspector({
-  data, updateData,
-}: { nodeId: string; data: OpenAIClientData; updateData: (p: Partial<OpenAIClientData>) => void }) {
+  data,
+  updateData,
+}: {
+  nodeId: string
+  data: OpenAIClientData
+  updateData: (p: Partial<OpenAIClientData>) => void
+}) {
   return (
     <div className='flex flex-col gap-3'>
       <div className='flex flex-col gap-1'>
         <Label>Assistant</Label>
-        <AssistantSelector
-          value={data.assistantId ?? ''}
-          onChange={(v: string) => updateData({ assistantId: v })}
-        />
+        <AssistantSelector value={data.assistantId ?? ''} onChange={(v: string) => updateData({ assistantId: v })} />
       </div>
       <div className='flex flex-col gap-1'>
         <Label>System Prompt (optional)</Label>
@@ -225,5 +208,5 @@ export function OpenAIClientInspector({
         />
       </div>
     </div>
-  );
+  )
 }

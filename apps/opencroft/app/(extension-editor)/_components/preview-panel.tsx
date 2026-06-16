@@ -38,7 +38,11 @@ export function PreviewPanel({ previewTypeId, version }: PreviewPanelProps) {
   }, [resolved])
 
   if (!resolved) {
-    return <div className='h-full w-full flex items-center justify-center text-xs text-muted-foreground'>Compile to preview</div>
+    return (
+      <div className='h-full w-full flex items-center justify-center text-xs text-muted-foreground'>
+        Compile to preview
+      </div>
+    )
   }
 
   return (

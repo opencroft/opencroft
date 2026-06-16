@@ -1,7 +1,7 @@
 'use client'
 
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@opencroft/ui-kit/context-menu'
 import React from 'react'
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from 'ui/context-menu'
 
 interface ThumbnailCardProps {
   key: string
@@ -14,11 +14,22 @@ interface ThumbnailCardProps {
   onDelete: () => void
 }
 
-export const ThumbnailCard = React.memo(function ThumbnailCard({ name, imageSrc, imageKey, isSelected = false, onClick, onEdit, onDelete }: ThumbnailCardProps) {
+export const ThumbnailCard = React.memo(function ThumbnailCard({
+  name,
+  imageSrc,
+  imageKey,
+  isSelected = false,
+  onClick,
+  onEdit,
+  onDelete,
+}: ThumbnailCardProps) {
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <div className={`relative bg-muted rounded-lg overflow-hidden cursor-pointer transition-all aspect-[2/3] ${isSelected ? 'ring-4 ring-primary' : 'hover:shadow-lg'}`} onClick={onClick}>
+        <div
+          className={`relative bg-muted rounded-lg overflow-hidden cursor-pointer transition-all aspect-[2/3] ${isSelected ? 'ring-4 ring-primary' : 'hover:shadow-lg'}`}
+          onClick={onClick}
+        >
           <img
             src={`${imageSrc}?t=${imageKey || 0}`}
             alt={`${name} thumbnail`}

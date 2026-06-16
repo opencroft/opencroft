@@ -1,49 +1,40 @@
-import {
-  React,
-  NodeFrame,
-  InputHandle,
-  icons,
-  inspectorIntent,
-  useReactFlow,
-} from '@ext/host';
-import {
-  Button,
-} from '@ext/ui';
+import { InputHandle, icons, inspectorIntent, NodeFrame, React, useReactFlow } from '@ext/host'
+import { Button } from '@ext/ui'
 
-const { useCallback, useEffect, useRef } = React;
+const { useCallback, useEffect, useRef } = React
 
 export interface LogEntry {
-  at: number;
-  text: string;
+  at: number
+  text: string
 }
 
 export interface LogData {
-  max: number;
-  entries: LogEntry[];
+  max: number
+  entries: LogEntry[]
 }
 
-const DEFAULT_MAX = 500;
+const DEFAULT_MAX = 500
 
 function formatTime(ms: number): string {
-  const d = new Date(ms);
-  const pad = (n: number) => n.toString().padStart(2, '0');
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const d = new Date(ms)
+  const pad = (n: number) => n.toString().padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
 export function LogNode({ id, data, selected }: { id: string; data: LogData; selected?: boolean }) {
-  const { setNodes } = useReactFlow();
-  const entries = data.entries ?? [];
+  const { setNodes } = useReactFlow()
+  const entries = data.entries ?? []
 
   const focus = useCallback(() => {
-    setNodes((nds: { id: string }[]) => nds.map((n) => ({ ...n, selected: n.id === id })));
-  }, [id, setNodes]);
+    setNodes((nds: { id: string }[]) => nds.map((n) => ({ ...n, selected: n.id === id })))
+  }, [id, setNodes])
 
   const openOutput = useCallback(() => {
-    focus();
-    inspectorIntent.open(id, 'output');
-  }, [id, focus]);
+    focus()
+    inspectorIntent.open(id, 'output')
+  }, [id, focus])
 
-  const subtitle = `${entries.length} entries`;
+  const subtitle = `${entries.length} entries`
 
   return (
     <NodeFrame
@@ -65,10 +56,17 @@ export function LogNode({ id, data, selected }: { id: string; data: LogData; sel
         </Button>
       }
     />
-  );
+  )
 }
 
-export function LogInspector({ data, updateData }: { nodeId: string; data: LogData; updateData: (p: Partial<LogData>) => void }) {
+export function LogInspector({
+  data,
+  updateData,
+}: {
+  nodeId: string
+  data: LogData
+  updateData: (p: Partial<LogData>) => void
+}) {
   return (
     <div className='flex flex-col gap-2'>
       <label className='flex flex-col gap-1 text-xs'>
@@ -78,32 +76,41 @@ export function LogInspector({ data, updateData }: { nodeId: string; data: LogDa
           min={1}
           className='h-8 rounded border bg-transparent px-2 text-xs'
           value={data.max ?? DEFAULT_MAX}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ max: Number(e.target.value) || DEFAULT_MAX })}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            updateData({ max: Number(e.target.value) || DEFAULT_MAX })
+          }
         />
       </label>
     </div>
-  );
+  )
 }
 
-export function LogOutputTab({ data, updateData }: { nodeId: string; data: LogData; updateData: (p: Partial<LogData>) => void }) {
-  const entries = data.entries ?? [];
-  const scrollRef = useRef<HTMLDivElement>(null);
+export function LogOutputTab({
+  data,
+  updateData,
+}: {
+  nodeId: string
+  data: LogData
+  updateData: (p: Partial<LogData>) => void
+}) {
+  const entries = data.entries ?? []
+  const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const el = scrollRef.current;
+    const el = scrollRef.current
     if (el) {
-      el.scrollTop = el.scrollHeight;
+      el.scrollTop = el.scrollHeight
     }
-  }, [entries]);
+  }, [entries])
 
   const copy = useCallback(() => {
-    const text = entries.map((e) => `[${formatTime(e.at)}] ${e.text}`).join('\n');
-    navigator.clipboard.writeText(text).catch(() => {});
-  }, [entries]);
+    const text = entries.map((e) => `[${formatTime(e.at)}] ${e.text}`).join('\n')
+    navigator.clipboard.writeText(text).catch(() => {})
+  }, [entries])
 
   const clear = useCallback(() => {
-    updateData({ entries: [] });
-  }, [updateData]);
+    updateData({ entries: [] })
+  }, [updateData])
 
   return (
     <div className='flex flex-col h-full w-full'>
@@ -111,8 +118,7 @@ export function LogOutputTab({ data, updateData }: { nodeId: string; data: LogDa
         <div className='font-mono text-[11px] text-[#cccccc] flex flex-col gap-1'>
           {entries.map((e: LogEntry, i: number) => (
             <div key={`${e.at}-${i}`} className='whitespace-pre-wrap break-words'>
-              <span className='text-muted-foreground'>[{formatTime(e.at)}]</span>{' '}
-              <span>{e.text}</span>
+              <span className='text-muted-foreground'>[{formatTime(e.at)}]</span> <span>{e.text}</span>
             </div>
           ))}
         </div>
@@ -126,9 +132,7 @@ export function LogOutputTab({ data, updateData }: { nodeId: string; data: LogDa
         </Button>
       </div>
     </div>
-  );
+  )
 }
 
-export const LOG_HANDLES = [
-  { id: 'text-in', contextType: 'text-stream', role: 'target' as const, label: 'Text' },
-];
+export const LOG_HANDLES = [{ id: 'text-in', contextType: 'text-stream', role: 'target' as const, label: 'Text' }]

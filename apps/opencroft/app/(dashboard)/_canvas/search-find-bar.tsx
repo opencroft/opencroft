@@ -1,12 +1,13 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { Input } from '@opencroft/ui-kit/input'
 import { ArrowUp, type LucideIcon, Search, Target } from 'lucide-react'
-import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Button } from 'ui/button'
+import { Input } from 'ui/input'
+
 import type { CommandNodeEntry } from '@/app/(dashboard)/_canvas/canvas-command-bar'
 import { CommandBarMenuItem } from '@/app/(dashboard)/_canvas/command-bar'
-import { useOverlayBar, useOverlayMenu } from '@/app/(dashboard)/_canvas/overlay-context'
+import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
 
 type SearchFindMode = 'search' | 'find'
 
@@ -55,7 +56,9 @@ function collectHits(data: unknown, query: string, out: MatchSnippet[], path = '
     return
   }
   if (Array.isArray(data)) {
-    data.forEach((item, i) => collectHits(item, query, out, `${path}[${i}]`))
+    data.forEach((item, i) => {
+      collectHits(item, query, out, `${path}[${i}]`)
+    })
     return
   }
   if (data && typeof data === 'object') {
@@ -106,6 +109,7 @@ export function SearchFindBar({ mode, nodes, focusTick, onFocusNode, onFocusChan
   const [highlight, setHighlight] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(mode): reset the query when the mode switches
   useEffect(() => {
     setText('')
     setHighlight(0)
@@ -117,6 +121,7 @@ export function SearchFindBar({ mode, nodes, focusTick, onFocusNode, onFocusChan
     }
   }, [focusTick])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(text): reset the highlight when the query changes
   useEffect(() => {
     setHighlight(0)
   }, [text])
@@ -125,45 +130,54 @@ export function SearchFindBar({ mode, nodes, focusTick, onFocusNode, onFocusChan
   const config = modeConfig[mode]
   const Icon = config.icon
 
-  const pickResult = (result: Result) => {
-    onFocusNode(result.entry.id)
-    inputRef.current?.blur()
-    onReset()
-  }
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault()
-    const pick = results[highlight]
-    if (pick) {
-      pickResult(pick)
-    }
-  }
-
-  const onInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Escape') {
-      event.preventDefault()
+  const pickResult = useCallback(
+    (result: Result) => {
+      onFocusNode(result.entry.id)
       inputRef.current?.blur()
       onReset()
-      return
-    }
-    if (event.key === 'Enter') {
+    },
+    [onFocusNode, onReset],
+  )
+
+  const submit = useCallback(
+    (event: FormEvent) => {
       event.preventDefault()
-      submit(event)
-      return
-    }
-    if (results.length === 0) {
-      return
-    }
-    if (event.key === 'ArrowDown') {
-      event.preventDefault()
-      setHighlight((h) => Math.min(h + 1, results.length - 1))
-      return
-    }
-    if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      setHighlight((h) => Math.max(h - 1, 0))
-    }
-  }
+      const pick = results[highlight]
+      if (pick) {
+        pickResult(pick)
+      }
+    },
+    [results, highlight, pickResult],
+  )
+
+  const onInputKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        inputRef.current?.blur()
+        onReset()
+        return
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        submit(event)
+        return
+      }
+      if (results.length === 0) {
+        return
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setHighlight((h) => Math.min(h + 1, results.length - 1))
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setHighlight((h) => Math.max(h - 1, 0))
+      }
+    },
+    [submit, results.length, onReset],
+  )
 
   const barNode = useMemo(
     () => (
@@ -182,12 +196,20 @@ export function SearchFindBar({ mode, nodes, focusTick, onFocusNode, onFocusChan
           placeholder={config.placeholder}
           className='border-0 shadow-none focus-visible:ring-0 focus-visible:border-0 bg-transparent h-8'
         />
-        <Button type='button' size='icon' variant='ghost' className='h-7 w-7 shrink-0 mt-0.5' onMouseDown={(e) => e.preventDefault()} onClick={submit} disabled={results.length === 0}>
+        <Button
+          type='button'
+          size='icon'
+          variant='ghost'
+          className='h-7 w-7 shrink-0 mt-0.5'
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={submit}
+          disabled={results.length === 0}
+        >
           <ArrowUp className='h-4 w-4' />
         </Button>
       </>
     ),
-    [text, results.length, config.placeholder, Icon, onFocusChange, onReset],
+    [text, results.length, config.placeholder, Icon, onFocusChange, onReset, onInputKeyDown, submit],
   )
 
   const menuNode = useMemo(() => {
@@ -197,11 +219,18 @@ export function SearchFindBar({ mode, nodes, focusTick, onFocusNode, onFocusChan
     return results.map((result, i) => {
       const EntryIcon = result.entry.icon
       return (
-        <CommandBarMenuItem key={result.key} active={i === highlight} onSelect={() => pickResult(result)} onHover={() => setHighlight(i)}>
+        <CommandBarMenuItem
+          key={result.key}
+          active={i === highlight}
+          onSelect={() => pickResult(result)}
+          onHover={() => setHighlight(i)}
+        >
           <div className='flex items-center gap-2 text-sm'>
             <EntryIcon className='h-4 w-4 shrink-0' style={{ color: result.entry.accent }} />
             <span className='truncate'>{result.entry.label}</span>
-            <span className='ml-auto text-[10px] font-mono text-muted-foreground truncate'>{result.entry.subtitle}</span>
+            <span className='ml-auto text-[10px] font-mono text-muted-foreground truncate'>
+              {result.entry.subtitle}
+            </span>
           </div>
           {result.match && (
             <div className='pl-6 font-mono text-[11px] leading-tight'>
@@ -214,10 +243,9 @@ export function SearchFindBar({ mode, nodes, focusTick, onFocusNode, onFocusChan
         </CommandBarMenuItem>
       )
     })
-  }, [results, highlight])
+  }, [results, highlight, pickResult])
 
-  useOverlayBar(barNode)
-  useOverlayMenu(menuNode)
+  useOverlay({ bar: barNode, menu: menuNode })
 
   return null
 }

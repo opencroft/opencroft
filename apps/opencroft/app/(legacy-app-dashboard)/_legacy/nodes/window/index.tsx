@@ -1,16 +1,17 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
+import type { TerminalConfig } from '@opencroft/terminal'
+import { Terminal } from '@opencroft/terminal/client'
 import { type NodeProps, useReactFlow } from '@xyflow/react'
 import { AppWindow, FolderOpen, TerminalSquare, X } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
+import { Button } from 'ui/button'
+
 import { FileBrowser } from '@/app/(filemanager)/_components/file-browser'
 import { FileManagerProvider } from '@/app/(filemanager)/_components/filemanager-provider'
 import type { StorageConnection } from '@/app/(filemanager)/_lib/types'
 import { InvisibleResizer } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/invisible-resizer'
 import { NodeCard, NodeCardHeader } from '@/app/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
-import { TerminalView } from '@/app/(terminal)/_components/terminal-view'
-import type { TerminalConfig } from '@/app/(terminal)/_lib/types'
 
 import '@/app/(legacy-app-dashboard)/_legacy/nodes/window/window.css'
 
@@ -29,7 +30,7 @@ const defaultConfig = { icon: AppWindow, iconClass: 'text-blue-400', accent: 'ok
 
 function WindowContent({ component, props }: { component: string; props: Record<string, unknown> }) {
   if (component === 'terminal') {
-    return <TerminalView termConfig={props.termConfig as TerminalConfig} onConnected={() => {}} onDisconnected={() => {}} onError={() => {}} />
+    return <Terminal connection={props.termConfig as TerminalConfig} fontSize={16} />
   }
   if (component === 'fileBrowser') {
     return (

@@ -9,6 +9,7 @@ import {
   type FinalConnectionState,
   type IsValidConnection,
   type Node,
+  type NodeTypes,
   type OnEdgesChange,
   type OnNodesChange,
   ReactFlow,
@@ -18,25 +19,28 @@ import {
 } from '@xyflow/react'
 import { SelectionMode } from '@xyflow/system'
 import '@xyflow/react/dist/style.css'
-import '@xterm/xterm/css/xterm.css'
 import { Box, GripVertical, Lock, LockOpen, PanelLeft, Trash2, Wrench } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
-import { ApprovalList } from '@/app/(approvals)/_components/approval-list'
+import { useSeedPendingRequests } from '@/app/(approvals)/_components/mcp-request-list'
+import { McpRequestNotifications } from '@/app/(approvals)/_components/mcp-request-notifications'
 import type { CommandNodeEntry } from '@/app/(dashboard)/_canvas/canvas-command-bar'
 import { CanvasOverlay } from '@/app/(dashboard)/_canvas/canvas-overlay'
 import { CommentNode } from '@/app/(dashboard)/_canvas/comment-node'
 import { FlowContextMenu } from '@/app/(dashboard)/_canvas/flow-context-menu'
 import '@/app/(dashboard)/_canvas/flow-editor.css'
-import { useSidebar } from '@opencroft/ui-kit/sidebar'
-import { Spinner } from '@opencroft/ui-kit/spinner'
+
+import { useIsMobile } from 'ui/hooks/use-mobile'
+import { useSidebar } from 'ui/sidebar'
+import { Spinner } from 'ui/spinner'
+
 import { InspectorContext, useInspectorState } from '@/app/(dashboard)/_canvas/inspector-context'
 import { subscribeNodeDataUpdates } from '@/app/(dashboard)/_canvas/node-data-events'
-import { NodeInspector } from '@/app/(dashboard)/_canvas/node-inspector'
+import { type BrowserTab, NodeInspector } from '@/app/(dashboard)/_canvas/node-inspector'
 import { buildNodeTypes } from '@/app/(dashboard)/_canvas/node-wrapper'
-import { useBackIntercept } from '@/app/(dashboard)/_canvas/overlay-context'
+import { useBackIntercept, useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
 import { useClipboard } from '@/app/(dashboard)/_canvas/use-clipboard'
 import { useGraphEvents } from '@/app/(dashboard)/_canvas/use-graph-events'
 import { installExtensionApi } from '@/app/(dashboard)/_extension-system/extension-api'
@@ -45,7 +49,6 @@ import { extensionRegistry } from '@/app/(extension-runtime)/_client/registry'
 import { findExtensionHandle } from '@/app/(extension-runtime)/_types'
 import { fetchSpaceGraph, saveSpaceGraph } from '@/app/(space)/_components/space-client'
 import { useSSEEvents, useSSEEventsDispatch } from '@/app/(sse)/_lib/sse-events-store'
-import { useIsMobile } from '@/hooks/use-mobile'
 
 installExtensionApi()
 
@@ -117,11 +120,15 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const [inspectorWidth, setInspectorWidth] = useState(420)
   const [resizing, setResizing] = useState(false)
   const [inspectorExpanded, setInspectorExpanded] = useState(false)
+  const [browserTab, setBrowserTab] = useState<BrowserTab>('outline')
   const inspector = useInspectorState()
+  const overlay = useOverlay()
   const isMobile = useIsMobile()
   const [mobileInspectorVisible, setMobileInspectorVisible] = useState(false)
   const [nodesLocked, setNodesLocked] = useState(false)
-  const [mobileNodeMenu, setMobileNodeMenu] = useState<{ screen: { x: number; y: number }; nodeId: string } | null>(null)
+  const [mobileNodeMenu, setMobileNodeMenu] = useState<{ screen: { x: number; y: number }; nodeId: string } | null>(
+    null,
+  )
   const [overlayActive, setOverlayActive] = useState(false)
   const { toggleSidebar } = useSidebar()
 
@@ -131,6 +138,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const { screenToFlowPosition, setCenter } = useReactFlow()
   const debouncedSave = useDebouncedSave(slug, 500)
   const sse = useSSEEvents()
+  useSeedPendingRequests()
 
   const allNodes = useMemo(() => {
     void extensionsVersion
@@ -141,11 +149,14 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       ({
         ...buildNodeTypes(allNodes),
         comment: CommentNode,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      }) as any,
+      }) as unknown as NodeTypes,
     [allNodes],
   )
   const selected = nodes.find((n) => n.selected && n.type !== 'comment') ?? null
+  // The MCP Requests browser tab is visible only when no node is selected and
+  // nothing overrides the inspector; the ask-user overlay is gated on it.
+  const mcpRequestsActive =
+    !selected && browserTab === 'mcp' && !inspector.inspectorNode && (!isMobile || mobileInspectorVisible)
 
   const commandNodes = useMemo<CommandNodeEntry[]>(() => {
     void extensionsVersion
@@ -426,7 +437,10 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     return edges.map((edge) => {
       const tgt = nodes.find((n) => n.id === edge.target)
       const tgtResolved = tgt?.type ? extensionRegistry.resolveNode(tgt.type) : undefined
-      const tgtHandle = tgtResolved && edge.targetHandle ? findExtensionHandle(tgtResolved.handles, edge.targetHandle, 'target') : undefined
+      const tgtHandle =
+        tgtResolved && edge.targetHandle
+          ? findExtensionHandle(tgtResolved.handles, edge.targetHandle, 'target')
+          : undefined
       const ctxType = tgtHandle?.contextType ? extensionRegistry.getContextType(tgtHandle.contextType) : undefined
       const stroke = ctxType?.color ?? 'var(--muted-foreground)'
       return {
@@ -466,7 +480,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
         return
       }
       const oppositeRole = pending.fromHandleType === 'source' ? 'target' : 'source'
-      const matchingHandle = resolved.handles.find((h) => h.role === oppositeRole && h.contextType === pending.contextType)
+      const matchingHandle = resolved.handles.find(
+        (h) => h.role === oppositeRole && h.contextType === pending.contextType,
+      )
       if (!matchingHandle) {
         addNodeAt(typeId, flow)
         return
@@ -557,6 +573,18 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     setNodes((nds) => nds.map((n) => ({ ...n, selected: false })))
   }, [setNodes])
 
+  // Open the MCP Requests inspector tab (e.g. from a corner notification):
+  // clear any docked chat, deselect so the node browser is visible.
+  const openMcpRequests = useCallback(() => {
+    overlay.slots.setSlot('content', null)
+    overlay.slots.setSlot('menu', null)
+    deselect()
+    setBrowserTab('mcp')
+    if (isMobile) {
+      setMobileInspectorVisible(true)
+    }
+  }, [overlay.slots.setSlot, deselect, isMobile])
+
   const onPaneContextMenu = useCallback(
     (event: React.MouseEvent | MouseEvent) => {
       event.preventDefault()
@@ -581,7 +609,10 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       if (!handle) {
         return
       }
-      const point = 'clientX' in event ? { x: event.clientX, y: event.clientY } : { x: event.changedTouches[0]?.clientX ?? 0, y: event.changedTouches[0]?.clientY ?? 0 }
+      const point =
+        'clientX' in event
+          ? { x: event.clientX, y: event.clientY }
+          : { x: event.changedTouches[0]?.clientX ?? 0, y: event.changedTouches[0]?.clientY ?? 0 }
       const flow = screenToFlowPosition(point)
       setMenu({
         screen: point,
@@ -620,7 +651,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     }
     const pending = menu.pending
     const oppositeRole = pending.fromHandleType === 'source' ? 'target' : 'source'
-    return allNodes.filter((n) => n.handles.some((h) => h.role === oppositeRole && h.contextType === pending.contextType))
+    return allNodes.filter((n) =>
+      n.handles.some((h) => h.role === oppositeRole && h.contextType === pending.contextType),
+    )
   }, [allNodes, menu])
 
   const openEditor = useCallback((_extensionId: string | null) => {
@@ -681,7 +714,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       if (!longPressFired.current) {
         // Short tap on empty space -> deselect and hide inspector
         const touch = e.changedTouches[0]
-        const el = (touch.target instanceof Element ? (touch.target as Element) : null) ?? document.elementFromPoint(touch.clientX, touch.clientY)
+        const el =
+          (touch.target instanceof Element ? (touch.target as Element) : null) ??
+          document.elementFromPoint(touch.clientX, touch.clientY)
         const nodeEl = el?.closest('.react-flow__node')
         if (!nodeEl) {
           deselect()
@@ -728,6 +763,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       <div className='flex h-full w-full'>
         <div className='flex-1 relative min-w-0'>
           <div
+            role='application'
             className='dashboard-mvp-flow absolute inset-0'
             onDragOver={handleDragOver}
             onDrop={handleDrop}
@@ -782,7 +818,11 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
             </ReactFlow>
             {/* Mobile node context menu */}
             {isMobile && mobileNodeMenu && (
-              <div className='fixed inset-0 z-50' onClick={() => setMobileNodeMenu(null)} onTouchEnd={() => setMobileNodeMenu(null)}>
+              <div
+                className='fixed inset-0 z-50'
+                onClick={() => setMobileNodeMenu(null)}
+                onTouchEnd={() => setMobileNodeMenu(null)}
+              >
                 <div
                   className='absolute bg-popover border rounded-lg shadow-lg py-1 min-w-[140px]'
                   style={{
@@ -839,16 +879,25 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
               </div>
             )}
           </div>
-          {menu && <FlowContextMenu position={menu.screen} extensions={menuExtensions} onSelect={onMenuSelect} onNewExtension={() => openEditor(null)} onClose={closeMenu} />}
+          {menu && (
+            <FlowContextMenu
+              position={menu.screen}
+              extensions={menuExtensions}
+              onSelect={onMenuSelect}
+              onNewExtension={() => openEditor(null)}
+              onClose={closeMenu}
+            />
+          )}
           <CanvasOverlay
             nodes={commandNodes}
             spaceName={spaceName}
             spaceSlug={slug}
             selectedNodeId={selected?.id ?? null}
+            mcpRequestsActive={mcpRequestsActive}
             onFocusNode={focusNode}
             onActiveChange={isMobile ? setOverlayActive : undefined}
           />
-          <ApprovalList spaceId={slug} />
+          <McpRequestNotifications onOpen={openMcpRequests} />
         </div>
         {(!isMobile || mobileInspectorVisible) && !inspectorExpanded && (
           <div
@@ -865,16 +914,22 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
         )}
         {(!isMobile || mobileInspectorVisible || inspectorExpanded) && (
           <div
-            className={inspectorExpanded || (isMobile && mobileInspectorVisible) ? 'fixed inset-0 z-50' : 'h-full border-l shrink-0 max-w-6xl min-w-md'}
+            className={
+              inspectorExpanded || (isMobile && mobileInspectorVisible)
+                ? 'fixed inset-0 z-50'
+                : 'h-full border-l shrink-0 max-w-6xl min-w-md'
+            }
             style={inspectorExpanded || (isMobile && mobileInspectorVisible) ? undefined : { width: inspectorWidth }}
           >
             <NodeInspector
               node={selected}
+              browserTab={browserTab}
               expanded={inspectorExpanded}
               extensions={allNodes}
               graphNodes={nodes}
               override={inspector.inspectorNode}
               updateNodeData={updateNodeData}
+              onBrowserTabChange={setBrowserTab}
               onDeselect={() => {
                 deselect()
                 if (isMobile) {

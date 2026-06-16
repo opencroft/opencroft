@@ -1,5 +1,6 @@
-import { createFileRoute } from '@tanstack/react-router'
 import { execSync } from 'child_process'
+
+import { createFileRoute } from '@tanstack/react-router'
 
 let cached: { branch: string; commit: string } | null = null
 

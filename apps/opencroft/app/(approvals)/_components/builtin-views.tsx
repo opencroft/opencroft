@@ -1,21 +1,24 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
 import { useReactFlow } from '@xyflow/react'
 import { GitCompare } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { Button } from 'ui/button'
+
 import { type ApprovalViewProps, registerApprovalView } from '@/app/(approvals)/_components/approval-views'
 import { NodeDiffEditor } from '@/app/(approvals)/_components/node-diff-editor'
 import { readRemoteFile } from '@/app/(approvals)/_server/actions'
 import { NodeCard } from '@/app/(dashboard)/_canvas/node-card'
-import { useOverlayContent } from '@/app/(dashboard)/_canvas/overlay-context'
+import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
 import { cn } from '@/lib/utils'
 
 function FieldRow({ label, value }: { label: string; value: string }) {
   return (
     <div className='space-y-0.5'>
       <div className='text-xs font-medium text-muted-foreground'>{label}</div>
-      <pre className='text-xs whitespace-pre-wrap break-all bg-muted/50 rounded-md p-2 max-h-40 overflow-auto font-mono'>{value}</pre>
+      <pre className='text-xs whitespace-pre-wrap break-all bg-muted/50 rounded-md p-2 max-h-40 overflow-auto font-mono'>
+        {value}
+      </pre>
     </div>
   )
 }
@@ -38,10 +41,16 @@ function TargetRow({ target }: { target: string }) {
   return <FieldRow label='Target' value={value} />
 }
 
-function useRemoteFileContent(target: string | undefined, space: string | undefined, path: string | undefined, requestId: string) {
+function useRemoteFileContent(
+  target: string | undefined,
+  space: string | undefined,
+  path: string | undefined,
+  requestId: string,
+) {
   const [content, setContent] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(requestId): re-read the file for every new approval request
   useEffect(() => {
     if (!target || !path) {
       return
@@ -92,7 +101,7 @@ function RemoteWriteView({ request }: ApprovalViewProps) {
     )
   }, [content, newContent, filePath])
 
-  useOverlayContent(diffNode)
+  useOverlay({ content: diffNode })
 
   return (
     <div className='space-y-3 px-3 py-2'>
@@ -130,7 +139,7 @@ function RemoteEditView({ request }: ApprovalViewProps) {
     )
   }, [content, oldString, newString, replaceAll, filePath])
 
-  useOverlayContent(diffNode)
+  useOverlay({ content: diffNode })
 
   return (
     <div className='space-y-3 px-3 py-2'>
@@ -157,7 +166,17 @@ function getByPath(obj: Record<string, unknown>, path: string): unknown {
   return cur
 }
 
-function NodePropertyDiff({ nodeId, path, current, next }: { nodeId: string; path: string; current: string; next: string }) {
+function NodePropertyDiff({
+  nodeId,
+  path,
+  current,
+  next,
+}: {
+  nodeId: string
+  path: string
+  current: string
+  next: string
+}) {
   const { getNode } = useReactFlow()
   const node = getNode(nodeId) as { data?: { name?: string } } | undefined
   const name = node?.data?.name ?? nodeId
@@ -191,7 +210,7 @@ function WriteNodePropertyView({ request }: ApprovalViewProps) {
     return <NodePropertyDiff nodeId={nodeId} path={propPath} current={current} next={value} />
   }, [nodeId, propPath, current, value])
 
-  useOverlayContent(diffNode)
+  useOverlay({ content: diffNode })
 
   return (
     <div className='space-y-3 px-3 py-2'>
@@ -220,7 +239,7 @@ function EditNodePropertyView({ request }: ApprovalViewProps) {
     return <NodePropertyDiff nodeId={nodeId} path={propPath} current={current} next={next} />
   }, [nodeId, propPath, current, oldString, newString, replaceAll])
 
-  useOverlayContent(diffNode)
+  useOverlay({ content: diffNode })
 
   return (
     <div className='space-y-3 px-3 py-2'>
@@ -283,7 +302,9 @@ function changeSummary(update: NodeUpdate): string {
 
 function NodeDiff({ update }: { update: NodeUpdate }) {
   const { getNode } = useReactFlow()
-  const node = getNode(update.nodeId) as { data?: Record<string, unknown>; position?: { x: number; y: number } } | undefined
+  const node = getNode(update.nodeId) as
+    | { data?: Record<string, unknown>; position?: { x: number; y: number } }
+    | undefined
   const name = (node?.data?.name as string | undefined) ?? update.nodeId
   const current = {
     ...(update.data ? { data: node?.data ?? {} } : {}),
@@ -323,8 +344,9 @@ function UpdateNodesView({ request }: ApprovalViewProps) {
     )
   }, [openUpdate])
 
-  useOverlayContent(diffNode)
+  useOverlay({ content: diffNode })
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(request.id): collapse the open diff when a new request arrives
   useEffect(() => {
     setOpenId(null)
   }, [request.id])

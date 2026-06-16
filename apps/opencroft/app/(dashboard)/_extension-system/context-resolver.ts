@@ -8,7 +8,11 @@ export interface GraphSnapshot {
   edges: Edge[]
 }
 
-export function resolveHandleContext(targetNodeId: string, targetHandleId: string, graph: GraphSnapshot): ResolvedContext | null {
+export function resolveHandleContext(
+  targetNodeId: string,
+  targetHandleId: string,
+  graph: GraphSnapshot,
+): ResolvedContext | null {
   const edge = graph.edges.find((e) => e.target === targetNodeId && e.targetHandle === targetHandleId)
   if (!edge) {
     return null
@@ -34,7 +38,12 @@ export function resolveHandleContext(targetNodeId: string, targetHandleId: strin
     return null
   }
 
-  const value = resolved.exposeOutput(sourceHandleId, sourceNode.data as Record<string, unknown>, sourceNode.type, sourceNode.id)
+  const value = resolved.exposeOutput(
+    sourceHandleId,
+    sourceNode.data as Record<string, unknown>,
+    sourceNode.type,
+    sourceNode.id,
+  )
   if (value === undefined || value === null) {
     return null
   }

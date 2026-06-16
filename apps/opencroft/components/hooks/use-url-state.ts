@@ -23,7 +23,10 @@ function buildUrl(params: URLSearchParams): string {
  * // URL: ?q=hello -> search = 'hello'
  * // setSearch('world') -> URL becomes ?q=world
  */
-export function useUrlState<T extends string | number | boolean>(key: string, defaultValue: T): [T, (value: T) => void] {
+export function useUrlState<T extends string | number | boolean>(
+  key: string,
+  defaultValue: T,
+): [T, (value: T) => void] {
   const searchStr = useLocation({ select: (l) => l.searchStr })
   const router = useRouter()
   const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr])
@@ -122,7 +125,10 @@ export function useUrlArrayState(key: string, defaultValue: string[] = []): [str
  * // URL: ?filter.age=25&filter.name=John -> filters = { age: '25', name: 'John' }
  * // setFilters({ age: '30' }) -> URL becomes ?filter.age=30
  */
-export function useUrlRecordState<T extends Record<string, string>>(prefix: string, defaultValue: T = {} as T): [T, (value: T) => void] {
+export function useUrlRecordState<T extends Record<string, string>>(
+  prefix: string,
+  defaultValue: T = {} as T,
+): [T, (value: T) => void] {
   const searchStr = useLocation({ select: (l) => l.searchStr })
   const router = useRouter()
   const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr])

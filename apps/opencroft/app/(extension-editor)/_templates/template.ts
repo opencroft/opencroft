@@ -62,7 +62,7 @@ export default extension;
 `,
 
     'server/index.ts': `// Server actions for this extension.
-// Available: host.fs, host.os, host.exec, host.execFile, host.prisma, host.crypto
+// Available: host.fs, host.os, host.exec, host.execFile, host.secrets, host.crypto
 
 export const actions = {
   '${slug}-node.ping': async () => 'pong',

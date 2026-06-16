@@ -1,5 +1,4 @@
 import { createFileRoute } from '@tanstack/react-router'
-
 import { checkMcpServer } from 'agent-client/mcp-check'
 import type { McpServerConfig } from 'agent-client/mcp-types'
 

@@ -1,4 +1,4 @@
-import { Skeleton } from '@opencroft/ui-kit/skeleton'
+import { Skeleton } from 'ui/skeleton'
 
 export function LoadingSkeleton() {
   return (

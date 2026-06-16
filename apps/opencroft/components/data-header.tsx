@@ -1,7 +1,7 @@
-import { Button } from '@opencroft/ui-kit/button'
-import { Input } from '@opencroft/ui-kit/input'
-import { Flex } from '@opencroft/ui-kit/layout/flex'
 import { Plus, Search, Settings } from 'lucide-react'
+import { Button } from 'ui/button'
+import { Input } from 'ui/input'
+import { Flex } from 'ui/layout/flex'
 
 interface EDataHeaderProps {
   searchTerm: string
@@ -15,7 +15,12 @@ export default function DataHeader({ searchTerm, onSearchChange, onCreate, onSet
     <Flex row withGaps className='w-full'>
       <div className='relative flex-1'>
         <Search className='absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground' />
-        <Input placeholder={`Filter...`} value={searchTerm} onChange={(e) => onSearchChange(e.target.value)} className='pl-9' />
+        <Input
+          placeholder={`Filter...`}
+          value={searchTerm}
+          onChange={(e) => onSearchChange(e.target.value)}
+          className='pl-9'
+        />
       </div>
       <Button onClick={onCreate}>
         <Plus />

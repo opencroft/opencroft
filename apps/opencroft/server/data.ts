@@ -1,22 +1,23 @@
 'use server'
 
-import { prisma } from '@opencroft/db'
+import { db, setting } from '@opencroft/db'
+import { eq } from 'drizzle-orm'
 
 // ── Setting CRUD ──
 
 export async function getSetting(id: string) {
-  return prisma.setting.findUnique({ where: { id } })
+  return (await db.query.setting.findFirst({ where: eq(setting.id, id) })) ?? null
 }
 
 export async function upsertSetting(id: string, data: string) {
-  return prisma.setting.upsert({
-    where: { id },
-    create: { id, data },
-    update: { data },
-  })
+  return db
+    .insert(setting)
+    .values({ id, data })
+    .onConflictDoUpdate({ target: setting.id, set: { data, updatedAt: new Date() } })
+    .returning()
+    .get()
 }
 
 export async function deleteSetting(id: string) {
-  const setting = await prisma.setting.delete({ where: { id } }).catch(() => null)
-  return setting !== null
+  return db.delete(setting).where(eq(setting.id, id)).run().changes > 0
 }

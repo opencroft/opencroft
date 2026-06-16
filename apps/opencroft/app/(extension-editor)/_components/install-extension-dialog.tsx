@@ -1,14 +1,19 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@opencroft/ui-kit/dialog'
-import { Input } from '@opencroft/ui-kit/input'
-import { Label } from '@opencroft/ui-kit/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@opencroft/ui-kit/select'
 import { Loader2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { type InstallAuth, type InstalledExtensionRecord, installExtensionFromUrl } from '@/app/(extension-editor)/_actions/installed-extensions-actions'
+import { Button } from 'ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from 'ui/dialog'
+import { Input } from 'ui/input'
+import { Label } from 'ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
+
+import {
+  type InstallAuth,
+  type InstalledExtensionRecord,
+  installExtensionFromUrl,
+} from '@/app/(extension-editor)/_actions/installed-extensions-actions'
 import { listSecretStores, type SecretStoreSummary } from '@/app/(secrets-store)/_server/actions'
 
 interface InstallExtensionDialogProps {
@@ -96,11 +101,26 @@ export function InstallExtensionDialog({ open, onOpenChange, onInstalled }: Inst
         <div className='flex flex-col gap-3'>
           <div className='flex flex-col gap-1.5'>
             <Label htmlFor='install-url'>Repository</Label>
-            <Input id='install-url' value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={handleKey} placeholder='owner/repo or https://host/owner/repo' disabled={busy} autoFocus />
+            <Input
+              id='install-url'
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={handleKey}
+              placeholder='owner/repo or https://host/owner/repo'
+              disabled={busy}
+              autoFocus
+            />
           </div>
           <div className='flex flex-col gap-1.5'>
             <Label htmlFor='install-ref'>Tag or branch (optional)</Label>
-            <Input id='install-ref' value={ref} onChange={(e) => setRef(e.target.value)} onKeyDown={handleKey} placeholder='Leave empty to install latest tag' disabled={busy} />
+            <Input
+              id='install-ref'
+              value={ref}
+              onChange={(e) => setRef(e.target.value)}
+              onKeyDown={handleKey}
+              placeholder='Leave empty to install latest tag'
+              disabled={busy}
+            />
           </div>
           <div className='flex flex-col gap-1.5'>
             <Label htmlFor='install-auth'>Authentication (private repos)</Label>
@@ -118,7 +138,8 @@ export function InstallExtensionDialog({ open, onOpenChange, onInstalled }: Inst
               </SelectContent>
             </Select>
             <p className='text-[10px] text-muted-foreground'>
-              Reads keys <code>token</code> (required) and <code>username</code> (optional, defaults to <code>x-access-token</code>) from the chosen Secrets Store.
+              Reads keys <code>token</code> (required) and <code>username</code> (optional, defaults to{' '}
+              <code>x-access-token</code>) from the chosen Secrets Store.
             </p>
           </div>
         </div>

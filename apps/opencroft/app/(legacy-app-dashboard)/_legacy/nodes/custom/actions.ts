@@ -6,10 +6,12 @@ import type { Setting } from '@/app/(settings)/_server/setting'
 
 const SETTING_ID = 'custom-node-templates'
 
-export const loadTemplates = createServerFn({ strict: { output: false } }).handler(async (): Promise<CustomTemplate[]> => {
-  const setting = (await getSetting({ data: SETTING_ID })) as Setting<CustomTemplate[]> | null
-  return setting?.data ?? []
-})
+export const loadTemplates = createServerFn({ strict: { output: false } }).handler(
+  async (): Promise<CustomTemplate[]> => {
+    const setting = (await getSetting({ data: SETTING_ID })) as Setting<CustomTemplate[]> | null
+    return setting?.data ?? []
+  },
+)
 
 export const saveTemplates = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((templates: CustomTemplate[]) => templates)

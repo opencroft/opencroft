@@ -1,0 +1,22 @@
+{
+  "name": "@opencroft/terminal",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/server/index.ts",
+    "./client": "./src/client/index.ts"
+  },
+  "dependencies": {
+    "@lydell/node-pty": "^1.1.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "@xterm/xterm": "^5.5.0",
+    "ssh2": "^1.17.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "@types/ssh2": "^1.15.5"
+  }
+}

@@ -1,9 +1,9 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@opencroft/ui-kit/dialog'
-import { HorizontalBox } from '@opencroft/ui-kit/layout/horizontal-box'
 import { type ComponentType, forwardRef, type ReactNode, type Ref, useImperativeHandle, useState } from 'react'
+import { Button } from 'ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
+import { HorizontalBox } from 'ui/layout/horizontal-box'
 
 export interface EditPopupFormProps<T> {
   data?: T
@@ -23,7 +23,10 @@ interface EditPopupProps<T> {
   onDelete?: (data: T) => Promise<void>
 }
 
-function EditPopup<T>({ form: FormComponent, onCreate, onSave, onDelete }: EditPopupProps<T>, ref: Ref<EditPopupRef<T>>) {
+function EditPopup<T>(
+  { form: FormComponent, onCreate, onSave, onDelete }: EditPopupProps<T>,
+  ref: Ref<EditPopupRef<T>>,
+) {
   const [isOpen, setIsOpen] = useState(false)
   const [title, setTitle] = useState('Edit')
   const [data, setData] = useState<T | undefined>()

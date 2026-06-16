@@ -12,7 +12,11 @@ interface MutableNode {
   data?: Record<string, unknown>
 }
 
-export async function updateNodeData(spaceId: string, nodeId: string, patcher: DataPatcher): Promise<Record<string, unknown> | null> {
+export async function updateNodeData(
+  spaceId: string,
+  nodeId: string,
+  patcher: DataPatcher,
+): Promise<Record<string, unknown> | null> {
   const r = getSpacesRegistry()
   await r.ensureLoaded()
   const space = r.getBySlug(spaceId)

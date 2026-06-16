@@ -1,5 +1,5 @@
-import { Button } from '@opencroft/ui-kit/button'
 import { useState } from 'react'
+import { Button } from 'ui/button'
 
 interface SaveButtonProps {
   saveConfig: () => Promise<void>

@@ -122,7 +122,11 @@ export function FileTabs({ files, active, onSelect, onCreate, onDelete, readOnly
           />
         </div>
       ) : !readOnly ? (
-        <button onClick={handleCreate} className='px-1.5 py-1 text-muted-foreground hover:text-foreground shrink-0' title='New file'>
+        <button
+          onClick={handleCreate}
+          className='px-1.5 py-1 text-muted-foreground hover:text-foreground shrink-0'
+          title='New file'
+        >
           <Plus className='size-3.5' />
         </button>
       ) : null}

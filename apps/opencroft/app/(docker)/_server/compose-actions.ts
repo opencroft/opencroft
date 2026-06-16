@@ -1,8 +1,9 @@
-import { createServerFn } from '@tanstack/react-start'
 import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
-import * as yaml from 'js-yaml'
 import path from 'path'
+
+import { createServerFn } from '@tanstack/react-start'
+import * as yaml from 'js-yaml'
 
 import type { CreateDockerContainerData } from '@/app/(docker)/_server/actions'
 
@@ -114,7 +115,10 @@ export interface DockerCompose {
 
 // --- Service status ---
 
-async function getServiceStatuses(context: string, composeName: string): Promise<Record<string, 'running' | 'stopped' | 'unknown'>> {
+async function getServiceStatuses(
+  context: string,
+  composeName: string,
+): Promise<Record<string, 'running' | 'stopped' | 'unknown'>> {
   try {
     const output = await executeDockerCommand([...composeArgs(context, composeName), 'ps', '--format', 'json'], context)
 
@@ -128,7 +132,8 @@ async function getServiceStatuses(context: string, composeName: string): Promise
           const state = service.State || 'unknown'
 
           if (name) {
-            statuses[name] = state.toLowerCase().includes('up') || state.toLowerCase().includes('running') ? 'running' : 'stopped'
+            statuses[name] =
+              state.toLowerCase().includes('up') || state.toLowerCase().includes('running') ? 'running' : 'stopped'
           }
         } catch {
           console.error('Failed to parse service status line:', line)
@@ -144,7 +149,10 @@ async function getServiceStatuses(context: string, composeName: string): Promise
 
 // --- Parse compose services ---
 
-function parseComposeServices(content: string, statuses: Record<string, 'running' | 'stopped' | 'unknown'> = {}): DockerComposeService[] {
+function parseComposeServices(
+  content: string,
+  statuses: Record<string, 'running' | 'stopped' | 'unknown'> = {},
+): DockerComposeService[] {
   const composeData = yaml.load(content) as Record<string, unknown>
   if (!composeData?.services) {
     return []
@@ -156,10 +164,16 @@ function parseComposeServices(content: string, statuses: Record<string, 'running
     const config = serviceConfig as Record<string, unknown>
 
     const deploy = config.deploy as Record<string, unknown> | undefined
-    const reservations = (deploy?.resources as Record<string, unknown>)?.reservations as Record<string, unknown> | undefined
+    const reservations = (deploy?.resources as Record<string, unknown>)?.reservations as
+      | Record<string, unknown>
+      | undefined
     const hasGpu =
       Array.isArray(reservations?.devices) &&
-      reservations.devices.some((d: unknown) => Array.isArray((d as Record<string, unknown>).capabilities) && ((d as Record<string, unknown>).capabilities as string[]).includes('gpu'))
+      reservations.devices.some(
+        (d: unknown) =>
+          Array.isArray((d as Record<string, unknown>).capabilities) &&
+          ((d as Record<string, unknown>).capabilities as string[]).includes('gpu'),
+      )
 
     const hc = config.healthcheck as Record<string, unknown> | undefined
     const healthcheck: DockerHealthcheck | undefined = hc
@@ -261,7 +275,10 @@ export const renameDockerCompose = createServerFn({ method: 'POST' })
 
 // --- Service CRUD ---
 
-function convertContainerDataToServiceFormat(serviceData: CreateDockerContainerData, serviceName: string): Record<string, unknown> {
+function convertContainerDataToServiceFormat(
+  serviceData: CreateDockerContainerData,
+  serviceName: string,
+): Record<string, unknown> {
   const service: Record<string, unknown> = {
     image: serviceData.image,
   }
@@ -368,7 +385,10 @@ function convertContainerDataToServiceFormat(serviceData: CreateDockerContainerD
 }
 
 export const addServiceToCompose = createServerFn({ method: 'POST' })
-  .inputValidator((data: { context: string; composeName: string; serviceName: string; serviceData: CreateDockerContainerData }) => data)
+  .inputValidator(
+    (data: { context: string; composeName: string; serviceName: string; serviceData: CreateDockerContainerData }) =>
+      data,
+  )
   .handler(async ({ data }): Promise<void> => {
     const { context, composeName, serviceName, serviceData } = data
     const file = composeFile(context, composeName)
@@ -385,7 +405,15 @@ export const addServiceToCompose = createServerFn({ method: 'POST' })
   })
 
 export const updateServiceInCompose = createServerFn({ method: 'POST' })
-  .inputValidator((data: { context: string; composeName: string; oldServiceName: string; newServiceName: string; serviceData: CreateDockerContainerData }) => data)
+  .inputValidator(
+    (data: {
+      context: string
+      composeName: string
+      oldServiceName: string
+      newServiceName: string
+      serviceData: CreateDockerContainerData
+    }) => data,
+  )
   .handler(async ({ data }): Promise<void> => {
     const { context, composeName, oldServiceName, newServiceName, serviceData } = data
     const file = composeFile(context, composeName)

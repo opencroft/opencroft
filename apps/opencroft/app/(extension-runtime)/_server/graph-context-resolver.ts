@@ -58,7 +58,16 @@ export async function resolveGraphContexts(graph: GraphSnapshot): Promise<GraphS
 
     try {
       const mod = await getExtensionModule(extInfo.extensionId)
-      const exposeOutput = (mod as { exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string, nodeId: string) => unknown }).exposeOutput
+      const exposeOutput = (
+        mod as {
+          exposeOutput?: (
+            handleId: string,
+            nodeData: Record<string, unknown>,
+            typeId: string,
+            nodeId: string,
+          ) => unknown
+        }
+      ).exposeOutput
       if (!exposeOutput) {
         continue
       }

@@ -1,16 +1,12 @@
-import {
-  React,
-  NodeFrame,
-  OutputHandle,
-  icons,
-} from '@ext/host';
-import { Input, Label } from '@ext/ui';
-import type { AgentToolData } from './agent-tool-shared';
+import { icons, NodeFrame, OutputHandle, React } from '@ext/host'
+import { Input, Label } from '@ext/ui'
 
-const { useMemo } = React;
+import type { AgentToolData } from './agent-tool-shared'
+
+const { useMemo } = React
 
 export function AgentToolNode({ id, data, selected }: { id: string; data: AgentToolData; selected?: boolean }) {
-  const name = data.name ?? 'new_tool';
+  const name = data.name ?? 'new_tool'
 
   return (
     <NodeFrame
@@ -26,11 +22,18 @@ export function AgentToolNode({ id, data, selected }: { id: string; data: AgentT
         </div>
       }
     />
-  );
+  )
 }
 
-export function AgentToolInspector({ data, updateData }: { nodeId: string; data: AgentToolData; updateData: (p: Partial<AgentToolData>) => void }) {
-  const schemaStr = data.inputSchema ?? '{\n  "type": "object",\n  "properties": {}\n}';
+export function AgentToolInspector({
+  data,
+  updateData,
+}: {
+  nodeId: string
+  data: AgentToolData
+  updateData: (p: Partial<AgentToolData>) => void
+}) {
+  const schemaStr = data.inputSchema ?? '{\n  "type": "object",\n  "properties": {}\n}'
 
   return (
     <div className='flex flex-col gap-3'>
@@ -42,9 +45,7 @@ export function AgentToolInspector({ data, updateData }: { nodeId: string; data:
           placeholder='my_tool'
           className='font-mono'
         />
-        <p className='text-[10px] text-muted-foreground'>
-          Unique name. Must not collide with any built-in MCP tool.
-        </p>
+        <p className='text-[10px] text-muted-foreground'>Unique name. Must not collide with any built-in MCP tool.</p>
       </div>
       <div className='flex flex-col gap-1'>
         <Label className='text-xs'>Description</Label>
@@ -71,22 +72,28 @@ export function AgentToolInspector({ data, updateData }: { nodeId: string; data:
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ requireApproval: e.target.checked })}
           className='rounded border-input'
         />
-        <Label className='text-xs cursor-pointer' onClick={() => updateData({ requireApproval: !data.requireApproval })}>
+        <Label
+          className='text-xs cursor-pointer'
+          onClick={() => updateData({ requireApproval: !data.requireApproval })}
+        >
           Require approval before execution
         </Label>
       </div>
     </div>
-  );
+  )
 }
 
 export const AGENT_TOOL_HANDLES = [
   { id: 'exec-out', contextType: 'execution-context', role: 'source' as const, label: 'Handler' },
-];
+]
 
-export function agentToolExposeOutput(handleId: string, data: unknown): { name: string; description: string } | undefined {
+export function agentToolExposeOutput(
+  handleId: string,
+  data: unknown,
+): { name: string; description: string } | undefined {
   if (handleId !== 'exec-out') {
-    return undefined;
+    return undefined
   }
-  const d = data as AgentToolData;
-  return { name: d.name ?? '', description: d.description ?? '' };
+  const d = data as AgentToolData
+  return { name: d.name ?? '', description: d.description ?? '' }
 }

@@ -1,22 +1,37 @@
 'use client'
 
-import { Badge } from '@opencroft/ui-kit/badge'
-import { Button } from '@opencroft/ui-kit/button'
-import { Input } from '@opencroft/ui-kit/input'
-import { Label } from '@opencroft/ui-kit/label'
-import { Flex } from '@opencroft/ui-kit/layout/flex'
-import { ScrollArea } from '@opencroft/ui-kit/layout/scroll-area'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@opencroft/ui-kit/select'
-import { Separator } from '@opencroft/ui-kit/separator'
-import { Textarea } from '@opencroft/ui-kit/textarea'
 import * as icons from 'lucide-react'
 import * as React from 'react'
 import { toast } from 'sonner'
+import { Badge } from 'ui/badge'
+import { Button } from 'ui/button'
+import { Input } from 'ui/input'
+import { Label } from 'ui/label'
+import { Flex } from 'ui/layout/flex'
+import { ScrollArea } from 'ui/layout/scroll-area'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
+import { Separator } from 'ui/separator'
+import { Textarea } from 'ui/textarea'
+
 import { NodeFrame } from '@/app/(dashboard)/_canvas/node-frame'
-import { extensionStorageClear, extensionStorageDelete, extensionStorageGet, extensionStorageList, extensionStorageSet } from '@/app/(dashboard)/_extension-system/extension-storage'
+import {
+  extensionStorageClear,
+  extensionStorageDelete,
+  extensionStorageGet,
+  extensionStorageList,
+  extensionStorageSet,
+} from '@/app/(dashboard)/_extension-system/extension-storage'
 import { useNodeContext } from '@/app/(dashboard)/_extension-system/use-node-context'
 import { defineExtension } from '@/app/(extension-runtime)/_client/host'
-import { copyKeyToWsl, createKey, deleteKey, importKey, listKeys, readPublicKey, removeKeyFromWsl } from '@/app/(legacy-app-dashboard)/_legacy/nodes/key-store/actions'
+import {
+  copyKeyToWsl,
+  createKey,
+  deleteKey,
+  importKey,
+  listKeys,
+  readPublicKey,
+  removeKeyFromWsl,
+} from '@/app/(legacy-app-dashboard)/_legacy/nodes/key-store/actions'
 import { deleteSecret, getSecrets, setSecret } from '@/app/(secrets-store)/_server/actions'
 import { ControlledInput } from '@/components/ui/input/controlled-input'
 

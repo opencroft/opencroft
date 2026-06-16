@@ -1,8 +1,8 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
 import { Handle, Position } from '@xyflow/react'
 import type { LucideIcon } from 'lucide-react'
+import { Button } from 'ui/button'
 
 export const HANDLE_EXECUTION = 'execution'
 export const HANDLE_FILESYSTEM = 'filesystem'
@@ -20,7 +20,12 @@ export function ButtonPin({ handleId, icon: Icon, label, side, onClick }: Button
   const type = side === 'right' ? 'source' : 'target'
 
   return (
-    <Button variant='ghost' size='sm' className='nodrag nopan h-5 text-[10px] px-1.5 w-full justify-between' onClick={onClick}>
+    <Button
+      variant='ghost'
+      size='sm'
+      className='nodrag nopan h-5 text-[10px] px-1.5 w-full justify-between'
+      onClick={onClick}
+    >
       {side === 'left' && <Handle type={type} position={pos} id={handleId} className='inline-handle' />}
       <Icon className='h-2.5 w-2.5 shrink-0' />
       <span className='flex-1 truncate'>{label}</span>

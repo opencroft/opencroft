@@ -1,34 +1,34 @@
-import { React } from '@ext/host';
+import { React } from '@ext/host'
 
 export interface ScriptResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
+  stdout: string
+  stderr: string
+  exitCode: number
 }
 
-const store = new Map<string, ScriptResult>();
-const listeners = new Set<() => void>();
+const store = new Map<string, ScriptResult>()
+const listeners = new Set<() => void>()
 
 function emit(): void {
   for (const l of listeners) {
-    l();
+    l()
   }
 }
 
 export function setScriptResult(nodeId: string, result: ScriptResult | null): void {
   if (result === null) {
-    store.delete(nodeId);
+    store.delete(nodeId)
   } else {
-    store.set(nodeId, result);
+    store.set(nodeId, result)
   }
-  emit();
+  emit()
 }
 
 function subscribe(cb: () => void): () => void {
-  listeners.add(cb);
+  listeners.add(cb)
   return () => {
-    listeners.delete(cb);
-  };
+    listeners.delete(cb)
+  }
 }
 
 export function useScriptResult(nodeId: string): ScriptResult | null {
@@ -36,5 +36,5 @@ export function useScriptResult(nodeId: string): ScriptResult | null {
     subscribe,
     () => store.get(nodeId) ?? null,
     () => null,
-  );
+  )
 }

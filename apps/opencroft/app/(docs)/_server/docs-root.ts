@@ -17,11 +17,6 @@ function cacheKey(namespace: string | undefined): string {
 }
 
 export async function getDocsRoot(namespace?: string): Promise<string | null> {
-  const envRoot = process.env.OPENCROFT_DOCS_ROOT
-  if (envRoot) {
-    return envRoot
-  }
-
   if (!cache) {
     cache = new Map()
   }
@@ -35,7 +30,7 @@ export async function getDocsRoot(namespace?: string): Promise<string | null> {
   let resolved: string | null = null
   try {
     const { getExtensionModule } = await import('@/app/(extension-runtime)/_server/loader')
-    const mod = await getExtensionModule('builtin/core')
+    const mod = await getExtensionModule('local/documentation')
     const findRoot = mod.actions?.['docs.findActiveDocsRoot']
     if (findRoot) {
       const r = (await findRoot({ namespace })) as string | null
@@ -47,16 +42,4 @@ export async function getDocsRoot(namespace?: string): Promise<string | null> {
 
   cache.set(key, { value: resolved, at: now })
   return resolved
-}
-
-export function getDocsRootSync(namespace?: string): string | null {
-  const envRoot = process.env.OPENCROFT_DOCS_ROOT
-  if (envRoot) {
-    return envRoot
-  }
-  return cache?.get(cacheKey(namespace))?.value ?? null
-}
-
-export function invalidateDocsRootCache(): void {
-  cache = null
 }

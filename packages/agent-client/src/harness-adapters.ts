@@ -10,9 +10,26 @@ export interface HarnessAdapter {
   keyEnv?: string
   modelEnv?: string
   note?: string
+  // 'acp' (default): spawn an external ACP agent subprocess. 'native': run the
+  // in-process harness (Vercel AI SDK) with native tools — no subprocess, no MCP.
+  kind?: 'acp' | 'native'
 }
 
 export const HARNESS_ADAPTERS: HarnessAdapter[] = [
+  {
+    id: 'native',
+    label: 'Custom',
+    kind: 'native',
+    // command/args are unused: ensureConnection short-circuits before spawning.
+    command: '',
+    args: [],
+    // Reached via the provider's OpenAI-compatible endpoint, so this adapter is
+    // offered for every provider that exposes one.
+    protocol: 'openai',
+    baseUrlEnv: 'OPENAI_BASE_URL',
+    keyEnv: 'OPENAI_API_KEY',
+    note: 'In-process harness — runs the agent loop directly with native tools (no subprocess, no MCP). Reaches any OpenAI-compatible model.',
+  },
   {
     id: 'claude',
     label: 'Claude Code',

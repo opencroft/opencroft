@@ -1,10 +1,9 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+
 import type { McpServer as AcpMcpServer } from '@agentclientprotocol/sdk'
 
 import type { McpServerConfig } from './mcp-types'
-
-export type { KeyValue, McpServerConfig, McpTransport } from './mcp-types'
 
 const CONFIG_PATH = join(process.cwd(), 'mcp-config.json')
 

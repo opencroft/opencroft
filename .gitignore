@@ -44,6 +44,8 @@ next-env.d.ts
 *.local.json
 
 dist/
+.output/
+.nitro/
 .cache/
 data/
 .tanstack/

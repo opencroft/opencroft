@@ -119,7 +119,13 @@ export function resolveSessionOnGraph(sessionKey: string, nodes: NodeLike[], edg
   }
 }
 
-export function wrapMessageWithContext(message: string, space: { name: string; slug: string }, sourceNodeId: string | null, jobContext: string, instructions: string[]): string {
+export function wrapMessageWithContext(
+  message: string,
+  space: { name: string; slug: string },
+  sourceNodeId: string | null,
+  jobContext: string,
+  instructions: string[],
+): string {
   const selectedPart = sourceNodeId ?? 'none'
   const system = `<opencroft-system>Sent from OpenCroft space: ${space.name} (${space.slug}). Selected node: ${selectedPart}.</opencroft-system>`
   let prefix = system

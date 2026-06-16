@@ -98,7 +98,12 @@ export async function uploadFile(config: DockerConfig, path: string, data: strin
   await run(config, `echo '${data}' | base64 -d > '${fullPath}'`)
 }
 
-export async function uploadStream(config: DockerConfig, path: string, stream: Readable, filename: string): Promise<void> {
+export async function uploadStream(
+  config: DockerConfig,
+  path: string,
+  stream: Readable,
+  filename: string,
+): Promise<void> {
   const dir = resolvePath(config, path)
   const fullPath = dir.endsWith('/') ? dir + filename : dir + '/' + filename
 

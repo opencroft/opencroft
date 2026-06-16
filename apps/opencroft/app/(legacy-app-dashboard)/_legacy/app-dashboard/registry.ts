@@ -23,7 +23,8 @@ export interface NodeTypeDefinition<T extends Record<string, unknown> = Record<s
 }
 
 // Infer AppNode union from definitions array
-type InferNode<D> = D extends NodeTypeDefinition<infer T> ? Node<T, D extends { type: infer U } ? U & string : string> : never
+type InferNode<D> =
+  D extends NodeTypeDefinition<infer T> ? Node<T, D extends { type: infer U } ? U & string : string> : never
 export type InferNodeUnion<Defs extends readonly NodeTypeDefinition[]> = InferNode<Defs[number]>
 
 export function buildNodeTypes(defs: readonly NodeTypeDefinition[]): NodeTypes {

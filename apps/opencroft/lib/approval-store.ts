@@ -22,11 +22,9 @@ class ApprovalStore {
     }
     return new Promise((resolve, reject) => {
       this.pending.set(request.id, { request, resolve, reject })
-      toastStore.broadcast({
-        type: 'approval_pending',
-        request,
-        spaceId: request.spaceId,
-      })
+      // Broadcast globally (no event spaceId): pending requests must surface on
+      // every space, not just the one that raised them.
+      toastStore.broadcast({ type: 'approval_pending', request })
     })
   }
 
@@ -50,7 +48,7 @@ class ApprovalStore {
       return false
     }
     this.pending.delete(id)
-    toastStore.broadcast({ type: 'approval_resolved', id, spaceId: entry.request.spaceId })
+    toastStore.broadcast({ type: 'approval_resolved', id })
     entry.resolve()
     return true
   }
@@ -61,7 +59,7 @@ class ApprovalStore {
       return false
     }
     this.pending.delete(id)
-    toastStore.broadcast({ type: 'approval_resolved', id, spaceId: entry.request.spaceId })
+    toastStore.broadcast({ type: 'approval_resolved', id })
     entry.reject(reason)
     return true
   }
@@ -73,7 +71,7 @@ class ApprovalStore {
       return false
     }
     this.pending.delete(id)
-    toastStore.broadcast({ type: 'approval_resolved', id, spaceId: entry.request.spaceId })
+    toastStore.broadcast({ type: 'approval_resolved', id })
     entry.reject('client cancelled')
     return true
   }

@@ -1,19 +1,42 @@
 'use client'
 
-import { Button } from '@opencroft/ui-kit/button'
-import { TypingDots } from '@opencroft/ui-kit/chat/typing-dots'
-import { Flex } from '@opencroft/ui-kit/layout/flex'
-import { Textarea } from '@opencroft/ui-kit/textarea'
-import { ChevronRight, Loader2, Maximize2, Minimize2, SendIcon, ShieldAlert, ShieldCheck, ShieldCog, Sparkles } from 'lucide-react'
-import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react'
+import { ChainDot, type ChainDotVariant, Chained } from 'agent-chat/chain'
+import { ThinkingBlock } from 'agent-chat/thinking-block'
+import { ToolCallBlock } from 'agent-chat/tool-block'
+import {
+  Maximize2,
+  Minimize2,
+  Pencil,
+  SendIcon,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldCog,
+  Sparkles,
+  Square,
+} from 'lucide-react'
+import {
+  type FormEvent,
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { Button } from 'ui/button'
+import { TypingDots } from 'ui/chat/typing-dots'
+import { Flex } from 'ui/layout/flex'
+import { Textarea } from 'ui/textarea'
+
 import { getAutoApprove, setAutoApprove } from '@/app/(approvals)/_server/actions'
 import { CommandBarMenuItem } from '@/app/(dashboard)/_canvas/command-bar'
-import { useOverlayBar, useOverlayMenu } from '@/app/(dashboard)/_canvas/overlay-context'
+import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
 import { messageId, normalizeHistory, type OpenclawMessage, type RawChatMessage } from '@/app/(openclaw)/_lib/messages'
 import { listCommands, loadSession, type OpenclawCommand, sendMessage } from '@/app/(openclaw)/_server/actions'
-import { ChainDot, type ChainDotVariant, Chained } from '@/components/experimental/chain'
 import { cn } from '@/lib/utils'
 
 export interface AgentSession {
@@ -24,9 +47,20 @@ export interface AgentSession {
   waiting: boolean
   botName: string
   send: (text: string) => void
+  // Turn control and message editing, provided by the ACP (local) backend only;
+  // the openclaw backend leaves these unset.
+  stop?: () => void
+  canFork?: boolean
+  // Rewind history to a user turn (0-based) and prefill its text for re-sending.
+  editMessage?: (turnIndex: number, text: string) => void
+  // Composer draft staged by editMessage; the input syncs to it when it changes.
+  draft?: { text: string; key: number }
 }
 
-export function useAgentSession(sessionKey: string, transformOutgoing?: (text: string, isFirstMessage: boolean) => string): AgentSession {
+export function useAgentSession(
+  sessionKey: string,
+  transformOutgoing?: (text: string, isFirstMessage: boolean) => string,
+): AgentSession {
   const [raw, setRaw] = useState<RawChatMessage[]>([])
   const [loading, setLoading] = useState(true)
   const [sending, startSending] = useTransition()
@@ -146,7 +180,10 @@ export function useAgentSession(sessionKey: string, transformOutgoing?: (text: s
     [sessionKey, transformOutgoing, isFirstMessage],
   )
 
-  return useMemo(() => ({ sessionKey, messages, loading, sending, waiting, botName, send }), [sessionKey, messages, loading, sending, waiting, botName, send])
+  return useMemo(
+    () => ({ sessionKey, messages, loading, sending, waiting, botName, send }),
+    [sessionKey, messages, loading, sending, waiting, botName, send],
+  )
 }
 
 interface AgentChatProps {
@@ -184,6 +221,7 @@ function useStickToBottom(resetKey: string) {
     }
   }, [])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(resetKey): re-pin the scroll to the bottom when the session changes
   useLayoutEffect(() => {
     const root = rootRef.current
     const viewport = root?.closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null
@@ -200,6 +238,19 @@ function useStickToBottom(resetKey: string) {
 export function AgentChat({ session, emptyText, agentAvatar, agentName }: AgentChatProps) {
   const displayName = agentName ?? session.botName
   const blocks = useMemo(() => buildBlocks(session.messages), [session.messages])
+  // 0-based user-turn index per user block, so "fork from here" rewinds to it.
+  const turnByBlock = useMemo(() => {
+    const map = new Map<number, number>()
+    let turn = -1
+    blocks.forEach((block, index) => {
+      if (block.kind === 'user') {
+        turn += 1
+        map.set(index, turn)
+      }
+    })
+    return map
+  }, [blocks])
+  const edit = session.canFork === true ? session.editMessage : undefined
   const rootRef = useStickToBottom(session.sessionKey)
   const chainCollapsedRef = useRef(true)
   const onChainCollapseChange = useCallback((collapsed: boolean) => {
@@ -215,18 +266,34 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName }: AgentC
       ) : (
         blocks.map((b, i) =>
           b.kind === 'user' ? (
-            <UserMessage key={i} text={b.text} />
+            <UserMessage
+              key={i}
+              text={b.text}
+              editDisabled={session.waiting}
+              onEdit={edit ? () => edit(turnByBlock.get(i) ?? 0, b.text) : undefined}
+            />
           ) : (
-            <Chain key={i} items={b.items} botName={displayName} agentAvatar={agentAvatar} defaultCollapsed={chainCollapsedRef.current} onCollapseChange={onChainCollapseChange} />
+            <Chain
+              key={i}
+              items={b.items}
+              botName={displayName}
+              agentAvatar={agentAvatar}
+              defaultCollapsed={chainCollapsedRef.current}
+              onCollapseChange={onChainCollapseChange}
+              pending={i === blocks.length - 1 && session.waiting}
+            />
           ),
         )
       )}
-      {session.waiting && <ThinkingIndicator botName={displayName} />}
+      {session.waiting && <ThinkingIndicator />}
     </Flex>
   )
 }
 
-type ChainItem = { kind: 'assistant-text'; text: string } | { kind: 'tool'; name: string; args: unknown; result?: { text: string; isError?: boolean } }
+type ChainItem =
+  | { kind: 'assistant-text'; text: string }
+  | { kind: 'thinking'; text: string }
+  | { kind: 'tool'; name: string; args: unknown; result?: { text: string; isError?: boolean } }
 
 type Block = { kind: 'user'; text: string } | { kind: 'chain'; items: ChainItem[] }
 
@@ -262,6 +329,11 @@ function buildBlocks(messages: OpenclawMessage[]): Block[] {
           continue
         }
         chain.push({ kind: 'assistant-text', text: v })
+      } else if (p.type === 'thinking') {
+        if (!p.text.trim()) {
+          continue
+        }
+        chain.push({ kind: 'thinking', text: p.text })
       } else {
         chain.push({ kind: 'tool', name: p.name, args: p.args, result: p.result })
       }
@@ -271,12 +343,27 @@ function buildBlocks(messages: OpenclawMessage[]): Block[] {
   return blocks
 }
 
-function UserMessage({ text }: { text: string }) {
+function UserMessage({ text, editDisabled, onEdit }: { text: string; editDisabled?: boolean; onEdit?: () => void }) {
   return (
-    <Flex className='gap-1.5 rounded-md bg-muted border-1 p-2'>
-      <div className='prose-chat'>
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
-      </div>
+    <Flex row align='start' className='group w-full gap-1'>
+      <Flex expanded className='gap-1.5 rounded-md bg-muted border-1 p-2'>
+        <div className='prose-chat'>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+        </div>
+      </Flex>
+      {onEdit && (
+        <Button
+          type='button'
+          size='icon'
+          variant='ghost'
+          className='h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100'
+          title='Edit message'
+          disabled={editDisabled}
+          onClick={onEdit}
+        >
+          <Pencil className='size-3.5' />
+        </Button>
+      )}
     </Flex>
   )
 }
@@ -292,7 +379,7 @@ type ChainEntry = { kind: 'header' } | { kind: 'item'; item: ChainItem }
 
 function withHeader(items: ChainItem[]): ChainEntry[] {
   const entries: ChainEntry[] = items.map((item) => ({ kind: 'item', item }))
-  if (items[0]?.kind === 'tool') {
+  if (items[0] && items[0].kind !== 'assistant-text') {
     entries.unshift({ kind: 'header' })
   }
   return entries
@@ -304,12 +391,15 @@ function Chain({
   agentAvatar,
   defaultCollapsed,
   onCollapseChange,
+  pending,
 }: {
   items: ChainItem[]
   botName: string
   agentAvatar?: string
   defaultCollapsed?: boolean
   onCollapseChange?: (collapsed: boolean) => void
+  // True while this chain is the active turn and still generating.
+  pending?: boolean
 }) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed ?? false)
   const entries = withHeader(items)
@@ -352,7 +442,11 @@ function Chain({
     }
 
     const hasAvatar = !!agentAvatar
-    const marker = hasAvatar ? <img src={agentAvatar} alt='' className='size-8 rounded-full object-cover' /> : <ChainDot />
+    const marker = hasAvatar ? (
+      <img src={agentAvatar} alt='' className='size-8 rounded-full object-cover' />
+    ) : (
+      <ChainDot />
+    )
 
     return (
       <Flex className='min-w-0 w-full'>
@@ -362,16 +456,28 @@ function Chain({
               <div className='text-xs font-medium text-foreground'>{botName}</div>
               {toggle}
             </Flex>
-            {/* Text — no animation, stable */}
-            {lastTextEntry && lastTextEntry.kind === 'item' && lastTextEntry.item.kind === 'assistant-text' && lastTextEntry.item.text.trim() && (
-              <div className='prose-chat'>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{lastTextEntry.item.text}</ReactMarkdown>
-              </div>
+            {items.map((it, idx) =>
+              it.kind === 'thinking' ? (
+                <ThinkingBlock key={idx} text={it.text} pending={pending && idx === items.length - 1} />
+              ) : null,
             )}
+            {/* Text — no animation, stable */}
+            {lastTextEntry &&
+              lastTextEntry.kind === 'item' &&
+              lastTextEntry.item.kind === 'assistant-text' &&
+              lastTextEntry.item.text.trim() && (
+                <div className='prose-chat'>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{lastTextEntry.item.text}</ReactMarkdown>
+                </div>
+              )}
             {/* Tool call — animate on changes */}
             {lastToolAfterText && (
-              <div key={lastToolAfterText.toolCallId}>
-                <ToolBlock name={lastToolAfterText.name} args={lastToolAfterText.args} result={lastToolAfterText.result} />
+              <div key={lastToolAfterText.name}>
+                <ToolCallBlock
+                  name={lastToolAfterText.name}
+                  args={lastToolAfterText.args}
+                  result={lastToolAfterText.result}
+                />
               </div>
             )}
             {/* If no text entry found, show the very last entry */}
@@ -380,7 +486,7 @@ function Chain({
                 const last = entries[entries.length - 1]
                 if (last?.kind === 'item') {
                   if (last.item.kind === 'tool') {
-                    return <ToolBlock name={last.item.name} args={last.item.args} result={last.item.result} />
+                    return <ToolCallBlock name={last.item.name} args={last.item.args} result={last.item.result} />
                   }
                   if (last.item.kind === 'assistant-text') {
                     return last.item.text.trim() ? (
@@ -404,10 +510,20 @@ function Chain({
         const isFirst = i === 0
         const isLast = i === entries.length - 1
         const hasAvatar = isFirst && !!agentAvatar
-        const marker = hasAvatar ? <img src={agentAvatar} alt='' className='size-8 rounded-full object-cover' /> : <ChainDot variant={entry.kind === 'item' ? toolDotVariant(entry.item) : 'default'} />
+        const marker = hasAvatar ? (
+          <img src={agentAvatar} alt='' className='size-8 rounded-full object-cover' />
+        ) : (
+          <ChainDot variant={entry.kind === 'item' ? toolDotVariant(entry.item) : 'default'} />
+        )
         return (
-          <Chained key={i} marker={marker} lineAbove={!isFirst} lineBelow={!isLast} align={hasAvatar ? 'start' : 'center'}>
-            {renderEntry(entry, isFirst ? botName : undefined, isFirst ? toggle : undefined)}
+          <Chained
+            key={i}
+            marker={marker}
+            lineAbove={!isFirst}
+            lineBelow={!isLast}
+            align={hasAvatar ? 'start' : 'center'}
+          >
+            {renderEntry(entry, isFirst ? botName : undefined, isFirst ? toggle : undefined, isLast && pending)}
           </Chained>
         )
       })}
@@ -423,7 +539,9 @@ function ChainToggleButton({ collapsed, onToggle }: { collapsed: boolean; onTogg
       onClick={onToggle}
       className={cn(
         'shrink-0 size-6 inline-flex items-center justify-center rounded-md transition-colors',
-        collapsed ? 'text-muted-foreground hover:text-foreground hover:bg-accent' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+        collapsed
+          ? 'text-muted-foreground hover:text-foreground hover:bg-accent'
+          : 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
       )}
       title={collapsed ? 'Show chain' : 'Collapse chain'}
     >
@@ -432,7 +550,7 @@ function ChainToggleButton({ collapsed, onToggle }: { collapsed: boolean; onTogg
   )
 }
 
-function renderEntry(entry: ChainEntry, botName?: string, toggle?: React.ReactNode) {
+function renderEntry(entry: ChainEntry, botName?: string, toggle?: React.ReactNode, pending?: boolean) {
   if (entry.kind === 'header') {
     return <AssistantText text='' botName={botName} toggle={toggle} />
   }
@@ -440,7 +558,10 @@ function renderEntry(entry: ChainEntry, botName?: string, toggle?: React.ReactNo
   if (item.kind === 'assistant-text') {
     return <AssistantText text={item.text} botName={botName} toggle={toggle} />
   }
-  return <ToolBlock name={item.name} args={item.args} result={item.result} />
+  if (item.kind === 'thinking') {
+    return <ThinkingBlock text={item.text} pending={pending} />
+  }
+  return <ToolCallBlock name={item.name} args={item.args} result={item.result} />
 }
 
 function AssistantText({ text, botName, toggle }: { text: string; botName?: string; toggle?: React.ReactNode }) {
@@ -482,7 +603,7 @@ const THINKING_PHRASES = [
   'Working...',
 ] as const
 
-export function ThinkingIndicator({ botName }: { botName: string }) {
+export function ThinkingIndicator() {
   const [phrase, setPhrase] = useState(() => THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)])
   const prevPhrase = useRef(phrase)
   const [visible, setVisible] = useState(0)
@@ -547,12 +668,21 @@ interface AgentChatInputProps {
   leadingBarContent?: React.ReactNode
 }
 
-export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlur, onSlashOpenChange, leadingBarContent }: AgentChatInputProps) {
+export function AgentChatInput({
+  session,
+  placeholder,
+  autoFocus,
+  onFocus,
+  onBlur,
+  onSlashOpenChange,
+  leadingBarContent,
+}: AgentChatInputProps) {
   const [text, setText] = useState('')
   const [commands, setCommands] = useState<OpenclawCommand[]>([])
   const [highlight, setHighlight] = useState(0)
   const [autoApprove, setAutoApproveState] = useState(false)
   const [yoloMode, setYoloMode] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     listCommands().then(setCommands)
@@ -562,6 +692,15 @@ export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlu
       .then(({ enabled }) => setYoloMode(enabled))
       .catch(() => {})
   }, [])
+
+  // Editing a user message stages its text as a draft — load it into the
+  // composer and focus so it's ready to revise and re-send.
+  useEffect(() => {
+    if (session.draft) {
+      setText(session.draft.text)
+      textareaRef.current?.focus()
+    }
+  }, [session.draft])
 
   const toggleAutoApprove = async () => {
     const next = await setAutoApprove({ data: !autoApprove })
@@ -650,7 +789,12 @@ export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlu
       return null
     }
     return matches.map((m, i) => (
-      <CommandBarMenuItem key={m.name} active={i === highlight} onSelect={() => pick(m)} onHover={() => setHighlight(i)}>
+      <CommandBarMenuItem
+        key={m.name}
+        active={i === highlight}
+        onSelect={() => pick(m)}
+        onHover={() => setHighlight(i)}
+      >
         <div className='flex items-center gap-2 text-sm'>
           <span className='font-mono'>{m.textAliases[0] ?? `/${m.name}`}</span>
           <span className='ml-auto text-[10px] uppercase tracking-wide text-muted-foreground'>{m.category}</span>
@@ -667,6 +811,7 @@ export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlu
         {leadingBarContent}
         <Sparkles className='h-4 w-4 ml-1 mt-1.5 shrink-0 text-primary' />
         <Textarea
+          ref={textareaRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
@@ -701,17 +846,38 @@ export function AgentChatInput({ session, placeholder, autoFocus, onFocus, onBlu
             <ShieldCheck className='h-4 w-4 text-primary' />
           )}
         </Button>
-        <Button type='button' size='icon' variant='ghost' className='h-7 w-7 shrink-0 mt-0.5' onMouseDown={(e) => e.preventDefault()} onClick={submit} disabled={!text.trim() || session.sending}>
-          <SendIcon className='h-4 w-4' />
-        </Button>
+        {session.waiting && session.stop ? (
+          <Button
+            type='button'
+            size='icon'
+            variant='ghost'
+            className='h-7 w-7 shrink-0 mt-0.5'
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={session.stop}
+            title='Stop'
+          >
+            <Square className='h-4 w-4' />
+          </Button>
+        ) : (
+          <Button
+            type='button'
+            size='icon'
+            variant='ghost'
+            className='h-7 w-7 shrink-0 mt-0.5'
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={submit}
+            disabled={!text.trim() || session.sending}
+          >
+            <SendIcon className='h-4 w-4' />
+          </Button>
+        )}
       </>
       // eslint-disable-next-line react-hooks/exhaustive-deps
     ),
-    [leadingBarContent, text, session.sending, inputPlaceholder, autoFocus, autoApprove],
+    [leadingBarContent, text, session.sending, session.waiting, session.stop, inputPlaceholder, autoFocus, autoApprove],
   )
 
-  useOverlayMenu(menuNode)
-  useOverlayBar(barNode)
+  useOverlay({ menu: menuNode, bar: barNode })
 
   return null
 }
@@ -722,84 +888,6 @@ function findMatches(text: string, commands: OpenclawCommand[]): OpenclawCommand
     return []
   }
   return commands.filter((c) => c.textAliases.some((a) => a.toLowerCase().startsWith(trimmed))).slice(0, 10)
-}
-
-function ToolBlock({ name, args, result }: { name: string; args: unknown; result?: { text: string; isError?: boolean } }) {
-  const isError = result?.isError === true
-  const [open, setOpen] = useState(false)
-  return (
-    <Flex className='gap-1.5'>
-      <button type='button' onClick={() => setOpen((v) => !v)} className='flex items-center gap-2 text-xs text-left cursor-pointer'>
-        <ChevronRight className={cn('h-3 w-3 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} />
-        <span className='font-mono font-medium shrink-0'>{name}</span>
-        {previewArg(name, args) && <span className='font-mono text-muted-foreground'>{previewArg(name, args)}</span>}
-        {!result && !open && <Loader2 className='size-3 shrink-0 animate-spin text-muted-foreground' />}
-        {isError && <span className='text-destructive shrink-0'>error</span>}
-      </button>
-      {open && (
-        <div className={cn('rounded-md border bg-muted/30 text-xs overflow-hidden', isError && 'border-destructive/60')}>
-          <ToolRow label='args'>
-            <pre className='max-h-48 overflow-y-auto whitespace-pre-wrap break-all text-[11px] text-muted-foreground'>{JSON.stringify(args, null, 2)}</pre>
-          </ToolRow>
-          {result ? (
-            <>
-              <div className='border-t' />
-              <ToolRow label='output'>
-                <pre className='overflow-y-auto whitespace-pre-wrap break-all text-[11px] text-muted-foreground'>{result.text}</pre>
-              </ToolRow>
-            </>
-          ) : (
-            <>
-              <div className='border-t' />
-              <ToolRow label='output'>
-                <Flex row align='center' className='gap-1.5 text-muted-foreground'>
-                  <Loader2 className='size-3 animate-spin' />
-                  <span>running…</span>
-                </Flex>
-              </ToolRow>
-            </>
-          )}
-        </div>
-      )}
-    </Flex>
-  )
-}
-
-function ToolRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <Flex row className='gap-3 px-3 py-2'>
-      <div className='w-10 shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground pt-0.5'>{label}</div>
-      <div className='flex-1 min-w-0'>{children}</div>
-    </Flex>
-  )
-}
-
-const PREVIEW_ARG: Record<string, string> = {
-  edit: 'path',
-  read: 'path',
-  write: 'path',
-  list: 'path',
-  glob: 'pattern',
-  grep: 'pattern',
-  search: 'pattern',
-  exec: 'command',
-  bash: 'command',
-  run: 'command',
-  fetch: 'url',
-  url: 'url',
-  web_fetch: 'url',
-}
-
-function previewArg(name: string, args: unknown): string | null {
-  const key = PREVIEW_ARG[name.toLowerCase()]
-  if (!key || !args || typeof args !== 'object') {
-    return null
-  }
-  const value = (args as Record<string, unknown>)[key]
-  if (typeof value !== 'string' || !value) {
-    return null
-  }
-  return value
 }
 
 function stripOpencroftTags(text: string): string {

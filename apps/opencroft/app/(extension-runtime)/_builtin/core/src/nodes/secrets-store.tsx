@@ -1,29 +1,21 @@
-import {
-  React,
-  NodeFrame,
-  icons,
-  invoke,
-  toast,
-} from '@ext/host';
-import {
-  Button,
-  Input,
-  Label,
-} from '@ext/ui';
+import { icons, invoke, NodeFrame, React, toast } from '@ext/host'
+import { Button, Input, Label } from '@ext/ui'
 
-const { useCallback, useEffect, useState } = React;
+const { useCallback, useEffect, useState } = React
 
 interface SecretRow {
-  id?: string;
-  key: string;
-  value: string;
-  updatedAt?: string;
-  dirty: boolean;
+  id?: string
+  key: string
+  value: string
+  updatedAt?: string
+  dirty: boolean
 }
-export interface SecretsData { secretKeys: string[]; }
+export interface SecretsData {
+  secretKeys: string[]
+}
 
 export function SecretsStoreNode({ data, selected }: { data: SecretsData; selected?: boolean }) {
-  const keys = data.secretKeys ?? [];
+  const keys = data.secretKeys ?? []
   return (
     <NodeFrame
       icon={icons.ShieldCheck}
@@ -42,33 +34,33 @@ export function SecretsStoreNode({ data, selected }: { data: SecretsData; select
         </div>
       ) : null}
     </NodeFrame>
-  );
+  )
 }
 
 function formatEditedAt(iso?: string): string {
   if (!iso) {
-    return 'unsaved';
+    return 'unsaved'
   }
-  const d = new Date(iso);
+  const d = new Date(iso)
   return d.toLocaleString(undefined, {
     year: 'numeric',
     month: 'short',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-  });
+  })
 }
 
 interface SecretRowEditorProps {
-  row: SecretRow;
-  onChange: (field: 'key' | 'value', v: string) => void;
-  onRemove: () => void;
-  onRotate: () => void;
+  row: SecretRow
+  onChange: (field: 'key' | 'value', v: string) => void
+  onRemove: () => void
+  onRotate: () => void
 }
 
 function SecretRowEditor({ row, onChange, onRemove, onRotate }: SecretRowEditorProps) {
-  const [visible, setVisible] = useState(false);
-  const canRotate = Boolean(row.id) && !row.dirty;
+  const [visible, setVisible] = useState(false)
+  const canRotate = Boolean(row.id) && !row.dirty
   return (
     <div className='flex flex-col gap-0.5'>
       <div className='flex items-center gap-1'>
@@ -102,99 +94,120 @@ function SecretRowEditor({ row, onChange, onRemove, onRotate }: SecretRowEditorP
           <icons.Trash2 className='h-3 w-3' />
         </Button>
       </div>
-      <div className='pl-1 text-[10px] text-muted-foreground'>
-        edited {formatEditedAt(row.updatedAt)}
-      </div>
+      <div className='pl-1 text-[10px] text-muted-foreground'>edited {formatEditedAt(row.updatedAt)}</div>
     </div>
-  );
+  )
 }
 
-interface OrphanRow { id: string; storeId: string; key: string; updatedAt: string; }
+interface OrphanRow {
+  id: string
+  storeId: string
+  key: string
+  updatedAt: string
+}
 
 export function SecretsStoreInspector({
-  nodeId, updateData,
-}: { nodeId: string; data: SecretsData; updateData: (p: Partial<SecretsData>) => void }) {
-  const [rows, setRows] = useState<SecretRow[]>([]);
-  const [removed, setRemoved] = useState<string[]>([]);
-  const [dirty, setDirty] = useState(false);
-  const [orphans, setOrphans] = useState<OrphanRow[]>([]);
+  nodeId,
+  updateData,
+}: {
+  nodeId: string
+  data: SecretsData
+  updateData: (p: Partial<SecretsData>) => void
+}) {
+  const [rows, setRows] = useState<SecretRow[]>([])
+  const [removed, setRemoved] = useState<string[]>([])
+  const [dirty, setDirty] = useState(false)
+  const [orphans, setOrphans] = useState<OrphanRow[]>([])
 
   const reload = useCallback(async () => {
     const secrets = await invoke<{ id: string; key: string; value: string; updatedAt: string }[]>(
-      'secretsStore.getSecrets', nodeId,
-    );
-    setRows(secrets.map((s) => ({
-      id: s.id, key: s.key, value: s.value, updatedAt: s.updatedAt, dirty: false,
-    })));
-    const found = await invoke<OrphanRow[]>('secretsStore.listOrphans', nodeId);
-    setOrphans(found);
-    setRemoved([]);
-    setDirty(false);
-  }, [nodeId]);
+      'secretsStore.getSecrets',
+      nodeId,
+    )
+    setRows(
+      secrets.map((s) => ({
+        id: s.id,
+        key: s.key,
+        value: s.value,
+        updatedAt: s.updatedAt,
+        dirty: false,
+      })),
+    )
+    const found = await invoke<OrphanRow[]>('secretsStore.listOrphans', nodeId)
+    setOrphans(found)
+    setRemoved([])
+    setDirty(false)
+  }, [nodeId])
 
-  const deleteOrphan = useCallback(async (id: string, key: string) => {
-    if (!window.confirm(`Delete orphan secret "${key}"? It belongs to a Secrets Store node that no longer exists.`)) {
-      return;
-    }
-    await invoke('secretsStore.deleteOrphan', id);
-    await reload();
-    toast.success(`Deleted orphan ${key}`);
-  }, [reload]);
+  const deleteOrphan = useCallback(
+    async (id: string, key: string) => {
+      if (!window.confirm(`Delete orphan secret "${key}"? It belongs to a Secrets Store node that no longer exists.`)) {
+        return
+      }
+      await invoke('secretsStore.deleteOrphan', id)
+      await reload()
+      toast.success(`Deleted orphan ${key}`)
+    },
+    [reload],
+  )
 
   useEffect(() => {
-    reload();
-  }, [reload]);
+    reload()
+  }, [reload])
 
   const persist = useCallback(async () => {
     for (const key of removed) {
-      await invoke('secretsStore.deleteSecret', nodeId, key);
+      await invoke('secretsStore.deleteSecret', nodeId, key)
     }
     for (const row of rows) {
       if (row.key && row.dirty) {
-        await invoke('secretsStore.setSecret', nodeId, row.key, row.value);
+        await invoke('secretsStore.setSecret', nodeId, row.key, row.value)
       }
     }
-    updateData({ secretKeys: rows.filter((r) => r.key).map((r) => r.key) });
-    await reload();
-    toast.success('Secrets saved');
-  }, [rows, removed, nodeId, updateData, reload]);
+    updateData({ secretKeys: rows.filter((r) => r.key).map((r) => r.key) })
+    await reload()
+    toast.success('Secrets saved')
+  }, [rows, removed, nodeId, updateData, reload])
 
   const addRow = useCallback(() => {
-    setRows((prev) => [...prev, { key: '', value: '', dirty: true }]);
-    setDirty(true);
-  }, []);
+    setRows((prev) => [...prev, { key: '', value: '', dirty: true }])
+    setDirty(true)
+  }, [])
 
   const updateRow = useCallback((index: number, field: 'key' | 'value', v: string) => {
-    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, [field]: v, dirty: true } : r)));
-    setDirty(true);
-  }, []);
+    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, [field]: v, dirty: true } : r)))
+    setDirty(true)
+  }, [])
 
   const removeRow = useCallback((index: number) => {
     setRows((prev) => {
-      const row = prev[index];
+      const row = prev[index]
       if (row.key) {
-        setRemoved((r) => [...r, row.key]);
+        setRemoved((r) => [...r, row.key])
       }
-      return prev.filter((_, i) => i !== index);
-    });
-    setDirty(true);
-  }, []);
+      return prev.filter((_, i) => i !== index)
+    })
+    setDirty(true)
+  }, [])
 
-  const rotateRow = useCallback(async (index: number) => {
-    const row = rows[index];
-    if (!row?.id || row.dirty) {
-      return;
-    }
-    const ok = window.confirm(
-      `Rotate token for "${row.key}"?\n\nThe current value will be replaced with a new random token.`,
-    );
-    if (!ok) {
-      return;
-    }
-    await invoke('secretsStore.rotateSecret', nodeId, row.key);
-    await reload();
-    toast.success(`Rotated ${row.key}`);
-  }, [rows, nodeId, reload]);
+  const rotateRow = useCallback(
+    async (index: number) => {
+      const row = rows[index]
+      if (!row?.id || row.dirty) {
+        return
+      }
+      const ok = window.confirm(
+        `Rotate token for "${row.key}"?\n\nThe current value will be replaced with a new random token.`,
+      )
+      if (!ok) {
+        return
+      }
+      await invoke('secretsStore.rotateSecret', nodeId, row.key)
+      await reload()
+      toast.success(`Rotated ${row.key}`)
+    },
+    [rows, nodeId, reload],
+  )
 
   return (
     <div className='flex flex-col gap-3'>
@@ -220,19 +233,18 @@ export function SecretsStoreInspector({
       </div>
       {orphans.length > 0 ? (
         <div className='flex flex-col gap-1 mt-3 pt-3 border-t'>
-          <Label className='text-xs text-amber-600'>
-            Orphan secrets ({orphans.length}) — from deleted stores
-          </Label>
+          <Label className='text-xs text-amber-600'>Orphan secrets ({orphans.length}) — from deleted stores</Label>
           <div className='text-[10px] text-muted-foreground'>
-            These rows still live in the DB but no Secrets Store node owns them. They can shadow your active secrets at lookup time.
+            These rows still live in the DB but no Secrets Store node owns them. They can shadow your active secrets at
+            lookup time.
           </div>
           <div className='flex flex-col gap-0.5 mt-1'>
             {orphans.map((o) => (
               <div key={o.id} className='flex items-center gap-1 text-xs font-mono'>
-                <span className='flex-1 truncate' title={`storeId: ${o.storeId}`}>{o.key}</span>
-                <span className='text-[10px] text-muted-foreground'>
-                  {formatEditedAt(o.updatedAt)}
+                <span className='flex-1 truncate' title={`storeId: ${o.storeId}`}>
+                  {o.key}
                 </span>
+                <span className='text-[10px] text-muted-foreground'>{formatEditedAt(o.updatedAt)}</span>
                 <Button
                   variant='ghost'
                   size='icon'
@@ -248,5 +260,5 @@ export function SecretsStoreInspector({
         </div>
       ) : null}
     </div>
-  );
+  )
 }

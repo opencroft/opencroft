@@ -44,6 +44,15 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
     keyEnv: 'OPENAI_API_KEY',
   },
   {
+    id: 'openai-compatible',
+    label: 'OpenAI-compatible (custom)',
+    // Base URL is supplied per-selection (AgentSelection.baseUrl); models are
+    // loaded dynamically from the endpoint's `/models` route.
+    endpoints: { openai: '' },
+    models: [],
+    keyEnv: 'OPENAI_API_KEY',
+  },
+  {
     id: 'google',
     label: 'Google',
     endpoints: { gemini: '' },

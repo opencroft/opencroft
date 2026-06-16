@@ -159,7 +159,10 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
         return prev
       }
       const merged = { ...prev[idx], ...meta }
-      const unchanged = merged.label === prev[idx].label && merged.agentName === prev[idx].agentName && merged.agentAvatar === prev[idx].agentAvatar
+      const unchanged =
+        merged.label === prev[idx].label &&
+        merged.agentName === prev[idx].agentName &&
+        merged.agentAvatar === prev[idx].agentAvatar
       if (unchanged) {
         return prev
       }

@@ -117,7 +117,12 @@ interface LogEntry {
 
 const DEFAULT_LOG_MAX = 500
 
-async function persistToDownstreamLogs(spaceId: string | undefined, sourceNodeId: string, sourceHandleId: string, text: string): Promise<void> {
+async function persistToDownstreamLogs(
+  spaceId: string | undefined,
+  sourceNodeId: string,
+  sourceHandleId: string,
+  text: string,
+): Promise<void> {
   if (!spaceId) {
     return
   }
@@ -137,17 +142,28 @@ async function persistToDownstreamLogs(spaceId: string | undefined, sourceNodeId
     if (target?.type !== 'log') {
       continue
     }
-    const max = (target.data?.['max'] as number | undefined) && (target.data?.['max'] as number) > 0 ? (target.data?.['max'] as number) : DEFAULT_LOG_MAX
+    const max =
+      (target.data?.['max'] as number | undefined) && (target.data?.['max'] as number) > 0
+        ? (target.data?.['max'] as number)
+        : DEFAULT_LOG_MAX
     await updateNodeData(spaceId, target.id, (prev) => {
       const prevEntries = (prev['entries'] as LogEntry[] | undefined) ?? []
       const entry: LogEntry = { at: Date.now(), text }
-      const nextEntries = prevEntries.length >= max ? [...prevEntries.slice(prevEntries.length - max + 1), entry] : [...prevEntries, entry]
+      const nextEntries =
+        prevEntries.length >= max
+          ? [...prevEntries.slice(prevEntries.length - max + 1), entry]
+          : [...prevEntries, entry]
       return { ...prev, entries: nextEntries }
     })
   }
 }
 
-async function persistToDownstreamSendMessages(spaceId: string | undefined, sourceNodeId: string, sourceHandleId: string, text: string): Promise<void> {
+async function persistToDownstreamSendMessages(
+  spaceId: string | undefined,
+  sourceNodeId: string,
+  sourceHandleId: string,
+  text: string,
+): Promise<void> {
   if (!spaceId) {
     return
   }
@@ -175,7 +191,13 @@ async function persistToDownstreamSendMessages(spaceId: string | undefined, sour
 
     let message = route.message
     if (!message.trim().startsWith('/')) {
-      message = wrapMessageWithContext(message, { name: space.name, slug: spaceId }, sourceNodeId, route.ctx.jobContext, route.ctx.instructions)
+      message = wrapMessageWithContext(
+        message,
+        { name: space.name, slug: spaceId },
+        sourceNodeId,
+        route.ctx.jobContext,
+        route.ctx.instructions,
+      )
     }
 
     try {
@@ -203,7 +225,12 @@ interface RouteResolution {
   ctx: { jobContext: string; instructions: string[] }
 }
 
-function resolveRoute(text: string, target: GraphNodeLike, nodes: GraphNodeLike[], edges: GraphEdgeLike[]): RouteResolution | null {
+function resolveRoute(
+  text: string,
+  target: GraphNodeLike,
+  nodes: GraphNodeLike[],
+  edges: GraphEdgeLike[],
+): RouteResolution | null {
   const smNodes = nodes as unknown as SmNodeLike[]
   const smEdges = edges as unknown as SmEdgeLike[]
 

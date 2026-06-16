@@ -3,7 +3,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { remoteExec, resolveTerminalContext, shellQuote } from '@/app/(mcp)/_server/tools'
 import { approvalStore } from '@/lib/approval-store'
 import { askUserStore } from '@/lib/ask-user-store'
-import type { PendingApproval } from '@/lib/sse-events'
+import type { PendingApproval, PendingAskUser } from '@/lib/sse-events'
 
 export const readRemoteFile = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { target: string; space: string | undefined; path: string }) => data)
@@ -44,6 +44,12 @@ export const setAutoApprove = createServerFn({ method: 'POST', strict: { output:
   })
 
 // ── AskUser actions ──────────────────────────────────────────────────────
+
+export const listPendingAskUsers = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((spaceId?: string) => spaceId)
+  .handler(async ({ data: spaceId }): Promise<PendingAskUser[]> => {
+    return askUserStore.list(spaceId)
+  })
 
 export const answerAskUser = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { id: string; answers: Record<string, string> }) => data)

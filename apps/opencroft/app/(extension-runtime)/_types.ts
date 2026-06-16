@@ -22,7 +22,11 @@ export interface ExtensionHandle {
 }
 
 /** Resolve a runtime handle id against a node's static handle declarations, supporting prefix-matched dynamic handles. */
-export function findExtensionHandle(handles: ExtensionHandle[], handleId: string, role: 'source' | 'target'): ExtensionHandle | undefined {
+export function findExtensionHandle(
+  handles: ExtensionHandle[],
+  handleId: string,
+  role: 'source' | 'target',
+): ExtensionHandle | undefined {
   return handles.find((h) => {
     if (h.role !== role) {
       return false
@@ -77,9 +81,18 @@ export interface ExtensionManifest {
   extensionDependencies?: string[]
   nodes?: NodeMetadata[]
   contexts?: ExtensionContextType[]
+  /** Generic, feature-defined provider points (e.g. `dashboards`). The runtime
+   *  stores these opaquely; features read them via getProvided. */
+  provides?: Record<string, unknown[]>
   main?: string
   exports?: ExtensionExports
   activationEvents?: string[]
+}
+
+/** A manifest plus runtime-computed flags, as sent to the client loader. */
+export interface ExtensionManifestInfo extends ExtensionManifest {
+  /** Whether the extension ships a client bundle the browser should import. */
+  hasClient: boolean
 }
 
 export interface ExtensionRecord {

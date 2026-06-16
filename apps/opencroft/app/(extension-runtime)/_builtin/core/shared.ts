@@ -1,1 +1,1 @@
-export const COMPOSE_PROJECT = 'opencroft';
+export const COMPOSE_PROJECT = 'opencroft'

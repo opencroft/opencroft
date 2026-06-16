@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import type { McpServerConfig } from 'agent-client/mcp-types'
+
 import { agentClient } from '@/app/(agent)/_server/agent-client-instance'
 import { readMcpServers, writeMcpServers } from '@/app/(agent)/_server/mcp-store'
 
