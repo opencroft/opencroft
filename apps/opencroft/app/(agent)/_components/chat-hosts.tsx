@@ -1,7 +1,7 @@
 'use client'
 
 import { PermissionRequest } from 'agent-chat/messages'
-import { type ReactNode, useMemo, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 
@@ -13,6 +13,7 @@ import {
 } from '@/app/(agent)/_components/use-acp-session'
 import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
 import { AgentChat, AgentChatInput, type AgentSession, useAgentSession } from '@/app/(openclaw)/_components/agent-chat'
+import { cn } from '@/lib/utils'
 
 interface AgentMeta {
   name: string
@@ -124,6 +125,28 @@ export function LocalAgentHost({
   )
 }
 
+// Approvals can pop in while the user is mid-tap on something else (e.g. while
+// expanding a tool call). Animate them in and ignore pointer input until the
+// entrance settles, so a tap meant for the chat doesn't accidentally resolve a
+// freshly-appeared request.
+const APPEAR_LOCKOUT_MS = 550
+
+function AppearGuard({ children }: { children: ReactNode }) {
+  const [locked, setLocked] = useState(true)
+  useEffect(() => {
+    const t = setTimeout(() => setLocked(false), APPEAR_LOCKOUT_MS)
+    return () => clearTimeout(t)
+  }, [])
+  return (
+    <div
+      className={cn('animate-in fade-in slide-in-from-bottom-2 duration-500', locked && 'pointer-events-none')}
+      aria-busy={locked}
+    >
+      {children}
+    </div>
+  )
+}
+
 function Approvals({ acp }: { acp: AcpSession }) {
   if (acp.permissions.length === 0 && acp.asks.length === 0) {
     return null
@@ -131,22 +154,25 @@ function Approvals({ acp }: { acp: AcpSession }) {
   return (
     <div className='flex flex-col gap-2 px-4 pb-2'>
       {acp.permissions.map((p) => (
-        <PermissionRequest
-          key={p.requestId}
-          message={{
-            id: p.requestId,
-            kind: 'permission',
-            requestId: p.requestId,
-            title: p.title,
-            options: p.options,
-            resolved: false,
-          }}
-          onRespond={acp.resolvePermission}
-          onRespondText={acp.respondPermissionText}
-        />
+        <AppearGuard key={p.requestId}>
+          <PermissionRequest
+            message={{
+              id: p.requestId,
+              kind: 'permission',
+              requestId: p.requestId,
+              title: p.title,
+              options: p.options,
+              resolved: false,
+            }}
+            onRespond={acp.resolvePermission}
+            onRespondText={acp.respondPermissionText}
+          />
+        </AppearGuard>
       ))}
       {acp.asks.map((a) => (
-        <AskPrompt key={a.requestId} ask={a} onAnswer={acp.resolveAsk} />
+        <AppearGuard key={a.requestId}>
+          <AskPrompt ask={a} onAnswer={acp.resolveAsk} />
+        </AppearGuard>
       ))}
     </div>
   )
