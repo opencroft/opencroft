@@ -185,22 +185,34 @@ function blockText(value: unknown): string | null {
   return null
 }
 
-// Flatten tool-call output to display text. Without this the client would
-// JSON.stringify structured output, leaking `{ "type": "text", "text": "…" }`
-// into the chat. Prefer the protocol's display-oriented `content`, fall back to
-// the raw output, and only stringify genuinely opaque (non-block) data.
+// Strip a single wrapping markdown code fence. Agents often fence tool output
+// in `content` for clients that render markdown; opencroft shows tool output
+// verbatim, so an unstripped fence would render as literal backticks.
+function stripCodeFence(text: string): string {
+  const match = text.match(/^```[^\n]*\n([\s\S]*?)\n?```$/)
+  return match ? match[1] : text
+}
+
+// Flatten tool-call output to display text. The client renders this verbatim, so
+// prefer the clean `rawOutput` string; the protocol's `content` is often a
+// markdown-fenced copy meant for markdown renderers. Fall back to `content`
+// (fence-stripped), then to stringifying genuinely opaque (non-block) data.
+// Extracting text here also avoids JSON.stringify leaking `{ "type": "text", … }`.
 function toolOutputText(content: ToolCallContent[] | null | undefined, rawOutput: unknown): string | undefined {
+  if (typeof rawOutput === 'string' && rawOutput.trim()) {
+    return rawOutput
+  }
   if (content && content.length > 0) {
     const text = blockText(content)
     if (text !== null) {
-      return text
+      return stripCodeFence(text)
     }
   }
   if (rawOutput === undefined || rawOutput === null) {
     return undefined
   }
   const text = blockText(rawOutput)
-  return text !== null ? text : JSON.stringify(rawOutput, null, 2)
+  return text !== null ? stripCodeFence(text) : JSON.stringify(rawOutput, null, 2)
 }
 
 function errorMessage(error: unknown): string {
