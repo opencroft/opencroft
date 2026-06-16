@@ -97,7 +97,19 @@ export const Route = createFileRoute('/(mcp)/api/mcp')({
           })
         } catch (e: unknown) {
           const err = e as { code?: number; message?: string }
-          return Response.json(mcpErr(body.id ?? null, err.code ?? -32603, err.message ?? 'Internal error'), {
+          const message = err.message ?? 'Internal error'
+          // A tool that fails (bad args, validation, runtime error) should surface
+          // to the caller as a tool result with isError — not a JSON-RPC transport
+          // error. The MCP client wraps transport errors in an opaque
+          // "Error POSTing to endpoint: {…}" envelope that hides the real message;
+          // an isError result delivers the message as plain text instead.
+          if (body.method === 'tools/call' && body.id !== null && body.id !== undefined) {
+            return Response.json(mcpRes(body.id, { content: [{ type: 'text', text: message }], isError: true }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+          }
+          return Response.json(mcpErr(body.id ?? null, err.code ?? -32603, message), {
             status: 500,
           })
         }
