@@ -1,6 +1,7 @@
 'use client'
 
 import { PermissionRequest } from 'agent-chat/messages'
+import { X } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
 import { Input } from 'ui/input'
@@ -9,6 +10,7 @@ import {
   type AcpSession,
   type LocalSource,
   type PendingAsk,
+  type QueuedMessage,
   useAcpSession,
 } from '@/app/(agent)/_components/use-acp-session'
 import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
@@ -38,6 +40,8 @@ function ChatHost({
   onFocusChange,
   approvals,
   defaultExpanded,
+  queued,
+  onRemoveQueued,
 }: {
   session: AgentSession
   activeAgent?: AgentMeta
@@ -46,6 +50,8 @@ function ChatHost({
   onFocusChange: (focused: boolean) => void
   approvals?: ReactNode
   defaultExpanded?: boolean
+  queued?: QueuedMessage[]
+  onRemoveQueued?: (id: string) => void
 }) {
   const [slashOpen, setSlashOpen] = useState(false)
   const showChat = focused && !slashOpen
@@ -70,13 +76,37 @@ function ChatHost({
   useOverlay({ content: contentNode })
 
   return (
-    <AgentChatInput
-      session={session}
-      placeholder='Ask AI...'
-      onSlashOpenChange={setSlashOpen}
-      onFocus={() => onFocusChange(true)}
-      leadingBarContent={createButton}
-    />
+    <div className='flex min-w-0 flex-col gap-1'>
+      {queued && queued.length > 0 && onRemoveQueued && <QueuedMessages items={queued} onRemove={onRemoveQueued} />}
+      <AgentChatInput
+        session={session}
+        placeholder='Ask AI...'
+        onSlashOpenChange={setSlashOpen}
+        onFocus={() => onFocusChange(true)}
+        leadingBarContent={createButton}
+      />
+    </div>
+  )
+}
+
+function QueuedMessages({ items, onRemove }: { items: QueuedMessage[]; onRemove: (id: string) => void }) {
+  return (
+    <div className='flex min-w-0 flex-col gap-1 px-2'>
+      {items.map((m) => (
+        <div key={m.id} className='flex min-w-0 items-center gap-2 rounded-md border bg-muted/40 px-2 py-1 text-xs'>
+          <span className='shrink-0 text-muted-foreground'>Queued</span>
+          <span className='min-w-0 flex-1 truncate'>{m.text}</span>
+          <button
+            type='button'
+            onClick={() => onRemove(m.id)}
+            className='shrink-0 text-muted-foreground transition-colors hover:text-foreground'
+            title='Remove from queue'
+          >
+            <X className='size-3.5' />
+          </button>
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -121,6 +151,8 @@ export function LocalAgentHost({
       onFocusChange={onFocusChange}
       approvals={approvals}
       defaultExpanded
+      queued={acp.queue}
+      onRemoveQueued={acp.removeQueued}
     />
   )
 }
