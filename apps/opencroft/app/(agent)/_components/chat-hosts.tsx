@@ -36,6 +36,7 @@ function ChatHost({
   focused,
   onFocusChange,
   approvals,
+  defaultExpanded,
 }: {
   session: AgentSession
   activeAgent?: AgentMeta
@@ -43,6 +44,7 @@ function ChatHost({
   focused: boolean
   onFocusChange: (focused: boolean) => void
   approvals?: ReactNode
+  defaultExpanded?: boolean
 }) {
   const [slashOpen, setSlashOpen] = useState(false)
   const showChat = focused && !slashOpen
@@ -53,11 +55,16 @@ function ChatHost({
     }
     return (
       <>
-        <AgentChat session={session} agentAvatar={activeAgent?.avatar} agentName={activeAgent?.name} />
+        <AgentChat
+          session={session}
+          agentAvatar={activeAgent?.avatar}
+          agentName={activeAgent?.name}
+          defaultExpanded={defaultExpanded}
+        />
         {approvals}
       </>
     )
-  }, [showChat, session, activeAgent, approvals])
+  }, [showChat, session, activeAgent, approvals, defaultExpanded])
 
   useOverlay({ content: contentNode })
 
@@ -112,6 +119,7 @@ export function LocalAgentHost({
       focused={focused}
       onFocusChange={onFocusChange}
       approvals={approvals}
+      defaultExpanded
     />
   )
 }
