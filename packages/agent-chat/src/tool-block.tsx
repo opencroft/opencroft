@@ -83,9 +83,7 @@ export function ToolCallBlock({ name, args, result }: ToolCallBlockProps) {
           <div className='border-t' />
           <ToolRow label='output'>
             {result ? (
-              <pre className='overflow-x-auto whitespace-pre text-[11px] text-muted-foreground'>
-                {result.text}
-              </pre>
+              <pre className='overflow-x-auto whitespace-pre text-[11px] text-muted-foreground'>{result.text}</pre>
             ) : (
               <Flex row align='center' className='gap-1.5 text-muted-foreground'>
                 <Loader2 className='size-3 animate-spin' />

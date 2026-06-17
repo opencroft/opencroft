@@ -469,8 +469,7 @@ async function ensureDependencies(extensionId: string): Promise<CompileError[]> 
   } catch {
     return []
   }
-  const hasDeps =
-    Object.keys(pkg.dependencies ?? {}).length > 0 || Object.keys(pkg.devDependencies ?? {}).length > 0
+  const hasDeps = Object.keys(pkg.dependencies ?? {}).length > 0 || Object.keys(pkg.devDependencies ?? {}).length > 0
   if (!hasDeps) {
     return []
   }

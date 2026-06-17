@@ -2,10 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import {
-  AgentSessionList,
-  type AgentSessionGroup,
-} from '@/app/(agent)/_components/agent-session-list'
+import { type AgentSessionGroup, AgentSessionList } from '@/app/(agent)/_components/agent-session-list'
 import { LocalAgentHost, OpenclawAgentHost } from '@/app/(agent)/_components/chat-hosts'
 import { forgetLocalSession } from '@/app/(agent)/_server/acp'
 import { useChatTabsMaybe } from '@/app/(openclaw)/_lib/chat-tabs-context'
