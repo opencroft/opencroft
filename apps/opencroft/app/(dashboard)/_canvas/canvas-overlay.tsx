@@ -1,6 +1,6 @@
 'use client'
 
-import { useLocation, useRouter } from '@tanstack/react-router'
+import { useLocation } from '@tanstack/react-router'
 import * as lucideIcons from 'lucide-react'
 import { type LucideIcon, X } from 'lucide-react'
 import type * as React from 'react'
@@ -9,6 +9,7 @@ import { Flex } from 'ui/layout/flex'
 import { ScrollArea } from 'ui/scroll-area'
 
 import { AiPanel } from '@/app/(dashboard)/_canvas/ai-panel'
+import { useChatTabsMaybe } from '@/app/(openclaw)/_lib/chat-tabs-context'
 import type { CommandNodeEntry } from '@/app/(dashboard)/_canvas/canvas-command-bar'
 import { CommandBar, CommandBarMenu } from '@/app/(dashboard)/_canvas/command-bar'
 import { InspectorContext } from '@/app/(dashboard)/_canvas/inspector-context'
@@ -52,9 +53,8 @@ export function CanvasOverlay({
   const [agentId, setAgentId] = useState<string | null>(null)
   const initialized = useRef(false)
   const searchParams = new URLSearchParams(useLocation({ select: (l) => l.searchStr }))
-  const router = useRouter()
-  const pathname = useLocation({ select: (l) => l.pathname })
   const chatParam = searchParams.get('chat') ?? null
+  const chatTabs = useChatTabsMaybe()
 
   const extensionModes = useMemo(() => extensionRegistry.allCommandModes(), [])
 
@@ -133,11 +133,9 @@ export function CanvasOverlay({
 
   const dismiss = useCallback(() => {
     dismissOverlay()
-
-    if (chatParam && pathname) {
-      router.navigate({ to: pathname, replace: true })
-    }
-  }, [dismissOverlay, chatParam, pathname, router])
+    // Closing the chat clears the active session; the provider then drops ?chat=.
+    chatTabs?.setActiveKey(chatTabs.fallbackKey)
+  }, [dismissOverlay, chatTabs])
 
   useOverlayBackIntercept(overlayActive, dismiss)
 

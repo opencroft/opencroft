@@ -1,7 +1,6 @@
 'use client'
 
-import { useLocation } from '@tanstack/react-router'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   AgentSessionList,
@@ -82,8 +81,6 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
   const [externalAgents, setExternalAgents] = useState<OpenclawAgent[]>([])
   const [sessions, setSessions] = useState<SessionEntry[]>([])
   const chatTabs = useChatTabsMaybe()
-  const searchParams = new URLSearchParams(useLocation({ select: (l) => l.searchStr }))
-  const chatParam = searchParams.get('chat') ?? null
 
   // Set fallback key for chat tabs context
   useEffect(() => {
@@ -96,15 +93,8 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
     setSessions(loadStoredSessions())
   }, [])
 
-  // Sync active session from chat param
-  useEffect(() => {
-    if (!chatParam || !chatTabs) {
-      return
-    }
-    chatTabs.setActiveKey(chatParam)
-  }, [chatParam, chatTabs])
-
-  // Determine active session key
+  // The active session is owned by the chat-tabs provider (single source of
+  // truth, mirrored to the URL there). Fall back to the dashboard key = "none".
   const activeSessionKey = chatTabs?.activeSessionKey || `agent:${agentId}:dashboard`
 
   const transformOutgoing = useCallback(
@@ -241,6 +231,14 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
     [chatTabs],
   )
 
+  // Stable per active session: an inline arrow here would give the docked
+  // inspector header a new identity every render, churning the header slot into
+  // the same setState loop as the list. activeSessionKey === the active entry's key.
+  const handleRename = useCallback(
+    (title: string) => renameSession(activeSessionKey, title),
+    [renameSession, activeSessionKey],
+  )
+
   const activeAgent = useMemo(() => {
     const local = sessions.find((s) => s.key === activeSessionKey)
     if (local) {
@@ -314,18 +312,28 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
     [chatTabs],
   )
 
+  // The list element is published into the command-bar menu slot, which re-sets
+  // the slot whenever the node identity changes. Keep the handlers in a ref so
+  // the element's identity tracks ONLY the data (sessionGroups) — depending on
+  // the callbacks (whose identity can churn) re-set the slot every render and
+  // drove an infinite setState loop.
+  const actionsRef = useRef({ openSession, createSession, deleteLocalSessionEntry, permanentlyDeleteSession })
+  actionsRef.current = { openSession, createSession, deleteLocalSessionEntry, permanentlyDeleteSession }
+
   const listView = useMemo(
     () => (
       <AgentSessionList
         groups={sessionGroups}
-        onOpenSession={openSession}
+        onOpenSession={(key) => actionsRef.current.openSession(key)}
         onDeleteSession={(agent, key) =>
-          agent.backend === 'local' ? deleteLocalSessionEntry(key) : permanentlyDeleteSession(key)
+          agent.backend === 'local'
+            ? actionsRef.current.deleteLocalSessionEntry(key)
+            : actionsRef.current.permanentlyDeleteSession(key)
         }
-        onCreateSession={createSession}
+        onCreateSession={(agent, job) => actionsRef.current.createSession(agent, job)}
       />
     ),
-    [sessionGroups, openSession, deleteLocalSessionEntry, permanentlyDeleteSession, createSession],
+    [sessionGroups],
   )
 
   // Back from the conversation → page 1 (the list) in the inspector, without
@@ -349,7 +357,7 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
         inspectorPage={inspectorPage}
         onBack={goToList}
         sessionTitle={activeEntry.title ?? activeEntry.jobName}
-        onRename={(title) => renameSession(activeEntry.key, title)}
+        onRename={handleRename}
       />
     )
   }
@@ -365,7 +373,7 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
       inspectorPage={inspectorPage}
       onBack={goToList}
       sessionTitle={activeEntry ? (activeEntry.title ?? activeEntry.jobName) : undefined}
-      onRename={activeEntry ? (title) => renameSession(activeEntry.key, title) : undefined}
+      onRename={activeEntry ? handleRename : undefined}
     />
   )
 }
