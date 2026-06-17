@@ -48,8 +48,12 @@ export function AgentSessionList({ groups, onOpenSession, onDeleteSession, onCre
   }, [groups, query])
 
   return (
-    <div className='flex min-h-0 flex-col'>
-      <div className='relative shrink-0 px-2 pt-2'>
+    // Content-sized (no self scroll/grow): the embedding container — the inspector
+    // ScrollArea or the command-bar menu's ScrollArea — owns scrolling. A nested
+    // overflow + flex-1 inside Radix ScrollArea oscillates its ResizeObserver into
+    // a "Maximum update depth exceeded" loop.
+    <div className='flex flex-col'>
+      <div className='relative px-2 pt-2'>
         <Search className='pointer-events-none absolute left-4 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground' />
         <Input
           value={query}
@@ -58,7 +62,7 @@ export function AgentSessionList({ groups, onOpenSession, onDeleteSession, onCre
           className='h-8 pl-7 text-sm'
         />
       </div>
-      <div className='min-h-0 flex-1 overflow-y-auto p-2'>
+      <div className='p-2'>
         {filtered.length === 0 ? (
           <div className='px-2 py-6 text-center text-xs text-muted-foreground'>No agents</div>
         ) : (
