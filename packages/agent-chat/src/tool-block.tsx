@@ -57,17 +57,17 @@ export function ToolCallBlock({ name, args, result }: ToolCallBlockProps) {
   const [open, setOpen] = useState(false)
   const preview = previewArg(name, args)
   return (
-    <Flex className='gap-1.5'>
+    <Flex className='w-full min-w-0 gap-1.5'>
       <button
         type='button'
         onClick={() => setOpen((v) => !v)}
-        className='flex items-center gap-2 text-xs text-left cursor-pointer'
+        className='flex w-full min-w-0 items-start gap-2 text-xs text-left cursor-pointer'
       >
         <ChevronRight
           className={cn('h-3 w-3 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')}
         />
         <span className='font-mono font-medium shrink-0'>{name}</span>
-        {preview && <span className='font-mono text-muted-foreground'>{preview}</span>}
+        {preview && <span className='font-mono text-muted-foreground min-w-0 flex-1 break-all'>{preview}</span>}
         {!result && !open && <Loader2 className='size-3 shrink-0 animate-spin text-muted-foreground' />}
         {isError && <span className='text-destructive shrink-0'>error</span>}
       </button>
@@ -76,16 +76,14 @@ export function ToolCallBlock({ name, args, result }: ToolCallBlockProps) {
           className={cn('rounded-md border bg-muted/30 text-xs overflow-hidden', isError && 'border-destructive/60')}
         >
           <ToolRow label='args'>
-            <pre className='max-h-48 overflow-y-auto whitespace-pre-wrap break-all text-[11px] text-muted-foreground'>
+            <pre className='max-h-48 overflow-auto whitespace-pre text-[11px] text-muted-foreground'>
               {JSON.stringify(args, null, 2)}
             </pre>
           </ToolRow>
           <div className='border-t' />
           <ToolRow label='output'>
             {result ? (
-              <pre className='overflow-y-auto whitespace-pre-wrap break-all text-[11px] text-muted-foreground'>
-                {result.text}
-              </pre>
+              <pre className='overflow-x-auto whitespace-pre text-[11px] text-muted-foreground'>{result.text}</pre>
             ) : (
               <Flex row align='center' className='gap-1.5 text-muted-foreground'>
                 <Loader2 className='size-3 animate-spin' />
@@ -101,7 +99,7 @@ export function ToolCallBlock({ name, args, result }: ToolCallBlockProps) {
 
 function ToolRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <Flex row className='gap-3 px-3 py-2'>
+    <Flex row className='w-full gap-3 px-3 py-2'>
       <div className='w-10 shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground pt-0.5'>{label}</div>
       <div className='flex-1 min-w-0'>{children}</div>
     </Flex>

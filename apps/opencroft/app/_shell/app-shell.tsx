@@ -3,7 +3,7 @@
 import type { DashboardMeta } from '@opencroft/dashboards'
 import { DashboardsSidebarSection } from '@opencroft/dashboards/client'
 import type { AppLink } from '@opencroft/db'
-import { Link, useLocation, useNavigate, useSearch } from '@tanstack/react-router'
+import { Link, useLocation, useSearch } from '@tanstack/react-router'
 import {
   BookOpen,
   ChevronRight,
@@ -58,13 +58,11 @@ interface SidebarProps {
 
 function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarProps) {
   const pathname = useLocation({ select: (l) => l.pathname })
-  const navigate = useNavigate()
   const search = useSearch({ strict: false }) as { namespace?: string }
   const activeNamespace = search.namespace ?? null
   const [appLinks, setAppLinks] = useState<AppLink[]>([])
   const [repos, setRepos] = useState<DocNamespace[]>([])
   const inSpace = pathname.startsWith('/space/')
-  const currentSpaceSlug = inSpace ? pathname.split('/')[2] : ''
   const chatTabs = useChatTabs()
   const pinnedDashboards = dashboards.filter((d) => pinnedDashboardSlugs.includes(d.slug))
   const [mounted, setMounted] = useState(false)
@@ -151,7 +149,6 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
                               onClick={(e) => {
                                 e.preventDefault()
                                 chatTabs.selectSession(tab.key)
-                                navigate({ to: `/space/${currentSpaceSlug}`, search: { chat: tab.key } })
                               }}
                             >
                               <button className='flex items-center gap-2 w-full min-w-0'>

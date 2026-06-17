@@ -15,6 +15,7 @@ import type {
   RequestPermissionRequest,
   RequestPermissionResponse,
   SessionNotification,
+  ToolCallContent,
   WriteTextFileRequest,
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk'
@@ -156,6 +157,64 @@ function textOf(content: ContentBlock): string {
   return `[${content.type}]`
 }
 
+// Extract display text from an ACP/MCP content shape (a block, an array of
+// blocks, or a { content } envelope). Returns null when the value isn't a
+// recognizable block so the caller can pick a fallback. Non-text blocks
+// (image, resource, diff, terminal, …) become a typed placeholder for now;
+// rich rendering is tracked separately.
+function blockText(value: unknown): string | null {
+  if (typeof value === 'string') {
+    return value
+  }
+  if (Array.isArray(value)) {
+    const parts = value.map(blockText)
+    return parts.some((part) => part === null) ? null : parts.join('\n')
+  }
+  if (value && typeof value === 'object') {
+    const block = value as Record<string, unknown>
+    if ('content' in block) {
+      return blockText(block.content)
+    }
+    if (block.type === 'text' && typeof block.text === 'string') {
+      return block.text
+    }
+    if (typeof block.type === 'string') {
+      return `[${block.type}]`
+    }
+  }
+  return null
+}
+
+// Strip a single wrapping markdown code fence. Agents often fence tool output
+// in `content` for clients that render markdown; opencroft shows tool output
+// verbatim, so an unstripped fence would render as literal backticks.
+function stripCodeFence(text: string): string {
+  const match = text.match(/^```[^\n]*\n([\s\S]*?)\n?```$/)
+  return match ? match[1] : text
+}
+
+// Flatten tool-call output to display text. The client renders this verbatim, so
+// prefer the clean `rawOutput` string; the protocol's `content` is often a
+// markdown-fenced copy meant for markdown renderers. Fall back to `content`
+// (fence-stripped), then to stringifying genuinely opaque (non-block) data.
+// Extracting text here also avoids JSON.stringify leaking `{ "type": "text", … }`.
+function toolOutputText(content: ToolCallContent[] | null | undefined, rawOutput: unknown): string | undefined {
+  if (typeof rawOutput === 'string' && rawOutput.trim()) {
+    return rawOutput
+  }
+  if (content && content.length > 0) {
+    const text = blockText(content)
+    if (text !== null) {
+      return stripCodeFence(text)
+    }
+  }
+  if (rawOutput === undefined || rawOutput === null) {
+    return undefined
+  }
+  const text = blockText(rawOutput)
+  return text !== null ? stripCodeFence(text) : JSON.stringify(rawOutput, null, 2)
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message
@@ -214,7 +273,7 @@ function handleUpdate(notification: SessionNotification): void {
         title: update.title ?? undefined,
         status: update.status ?? undefined,
         input: update.rawInput ?? undefined,
-        output: update.rawOutput ?? undefined,
+        output: toolOutputText(update.content, update.rawOutput),
       })
       break
     }

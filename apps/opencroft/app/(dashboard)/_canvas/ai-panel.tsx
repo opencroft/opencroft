@@ -1,20 +1,8 @@
 'use client'
 
-import { useLocation } from '@tanstack/react-router'
-import { Briefcase, MessageSquare, Plus, Trash2, User } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from 'ui/dropdown-menu'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { type AgentSessionGroup, AgentSessionList } from '@/app/(agent)/_components/agent-session-list'
 import { LocalAgentHost, OpenclawAgentHost } from '@/app/(agent)/_components/chat-hosts'
 import { forgetLocalSession } from '@/app/(agent)/_server/acp'
 import { useChatTabsMaybe } from '@/app/(openclaw)/_lib/chat-tabs-context'
@@ -37,6 +25,9 @@ interface SessionEntry {
   agentName: string
   jobNodeId: string
   jobName: string
+  // User-facing session title; defaults to the job name (with a counter when a
+  // job has more than one session) and is editable via the rename control.
+  title?: string
   createdAt: number
   backend: 'openclaw' | 'local'
 }
@@ -87,8 +78,6 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
   const [externalAgents, setExternalAgents] = useState<OpenclawAgent[]>([])
   const [sessions, setSessions] = useState<SessionEntry[]>([])
   const chatTabs = useChatTabsMaybe()
-  const searchParams = new URLSearchParams(useLocation({ select: (l) => l.searchStr }))
-  const chatParam = searchParams.get('chat') ?? null
 
   // Set fallback key for chat tabs context
   useEffect(() => {
@@ -101,15 +90,8 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
     setSessions(loadStoredSessions())
   }, [])
 
-  // Sync active session from chat param
-  useEffect(() => {
-    if (!chatParam || !chatTabs) {
-      return
-    }
-    chatTabs.setActiveKey(chatParam)
-  }, [chatParam, chatTabs])
-
-  // Determine active session key
+  // The active session is owned by the chat-tabs provider (single source of
+  // truth, mirrored to the URL there). Fall back to the dashboard key = "none".
   const activeSessionKey = chatTabs?.activeSessionKey || `agent:${agentId}:dashboard`
 
   const transformOutgoing = useCallback(
@@ -164,11 +146,6 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
     return map
   }, [externalAgents])
 
-  const unmatchedExternalAgents = useMemo(() => {
-    const localSlugs = new Set(agents.map((a) => slug(a.name)))
-    return externalAgents.filter((a) => !localSlugs.has(a.agentId))
-  }, [agents, externalAgents])
-
   const permanentlyDeleteSession = useCallback(
     (key: string) => {
       chatTabs?.closeTab(key)
@@ -208,26 +185,25 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
 
   const createSession = useCallback(
     (agent: AgentNodeRef, job: AgentJobRef) => {
-      const key = `agent:${slug(agent.name)}:${slug(job.name)}`
-      // Reuse the tab only when it matches the agent's current backend; a tab
-      // from a previous backend is replaced. The live ACP session (for local)
-      // is established lazily by LocalAgentHost on mount, not here.
-      const existing = sessions.find((s) => s.key === key)
-      if (existing && existing.backend === agent.backend) {
-        chatTabs?.selectSession(key)
-        return
-      }
+      // Always start a fresh session — a job can have many. The unique suffix
+      // keeps each session (and its lazily-created ACP session, keyed by tabKey)
+      // distinct; resolution reads the stored entry, so the suffix never has to
+      // be parsed back out.
+      const key = `agent:${slug(agent.name)}:${slug(job.name)}:${Date.now().toString(36)}`
+      const sameJob = sessions.filter((s) => s.agentNodeId === agent.nodeId && s.jobNodeId === job.nodeId).length
+      const title = sameJob === 0 ? job.name : `${job.name} ${sameJob + 1}`
       const entry: SessionEntry = {
         key,
         agentNodeId: agent.nodeId,
         agentName: agent.name,
         jobNodeId: job.nodeId,
         jobName: job.name,
+        title,
         createdAt: Date.now(),
         backend: agent.backend,
       }
       setSessions((prev) => {
-        const next = [...prev.filter((s) => s.key !== key), entry]
+        const next = [...prev, entry]
         persistSessions(next)
         return next
       })
@@ -236,17 +212,28 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
     [sessions, chatTabs],
   )
 
-  const selectExternalAgent = useCallback(
-    (extAgent: OpenclawAgent) => {
-      if (extAgent.sessions.length > 0) {
-        const key = extAgent.sessions[0].key
-        chatTabs?.selectSession(key)
-      } else {
-        const key = `agent:${extAgent.name}:dashboard`
-        chatTabs?.selectSession(key)
+  const renameSession = useCallback(
+    (key: string, title: string) => {
+      const trimmed = title.trim()
+      if (!trimmed) {
+        return
       }
+      setSessions((prev) => {
+        const next = prev.map((s) => (s.key === key ? { ...s, title: trimmed } : s))
+        persistSessions(next)
+        return next
+      })
+      chatTabs?.updateTabMeta(key, { label: trimmed })
     },
     [chatTabs],
+  )
+
+  // Stable per active session: an inline arrow here would give the docked
+  // inspector header a new identity every render, churning the header slot into
+  // the same setState loop as the list. activeSessionKey === the active entry's key.
+  const handleRename = useCallback(
+    (title: string) => renameSession(activeSessionKey, title),
+    [renameSession, activeSessionKey],
   )
 
   const activeAgent = useMemo(() => {
@@ -281,32 +268,77 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
     })
   }, [activeSessionKey, activeAgent, chatTabs])
 
-  const createButton = useMemo(
+  // The standalone + agent menu is gone; the session list now lives in the
+  // inspector (page 1) and, when nothing is docked, as a command-bar focus hint.
+  const createButton = null
+
+  // Two-page chat inspector, driven by a 3-state page:
+  //   'chat' — a session is active (the conversation)
+  //   'list' — page 1, reached via the back button
+  //   'none' — nothing docked; the focus hint offers the list instead
+  const fallbackKey = `agent:${agentId}:dashboard`
+  const hasActiveSession = activeSessionKey !== fallbackKey
+  const [inspectorListOpen, setInspectorListOpen] = useState(false)
+  // Drop back to the focus-hint state whenever the command bar loses focus, so
+  // reopening starts from the hint rather than a stale page-1.
+  useEffect(() => {
+    if (!focused) {
+      setInspectorListOpen(false)
+    }
+  }, [focused])
+  const inspectorPage: 'list' | 'chat' | 'none' = hasActiveSession ? 'chat' : inspectorListOpen ? 'list' : 'none'
+
+  const sessionGroups = useMemo<AgentSessionGroup[]>(
+    () =>
+      agents.map((agent) => ({
+        agent,
+        sessions: agentExistingSessions(agent, externalById.get(slug(agent.name)), sessions).map((s) => ({
+          key: s.key,
+          title: s.title,
+        })),
+      })),
+    [agents, externalById, sessions],
+  )
+
+  // Opening or creating a session leaves page-1 and lands on the conversation.
+  const openSession = useCallback(
+    (key: string) => {
+      setInspectorListOpen(false)
+      chatTabs?.selectSession(key)
+    },
+    [chatTabs],
+  )
+
+  // The list element is published into the command-bar menu slot, which re-sets
+  // the slot whenever the node identity changes. Keep the handlers in a ref so
+  // the element's identity tracks ONLY the data (sessionGroups) — depending on
+  // the callbacks (whose identity can churn) re-set the slot every render and
+  // drove an infinite setState loop.
+  const actionsRef = useRef({ openSession, createSession, deleteLocalSessionEntry, permanentlyDeleteSession })
+  actionsRef.current = { openSession, createSession, deleteLocalSessionEntry, permanentlyDeleteSession }
+
+  const listView = useMemo(
     () => (
-      <CreateChatMenu
-        allAgents={agents}
-        externalAgents={unmatchedExternalAgents}
-        existingSessionsByAgent={externalById}
-        localSessions={sessions}
-        onCreateSession={createSession}
-        onOpenSession={(key) => chatTabs?.selectSession(key)}
-        onDeleteSession={permanentlyDeleteSession}
-        onDeleteLocalSession={deleteLocalSessionEntry}
-        onSelectExternalAgent={selectExternalAgent}
+      <AgentSessionList
+        groups={sessionGroups}
+        onOpenSession={(key) => actionsRef.current.openSession(key)}
+        onDeleteSession={(agent, key) =>
+          agent.backend === 'local'
+            ? actionsRef.current.deleteLocalSessionEntry(key)
+            : actionsRef.current.permanentlyDeleteSession(key)
+        }
+        onCreateSession={(agent, job) => actionsRef.current.createSession(agent, job)}
       />
     ),
-    [
-      agents,
-      unmatchedExternalAgents,
-      externalById,
-      sessions,
-      createSession,
-      permanentlyDeleteSession,
-      deleteLocalSessionEntry,
-      selectExternalAgent,
-      chatTabs,
-    ],
+    [sessionGroups],
   )
+
+  // Back from the conversation → page 1 (the list) in the inspector, without
+  // materializing a tab (selectSession would add a persistent "dashboard" tab).
+  const goToList = useCallback(() => {
+    setInspectorListOpen(true)
+    chatTabs?.setActiveKey(fallbackKey)
+  }, [chatTabs, fallbackKey])
 
   const activeEntry = sessions.find((s) => s.key === activeSessionKey)
   if (activeEntry?.backend === 'local') {
@@ -318,6 +350,11 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
         createButton={createButton}
         focused={focused}
         onFocusChange={onFocusChange}
+        listView={listView}
+        inspectorPage={inspectorPage}
+        onBack={goToList}
+        sessionTitle={activeEntry.title ?? activeEntry.jobName}
+        onRename={handleRename}
       />
     )
   }
@@ -329,6 +366,11 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
       createButton={createButton}
       focused={focused}
       onFocusChange={onFocusChange}
+      listView={listView}
+      inspectorPage={inspectorPage}
+      onBack={goToList}
+      sessionTitle={activeEntry ? (activeEntry.title ?? activeEntry.jobName) : undefined}
+      onRename={activeEntry ? handleRename : undefined}
     />
   )
 }
@@ -338,155 +380,15 @@ interface ExistingSession {
   title: string
 }
 
-interface CreateChatMenuProps {
-  allAgents: AgentNodeRef[]
-  externalAgents: OpenclawAgent[]
-  existingSessionsByAgent: Map<string, OpenclawAgent>
-  localSessions: SessionEntry[]
-  onCreateSession: (agent: AgentNodeRef, job: AgentJobRef) => void
-  onOpenSession: (key: string) => void
-  onDeleteSession: (key: string) => void
-  onDeleteLocalSession: (key: string) => void
-  onSelectExternalAgent: (agent: OpenclawAgent) => void
-}
-
 function agentExistingSessions(
   agent: AgentNodeRef,
   externalAgent: OpenclawAgent | undefined,
   localSessions: SessionEntry[],
 ): ExistingSession[] {
   if (agent.backend === 'local') {
-    return localSessions.filter((s) => s.agentNodeId === agent.nodeId).map((s) => ({ key: s.key, title: s.jobName }))
+    return localSessions
+      .filter((s) => s.agentNodeId === agent.nodeId)
+      .map((s) => ({ key: s.key, title: s.title ?? s.jobName }))
   }
   return (externalAgent?.sessions ?? []).map((s) => ({ key: s.key, title: s.title ?? s.key.split(':').pop() ?? s.key }))
-}
-
-function CreateChatMenu({
-  allAgents,
-  externalAgents,
-  existingSessionsByAgent,
-  localSessions,
-  onCreateSession,
-  onOpenSession,
-  onDeleteSession,
-  onDeleteLocalSession,
-  onSelectExternalAgent,
-}: CreateChatMenuProps) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type='button'
-          className='flex items-center justify-center size-7 shrink-0 rounded-md hover:bg-accent/50 transition-colors cursor-pointer'
-          aria-label='New chat'
-        >
-          <Plus className='size-4' />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align='start' className='w-[260px]'>
-        <DropdownMenuLabel>Agents</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {allAgents.map((agent) => (
-          <AgentMenuItem
-            key={agent.nodeId}
-            agent={agent}
-            existingSessions={agentExistingSessions(
-              agent,
-              existingSessionsByAgent.get(slug(agent.name)),
-              localSessions,
-            )}
-            onCreateSession={onCreateSession}
-            onOpenSession={onOpenSession}
-            onDeleteSession={agent.backend === 'local' ? onDeleteLocalSession : onDeleteSession}
-          />
-        ))}
-        {externalAgents.length > 0 && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel>OpenClaw</DropdownMenuLabel>
-            {externalAgents.map((agent) => (
-              <DropdownMenuItem key={agent.agentId} onSelect={() => onSelectExternalAgent(agent)}>
-                <User className='size-4 shrink-0' />
-                <span className='truncate'>{agent.name}</span>
-                {agent.isDefault && (
-                  <span className='ml-auto text-[10px] uppercase tracking-wide text-muted-foreground'>default</span>
-                )}
-              </DropdownMenuItem>
-            ))}
-          </>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
-interface AgentMenuItemProps {
-  agent: AgentNodeRef
-  existingSessions: ExistingSession[]
-  onCreateSession: (agent: AgentNodeRef, job: AgentJobRef) => void
-  onOpenSession: (key: string) => void
-  onDeleteSession: (key: string) => void
-}
-
-function AgentMenuItem({
-  agent,
-  existingSessions,
-  onCreateSession,
-  onOpenSession,
-  onDeleteSession,
-}: AgentMenuItemProps) {
-  return (
-    <DropdownMenuSub>
-      <DropdownMenuSubTrigger>
-        {agent.avatar ? (
-          <img src={agent.avatar} alt='' className='size-4 shrink-0 rounded-full object-cover' />
-        ) : (
-          <User className='size-4 shrink-0' />
-        )}
-        <span className='truncate'>{agent.name}</span>
-      </DropdownMenuSubTrigger>
-      <DropdownMenuSubContent className='w-[260px]'>
-        {/* Existing sessions */}
-        {existingSessions.length > 0 && (
-          <>
-            <DropdownMenuLabel>Existing sessions</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {existingSessions.slice(0, 10).map((s) => (
-              <div key={s.key} className='flex items-center gap-1 px-2 py-1.5'>
-                <button
-                  type='button'
-                  className='flex-1 min-w-0 flex items-center gap-1.5 text-sm rounded-sm px-1 py-0.5 hover:bg-accent/50 cursor-pointer text-left'
-                  onClick={() => onOpenSession(s.key)}
-                >
-                  <MessageSquare className='size-3.5 shrink-0' />
-                  <span className='truncate'>{s.title}</span>
-                </button>
-                <button
-                  type='button'
-                  className='size-6 inline-flex items-center justify-center rounded-sm hover:bg-muted hover:text-destructive shrink-0 cursor-pointer'
-                  onClick={() => onDeleteSession(s.key)}
-                  aria-label='Delete session'
-                >
-                  <Trash2 className='size-3' />
-                </button>
-              </div>
-            ))}
-            <DropdownMenuSeparator />
-          </>
-        )}
-        {/* New session */}
-        <DropdownMenuLabel>New session</DropdownMenuLabel>
-        {agent.jobs.length === 0 ? (
-          <DropdownMenuItem disabled>No jobs available</DropdownMenuItem>
-        ) : (
-          agent.jobs.map((job) => (
-            <DropdownMenuItem key={job.nodeId} onSelect={() => onCreateSession(agent, job)}>
-              <Briefcase className='size-3.5 shrink-0' />
-              <span className='truncate'>{job.name}</span>
-            </DropdownMenuItem>
-          ))
-        )}
-      </DropdownMenuSubContent>
-    </DropdownMenuSub>
-  )
 }

@@ -1,5 +1,8 @@
+import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { promisify } from 'node:util'
 
 import { compile as compileTailwind } from '@tailwindcss/node'
 import { Scanner } from '@tailwindcss/oxide'
@@ -8,7 +11,35 @@ import * as esbuild from 'esbuild'
 import { extDir, extDistDir, projectRoot } from '@/app/(extension-runtime)/_server/paths'
 import type { BuildResult, CompileError, ExtensionManifest } from '@/app/(extension-runtime)/_types'
 
-const PROJECT_NODE_MODULES = path.join(projectRoot(), 'node_modules')
+// Resolve bundled (client) dependencies from every ancestor node_modules, so
+// monorepo-hoisted packages (lucide-react, clsx, tailwind-merge, …) are found
+// even when the app runs with its cwd set to a workspace subdir rather than the
+// repo root — npm hoists shared deps up to the workspace root.
+function ancestorNodeModules(start: string): string[] {
+  const dirs: string[] = []
+  let dir = start
+  while (true) {
+    dirs.push(path.join(dir, 'node_modules'))
+    const parent = path.dirname(dir)
+    if (parent === dir) {
+      break
+    }
+    dir = parent
+  }
+  return dirs
+}
+
+const PROJECT_NODE_MODULES = ancestorNodeModules(projectRoot())
+
+const execFileAsync = promisify(execFile)
+
+async function readFileOrNull(file: string): Promise<string | null> {
+  try {
+    return await fs.readFile(file, 'utf-8')
+  } catch {
+    return null
+  }
+}
 
 const SERVER_EXTERNAL_PACKAGES = [
   'node:*',
@@ -367,7 +398,7 @@ async function compileSide(
       logLevel: 'silent',
       write: true,
       absWorkingDir: src,
-      nodePaths: [path.join(src, 'node_modules'), PROJECT_NODE_MODULES],
+      nodePaths: [path.join(src, 'node_modules'), ...PROJECT_NODE_MODULES],
     })
     return {
       errors: toCompileErrors(result.errors),
@@ -413,7 +444,89 @@ async function compileClientCss(extensionId: string): Promise<CompileError[]> {
   }
 }
 
+// Install an extension's npm dependencies on demand before building, so a
+// source-only checkout (a freshly cloned extension with no node_modules)
+// compiles without a manual install step. Behaviour:
+//   - `npm ci` when a lockfile is present — deterministic, and it clears
+//     node_modules itself; falls back to a clean `npm install` if the lockfile
+//     is out of sync with package.json.
+//   - `npm install` (no fabricated lockfile) when there is none.
+// The install only re-runs when it needs to: a fingerprint of package.json +
+// the lockfile is stored inside node_modules, so an unchanged manifest is a
+// no-op, and a changed one reinstalls (clearing the stale tree) without any
+// manual cleanup. --legacy-peer-deps keeps npm from resolving host-provided
+// @opencroft/* peer deps, which are declared as peers but not published to npm
+// (the host virtual plugin supplies them at build time).
+async function ensureDependencies(extensionId: string): Promise<CompileError[]> {
+  const dir = extDir(extensionId)
+  const pkgRaw = await readFileOrNull(path.join(dir, 'package.json'))
+  if (!pkgRaw) {
+    return []
+  }
+  let pkg: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }
+  try {
+    pkg = JSON.parse(pkgRaw)
+  } catch {
+    return []
+  }
+  const hasDeps = Object.keys(pkg.dependencies ?? {}).length > 0 || Object.keys(pkg.devDependencies ?? {}).length > 0
+  if (!hasDeps) {
+    return []
+  }
+
+  const nodeModules = path.join(dir, 'node_modules')
+  const lockRaw = await readFileOrNull(path.join(dir, 'package-lock.json'))
+  const fingerprint = createHash('sha256')
+    .update(pkgRaw)
+    .update('\0')
+    .update(lockRaw ?? '')
+    .digest('hex')
+  const markerPath = path.join(nodeModules, '.opencroft-deps')
+  if ((await readFileOrNull(markerPath))?.trim() === fingerprint) {
+    // node_modules already matches the current manifest — nothing to do.
+    return []
+  }
+
+  const flags = ['--legacy-peer-deps', '--no-audit', '--no-fund', '--loglevel=error']
+  const npm = (args: string[]) =>
+    execFileAsync('npm', args, {
+      cwd: dir,
+      env: process.env,
+      timeout: 5 * 60 * 1000,
+      maxBuffer: 64 * 1024 * 1024,
+    })
+  try {
+    if (lockRaw) {
+      try {
+        await npm(['ci', ...flags])
+      } catch {
+        await fs.rm(nodeModules, { recursive: true, force: true })
+        await npm(['install', '--no-package-lock', ...flags])
+      }
+    } else {
+      await fs.rm(nodeModules, { recursive: true, force: true })
+      await npm(['install', '--no-package-lock', ...flags])
+    }
+  } catch (err) {
+    const e = err as { stderr?: string; message?: string }
+    return [{ file: 'package.json', message: `npm install failed: ${e.stderr || e.message || String(err)}` }]
+  }
+  // Record the manifest fingerprint so the next build skips reinstalling.
+  await fs.writeFile(markerPath, fingerprint).catch(() => {})
+  return []
+}
+
 export async function buildExtension(extensionId: string, manifest: ExtensionManifest): Promise<BuildResult> {
+  const installErrors = await ensureDependencies(extensionId)
+  if (installErrors.length > 0) {
+    return {
+      success: false,
+      errors: installErrors,
+      warnings: [],
+      clientHash: String(Date.now()),
+      serverHash: String(Date.now()),
+    }
+  }
   const [client, server] = await Promise.all([
     compileSide(extensionId, manifest, 'client'),
     compileSide(extensionId, manifest, 'server'),

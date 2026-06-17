@@ -1,5 +1,6 @@
 'use client'
 
+import { useLocation, useRouter } from '@tanstack/react-router'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -85,28 +86,51 @@ export function useChatTabsMaybe(): ChatTabsContextValue | null {
 
 export function ChatTabsProvider({ children }: { children: ReactNode }) {
   const [tabs, setTabs] = useState<ChatTab[]>([])
-  const [activeSessionKey, setActiveSessionKey] = useState<string>('')
+  // The active session is the single source of truth; seed it once from the URL
+  // (deep-link support) and mirror it back to the URL below.
+  const [activeSessionKey, setActiveSessionKey] = useState<string>(() =>
+    typeof window === 'undefined' ? '' : (new URLSearchParams(window.location.search).get('chat') ?? ''),
+  )
   const [fallbackKey, setFallbackKey] = useState('')
   const initialized = useRef(false)
+  const router = useRouter()
+  const pathname = useLocation({ select: (l) => l.pathname })
+  const searchStr = useLocation({ select: (l) => l.searchStr })
 
-  // Load from localStorage on mount
+  // Load open tabs from localStorage on mount. (No auto-select — the chat opens
+  // only when a session is chosen, so the inspector lands on the list, not a
+  // forced conversation.)
   useEffect(() => {
     if (initialized.current) {
       return
     }
     initialized.current = true
-    const stored = loadStoredTabs()
-    setTabs(stored)
-
-    // If there's a chat param in URL, use it as active
-    const params = new URLSearchParams(window.location.search)
-    const chatParam = params.get('chat')
-    if (chatParam) {
-      setActiveSessionKey(chatParam)
-    } else if (stored.length > 0) {
-      setActiveSessionKey(stored[0].key)
-    }
+    setTabs(loadStoredTabs())
   }, [])
+
+  // Mirror the active session into the URL (?chat=) — one source of truth, the
+  // URL just reflects it. Clearing it (back / close → the fallback key) drops it.
+  useEffect(() => {
+    const real = !!activeSessionKey && activeSessionKey !== fallbackKey
+    const desired = real ? activeSessionKey : null
+    const params = new URLSearchParams(searchStr)
+    if ((params.get('chat') ?? null) === desired) {
+      return
+    }
+    // Rebuild the search object from scratch (preserving other params) and pass
+    // it as a plain object — a function updater here merges with prev, so a
+    // removed/undefined `chat` key is dropped on the floor and never cleared.
+    const next: Record<string, string> = {}
+    params.forEach((value, key) => {
+      if (key !== 'chat') {
+        next[key] = value
+      }
+    })
+    if (desired) {
+      next.chat = desired
+    }
+    router.navigate({ to: pathname, replace: true, search: next })
+  }, [activeSessionKey, fallbackKey, pathname, searchStr, router])
 
   const openTab = useCallback((key: string, meta?: TabMeta) => {
     setTabs((prev) => {

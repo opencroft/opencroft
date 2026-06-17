@@ -1,6 +1,6 @@
 'use client'
 
-import { useLocation, useRouter } from '@tanstack/react-router'
+import { useLocation } from '@tanstack/react-router'
 import * as lucideIcons from 'lucide-react'
 import { type LucideIcon, X } from 'lucide-react'
 import type * as React from 'react'
@@ -16,6 +16,7 @@ import { useOverlay, useOverlayBackIntercept } from '@/app/(dashboard)/_canvas/o
 import { SearchFindBar } from '@/app/(dashboard)/_canvas/search-find-bar'
 import type { CommandModeDefinition } from '@/app/(extension-runtime)/_client/host'
 import { extensionRegistry } from '@/app/(extension-runtime)/_client/registry'
+import { useChatTabsMaybe } from '@/app/(openclaw)/_lib/chat-tabs-context'
 import { loadAiSettings } from '@/app/(settings)/_server/ai-actions'
 import { ChatArea, ChatBar, ChatContent, ChatHeader } from '@/components/experimental/chat'
 import { cn } from '@/lib/utils'
@@ -52,9 +53,8 @@ export function CanvasOverlay({
   const [agentId, setAgentId] = useState<string | null>(null)
   const initialized = useRef(false)
   const searchParams = new URLSearchParams(useLocation({ select: (l) => l.searchStr }))
-  const router = useRouter()
-  const pathname = useLocation({ select: (l) => l.pathname })
   const chatParam = searchParams.get('chat') ?? null
+  const chatTabs = useChatTabsMaybe()
 
   const extensionModes = useMemo(() => extensionRegistry.allCommandModes(), [])
 
@@ -133,11 +133,9 @@ export function CanvasOverlay({
 
   const dismiss = useCallback(() => {
     dismissOverlay()
-
-    if (chatParam && pathname) {
-      router.navigate({ to: pathname, replace: true })
-    }
-  }, [dismissOverlay, chatParam, pathname, router])
+    // Closing the chat clears the active session; the provider then drops ?chat=.
+    chatTabs?.setActiveKey(chatTabs.fallbackKey)
+  }, [dismissOverlay, chatTabs])
 
   useOverlayBackIntercept(overlayActive, dismiss)
 
@@ -350,7 +348,10 @@ function InspectorChat({
   return (
     <Flex expanded className='w-full h-full min-h-0 bg-card'>
       <Flex row align='center' className='gap-2 px-3 py-2 border-b shrink-0'>
-        <span className='text-sm font-semibold flex-1'>Chat</span>
+        {/* `header` carries the back control on the conversation page (page 2); it
+            is null on the list page (page 1), leaving just the title. */}
+        {header}
+        <span className='text-sm font-semibold flex-1 truncate'>Chat</span>
         <button
           type='button'
           onClick={onClose}
@@ -360,7 +361,6 @@ function InspectorChat({
           <X className='size-3.5' />
         </button>
       </Flex>
-      {header ? <div className='shrink-0 px-3 py-1'>{header}</div> : null}
       <ScrollArea
         className={cn(
           'flex-1 min-h-0',
