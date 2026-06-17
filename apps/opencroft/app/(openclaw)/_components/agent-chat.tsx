@@ -191,6 +191,9 @@ interface AgentChatProps {
   emptyText?: string
   agentAvatar?: string
   agentName?: string
+  // When true, chains render expanded (full detail) by default instead of the
+  // collapsed last-message-only view.
+  defaultExpanded?: boolean
 }
 
 const SCROLL_BOTTOM_THRESHOLD = 32
@@ -235,7 +238,7 @@ function useStickToBottom(resetKey: string) {
   return rootRef
 }
 
-export function AgentChat({ session, emptyText, agentAvatar, agentName }: AgentChatProps) {
+export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultExpanded }: AgentChatProps) {
   const displayName = agentName ?? session.botName
   const blocks = useMemo(() => buildBlocks(session.messages), [session.messages])
   // 0-based user-turn index per user block, so "fork from here" rewinds to it.
@@ -252,9 +255,9 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName }: AgentC
   }, [blocks])
   const edit = session.canFork === true ? session.editMessage : undefined
   const rootRef = useStickToBottom(session.sessionKey)
-  const chainCollapsedRef = useRef(true)
-  const onChainCollapseChange = useCallback((collapsed: boolean) => {
-    chainCollapsedRef.current = collapsed
+  const detailsCollapsedRef = useRef(!defaultExpanded)
+  const onDetailsCollapseChange = useCallback((collapsed: boolean) => {
+    detailsCollapsedRef.current = collapsed
   }, [])
 
   return (
@@ -273,13 +276,13 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName }: AgentC
               onEdit={edit ? () => edit(turnByBlock.get(i) ?? 0, b.text) : undefined}
             />
           ) : (
-            <Chain
+            <Details
               key={i}
               items={b.items}
               botName={displayName}
               agentAvatar={agentAvatar}
-              defaultCollapsed={chainCollapsedRef.current}
-              onCollapseChange={onChainCollapseChange}
+              defaultCollapsed={detailsCollapsedRef.current}
+              onCollapseChange={onDetailsCollapseChange}
               pending={i === blocks.length - 1 && session.waiting}
             />
           ),
@@ -290,22 +293,22 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName }: AgentC
   )
 }
 
-type ChainItem =
+type DetailItem =
   | { kind: 'assistant-text'; text: string }
   | { kind: 'thinking'; text: string }
   | { kind: 'tool'; name: string; args: unknown; result?: { text: string; isError?: boolean } }
 
-type Block = { kind: 'user'; text: string } | { kind: 'chain'; items: ChainItem[] }
+type Block = { kind: 'user'; text: string } | { kind: 'details'; items: DetailItem[] }
 
 function buildBlocks(messages: OpenclawMessage[]): Block[] {
   const blocks: Block[] = []
-  let chain: ChainItem[] = []
+  let details: DetailItem[] = []
   const flush = () => {
-    if (chain.length === 0) {
+    if (details.length === 0) {
       return
     }
-    blocks.push({ kind: 'chain', items: chain })
-    chain = []
+    blocks.push({ kind: 'details', items: details })
+    details = []
   }
   for (const m of messages) {
     if (m.role === 'user') {
@@ -328,14 +331,14 @@ function buildBlocks(messages: OpenclawMessage[]): Block[] {
         if (!v.trim()) {
           continue
         }
-        chain.push({ kind: 'assistant-text', text: v })
+        details.push({ kind: 'assistant-text', text: v })
       } else if (p.type === 'thinking') {
         if (!p.text.trim()) {
           continue
         }
-        chain.push({ kind: 'thinking', text: p.text })
+        details.push({ kind: 'thinking', text: p.text })
       } else {
-        chain.push({ kind: 'tool', name: p.name, args: p.args, result: p.result })
+        details.push({ kind: 'tool', name: p.name, args: p.args, result: p.result })
       }
     }
   }
@@ -368,24 +371,24 @@ function UserMessage({ text, editDisabled, onEdit }: { text: string; editDisable
   )
 }
 
-function toolDotVariant(item: ChainItem): ChainDotVariant {
+function toolDotVariant(item: DetailItem): ChainDotVariant {
   if (item.kind !== 'tool' || !item.result) {
     return 'default'
   }
   return item.result.isError ? 'destructive' : 'success'
 }
 
-type ChainEntry = { kind: 'header' } | { kind: 'item'; item: ChainItem }
+type DetailEntry = { kind: 'header' } | { kind: 'item'; item: DetailItem }
 
-function withHeader(items: ChainItem[]): ChainEntry[] {
-  const entries: ChainEntry[] = items.map((item) => ({ kind: 'item', item }))
+function withHeader(items: DetailItem[]): DetailEntry[] {
+  const entries: DetailEntry[] = items.map((item) => ({ kind: 'item', item }))
   if (items[0] && items[0].kind !== 'assistant-text') {
     entries.unshift({ kind: 'header' })
   }
   return entries
 }
 
-function Chain({
+function Details({
   items,
   botName,
   agentAvatar,
@@ -393,19 +396,19 @@ function Chain({
   onCollapseChange,
   pending,
 }: {
-  items: ChainItem[]
+  items: DetailItem[]
   botName: string
   agentAvatar?: string
   defaultCollapsed?: boolean
   onCollapseChange?: (collapsed: boolean) => void
-  // True while this chain is the active turn and still generating.
+  // True while this turn is the active turn and still generating.
   pending?: boolean
 }) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed ?? false)
   const entries = withHeader(items)
   const toggle =
     items.length > 1 ? (
-      <ChainToggleButton
+      <DetailsToggleButton
         collapsed={collapsed}
         onToggle={() => {
           const next = !collapsed
@@ -418,7 +421,7 @@ function Chain({
   // When collapsed, combine last text + last tool call (if tool comes AFTER text)
   if (collapsed) {
     // Find the last assistant-text entry
-    let lastTextEntry: ChainEntry | null = null
+    let lastTextEntry: DetailEntry | null = null
     let lastTextIdx = -1
     for (let i = entries.length - 1; i >= 0; i--) {
       const e = entries[i]
@@ -430,7 +433,7 @@ function Chain({
     }
 
     // Find the last tool entry that comes AFTER the last text
-    let lastToolAfterText: ChainItem | null = null
+    let lastToolAfterText: DetailItem | null = null
     if (lastTextIdx >= 0) {
       for (let i = entries.length - 1; i > lastTextIdx; i--) {
         const e = entries[i]
@@ -531,7 +534,7 @@ function Chain({
   )
 }
 
-function ChainToggleButton({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+function DetailsToggleButton({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const Icon = collapsed ? Maximize2 : Minimize2
   return (
     <button
@@ -543,14 +546,14 @@ function ChainToggleButton({ collapsed, onToggle }: { collapsed: boolean; onTogg
           ? 'text-muted-foreground hover:text-foreground hover:bg-accent'
           : 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
       )}
-      title={collapsed ? 'Show chain' : 'Collapse chain'}
+      title={collapsed ? 'Show details' : 'Hide details'}
     >
       <Icon className='size-3.5' />
     </button>
   )
 }
 
-function renderEntry(entry: ChainEntry, botName?: string, toggle?: React.ReactNode, pending?: boolean) {
+function renderEntry(entry: DetailEntry, botName?: string, toggle?: React.ReactNode, pending?: boolean) {
   if (entry.kind === 'header') {
     return <AssistantText text='' botName={botName} toggle={toggle} />
   }
@@ -666,6 +669,9 @@ interface AgentChatInputProps {
   onSlashOpenChange?: (open: boolean) => void
   /** Extra content rendered at the start of the command bar (left of sparkles icon). */
   leadingBarContent?: React.ReactNode
+  /** Rendered in the command-bar menu when the input has no slash matches (e.g. a
+   * session picker shown on focus). The caller decides when it's non-null. */
+  focusMenu?: React.ReactNode
 }
 
 export function AgentChatInput({
@@ -676,6 +682,7 @@ export function AgentChatInput({
   onBlur,
   onSlashOpenChange,
   leadingBarContent,
+  focusMenu,
 }: AgentChatInputProps) {
   const [text, setText] = useState('')
   const [commands, setCommands] = useState<OpenclawCommand[]>([])
@@ -786,7 +793,8 @@ export function AgentChatInput({
 
   const menuNode = useMemo(() => {
     if (matches.length === 0) {
-      return null
+      // No slash command in flight — surface the caller's focus menu (if any).
+      return focusMenu ?? null
     }
     return matches.map((m, i) => (
       <CommandBarMenuItem
@@ -803,7 +811,7 @@ export function AgentChatInput({
       </CommandBarMenuItem>
     ))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matches, highlight])
+  }, [matches, highlight, focusMenu])
 
   const barNode = useMemo(
     () => (

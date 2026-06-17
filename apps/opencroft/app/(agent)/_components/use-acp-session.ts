@@ -24,13 +24,22 @@ export interface PendingAsk {
   message: string
 }
 
+export interface QueuedMessage {
+  id: string
+  text: string
+}
+
 export interface AcpSession {
   session: AgentSession
   permissions: PendingPermission[]
   asks: PendingAsk[]
+  // Messages typed while a turn is in progress, awaiting delivery.
+  queue: QueuedMessage[]
   resolvePermission: (requestId: string, optionId?: string) => void
   resolveAsk: (requestId: string, answer?: string) => void
   respondPermissionText: (requestId: string, text: string) => void
+  // Drop a still-queued message before it's delivered.
+  removeQueued: (id: string) => void
 }
 
 type ToolPart = Extract<OpenclawPart, { type: 'tool-call' }>
@@ -173,6 +182,17 @@ export function useAcpSession(
   // A message typed before the ACP session finished being created, queued so
   // the first message isn't dropped during the (slow first-spawn) handshake.
   const pending = useRef<string | null>(null)
+  // Messages typed while a turn is in progress. ACP allows only one prompt-turn
+  // at a time, so they're held here and delivered one-by-one as each turn ends
+  // (removable until pulled). When ACP gains native mid-turn input, deliver()
+  // can target the live turn instead of routing through this queue.
+  const [queue, setQueue] = useState<QueuedMessage[]>([])
+  const queueIdRef = useRef(0)
+  // Read inside callbacks/effects to avoid stale closures.
+  const waitingRef = useRef(false)
+  const isFirstRef = useRef(true)
+  const transformRef = useRef(transformOutgoing)
+  transformRef.current = transformOutgoing
 
   // Resolve (or lazily create) the live ACP session for this tab.
   useEffect(() => {
@@ -182,6 +202,7 @@ export function useAcpSession(
     setLoading(true)
     setLocalWaiting(false)
     setCanFork(false)
+    setQueue([])
     ensureLocalSession({ data: { agentNodeId, jobNodeId, tabKey } })
       .then((result) => {
         if (!cancelled) {
@@ -226,16 +247,19 @@ export function useAcpSession(
 
   const folded = useMemo(() => fold(events), [events])
 
-  const isFirstMessage = folded.messages.length === 0
-  const send = useCallback(
+  isFirstRef.current = folded.messages.length === 0
+
+  // The single seam where a message reaches the agent (applies the outgoing
+  // transform). Used for an immediate send and for draining the queue. When ACP
+  // gains native mid-turn input, this is what changes — not the queue/UX.
+  const deliver = useCallback(
     (value: string) => {
-      const text = transformOutgoing ? transformOutgoing(value, isFirstMessage) : value
-      setLocalWaiting(true)
       if (!sessionId) {
-        // Session is still being created — queue and flush once it's ready.
-        pending.current = text
         return
       }
+      const transform = transformRef.current
+      const text = transform ? transform(value, isFirstRef.current) : value
+      setLocalWaiting(true)
       startSending(async () => {
         try {
           await promptLocal({ data: { sessionId, text } })
@@ -245,21 +269,39 @@ export function useAcpSession(
         }
       })
     },
-    [sessionId, transformOutgoing, isFirstMessage],
+    [sessionId],
   )
 
-  // Flush a message that was queued before the session existed.
+  const send = useCallback(
+    (value: string) => {
+      if (!sessionId) {
+        // Session is still being created — hold the raw text, flush once ready.
+        pending.current = value
+        setLocalWaiting(true)
+        return
+      }
+      if (waitingRef.current) {
+        // A turn is in progress — ACP can't take a second prompt, so queue it.
+        // The turn-end effect drains the queue one message at a time.
+        queueIdRef.current += 1
+        const id = `q${queueIdRef.current}`
+        setQueue((q) => [...q, { id, text: value }])
+        return
+      }
+      deliver(value)
+    },
+    [sessionId, deliver],
+  )
+
+  // Flush the message held while the session was being created.
   useEffect(() => {
     if (!sessionId || pending.current === null) {
       return
     }
     const text = pending.current
     pending.current = null
-    promptLocal({ data: { sessionId, text } }).catch((error) => {
-      console.error('promptLocal failed', error)
-      setLocalWaiting(false)
-    })
-  }, [sessionId])
+    deliver(text)
+  }, [sessionId, deliver])
 
   // Interrupt the running turn. The agent emits a (cancelled) turn_end, which
   // clears the waiting state through the event stream.
@@ -308,9 +350,8 @@ export function useAcpSession(
   }, [])
 
   // "Tell what to do different": ACP can't attach a reason to a rejection, so we
-  // reject the request, stop the run, then send the typed guidance as a fresh
-  // prompt once the interrupted turn has stopped.
-  const pendingGuidance = useRef<string | null>(null)
+  // reject the request, cancel the run, then queue the typed guidance at the
+  // front — the queue delivers it once the interrupted turn has stopped.
   const respondPermissionText = useCallback(
     (requestId: string, text: string) => {
       resolvePermission(requestId)
@@ -319,22 +360,27 @@ export function useAcpSession(
         return
       }
       void cancelLocal({ data: sessionId })
-      pendingGuidance.current = value
+      queueIdRef.current += 1
+      const id = `q${queueIdRef.current}`
+      setQueue((q) => [{ id, text: value }, ...q])
     },
     [sessionId, resolvePermission],
   )
 
   const waiting = folded.waiting || localWaiting
+  waitingRef.current = waiting
 
-  // Flush queued guidance once the interrupted run has stopped.
+  // Drain the queue one message per turn: when no turn is active and messages
+  // are waiting, deliver the next. deliver() sets waiting again, so subsequent
+  // messages wait for the turn each one starts to finish.
   useEffect(() => {
-    if (waiting || pendingGuidance.current === null || !sessionId) {
+    if (waiting || !sessionId || queue.length === 0) {
       return
     }
-    const text = pendingGuidance.current
-    pendingGuidance.current = null
-    send(text)
-  }, [waiting, sessionId, send])
+    const [next, ...rest] = queue
+    setQueue(rest)
+    deliver(next.text)
+  }, [waiting, sessionId, queue, deliver])
 
   const session = useMemo<AgentSession>(
     () => ({
@@ -366,15 +412,30 @@ export function useAcpSession(
     ],
   )
 
+  const removeQueued = useCallback((id: string) => {
+    setQueue((q) => q.filter((m) => m.id !== id))
+  }, [])
+
   return useMemo(
     () => ({
       session,
       permissions: folded.permissions,
       asks: folded.asks,
+      queue,
       resolvePermission,
       resolveAsk,
       respondPermissionText,
+      removeQueued,
     }),
-    [session, folded.permissions, folded.asks, resolvePermission, resolveAsk, respondPermissionText],
+    [
+      session,
+      folded.permissions,
+      folded.asks,
+      queue,
+      resolvePermission,
+      resolveAsk,
+      respondPermissionText,
+      removeQueued,
+    ],
   )
 }
