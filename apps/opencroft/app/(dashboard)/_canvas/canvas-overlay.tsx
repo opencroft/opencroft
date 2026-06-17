@@ -350,7 +350,10 @@ function InspectorChat({
   return (
     <Flex expanded className='w-full h-full min-h-0 bg-card'>
       <Flex row align='center' className='gap-2 px-3 py-2 border-b shrink-0'>
-        <span className='text-sm font-semibold flex-1'>Chat</span>
+        {/* `header` carries the back control on the conversation page (page 2); it
+            is null on the list page (page 1), leaving just the title. */}
+        {header}
+        <span className='text-sm font-semibold flex-1 truncate'>Chat</span>
         <button
           type='button'
           onClick={onClose}
@@ -360,7 +363,6 @@ function InspectorChat({
           <X className='size-3.5' />
         </button>
       </Flex>
-      {header ? <div className='shrink-0 px-3 py-1'>{header}</div> : null}
       <ScrollArea
         className={cn(
           'flex-1 min-h-0',

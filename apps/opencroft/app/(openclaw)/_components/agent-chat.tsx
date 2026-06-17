@@ -669,6 +669,9 @@ interface AgentChatInputProps {
   onSlashOpenChange?: (open: boolean) => void
   /** Extra content rendered at the start of the command bar (left of sparkles icon). */
   leadingBarContent?: React.ReactNode
+  /** Rendered in the command-bar menu when the input has no slash matches (e.g. a
+   * session picker shown on focus). The caller decides when it's non-null. */
+  focusMenu?: React.ReactNode
 }
 
 export function AgentChatInput({
@@ -679,6 +682,7 @@ export function AgentChatInput({
   onBlur,
   onSlashOpenChange,
   leadingBarContent,
+  focusMenu,
 }: AgentChatInputProps) {
   const [text, setText] = useState('')
   const [commands, setCommands] = useState<OpenclawCommand[]>([])
@@ -789,7 +793,8 @@ export function AgentChatInput({
 
   const menuNode = useMemo(() => {
     if (matches.length === 0) {
-      return null
+      // No slash command in flight — surface the caller's focus menu (if any).
+      return focusMenu ?? null
     }
     return matches.map((m, i) => (
       <CommandBarMenuItem
@@ -806,7 +811,7 @@ export function AgentChatInput({
       </CommandBarMenuItem>
     ))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matches, highlight])
+  }, [matches, highlight, focusMenu])
 
   const barNode = useMemo(
     () => (
