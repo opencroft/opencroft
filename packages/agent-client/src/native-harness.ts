@@ -262,6 +262,13 @@ export function createNativeHarness(
       return {}
     },
 
+    // No on-disk history to replay — the native harness keeps conversation state
+    // in the in-memory `sessions` map, so a load is a no-op (and the engine never
+    // routes a real resume here; it falls back to a fresh session).
+    async loadSession() {
+      return {}
+    },
+
     async setSessionMode({ sessionId, modeId }) {
       const session = sessions.get(sessionId)
       if (session) {
