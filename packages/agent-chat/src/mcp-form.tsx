@@ -6,17 +6,9 @@ import { Loader2 } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from 'ui/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from 'ui/components/ui/dialog'
 import { Field, FieldLabel } from 'ui/components/ui/field'
 import { Input } from 'ui/components/ui/input'
+import { AdaptivePopup, PopupContent, PopupFooter, PopupHeader } from 'ui/components/ui/layout/adaptive-popup'
 import { Flex } from 'ui/components/ui/layout/flex'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/components/ui/select'
 import { Textarea } from 'ui/components/ui/textarea'
@@ -218,16 +210,14 @@ export function McpServerDialog({ trigger, onChanged }: McpServerDialogProps) {
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>MCP server</DialogTitle>
-          <DialogDescription>
-            One optional MCP server exposed to the agent alongside the built-in tools.
-          </DialogDescription>
-        </DialogHeader>
-
+    <AdaptivePopup open={open} onOpenChange={handleOpenChange} trigger={trigger}>
+      <PopupHeader>
+        <span className='text-base font-semibold'>MCP server</span>
+        <span className='text-sm text-muted-foreground'>
+          One optional MCP server exposed to the agent alongside the built-in tools.
+        </span>
+      </PopupHeader>
+      <PopupContent className='mx-auto w-full max-w-md'>
         <Flex withGaps>
           <McpServerForm
             config={config}
@@ -243,8 +233,9 @@ export function McpServerDialog({ trigger, onChanged }: McpServerDialogProps) {
             </span>
           )}
         </Flex>
-
-        <DialogFooter className='sm:justify-between'>
+      </PopupContent>
+      <PopupFooter>
+        <Flex row align='center' className='justify-between gap-2 p-4'>
           <Button variant='ghost' onClick={handleRemove}>
             Remove
           </Button>
@@ -254,8 +245,8 @@ export function McpServerDialog({ trigger, onChanged }: McpServerDialogProps) {
             </Button>
             <Button onClick={handleSave}>Save</Button>
           </Flex>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </Flex>
+      </PopupFooter>
+    </AdaptivePopup>
   )
 }

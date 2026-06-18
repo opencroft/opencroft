@@ -3,8 +3,8 @@
 import { Bot, Loader2, Plug, Settings2, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from 'ui/components/ui/button'
+import { AdaptivePopup, PopupContent, PopupHeader } from 'ui/components/ui/layout/adaptive-popup'
 import { Flex } from 'ui/components/ui/layout/flex'
-import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/components/ui/select'
 import { Switch } from 'ui/components/ui/switch'
 import { cn } from 'ui/lib/utils'
@@ -40,18 +40,23 @@ export function AgentChat({ eventsUrl, toolViews = DEFAULT_TOOL_VIEWS, className
   const session = useAgentSession({ eventsUrl })
   const [showThinking, setShowThinking] = useState(false)
   const [showTools, setShowTools] = useState(false)
+  const [agentOpen, setAgentOpen] = useState(false)
 
   return (
     <Flex className={cn('h-full min-h-0 w-full', className)}>
       {/* Toolbar */}
       <Flex row align='center' withSpacing className='border-b gap-2 flex-wrap'>
-        <Popover>
-          <PopoverTrigger asChild>
+        <AdaptivePopup
+          open={agentOpen}
+          onOpenChange={setAgentOpen}
+          trigger={
             <Button variant='outline' size='sm'>
               <Settings2 /> Agent
             </Button>
-          </PopoverTrigger>
-          <PopoverContent align='start' className='w-96'>
+          }
+        >
+          <PopupHeader>Agent profile</PopupHeader>
+          <PopupContent className='mx-auto w-full max-w-md'>
             <Flex withGaps>
               <AgentProfilePicker
                 profiles={session.profiles}
@@ -71,11 +76,14 @@ export function AgentChat({ eventsUrl, toolViews = DEFAULT_TOOL_VIEWS, className
                 roles={session.roles}
                 roleIds={session.roleIds}
                 onRoleIdsChange={session.setRoleIds}
-                onSave={session.saveProfile}
+                onSave={async () => {
+                  await session.saveProfile()
+                  setAgentOpen(false)
+                }}
               />
             </Flex>
-          </PopoverContent>
-        </Popover>
+          </PopupContent>
+        </AdaptivePopup>
 
         <McpServerDialog
           trigger={

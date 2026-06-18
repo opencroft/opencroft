@@ -5,12 +5,12 @@ import { Check, CheckCheck, X } from 'lucide-react'
 import { useState } from 'react'
 import { Badge } from 'ui/components/ui/badge'
 import { Button } from 'ui/components/ui/button'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/components/ui/collapsible'
 import { Input } from 'ui/components/ui/input'
 import { Flex } from 'ui/components/ui/layout/flex'
 import { cn } from 'ui/lib/utils'
 
 import { ThinkingBlock } from './thinking-block'
+import { ToolCallBlock } from './tool-block'
 import type { ToolMessage, ToolViewRegistry } from './tool-views'
 
 export type PermissionMessage = Extract<ChatMessage, { kind: 'permission' }>
@@ -229,14 +229,30 @@ export function ToolView({
   if (hideToolCall) {
     return <>{custom}</>
   }
+  // A settled call (or one that already has output) shows its result; until then
+  // ToolCallBlock renders a running indicator (no `result`).
+  const settled = message.status === 'completed' || message.status === 'failed'
+  const toolCall = (
+    <ToolCallBlock
+      name={message.title}
+      args={message.input}
+      result={
+        settled || message.output !== undefined
+          ? {
+              text: message.output === undefined ? '' : formatValue(message.output),
+              isError: message.status === 'failed',
+            }
+          : undefined
+      }
+    />
+  )
   // Nothing custom to show (yet) → just the tool call.
   if (!custom) {
-    return <ToolCallCard message={message} />
+    return toolCall
   }
   if (view?.display === 'replace') {
     return <>{custom}</>
   }
-  const toolCall = <ToolCallCard message={message} />
   return (
     <Flex withGaps className='gap-2'>
       {view?.display === 'before' ? (
@@ -251,32 +267,5 @@ export function ToolView({
         </>
       )}
     </Flex>
-  )
-}
-
-export function ToolCallCard({ message }: { message: ToolMessage }) {
-  const hasDetails = message.input !== undefined || message.output !== undefined
-  return (
-    <Collapsible className='rounded-md border text-sm'>
-      <CollapsibleTrigger
-        disabled={!hasDetails}
-        className='flex w-full items-center gap-2 px-3 py-2 text-left disabled:cursor-default'
-      >
-        <span className='flex-1 truncate font-medium'>{message.title}</span>
-        <Badge variant={statusVariant(message.status)} className='shrink-0'>
-          {message.status}
-        </Badge>
-      </CollapsibleTrigger>
-      {hasDetails && (
-        <CollapsibleContent className='border-t px-3 py-2'>
-          {message.input !== undefined && (
-            <pre className='overflow-x-auto text-xs text-muted-foreground'>{formatValue(message.input)}</pre>
-          )}
-          {message.output !== undefined && (
-            <pre className='mt-2 overflow-x-auto text-xs'>{formatValue(message.output)}</pre>
-          )}
-        </CollapsibleContent>
-      )}
-    </Collapsible>
   )
 }
