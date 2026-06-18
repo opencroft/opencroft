@@ -1,6 +1,8 @@
-import { createAgentClient } from 'agent-client/agent-client'
+import { createAgentClient, type PermissionContext, type PermissionOutcome } from 'agent-client/agent-client'
 
 import { readMcpServers } from '@/app/(agent)/_server/mcp-store'
+import { isYoloMode } from '@/app/(mcp)/_server/yolo'
+import { approvalStore } from '@/lib/approval-store'
 
 // Single shared agent-client engine for the opencroft app. Every ACP route and
 // the SSE stream import this one instance so they share the session store.
@@ -14,6 +16,21 @@ import { readMcpServers } from '@/app/(agent)/_server/mcp-store'
 // permission flow) instead of appearing in the MCP Requests inspector tab.
 const OPENCROFT_MCP_URL = process.env.OPENCROFT_MCP_URL ?? 'http://127.0.0.1:9999/api/mcp'
 
+// ACP tool-call kinds that only read state — safe to auto-approve so the chat
+// only prompts for write/exec kinds (the destructive operations).
+const READONLY_KINDS = new Set(['read', 'search', 'fetch', 'think'])
+
+// Decide each ACP permission request against the global approval mode:
+//   YOLO        → bypass approvals entirely.
+//   Auto-approve → approve every request.
+//   Default      → auto-approve read-only kinds, prompt for the rest.
+function resolvePermission({ toolKind }: PermissionContext): PermissionOutcome {
+  if (isYoloMode() || approvalStore.getAutoApprove()) {
+    return 'allow'
+  }
+  return toolKind && READONLY_KINDS.has(toolKind) ? 'allow' : 'prompt'
+}
+
 export const agentClient = createAgentClient({
   extraMcpServers: [
     {
@@ -24,4 +41,5 @@ export const agentClient = createAgentClient({
     },
   ],
   loadMcpServers: readMcpServers,
+  permissionHandler: resolvePermission,
 })
