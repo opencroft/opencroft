@@ -83,6 +83,14 @@ interface ConnEntry {
   // The session last prompted through this connection — scopes elicitation
   // routing per connection instead of globally.
   lastSessionId: string | null
+  // Whether the agent advertised the `loadSession` capability at initialize
+  // (session/load history replay). Clients MUST NOT call loadSession otherwise.
+  // Only meaningful once `initialized` has resolved.
+  loadSession: boolean
+  // Resolves when initialize() has completed and `loadSession` is set. Every
+  // caller (spawner and concurrent reusers) awaits this before using the
+  // connection, so capability checks never race a half-open connection.
+  initialized: Promise<void>
 }
 
 interface ClientStore {
@@ -247,6 +255,13 @@ function dropSessionTokens(sessionId: string): void {
 function handleUpdate(notification: SessionNotification): void {
   const { sessionId, update } = notification
   switch (update.sessionUpdate) {
+    case 'user_message_chunk': {
+      // Only arrives during session/load replay — live user turns are emitted
+      // locally by prompt(). Surfacing it lets a resumed conversation show the
+      // user's side of the history, not just the agent's replies.
+      emit(sessionId, { kind: 'user', text: textOf(update.content) })
+      break
+    }
     case 'agent_message_chunk': {
       emit(sessionId, { kind: 'agent_message', text: textOf(update.content) })
       break
@@ -521,6 +536,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // (no await before set), so concurrent creates for the same key are safe.
     const existing = store.connections.get(key)
     if (existing) {
+      await existing.initialized
       return existing.connection
     }
     const child = spawn(spawnConfig.command, spawnConfig.args, {
@@ -554,16 +570,22 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // by which point `entry` is assigned — so the forward reference is safe.
     let entry: ConnEntry
     const connection = new ClientSideConnection(() => buildClient(() => entry.lastSessionId), stream)
-    entry = { process: child, connection, lastSessionId: null }
+    entry = { process: child, connection, lastSessionId: null, loadSession: false, initialized: Promise.resolve() }
     store.connections.set(key, entry)
-    await connection.initialize({
-      protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: {
-        fs: { readTextFile: true, writeTextFile: true },
-        elicitation: {},
-      },
-      clientInfo,
-    })
+    entry.initialized = (async () => {
+      const initResult = await connection.initialize({
+        protocolVersion: PROTOCOL_VERSION,
+        clientCapabilities: {
+          fs: { readTextFile: true, writeTextFile: true },
+          elicitation: {},
+        },
+        clientInfo,
+      })
+      entry.loadSession = Boolean(
+        (initResult as { agentCapabilities?: { loadSession?: boolean } }).agentCapabilities?.loadSession,
+      )
+    })()
+    await entry.initialized
     return connection
   }
 
@@ -689,6 +711,64 @@ export function createAgentClient(options: AgentClientOptions = {}) {
             .catch((error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }))
         }
       }
+      return meta
+    },
+
+    // Resume a persisted ACP session by replaying its recorded history
+    // (session/load). Returns null when the session can't be resumed this way —
+    // a native selection (no on-disk history) or an agent that doesn't advertise
+    // `loadSession` — so callers fall back to a fresh session. The agent owns its
+    // transcript, so this stays harness-agnostic: we never read its session files.
+    async loadSession(
+      sessionId: string,
+      selection: AgentSelection,
+      permissions?: ResolvedPermissions,
+    ): Promise<SessionMeta | null> {
+      if (isNativeSelection(selection)) {
+        return null
+      }
+      const connection = await ensureConnection(selection)
+      const entry = connEntryFor(selection)
+      if (!entry?.loadSession) {
+        return null
+      }
+      // Mint a per-session MCP token before the replay, mirroring createSession.
+      const { internal, servers } = await buildMcpServers()
+      const token = randomUUID()
+      store.acpTokenPermissions.set(token, permissions)
+      store.acpTokenSession.set(token, sessionId)
+      const mcpServers = tagInternal(internal, servers, token)
+      store.titleCounter += 1
+      const meta: SessionMeta = {
+        id: sessionId,
+        title: `New chat ${store.titleCounter}`,
+        createdAt: Date.now(),
+        canFork: false,
+      }
+      // Register the session record BEFORE the replay: the agent streams its
+      // history as session/update notifications, and emit()/subscribe() drop
+      // events for an unknown session id.
+      store.sessions.set(sessionId, {
+        meta,
+        selection,
+        events: [],
+        subscribers: new Set(),
+        modes: null,
+        permissions,
+      })
+      try {
+        await connection.loadSession({ sessionId, cwd: selection.cwd, mcpServers })
+      } catch (error) {
+        // Transcript gone or agent refused — unwind the half-registered session
+        // so the caller can cleanly create a fresh one.
+        store.sessions.delete(sessionId)
+        store.acpTokenSession.delete(token)
+        store.acpTokenPermissions.delete(token)
+        throw error
+      }
+      // The replay streams history but no turn boundary, so the client would stay
+      // stuck "waiting". A terminal turn_end marks the resumed session idle.
+      emit(sessionId, { kind: 'turn_end', stopReason: 'resumed' })
       return meta
     },
 
