@@ -451,6 +451,13 @@ function isNativeSelection(selection: AgentSelection): boolean {
   return findAdapter(selection.adapterId)?.kind === 'native'
 }
 
+// Forward the opencroft session key to bridges that route by their own session
+// key (e.g. OpenClaw's ACP bridge → Gateway). ACP agents that don't recognize
+// `_meta.sessionKey` ignore it, so this stays harness-agnostic.
+function sessionMeta(selection: AgentSelection): { sessionKey: string } | undefined {
+  return selection.sessionKey ? { sessionKey: selection.sessionKey } : undefined
+}
+
 export function createAgentClient(options: AgentClientOptions = {}) {
   const mcpServerName = options.mcpServerName ?? 'local'
   const clientInfo = options.clientInfo ?? { name: 'agent-client', version: '0.1.0' }
@@ -647,6 +654,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       const response = await connection.newSession({
         cwd: selection.cwd,
         mcpServers,
+        _meta: sessionMeta(selection),
       })
       const sessionId = response.sessionId
       if (token) {
@@ -757,7 +765,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         permissions,
       })
       try {
-        await connection.loadSession({ sessionId, cwd: selection.cwd, mcpServers })
+        await connection.loadSession({ sessionId, cwd: selection.cwd, mcpServers, _meta: sessionMeta(selection) })
       } catch (error) {
         // Transcript gone or agent refused — unwind the half-registered session
         // so the caller can cleanly create a fresh one.

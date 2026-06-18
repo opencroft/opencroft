@@ -122,6 +122,11 @@ async function openLocalSession(data: {
     systemPrompt: agent.systemPrompt,
     reasoningEffort: agent.reasoningEffort,
     temperature: agent.temperature,
+    // The chat tab key is already the gateway session key
+    // (agent:<agent-slug>:<job>:<unique>); forward it so the OpenClaw ACP bridge
+    // binds this session to the same Gateway session/agent the openclaw backend
+    // would use, instead of an ephemeral acp-bridge:<uuid> session.
+    sessionKey: data.tabKey,
   }
   // Spawn cwd must exist or spawn fails with ENOENT.
   await mkdir(selection.cwd, { recursive: true })

@@ -24,6 +24,11 @@ export interface AgentSelection {
   // Sampling temperature for the Custom (native) harness; undefined = provider
   // default. Ignored by ACP agents, which manage their own sampling.
   temperature?: number
+  // External session key forwarded via ACP `_meta.sessionKey`. Bridges that
+  // route by their own session key (e.g. OpenClaw's ACP bridge → Gateway) use
+  // it to bind this session to a specific server-side session/agent; ACP agents
+  // that don't recognize it ignore unknown `_meta` keys.
+  sessionKey?: string
 }
 
 export interface SessionMeta {
