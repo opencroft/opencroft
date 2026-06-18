@@ -116,8 +116,9 @@ export function CanvasOverlay({
   // Only AiPanel's chat is relocated to the inspector; every other overlay mode
   // (search, find, extension modes) keeps using the floating overlay. While the
   // MCP Requests tab is selected, the content slot belongs to request views
-  // (e.g. diffs), so the chat must not claim it.
-  const aiChatActive = !mcpRequestsActive && mode === 'ai' && !!agentId
+  // (e.g. diffs), so the chat must not claim it. In 'focused' chat mode the chat
+  // is also kept out of the inspector and rendered as the floating overlay.
+  const aiChatActive = chatTabs?.chatMode !== 'focused' && !mcpRequestsActive && mode === 'ai' && !!agentId
 
   // Notify parent when overlay content or header is active
   const prevActive = useRef(false)

@@ -12,6 +12,10 @@ export interface ChatTab {
   agentAvatar?: string | null
 }
 
+// Docked = chat lives in the node inspector panel; focused = chat opens as the
+// floating canvas overlay.
+export type ChatMode = 'docked' | 'focused'
+
 interface TabMeta {
   label?: string
   agentName?: string
@@ -21,6 +25,14 @@ interface TabMeta {
 // ── Storage ────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = 'opencroft.aiPanel.openTabs'
+const MODE_STORAGE_KEY = 'opencroft.aiPanel.chatMode'
+
+function loadStoredMode(): ChatMode {
+  if (typeof window === 'undefined') {
+    return 'docked'
+  }
+  return window.localStorage.getItem(MODE_STORAGE_KEY) === 'focused' ? 'focused' : 'docked'
+}
 
 function loadStoredTabs(): ChatTab[] {
   if (typeof window === 'undefined') {
@@ -66,6 +78,8 @@ interface ChatTabsContextValue {
   updateTabMeta: (key: string, meta: TabMeta) => void
   fallbackKey: string
   setFallbackKey: (key: string) => void
+  chatMode: ChatMode
+  toggleChatMode: () => void
 }
 
 const ChatTabsContext = createContext<ChatTabsContextValue | null>(null)
@@ -92,6 +106,7 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
     typeof window === 'undefined' ? '' : (new URLSearchParams(window.location.search).get('chat') ?? ''),
   )
   const [fallbackKey, setFallbackKey] = useState('')
+  const [chatMode, setChatMode] = useState<ChatMode>('docked')
   const initialized = useRef(false)
   const router = useRouter()
   const pathname = useLocation({ select: (l) => l.pathname })
@@ -106,6 +121,17 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
     }
     initialized.current = true
     setTabs(loadStoredTabs())
+    setChatMode(loadStoredMode())
+  }, [])
+
+  const toggleChatMode = useCallback(() => {
+    setChatMode((prev) => {
+      const next = prev === 'focused' ? 'docked' : 'focused'
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(MODE_STORAGE_KEY, next)
+      }
+      return next
+    })
   }, [])
 
   // Mirror the active session into the URL (?chat=) — one source of truth, the
@@ -208,8 +234,21 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
       updateTabMeta,
       fallbackKey,
       setFallbackKey,
+      chatMode,
+      toggleChatMode,
     }),
-    [tabs, activeSessionKey, selectSession, closeTab, setActiveKey, openTab, updateTabMeta, fallbackKey],
+    [
+      tabs,
+      activeSessionKey,
+      selectSession,
+      closeTab,
+      setActiveKey,
+      openTab,
+      updateTabMeta,
+      fallbackKey,
+      chatMode,
+      toggleChatMode,
+    ],
   )
 
   return <ChatTabsContext.Provider value={value}>{children}</ChatTabsContext.Provider>

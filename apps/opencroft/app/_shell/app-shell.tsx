@@ -11,11 +11,13 @@ import {
   Globe,
   MessageSquare,
   Network,
+  PanelRightOpen,
   Puzzle,
   SettingsIcon,
   X,
 } from 'lucide-react'
 import { Suspense, useEffect, useState } from 'react'
+import { Button } from 'ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/collapsible'
 import { TitlebarProvider } from 'ui/layout/titlebar'
 import {
@@ -56,6 +58,22 @@ interface SidebarProps {
   pinnedDashboardSlugs: string[]
 }
 
+function ChatModeToggle() {
+  const chatTabs = useChatTabs()
+  const focused = chatTabs.chatMode === 'focused'
+  return (
+    <Button
+      variant='ghost'
+      size='icon'
+      className='size-7 group-data-[collapsible=icon]:hidden'
+      onClick={chatTabs.toggleChatMode}
+      title={focused ? 'Chat mode: focused (overlay)' : 'Chat mode: docked'}
+    >
+      <PanelRightOpen className={focused ? 'text-primary' : 'text-muted-foreground'} />
+    </Button>
+  )
+}
+
 function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarProps) {
   const pathname = useLocation({ select: (l) => l.pathname })
   const search = useSearch({ strict: false }) as { namespace?: string }
@@ -84,7 +102,10 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
   return (
     <Sidebar collapsible='icon'>
       <SidebarHeader>
-        <SidebarTrigger />
+        <div className='flex items-center justify-between'>
+          <SidebarTrigger />
+          <ChatModeToggle />
+        </div>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
