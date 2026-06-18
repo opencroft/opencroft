@@ -198,42 +198,80 @@ interface AgentChatProps {
 
 const SCROLL_BOTTOM_THRESHOLD = 32
 
-function useStickToBottom(resetKey: string) {
+function useStickToBottom(resetKey: string, contentKey: number) {
   const rootRef = useRef<HTMLDivElement>(null)
-  const nearBottom = useRef(true)
+  // Whether the view is "pinned" to the bottom and should follow new content.
+  const pinned = useRef(true)
+  // Set while we scroll ourselves, so our own scroll events aren't mistaken for
+  // the user moving away from the bottom (which would unpin and stop following).
+  const programmatic = useRef(false)
+
+  const viewport = useCallback(
+    () => rootRef.current?.closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null,
+    [],
+  )
+
+  const scrollToBottom = useCallback(() => {
+    const el = viewport()
+    if (!el) {
+      return
+    }
+    programmatic.current = true
+    el.scrollTop = el.scrollHeight
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        programmatic.current = false
+      })
+    })
+  }, [viewport])
 
   useEffect(() => {
-    const root = rootRef.current
-    const viewport = root?.closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null
-    if (!root || !viewport) {
+    const el = viewport()
+    if (!rootRef.current || !el) {
       return
     }
     const onScroll = () => {
-      nearBottom.current = viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - SCROLL_BOTTOM_THRESHOLD
+      if (programmatic.current) {
+        return
+      }
+      pinned.current = el.scrollTop + el.clientHeight >= el.scrollHeight - SCROLL_BOTTOM_THRESHOLD
     }
-    viewport.addEventListener('scroll', onScroll)
+    // A wheel gesture toward the top unpins immediately, so streaming content
+    // can't yank the view back down while the user is reading up.
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0) {
+        pinned.current = false
+      }
+    }
+    el.addEventListener('scroll', onScroll)
+    el.addEventListener('wheel', onWheel, { passive: true })
     const observer = new ResizeObserver(() => {
-      if (nearBottom.current) {
-        viewport.scrollTop = viewport.scrollHeight
+      if (pinned.current) {
+        scrollToBottom()
       }
     })
-    observer.observe(root)
+    observer.observe(rootRef.current)
     return () => {
-      viewport.removeEventListener('scroll', onScroll)
+      el.removeEventListener('scroll', onScroll)
+      el.removeEventListener('wheel', onWheel)
       observer.disconnect()
     }
-  }, [])
+  }, [viewport, scrollToBottom])
 
+  // Follow new content while pinned (covers updates that don't change height).
+  // biome-ignore lint/correctness/useExhaustiveDependencies(contentKey): re-run when the message count changes
+  useEffect(() => {
+    if (pinned.current) {
+      scrollToBottom()
+    }
+  }, [contentKey, scrollToBottom])
+
+  // Re-pin and jump to the bottom when switching to another session.
   // biome-ignore lint/correctness/useExhaustiveDependencies(resetKey): re-pin the scroll to the bottom when the session changes
   useLayoutEffect(() => {
-    const root = rootRef.current
-    const viewport = root?.closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null
-    if (!viewport) {
-      return
-    }
-    nearBottom.current = true
-    viewport.scrollTop = viewport.scrollHeight
-  }, [resetKey])
+    pinned.current = true
+    scrollToBottom()
+  }, [resetKey, scrollToBottom])
 
   return rootRef
 }
@@ -254,7 +292,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
     return map
   }, [blocks])
   const edit = session.canFork === true ? session.editMessage : undefined
-  const rootRef = useStickToBottom(session.sessionKey)
+  const rootRef = useStickToBottom(session.sessionKey, blocks.length)
   const detailsCollapsedRef = useRef(!defaultExpanded)
   const onDetailsCollapseChange = useCallback((collapsed: boolean) => {
     detailsCollapsedRef.current = collapsed
