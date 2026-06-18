@@ -15,6 +15,7 @@ export type AgentConnection = Pick<
   ClientSideConnection,
   | 'initialize'
   | 'newSession'
+  | 'loadSession'
   | 'resumeSession'
   | 'setSessionMode'
   | 'setSessionConfigOption'
