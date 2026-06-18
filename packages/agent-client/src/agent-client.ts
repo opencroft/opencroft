@@ -496,9 +496,9 @@ function isNativeSelection(selection: AgentSelection): boolean {
   return findAdapter(selection.adapterId)?.kind === 'native'
 }
 
-// Forward the opencroft session key to bridges that route by their own session
-// key (e.g. OpenClaw's ACP bridge → Gateway). ACP agents that don't recognize
-// `_meta.sessionKey` ignore it, so this stays harness-agnostic.
+// Forward the host's external session key to bridges that route by their own
+// session key (e.g. OpenClaw's ACP bridge → Gateway). ACP agents that don't
+// recognize `_meta.sessionKey` ignore it, so this stays harness-agnostic.
 function sessionMeta(selection: AgentSelection): { sessionKey: string } | undefined {
   return selection.sessionKey ? { sessionKey: selection.sessionKey } : undefined
 }
