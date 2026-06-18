@@ -77,6 +77,7 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
   const [agents, setAgents] = useState<AgentNodeRef[]>([])
   const [externalAgents, setExternalAgents] = useState<OpenclawAgent[]>([])
   const [sessions, setSessions] = useState<SessionEntry[]>([])
+  const [sessionPickerOpen, setSessionPickerOpen] = useState(false)
   const chatTabs = useChatTabsMaybe()
 
   // Set fallback key for chat tabs context
@@ -207,6 +208,7 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
         persistSessions(next)
         return next
       })
+      setSessionPickerOpen(false)
       chatTabs?.selectSession(key)
     },
     [sessions, chatTabs],
@@ -249,9 +251,15 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
     return agents.find((a) => slug(a.name) === agentSlug)
   }, [sessions, agents, activeSessionKey])
 
-  // The standalone + agent menu is gone; the session list now lives in the
-  // inspector (page 1) and, when nothing is docked, as a command-bar focus hint.
   const createButton = null
+
+  // Clicking the Sparkles start icon opens the session list in the command-bar
+  // menu for quick navigation, even while a chat is already docked. Stable
+  // identity so the published bar slot doesn't churn every render.
+  const openSessionsMenu = useCallback(() => {
+    onFocusChange(true)
+    setSessionPickerOpen(true)
+  }, [onFocusChange])
 
   // Two-page chat inspector, driven by a 3-state page:
   //   'chat' — a session is active (the conversation)
@@ -261,10 +269,12 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
   const hasActiveSession = activeSessionKey !== fallbackKey
   const [inspectorListOpen, setInspectorListOpen] = useState(false)
   // Drop back to the focus-hint state whenever the command bar loses focus, so
-  // reopening starts from the hint rather than a stale page-1.
+  // reopening starts from the hint rather than a stale page-1. The session picker
+  // closes with it (the start icon is open-only; blur is how it dismisses).
   useEffect(() => {
     if (!focused) {
       setInspectorListOpen(false)
+      setSessionPickerOpen(false)
     }
   }, [focused])
   const inspectorPage: 'list' | 'chat' | 'none' = hasActiveSession ? 'chat' : inspectorListOpen ? 'list' : 'none'
@@ -302,6 +312,7 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
   const openSession = useCallback(
     (key: string) => {
       setInspectorListOpen(false)
+      setSessionPickerOpen(false)
       chatTabs?.selectSession(key)
     },
     [chatTabs],
@@ -353,6 +364,8 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
         onBack={goToList}
         sessionTitle={activeEntry.title ?? activeEntry.jobName}
         onRename={handleRename}
+        forceListMenu={sessionPickerOpen}
+        onOpenSessions={openSessionsMenu}
       />
     )
   }
@@ -369,6 +382,8 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
       onBack={goToList}
       sessionTitle={activeEntry ? (activeEntry.title ?? activeEntry.jobName) : undefined}
       onRename={activeEntry ? handleRename : undefined}
+      forceListMenu={sessionPickerOpen}
+      onOpenSessions={openSessionsMenu}
     />
   )
 }

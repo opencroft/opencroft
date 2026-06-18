@@ -672,6 +672,9 @@ interface AgentChatInputProps {
   /** Rendered in the command-bar menu when the input has no slash matches (e.g. a
    * session picker shown on focus). The caller decides when it's non-null. */
   focusMenu?: React.ReactNode
+  /** When set, the Sparkles start icon becomes a button that runs this (e.g. open
+   * the session picker). Must be stable — it feeds the memoized command bar. */
+  onStartIconClick?: () => void
 }
 
 export function AgentChatInput({
@@ -683,6 +686,7 @@ export function AgentChatInput({
   onSlashOpenChange,
   leadingBarContent,
   focusMenu,
+  onStartIconClick,
 }: AgentChatInputProps) {
   const [text, setText] = useState('')
   const [commands, setCommands] = useState<OpenclawCommand[]>([])
@@ -817,7 +821,21 @@ export function AgentChatInput({
     () => (
       <>
         {leadingBarContent}
-        <Sparkles className='h-4 w-4 ml-1 mt-1.5 shrink-0 text-primary' />
+        {onStartIconClick ? (
+          <Button
+            type='button'
+            size='icon'
+            variant='ghost'
+            className='h-7 w-7 shrink-0 mt-0.5'
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={onStartIconClick}
+            title='Sessions'
+          >
+            <Sparkles className='h-4 w-4 text-primary' />
+          </Button>
+        ) : (
+          <Sparkles className='h-4 w-4 ml-1 mt-1.5 shrink-0 text-primary' />
+        )}
         <Textarea
           ref={textareaRef}
           value={text}
@@ -882,7 +900,17 @@ export function AgentChatInput({
       </>
       // eslint-disable-next-line react-hooks/exhaustive-deps
     ),
-    [leadingBarContent, text, session.sending, session.waiting, session.stop, inputPlaceholder, autoFocus, autoApprove],
+    [
+      leadingBarContent,
+      onStartIconClick,
+      text,
+      session.sending,
+      session.waiting,
+      session.stop,
+      inputPlaceholder,
+      autoFocus,
+      autoApprove,
+    ],
   )
 
   useOverlay({ menu: menuNode, bar: barNode })

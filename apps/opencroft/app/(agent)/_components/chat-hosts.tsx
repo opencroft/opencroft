@@ -43,6 +43,11 @@ interface HostProps {
   // Page-2 header: current session title + a rename control.
   sessionTitle?: string
   onRename?: (title: string) => void
+  // Force the session list into the command-bar menu regardless of the inspector
+  // page — lets the start icon open a session picker while a chat is docked.
+  forceListMenu?: boolean
+  // Clicking the command bar's Sparkles start icon opens that session picker.
+  onOpenSessions?: () => void
 }
 
 function ChatHost({
@@ -60,6 +65,8 @@ function ChatHost({
   onBack,
   sessionTitle,
   onRename,
+  forceListMenu,
+  onOpenSessions,
 }: {
   session: AgentSession
   activeAgent?: AgentMeta
@@ -75,6 +82,8 @@ function ChatHost({
   onBack?: () => void
   sessionTitle?: string
   onRename?: (title: string) => void
+  forceListMenu?: boolean
+  onOpenSessions?: () => void
 }) {
   const [slashOpen, setSlashOpen] = useState(false)
   const showChat = focused && !slashOpen
@@ -112,8 +121,9 @@ function ChatHost({
 
   // When no inspector page is open, focusing the input surfaces the same list as
   // a command-bar menu hint. Gated on `focused` (which stays set while the user
-  // interacts with the menu), so picking a session isn't lost to a blur.
-  const focusMenu = focused && inspectorPage === 'none' ? listView : undefined
+  // interacts with the menu), so picking a session isn't lost to a blur. The
+  // start icon (`forceListMenu`) opens the same list while a chat is docked.
+  const focusMenu = forceListMenu || (focused && inspectorPage === 'none') ? listView : undefined
 
   return (
     <div className='flex min-w-0 flex-col gap-1'>
@@ -125,6 +135,7 @@ function ChatHost({
         onFocus={() => onFocusChange(true)}
         leadingBarContent={createButton}
         focusMenu={focusMenu}
+        onStartIconClick={onOpenSessions}
       />
     </div>
   )
@@ -235,6 +246,8 @@ export function OpenclawAgentHost({
   onBack,
   sessionTitle,
   onRename,
+  forceListMenu,
+  onOpenSessions,
 }: HostProps & { sessionKey: string }) {
   const session = useAgentSession(sessionKey, transformOutgoing)
   return (
@@ -249,6 +262,8 @@ export function OpenclawAgentHost({
       onBack={onBack}
       sessionTitle={sessionTitle}
       onRename={onRename}
+      forceListMenu={forceListMenu}
+      onOpenSessions={onOpenSessions}
     />
   )
 }
@@ -265,6 +280,8 @@ export function LocalAgentHost({
   onBack,
   sessionTitle,
   onRename,
+  forceListMenu,
+  onOpenSessions,
 }: HostProps & { source: LocalSource }) {
   const acp = useAcpSession(source, transformOutgoing, activeAgent?.name)
   // Stable element identity so ChatHost's memoized content (and the published
@@ -286,6 +303,8 @@ export function LocalAgentHost({
       onBack={onBack}
       sessionTitle={sessionTitle}
       onRename={onRename}
+      forceListMenu={forceListMenu}
+      onOpenSessions={onOpenSessions}
     />
   )
 }
