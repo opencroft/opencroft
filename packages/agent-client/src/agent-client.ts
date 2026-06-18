@@ -186,8 +186,8 @@ function blockText(value: unknown): string | null {
 }
 
 // Strip a single wrapping markdown code fence. Agents often fence tool output
-// in `content` for clients that render markdown; opencroft shows tool output
-// verbatim, so an unstripped fence would render as literal backticks.
+// in `content` for clients that render markdown; clients that show tool output
+// verbatim would otherwise render the fence as literal backticks.
 function stripCodeFence(text: string): string {
   const match = text.match(/^```[^\n]*\n([\s\S]*?)\n?```$/)
   return match ? match[1] : text
