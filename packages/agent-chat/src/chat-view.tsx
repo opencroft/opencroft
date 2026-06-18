@@ -3,6 +3,7 @@
 import type { ChatBlock, ChatMessage } from 'agent-client/fold'
 import { Bot, Copy, GitFork } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useRef } from 'react'
+import { toast } from 'sonner'
 import { StickySection } from 'ui/components/experimental/sticky-section'
 import { useAutoScroll } from 'ui/components/hooks/use-auto-scroll'
 import { TypingDots } from 'ui/components/ui/chat/typing-dots'
@@ -14,6 +15,52 @@ import { useIsMobile } from 'ui/hooks/use-mobile'
 
 import { MessageView } from './messages'
 import { hasToolView, type ToolViewRegistry } from './tool-views'
+
+// Select-and-execCommand fallback for insecure contexts (plain http, e.g. served
+// over a LAN IP) where the async Clipboard API is unavailable. Uses a Selection
+// + Range rather than focusing a textarea, so it isn't defeated by the focus trap
+// of the surrounding context menu (which would otherwise copy nothing).
+function legacyCopy(text: string): boolean {
+  const span = document.createElement('span')
+  span.textContent = text
+  span.style.cssText = 'position:fixed;top:0;left:0;opacity:0;white-space:pre;user-select:text'
+  document.body.appendChild(span)
+  const selection = window.getSelection()
+  const range = document.createRange()
+  range.selectNodeContents(span)
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+  let ok = false
+  try {
+    ok = document.execCommand('copy')
+  } finally {
+    selection?.removeAllRanges()
+    document.body.removeChild(span)
+  }
+  return ok
+}
+
+// Copy text to the clipboard. Prefers the async Clipboard API (secure contexts:
+// https / localhost) and falls back to the legacy path otherwise.
+async function copyText(text: string): Promise<void> {
+  try {
+    if (window.isSecureContext && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+    } else if (!legacyCopy(text)) {
+      throw new Error('Clipboard copy is not supported here.')
+    }
+    toast.success('Copied')
+  } catch (error) {
+    // Last-ditch legacy attempt if the async API rejected (e.g. lost focus).
+    if (legacyCopy(text)) {
+      toast.success('Copied')
+      return
+    }
+    toast.error('Copy failed', {
+      description: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
 
 export interface ChatViewProps {
   // Folded conversation, as produced by `buildBlocks(foldEvents(events))`
@@ -31,7 +78,7 @@ export interface ChatViewProps {
   turnActive?: boolean
   // Offer "Fork from here" on user turns (only the native harness supports it).
   canFork?: boolean
-  onFork?: (turnIndex: number) => void
+  onFork?: (turnIndex: number, text: string) => void
   onRespondPermission: (requestId: string, optionId?: string) => void
   onRespondAsk: (requestId: string, answer?: string) => void
   // Deny the pending tool and tell the agent what to do differently.
@@ -130,7 +177,7 @@ export function ChatView({
                   text={block.text}
                   canFork={canFork}
                   forkDisabled={turnActive}
-                  onFork={onFork ? () => onFork(turnIndexById.get(block.id) ?? 0) : undefined}
+                  onFork={onFork ? () => onFork(turnIndexById.get(block.id) ?? 0, block.text) : undefined}
                 />
               ) : (
                 <Flex key={block.id} withGaps className='gap-2'>
@@ -220,7 +267,7 @@ function UserBubble({
           <div className='rounded-lg bg-primary/10 px-3 py-2 text-sm whitespace-pre-wrap wrap-break-word'>{text}</div>
         </ContextMenuTrigger>
         <ContextMenuContent>
-          <ContextMenuItem onClick={() => void navigator.clipboard.writeText(text)}>
+          <ContextMenuItem onClick={() => void copyText(text)}>
             <Copy /> Copy
           </ContextMenuItem>
           {canFork && onFork && (

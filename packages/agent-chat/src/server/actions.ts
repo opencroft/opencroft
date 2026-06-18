@@ -1,7 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 import { writeSelection } from 'agent-client/config'
 import { checkMcpServer, type McpCheckResult } from 'agent-client/mcp-check'
-import { readMcpConfig, writeMcpConfig } from 'agent-client/mcp-config'
 import type { McpServerConfig } from 'agent-client/mcp-types'
 import {
   type DefaultAccess,
@@ -216,14 +215,14 @@ export const setAgentMode = (sessionId: string, modeId: string) => _setAgentMode
 // ---- MCP server (single optional server, edited via dialog) ----
 
 const _getMcpServers = createServerFn({ method: 'GET' }).handler(
-  async (): Promise<McpServerConfig[]> => readMcpConfig(),
+  async (): Promise<McpServerConfig[]> => getRuntime().mcp.read(),
 )
 export const getMcpServers = () => _getMcpServers()
 
 const _saveMcpServers = createServerFn({ method: 'POST' })
   .inputValidator((servers: McpServerConfig[]) => servers)
   .handler(async ({ data }) => {
-    await writeMcpConfig(data)
+    await getRuntime().mcp.write(data)
     // Re-resume live sessions so they pick up the new server set.
     await getRuntime().agent.refreshMcpServers()
     return { ok: true }

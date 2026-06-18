@@ -241,7 +241,7 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
   }, [sessionId, resetSessionState])
 
   const fork = useCallback(
-    async (dropFromTurn: number) => {
+    async (dropFromTurn: number, text?: string) => {
       if (!sessionId) return
       try {
         const meta = await forkAgentSession(sessionId, dropFromTurn)
@@ -250,6 +250,9 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
           // transcript of the fork.
           setTurnActive(false)
           setSessionId(meta.id)
+          // Reinsert the forked message into the composer so it can be edited
+          // and resent from the fork point.
+          if (text !== undefined) setInput(text)
         }
       } catch (error) {
         toast.error('Failed to fork session', {

@@ -12,6 +12,7 @@ import { Flex } from 'ui/components/ui/layout/flex'
 import { MenuLayout } from 'ui/components/ui/layout/menulayout'
 import { ScrollContent, ScrollHeader, ScrollPage } from 'ui/components/ui/layout/scrollpage'
 import { SidebarMenuButton } from 'ui/components/ui/sidebar'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from 'ui/components/ui/tabs'
 
 import type { RoleRecord } from './server/runtime'
 
@@ -19,7 +20,7 @@ export type { RoleRecord }
 
 type AccessChoice = 'none' | PermissionValue
 
-// Compact labels for the segmented switch.
+// Compact labels for the segmented switch (matches the stories filter control).
 const ACCESS_OPTIONS: { value: AccessChoice; label: string }[] = [
   { value: 'none', label: 'Off' },
   { value: 'Allow', label: 'Allow' },
@@ -231,34 +232,38 @@ export function RolesManager({
                 placeholder='What this role is for'
               />
             </Field>
-            <Field>
-              <FieldLabel>Tools</FieldLabel>
-              <Flex className='gap-1.5'>
-                {tools.length === 0 && <span className='text-sm text-muted-foreground'>No tools available.</span>}
-                {tools.map((t) => (
-                  <PermissionRow
-                    key={t.name}
-                    label={t.name}
-                    value={permissions[toolKey(t.name)] ?? 'none'}
-                    onChange={(choice) => setAccess(toolKey(t.name), choice)}
-                  />
-                ))}
-              </Flex>
-            </Field>
-            <Field>
-              <FieldLabel>Skills</FieldLabel>
-              <Flex className='gap-1.5'>
-                {skills.length === 0 && <span className='text-sm text-muted-foreground'>No skills available.</span>}
-                {skills.map((s) => (
-                  <PermissionRow
-                    key={s.name}
-                    label={s.name}
-                    value={permissions[skillKey(s.name)] ?? 'none'}
-                    onChange={(choice) => setAccess(skillKey(s.name), choice)}
-                  />
-                ))}
-              </Flex>
-            </Field>
+            <Tabs defaultValue='tools'>
+              <TabsList>
+                <TabsTrigger value='tools'>Tools</TabsTrigger>
+                <TabsTrigger value='skills'>Skills</TabsTrigger>
+              </TabsList>
+              <TabsContent value='tools'>
+                <Flex className='gap-1.5'>
+                  {tools.length === 0 && <span className='text-sm text-muted-foreground'>No tools available.</span>}
+                  {tools.map((t) => (
+                    <PermissionRow
+                      key={t.name}
+                      label={t.name}
+                      value={permissions[toolKey(t.name)] ?? 'none'}
+                      onChange={(choice) => setAccess(toolKey(t.name), choice)}
+                    />
+                  ))}
+                </Flex>
+              </TabsContent>
+              <TabsContent value='skills'>
+                <Flex className='gap-1.5'>
+                  {skills.length === 0 && <span className='text-sm text-muted-foreground'>No skills available.</span>}
+                  {skills.map((s) => (
+                    <PermissionRow
+                      key={s.name}
+                      label={s.name}
+                      value={permissions[skillKey(s.name)] ?? 'none'}
+                      onChange={(choice) => setAccess(skillKey(s.name), choice)}
+                    />
+                  ))}
+                </Flex>
+              </TabsContent>
+            </Tabs>
           </ScrollContent>
         </ScrollPage>
       ) : (

@@ -10,9 +10,11 @@
 // reason agent-client keeps its session store there).
 
 import type { createAgentClient } from 'agent-client'
+import type { McpServerConfig } from 'agent-client/mcp-types'
 import type { DefaultAccess, PermissionValue } from 'agent-client/permissions'
 import type { ProfilesFile } from 'agent-client/profiles'
 
+import { fileMcpStore } from './mcp-store'
 import { fileProfilesStore } from './profiles-store'
 
 // The agent engine — the object returned by agent-client's `createAgentClient`.
@@ -44,6 +46,15 @@ export interface SkillsDataLayer {
 export interface ProfilesStore {
   read(): Promise<ProfilesFile>
   write(data: ProfilesFile): Promise<void>
+}
+
+// Where the user-configured MCP servers are persisted. Defaults to the
+// mcp-config.json file (see ./mcp-store); a host can swap in a DB-backed store.
+// The same store should back the engine's `loadMcpServers` so sessions and the
+// editor UI agree on the server set.
+export interface McpStore {
+  read(): McpServerConfig[] | Promise<McpServerConfig[]>
+  write(servers: McpServerConfig[]): void | Promise<void>
 }
 
 // A single agent role (per-tool / per-skill permissions). Structurally matches
@@ -84,12 +95,15 @@ export interface AgentChatRuntime {
   skills: SkillsDataLayer
   // Optional — defaults to the JSON-file profiles store.
   profiles?: ProfilesStore
+  // Optional — defaults to the mcp-config.json file store.
+  mcp?: McpStore
   // Optional — when absent, sessions are unrestricted (no roles).
   roles?: RolesDataLayer
 }
 
 interface ResolvedRuntime extends AgentChatRuntime {
   profiles: ProfilesStore
+  mcp: McpStore
 }
 
 const globalRef = globalThis as typeof globalThis & {
@@ -99,11 +113,12 @@ const globalRef = globalThis as typeof globalThis & {
 // Register the host's engine + data layers. Call once on the server (e.g. from
 // the app's instrumentation `register()` hook) before any chat request runs.
 export function configureAgentChat(runtime: AgentChatRuntime): void {
-  // Fall back to the file-based profiles store so hosts that don't keep profiles
-  // elsewhere need no extra wiring.
+  // Fall back to the file-based stores so hosts that don't keep these elsewhere
+  // need no extra wiring.
   globalRef.__agentChatRuntime = {
     ...runtime,
     profiles: runtime.profiles ?? fileProfilesStore,
+    mcp: runtime.mcp ?? fileMcpStore,
   }
 }
 
