@@ -249,25 +249,6 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
     return agents.find((a) => slug(a.name) === agentSlug)
   }, [sessions, agents, activeSessionKey])
 
-  // Update active tab metadata when agent/session info changes
-  useEffect(() => {
-    if (!chatTabs || !activeSessionKey) {
-      return
-    }
-    const parts = activeSessionKey.split(':')
-    const jobSlug = parts.length >= 3 ? parts.slice(2).join(':') : undefined
-    const label = activeAgent
-      ? jobSlug && jobSlug !== 'dashboard'
-        ? `${activeAgent.name}: ${jobSlug}`
-        : activeAgent.name
-      : (parts[parts.length - 1] ?? activeSessionKey)
-    chatTabs.updateTabMeta(activeSessionKey, {
-      label,
-      agentName: activeAgent?.name,
-      agentAvatar: activeAgent?.avatar,
-    })
-  }, [activeSessionKey, activeAgent, chatTabs])
-
   // The standalone + agent menu is gone; the session list now lives in the
   // inspector (page 1) and, when nothing is docked, as a command-bar focus hint.
   const createButton = null
@@ -299,6 +280,23 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
       })),
     [agents, externalById, sessions],
   )
+
+  // Keep every open chat tab labelled with its session title, so the sidebar
+  // shows readable names instead of the raw session-key suffix.
+  useEffect(() => {
+    if (!chatTabs) {
+      return
+    }
+    for (const group of sessionGroups) {
+      for (const session of group.sessions) {
+        chatTabs.updateTabMeta(session.key, {
+          label: `${group.agent.name}: ${session.title}`,
+          agentName: group.agent.name,
+          agentAvatar: group.agent.avatar,
+        })
+      }
+    }
+  }, [chatTabs, sessionGroups])
 
   // Opening or creating a session leaves page-1 and lands on the conversation.
   const openSession = useCallback(
