@@ -276,7 +276,7 @@ export function AppShell({ pinnedSpaces, dashboards, pinnedDashboardSlugs, child
   return (
     <TitlebarProvider>
       <ChatTabsProvider>
-        <SidebarProvider>
+        <SidebarProvider style={{ '--sidebar-width': '24rem' } as React.CSSProperties}>
           <Suspense fallback={null}>
             <AppSidebar
               pinnedSpaces={pinnedSpaces}
