@@ -392,19 +392,32 @@ export const toolDefinitions = [
   {
     name: 'list_extensions',
     description:
-      'List all local extensions. Each one is a folder under data/extensions/local/<slug>/ containing extension.json and source files. Built-in extensions are bundled with the app and not listed here.',
+      'List all local extensions as lightweight summaries (id, name, version, description, node/file counts). Use get_extension for the full manifest and source files. Each extension is a folder under data/extensions/local/<slug>/ containing extension.json and source files. Built-in extensions are bundled with the app and not listed here.',
     inputSchema: { type: 'object' as const, properties: {} },
   },
   {
     name: 'get_extension',
     description:
-      'Get a single local extension by its id (e.g. "local/my-node"). Returns the parsed manifest plus all source files.',
+      'Get a single local extension by its id (e.g. "local/my-node"). Returns the parsed manifest plus the list of source file paths. Use read_extension_file to read a file\'s contents.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         extensionId: { type: 'string', description: 'The local extension id (must start with "local/")' },
       },
       required: ['extensionId'],
+    },
+  },
+  {
+    name: 'read_extension_file',
+    description:
+      'Read the contents of a single source file within a local extension. Use get_extension first to discover the available file paths.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        extensionId: { type: 'string', description: 'The local extension id (must start with "local/")' },
+        path: { type: 'string', description: 'File path relative to the extension folder (e.g. "src/client.tsx")' },
+      },
+      required: ['extensionId', 'path'],
     },
   },
   {
@@ -1935,13 +1948,14 @@ function buildHandlers(): Record<string, ToolHandler> {
     // ── list_extensions ─────────────────────────────────────────────
     list_extensions: async () => {
       const records = await listLocalExtensions()
-      // Summaries only — full file contents (get_extension) would make the
-      // response several MB and break the MCP transport.
+      // Identity + counts only. Use get_extension for the manifest and source files.
       const summaries = records.map((record) => ({
         id: record.id,
-        slug: record.slug,
-        manifest: record.manifest,
-        files: Object.keys(record.files),
+        name: record.manifest.name,
+        version: record.manifest.version,
+        description: record.manifest.description,
+        nodeCount: record.manifest.nodes?.length ?? 0,
+        fileCount: Object.keys(record.files).length,
         updatedAt: record.updatedAt,
       }))
       return textResult(JSON.stringify(summaries, null, 2))
@@ -1957,7 +1971,27 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!record) {
         fail(-32602, `Extension not found: ${extensionId}`)
       }
-      return textResult(JSON.stringify(record, null, 2))
+      // Manifest + file paths only. Use read_extension_file for contents.
+      const { files, ...rest } = record
+      return textResult(JSON.stringify({ ...rest, files: Object.keys(files) }, null, 2))
+    },
+
+    // ── read_extension_file ─────────────────────────────────────────
+    read_extension_file: async (args) => {
+      const extensionId = args.extensionId as string | undefined
+      const filePath = args.path as string | undefined
+      if (!extensionId || !filePath) {
+        fail(-32602, 'Missing required params: extensionId and path')
+      }
+      const record = await getLocalExtension({ data: extensionId })
+      if (!record) {
+        fail(-32602, `Extension not found: ${extensionId}`)
+      }
+      const content = record.files[filePath]
+      if (content === undefined) {
+        fail(-32602, `File not found in ${extensionId}: ${filePath}`)
+      }
+      return textResult(content)
     },
 
     // ── create_extension ────────────────────────────────────────────
