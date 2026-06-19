@@ -1,6 +1,7 @@
 import host from '@ext/host'
 
 import { fireEvent } from './event'
+import { openaiChat } from './openai'
 import { runScript, type ScriptResult } from './script'
 
 interface Stream<T> {
@@ -96,6 +97,67 @@ async function eventRun(ctx: ActionCtx): Promise<unknown> {
   return fireEvent(ctx.nodeId, ctx.params)
 }
 
+interface AssistantData {
+  chatApiBase?: string
+  chatApiKey?: string
+  chatModel?: string
+  temperature?: number
+}
+
+interface TextGenerationData {
+  assistantId?: string
+  systemPrompt?: string
+}
+
+// Resolve the text to act on: streamed text (delivered on stream completion via
+// the handle's `streamAction`), else a resolved `text-in` input, else empty.
+function streamText(ctx: ActionCtx): string {
+  const param = ctx.params.text
+  if (typeof param === 'string' && param.trim()) {
+    return param
+  }
+  const input = ctx.inputSource<unknown>('text-in')?.value
+  if (typeof input === 'string' && input.trim()) {
+    return input
+  }
+  return ''
+}
+
+async function textGenerationRun(ctx: ActionCtx): Promise<void> {
+  const data = ctx.data as TextGenerationData
+  const prompt = streamText(ctx)
+  if (!prompt.trim()) {
+    throw new Error('No input text to generate from')
+  }
+  if (!data.assistantId) {
+    throw new Error('No assistant selected')
+  }
+  const node = await host.graph.getNode(data.assistantId)
+  const assistant = (node?.data ?? {}) as AssistantData
+  if (!assistant.chatModel?.trim()) {
+    throw new Error('Assistant has no chat model configured')
+  }
+  const result = await openaiChat({
+    apiBase: assistant.chatApiBase ?? '',
+    apiKey: assistant.chatApiKey ?? '',
+    model: assistant.chatModel,
+    systemPrompt: data.systemPrompt ?? '',
+    userPrompt: prompt,
+    temperature: typeof assistant.temperature === 'number' ? assistant.temperature : 0.7,
+  })
+  const stream = ctx.output<TextChunk>('text-out')
+  stream.broadcast({ text: result.content, final: false })
+  stream.broadcast({ text: '', final: true })
+}
+
+async function promptSend(ctx: ActionCtx): Promise<void> {
+  const text = typeof ctx.params.text === 'string' ? ctx.params.text.trim() : ''
+  if (!text) {
+    throw new Error('Prompt is empty')
+  }
+  ctx.output<TextChunk>('text-out').broadcast({ text, final: true })
+}
+
 export const nodeActions = {
   'script-bash': {
     run: scriptRun,
@@ -108,5 +170,11 @@ export const nodeActions = {
   },
   event: {
     run: eventRun,
+  },
+  'text-generation': {
+    run: textGenerationRun,
+  },
+  prompt: {
+    send: promptSend,
   },
 }

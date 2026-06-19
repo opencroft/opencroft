@@ -7,9 +7,11 @@
 // `subscribe(stream, ...)` consumers wake up unchanged.
 //
 // Each stream keeps a small global ring buffer of the most recent chunks.
-// On final chunks, downstream Log nodes have their accumulated entry
-// persisted into their own node data via `updateNodeData`, which both saves
-// the graph and emits `node_data_updated` for in-place client refresh.
+// On final chunks the accumulated text is delivered to downstream consumers:
+// Log nodes persist it as an entry via `updateNodeData`, and any node whose
+// target handle declares a `streamAction` has that action dispatched with the
+// text — letting extensions consume a text-stream server-side without core
+// knowing the node type.
 
 import { ensureLocalSession, promptLocal } from '@/app/(agent)/_server/acp'
 import { updateNodeData } from '@/app/(extension-runtime)/_server/node-data'
@@ -22,6 +24,7 @@ import {
   tryParseJsonMessage,
   wrapMessageWithContext,
 } from '@/app/(extension-runtime)/_server/send-message-helpers'
+import { findExtensionHandle, type NodeMetadata } from '@/app/(extension-runtime)/_types'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
 import type { StreamChunkPayload } from '@/lib/sse-events'
 import { toastStore } from '@/lib/toast-store'
@@ -81,6 +84,7 @@ class StreamImpl<T> implements Stream<T> {
         if (text) {
           void persistToDownstreamLogs(this.spaceId, this.nodeId, this.handleId, text)
           void persistToDownstreamSendMessages(this.spaceId, this.nodeId, this.handleId, text)
+          void dispatchDownstreamTextActions(this.spaceId, this.nodeId, this.handleId, text)
         }
       }
     }
@@ -157,6 +161,60 @@ async function persistToDownstreamLogs(
           : [...prevEntries, entry]
       return { ...prev, entries: nextEntries }
     })
+  }
+}
+
+// When a text-stream completes, dispatch the accumulated text to any downstream
+// node whose target handle declares a `streamAction` in its manifest. The action
+// receives the text as `ctx.params.text`. This keeps per-integration logic inside
+// the owning extension — core never names specific node types.
+async function dispatchDownstreamTextActions(
+  spaceId: string | undefined,
+  sourceNodeId: string,
+  sourceHandleId: string,
+  text: string,
+): Promise<void> {
+  if (!spaceId) {
+    return
+  }
+  const r = getSpacesRegistry()
+  await r.ensureLoaded()
+  const space = r.getBySlug(spaceId)
+  if (!space) {
+    return
+  }
+  const edges = space.graph.edges as unknown as GraphEdgeLike[]
+  const nodes = space.graph.nodes as unknown as GraphNodeLike[]
+  const outgoing = edges.filter((e) => e.source === sourceNodeId && e.sourceHandle === sourceHandleId)
+  if (outgoing.length === 0) {
+    return
+  }
+  // Late import avoids a cycle: node-actions imports getStream from this module.
+  const [{ dispatchNodeAction }, { loadAllManifests }] = await Promise.all([
+    import('@/app/(extension-runtime)/_server/node-actions'),
+    import('@/app/(extension-runtime)/_server/loader'),
+  ])
+  const metaByType = new Map<string, NodeMetadata>()
+  for (const manifest of await loadAllManifests()) {
+    for (const node of manifest.nodes ?? []) {
+      metaByType.set(node.typeId, node)
+    }
+  }
+  for (const edge of outgoing) {
+    const target = nodes.find((n) => n.id === edge.target)
+    const meta = target?.type ? metaByType.get(target.type) : undefined
+    const handle = meta?.handles ? findExtensionHandle(meta.handles, edge.targetHandle ?? '', 'target') : undefined
+    if (!target || !handle?.streamAction) {
+      continue
+    }
+    try {
+      await dispatchNodeAction({ data: { nodeId: target.id, actionId: handle.streamAction, params: { text } } })
+    } catch (err) {
+      console.error(
+        `[stream→${target.type}.${handle.streamAction}] dispatch failed:`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
   }
 }
 

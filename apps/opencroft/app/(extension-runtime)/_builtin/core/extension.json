@@ -136,6 +136,23 @@
         { "id": "run", "label": "Run", "icon": "Play", "description": "Fire the connected handler immediately." }
       ]
     },
+    {
+      "typeId": "prompt",
+      "name": "Prompt",
+      "category": "Text",
+      "icon": "MessageCircle",
+      "handles": [{ "id": "text-out", "contextType": "text-stream", "role": "source", "label": "Text" }]
+    },
+    {
+      "typeId": "text-generation",
+      "name": "Text Generation",
+      "category": "Text",
+      "icon": "Sparkles",
+      "handles": [
+        { "id": "text-in", "contextType": "text-stream", "role": "target", "label": "Prompt", "streamAction": "run" },
+        { "id": "text-out", "contextType": "text-stream", "role": "source", "label": "Text" }
+      ]
+    },
     { "typeId": "section", "name": "Section", "category": "Organization", "icon": "Boxes" },
     { "typeId": "domain", "name": "Domain", "category": "Organization", "icon": "Globe" }
   ],
