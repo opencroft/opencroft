@@ -14,10 +14,8 @@ import {
   PanelRightOpen,
   Puzzle,
   SettingsIcon,
-  X,
 } from 'lucide-react'
 import { Suspense, useEffect, useState } from 'react'
-import { AgentAvatar } from 'ui/agent-avatar'
 import { Button } from 'ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/collapsible'
 import { TitlebarProvider } from 'ui/layout/titlebar'
@@ -41,6 +39,7 @@ import {
 } from 'ui/sidebar'
 
 import { DevBuildBadge } from '@/app/_components/dev-build-badge'
+import { ChatTabItem } from '@/app/_shell/chat-tab-item'
 import { ChatTabsProvider, useChatTabs } from '@/app/(agent)/_lib/chat-tabs-context'
 import { listPendingPermissions } from '@/app/(agent)/_server/acp'
 import { getAppLinks } from '@/app/(applink)/_server/actions'
@@ -193,39 +192,14 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
                     <SidebarMenuSub>
                       {mounted &&
                         chatTabs.tabs.map((tab) => (
-                          <SidebarMenuSubItem key={tab.key}>
-                            <SidebarMenuSubButton
-                              asChild
-                              isActive={chatTabs.activeSessionKey === tab.key}
-                              onClick={(e) => {
-                                e.preventDefault()
-                                chatTabs.selectSession(tab.key)
-                              }}
-                            >
-                              <button className='flex items-center gap-2 w-full min-w-0'>
-                                <AgentAvatar avatar={tab.agentAvatar} size='sm' pending={pendingKeys.has(tab.key)} />
-                                <span className='truncate'>{tab.label}</span>
-                                <span
-                                  role='button'
-                                  tabIndex={0}
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    chatTabs.closeTab(tab.key)
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter' || e.key === ' ') {
-                                      e.stopPropagation()
-                                      chatTabs.closeTab(tab.key)
-                                    }
-                                  }}
-                                  className='ml-auto size-4 inline-flex items-center justify-center rounded-sm hover:bg-muted hover:text-destructive shrink-0'
-                                  aria-label='Close tab'
-                                >
-                                  <X className='size-3' />
-                                </span>
-                              </button>
-                            </SidebarMenuSubButton>
-                          </SidebarMenuSubItem>
+                          <ChatTabItem
+                            key={tab.key}
+                            tab={tab}
+                            isActive={chatTabs.activeSessionKey === tab.key}
+                            pending={pendingKeys.has(tab.key)}
+                            onSelect={chatTabs.selectSession}
+                            onClose={chatTabs.closeTab}
+                          />
                         ))}
                     </SidebarMenuSub>
                   </CollapsibleContent>

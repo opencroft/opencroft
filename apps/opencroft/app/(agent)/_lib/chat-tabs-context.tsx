@@ -9,6 +9,7 @@ export interface ChatTab {
   key: string
   label: string
   agentName?: string
+  title?: string
   agentAvatar?: string | null
 }
 
@@ -19,6 +20,7 @@ export type ChatMode = 'docked' | 'focused'
 interface TabMeta {
   label?: string
   agentName?: string
+  title?: string
   agentAvatar?: string | null
 }
 
@@ -62,6 +64,7 @@ function makeTab(key: string, meta?: TabMeta): ChatTab {
     key,
     label: meta?.label || key.split(':').pop() || key,
     agentName: meta?.agentName,
+    title: meta?.title,
     agentAvatar: meta?.agentAvatar,
   }
 }
@@ -224,6 +227,7 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
       const unchanged =
         merged.label === prev[idx].label &&
         merged.agentName === prev[idx].agentName &&
+        merged.title === prev[idx].title &&
         merged.agentAvatar === prev[idx].agentAvatar
       if (unchanged) {
         return prev

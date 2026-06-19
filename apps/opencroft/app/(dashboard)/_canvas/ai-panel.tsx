@@ -276,6 +276,7 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
         chatTabs.updateTabMeta(session.key, {
           label: `${group.agent.name}: ${session.title}`,
           agentName: group.agent.name,
+          title: session.title,
           agentAvatar: group.agent.avatar,
         })
       }
