@@ -496,6 +496,13 @@ function isNativeSelection(selection: AgentSelection): boolean {
   return findAdapter(selection.adapterId)?.kind === 'native'
 }
 
+// Whether this agent accepts per-session MCP servers (tool support). Adapters
+// opt out via `supportsTools: false` (e.g. OpenClaw's bridge rejects them), in
+// which case the client sends an empty server list.
+function supportsTools(selection: AgentSelection): boolean {
+  return findAdapter(selection.adapterId)?.supportsTools !== false
+}
+
 // Forward the host's external session key to bridges that route by their own
 // session key (e.g. OpenClaw's ACP bridge → Gateway). ACP agents that don't
 // recognize `_meta.sessionKey` ignore it, so this stays harness-agnostic.
@@ -693,7 +700,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // internal entry only.
       let token: string | null = null
       let mcpServers: AcpMcpServer[] = []
-      if (!native) {
+      if (!native && supportsTools(selection)) {
         const { internal, servers } = await buildMcpServers()
         token = randomUUID()
         store.acpTokenPermissions.set(token, permissions)
@@ -789,11 +796,15 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         return null
       }
       // Mint a per-session MCP token before the replay, mirroring createSession.
-      const { internal, servers } = await buildMcpServers()
-      const token = randomUUID()
-      store.acpTokenPermissions.set(token, permissions)
-      store.acpTokenSession.set(token, sessionId)
-      const mcpServers = tagInternal(internal, servers, token)
+      let token: string | null = null
+      let mcpServers: AcpMcpServer[] = []
+      if (supportsTools(selection)) {
+        const { internal, servers } = await buildMcpServers()
+        token = randomUUID()
+        store.acpTokenPermissions.set(token, permissions)
+        store.acpTokenSession.set(token, sessionId)
+        mcpServers = tagInternal(internal, servers, token)
+      }
       store.titleCounter += 1
       const meta: SessionMeta = {
         id: sessionId,
@@ -818,8 +829,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // Transcript gone or agent refused — unwind the half-registered session
         // so the caller can cleanly create a fresh one.
         store.sessions.delete(sessionId)
-        store.acpTokenSession.delete(token)
-        store.acpTokenPermissions.delete(token)
+        if (token) {
+          store.acpTokenSession.delete(token)
+          store.acpTokenPermissions.delete(token)
+        }
         throw error
       }
       // The replay streams history but no turn boundary, so the client would stay
@@ -835,7 +848,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       }
       const connection = await ensureConnection(session.selection)
       let mcpServers: AcpMcpServer[] = []
-      if (!isNativeSelection(session.selection)) {
+      if (!isNativeSelection(session.selection) && supportsTools(session.selection)) {
         // Retire the prior token for this session before minting a new one so
         // repeated resumes (e.g. on every MCP-config refresh) don't leak tokens.
         // permissionsFor resolves via the session record, which is already set.
