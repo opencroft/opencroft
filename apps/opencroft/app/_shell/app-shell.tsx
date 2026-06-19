@@ -150,7 +150,7 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
             <SidebarMenu>
               <Collapsible defaultOpen className='group/collapsible'>
                 <SidebarMenuItem>
-                  <SidebarMenuButton tooltip='Chats'>
+                  <SidebarMenuButton tooltip='Chats' onClick={chatTabs.openChatList}>
                     <MessageSquare />
                     <span>Chats</span>
                   </SidebarMenuButton>

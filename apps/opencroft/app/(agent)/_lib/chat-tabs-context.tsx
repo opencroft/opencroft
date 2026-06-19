@@ -80,6 +80,10 @@ interface ChatTabsContextValue {
   setFallbackKey: (key: string) => void
   chatMode: ChatMode
   toggleChatMode: () => void
+  // Bumped to ask the canvas to open the chat list (docked or overlay, per mode).
+  // Lets the sidebar — which lives above the overlay provider — trigger it.
+  listRequest: number
+  openChatList: () => void
 }
 
 const ChatTabsContext = createContext<ChatTabsContextValue | null>(null)
@@ -107,6 +111,7 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
   )
   const [fallbackKey, setFallbackKey] = useState('')
   const [chatMode, setChatMode] = useState<ChatMode>('docked')
+  const [listRequest, setListRequest] = useState(0)
   const initialized = useRef(false)
   const router = useRouter()
   const pathname = useLocation({ select: (l) => l.pathname })
@@ -202,6 +207,13 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
     setActiveSessionKey(key)
   }, [])
 
+  const openChatList = useCallback(() => {
+    // Drop the active session at the source so the canvas lands on the list (not
+    // a conversation), then signal the canvas to surface it.
+    setActiveSessionKey(fallbackKey)
+    setListRequest((n) => n + 1)
+  }, [fallbackKey])
+
   const updateTabMeta = useCallback((key: string, meta: TabMeta) => {
     setTabs((prev) => {
       const idx = prev.findIndex((t) => t.key === key)
@@ -236,6 +248,8 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
       setFallbackKey,
       chatMode,
       toggleChatMode,
+      listRequest,
+      openChatList,
     }),
     [
       tabs,
@@ -248,6 +262,8 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
       fallbackKey,
       chatMode,
       toggleChatMode,
+      listRequest,
+      openChatList,
     ],
   )
 

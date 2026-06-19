@@ -242,6 +242,17 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
   }, [focused])
   const inspectorPage: 'list' | 'chat' | 'none' = hasActiveSession ? 'chat' : inspectorListOpen ? 'list' : 'none'
 
+  // The sidebar's "Chats" entry requests the session list (the active session is
+  // already cleared at the context source). Depend only on listRequest — keying
+  // on chatTabs would re-fire on every selectSession and bounce back to the list.
+  const listRequest = chatTabs?.listRequest ?? 0
+  useEffect(() => {
+    if (!listRequest) {
+      return
+    }
+    setInspectorListOpen(true)
+  }, [listRequest])
+
   const sessionGroups = useMemo<AgentSessionGroup[]>(
     () =>
       agents.map((agent) => ({

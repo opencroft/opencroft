@@ -62,6 +62,16 @@ export function CanvasOverlay({
     activateMode('ai')
   }, [chatParam, activateMode])
 
+  // The sidebar's "Chats" entry bumps listRequest to open the session list here;
+  // activating 'ai' surfaces it (docked in the inspector or as the focus overlay).
+  const listRequest = chatTabs?.listRequest ?? 0
+  useEffect(() => {
+    if (!listRequest) {
+      return
+    }
+    activateMode('ai')
+  }, [listRequest, activateMode])
+
   useEffect(() => {
     function onKey(event: globalThis.KeyboardEvent) {
       if (!(event.ctrlKey || event.metaKey)) {
