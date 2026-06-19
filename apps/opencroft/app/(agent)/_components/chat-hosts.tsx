@@ -43,6 +43,8 @@ interface HostProps {
   // Page-2 header: current session title + a rename control.
   sessionTitle?: string
   onRename?: (title: string) => void
+  // Apply a title the agent self-reported on the first reply (see use-acp-session).
+  onAutoTitle?: (title: string) => void
   // Force the session list into the command-bar menu regardless of the inspector
   // page — lets the start icon open a session picker while a chat is docked.
   forceListMenu?: boolean
@@ -299,10 +301,11 @@ export function LocalAgentHost({
   onBack,
   sessionTitle,
   onRename,
+  onAutoTitle,
   forceListMenu,
   onOpenSessions,
 }: HostProps & { source: LocalSource }) {
-  const acp = useAcpSession(source, transformOutgoing, activeAgent?.name)
+  const acp = useAcpSession(source, transformOutgoing, activeAgent?.name, onAutoTitle)
   // Stable element identity so ChatHost's memoized content (and the published
   // overlay slot) don't re-fire every render — that would be an infinite update loop.
   const approvals = useMemo(() => <Approvals acp={acp} />, [acp])

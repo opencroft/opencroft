@@ -33,6 +33,15 @@ const SESSIONS_STORAGE_KEY = 'opencroft.aiPanel.sessions'
 // Sentinel key for the "no session selected" state; namespaces the chat-tabs
 // fallback so a dashboard view never collides with a real session.
 const DASHBOARD_KEY = 'agent:dashboard'
+// Sent with every message: the space and the node currently selected on the canvas.
+const systemTag = (spaceName: string, spaceSlug: string, selectedNodeId: string | null) =>
+  `<opencroft-system>Sent from OpenCroft space: ${spaceName} (${spaceSlug}). Selected node: ${selectedNodeId ?? 'none'}.</opencroft-system>`
+// Injected on the first message of a session: asks the agent to lead its reply
+// with a self-titled chat name, which use-acp-session parses out to rename the
+// tab. No literal nested opencroft tag here — a nested close would truncate the
+// render-time stripOpencroftTags match and leak the instruction into the bubble.
+const TITLE_REQUEST =
+  '<opencroft-title-request>Begin your very first reply with a concise title that summarizes this request: maximum 5 words, Title Case, no quotes or trailing punctuation. Put it on its own first line wrapped in an opencroft-title tag (opening and closing), then continue your normal reply on the next lines. Do this only in this first reply.</opencroft-title-request>'
 
 function loadStoredSessions(): SessionEntry[] {
   if (typeof window === 'undefined') {
@@ -99,16 +108,13 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
       if (text.trim().startsWith('/')) {
         return text
       }
-      const system = `<opencroft-system>Sent from OpenCroft space: ${spaceName} (${spaceSlug}). Selected node: ${selectedNodeId ?? 'none'}.</opencroft-system>`
+      const system = systemTag(spaceName, spaceSlug, selectedNodeId)
       if (!isFirstMessage) {
         return `${system}\n${text}`
       }
       const { job, agent } = resolveJobForSession(activeSessionKey, sessions, agents)
       const ctx = job?.context.trim()
-      if (!ctx && !agent?.instructions.length) {
-        return `${system}\n${text}`
-      }
-      let prefix = system
+      let prefix = `${system}\n${TITLE_REQUEST}`
       if (ctx) {
         prefix += `\n<opencroft-task>${ctx}</opencroft-task>`
       }
@@ -317,6 +323,7 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
         onBack={goToList}
         sessionTitle={activeEntry.title ?? activeEntry.jobName}
         onRename={handleRename}
+        onAutoTitle={handleRename}
         forceListMenu={sessionPickerOpen}
         onOpenSessions={openSessionsMenu}
       />
