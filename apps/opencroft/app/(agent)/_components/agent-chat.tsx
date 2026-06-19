@@ -26,6 +26,7 @@ import {
 } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { AgentAvatar } from 'ui/agent-avatar'
 import { Button } from 'ui/button'
 import { TypingDots } from 'ui/chat/typing-dots'
 import { Flex } from 'ui/layout/flex'
@@ -353,11 +354,7 @@ function Details({
     }
 
     const hasAvatar = !!agentAvatar
-    const marker = hasAvatar ? (
-      <img src={agentAvatar} alt='' className='size-8 rounded-full object-cover' />
-    ) : (
-      <ChainDot />
-    )
+    const marker = hasAvatar ? <AgentAvatar avatar={agentAvatar} name={botName} size='md' /> : <ChainDot />
 
     return (
       <Flex className='min-w-0 w-full'>
@@ -422,7 +419,7 @@ function Details({
         const isLast = i === entries.length - 1
         const hasAvatar = isFirst && !!agentAvatar
         const marker = hasAvatar ? (
-          <img src={agentAvatar} alt='' className='size-8 rounded-full object-cover' />
+          <AgentAvatar avatar={agentAvatar} name={botName} size='md' />
         ) : (
           <ChainDot variant={entry.kind === 'item' ? toolDotVariant(entry.item) : 'default'} />
         )

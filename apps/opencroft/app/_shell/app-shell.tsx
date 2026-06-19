@@ -17,6 +17,7 @@ import {
   X,
 } from 'lucide-react'
 import { Suspense, useEffect, useState } from 'react'
+import { AgentAvatar } from 'ui/agent-avatar'
 import { Button } from 'ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/collapsible'
 import { TitlebarProvider } from 'ui/layout/titlebar'
@@ -41,6 +42,7 @@ import {
 
 import { DevBuildBadge } from '@/app/_components/dev-build-badge'
 import { ChatTabsProvider, useChatTabs } from '@/app/(agent)/_lib/chat-tabs-context'
+import { listPendingPermissions } from '@/app/(agent)/_server/acp'
 import { getAppLinks } from '@/app/(applink)/_server/actions'
 import { type DocNamespace, listDocNamespaces } from '@/app/(docs)/_server/actions'
 import type { SpaceSummary } from '@/app/(space)/_server/types'
@@ -56,6 +58,33 @@ interface SidebarProps {
   pinnedSpaces: SpaceSummary[]
   dashboards: DashboardMeta[]
   pinnedDashboardSlugs: string[]
+}
+
+// Poll for chat sessions blocked on a permission request, so their sidebar
+// avatars can show a pending dot. Gated off when no chats are open.
+function usePendingPermissionKeys(enabled: boolean): Set<string> {
+  const [keys, setKeys] = useState<Set<string>>(() => new Set())
+  useEffect(() => {
+    if (!enabled) {
+      setKeys(new Set())
+      return
+    }
+    let cancelled = false
+    const poll = () => {
+      listPendingPermissions().then((list) => {
+        if (!cancelled) {
+          setKeys(new Set(list))
+        }
+      })
+    }
+    poll()
+    const id = window.setInterval(poll, 2500)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [enabled])
+  return keys
 }
 
 function ChatModeToggle() {
@@ -84,6 +113,7 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
   const chatTabs = useChatTabs()
   const pinnedDashboards = dashboards.filter((d) => pinnedDashboardSlugs.includes(d.slug))
   const [mounted, setMounted] = useState(false)
+  const pendingKeys = usePendingPermissionKeys(inSpace && mounted && chatTabs.tabs.length > 0)
 
   useEffect(() => {
     setMounted(true)
@@ -173,15 +203,7 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
                               }}
                             >
                               <button className='flex items-center gap-2 w-full min-w-0'>
-                                {tab.agentAvatar ? (
-                                  <img
-                                    src={tab.agentAvatar}
-                                    alt=''
-                                    className='size-4 shrink-0 rounded-full object-cover'
-                                  />
-                                ) : (
-                                  <MessageSquare className='size-4 shrink-0' />
-                                )}
+                                <AgentAvatar avatar={tab.agentAvatar} size='sm' pending={pendingKeys.has(tab.key)} />
                                 <span className='truncate'>{tab.label}</span>
                                 <span
                                   role='button'

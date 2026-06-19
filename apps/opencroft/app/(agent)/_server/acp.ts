@@ -210,6 +210,12 @@ export const forkLocal = createServerFn({ method: 'POST', strict: { output: fals
     return { sessionId: meta.id }
   })
 
+// Tab keys of chat sessions currently blocked on an unresolved permission
+// request — the sidebar polls this to badge those chats' avatars.
+export const listPendingPermissions = createServerFn({ method: 'GET', strict: { output: false } }).handler(
+  async (): Promise<string[]> => agentClient.pendingPermissionSessionKeys(),
+)
+
 export const respondLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { type: 'permission' | 'ask'; requestId: string; optionId?: string; answer?: string }) => data)
   .handler(async ({ data }): Promise<void> => {

@@ -682,6 +682,19 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return [...store.sessions.values()].map((session) => session.meta).sort((a, b) => a.createdAt - b.createdAt)
     },
 
+    // Session keys (selection.sessionKey) of every session currently blocked on
+    // an unresolved permission request — lets a host badge those sessions.
+    pendingPermissionSessionKeys(): string[] {
+      const keys = new Set<string>()
+      for (const { sessionId } of store.pendingPermissions.values()) {
+        const key = store.sessions.get(sessionId)?.selection.sessionKey
+        if (key) {
+          keys.add(key)
+        }
+      }
+      return [...keys]
+    },
+
     // The host's statically registered LocalTools (for role-permission editors).
     // Per-session MCP and skill tools are dynamic and not listed here.
     listTools(): { name: string; description: string }[] {

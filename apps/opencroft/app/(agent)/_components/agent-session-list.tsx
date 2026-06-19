@@ -1,7 +1,8 @@
 'use client'
 
-import { Briefcase, MessageSquare, Plus, Search, Trash2, User } from 'lucide-react'
+import { Briefcase, MessageSquare, Plus, Search, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { AgentAvatar } from 'ui/agent-avatar'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Input } from 'ui/input'
 
@@ -69,12 +70,8 @@ export function AgentSessionList({ groups, onOpenSession, onDeleteSession, onCre
           filtered.map((group) => (
             <div key={group.agent.nodeId} className='mb-2 min-w-0'>
               <div className='flex items-center gap-2 px-1 py-1'>
-                {group.agent.avatar ? (
-                  <img src={group.agent.avatar} alt='' className='size-5 shrink-0 rounded-full object-cover' />
-                ) : (
-                  <User className='size-4 shrink-0 text-muted-foreground' />
-                )}
-                <span className='min-w-0 flex-1 truncate text-sm font-medium'>{group.agent.name}</span>
+                <AgentAvatar avatar={group.agent.avatar} name={group.agent.name} size='md' />
+                <span className='min-w-0 flex-1 truncate text-xs font-medium'>{group.agent.name}</span>
                 <button
                   type='button'
                   onClick={() => setJobsFor(group.agent)}

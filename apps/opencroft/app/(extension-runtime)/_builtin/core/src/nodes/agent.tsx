@@ -1,5 +1,6 @@
 import { InputHandle, icons, invoke, NodeFrame, React } from '@ext/host'
 import {
+  AgentAvatar,
   Button,
   Input,
   Label,
@@ -86,13 +87,7 @@ export function AgentInspector({
       <div className='flex flex-col gap-1'>
         <Label>Avatar</Label>
         <div className='flex items-center gap-2'>
-          <div className='h-12 w-12 rounded-full overflow-hidden bg-muted flex items-center justify-center shrink-0'>
-            {data.avatar ? (
-              <img src={data.avatar} alt='' className='h-full w-full object-cover' />
-            ) : (
-              <icons.User className='h-5 w-5 text-muted-foreground' />
-            )}
-          </div>
+          <AgentAvatar avatar={data.avatar} name={data.name} size='lg' />
           <Button variant='outline' size='sm' onClick={() => inputRef.current?.click()}>
             <icons.Upload className='h-3 w-3 mr-1' />
             {data.avatar ? 'Change' : 'Upload'}
