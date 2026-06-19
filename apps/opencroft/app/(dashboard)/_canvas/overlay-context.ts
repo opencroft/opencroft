@@ -162,7 +162,7 @@ export function useBackIntercept(active: boolean, onClose: () => void) {
     }
 
     if (active && !pushedRef.current) {
-      history.pushState(null, '')
+      history.pushState({ overlayBackTrap: true }, '')
       pushedRef.current = true
     }
 
@@ -184,8 +184,13 @@ export function useBackIntercept(active: boolean, onClose: () => void) {
     nav.addEventListener('navigate', onNavigate)
     return () => {
       nav.removeEventListener('navigate', onNavigate)
-      if (pushedRef.current) {
-        pushedRef.current = false
+      // Only unwind the trap entry while it's still the current entry. A forward
+      // navigation (clicking a link) buries it in the back-stack and replaces
+      // the current entry's state, so calling history.back() here would revert
+      // that navigation instead of removing the trap.
+      const onTrap = pushedRef.current && history.state?.overlayBackTrap === true
+      pushedRef.current = false
+      if (onTrap) {
         history.back()
       }
     }
