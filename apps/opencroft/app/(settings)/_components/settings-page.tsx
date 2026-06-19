@@ -1,13 +1,12 @@
 'use client'
 
-import { ExternalLink, ScrollText, Sparkles } from 'lucide-react'
+import { ExternalLink, ScrollText } from 'lucide-react'
 import type React from 'react'
 import { Suspense, useCallback } from 'react'
 import { MenuLayout } from 'ui/layout/menulayout'
 import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
 
 import AppLinksSettings from '@/app/(applink)/_components/applinks-settings'
-import AiSettings from '@/app/(settings)/_components/ai-settings'
 import AuditSettings from '@/app/(settings)/_components/audit-settings'
 import {
   ExtensionSettingsMenu,
@@ -25,7 +24,6 @@ interface BuiltinPage {
 }
 
 const BUILTIN_PAGES: BuiltinPage[] = [
-  { id: 'ai', label: 'AI', icon: Sparkles, component: AiSettings },
   { id: 'applinks', label: 'App Links', icon: ExternalLink, component: AppLinksSettings },
   { id: 'audit', label: 'MCP Audit', icon: ScrollText, component: AuditSettings },
 ]

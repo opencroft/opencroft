@@ -1,6 +1,6 @@
 import { defineExtension } from '@ext/host'
 
-import { AgentInspector, AgentNode, AgentOpenClawTab, AgentProfileTab } from './nodes/agent'
+import { AgentInspector, AgentNode, AgentProfileTab } from './nodes/agent'
 import { AgentInstructionInspector, AgentInstructionNode } from './nodes/agent-instruction'
 import { AgentJobInspector, AgentJobNode } from './nodes/agent-job'
 import { AgentMcpTab } from './nodes/agent-mcp'
@@ -321,7 +321,7 @@ export default defineExtension({
       icon: 'User',
       accent: 'oklch(0.65 0.24 25)',
       handles: AGENT_HANDLES as unknown as never[],
-      defaultData: { name: '', backend: 'openclaw' },
+      defaultData: { name: '' },
       component: AgentNode as unknown as never,
       inspector: AgentInspector as unknown as never,
       inspectorTabs: [
@@ -333,13 +333,6 @@ export default defineExtension({
           component: AgentProfileTab as unknown as never,
         },
         { id: 'mcp', label: 'MCP', icon: 'Wrench', fullHeight: true, component: AgentMcpTab as unknown as never },
-        {
-          id: 'openclaw',
-          label: 'OpenClaw',
-          icon: 'Globe',
-          fullHeight: true,
-          component: AgentOpenClawTab as unknown as never,
-        },
       ],
     },
     {

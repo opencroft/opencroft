@@ -316,7 +316,6 @@ export const keyStore = host.keyStore;
 export const secretsStore = host.secretsStore;
 export const localhost = host.localhost;
 export const wsl = host.wsl;
-export const openclaw = host.openclaw;
 export const terminal = host.terminal;
 export const ssh = host.ssh;
 export const extensionId = host.extensionId;

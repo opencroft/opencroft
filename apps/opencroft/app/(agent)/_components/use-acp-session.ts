@@ -3,9 +3,9 @@
 import type { ChatEvent, PermissionOpt } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 
+import type { AgentSession } from '@/app/(agent)/_components/agent-chat'
+import type { ChatMessage, ChatPart } from '@/app/(agent)/_lib/messages'
 import { cancelLocal, ensureLocalSession, forkLocal, promptLocal, respondLocal } from '@/app/(agent)/_server/acp'
-import type { AgentSession } from '@/app/(openclaw)/_components/agent-chat'
-import type { OpenclawMessage, OpenclawPart } from '@/app/(openclaw)/_lib/messages'
 
 export interface LocalSource {
   agentNodeId: string
@@ -42,7 +42,7 @@ export interface AcpSession {
   removeQueued: (id: string) => void
 }
 
-type ToolPart = Extract<OpenclawPart, { type: 'tool-call' }>
+type ToolPart = Extract<ChatPart, { type: 'tool-call' }>
 
 function toolText(output: unknown): string {
   if (typeof output === 'string') {
@@ -52,7 +52,7 @@ function toolText(output: unknown): string {
 }
 
 interface Folded {
-  messages: OpenclawMessage[]
+  messages: ChatMessage[]
   permissions: PendingPermission[]
   asks: PendingAsk[]
   waiting: boolean
@@ -61,14 +61,14 @@ interface Folded {
 // Reduce the agent-client event log into the message shape AgentChat renders,
 // plus the set of still-pending approval / elicitation prompts.
 function fold(events: ChatEvent[]): Folded {
-  const messages: OpenclawMessage[] = []
+  const messages: ChatMessage[] = []
   const tools = new Map<string, ToolPart>()
   const permissions = new Map<string, PendingPermission>()
   const asks = new Map<string, PendingAsk>()
-  let assistant: OpenclawMessage | null = null
+  let assistant: ChatMessage | null = null
   let waiting = false
 
-  const ensureAssistant = (): OpenclawMessage => {
+  const ensureAssistant = (): ChatMessage => {
     if (!assistant) {
       assistant = { role: 'assistant', parts: [], timestamp: 0 }
       messages.push(assistant)

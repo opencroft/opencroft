@@ -9,7 +9,6 @@ import type { HostSecretsApi } from '@opencroft/server'
 import type { ServerConfig, TerminalContext } from '@opencroft/terminal'
 import { exec, resolveKeyContent, sshExec, terminalExec, terminalRun } from '@opencroft/terminal/server'
 
-import { gateway } from '@/app/(openclaw)/_server/gateway-client'
 import { getSetting, setSetting } from '@/app/(settings)/_server/actions'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
 import type { GraphData } from '@/app/(space)/_server/types'
@@ -227,16 +226,6 @@ function storageApi(extensionId: string): ExtensionStorageApi {
   }
 }
 
-export interface OpenclawApi {
-  call<T = unknown>(method: string, params?: object): Promise<T>
-}
-
-const openclawApi: OpenclawApi = {
-  call<T = unknown>(method: string, params: object = {}): Promise<T> {
-    return gateway().call<T>(method, params)
-  },
-}
-
 export interface ExtensionHost {
   extensionId: string
   fs: typeof fsPromises
@@ -251,7 +240,6 @@ export interface ExtensionHost {
   settings: { get: typeof getSetting; set: typeof setSetting }
   graph: HostGraphApi
   storage: ExtensionStorageApi
-  openclaw: OpenclawApi
   terminal: {
     exec(ctx: TerminalContext, command: string): Promise<string>
     run(ctx: TerminalContext, args: string[], env?: Record<string, string>): Promise<string>
@@ -277,7 +265,6 @@ export function createHost(extensionId: string): ExtensionHost {
     settings: { get: getSetting, set: setSetting },
     graph: graphApi,
     storage: storageApi(extensionId),
-    openclaw: openclawApi,
     terminal: { exec: terminalExec, run: terminalRun },
     ssh: { exec: sshExec, resolveKey: resolveKeyContent },
   }

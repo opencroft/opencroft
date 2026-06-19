@@ -7,6 +7,7 @@ import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Input } from 'ui/input'
 
+import { AgentChat, AgentChatInput, type AgentSession } from '@/app/(agent)/_components/agent-chat'
 import {
   type AcpSession,
   type LocalSource,
@@ -15,7 +16,6 @@ import {
   useAcpSession,
 } from '@/app/(agent)/_components/use-acp-session'
 import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
-import { AgentChat, AgentChatInput, type AgentSession, useAgentSession } from '@/app/(openclaw)/_components/agent-chat'
 import { cn } from '@/lib/utils'
 
 interface AgentMeta {
@@ -85,8 +85,7 @@ function ChatHost({
   forceListMenu?: boolean
   onOpenSessions?: () => void
 }) {
-  const [slashOpen, setSlashOpen] = useState(false)
-  const showChat = focused && !slashOpen
+  const showChat = focused
 
   const contentNode = useMemo(() => {
     if (!showChat || inspectorPage === 'none') {
@@ -131,7 +130,6 @@ function ChatHost({
       <AgentChatInput
         session={session}
         placeholder='Ask AI...'
-        onSlashOpenChange={setSlashOpen}
         onFocus={() => onFocusChange(true)}
         leadingBarContent={createButton}
         focusMenu={focusMenu}
@@ -234,9 +232,11 @@ function QueuedMessages({ items, onRemove }: { items: QueuedMessage[]; onRemove:
   )
 }
 
-export function OpenclawAgentHost({
+// Shown when no session is selected: the composer stays present (so the command
+// bar is usable and the session picker is reachable), but send is disabled until
+// the user picks an agent/job from the list.
+export function DashboardHost({
   sessionKey,
-  transformOutgoing,
   activeAgent,
   createButton,
   focused,
@@ -244,12 +244,33 @@ export function OpenclawAgentHost({
   listView,
   inspectorPage,
   onBack,
-  sessionTitle,
-  onRename,
   forceListMenu,
   onOpenSessions,
-}: HostProps & { sessionKey: string }) {
-  const session = useAgentSession(sessionKey, transformOutgoing)
+}: {
+  sessionKey: string
+  activeAgent?: AgentMeta
+  createButton: ReactNode
+  focused: boolean
+  onFocusChange: (focused: boolean) => void
+  listView?: ReactNode
+  inspectorPage?: 'list' | 'chat' | 'none'
+  onBack?: () => void
+  forceListMenu?: boolean
+  onOpenSessions?: () => void
+}) {
+  const session = useMemo<AgentSession>(
+    () => ({
+      sessionKey,
+      messages: [],
+      loading: false,
+      sending: false,
+      waiting: false,
+      botName: 'assistant',
+      send: () => {},
+      disabled: true,
+    }),
+    [sessionKey],
+  )
   return (
     <ChatHost
       session={session}
@@ -260,8 +281,6 @@ export function OpenclawAgentHost({
       listView={listView}
       inspectorPage={inspectorPage}
       onBack={onBack}
-      sessionTitle={sessionTitle}
-      onRename={onRename}
       forceListMenu={forceListMenu}
       onOpenSessions={onOpenSessions}
     />

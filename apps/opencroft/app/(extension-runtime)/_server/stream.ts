@@ -11,8 +11,10 @@
 // persisted into their own node data via `updateNodeData`, which both saves
 // the graph and emits `node_data_updated` for in-place client refresh.
 
+import { ensureLocalSession, promptLocal } from '@/app/(agent)/_server/acp'
 import { updateNodeData } from '@/app/(extension-runtime)/_server/node-data'
 import {
+  type AgentContext,
   buildSessionKey,
   resolveSessionOnGraph,
   type EdgeLike as SmEdgeLike,
@@ -201,12 +203,10 @@ async function persistToDownstreamSendMessages(
     }
 
     try {
-      const { gateway } = await import('@/app/(openclaw)/_server/gateway-client')
-      await gateway().call('chat.send', {
-        sessionKey: route.sessionKey,
-        message,
-        idempotencyKey: crypto.randomUUID(),
+      const { sessionId } = await ensureLocalSession({
+        data: { agentNodeId: route.ctx.agentNodeId, jobNodeId: route.ctx.jobNodeId, tabKey: route.sessionKey },
       })
+      await promptLocal({ data: { sessionId, text: message } })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`[send-message] Failed to send to session ${route.sessionKey}:`, msg)
@@ -222,7 +222,7 @@ interface SendMessageNodeData {
 interface RouteResolution {
   sessionKey: string
   message: string
-  ctx: { jobContext: string; instructions: string[] }
+  ctx: AgentContext
 }
 
 function resolveRoute(

@@ -40,9 +40,9 @@ import {
 } from 'ui/sidebar'
 
 import { DevBuildBadge } from '@/app/_components/dev-build-badge'
+import { ChatTabsProvider, useChatTabs } from '@/app/(agent)/_lib/chat-tabs-context'
 import { getAppLinks } from '@/app/(applink)/_server/actions'
 import { type DocNamespace, listDocNamespaces } from '@/app/(docs)/_server/actions'
-import { ChatTabsProvider, useChatTabs } from '@/app/(openclaw)/_lib/chat-tabs-context'
 import type { SpaceSummary } from '@/app/(space)/_server/types'
 
 interface Props {

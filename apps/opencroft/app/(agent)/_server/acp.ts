@@ -16,7 +16,6 @@ import { secrets } from '@/server/secrets'
 
 interface AgentNodeData {
   name?: string
-  backend?: 'openclaw' | 'local'
   providerId?: string
   adapterId?: string
   model?: string
@@ -116,16 +115,18 @@ async function openLocalSession(data: {
     providerId: agent.providerId ?? '',
     adapterId,
     model: agent.model ?? '',
-    apiKey: await resolveSecret(agent.apiKeySecret ?? ''),
+    // The API token / base URL fall back to the OPENCLAW_GATEWAY_* env vars when
+    // the node leaves them unset, so a deployment can supply them globally.
+    apiKey: (await resolveSecret(agent.apiKeySecret ?? '')) || process.env.OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
-    baseUrl: agent.baseUrl,
+    baseUrl: agent.baseUrl || process.env.OPENCLAW_GATEWAY_URL,
     systemPrompt: agent.systemPrompt,
     reasoningEffort: agent.reasoningEffort,
     temperature: agent.temperature,
-    // The chat tab key is already the gateway session key
-    // (agent:<agent-slug>:<job>:<unique>); forward it so the OpenClaw ACP bridge
-    // binds this session to the same Gateway session/agent the openclaw backend
-    // would use, instead of an ephemeral acp-bridge:<uuid> session.
+    // The chat tab key is already a stable session key
+    // (agent:<agent-slug>:<job>:<unique>); forward it so an ACP bridge can bind
+    // this session to a stable gateway session/agent instead of an ephemeral
+    // acp-bridge:<uuid> session.
     sessionKey: data.tabKey,
   }
   // Spawn cwd must exist or spawn fails with ENOENT.

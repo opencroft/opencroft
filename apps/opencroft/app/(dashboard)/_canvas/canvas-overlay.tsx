@@ -4,10 +4,11 @@ import { useLocation } from '@tanstack/react-router'
 import * as lucideIcons from 'lucide-react'
 import { type LucideIcon, X } from 'lucide-react'
 import type * as React from 'react'
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useMemo, useRef } from 'react'
 import { Flex } from 'ui/layout/flex'
 import { ScrollArea } from 'ui/scroll-area'
 
+import { useChatTabsMaybe } from '@/app/(agent)/_lib/chat-tabs-context'
 import { AiPanel } from '@/app/(dashboard)/_canvas/ai-panel'
 import type { CommandNodeEntry } from '@/app/(dashboard)/_canvas/canvas-command-bar'
 import { CommandBar, CommandBarMenu } from '@/app/(dashboard)/_canvas/command-bar'
@@ -16,8 +17,6 @@ import { useOverlay, useOverlayBackIntercept } from '@/app/(dashboard)/_canvas/o
 import { SearchFindBar } from '@/app/(dashboard)/_canvas/search-find-bar'
 import type { CommandModeDefinition } from '@/app/(extension-runtime)/_client/host'
 import { extensionRegistry } from '@/app/(extension-runtime)/_client/registry'
-import { useChatTabsMaybe } from '@/app/(openclaw)/_lib/chat-tabs-context'
-import { loadAiSettings } from '@/app/(settings)/_server/ai-actions'
 import { ChatArea, ChatBar, ChatContent, ChatHeader } from '@/components/experimental/chat'
 import { cn } from '@/lib/utils'
 
@@ -50,25 +49,11 @@ export function CanvasOverlay({
     setMode,
     setCommandFocused,
   } = useOverlay()
-  const [agentId, setAgentId] = useState<string | null>(null)
-  const initialized = useRef(false)
   const searchParams = new URLSearchParams(useLocation({ select: (l) => l.searchStr }))
   const chatParam = searchParams.get('chat') ?? null
   const chatTabs = useChatTabsMaybe()
 
   const extensionModes = useMemo(() => extensionRegistry.allCommandModes(), [])
-
-  useEffect(() => {
-    loadAiSettings().then((s) => {
-      setAgentId(s.defaultAgentId)
-      if (!initialized.current) {
-        initialized.current = true
-        if (!s.defaultAgentId) {
-          setMode('search')
-        }
-      }
-    })
-  }, [setMode])
 
   useEffect(() => {
     if (!chatParam) {
@@ -118,7 +103,7 @@ export function CanvasOverlay({
   // MCP Requests tab is selected, the content slot belongs to request views
   // (e.g. diffs), so the chat must not claim it. In 'focused' chat mode the chat
   // is also kept out of the inspector and rendered as the floating overlay.
-  const aiChatActive = chatTabs?.chatMode !== 'focused' && !mcpRequestsActive && mode === 'ai' && !!agentId
+  const aiChatActive = chatTabs?.chatMode !== 'focused' && !mcpRequestsActive && mode === 'ai'
 
   // Notify parent when overlay content or header is active
   const prevActive = useRef(false)
@@ -174,10 +159,9 @@ export function CanvasOverlay({
   const activeExtMode = useMemo(() => extensionModes.find((m) => m.id === mode), [extensionModes, mode])
 
   const activeMode = (() => {
-    if (mode === 'ai' && agentId) {
+    if (mode === 'ai') {
       return (
         <AiPanel
-          agentId={agentId}
           spaceName={spaceName}
           spaceSlug={spaceSlug}
           selectedNodeId={selectedNodeId}

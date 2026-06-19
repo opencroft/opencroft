@@ -23,7 +23,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useTransition,
 } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -32,158 +31,29 @@ import { TypingDots } from 'ui/chat/typing-dots'
 import { Flex } from 'ui/layout/flex'
 import { Textarea } from 'ui/textarea'
 
+import type { ChatMessage } from '@/app/(agent)/_lib/messages'
 import { getAutoApprove, setAutoApprove } from '@/app/(approvals)/_server/actions'
-import { CommandBarMenuItem } from '@/app/(dashboard)/_canvas/command-bar'
 import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
-import { messageId, normalizeHistory, type OpenclawMessage, type RawChatMessage } from '@/app/(openclaw)/_lib/messages'
-import { listCommands, loadSession, type OpenclawCommand, sendMessage } from '@/app/(openclaw)/_server/actions'
 import { cn } from '@/lib/utils'
 
 export interface AgentSession {
   sessionKey: string
-  messages: OpenclawMessage[]
+  messages: ChatMessage[]
   loading: boolean
   sending: boolean
   waiting: boolean
   botName: string
   send: (text: string) => void
-  // Turn control and message editing, provided by the ACP (local) backend only;
-  // the openclaw backend leaves these unset.
+  // Turn control and message editing, provided by the ACP (local) backend; the
+  // dashboard placeholder session leaves these unset.
   stop?: () => void
   canFork?: boolean
   // Rewind history to a user turn (0-based) and prefill its text for re-sending.
   editMessage?: (turnIndex: number, text: string) => void
   // Composer draft staged by editMessage; the input syncs to it when it changes.
   draft?: { text: string; key: number }
-}
-
-export function useAgentSession(
-  sessionKey: string,
-  transformOutgoing?: (text: string, isFirstMessage: boolean) => string,
-): AgentSession {
-  const [raw, setRaw] = useState<RawChatMessage[]>([])
-  const [loading, setLoading] = useState(true)
-  const [sending, startSending] = useTransition()
-  const [waiting, setWaiting] = useState(false)
-
-  useEffect(() => {
-    setLoading(true)
-    setWaiting(false)
-    let active = true
-    const seen = new Set<string>()
-    const isAgentRunning = (rows: RawChatMessage[]): boolean => {
-      // Check if the last assistant message has toolCalls without results
-      const toolCallIds = new Set<string>()
-      const resultIds = new Set<string>()
-      let hasAssistant = false
-      for (const row of rows) {
-        if (row.role === 'assistant' || row.role === 'tool') {
-          hasAssistant = true
-        }
-        const parts = Array.isArray(row.content) ? row.content : []
-        for (const p of parts) {
-          if (p.type === 'toolCall' && p.id) {
-            toolCallIds.add(p.id)
-          }
-        }
-        if (row.role === 'toolResult' && row.toolCallId) {
-          resultIds.add(row.toolCallId)
-        }
-      }
-      if (!hasAssistant) {
-        return false
-      }
-      for (const id of toolCallIds) {
-        if (!resultIds.has(id)) {
-          return true
-        }
-      }
-      return false
-    }
-    const refresh = async (resetWaiting = true) => {
-      let rows: RawChatMessage[]
-      try {
-        rows = await loadSession({ data: sessionKey })
-      } catch (error) {
-        if (active) {
-          console.error('loadSession failed', error)
-          setLoading(false)
-        }
-        return
-      }
-      if (!active) {
-        return
-      }
-      seen.clear()
-      for (const row of rows) {
-        const id = messageId(row)
-        if (id) {
-          seen.add(id)
-        }
-      }
-      setRaw(rows)
-      setLoading(false)
-      if (resetWaiting) {
-        // Don't reset waiting if agent is still running
-        setWaiting(isAgentRunning(rows))
-      }
-    }
-    refresh()
-    const es = new EventSource(`/api/openclaw/sessions/${encodeURIComponent(sessionKey)}/stream`)
-    es.addEventListener('message', (e) => {
-      const msg = JSON.parse(e.data) as RawChatMessage
-      const id = messageId(msg)
-      if (!id || seen.has(id)) {
-        return
-      }
-      seen.add(id)
-      setRaw((prev) => [...prev, msg])
-    })
-    es.addEventListener('tool', (e) => {
-      const payload = JSON.parse(e.data) as {
-        data?: { phase?: string; toolCallId?: string; name?: string; result?: unknown }
-        sessionKey?: string
-      }
-      if (payload.data?.phase === 'result') {
-        // Tool completed — refresh full history to pick up toolResult (don't reset waiting)
-        refresh(false)
-      }
-    })
-    es.addEventListener('changed', (e) => {
-      const data = JSON.parse(e.data)
-      // Only reset waiting when the run ends
-      refresh(data.phase === 'end')
-    })
-    return () => {
-      active = false
-      es.close()
-    }
-  }, [sessionKey])
-
-  const messages = useMemo(() => normalizeHistory(raw), [raw])
-  const botName = extractBotName(sessionKey)
-
-  const isFirstMessage = messages.length === 0
-  const send = useCallback(
-    (value: string) => {
-      const payload = transformOutgoing ? transformOutgoing(value, isFirstMessage) : value
-      setWaiting(true)
-      startSending(async () => {
-        try {
-          await sendMessage({ data: { key: sessionKey, text: payload } })
-        } catch (error) {
-          console.error('sendMessage failed', error)
-          setWaiting(false)
-        }
-      })
-    },
-    [sessionKey, transformOutgoing, isFirstMessage],
-  )
-
-  return useMemo(
-    () => ({ sessionKey, messages, loading, sending, waiting, botName, send }),
-    [sessionKey, messages, loading, sending, waiting, botName, send],
-  )
+  // When set, the composer's send is disabled (e.g. no agent selected yet).
+  disabled?: boolean
 }
 
 interface AgentChatProps {
@@ -338,7 +208,7 @@ type DetailItem =
 
 type Block = { kind: 'user'; text: string } | { kind: 'details'; items: DetailItem[] }
 
-function buildBlocks(messages: OpenclawMessage[]): Block[] {
+function buildBlocks(messages: ChatMessage[]): Block[] {
   const blocks: Block[] = []
   let details: DetailItem[] = []
   const flush = () => {
@@ -645,7 +515,9 @@ const THINKING_PHRASES = [
 ] as const
 
 export function ThinkingIndicator() {
-  const [phrase, setPhrase] = useState(() => THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)])
+  const [phrase, setPhrase] = useState<string>(
+    () => THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)],
+  )
   const prevPhrase = useRef(phrase)
   const [visible, setVisible] = useState(0)
 
@@ -704,11 +576,10 @@ interface AgentChatInputProps {
   autoFocus?: boolean
   onFocus?: () => void
   onBlur?: () => void
-  onSlashOpenChange?: (open: boolean) => void
   /** Extra content rendered at the start of the command bar (left of sparkles icon). */
   leadingBarContent?: React.ReactNode
-  /** Rendered in the command-bar menu when the input has no slash matches (e.g. a
-   * session picker shown on focus). The caller decides when it's non-null. */
+  /** Rendered in the command-bar menu (e.g. a session picker shown on focus). The
+   * caller decides when it's non-null. */
   focusMenu?: React.ReactNode
   /** When set, the Sparkles start icon becomes a button that runs this (e.g. open
    * the session picker). Must be stable — it feeds the memoized command bar. */
@@ -721,20 +592,16 @@ export function AgentChatInput({
   autoFocus,
   onFocus,
   onBlur,
-  onSlashOpenChange,
   leadingBarContent,
   focusMenu,
   onStartIconClick,
 }: AgentChatInputProps) {
   const [text, setText] = useState('')
-  const [commands, setCommands] = useState<OpenclawCommand[]>([])
-  const [highlight, setHighlight] = useState(0)
   const [autoApprove, setAutoApproveState] = useState(false)
   const [yoloMode, setYoloMode] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    listCommands().then(setCommands)
     getAutoApprove().then(setAutoApproveState)
     fetch('/api/yolo')
       .then((r) => r.json())
@@ -756,43 +623,12 @@ export function AgentChatInput({
     setAutoApproveState(next)
   }
 
-  const matches = useMemo(() => findMatches(text, commands), [text, commands])
-
-  useEffect(() => {
-    setHighlight(0)
-  }, [matches.length])
-
-  useEffect(() => {
-    onSlashOpenChange?.(matches.length > 0)
-  }, [matches.length, onSlashOpenChange])
-
   const inputPlaceholder = placeholder ?? `Message ${shortKey(session.sessionKey)}…`
-
-  const pick = (command: OpenclawCommand) => {
-    const alias = command.textAliases[0] ?? `/${command.name}`
-    if (command.acceptsArgs) {
-      setText(`${alias} `)
-      return
-    }
-    setText('')
-    session.send(alias)
-  }
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
     const value = text.trim()
-    if (!value || session.sending) {
-      return
-    }
-    if (matches.length > 0) {
-      const target = matches[highlight]
-      const alias = target.textAliases[0] ?? `/${target.name}`
-      if (value.toLowerCase() === alias.toLowerCase()) {
-        setText('')
-        session.send(value)
-        return
-      }
-      pick(target)
+    if (!value || session.sending || session.disabled) {
       return
     }
     setText('')
@@ -808,52 +644,8 @@ export function AgentChatInput({
     if (event.key === 'Escape') {
       event.preventDefault()
       setText('')
-      return
-    }
-    if (matches.length === 0) {
-      return
-    }
-    if (event.key === 'ArrowDown') {
-      event.preventDefault()
-      setHighlight((h) => Math.min(h + 1, matches.length - 1))
-      return
-    }
-    if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      setHighlight((h) => Math.max(h - 1, 0))
-      return
-    }
-    if (event.key === 'Tab') {
-      event.preventDefault()
-      const cmd = matches[highlight]
-      if (cmd) {
-        const alias = cmd.textAliases[0] ?? `/${cmd.name}`
-        setText(cmd.acceptsArgs ? `${alias} ` : alias)
-      }
     }
   }
-
-  const menuNode = useMemo(() => {
-    if (matches.length === 0) {
-      // No slash command in flight — surface the caller's focus menu (if any).
-      return focusMenu ?? null
-    }
-    return matches.map((m, i) => (
-      <CommandBarMenuItem
-        key={m.name}
-        active={i === highlight}
-        onSelect={() => pick(m)}
-        onHover={() => setHighlight(i)}
-      >
-        <div className='flex items-center gap-2 text-sm'>
-          <span className='font-mono'>{m.textAliases[0] ?? `/${m.name}`}</span>
-          <span className='ml-auto text-[10px] uppercase tracking-wide text-muted-foreground'>{m.category}</span>
-        </div>
-        {m.description && <div className='text-xs text-muted-foreground'>{m.description}</div>}
-      </CommandBarMenuItem>
-    ))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matches, highlight, focusMenu])
 
   const barNode = useMemo(
     () => (
@@ -930,7 +722,7 @@ export function AgentChatInput({
             className='h-7 w-7 shrink-0 mt-0.5'
             onMouseDown={(e) => e.preventDefault()}
             onClick={submit}
-            disabled={!text.trim() || session.sending}
+            disabled={!text.trim() || session.sending || session.disabled}
           >
             <SendIcon className='h-4 w-4' />
           </Button>
@@ -945,23 +737,16 @@ export function AgentChatInput({
       session.sending,
       session.waiting,
       session.stop,
+      session.disabled,
       inputPlaceholder,
       autoFocus,
       autoApprove,
     ],
   )
 
-  useOverlay({ menu: menuNode, bar: barNode })
+  useOverlay({ menu: focusMenu ?? null, bar: barNode })
 
   return null
-}
-
-function findMatches(text: string, commands: OpenclawCommand[]): OpenclawCommand[] {
-  const trimmed = text.trim().toLowerCase()
-  if (!trimmed.startsWith('/')) {
-    return []
-  }
-  return commands.filter((c) => c.textAliases.some((a) => a.toLowerCase().startsWith(trimmed))).slice(0, 10)
 }
 
 function stripOpencroftTags(text: string): string {
@@ -971,8 +756,4 @@ function stripOpencroftTags(text: string): string {
 function shortKey(key: string): string {
   const parts = key.split(':')
   return parts.slice(-1)[0] ?? key
-}
-
-function extractBotName(key: string): string {
-  return key.split(':')[1] ?? 'assistant'
 }

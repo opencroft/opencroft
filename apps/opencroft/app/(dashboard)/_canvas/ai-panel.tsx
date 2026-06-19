@@ -3,15 +3,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { type AgentSessionGroup, AgentSessionList } from '@/app/(agent)/_components/agent-session-list'
-import { LocalAgentHost, OpenclawAgentHost } from '@/app/(agent)/_components/chat-hosts'
+import { DashboardHost, LocalAgentHost } from '@/app/(agent)/_components/chat-hosts'
+import { useChatTabsMaybe } from '@/app/(agent)/_lib/chat-tabs-context'
 import { forgetLocalSession } from '@/app/(agent)/_server/acp'
-import { useChatTabsMaybe } from '@/app/(openclaw)/_lib/chat-tabs-context'
-import { deleteSession, loadOpenclaw, type OpenclawAgent } from '@/app/(openclaw)/_server/actions'
 import { slug } from '@/app/(server)/_server/types'
 import { type AgentJobRef, type AgentNodeRef, listAgentNodes } from '@/app/(space)/_server/agents'
 
 interface AiPanelProps {
-  agentId: string
   spaceName: string
   spaceSlug: string
   selectedNodeId: string | null
@@ -29,10 +27,12 @@ interface SessionEntry {
   // job has more than one session) and is editable via the rename control.
   title?: string
   createdAt: number
-  backend: 'openclaw' | 'local'
 }
 
 const SESSIONS_STORAGE_KEY = 'opencroft.aiPanel.sessions'
+// Sentinel key for the "no session selected" state; namespaces the chat-tabs
+// fallback so a dashboard view never collides with a real session.
+const DASHBOARD_KEY = 'agent:dashboard'
 
 function loadStoredSessions(): SessionEntry[] {
   if (typeof window === 'undefined') {
@@ -73,9 +73,8 @@ function persistSessions(list: SessionEntry[]) {
   window.localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(list))
 }
 
-export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused, onFocusChange }: AiPanelProps) {
+export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocusChange }: AiPanelProps) {
   const [agents, setAgents] = useState<AgentNodeRef[]>([])
-  const [externalAgents, setExternalAgents] = useState<OpenclawAgent[]>([])
   const [sessions, setSessions] = useState<SessionEntry[]>([])
   const [sessionPickerOpen, setSessionPickerOpen] = useState(false)
   const chatTabs = useChatTabsMaybe()
@@ -83,9 +82,9 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
   // Set fallback key for chat tabs context
   useEffect(() => {
     if (chatTabs) {
-      chatTabs.setFallbackKey(`agent:${agentId}:dashboard`)
+      chatTabs.setFallbackKey(DASHBOARD_KEY)
     }
-  }, [agentId, chatTabs])
+  }, [chatTabs])
 
   useEffect(() => {
     setSessions(loadStoredSessions())
@@ -93,7 +92,7 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
 
   // The active session is owned by the chat-tabs provider (single source of
   // truth, mirrored to the URL there). Fall back to the dashboard key = "none".
-  const activeSessionKey = chatTabs?.activeSessionKey || `agent:${agentId}:dashboard`
+  const activeSessionKey = chatTabs?.activeSessionKey || DASHBOARD_KEY
 
   const transformOutgoing = useCallback(
     (text: string, isFirstMessage: boolean) => {
@@ -126,48 +125,7 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
 
   useEffect(() => {
     listAgentNodes().then(setAgents)
-    loadOpenclaw()
-      .then((state) => {
-        if (state.status === 'ok') {
-          setExternalAgents(state.agents)
-        } else {
-          setExternalAgents([])
-        }
-      })
-      .catch(() => {
-        setExternalAgents([])
-      })
   }, [])
-
-  const externalById = useMemo(() => {
-    const map = new Map<string, OpenclawAgent>()
-    for (const ext of externalAgents) {
-      map.set(ext.agentId, ext)
-    }
-    return map
-  }, [externalAgents])
-
-  const permanentlyDeleteSession = useCallback(
-    (key: string) => {
-      chatTabs?.closeTab(key)
-      setSessions((prev) => {
-        const next = prev.filter((s) => s.key !== key)
-        persistSessions(next)
-        return next
-      })
-      setExternalAgents((prev) =>
-        prev.map((a) => ({
-          ...a,
-          sessions: a.sessions.filter((s) => s.key !== key),
-          sessionCount: Math.max(0, a.sessionCount - (a.sessions.some((s) => s.key === key) ? 1 : 0)),
-        })),
-      )
-      deleteSession({ data: key }).catch((err) => {
-        console.error('Failed to delete OpenClaw session', key, err)
-      })
-    },
-    [chatTabs],
-  )
 
   const deleteLocalSessionEntry = useCallback(
     (key: string) => {
@@ -201,7 +159,6 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
         jobName: job.name,
         title,
         createdAt: Date.now(),
-        backend: agent.backend,
       }
       setSessions((prev) => {
         const next = [...prev, entry]
@@ -265,7 +222,7 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
   //   'chat' — a session is active (the conversation)
   //   'list' — page 1, reached via the back button
   //   'none' — nothing docked; the focus hint offers the list instead
-  const fallbackKey = `agent:${agentId}:dashboard`
+  const fallbackKey = DASHBOARD_KEY
   const hasActiveSession = activeSessionKey !== fallbackKey
   const [inspectorListOpen, setInspectorListOpen] = useState(false)
   // Drop back to the focus-hint state whenever the command bar loses focus, so
@@ -283,12 +240,12 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
     () =>
       agents.map((agent) => ({
         agent,
-        sessions: agentExistingSessions(agent, externalById.get(slug(agent.name)), sessions).map((s) => ({
+        sessions: agentExistingSessions(agent, sessions).map((s) => ({
           key: s.key,
           title: s.title,
         })),
       })),
-    [agents, externalById, sessions],
+    [agents, sessions],
   )
 
   // Keep every open chat tab labelled with its session title, so the sidebar
@@ -323,19 +280,15 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
   // the element's identity tracks ONLY the data (sessionGroups) — depending on
   // the callbacks (whose identity can churn) re-set the slot every render and
   // drove an infinite setState loop.
-  const actionsRef = useRef({ openSession, createSession, deleteLocalSessionEntry, permanentlyDeleteSession })
-  actionsRef.current = { openSession, createSession, deleteLocalSessionEntry, permanentlyDeleteSession }
+  const actionsRef = useRef({ openSession, createSession, deleteLocalSessionEntry })
+  actionsRef.current = { openSession, createSession, deleteLocalSessionEntry }
 
   const listView = useMemo(
     () => (
       <AgentSessionList
         groups={sessionGroups}
         onOpenSession={(key) => actionsRef.current.openSession(key)}
-        onDeleteSession={(agent, key) =>
-          agent.backend === 'local'
-            ? actionsRef.current.deleteLocalSessionEntry(key)
-            : actionsRef.current.permanentlyDeleteSession(key)
-        }
+        onDeleteSession={(_agent, key) => actionsRef.current.deleteLocalSessionEntry(key)}
         onCreateSession={(agent, job) => actionsRef.current.createSession(agent, job)}
       />
     ),
@@ -350,7 +303,7 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
   }, [chatTabs, fallbackKey])
 
   const activeEntry = sessions.find((s) => s.key === activeSessionKey)
-  if (activeEntry?.backend === 'local') {
+  if (activeEntry) {
     return (
       <LocalAgentHost
         source={{ agentNodeId: activeEntry.agentNodeId, jobNodeId: activeEntry.jobNodeId, tabKey: activeEntry.key }}
@@ -370,9 +323,8 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
     )
   }
   return (
-    <OpenclawAgentHost
+    <DashboardHost
       sessionKey={activeSessionKey}
-      transformOutgoing={transformOutgoing}
       activeAgent={activeAgent}
       createButton={createButton}
       focused={focused}
@@ -380,8 +332,6 @@ export function AiPanel({ agentId, spaceName, spaceSlug, selectedNodeId, focused
       listView={listView}
       inspectorPage={inspectorPage}
       onBack={goToList}
-      sessionTitle={activeEntry ? (activeEntry.title ?? activeEntry.jobName) : undefined}
-      onRename={activeEntry ? handleRename : undefined}
       forceListMenu={sessionPickerOpen}
       onOpenSessions={openSessionsMenu}
     />
@@ -393,15 +343,8 @@ interface ExistingSession {
   title: string
 }
 
-function agentExistingSessions(
-  agent: AgentNodeRef,
-  externalAgent: OpenclawAgent | undefined,
-  localSessions: SessionEntry[],
-): ExistingSession[] {
-  if (agent.backend === 'local') {
-    return localSessions
-      .filter((s) => s.agentNodeId === agent.nodeId)
-      .map((s) => ({ key: s.key, title: s.title ?? s.jobName }))
-  }
-  return (externalAgent?.sessions ?? []).map((s) => ({ key: s.key, title: s.title ?? s.key.split(':').pop() ?? s.key }))
+function agentExistingSessions(agent: AgentNodeRef, localSessions: SessionEntry[]): ExistingSession[] {
+  return localSessions
+    .filter((s) => s.agentNodeId === agent.nodeId)
+    .map((s) => ({ key: s.key, title: s.title ?? s.jobName }))
 }
