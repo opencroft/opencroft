@@ -84,6 +84,8 @@ export interface ExtensionServerHost {
   terminal: {
     exec(ctx: TerminalContext, command: string): Promise<string>
     run(ctx: TerminalContext, args: string[], env?: Record<string, string>): Promise<string>
+    /** Resolve a terminal context from a node's output handle ("node-id" + "handle-id"). */
+    getContext(nodeId: string, handleId: string): Promise<TerminalContext>
   }
   ssh: {
     exec(config: ServerConfig, command: string): Promise<string>

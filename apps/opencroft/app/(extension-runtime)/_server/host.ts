@@ -169,6 +169,28 @@ const graphApi: HostGraphApi = {
   },
 }
 
+// Resolve a terminal-context value from a node's output handle by invoking the
+// owning extension's exposeOutput. Lazy imports avoid the host<->loader cycle.
+async function getTerminalContext(nodeId: string, handleId: string): Promise<TerminalContext> {
+  const node = await graphApi.getNode(nodeId)
+  if (!node?.type) {
+    throw new Error(`Node not found: ${nodeId}`)
+  }
+  const { listExtensionManifests } = await import('@/app/(extension-runtime)/_server/actions')
+  const manifests = await listExtensionManifests()
+  const manifest = manifests.find((m) => m.nodes?.some((n) => n.typeId === node.type))
+  if (!manifest) {
+    throw new Error(`No extension provides node type: ${node.type}`)
+  }
+  const { getExtensionModule } = await import('@/app/(extension-runtime)/_server/loader')
+  const mod = await getExtensionModule(manifest.id)
+  const value = mod.exposeOutput?.(handleId, node.data, node.type)
+  if (value === undefined || value === null) {
+    throw new Error(`No context value for ${nodeId}/${handleId}`)
+  }
+  return value as TerminalContext
+}
+
 function execFilePromise(cmd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(cmd, args, { windowsHide: true, maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
@@ -243,6 +265,7 @@ export interface ExtensionHost {
   terminal: {
     exec(ctx: TerminalContext, command: string): Promise<string>
     run(ctx: TerminalContext, args: string[], env?: Record<string, string>): Promise<string>
+    getContext(nodeId: string, handleId: string): Promise<TerminalContext>
   }
   ssh: {
     exec(config: ServerConfig, command: string): Promise<string>
@@ -265,7 +288,7 @@ export function createHost(extensionId: string): ExtensionHost {
     settings: { get: getSetting, set: setSetting },
     graph: graphApi,
     storage: storageApi(extensionId),
-    terminal: { exec: terminalExec, run: terminalRun },
+    terminal: { exec: terminalExec, run: terminalRun, getContext: getTerminalContext },
     ssh: { exec: sshExec, resolveKey: resolveKeyContent },
   }
 }
