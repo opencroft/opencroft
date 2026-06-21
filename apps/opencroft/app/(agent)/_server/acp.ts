@@ -170,6 +170,43 @@ export const promptLocal = createServerFn({ method: 'POST', strict: { output: fa
     }
   })
 
+// Resolve the live ACP session a Send Message node should target for a base
+// session key (`agent:<agent-slug>:<job-slug>`). The chat UI opens sessions with
+// a unique suffix (`...:<uniq>`), so a node-owned session created under the bare
+// base key is distinct from any tab the user has open. We bridge the two:
+//   1. Prefer the node's own remembered session (exact base key) once it exists,
+//      so repeated sends reuse the same session instead of spawning duplicates.
+//   2. Otherwise adopt the user's most recently created live chat for this
+//      agent+job (a suffixed variant), so the message lands in a chat they can see.
+//   3. Return null when nothing live exists yet — the caller then creates a fresh
+//      session (and remembers it via promptLocal's persisted pointer).
+export const findTargetSession = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { baseKey: string }) => data)
+  .handler(async ({ data }): Promise<{ sessionId: string } | null> => {
+    const createdById = new Map(agentClient.listSessions().map((s) => [s.id, s.createdAt]))
+    // 1. The node's own remembered session, if still live.
+    const exact = tabSessions.get(data.baseKey)
+    if (exact && createdById.has(exact.id)) {
+      return { sessionId: exact.id }
+    }
+    // 2. The most recently created live chat tab for this agent+job.
+    const prefix = `${data.baseKey}:`
+    let best: { id: string; createdAt: number } | null = null
+    for (const [tabKey, entry] of tabSessions) {
+      if (!tabKey.startsWith(prefix)) {
+        continue
+      }
+      const createdAt = createdById.get(entry.id)
+      if (createdAt === undefined) {
+        continue // stale pointer to a session that's no longer live
+      }
+      if (!best || createdAt > best.createdAt) {
+        best = { id: entry.id, createdAt }
+      }
+    }
+    return best ? { sessionId: best.id } : null
+  })
+
 export const setLocalMode = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { sessionId: string; modeId: string }) => data)
   .handler(async ({ data }): Promise<void> => {
