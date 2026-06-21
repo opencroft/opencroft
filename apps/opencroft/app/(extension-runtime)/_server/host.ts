@@ -9,7 +9,6 @@ import type { HostSecretsApi } from '@opencroft/server'
 import type { ServerConfig, TerminalContext } from '@opencroft/terminal'
 import { exec, resolveKeyContent, sshExec, terminalExec, terminalRun } from '@opencroft/terminal/server'
 
-import { gateway } from '@/app/(openclaw)/_server/gateway-client'
 import { getSetting, setSetting } from '@/app/(settings)/_server/actions'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
 import type { GraphData } from '@/app/(space)/_server/types'
@@ -170,6 +169,28 @@ const graphApi: HostGraphApi = {
   },
 }
 
+// Resolve a terminal-context value from a node's output handle by invoking the
+// owning extension's exposeOutput. Lazy imports avoid the host<->loader cycle.
+async function getTerminalContext(nodeId: string, handleId: string): Promise<TerminalContext> {
+  const node = await graphApi.getNode(nodeId)
+  if (!node?.type) {
+    throw new Error(`Node not found: ${nodeId}`)
+  }
+  const { listExtensionManifests } = await import('@/app/(extension-runtime)/_server/actions')
+  const manifests = await listExtensionManifests()
+  const manifest = manifests.find((m) => m.nodes?.some((n) => n.typeId === node.type))
+  if (!manifest) {
+    throw new Error(`No extension provides node type: ${node.type}`)
+  }
+  const { getExtensionModule } = await import('@/app/(extension-runtime)/_server/loader')
+  const mod = await getExtensionModule(manifest.id)
+  const value = mod.exposeOutput?.(handleId, node.data, node.type)
+  if (value === undefined || value === null) {
+    throw new Error(`No context value for ${nodeId}/${handleId}`)
+  }
+  return value as TerminalContext
+}
+
 function execFilePromise(cmd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(cmd, args, { windowsHide: true, maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
@@ -227,16 +248,6 @@ function storageApi(extensionId: string): ExtensionStorageApi {
   }
 }
 
-export interface OpenclawApi {
-  call<T = unknown>(method: string, params?: object): Promise<T>
-}
-
-const openclawApi: OpenclawApi = {
-  call<T = unknown>(method: string, params: object = {}): Promise<T> {
-    return gateway().call<T>(method, params)
-  },
-}
-
 export interface ExtensionHost {
   extensionId: string
   fs: typeof fsPromises
@@ -251,10 +262,10 @@ export interface ExtensionHost {
   settings: { get: typeof getSetting; set: typeof setSetting }
   graph: HostGraphApi
   storage: ExtensionStorageApi
-  openclaw: OpenclawApi
   terminal: {
     exec(ctx: TerminalContext, command: string): Promise<string>
     run(ctx: TerminalContext, args: string[], env?: Record<string, string>): Promise<string>
+    getContext(nodeId: string, handleId: string): Promise<TerminalContext>
   }
   ssh: {
     exec(config: ServerConfig, command: string): Promise<string>
@@ -277,8 +288,7 @@ export function createHost(extensionId: string): ExtensionHost {
     settings: { get: getSetting, set: setSetting },
     graph: graphApi,
     storage: storageApi(extensionId),
-    openclaw: openclawApi,
-    terminal: { exec: terminalExec, run: terminalRun },
+    terminal: { exec: terminalExec, run: terminalRun, getContext: getTerminalContext },
     ssh: { exec: sshExec, resolveKey: resolveKeyContent },
   }
 }

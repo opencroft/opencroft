@@ -99,6 +99,8 @@ export interface CommandModeProps {
   spaceName: string
   selectedNodeId: string | null
   focusTick: number
+  /** Params passed by the caller of activate(modeId, params); null when opened without any. */
+  params: unknown
   onFocusNode: (nodeId: string) => void
   onClose: () => void
   onFocusChange: (focused: boolean) => void

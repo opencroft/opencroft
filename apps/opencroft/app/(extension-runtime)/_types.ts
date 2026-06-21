@@ -19,6 +19,11 @@ export interface ExtensionHandle {
   label?: string
   /** When true, `id` is treated as a prefix matching dynamically-rendered handle ids (e.g. per-instance outputs). */
   dynamic?: boolean
+  /** For `text-stream` target handles: the node action to dispatch when an inbound
+   *  stream completes, receiving the accumulated text as `ctx.params.text`. Lets a
+   *  node consume a text-stream server-side (like the Log node) without core knowing
+   *  the node type. */
+  streamAction?: string
 }
 
 /** Resolve a runtime handle id against a node's static handle declarations, supporting prefix-matched dynamic handles. */

@@ -3,9 +3,9 @@
 import type { ChatEvent, PermissionOpt } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 
+import type { AgentSession } from '@/app/(agent)/_components/agent-chat'
+import type { ChatMessage, ChatPart } from '@/app/(agent)/_lib/messages'
 import { cancelLocal, ensureLocalSession, forkLocal, promptLocal, respondLocal } from '@/app/(agent)/_server/acp'
-import type { AgentSession } from '@/app/(openclaw)/_components/agent-chat'
-import type { OpenclawMessage, OpenclawPart } from '@/app/(openclaw)/_lib/messages'
 
 export interface LocalSource {
   agentNodeId: string
@@ -42,7 +42,7 @@ export interface AcpSession {
   removeQueued: (id: string) => void
 }
 
-type ToolPart = Extract<OpenclawPart, { type: 'tool-call' }>
+type ToolPart = Extract<ChatPart, { type: 'tool-call' }>
 
 function toolText(output: unknown): string {
   if (typeof output === 'string') {
@@ -52,7 +52,7 @@ function toolText(output: unknown): string {
 }
 
 interface Folded {
-  messages: OpenclawMessage[]
+  messages: ChatMessage[]
   permissions: PendingPermission[]
   asks: PendingAsk[]
   waiting: boolean
@@ -61,14 +61,14 @@ interface Folded {
 // Reduce the agent-client event log into the message shape AgentChat renders,
 // plus the set of still-pending approval / elicitation prompts.
 function fold(events: ChatEvent[]): Folded {
-  const messages: OpenclawMessage[] = []
+  const messages: ChatMessage[] = []
   const tools = new Map<string, ToolPart>()
   const permissions = new Map<string, PendingPermission>()
   const asks = new Map<string, PendingAsk>()
-  let assistant: OpenclawMessage | null = null
+  let assistant: ChatMessage | null = null
   let waiting = false
 
-  const ensureAssistant = (): OpenclawMessage => {
+  const ensureAssistant = (): ChatMessage => {
     if (!assistant) {
       assistant = { role: 'assistant', parts: [], timestamp: 0 }
       messages.push(assistant)
@@ -165,10 +165,14 @@ function fold(events: ChatEvent[]): Folded {
   }
 }
 
+// Title the agent self-reports at the very start of its first reply.
+const TITLE_TAG = /<opencroft-title>([\s\S]*?)<\/opencroft-title>/i
+
 export function useAcpSession(
   source: LocalSource,
   transformOutgoing?: (text: string, isFirstMessage: boolean) => string,
   botName = 'assistant',
+  onTitle?: (title: string) => void,
 ): AcpSession {
   const { agentNodeId, jobNodeId, tabKey } = source
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -191,8 +195,14 @@ export function useAcpSession(
   // Read inside callbacks/effects to avoid stale closures.
   const waitingRef = useRef(false)
   const isFirstRef = useRef(true)
+  // Armed only when we deliver a live first message (which carries the title
+  // request). This keeps auto-titling off history replay and later turns: a
+  // remounted hook starts disarmed, so reconnecting a session never re-titles.
+  const titleRequestedRef = useRef(false)
   const transformRef = useRef(transformOutgoing)
   transformRef.current = transformOutgoing
+  const onTitleRef = useRef(onTitle)
+  onTitleRef.current = onTitle
 
   // Resolve (or lazily create) the live ACP session for this tab.
   useEffect(() => {
@@ -249,6 +259,29 @@ export function useAcpSession(
 
   isFirstRef.current = folded.messages.length === 0
 
+  // Pull the self-reported title out of the first reply and apply it once. Gated
+  // on titleRequestedRef so it only fires for the live first turn — never on the
+  // replayed transcript of a reopened session or on any later message.
+  useEffect(() => {
+    if (!titleRequestedRef.current) {
+      return
+    }
+    const reply = folded.messages.find((m) => m.role === 'assistant')
+    if (!reply) {
+      return
+    }
+    const text = reply.parts.reduce((acc, part) => (part.type === 'text' ? acc + part.text : acc), '')
+    const match = text.match(TITLE_TAG)
+    if (!match) {
+      return
+    }
+    titleRequestedRef.current = false
+    const title = match[1].trim()
+    if (title) {
+      onTitleRef.current?.(title)
+    }
+  }, [folded.messages])
+
   // The single seam where a message reaches the agent (applies the outgoing
   // transform). Used for an immediate send and for draining the queue. When ACP
   // gains native mid-turn input, this is what changes — not the queue/UX.
@@ -258,7 +291,11 @@ export function useAcpSession(
         return
       }
       const transform = transformRef.current
-      const text = transform ? transform(value, isFirstRef.current) : value
+      const isFirst = isFirstRef.current
+      const text = transform ? transform(value, isFirst) : value
+      if (isFirst) {
+        titleRequestedRef.current = true
+      }
       setLocalWaiting(true)
       startSending(async () => {
         try {

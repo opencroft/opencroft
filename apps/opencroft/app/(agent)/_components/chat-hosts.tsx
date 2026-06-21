@@ -7,6 +7,7 @@ import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Input } from 'ui/input'
 
+import { AgentChat, AgentChatInput, type AgentSession } from '@/app/(agent)/_components/agent-chat'
 import {
   type AcpSession,
   type LocalSource,
@@ -15,7 +16,6 @@ import {
   useAcpSession,
 } from '@/app/(agent)/_components/use-acp-session'
 import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
-import { AgentChat, AgentChatInput, type AgentSession, useAgentSession } from '@/app/(openclaw)/_components/agent-chat'
 import { cn } from '@/lib/utils'
 
 interface AgentMeta {
@@ -43,6 +43,13 @@ interface HostProps {
   // Page-2 header: current session title + a rename control.
   sessionTitle?: string
   onRename?: (title: string) => void
+  // Apply a title the agent self-reported on the first reply (see use-acp-session).
+  onAutoTitle?: (title: string) => void
+  // Force the session list into the command-bar menu regardless of the inspector
+  // page — lets the start icon open a session picker while a chat is docked.
+  forceListMenu?: boolean
+  // Clicking the command bar's Sparkles start icon opens that session picker.
+  onOpenSessions?: () => void
 }
 
 function ChatHost({
@@ -60,6 +67,8 @@ function ChatHost({
   onBack,
   sessionTitle,
   onRename,
+  forceListMenu,
+  onOpenSessions,
 }: {
   session: AgentSession
   activeAgent?: AgentMeta
@@ -75,9 +84,10 @@ function ChatHost({
   onBack?: () => void
   sessionTitle?: string
   onRename?: (title: string) => void
+  forceListMenu?: boolean
+  onOpenSessions?: () => void
 }) {
-  const [slashOpen, setSlashOpen] = useState(false)
-  const showChat = focused && !slashOpen
+  const showChat = focused
 
   const contentNode = useMemo(() => {
     if (!showChat || inspectorPage === 'none') {
@@ -112,8 +122,9 @@ function ChatHost({
 
   // When no inspector page is open, focusing the input surfaces the same list as
   // a command-bar menu hint. Gated on `focused` (which stays set while the user
-  // interacts with the menu), so picking a session isn't lost to a blur.
-  const focusMenu = focused && inspectorPage === 'none' ? listView : undefined
+  // interacts with the menu), so picking a session isn't lost to a blur. The
+  // start icon (`forceListMenu`) opens the same list while a chat is docked.
+  const focusMenu = forceListMenu || (focused && inspectorPage === 'none') ? listView : undefined
 
   return (
     <div className='flex min-w-0 flex-col gap-1'>
@@ -121,10 +132,10 @@ function ChatHost({
       <AgentChatInput
         session={session}
         placeholder='Ask AI...'
-        onSlashOpenChange={setSlashOpen}
         onFocus={() => onFocusChange(true)}
         leadingBarContent={createButton}
         focusMenu={focusMenu}
+        onStartIconClick={onOpenSessions}
       />
     </div>
   )
@@ -223,9 +234,11 @@ function QueuedMessages({ items, onRemove }: { items: QueuedMessage[]; onRemove:
   )
 }
 
-export function OpenclawAgentHost({
+// Shown when no session is selected: the composer stays present (so the command
+// bar is usable and the session picker is reachable), but send is disabled until
+// the user picks an agent/job from the list.
+export function DashboardHost({
   sessionKey,
-  transformOutgoing,
   activeAgent,
   createButton,
   focused,
@@ -233,10 +246,33 @@ export function OpenclawAgentHost({
   listView,
   inspectorPage,
   onBack,
-  sessionTitle,
-  onRename,
-}: HostProps & { sessionKey: string }) {
-  const session = useAgentSession(sessionKey, transformOutgoing)
+  forceListMenu,
+  onOpenSessions,
+}: {
+  sessionKey: string
+  activeAgent?: AgentMeta
+  createButton: ReactNode
+  focused: boolean
+  onFocusChange: (focused: boolean) => void
+  listView?: ReactNode
+  inspectorPage?: 'list' | 'chat' | 'none'
+  onBack?: () => void
+  forceListMenu?: boolean
+  onOpenSessions?: () => void
+}) {
+  const session = useMemo<AgentSession>(
+    () => ({
+      sessionKey,
+      messages: [],
+      loading: false,
+      sending: false,
+      waiting: false,
+      botName: 'assistant',
+      send: () => {},
+      disabled: true,
+    }),
+    [sessionKey],
+  )
   return (
     <ChatHost
       session={session}
@@ -247,8 +283,8 @@ export function OpenclawAgentHost({
       listView={listView}
       inspectorPage={inspectorPage}
       onBack={onBack}
-      sessionTitle={sessionTitle}
-      onRename={onRename}
+      forceListMenu={forceListMenu}
+      onOpenSessions={onOpenSessions}
     />
   )
 }
@@ -265,8 +301,11 @@ export function LocalAgentHost({
   onBack,
   sessionTitle,
   onRename,
+  onAutoTitle,
+  forceListMenu,
+  onOpenSessions,
 }: HostProps & { source: LocalSource }) {
-  const acp = useAcpSession(source, transformOutgoing, activeAgent?.name)
+  const acp = useAcpSession(source, transformOutgoing, activeAgent?.name, onAutoTitle)
   // Stable element identity so ChatHost's memoized content (and the published
   // overlay slot) don't re-fire every render — that would be an infinite update loop.
   const approvals = useMemo(() => <Approvals acp={acp} />, [acp])
@@ -286,6 +325,8 @@ export function LocalAgentHost({
       onBack={onBack}
       sessionTitle={sessionTitle}
       onRename={onRename}
+      forceListMenu={forceListMenu}
+      onOpenSessions={onOpenSessions}
     />
   )
 }

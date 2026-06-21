@@ -37,6 +37,23 @@ export interface ClientInfo {
   version: string
 }
 
+// What the host decides to do with an ACP permission request:
+//  - 'allow':  resolve it as approved without prompting the user.
+//  - 'deny':   resolve it as rejected without prompting the user.
+//  - 'prompt': surface it to the chat UI for the user to decide (the default).
+export type PermissionOutcome = 'allow' | 'deny' | 'prompt'
+
+export interface PermissionContext {
+  sessionId: string
+  // The ACP tool-call title (best-effort tool name).
+  toolName: string
+  // The ACP tool-call kind (e.g. 'read' | 'edit' | 'execute'), when the agent
+  // provides one — lets the host auto-approve read-only kinds, etc.
+  toolKind?: string
+}
+
+export type PermissionHandler = (context: PermissionContext) => PermissionOutcome | Promise<PermissionOutcome>
+
 export interface AgentClientOptions {
   mcpServerName?: string
   tools?: LocalTool[]
@@ -54,6 +71,11 @@ export interface AgentClientOptions {
   maxSteps?: number
   // Identifies this client to ACP agents during initialize().
   clientInfo?: ClientInfo
+  // Host policy applied to every ACP permission request before it reaches the
+  // user, on top of the per-session role permissions. Lets the host auto-approve
+  // (e.g. an auto-approve toggle) or bypass approvals entirely (e.g. a YOLO
+  // mode). Defaults to prompting the user.
+  permissionHandler?: PermissionHandler
 }
 
 type Subscriber = (event: ChatEvent) => void
@@ -343,26 +365,48 @@ function isAlwaysAllowed(perms: ResolvedPermissions | undefined, title: string):
   )
 }
 
-// Pick the option that grants the call (kind starts with "allow"), falling back
-// to a conventional id when the agent labels them differently.
+// Pick the option that grants the call for THIS turn only. Prefer an
+// "allow_once" kind: a programmatic approval must never select "allow_always",
+// which would write a persistent "don't ask again" rule into the agent's own
+// state and keep tools approved after the approval mode is turned back off.
+// Fall back to any allow-kind option, then a conventional id.
 function pickAllowOption(request: RequestPermissionRequest): string {
+  const once = request.options.find((option) => option.kind === 'allow_once')
+  if (once) {
+    return once.optionId
+  }
   return request.options.find((option) => option.kind.startsWith('allow'))?.optionId ?? 'allow'
 }
 
 // Resolve the session an elicitation belongs to, scoped to the connection it
-// arrived on, with the global last-prompted session as a fallback.
-function buildClient(getElicitationSession: () => string | null): Client {
+// arrived on, with the global last-prompted session as a fallback. The optional
+// permissionHandler lets the host auto-approve / bypass requests before they
+// surface to the user.
+function buildClient(getElicitationSession: () => string | null, permissionHandler?: PermissionHandler): Client {
   return {
     sessionUpdate: async (notification: SessionNotification) => {
       handleUpdate(notification)
     },
-    requestPermission: (request: RequestPermissionRequest) =>
-      new Promise<RequestPermissionResponse>((resolve) => {
-        const perms = store.sessions.get(request.sessionId)?.permissions
-        if (isAlwaysAllowed(perms, request.toolCall.title ?? '')) {
-          resolve({ outcome: { outcome: 'selected', optionId: pickAllowOption(request) } })
-          return
-        }
+    requestPermission: async (request: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
+      const perms = store.sessions.get(request.sessionId)?.permissions
+      const title = request.toolCall.title ?? ''
+      if (isAlwaysAllowed(perms, title)) {
+        return { outcome: { outcome: 'selected', optionId: pickAllowOption(request) } }
+      }
+      const outcome = permissionHandler
+        ? await permissionHandler({
+            sessionId: request.sessionId,
+            toolName: title,
+            toolKind: request.toolCall.kind ?? undefined,
+          })
+        : 'prompt'
+      if (outcome === 'allow') {
+        return { outcome: { outcome: 'selected', optionId: pickAllowOption(request) } }
+      }
+      if (outcome === 'deny') {
+        return { outcome: { outcome: 'cancelled' } }
+      }
+      return new Promise<RequestPermissionResponse>((resolve) => {
         const requestId = randomUUID()
         store.pendingPermissions.set(requestId, {
           sessionId: request.sessionId,
@@ -371,14 +415,15 @@ function buildClient(getElicitationSession: () => string | null): Client {
         emit(request.sessionId, {
           kind: 'permission_request',
           requestId,
-          title: request.toolCall.title ?? 'tool call',
+          title: title || 'tool call',
           options: request.options.map((option) => ({
             id: option.optionId,
             label: option.name,
             kind: option.kind,
           })),
         })
-      }),
+      })
+    },
     unstable_createElicitation: (request: CreateElicitationRequest) =>
       new Promise<CreateElicitationResponse>((resolve) => {
         const sessionId = getElicitationSession() ?? store.lastSessionId
@@ -451,6 +496,20 @@ function isNativeSelection(selection: AgentSelection): boolean {
   return findAdapter(selection.adapterId)?.kind === 'native'
 }
 
+// Whether this agent accepts per-session MCP servers (tool support). Adapters
+// opt out via `supportsTools: false` (e.g. OpenClaw's bridge rejects them), in
+// which case the client sends an empty server list.
+function supportsTools(selection: AgentSelection): boolean {
+  return findAdapter(selection.adapterId)?.supportsTools !== false
+}
+
+// Forward the host's external session key to bridges that route by their own
+// session key (e.g. OpenClaw's ACP bridge → Gateway). ACP agents that don't
+// recognize `_meta.sessionKey` ignore it, so this stays harness-agnostic.
+function sessionMeta(selection: AgentSelection): { sessionKey: string } | undefined {
+  return selection.sessionKey ? { sessionKey: selection.sessionKey } : undefined
+}
+
 export function createAgentClient(options: AgentClientOptions = {}) {
   const mcpServerName = options.mcpServerName ?? 'local'
   const clientInfo = options.clientInfo ?? { name: 'agent-client', version: '0.1.0' }
@@ -516,7 +575,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // session last prompted through this engine.
   function ensureNativeConnection(selection: AgentSelection): AgentConnection {
     return createNativeHarness(
-      buildClient(() => store.lastSessionId),
+      buildClient(() => store.lastSessionId, options.permissionHandler),
       selection,
       nativeConfig,
       store.nativeSessions,
@@ -569,7 +628,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // to this connection. The factory only runs lazily (on the first message),
     // by which point `entry` is assigned — so the forward reference is safe.
     let entry: ConnEntry
-    const connection = new ClientSideConnection(() => buildClient(() => entry.lastSessionId), stream)
+    const connection = new ClientSideConnection(
+      () => buildClient(() => entry.lastSessionId, options.permissionHandler),
+      stream,
+    )
     entry = { process: child, connection, lastSessionId: null, loadSession: false, initialized: Promise.resolve() }
     store.connections.set(key, entry)
     entry.initialized = (async () => {
@@ -620,6 +682,19 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return [...store.sessions.values()].map((session) => session.meta).sort((a, b) => a.createdAt - b.createdAt)
     },
 
+    // Session keys (selection.sessionKey) of every session currently blocked on
+    // an unresolved permission request — lets a host badge those sessions.
+    pendingPermissionSessionKeys(): string[] {
+      const keys = new Set<string>()
+      for (const { sessionId } of store.pendingPermissions.values()) {
+        const key = store.sessions.get(sessionId)?.selection.sessionKey
+        if (key) {
+          keys.add(key)
+        }
+      }
+      return [...keys]
+    },
+
     // The host's statically registered LocalTools (for role-permission editors).
     // Per-session MCP and skill tools are dynamic and not listed here.
     listTools(): { name: string; description: string }[] {
@@ -638,7 +713,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // internal entry only.
       let token: string | null = null
       let mcpServers: AcpMcpServer[] = []
-      if (!native) {
+      if (!native && supportsTools(selection)) {
         const { internal, servers } = await buildMcpServers()
         token = randomUUID()
         store.acpTokenPermissions.set(token, permissions)
@@ -647,6 +722,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       const response = await connection.newSession({
         cwd: selection.cwd,
         mcpServers,
+        _meta: sessionMeta(selection),
       })
       const sessionId = response.sessionId
       if (token) {
@@ -733,11 +809,15 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         return null
       }
       // Mint a per-session MCP token before the replay, mirroring createSession.
-      const { internal, servers } = await buildMcpServers()
-      const token = randomUUID()
-      store.acpTokenPermissions.set(token, permissions)
-      store.acpTokenSession.set(token, sessionId)
-      const mcpServers = tagInternal(internal, servers, token)
+      let token: string | null = null
+      let mcpServers: AcpMcpServer[] = []
+      if (supportsTools(selection)) {
+        const { internal, servers } = await buildMcpServers()
+        token = randomUUID()
+        store.acpTokenPermissions.set(token, permissions)
+        store.acpTokenSession.set(token, sessionId)
+        mcpServers = tagInternal(internal, servers, token)
+      }
       store.titleCounter += 1
       const meta: SessionMeta = {
         id: sessionId,
@@ -757,13 +837,15 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         permissions,
       })
       try {
-        await connection.loadSession({ sessionId, cwd: selection.cwd, mcpServers })
+        await connection.loadSession({ sessionId, cwd: selection.cwd, mcpServers, _meta: sessionMeta(selection) })
       } catch (error) {
         // Transcript gone or agent refused — unwind the half-registered session
         // so the caller can cleanly create a fresh one.
         store.sessions.delete(sessionId)
-        store.acpTokenSession.delete(token)
-        store.acpTokenPermissions.delete(token)
+        if (token) {
+          store.acpTokenSession.delete(token)
+          store.acpTokenPermissions.delete(token)
+        }
         throw error
       }
       // The replay streams history but no turn boundary, so the client would stay
@@ -779,7 +861,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       }
       const connection = await ensureConnection(session.selection)
       let mcpServers: AcpMcpServer[] = []
-      if (!isNativeSelection(session.selection)) {
+      if (!isNativeSelection(session.selection) && supportsTools(session.selection)) {
         // Retire the prior token for this session before minting a new one so
         // repeated resumes (e.g. on every MCP-config refresh) don't leak tokens.
         // permissionsFor resolves via the session record, which is already set.

@@ -13,6 +13,10 @@ export interface HarnessAdapter {
   // 'acp' (default): spawn an external ACP agent subprocess. 'native': run the
   // in-process harness (Vercel AI SDK) with native tools — no subprocess, no MCP.
   kind?: 'acp' | 'native'
+  // Whether the agent accepts per-session MCP servers (the source of tool
+  // support). Defaults to true. Set false for agents whose ACP bridge rejects
+  // per-session MCP servers (e.g. OpenClaw), so the client sends an empty list.
+  supportsTools?: boolean
 }
 
 export const HARNESS_ADAPTERS: HarnessAdapter[] = [
@@ -119,6 +123,9 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     command: 'npx',
     args: ['-y', 'openclaw@latest', 'acp'],
     protocol: 'native',
+    // The OpenClaw ACP bridge rejects per-session MCP servers; configure MCP on
+    // the gateway/agent instead, so the client sends an empty server list.
+    supportsTools: false,
     note: 'Bridges to an OpenClaw Gateway; configure the gateway and token on the host.',
   },
 ]

@@ -3,18 +3,10 @@ import path from 'node:path'
 
 import { createServerFn } from '@tanstack/react-start'
 
-import {
-  type Anchor,
-  appendComment,
-  type Comment,
-  createComment,
-  findThreadRoot,
-  readComments,
-} from '@/app/(docs)/_server/comments'
+import { type Anchor, appendComment, type Comment, createComment, readComments } from '@/app/(docs)/_server/comments'
 import { getDocsRoot } from '@/app/(docs)/_server/docs-root'
 import { type DocSearchResult, searchDocsAtRoot } from '@/app/(docs)/_server/search'
 import { getExtensionModule } from '@/app/(extension-runtime)/_server/loader'
-import { gateway } from '@/app/(openclaw)/_server/gateway-client'
 import { toastStore } from '@/lib/toast-store'
 
 async function docsRoot(namespace: string): Promise<string> {
@@ -237,51 +229,6 @@ export const gitDiscardFile = createServerFn({ method: 'POST' })
 
 // ── Comments ─────────────────────────────────────────────────────────────
 
-function extractMentions(message: string): string[] {
-  const matches = message.matchAll(/@([a-zA-Z0-9][a-zA-Z0-9_-]*)/g)
-  const names = new Set<string>()
-  for (const m of matches) {
-    names.add(m[1])
-  }
-  return [...names]
-}
-
-function formatAgentPrompt(docPath: string, comment: Comment, isReply: boolean, threadRootId?: string): string {
-  const kind = isReply ? 'reply' : 'comment'
-  const lines = [`A user ${kind} was posted on doc "${docPath}" (commentId: ${comment.id}):`]
-  if (comment.anchor?.quote) {
-    lines.push('', 'Anchored to the following passage in the doc:', `> ${comment.anchor.quote.replace(/\n/g, '\n> ')}`)
-  }
-  lines.push('', comment.message, '')
-  const replyId = threadRootId ?? comment.id
-  lines.push(
-    `Use the \`doc_reply\` MCP tool with docPath="${docPath}" and commentId="${replyId}" to respond in this thread.`,
-  )
-  return lines.join('\n')
-}
-
-async function dispatchMentions(docPath: string, comment: Comment, threadRootId: string): Promise<void> {
-  const agents = extractMentions(comment.message)
-  if (agents.length === 0) {
-    return
-  }
-  const isReply = threadRootId !== comment.id
-  const prompt = formatAgentPrompt(docPath, comment, isReply, threadRootId)
-  await Promise.all(
-    agents.map(async (name) => {
-      try {
-        await gateway().call('chat.send', {
-          sessionKey: `agent:${name}:main`,
-          message: prompt,
-          idempotencyKey: crypto.randomUUID(),
-        })
-      } catch (e) {
-        console.error(`Failed to dispatch to agent:${name}`, e)
-      }
-    }),
-  )
-}
-
 export const listDocComments = createServerFn()
   .inputValidator((data: { namespace: string; filePath: string }) => data)
   .handler(async ({ data }): Promise<Comment[]> => {
@@ -300,14 +247,5 @@ export const postDocComment = createServerFn({ method: 'POST' })
     const comment = createComment('user', trimmed, data.parentId ? undefined : data.anchor)
     await appendComment(data.namespace, data.filePath, comment, data.parentId)
     toastStore.broadcast({ type: 'doc_comments_updated', docPath: data.filePath })
-    let threadRootId = comment.id
-    if (data.parentId) {
-      const all = await readComments(data.namespace, data.filePath)
-      const root = findThreadRoot(all, data.parentId)
-      if (root) {
-        threadRootId = root.id
-      }
-    }
-    await dispatchMentions(data.filePath, comment, threadRootId)
     return comment
   })

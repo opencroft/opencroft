@@ -9,18 +9,32 @@ export interface ChatTab {
   key: string
   label: string
   agentName?: string
+  title?: string
   agentAvatar?: string | null
 }
+
+// Docked = chat lives in the node inspector panel; focused = chat opens as the
+// floating canvas overlay.
+export type ChatMode = 'docked' | 'focused'
 
 interface TabMeta {
   label?: string
   agentName?: string
+  title?: string
   agentAvatar?: string | null
 }
 
 // ── Storage ────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = 'opencroft.aiPanel.openTabs'
+const MODE_STORAGE_KEY = 'opencroft.aiPanel.chatMode'
+
+function loadStoredMode(): ChatMode {
+  if (typeof window === 'undefined') {
+    return 'docked'
+  }
+  return window.localStorage.getItem(MODE_STORAGE_KEY) === 'focused' ? 'focused' : 'docked'
+}
 
 function loadStoredTabs(): ChatTab[] {
   if (typeof window === 'undefined') {
@@ -50,6 +64,7 @@ function makeTab(key: string, meta?: TabMeta): ChatTab {
     key,
     label: meta?.label || key.split(':').pop() || key,
     agentName: meta?.agentName,
+    title: meta?.title,
     agentAvatar: meta?.agentAvatar,
   }
 }
@@ -66,6 +81,12 @@ interface ChatTabsContextValue {
   updateTabMeta: (key: string, meta: TabMeta) => void
   fallbackKey: string
   setFallbackKey: (key: string) => void
+  chatMode: ChatMode
+  toggleChatMode: () => void
+  // Bumped to ask the canvas to open the chat list (docked or overlay, per mode).
+  // Lets the sidebar — which lives above the overlay provider — trigger it.
+  listRequest: number
+  openChatList: () => void
 }
 
 const ChatTabsContext = createContext<ChatTabsContextValue | null>(null)
@@ -92,6 +113,8 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
     typeof window === 'undefined' ? '' : (new URLSearchParams(window.location.search).get('chat') ?? ''),
   )
   const [fallbackKey, setFallbackKey] = useState('')
+  const [chatMode, setChatMode] = useState<ChatMode>('docked')
+  const [listRequest, setListRequest] = useState(0)
   const initialized = useRef(false)
   const router = useRouter()
   const pathname = useLocation({ select: (l) => l.pathname })
@@ -106,6 +129,17 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
     }
     initialized.current = true
     setTabs(loadStoredTabs())
+    setChatMode(loadStoredMode())
+  }, [])
+
+  const toggleChatMode = useCallback(() => {
+    setChatMode((prev) => {
+      const next = prev === 'focused' ? 'docked' : 'focused'
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(MODE_STORAGE_KEY, next)
+      }
+      return next
+    })
   }, [])
 
   // Mirror the active session into the URL (?chat=) — one source of truth, the
@@ -176,6 +210,13 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
     setActiveSessionKey(key)
   }, [])
 
+  const openChatList = useCallback(() => {
+    // Drop the active session at the source so the canvas lands on the list (not
+    // a conversation), then signal the canvas to surface it.
+    setActiveSessionKey(fallbackKey)
+    setListRequest((n) => n + 1)
+  }, [fallbackKey])
+
   const updateTabMeta = useCallback((key: string, meta: TabMeta) => {
     setTabs((prev) => {
       const idx = prev.findIndex((t) => t.key === key)
@@ -186,6 +227,7 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
       const unchanged =
         merged.label === prev[idx].label &&
         merged.agentName === prev[idx].agentName &&
+        merged.title === prev[idx].title &&
         merged.agentAvatar === prev[idx].agentAvatar
       if (unchanged) {
         return prev
@@ -208,8 +250,25 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
       updateTabMeta,
       fallbackKey,
       setFallbackKey,
+      chatMode,
+      toggleChatMode,
+      listRequest,
+      openChatList,
     }),
-    [tabs, activeSessionKey, selectSession, closeTab, setActiveKey, openTab, updateTabMeta, fallbackKey],
+    [
+      tabs,
+      activeSessionKey,
+      selectSession,
+      closeTab,
+      setActiveKey,
+      openTab,
+      updateTabMeta,
+      fallbackKey,
+      chatMode,
+      toggleChatMode,
+      listRequest,
+      openChatList,
+    ],
   )
 
   return <ChatTabsContext.Provider value={value}>{children}</ChatTabsContext.Provider>

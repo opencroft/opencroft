@@ -15,6 +15,7 @@ export interface AgentContext {
   agentName: string
   agentNodeId: string
   jobName: string
+  jobNodeId: string
   jobContext: string
   instructions: string[]
 }
@@ -114,6 +115,7 @@ export function resolveSessionOnGraph(sessionKey: string, nodes: NodeLike[], edg
     agentName: nodeName(agentNode),
     agentNodeId: agentNode.id,
     jobName: nodeName(jobNode),
+    jobNodeId: jobNode.id,
     jobContext: ((jobNode.data?.['context'] as string) || '').trim(),
     instructions,
   }

@@ -11,11 +11,12 @@ import {
   Globe,
   MessageSquare,
   Network,
+  PanelRightOpen,
   Puzzle,
   SettingsIcon,
-  X,
 } from 'lucide-react'
 import { Suspense, useEffect, useState } from 'react'
+import { Button } from 'ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/collapsible'
 import { TitlebarProvider } from 'ui/layout/titlebar'
 import {
@@ -38,9 +39,11 @@ import {
 } from 'ui/sidebar'
 
 import { DevBuildBadge } from '@/app/_components/dev-build-badge'
+import { ChatTabItem } from '@/app/_shell/chat-tab-item'
+import { ChatTabsProvider, useChatTabs } from '@/app/(agent)/_lib/chat-tabs-context'
+import { listPendingPermissions } from '@/app/(agent)/_server/acp'
 import { getAppLinks } from '@/app/(applink)/_server/actions'
 import { type DocNamespace, listDocNamespaces } from '@/app/(docs)/_server/actions'
-import { ChatTabsProvider, useChatTabs } from '@/app/(openclaw)/_lib/chat-tabs-context'
 import type { SpaceSummary } from '@/app/(space)/_server/types'
 
 interface Props {
@@ -56,6 +59,49 @@ interface SidebarProps {
   pinnedDashboardSlugs: string[]
 }
 
+// Poll for chat sessions blocked on a permission request, so their sidebar
+// avatars can show a pending dot. Gated off when no chats are open.
+function usePendingPermissionKeys(enabled: boolean): Set<string> {
+  const [keys, setKeys] = useState<Set<string>>(() => new Set())
+  useEffect(() => {
+    if (!enabled) {
+      setKeys(new Set())
+      return
+    }
+    let cancelled = false
+    const poll = () => {
+      listPendingPermissions().then((list) => {
+        if (!cancelled) {
+          setKeys(new Set(list))
+        }
+      })
+    }
+    poll()
+    const id = window.setInterval(poll, 2500)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [enabled])
+  return keys
+}
+
+function ChatModeToggle() {
+  const chatTabs = useChatTabs()
+  const focused = chatTabs.chatMode === 'focused'
+  return (
+    <Button
+      variant='ghost'
+      size='icon'
+      className='size-7 group-data-[collapsible=icon]:hidden'
+      onClick={chatTabs.toggleChatMode}
+      title={focused ? 'Chat mode: focused (overlay)' : 'Chat mode: docked'}
+    >
+      <PanelRightOpen className={focused ? 'text-primary' : 'text-muted-foreground'} />
+    </Button>
+  )
+}
+
 function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarProps) {
   const pathname = useLocation({ select: (l) => l.pathname })
   const search = useSearch({ strict: false }) as { namespace?: string }
@@ -66,6 +112,7 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
   const chatTabs = useChatTabs()
   const pinnedDashboards = dashboards.filter((d) => pinnedDashboardSlugs.includes(d.slug))
   const [mounted, setMounted] = useState(false)
+  const pendingKeys = usePendingPermissionKeys(inSpace && mounted && chatTabs.tabs.length > 0)
 
   useEffect(() => {
     setMounted(true)
@@ -84,7 +131,10 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
   return (
     <Sidebar collapsible='icon'>
       <SidebarHeader>
-        <SidebarTrigger />
+        <div className='flex items-center justify-between'>
+          <SidebarTrigger />
+          <ChatModeToggle />
+        </div>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
@@ -129,7 +179,7 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
             <SidebarMenu>
               <Collapsible defaultOpen className='group/collapsible'>
                 <SidebarMenuItem>
-                  <SidebarMenuButton tooltip='Chats'>
+                  <SidebarMenuButton tooltip='Chats' onClick={chatTabs.openChatList}>
                     <MessageSquare />
                     <span>Chats</span>
                   </SidebarMenuButton>
@@ -142,47 +192,14 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
                     <SidebarMenuSub>
                       {mounted &&
                         chatTabs.tabs.map((tab) => (
-                          <SidebarMenuSubItem key={tab.key}>
-                            <SidebarMenuSubButton
-                              asChild
-                              isActive={chatTabs.activeSessionKey === tab.key}
-                              onClick={(e) => {
-                                e.preventDefault()
-                                chatTabs.selectSession(tab.key)
-                              }}
-                            >
-                              <button className='flex items-center gap-2 w-full min-w-0'>
-                                {tab.agentAvatar ? (
-                                  <img
-                                    src={tab.agentAvatar}
-                                    alt=''
-                                    className='size-4 shrink-0 rounded-full object-cover'
-                                  />
-                                ) : (
-                                  <MessageSquare className='size-4 shrink-0' />
-                                )}
-                                <span className='truncate'>{tab.label}</span>
-                                <span
-                                  role='button'
-                                  tabIndex={0}
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    chatTabs.closeTab(tab.key)
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter' || e.key === ' ') {
-                                      e.stopPropagation()
-                                      chatTabs.closeTab(tab.key)
-                                    }
-                                  }}
-                                  className='ml-auto size-4 inline-flex items-center justify-center rounded-sm hover:bg-muted hover:text-destructive shrink-0'
-                                  aria-label='Close tab'
-                                >
-                                  <X className='size-3' />
-                                </span>
-                              </button>
-                            </SidebarMenuSubButton>
-                          </SidebarMenuSubItem>
+                          <ChatTabItem
+                            key={tab.key}
+                            tab={tab}
+                            isActive={chatTabs.activeSessionKey === tab.key}
+                            pending={pendingKeys.has(tab.key)}
+                            onSelect={chatTabs.selectSession}
+                            onClose={chatTabs.closeTab}
+                          />
                         ))}
                     </SidebarMenuSub>
                   </CollapsibleContent>
@@ -276,7 +293,7 @@ export function AppShell({ pinnedSpaces, dashboards, pinnedDashboardSlugs, child
   return (
     <TitlebarProvider>
       <ChatTabsProvider>
-        <SidebarProvider>
+        <SidebarProvider style={{ '--sidebar-width': '24rem' } as React.CSSProperties}>
           <Suspense fallback={null}>
             <AppSidebar
               pinnedSpaces={pinnedSpaces}

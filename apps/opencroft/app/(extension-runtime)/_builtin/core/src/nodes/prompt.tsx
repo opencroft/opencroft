@@ -1,4 +1,14 @@
-import { broadcast, getStream, icons, NodeFrame, OutputHandle, React, type Stream, type TextChunk } from '@ext/host'
+import {
+  dispatch,
+  getStream,
+  icons,
+  NodeFrame,
+  OutputHandle,
+  React,
+  type Stream,
+  type TextChunk,
+  toast,
+} from '@ext/host'
 import { Button, Textarea } from '@ext/ui'
 
 const { useCallback, useState } = React
@@ -10,13 +20,17 @@ export interface PromptData {
 export function PromptNode({ id, data, selected }: { id: string; data: PromptData; selected?: boolean }) {
   const [input, setInput] = useState(data.text ?? '')
 
-  const send = useCallback(() => {
+  const send = useCallback(async () => {
     const text = input.trim()
     if (!text) {
       return
     }
-    const stream = getStream<TextChunk>(id, 'text-out')
-    broadcast(stream, { text, final: true })
+    try {
+      await dispatch(id, 'send', { text })
+      setInput('')
+    } catch (err) {
+      toast.error(`Send failed: ${String(err)}`)
+    }
   }, [id, input])
 
   return (

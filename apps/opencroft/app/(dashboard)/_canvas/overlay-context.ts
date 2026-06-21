@@ -37,10 +37,12 @@ export interface OverlaySlotNodes {
 
 export interface OverlayManager {
   mode: CommandMode
+  /** Params passed to the active mode's component (set by activate). */
+  params: unknown
   focusTick: number
   commandFocused: boolean
   slots: OverlaySlots
-  activate: (mode: CommandMode) => void
+  activate: (mode: CommandMode, params?: unknown) => void
   dismiss: () => void
   setMode: (mode: CommandMode) => void
   setCommandFocused: (focused: boolean) => void
@@ -78,11 +80,13 @@ function useOverlayState(): OverlaySlots {
 export function OverlayProvider({ children }: { children: ReactNode }) {
   const slots = useOverlayState()
   const [mode, setMode] = useState<CommandMode>('ai')
+  const [params, setParams] = useState<unknown>(null)
   const [focusTick, setFocusTick] = useState(0)
   const [commandFocused, setCommandFocused] = useState(false)
 
-  const activate = useCallback((next: CommandMode) => {
+  const activate = useCallback((next: CommandMode, nextParams?: unknown) => {
     setMode(next)
+    setParams(nextParams ?? null)
     setCommandFocused(true)
     setFocusTick((t) => t + 1)
   }, [])
@@ -104,6 +108,7 @@ export function OverlayProvider({ children }: { children: ReactNode }) {
 
   const manager: OverlayManager = {
     mode,
+    params,
     focusTick,
     commandFocused,
     slots,
@@ -162,7 +167,7 @@ export function useBackIntercept(active: boolean, onClose: () => void) {
     }
 
     if (active && !pushedRef.current) {
-      history.pushState(null, '')
+      history.pushState({ overlayBackTrap: true }, '')
       pushedRef.current = true
     }
 
@@ -184,8 +189,13 @@ export function useBackIntercept(active: boolean, onClose: () => void) {
     nav.addEventListener('navigate', onNavigate)
     return () => {
       nav.removeEventListener('navigate', onNavigate)
-      if (pushedRef.current) {
-        pushedRef.current = false
+      // Only unwind the trap entry while it's still the current entry. A forward
+      // navigation (clicking a link) buries it in the back-stack and replaces
+      // the current entry's state, so calling history.back() here would revert
+      // that navigation instead of removing the trap.
+      const onTrap = pushedRef.current && history.state?.overlayBackTrap === true
+      pushedRef.current = false
+      if (onTrap) {
         history.back()
       }
     }

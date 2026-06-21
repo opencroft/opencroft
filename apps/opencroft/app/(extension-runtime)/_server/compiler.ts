@@ -167,6 +167,7 @@ export const flushSync = (fn) => fn();
 const api = globalThis.__extHost;
 if (!api) { throw new Error('Extension API not installed'); }
 const ui = api.ui;
+export const AgentAvatar = ui.AgentAvatar;
 export const Badge = ui.Badge;
 export const Button = ui.Button;
 export const Input = ui.Input;
@@ -316,7 +317,6 @@ export const keyStore = host.keyStore;
 export const secretsStore = host.secretsStore;
 export const localhost = host.localhost;
 export const wsl = host.wsl;
-export const openclaw = host.openclaw;
 export const terminal = host.terminal;
 export const ssh = host.ssh;
 export const extensionId = host.extensionId;
