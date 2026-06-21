@@ -37,10 +37,12 @@ export interface OverlaySlotNodes {
 
 export interface OverlayManager {
   mode: CommandMode
+  /** Params passed to the active mode's component (set by activate). */
+  params: unknown
   focusTick: number
   commandFocused: boolean
   slots: OverlaySlots
-  activate: (mode: CommandMode) => void
+  activate: (mode: CommandMode, params?: unknown) => void
   dismiss: () => void
   setMode: (mode: CommandMode) => void
   setCommandFocused: (focused: boolean) => void
@@ -78,11 +80,13 @@ function useOverlayState(): OverlaySlots {
 export function OverlayProvider({ children }: { children: ReactNode }) {
   const slots = useOverlayState()
   const [mode, setMode] = useState<CommandMode>('ai')
+  const [params, setParams] = useState<unknown>(null)
   const [focusTick, setFocusTick] = useState(0)
   const [commandFocused, setCommandFocused] = useState(false)
 
-  const activate = useCallback((next: CommandMode) => {
+  const activate = useCallback((next: CommandMode, nextParams?: unknown) => {
     setMode(next)
+    setParams(nextParams ?? null)
     setCommandFocused(true)
     setFocusTick((t) => t + 1)
   }, [])
@@ -104,6 +108,7 @@ export function OverlayProvider({ children }: { children: ReactNode }) {
 
   const manager: OverlayManager = {
     mode,
+    params,
     focusTick,
     commandFocused,
     slots,

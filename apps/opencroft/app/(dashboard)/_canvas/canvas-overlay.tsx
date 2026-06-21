@@ -41,6 +41,7 @@ export function CanvasOverlay({
 }: CanvasOverlayProps) {
   const {
     mode,
+    params: modeParams,
     focusTick,
     commandFocused,
     slots,
@@ -200,6 +201,7 @@ export function CanvasOverlay({
           spaceName={spaceName}
           selectedNodeId={selectedNodeId}
           focusTick={focusTick}
+          params={modeParams}
           onFocusNode={onFocusNode}
           onClose={resetToAI}
           onFocusChange={setCommandFocused}

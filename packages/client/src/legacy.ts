@@ -78,6 +78,8 @@ export interface CommandModeProps {
   spaceName: string
   selectedNodeId: string | null
   focusTick: number
+  /** Params passed by the caller of activate(modeId, params); null when opened without any. */
+  params: unknown
   onFocusNode: (nodeId: string) => void
   onClose: () => void
   onFocusChange: (focused: boolean) => void
@@ -165,7 +167,13 @@ export declare const useNodeAccent: (...args: unknown[]) => unknown
 export declare const useNodeContext: (...args: unknown[]) => unknown
 export declare const inspectorIntent: (...args: unknown[]) => unknown
 export declare const useInspectorIntent: (...args: unknown[]) => unknown
-export declare const useOverlay: (...args: unknown[]) => unknown
+
+/** Overlay control returned by useOverlay; activate(modeId, params?) opens a registered command mode. */
+export interface OverlayControl {
+  activate: (modeId: string, params?: unknown) => void
+  dismiss: () => void
+}
+export declare const useOverlay: (slots?: Record<string, unknown>) => OverlayControl
 
 // ── Streaming ────────────────────────────────────────────────────────────────
 
