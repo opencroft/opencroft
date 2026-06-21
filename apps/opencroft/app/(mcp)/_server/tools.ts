@@ -1461,12 +1461,8 @@ async function resolveDocPath(namespace: string, relative: string): Promise<stri
 
 async function findDocNodeIdForNamespace(namespace: string): Promise<string | null> {
   try {
-    const mod = await getExtensionModule('local/documentation')
-    const fn = mod.actions?.['docs.findDocNodeId']
-    if (!fn) {
-      return null
-    }
-    return (await fn({ namespace })) as string | null
+    const { callDocsAction } = await import('@/app/(docs)/_server/docs-provider')
+    return (await callDocsAction('docs.findDocNodeId', { namespace })) as string | null
   } catch {
     return null
   }
@@ -1479,12 +1475,8 @@ async function docsGitAdd(namespace: string, relativePath: string): Promise<void
     if (!nodeId) {
       return
     }
-    const mod = await getExtensionModule('local/documentation')
-    const addFn = mod.actions?.['docs.addFile']
-    if (!addFn) {
-      return
-    }
-    await addFn({ nodeId, filePath: relativePath })
+    const { callDocsAction } = await import('@/app/(docs)/_server/docs-provider')
+    await callDocsAction('docs.addFile', { nodeId, filePath: relativePath })
   } catch {
     // best-effort — do not block doc operations if git-add fails
   }
@@ -2182,12 +2174,12 @@ function buildHandlers(): Record<string, ToolHandler> {
 
     // ── doc_list_namespaces ─────────────────────────────────────────
     doc_list_namespaces: async () => {
-      const mod = await getExtensionModule('local/documentation')
-      const fn = mod.actions?.['docs.listNamespaces']
-      if (!fn) {
-        return textResult('[]')
-      }
-      const list = (await fn()) as Array<{ id: string; namespace: string; name: string }>
+      const { callDocsAction } = await import('@/app/(docs)/_server/docs-provider')
+      const list = ((await callDocsAction('docs.listNamespaces')) ?? []) as Array<{
+        id: string
+        namespace: string
+        name: string
+      }>
       return textResult(JSON.stringify(list, null, 2))
     },
 
@@ -2317,12 +2309,11 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!nodeId) {
         fail(-32602, `No Documentation node found for namespace "${namespace}".`)
       }
-      const mod = await getExtensionModule('local/documentation')
-      const publishFn = mod.actions?.['docs.publish']
-      if (!publishFn) {
-        fail(-32602, 'docs.publish action not found in builtin/core extension.')
+      const { callDocsAction } = await import('@/app/(docs)/_server/docs-provider')
+      const result = await callDocsAction('docs.publish', { nodeId, filePath, message })
+      if (result === null) {
+        fail(-32602, 'docs.publish action not available from any Documentation provider.')
       }
-      const result = await publishFn({ nodeId, filePath, message })
       return textResult(JSON.stringify({ nodeId, namespace, path: filePath, ...(result as object) }, null, 2))
     },
 

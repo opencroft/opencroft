@@ -13,7 +13,7 @@
 // text — letting extensions consume a text-stream server-side without core
 // knowing the node type.
 
-import { ensureLocalSession, promptLocal } from '@/app/(agent)/_server/acp'
+import { ensureLocalSession, findTargetSession, promptLocal } from '@/app/(agent)/_server/acp'
 import { updateNodeData } from '@/app/(extension-runtime)/_server/node-data'
 import {
   type AgentContext,
@@ -261,9 +261,18 @@ async function persistToDownstreamSendMessages(
     }
 
     try {
-      const { sessionId } = await ensureLocalSession({
-        data: { agentNodeId: route.ctx.agentNodeId, jobNodeId: route.ctx.jobNodeId, tabKey: route.sessionKey },
-      })
+      // Reuse an existing live session for this agent+job (the node's own
+      // remembered session, or a chat tab the user has open) so messages land in
+      // one stable conversation. Only create a fresh session when none exists;
+      // promptLocal then persists the pointer so it's remembered and reused next time.
+      const existing = await findTargetSession({ data: { baseKey: route.sessionKey } })
+      const sessionId =
+        existing?.sessionId ??
+        (
+          await ensureLocalSession({
+            data: { agentNodeId: route.ctx.agentNodeId, jobNodeId: route.ctx.jobNodeId, tabKey: route.sessionKey },
+          })
+        ).sessionId
       await promptLocal({ data: { sessionId, text: message } })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)

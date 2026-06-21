@@ -136,24 +136,30 @@ export const deleteDoc = createServerFn({ method: 'POST' })
 
 async function findDocNodeId(namespace?: string): Promise<string | null> {
   try {
-    const mod = await getExtensionModule('local/documentation')
-    const fn = mod.actions?.['docs.findDocNodeId']
-    if (!fn) {
-      return null
+    const { docProviderIds } = await import('@/app/(docs)/_server/docs-provider')
+    for (const id of await docProviderIds()) {
+      const mod = await getExtensionModule(id)
+      const fn = mod.actions?.['docs.findDocNodeId']
+      if (fn) {
+        return (await fn({ namespace })) as string | null
+      }
     }
-    return (await fn({ namespace })) as string | null
+    return null
   } catch {
     return null
   }
 }
 
 async function callDocsAction(action: string, params: Record<string, unknown>) {
-  const mod = await getExtensionModule('local/documentation')
-  const fn = mod.actions?.[action]
-  if (!fn) {
-    throw new Error(`Action ${action} not found`)
+  const { docProviderIds } = await import('@/app/(docs)/_server/docs-provider')
+  for (const id of await docProviderIds()) {
+    const mod = await getExtensionModule(id)
+    const fn = mod.actions?.[action]
+    if (fn) {
+      return fn(params)
+    }
   }
-  return fn(params)
+  throw new Error(`Action ${action} not found`)
 }
 
 export const getGitFileLog = createServerFn()
