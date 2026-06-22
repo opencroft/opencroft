@@ -31,7 +31,7 @@ export function LogNode({ id, data, selected }: { id: string; data: LogData; sel
 
   const openOutput = useCallback(() => {
     focus()
-    inspectorIntent.open(id, 'output')
+    inspectorIntent.open(id, 'details')
   }, [id, focus])
 
   const subtitle = `${entries.length} entries`
@@ -67,32 +67,6 @@ export function LogInspector({
   data: LogData
   updateData: (p: Partial<LogData>) => void
 }) {
-  return (
-    <div className='flex flex-col gap-2'>
-      <label className='flex flex-col gap-1 text-xs'>
-        <span>Max entries</span>
-        <input
-          type='number'
-          min={1}
-          className='h-8 rounded border bg-transparent px-2 text-xs'
-          value={data.max ?? DEFAULT_MAX}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            updateData({ max: Number(e.target.value) || DEFAULT_MAX })
-          }
-        />
-      </label>
-    </div>
-  )
-}
-
-export function LogOutputTab({
-  data,
-  updateData,
-}: {
-  nodeId: string
-  data: LogData
-  updateData: (p: Partial<LogData>) => void
-}) {
   const entries = data.entries ?? []
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -113,23 +87,44 @@ export function LogOutputTab({
   }, [updateData])
 
   return (
-    <div className='flex flex-col h-full w-full'>
-      <div ref={scrollRef} className='flex-1 min-h-0 bg-black p-2 overflow-auto'>
-        <div className='font-mono text-[11px] text-[#cccccc] flex flex-col gap-1'>
-          {entries.map((e: LogEntry, i: number) => (
-            <div key={`${e.at}-${i}`} className='whitespace-pre-wrap break-words'>
-              <span className='text-muted-foreground'>[{formatTime(e.at)}]</span> <span>{e.text}</span>
-            </div>
-          ))}
+    <div className='flex flex-col gap-3'>
+      <label className='flex flex-col gap-1 text-xs'>
+        <span>Max entries</span>
+        <input
+          type='number'
+          min={1}
+          className='h-8 rounded border bg-transparent px-2 text-xs'
+          value={data.max ?? DEFAULT_MAX}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            updateData({ max: Number(e.target.value) || DEFAULT_MAX })
+          }
+        />
+      </label>
+      <div className='flex flex-col gap-1'>
+        <div className='flex items-center justify-between'>
+          <span className='text-xs'>Output</span>
+          <div className='flex items-center gap-1'>
+            <Button variant='ghost' size='sm' onClick={copy} disabled={entries.length === 0}>
+              <icons.Copy className='h-3 w-3 mr-1' /> Copy
+            </Button>
+            <Button variant='ghost' size='sm' onClick={clear} disabled={entries.length === 0}>
+              <icons.Trash2 className='h-3 w-3 mr-1' /> Clear
+            </Button>
+          </div>
         </div>
-      </div>
-      <div className='flex items-center gap-2 justify-end p-2 border-t bg-background'>
-        <Button variant='ghost' size='sm' onClick={copy} disabled={entries.length === 0}>
-          <icons.Copy className='h-3 w-3 mr-1' /> Copy
-        </Button>
-        <Button variant='ghost' size='sm' onClick={clear} disabled={entries.length === 0}>
-          <icons.Trash2 className='h-3 w-3 mr-1' /> Clear
-        </Button>
+        <div ref={scrollRef} className='bg-black p-2 rounded-md overflow-auto max-h-[280px]'>
+          {entries.length === 0 ? (
+            <p className='text-[10px] text-muted-foreground italic'>No log entries yet.</p>
+          ) : (
+            <div className='font-mono text-[11px] text-[#cccccc] flex flex-col gap-1'>
+              {entries.map((e: LogEntry, i: number) => (
+                <div key={`${e.at}-${i}`} className='whitespace-pre-wrap break-words'>
+                  <span className='text-muted-foreground'>[{formatTime(e.at)}]</span> <span>{e.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

@@ -11,7 +11,7 @@ import { EVENT_HANDLES, EventInspector, EventNode, eventExposeOutput } from './n
 import { FileManagerWindowInspector, FileManagerWindowNode } from './nodes/file-manager'
 import { KeyStoreInspector, KeyStoreNode } from './nodes/key-store'
 import { LocalhostFilesTab, LocalhostInspector, LocalhostNode, LocalhostTerminalTab } from './nodes/localhost'
-import { LOG_HANDLES, LogInspector, LogNode, LogOutputTab } from './nodes/log'
+import { LOG_HANDLES, LogInspector, LogNode } from './nodes/log'
 import { NetworkInspector, NetworkNode } from './nodes/network'
 import { OpenAIAssistantInspector, OpenAIAssistantNode } from './nodes/openai-assistant'
 import { OpenAIClientInspector, OpenAIClientNode } from './nodes/openai-client'
@@ -441,15 +441,6 @@ export default defineExtension({
       defaultData: { max: 500, entries: [] },
       component: LogNode as unknown as never,
       inspector: LogInspector as unknown as never,
-      inspectorTabs: [
-        {
-          id: 'output',
-          label: 'Output',
-          icon: 'ScrollText',
-          fullHeight: true,
-          component: LogOutputTab as unknown as never,
-        },
-      ],
     },
     {
       typeId: 'send-message',
