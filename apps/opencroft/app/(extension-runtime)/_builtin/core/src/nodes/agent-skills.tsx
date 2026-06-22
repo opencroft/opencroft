@@ -32,10 +32,7 @@ export function AgentSkillsTab() {
   }, [])
 
   const add = useCallback(() => {
-    setRows((current) => [
-      ...current,
-      { id: crypto.randomUUID(), config: { name: '', description: '', body: '' } },
-    ])
+    setRows((current) => [...current, { id: crypto.randomUUID(), config: { name: '', description: '', body: '' } }])
   }, [])
 
   const remove = useCallback((id: string) => {

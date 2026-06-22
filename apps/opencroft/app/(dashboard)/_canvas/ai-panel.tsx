@@ -45,13 +45,19 @@ async function fetchSessions(): Promise<SessionEntry[]> {
 }
 
 function upsertSessionRemote(entry: Partial<SessionEntry> & { key: string }): Promise<SessionEntry[]> {
-  return fetch(SESSIONS_ENDPOINT, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ op: 'upsert', entry }) })
-    .then((r) => r.json() as Promise<SessionEntry[]>)
+  return fetch(SESSIONS_ENDPOINT, {
+    method: 'POST',
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ op: 'upsert', entry }),
+  }).then((r) => r.json() as Promise<SessionEntry[]>)
 }
 
 function deleteSessionRemote(key: string): Promise<SessionEntry[]> {
-  return fetch(SESSIONS_ENDPOINT, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ op: 'delete', key }) })
-    .then((r) => r.json() as Promise<SessionEntry[]>)
+  return fetch(SESSIONS_ENDPOINT, {
+    method: 'POST',
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ op: 'delete', key }),
+  }).then((r) => r.json() as Promise<SessionEntry[]>)
 }
 
 // Sessions that only ever lived in this browser's localStorage, lifted into the
