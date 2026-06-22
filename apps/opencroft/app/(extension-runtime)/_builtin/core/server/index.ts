@@ -4,9 +4,19 @@ import { AGENT_PROVIDERS } from 'agent-client/agent-providers'
 import { HARNESS_ADAPTERS } from 'agent-client/harness-adapters'
 import { reasoningEfforts } from 'agent-client/reasoning'
 
+import {
+  keyStoreCopyKeyToWsl,
+  keyStoreCreateKey,
+  keyStoreDeleteKey,
+  keyStoreImportKey,
+  keyStoreListKeys,
+  keyStoreReadPublicKey,
+  keyStoreRemoveKeyFromWsl,
+} from './key-store'
 import { nodeActions } from './node-actions'
 import { type OpenAIChatParams, openaiChat } from './openai'
 import { type HandlerRunParams, runHandler, runScript, type ScriptRunParams } from './script'
+import { acceptHostKey, hostKeyStatus, installPublicKey, resolvePublicKey } from './ssh-setup'
 
 export { nodeActions }
 
@@ -56,7 +66,7 @@ async function listModels(params: { baseUrl?: string; apiKeySecret?: string }): 
   const key = params.apiKeySecret ? ((await host.secrets.resolve(params.apiKeySecret)) ?? '') : ''
   const headers: Record<string, string> = {}
   if (key) {
-    headers['Authorization'] = `Bearer ${key}`
+    headers.Authorization = `Bearer ${key}`
   }
   const res = await fetch(`${base}/models`, { headers })
   if (!res.ok) {
@@ -70,40 +80,6 @@ async function listModels(params: { baseUrl?: string; apiKeySecret?: string }): 
 }
 
 const isWindows = host.os.platform() === 'win32'
-
-// ═══════════════════════════════════════════════════════════════════
-// Helpers
-// ═══════════════════════════════════════════════════════════════════
-
-async function setKeyPermissions(filePath: string): Promise<void> {
-  if (!isWindows) {
-    await host.fs.chmod(filePath, 0o600)
-    return
-  }
-  await host.execFile('icacls', [filePath, '/inheritance:r', '/grant:r', `${host.os.userInfo().username}:F`])
-}
-
-async function isPrivateKey(filePath: string): Promise<boolean> {
-  try {
-    const content = await host.fs.readFile(filePath, 'utf-8')
-    return content.includes('PRIVATE KEY') || content.includes('-----BEGIN')
-  } catch {
-    return false
-  }
-}
-
-async function isKeyInWsl(name: string): Promise<boolean> {
-  try {
-    await host.exec(`test -f ~/.ssh/keys/${name}`)
-    return true
-  } catch {
-    return false
-  }
-}
-
-function keyStoreDir(nodeId: string): string {
-  return host.cacheDir('key-store', nodeId)
-}
 
 // ═══════════════════════════════════════════════════════════════════
 // Localhost
@@ -136,8 +112,8 @@ async function getLocalhostDiskUsage(): Promise<string> {
       const lines = stdout.trim().split('\n').filter(Boolean)
       const last = lines[lines.length - 1]
       const parts = last.split(',')
-      const free = parseInt(parts[1] || '0')
-      const total = parseInt(parts[2] || '0')
+      const free = parseInt(parts[1] || '0', 10)
+      const total = parseInt(parts[2] || '0', 10)
       const used = total - free
       const gb = (n: number) => `${(n / 1024 ** 3).toFixed(0)}G`
       return `${gb(used)}/${gb(total)}`
@@ -202,109 +178,6 @@ async function getWslStats(distro: string): Promise<WslStats> {
     memory: lines['MEMORY'] || 'unknown',
     storage: lines['STORAGE'] || 'unknown',
   }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// Key Store
-// ═══════════════════════════════════════════════════════════════════
-
-interface KeyEntry {
-  name: string
-  type: string
-  fingerprint: string
-  hasPublicKey: boolean
-  inWsl: boolean
-}
-
-async function keyStoreListKeys(storeId: string): Promise<KeyEntry[]> {
-  const dir = keyStoreDir(storeId)
-  let entries: string[]
-  try {
-    entries = await host.fs.readdir(dir)
-  } catch {
-    return []
-  }
-  const keys: KeyEntry[] = []
-  for (const name of entries) {
-    if (name.endsWith('.pub')) {
-      continue
-    }
-    const filePath = host.path.join(dir, name)
-    const stat = await host.fs.stat(filePath)
-    if (!stat.isFile() || !(await isPrivateKey(filePath))) {
-      continue
-    }
-    let type = 'unknown'
-    let fingerprint = ''
-    try {
-      const info = await host.execFile('ssh-keygen', ['-l', '-f', filePath])
-      const match = info.match(/^\d+\s+(\S+)\s+.*\((\w+)\)/)
-      if (match) {
-        fingerprint = match[1]
-        type = match[2]
-      }
-    } catch {
-      /* best effort */
-    }
-    let hasPublicKey = false
-    try {
-      await host.fs.access(`${filePath}.pub`)
-      hasPublicKey = true
-    } catch {
-      /* no pub */
-    }
-    const inWsl = isWindows ? await isKeyInWsl(name) : false
-    keys.push({ name, type, fingerprint, hasPublicKey, inWsl })
-  }
-  return keys
-}
-
-async function keyStoreCreateKey(storeId: string, name: string, keyType: string): Promise<void> {
-  const dir = keyStoreDir(storeId)
-  await host.fs.mkdir(dir, { recursive: true })
-  await host.execFile('ssh-keygen', ['-t', keyType, '-f', host.path.join(dir, name), '-N', '', '-q'])
-}
-
-async function keyStoreImportKey(storeId: string, name: string, content: string): Promise<void> {
-  const dir = keyStoreDir(storeId)
-  await host.fs.mkdir(dir, { recursive: true })
-  const keyPath = host.path.join(dir, name)
-  await host.fs.writeFile(keyPath, content)
-  await setKeyPermissions(keyPath)
-}
-
-async function keyStoreDeleteKey(storeId: string, name: string): Promise<void> {
-  const dir = keyStoreDir(storeId)
-  const keyPath = host.path.join(dir, name)
-  await host.fs.unlink(keyPath).catch(() => null)
-  await host.fs.unlink(`${keyPath}.pub`).catch(() => null)
-}
-
-async function keyStoreReadPublicKey(storeId: string, name: string): Promise<string> {
-  const keyPath = host.path.join(keyStoreDir(storeId), name)
-  try {
-    return await host.fs.readFile(`${keyPath}.pub`, 'utf-8')
-  } catch {
-    return host.execFile('ssh-keygen', ['-y', '-f', keyPath])
-  }
-}
-
-async function keyStoreCopyKeyToWsl(storeId: string, name: string): Promise<void> {
-  const keyPath = host.path.join(keyStoreDir(storeId), name)
-  const content = await host.fs.readFile(keyPath, 'utf-8')
-  await host.exec('mkdir -p ~/.ssh/keys')
-  await host.exec(`cat > ~/.ssh/keys/${name} << 'KEYEOF'\n${content}\nKEYEOF`)
-  await host.exec(`chmod 600 ~/.ssh/keys/${name}`)
-  try {
-    const pub = await host.fs.readFile(`${keyPath}.pub`, 'utf-8')
-    await host.exec(`cat > ~/.ssh/keys/${name}.pub << 'KEYEOF'\n${pub}\nKEYEOF`)
-  } catch {
-    /* no pub */
-  }
-}
-
-async function keyStoreRemoveKeyFromWsl(name: string): Promise<void> {
-  await host.exec(`rm -f ~/.ssh/keys/${name} ~/.ssh/keys/${name}.pub`)
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -419,6 +292,10 @@ export const actions = {
   'secretsStore.deleteOrphan': (id: string) => secretsStoreDeleteOrphan(id),
   'server.getStats': (config: ServerConfig) => serverGetStats(config),
   'server.resolveKey': (keyPath: string) => host.ssh.resolveKey(keyPath),
+  'server.hostKeyStatus': (address: string, port: number) => hostKeyStatus(address, port),
+  'server.acceptHostKey': (address: string, port: number) => acceptHostKey(address, port),
+  'server.installKey': async (config: ServerConfig, keyRef: string) =>
+    installPublicKey(config, await resolvePublicKey(keyRef)),
   'terminal.run': (ctx: TerminalContext, args: string[]) => host.terminal.run(ctx, args),
   'terminal.exec': (ctx: TerminalContext, command: string) => host.terminal.exec(ctx, command),
   'script.run': (params: ScriptRunParams) => runScript(params),

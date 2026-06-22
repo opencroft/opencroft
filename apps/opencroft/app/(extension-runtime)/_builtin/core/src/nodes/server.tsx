@@ -1,4 +1,14 @@
-import { icons, inspectorIntent, invoke, NodeFrame, OutputHandle, React, useGraphNodes, useReactFlow } from '@ext/host'
+import {
+  icons,
+  inspectorIntent,
+  invoke,
+  NodeFrame,
+  OutputHandle,
+  React,
+  toast,
+  useGraphNodes,
+  useReactFlow,
+} from '@ext/host'
 import {
   Badge,
   Button,
@@ -184,6 +194,83 @@ export function ServerNode({ id, data, selected }: { id: string; data: ServerDat
   )
 }
 
+interface HostKeyStatus {
+  trusted: boolean
+  fingerprint?: string
+  error?: string
+}
+
+// Host-key trust: docker's `ssh://` transport (and any OpenSSH-based path)
+// verifies the remote host key and fails closed when it isn't pinned. Surface
+// that state and let the user pin it explicitly — no silent auto-trust.
+function HostKeySection({ data }: { data: ServerData }) {
+  const [status, setStatus] = useState<HostKeyStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const check = useCallback(async () => {
+    if (!data.address) {
+      setStatus(null)
+      return
+    }
+    setBusy(true)
+    try {
+      setStatus(await invoke<HostKeyStatus>('server.hostKeyStatus', data.address, data.port || 22))
+    } catch (err) {
+      setStatus({ trusted: false, error: String(err) })
+    } finally {
+      setBusy(false)
+    }
+  }, [data.address, data.port])
+
+  useEffect(() => {
+    check()
+  }, [check])
+
+  const accept = useCallback(async () => {
+    setBusy(true)
+    try {
+      setStatus(await invoke<HostKeyStatus>('server.acceptHostKey', data.address, data.port || 22))
+      toast.success('Host key accepted')
+    } catch (err) {
+      toast.error(`Could not accept host key: ${String(err)}`)
+    } finally {
+      setBusy(false)
+    }
+  }, [data.address, data.port])
+
+  if (!data.address) {
+    return null
+  }
+
+  return (
+    <div className='flex flex-col gap-1'>
+      <Label>Host key</Label>
+      {status?.trusted ? (
+        <div className='flex items-center gap-1.5 text-xs text-muted-foreground'>
+          <icons.ShieldCheck className='h-3.5 w-3.5 text-green-500 shrink-0' />
+          <span className='font-mono break-all'>{status.fingerprint ? status.fingerprint : 'Trusted'}</span>
+        </div>
+      ) : (
+        <div className='flex flex-col gap-1.5 rounded border border-amber-500/40 bg-amber-500/5 p-2'>
+          <div className='flex items-start gap-1.5 text-xs'>
+            <icons.ShieldAlert className='h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5' />
+            <span>
+              Host key not pinned — Docker/SSH transports will fail host-key verification until you accept it.
+            </span>
+          </div>
+          {status?.fingerprint ? (
+            <div className='text-[10px] font-mono text-muted-foreground break-all'>{status.fingerprint}</div>
+          ) : null}
+          {status?.error ? <div className='text-[10px] text-destructive break-all'>{status.error}</div> : null}
+          <Button size='sm' className='h-7 text-xs' onClick={accept} disabled={busy || !status?.fingerprint}>
+            {busy ? 'Working…' : 'Accept host key'}
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function ServerInspector({
   data,
   updateData,
@@ -193,6 +280,22 @@ export function ServerInspector({
   updateData: (p: Partial<ServerData>) => void
 }) {
   const { stats, loading, refresh } = useServerStats(data)
+  const [installing, setInstalling] = useState(false)
+
+  const installKey = useCallback(async () => {
+    if (!data.keyPath || !data.address) {
+      return
+    }
+    setInstalling(true)
+    try {
+      await invoke('server.installKey', serverConfigFrom(data), data.keyPath)
+      toast.success('Public key installed on server')
+    } catch (err) {
+      toast.error(`Install failed: ${String(err)}`)
+    } finally {
+      setInstalling(false)
+    }
+  }, [data])
 
   return (
     <div className='flex flex-col gap-3'>
@@ -219,7 +322,19 @@ export function ServerInspector({
       <div className='flex flex-col gap-1'>
         <Label>SSH Key</Label>
         <KeyStoreKeySelector value={data.keyPath ?? ''} onChange={(v) => updateData({ keyPath: v || undefined })} />
+        {data.keyPath ? (
+          <Button
+            variant='outline'
+            size='sm'
+            className='h-7 text-xs mt-1'
+            onClick={installKey}
+            disabled={installing || !data.address}
+          >
+            {installing ? 'Installing…' : 'Install key on server'}
+          </Button>
+        ) : null}
       </div>
+      <HostKeySection data={data} />
       <Separator />
       <Button size='sm' className='h-7 text-xs' onClick={refresh} disabled={!data.address || loading}>
         {loading ? 'Refreshing…' : 'Refresh stats'}

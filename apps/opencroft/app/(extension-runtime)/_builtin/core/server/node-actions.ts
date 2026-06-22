@@ -1,8 +1,11 @@
 import host from '@ext/host'
+import type { ServerConfig } from '@opencroft/server'
 
 import { fireEvent } from './event'
+import { keyStoreCreateKey, keyStoreDeleteKey, keyStoreListKeys } from './key-store'
 import { openaiChat } from './openai'
 import { runScript, type ScriptResult } from './script'
+import { acceptHostKey, type HostKeyStatus, installPublicKey, resolvePublicKey } from './ssh-setup'
 
 interface Stream<T> {
   subscribe(fn: (chunk: T) => void): () => void
@@ -25,6 +28,7 @@ interface ActionCtx {
     typeId?: string,
   ): { id: string; type?: string; position: { x: number; y: number }; data: Record<string, unknown> }[]
   output<T = unknown>(handleId: string): Stream<T>
+  updateData(patch: Record<string, unknown>): void
 }
 
 interface ScriptData {
@@ -158,7 +162,93 @@ async function promptSend(ctx: ActionCtx): Promise<void> {
   ctx.output<TextChunk>('text-out').broadcast({ text, final: true })
 }
 
+// ── Key Store node actions ────────────────────────────────────────────────
+// Agent-invokable. These only ever return key *metadata* (name/type/
+// fingerprint) — never private key material — so keys don't leak into an
+// agent's context.
+
+const KEY_TYPES = ['ed25519', 'rsa', 'ecdsa']
+
+function requireKeyName(ctx: ActionCtx): string {
+  const name = typeof ctx.params.name === 'string' ? ctx.params.name.trim() : ''
+  if (!name) {
+    throw new Error('Key name is required (params.name)')
+  }
+  return name
+}
+
+async function keyStoreGenerate(ctx: ActionCtx): Promise<{ name: string; keyType: string }> {
+  const name = requireKeyName(ctx)
+  const requested = typeof ctx.params.keyType === 'string' ? ctx.params.keyType.trim() : ''
+  const keyType = requested || 'ed25519'
+  if (!KEY_TYPES.includes(keyType)) {
+    throw new Error(`Unsupported key type "${keyType}". Use one of: ${KEY_TYPES.join(', ')}`)
+  }
+  await keyStoreCreateKey(ctx.nodeId, name, keyType)
+  return { name, keyType }
+}
+
+function keyStoreListAction(ctx: ActionCtx) {
+  return keyStoreListKeys(ctx.nodeId)
+}
+
+async function keyStoreDeleteAction(ctx: ActionCtx): Promise<{ deleted: string }> {
+  const name = requireKeyName(ctx)
+  await keyStoreDeleteKey(ctx.nodeId, name)
+  return { deleted: name }
+}
+
+// ── Server node actions ───────────────────────────────────────────────────
+
+function serverConfigFromData(data: Record<string, unknown>): ServerConfig {
+  const address = typeof data.address === 'string' ? data.address : ''
+  if (!address) {
+    throw new Error('Server has no address configured')
+  }
+  return {
+    address,
+    port: typeof data.port === 'number' ? data.port : 22,
+    username: typeof data.username === 'string' && data.username ? data.username : 'root',
+    password: typeof data.password === 'string' ? data.password : undefined,
+    keyPath: typeof data.keyPath === 'string' ? data.keyPath : undefined,
+  }
+}
+
+// Assign a Key Store key to this Server node. With `install: true`, also append
+// the key's public half to the remote's authorized_keys (connecting with the
+// server's current auth, typically a password).
+async function serverSetKey(ctx: ActionCtx): Promise<{ keyPath: string; installed: boolean }> {
+  const key = typeof ctx.params.key === 'string' ? ctx.params.key.trim() : ''
+  if (!key) {
+    throw new Error('A key reference is required (params.key)')
+  }
+  const install = ctx.params.install === true
+  ctx.updateData({ keyPath: key })
+  if (install) {
+    const publicKey = await resolvePublicKey(key)
+    await installPublicKey(serverConfigFromData({ ...ctx.data, keyPath: key }), publicKey)
+  }
+  return { keyPath: key, installed: install }
+}
+
+// Scan the remote host key and pin it into known_hosts so OpenSSH-based
+// transports (e.g. docker `ssh://`) stop failing host-key verification.
+function serverAcceptHostKey(ctx: ActionCtx): Promise<HostKeyStatus> {
+  const address = typeof ctx.data.address === 'string' ? ctx.data.address : ''
+  const port = typeof ctx.data.port === 'number' ? ctx.data.port : 22
+  return acceptHostKey(address, port)
+}
+
 export const nodeActions = {
+  'core-key-store': {
+    generate: keyStoreGenerate,
+    list: keyStoreListAction,
+    delete: keyStoreDeleteAction,
+  },
+  server: {
+    setKey: serverSetKey,
+    acceptHostKey: serverAcceptHostKey,
+  },
   'script-bash': {
     run: scriptRun,
   },
