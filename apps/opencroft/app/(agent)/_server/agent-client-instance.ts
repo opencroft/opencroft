@@ -1,6 +1,7 @@
 import { createAgentClient, type PermissionContext, type PermissionOutcome } from 'agent-client/agent-client'
 
 import { readMcpServers } from '@/app/(agent)/_server/mcp-store'
+import { loadSkillDefs, skillBodyHandler } from '@/app/(agent)/_server/skill-store'
 import { isYoloMode } from '@/app/(mcp)/_server/yolo'
 import { approvalStore } from '@/lib/approval-store'
 
@@ -41,5 +42,9 @@ export const agentClient = createAgentClient({
     },
   ],
   loadMcpServers: readMcpServers,
+  // Global skill catalog from the settings DB, resolved per turn. For now every
+  // configured skill is exposed to this agent client (not scoped per node).
+  skills: loadSkillDefs,
+  skillHandler: skillBodyHandler,
   permissionHandler: resolvePermission,
 })

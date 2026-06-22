@@ -4,6 +4,7 @@ import { AgentInspector, AgentNode, AgentProfileTab } from './nodes/agent'
 import { AgentInstructionInspector, AgentInstructionNode } from './nodes/agent-instruction'
 import { AgentJobInspector, AgentJobNode } from './nodes/agent-job'
 import { AgentMcpTab } from './nodes/agent-mcp'
+import { AgentSkillsTab } from './nodes/agent-skills'
 import { AGENT_TOOL_HANDLES, AgentToolInspector, AgentToolNode, agentToolExposeOutput } from './nodes/agent-tool'
 import { API_ROUTE_HANDLES, ApiRouteInspector, ApiRouteNode, apiRouteExposeOutput } from './nodes/api-route'
 import { EVENT_HANDLES, EventInspector, EventNode, eventExposeOutput } from './nodes/event'
@@ -333,6 +334,13 @@ export default defineExtension({
           component: AgentProfileTab as unknown as never,
         },
         { id: 'mcp', label: 'MCP', icon: 'Wrench', fullHeight: true, component: AgentMcpTab as unknown as never },
+        {
+          id: 'skills',
+          label: 'Skills',
+          icon: 'Sparkles',
+          fullHeight: true,
+          component: AgentSkillsTab as unknown as never,
+        },
       ],
     },
     {
