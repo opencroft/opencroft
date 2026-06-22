@@ -26,37 +26,15 @@ interface TabMeta {
 
 // ── Storage ────────────────────────────────────────────────────────────
 
-const STORAGE_KEY = 'opencroft.aiPanel.openTabs'
-const MODE_STORAGE_KEY = 'opencroft.aiPanel.chatMode'
+// Open tabs + chat mode live in the settings DB (see acp.tabs.ts /
+// chat-tabs-store.ts) rather than localStorage, so they follow the user across
+// browsers. The provider loads this on mount and posts it back on every change.
+const TABS_ENDPOINT = '/api/acp/tabs'
+const JSON_HEADERS = { 'content-type': 'application/json' }
 
-function loadStoredMode(): ChatMode {
-  if (typeof window === 'undefined') {
-    return 'docked'
-  }
-  return window.localStorage.getItem(MODE_STORAGE_KEY) === 'focused' ? 'focused' : 'docked'
-}
-
-function loadStoredTabs(): ChatTab[] {
-  if (typeof window === 'undefined') {
-    return []
-  }
-  const raw = window.localStorage.getItem(STORAGE_KEY)
-  if (!raw) {
-    return []
-  }
-  try {
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
-function persistTabs(tabs: ChatTab[]) {
-  if (typeof window === 'undefined') {
-    return
-  }
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(tabs))
+interface StoredState {
+  tabs: ChatTab[]
+  mode: ChatMode
 }
 
 function makeTab(key: string, meta?: TabMeta): ChatTab {
@@ -116,30 +94,59 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
   const [chatMode, setChatMode] = useState<ChatMode>('docked')
   const [listRequest, setListRequest] = useState(0)
   const initialized = useRef(false)
+  // Set right before applying server-loaded state so the persist effect skips
+  // writing it straight back.
+  const skipPersist = useRef(false)
   const router = useRouter()
   const pathname = useLocation({ select: (l) => l.pathname })
   const searchStr = useLocation({ select: (l) => l.searchStr })
 
-  // Load open tabs from localStorage on mount. (No auto-select — the chat opens
-  // only when a session is chosen, so the inspector lands on the list, not a
-  // forced conversation.)
+  // Load open tabs + chat mode from the settings DB on mount. (No auto-select —
+  // the chat opens only when a session is chosen, so the inspector lands on the
+  // list, not a forced conversation.)
   useEffect(() => {
-    if (initialized.current) {
-      return
+    let cancelled = false
+    fetch(TABS_ENDPOINT)
+      .then((r) => r.json())
+      .then((state: Partial<StoredState>) => {
+        if (cancelled) {
+          return
+        }
+        // Don't echo the freshly-loaded state straight back to the server.
+        skipPersist.current = true
+        setTabs(Array.isArray(state.tabs) ? state.tabs : [])
+        setChatMode(state.mode === 'focused' ? 'focused' : 'docked')
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) {
+          initialized.current = true
+        }
+      })
+    return () => {
+      cancelled = true
     }
-    initialized.current = true
-    setTabs(loadStoredTabs())
-    setChatMode(loadStoredMode())
   }, [])
 
+  // Persist tabs + chat mode to the settings DB whenever they change (after the
+  // initial load), replacing the old localStorage mirror.
+  useEffect(() => {
+    if (!initialized.current) {
+      return
+    }
+    if (skipPersist.current) {
+      skipPersist.current = false
+      return
+    }
+    fetch(TABS_ENDPOINT, {
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ tabs, mode: chatMode } satisfies StoredState),
+    }).catch(() => {})
+  }, [tabs, chatMode])
+
   const toggleChatMode = useCallback(() => {
-    setChatMode((prev) => {
-      const next = prev === 'focused' ? 'docked' : 'focused'
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem(MODE_STORAGE_KEY, next)
-      }
-      return next
-    })
+    setChatMode((prev) => (prev === 'focused' ? 'docked' : 'focused'))
   }, [])
 
   // Mirror the active session into the URL (?chat=) — one source of truth, the
@@ -172,7 +179,6 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
         return prev
       }
       const next = [...prev, makeTab(key, meta)]
-      persistTabs(next)
       return next
     })
   }, [])
@@ -184,7 +190,6 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
         return prev
       }
       const next = [...prev, makeTab(key)]
-      persistTabs(next)
       return next
     })
   }, [])
@@ -193,7 +198,6 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
     (key: string) => {
       setTabs((prev) => {
         const next = prev.filter((t) => t.key !== key)
-        persistTabs(next)
         return next
       })
       setActiveSessionKey((current) => {
@@ -234,7 +238,6 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
       }
       const next = [...prev]
       next[idx] = merged
-      persistTabs(next)
       return next
     })
   }, [])
