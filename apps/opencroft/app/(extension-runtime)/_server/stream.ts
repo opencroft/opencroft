@@ -14,6 +14,7 @@
 // knowing the node type.
 
 import { ensureLocalSession, findTargetSession, promptLocal } from '@/app/(agent)/_server/acp'
+import { upsertSession } from '@/app/(agent)/_server/agent-sessions-store'
 import { updateNodeData } from '@/app/(extension-runtime)/_server/node-data'
 import {
   type AgentContext,
@@ -266,13 +267,28 @@ async function persistToDownstreamSendMessages(
       // one stable conversation. Only create a fresh session when none exists;
       // promptLocal then persists the pointer so it's remembered and reused next time.
       const existing = await findTargetSession({ data: { baseKey: route.sessionKey } })
-      const sessionId =
-        existing?.sessionId ??
-        (
+      let sessionId: string
+      if (existing?.sessionId) {
+        sessionId = existing.sessionId
+      } else {
+        sessionId = (
           await ensureLocalSession({
             data: { agentNodeId: route.ctx.agentNodeId, jobNodeId: route.ctx.jobNodeId, tabKey: route.sessionKey },
           })
         ).sessionId
+        // A brand-new session: register it in the shared registry (keyed by the
+        // node's base session key) so the node-driven conversation shows up in
+        // the chat list and is resumable on every device, like a UI-started chat.
+        await upsertSession({
+          key: route.sessionKey,
+          agentNodeId: route.ctx.agentNodeId,
+          agentName: route.ctx.agentName,
+          jobNodeId: route.ctx.jobNodeId,
+          jobName: route.ctx.jobName,
+          title: route.ctx.jobName,
+          createdAt: Date.now(),
+        }).catch(() => {})
+      }
       await promptLocal({ data: { sessionId, text: message } })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
