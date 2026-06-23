@@ -146,6 +146,8 @@ export interface NodeActionCtx {
   connectedSources(handleId: string): ConnectedSource[]
   containingNodes(typeId?: string): NodeActionCtxNode[]
   output<T = unknown>(handleId: string): Stream<T>
+  /** Persist a patch to this node's stored data (e.g. assign a key). */
+  updateData(patch: Record<string, unknown>): void
 }
 
 export interface NodeActionDescriptor {
@@ -155,6 +157,9 @@ export interface NodeActionDescriptor {
   actionId: string
   label: string
   description?: string
+  /** JSON schema for the action's `params`, when it accepts any. Surfaced to
+   *  agents via `list_actions` so they know what to pass to `call`. */
+  inputSchema?: Record<string, unknown>
 }
 
 /** An HTTP handler exposed by an extension's server module, served at

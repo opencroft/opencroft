@@ -85,6 +85,7 @@ function buildCtx(
   node: GraphNodeLike,
   params: Record<string, unknown>,
   spaceId: string,
+  pending: Record<string, unknown>,
 ): NodeActionCtx {
   const data = node.data ?? {}
   const resolved = (data['__resolvedContexts'] as Record<string, ResolvedHandle> | undefined) ?? {}
@@ -157,6 +158,11 @@ function buildCtx(
     return getStream<T>(spaceId, node.id, handleId)
   }
 
+  const updateData = (patch: Record<string, unknown>): void => {
+    Object.assign(data, patch)
+    Object.assign(pending, patch)
+  }
+
   return {
     nodeId: node.id,
     typeId: node.type ?? '',
@@ -167,6 +173,7 @@ function buildCtx(
     connectedSources,
     containingNodes,
     output,
+    updateData,
   }
 }
 
@@ -190,6 +197,7 @@ export const listNodeActions = createServerFn({ method: 'POST', strict: { output
         actionId: a.id,
         label: a.label,
         description: a.description,
+        inputSchema: a.inputSchema,
       }))
     }
     return []
@@ -217,6 +225,25 @@ async function persistErrors(found: FoundNode, errors: string[]): Promise<void> 
   await r.saveGraph(found.slug, space.graph)
 }
 
+// Persist a data patch produced by a node action (via ctx.updateData) back to
+// the stored graph, so actions can configure their own node (e.g. assign a key).
+async function persistData(found: FoundNode, patch: Record<string, unknown>): Promise<void> {
+  const r = getSpacesRegistry()
+  await r.ensureLoaded()
+  const space = r.getBySlug(found.slug)
+  if (!space) {
+    return
+  }
+  const node = space.graph.nodes.find((n) => (n as unknown as GraphNodeLike).id === found.node.id) as unknown as
+    | GraphNodeLike
+    | undefined
+  if (!node) {
+    return
+  }
+  node.data = { ...(node.data ?? {}), ...patch }
+  await r.saveGraph(found.slug, space.graph)
+}
+
 export const dispatchNodeAction = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { nodeId: string; actionId: string; params?: Record<string, unknown> }) => data)
   .handler(async ({ data }): Promise<unknown> => {
@@ -240,10 +267,14 @@ export const dispatchNodeAction = createServerFn({ method: 'POST', strict: { out
     if (!handler) {
       throw new Error(`Extension ${owning.id} has no nodeAction "${typeId}.${actionId}"`)
     }
-    const ctx = buildCtx(found.graph, found.node, params, found.slug)
+    const pending: Record<string, unknown> = {}
+    const ctx = buildCtx(found.graph, found.node, params, found.slug, pending)
     await persistErrors(found, [])
     try {
       const result = await handler(ctx)
+      if (Object.keys(pending).length > 0) {
+        await persistData(found, pending)
+      }
       return result
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)

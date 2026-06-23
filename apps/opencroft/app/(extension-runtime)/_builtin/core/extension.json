@@ -32,9 +32,78 @@
       "handles": [
         { "id": "terminal", "contextType": "terminal-context", "role": "source", "label": "Terminal" },
         { "id": "fs-out", "contextType": "filesystem-target", "role": "source", "label": "Files" }
+      ],
+      "actions": [
+        {
+          "id": "setKey",
+          "label": "Set SSH Key",
+          "icon": "KeyRound",
+          "description": "Assign a Key Store key to this server (key reference is \"<keyStoreNodeId>:<keyName>\"). With install=true, also append the key's public half to the remote's authorized_keys using the server's current credentials.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "key": { "type": "string", "description": "Key reference: \"<keyStoreNodeId>:<keyName>\"" },
+              "install": {
+                "type": "boolean",
+                "description": "Also install the public key on the remote's authorized_keys (default: false)"
+              }
+            },
+            "required": ["key"]
+          }
+        },
+        {
+          "id": "acceptHostKey",
+          "label": "Accept Host Key",
+          "icon": "ShieldCheck",
+          "description": "Scan the remote host key and pin it into known_hosts so OpenSSH-based transports (e.g. docker over ssh://) stop failing host-key verification.",
+          "inputSchema": { "type": "object", "properties": {} }
+        }
       ]
     },
-    { "typeId": "core-key-store", "name": "Key Store", "category": "Storage", "icon": "KeyRound" },
+    {
+      "typeId": "core-key-store",
+      "name": "Key Store",
+      "category": "Storage",
+      "icon": "KeyRound",
+      "actions": [
+        {
+          "id": "generate",
+          "label": "Generate Key",
+          "icon": "Plus",
+          "description": "Generate a new SSH keypair in this Key Store. Returns the key name and type — never private key material.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "description": "Name for the new key" },
+              "keyType": {
+                "type": "string",
+                "enum": ["ed25519", "rsa", "ecdsa"],
+                "description": "Key algorithm (default: ed25519)"
+              }
+            },
+            "required": ["name"]
+          }
+        },
+        {
+          "id": "list",
+          "label": "List Keys",
+          "icon": "List",
+          "description": "List keys in this store with their type and fingerprint. Does not expose private key material.",
+          "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+          "id": "delete",
+          "label": "Delete Key",
+          "icon": "Trash2",
+          "description": "Delete a key (and its public key) from this store.",
+          "inputSchema": {
+            "type": "object",
+            "properties": { "name": { "type": "string", "description": "Name of the key to delete" } },
+            "required": ["name"]
+          }
+        }
+      ]
+    },
     { "typeId": "core-secrets-store", "name": "Secrets Store", "category": "Storage", "icon": "ShieldCheck" },
     {
       "typeId": "terminal",

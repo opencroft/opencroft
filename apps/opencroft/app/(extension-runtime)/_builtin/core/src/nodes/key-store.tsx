@@ -4,7 +4,6 @@ import {
   Button,
   ControlledInput,
   Flex,
-  Label,
   Select,
   SelectContent,
   SelectItem,
@@ -175,49 +174,69 @@ export function KeyStoreInspector({
     if (!newName.trim()) {
       return
     }
-    await invoke('keyStore.createKey', nodeId, newName.trim(), newType)
-    setNewName('')
-    await load()
-    toast.success('Key created')
+    try {
+      await invoke('keyStore.createKey', nodeId, newName.trim(), newType)
+      setNewName('')
+      await load()
+      toast.success('Key created')
+    } catch (err) {
+      toast.error(`Could not create key: ${String(err)}`)
+    }
   }, [newName, newType, nodeId, load])
 
   const handleImport = useCallback(
     async (name: string, content: string) => {
-      await invoke('keyStore.importKey', nodeId, name, content)
-      await load()
-      toast.success(`Imported ${name}`)
+      try {
+        await invoke('keyStore.importKey', nodeId, name, content)
+        await load()
+        toast.success(`Imported ${name}`)
+      } catch (err) {
+        toast.error(`Could not import ${name}: ${String(err)}`)
+      }
     },
     [nodeId, load],
   )
 
   const handleDelete = useCallback(
     async (name: string) => {
-      await invoke('keyStore.deleteKey', nodeId, name)
-      await load()
-      toast.success('Key deleted')
+      try {
+        await invoke('keyStore.deleteKey', nodeId, name)
+        await load()
+        toast.success('Key deleted')
+      } catch (err) {
+        toast.error(`Could not delete key: ${String(err)}`)
+      }
     },
     [nodeId, load],
   )
 
   const handleCopyPublic = useCallback(
     async (name: string) => {
-      const pub = await invoke<string>('keyStore.readPublicKey', nodeId, name)
-      await navigator.clipboard.writeText(pub.trim())
-      toast.success('Public key copied')
+      try {
+        const pub = await invoke<string>('keyStore.readPublicKey', nodeId, name)
+        await navigator.clipboard.writeText(pub.trim())
+        toast.success('Public key copied')
+      } catch (err) {
+        toast.error(`Could not read public key: ${String(err)}`)
+      }
     },
     [nodeId],
   )
 
   const handleToggleWsl = useCallback(
     async (entry: KeyEntry) => {
-      if (entry.inWsl) {
-        await invoke('keyStore.removeKeyFromWsl', entry.name)
-        toast.success(`Removed ${entry.name} from WSL`)
-      } else {
-        await invoke('keyStore.copyKeyToWsl', nodeId, entry.name)
-        toast.success(`Copied ${entry.name} to WSL`)
+      try {
+        if (entry.inWsl) {
+          await invoke('keyStore.removeKeyFromWsl', entry.name)
+          toast.success(`Removed ${entry.name} from WSL`)
+        } else {
+          await invoke('keyStore.copyKeyToWsl', nodeId, entry.name)
+          toast.success(`Copied ${entry.name} to WSL`)
+        }
+        await load()
+      } catch (err) {
+        toast.error(`WSL update failed: ${String(err)}`)
       }
-      await load()
     },
     [nodeId, load],
   )
