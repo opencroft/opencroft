@@ -10,14 +10,14 @@ export async function getSetting(id: string) {
 }
 
 export async function upsertSetting(id: string, data: string) {
-  return db
+  const [row] = await db
     .insert(setting)
     .values({ id, data })
     .onConflictDoUpdate({ target: setting.id, set: { data, updatedAt: new Date() } })
     .returning()
-    .get()
+  return row
 }
 
 export async function deleteSetting(id: string) {
-  return db.delete(setting).where(eq(setting.id, id)).run().changes > 0
+  return (await db.delete(setting).where(eq(setting.id, id)).returning()).length > 0
 }

@@ -1,23 +1,31 @@
 {
   "name": "@opencroft/db",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./schema": "./src/schema.ts"
+    "./schema": "./src/schema.ts",
+    "./connect": "./src/connect.ts",
+    "./backup": "./src/backup.ts"
   },
   "scripts": {
+    "generate": "drizzle-kit generate",
+    "migrate": "drizzle-kit migrate",
     "push": "drizzle-kit push",
     "pull": "drizzle-kit pull",
-    "generate": "drizzle-kit generate"
+    "studio": "drizzle-kit studio",
+    "backup": "tsx scripts/backup.ts",
+    "restore": "tsx scripts/restore.ts"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "drizzle-kit": "^0.31.10"
+    "@types/pg": "^8.11.10",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.19.2"
   },
   "dependencies": {
-    "better-sqlite3": "^12.10.0",
-    "drizzle-orm": "^0.45.2"
+    "@electric-sql/pglite": "^0.2.17",
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.13.1"
   }
 }

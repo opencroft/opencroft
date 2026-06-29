@@ -22,14 +22,12 @@ export interface AuditEntryInput {
 }
 
 export async function recordAudit(input: AuditEntryInput): Promise<void> {
-  db.insert(mcpAuditLog)
-    .values({
-      tool: input.tool,
-      args: serialize(input.args),
-      result: input.result === undefined ? null : serialize(input.result),
-      error: input.error ?? null,
-      status: input.status,
-      durationMs: input.durationMs,
-    })
-    .run()
+  await db.insert(mcpAuditLog).values({
+    tool: input.tool,
+    args: serialize(input.args),
+    result: input.result === undefined ? null : serialize(input.result),
+    error: input.error ?? null,
+    status: input.status,
+    durationMs: input.durationMs,
+  })
 }

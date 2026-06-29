@@ -14,8 +14,9 @@ RUN --mount=type=cache,target=/root/.npm npm ci
 
 COPY . .
 
-# Create the schema in a fresh DB at build time (drizzle-kit push, non-interactive);
-# this empty DB is baked into seed.db below for new installs.
+# Provision the schema in a fresh embedded PGlite at build time (drizzle-kit
+# push, non-interactive) so any build-time SSR/prerender has a database. Fresh
+# runtime volumes are initialised by the boot-time migrator, so nothing is baked.
 RUN mkdir -p apps/opencroft/data && npm run push -w @opencroft/db
 
 WORKDIR /repo/apps/opencroft
@@ -37,13 +38,16 @@ ENV PORT=9999
 ENV HOST=0.0.0.0
 ENV HOSTNAME=0.0.0.0
 ENV OPENCROFT_CACHE_DIR=/home/node/.cache
+# The boot-time migrator (packages/db) reads its migrations from this path; the
+# workspace sources are copied to /app/packages below.
+ENV DB_MIGRATIONS_DIR=/app/packages/db/migrations
 
 # Nitro build output: the self-contained Node server (.output/server, incl. the
 # /api/ws/terminal WebSocket route) plus the public client assets (.output/public).
 COPY --from=build --chown=node:node /repo/apps/opencroft/.output ./.output
 # Runtime deps are hoisted to the workspace root by npm; copy them next to the
 # app so Node resolves them from /app/node_modules. The Start server build,
-# drizzle-orm / better-sqlite3, esbuild (runtime extension compile), ssh2 / node-pty / ws live here.
+# drizzle-orm / @electric-sql/pglite + pg, esbuild (runtime extension compile), ssh2 / node-pty / ws live here.
 COPY --from=build --chown=node:node /repo/node_modules ./node_modules
 # Workspace package sources. node_modules/<pkg> are relative symlinks into
 # ../packages (e.g. agent-client, which ships raw TS and is imported by the
@@ -54,7 +58,6 @@ COPY --from=build --chown=node:node /repo/packages ./packages
 COPY --from=build --chown=node:node /repo/apps/opencroft/package.json ./package.json
 # Source is needed at runtime by the extension compiler (builtin extension lives in app/).
 COPY --from=build --chown=node:node /repo/apps/opencroft/app ./app
-COPY --from=build --chown=node:node /repo/apps/opencroft/data/opencroft.db ./seed.db
 
 USER node
 EXPOSE 9999
