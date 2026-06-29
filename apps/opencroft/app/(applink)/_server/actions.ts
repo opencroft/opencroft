@@ -20,7 +20,9 @@ export const createAppLink = createServerFn({ method: 'POST' })
 export const updateAppLink = createServerFn({ method: 'POST' })
   .inputValidator((data: { id: string; title: string; url: string }) => data)
   .handler(async ({ data }) => {
-    return (await db.update(appLink).set({ title: data.title, url: data.url }).where(eq(appLink.id, data.id)).returning())[0]
+    return (
+      await db.update(appLink).set({ title: data.title, url: data.url }).where(eq(appLink.id, data.id)).returning()
+    )[0]
   })
 
 export const deleteAppLink = createServerFn({ method: 'POST' })

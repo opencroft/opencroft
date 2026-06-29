@@ -6,6 +6,6 @@ import { type DB, openDb } from './connect'
 const globalForDb = globalThis as unknown as { __opencroftDb?: Promise<DB> }
 export const db = await (globalForDb.__opencroftDb ??= openDb().then((r) => r.db))
 
-export type { DB }
-export { openDb, migrationsFolder } from './connect'
+export { migrationsFolder, openDb } from './connect'
 export * from './schema'
+export type { DB }
