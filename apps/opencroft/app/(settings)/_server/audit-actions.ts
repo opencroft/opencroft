@@ -65,12 +65,12 @@ export const listAuditEntries = createServerFn({ method: 'POST' })
   })
 
 export const listAuditTools = createServerFn().handler(async (): Promise<string[]> => {
-  const rows = db.selectDistinct({ tool: mcpAuditLog.tool }).from(mcpAuditLog).orderBy(asc(mcpAuditLog.tool)).all()
+  const rows = await db.selectDistinct({ tool: mcpAuditLog.tool }).from(mcpAuditLog).orderBy(asc(mcpAuditLog.tool))
   return rows.map((r) => r.tool)
 })
 
 export const clearAuditLog = createServerFn().handler(async (): Promise<void> => {
-  db.delete(mcpAuditLog).run()
+  await db.delete(mcpAuditLog)
 })
 
 // ── YOLO Mode ──────────────────────────────────────────────────────────────

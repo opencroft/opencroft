@@ -1,12 +1,16 @@
 import { defineConfig } from 'drizzle-kit'
 
-// Path to the SQLite file. Defaults to the app's data dir; override with
-// DATABASE_URL (e.g. in Docker, where it lives next to the app at runtime).
-const url = process.env.DATABASE_URL ?? '../../apps/opencroft/data/opencroft.db'
+// Postgres dialect for both drivers. With a remote DATABASE_URL drizzle-kit
+// targets node-postgres; otherwise it drives the embedded PGlite instance at
+// PGLITE_PATH (used by `generate`/`push`/`studio`).
+const url = process.env.DATABASE_URL
+const isRemote = !!url && /^postgres(ql)?:\/\//.test(url)
 
 export default defineConfig({
-  dialect: 'sqlite',
+  dialect: 'postgresql',
   schema: './src/schema.ts',
   out: './migrations',
-  dbCredentials: { url },
+  ...(isRemote
+    ? { dbCredentials: { url: url as string } }
+    : { driver: 'pglite', dbCredentials: { url: process.env.PGLITE_PATH ?? '../../apps/opencroft/data/pglite' } }),
 })
