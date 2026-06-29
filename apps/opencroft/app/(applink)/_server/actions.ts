@@ -10,21 +10,23 @@ export const createAppLink = createServerFn({ method: 'POST' })
   .inputValidator((data: { title: string; url: string }) => data)
   .handler(async ({ data }) => {
     const last = await db.query.appLink.findFirst({ orderBy: desc(appLink.order) })
-    return db
+    const [row] = await db
       .insert(appLink)
       .values({ ...data, order: (last?.order ?? -1) + 1 })
       .returning()
-      .get()
+    return row
   })
 
 export const updateAppLink = createServerFn({ method: 'POST' })
   .inputValidator((data: { id: string; title: string; url: string }) => data)
   .handler(async ({ data }) => {
-    return db.update(appLink).set({ title: data.title, url: data.url }).where(eq(appLink.id, data.id)).returning().get()
+    return (
+      await db.update(appLink).set({ title: data.title, url: data.url }).where(eq(appLink.id, data.id)).returning()
+    )[0]
   })
 
 export const deleteAppLink = createServerFn({ method: 'POST' })
   .inputValidator((id: string) => id)
   .handler(async ({ data: id }) => {
-    return db.delete(appLink).where(eq(appLink.id, id)).returning().get()
+    return (await db.delete(appLink).where(eq(appLink.id, id)).returning())[0]
   })

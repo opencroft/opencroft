@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**"]
+    "includes": ["**", "!packages/db/migrations"]
   },
   "formatter": {
     "enabled": true,

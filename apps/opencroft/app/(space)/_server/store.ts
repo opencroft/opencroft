@@ -79,21 +79,18 @@ class SpacesRegistry {
       return
     }
     const graph = parseGraph(legacy.data)
-    db.insert(space)
-      .values({
-        slug: DEFAULT_SPACE_SLUG,
-        name: DEFAULT_SPACE_NAME,
-        data: JSON.stringify(graph),
-      })
-      .run()
+    await db.insert(space).values({
+      slug: DEFAULT_SPACE_SLUG,
+      name: DEFAULT_SPACE_NAME,
+      data: JSON.stringify(graph),
+    })
   }
 
   private async createInternal(name: string, slug: string, graph: GraphData): Promise<SpaceRuntime> {
-    const row = db
+    const [row] = await db
       .insert(space)
       .values({ name, slug, data: JSON.stringify(graph) })
       .returning()
-      .get()
     const runtime: SpaceRuntime = {
       id: row.id,
       slug: row.slug,
@@ -156,7 +153,7 @@ class SpacesRegistry {
       return null
     }
     const runtime = this.spaces.get(id)!
-    const row = db.update(space).set({ pinned }).where(eq(space.id, id)).returning().get()
+    const [row] = await db.update(space).set({ pinned }).where(eq(space.id, id)).returning()
     runtime.pinned = row.pinned
     runtime.updatedAt = row.updatedAt
     return runtime
@@ -168,7 +165,7 @@ class SpacesRegistry {
       return null
     }
     const runtime = this.spaces.get(id)!
-    const row = db.update(space).set({ name }).where(eq(space.id, id)).returning().get()
+    const [row] = await db.update(space).set({ name }).where(eq(space.id, id)).returning()
     runtime.name = row.name
     runtime.updatedAt = row.updatedAt
     return runtime
@@ -179,7 +176,7 @@ class SpacesRegistry {
     if (!id) {
       return false
     }
-    db.delete(space).where(eq(space.id, id)).run()
+    await db.delete(space).where(eq(space.id, id))
     this.spaces.delete(id)
     this.bySlug.delete(slug)
     return true
@@ -191,12 +188,11 @@ class SpacesRegistry {
       return null
     }
     const runtime = this.spaces.get(id)!
-    const row = db
+    const [row] = await db
       .update(space)
       .set({ data: JSON.stringify(graph) })
       .where(eq(space.id, id))
       .returning()
-      .get()
     runtime.graph = graph
     runtime.updatedAt = row.updatedAt
     return runtime

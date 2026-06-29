@@ -20,9 +20,9 @@ export async function setDashboardPinned(slug: string, pinned: boolean): Promise
   const current = await readPinned()
   const next = pinned ? [...new Set([...current, slug])] : current.filter((s) => s !== slug)
   const data = JSON.stringify({ slugs: next })
-  db.insert(setting)
+  await db
+    .insert(setting)
     .values({ id: PINNED_SETTING_ID, data })
     .onConflictDoUpdate({ target: setting.id, set: { data, updatedAt: new Date() } })
-    .run()
   return next
 }

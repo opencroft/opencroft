@@ -1,73 +1,65 @@
-import { customType, index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
 
-// Timestamps are stored on disk as ISO-8601 text while surfacing JS `Date`
+// Timestamps are real Postgres `timestamptz` columns surfacing JS `Date`
 // objects, matching what the app expects (it calls `.toISOString()` /
-// `.getTime()` on these fields).
-const timestamp = customType<{ data: Date; driverData: string }>({
-  dataType: () => 'text',
-  toDriver: (value) => value.toISOString(),
-  fromDriver: (value) => new Date(value),
-})
+// `.getTime()` on these fields). Defaults are computed app-side (as before the
+// Postgres port) so behaviour is identical across the PGlite and node-postgres
+// drivers.
+const createdAt = () =>
+  timestamp({ withTimezone: true, mode: 'date' })
+    .notNull()
+    .$defaultFn(() => new Date())
+
+const updatedAt = () =>
+  timestamp({ withTimezone: true, mode: 'date' })
+    .notNull()
+    .$defaultFn(() => new Date())
+    .$onUpdateFn(() => new Date())
 
 const uuid = () => crypto.randomUUID()
 
-export const setting = sqliteTable('Setting', {
+export const setting = pgTable('Setting', {
   id: text().primaryKey().notNull(),
   data: text().default('{}').notNull(),
-  createdAt: timestamp()
-    .notNull()
-    .$defaultFn(() => new Date()),
-  updatedAt: timestamp()
-    .notNull()
-    .$defaultFn(() => new Date())
-    .$onUpdateFn(() => new Date()),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
 })
 
-export const secret = sqliteTable(
+export const secret = pgTable(
   'Secret',
   {
     id: text().primaryKey().notNull().$defaultFn(uuid),
     storeId: text().notNull(),
     key: text().notNull(),
     value: text().notNull(),
-    createdAt: timestamp()
-      .notNull()
-      .$defaultFn(() => new Date()),
-    updatedAt: timestamp()
-      .notNull()
-      .$defaultFn(() => new Date())
-      .$onUpdateFn(() => new Date()),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
   },
   (t) => [uniqueIndex('Secret_storeId_key_key').on(t.storeId, t.key), index('Secret_storeId_idx').on(t.storeId)],
 )
 
-export const appLink = sqliteTable('AppLink', {
+export const appLink = pgTable('AppLink', {
   id: text().primaryKey().notNull().$defaultFn(uuid),
   title: text().notNull(),
   url: text().notNull(),
   order: integer().default(0).notNull(),
 })
 
-export const space = sqliteTable(
+export const space = pgTable(
   'Space',
   {
     id: text().primaryKey().notNull().$defaultFn(uuid),
     slug: text().notNull(),
     name: text().notNull(),
     data: text().default('{"nodes":[],"edges":[]}').notNull(),
-    pinned: integer({ mode: 'boolean' }).default(false).notNull(),
-    createdAt: timestamp()
-      .notNull()
-      .$defaultFn(() => new Date()),
-    updatedAt: timestamp()
-      .notNull()
-      .$defaultFn(() => new Date())
-      .$onUpdateFn(() => new Date()),
+    pinned: boolean().default(false).notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
   },
   (t) => [uniqueIndex('Space_slug_key').on(t.slug)],
 )
 
-export const mcpAuditLog = sqliteTable(
+export const mcpAuditLog = pgTable(
   'McpAuditLog',
   {
     id: text().primaryKey().notNull().$defaultFn(uuid),
@@ -77,9 +69,7 @@ export const mcpAuditLog = sqliteTable(
     error: text(),
     status: text().default('auto-approved').notNull(),
     durationMs: integer().notNull(),
-    createdAt: timestamp()
-      .notNull()
-      .$defaultFn(() => new Date()),
+    createdAt: createdAt(),
   },
   (t) => [
     index('McpAuditLog_tool_idx').on(t.tool),

@@ -1,30 +1,11 @@
-import fs from 'node:fs'
-import path from 'node:path'
+import { type DB, openDb } from './connect'
 
-import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
+// Reuse one connection per process (and across HMR in dev). The runtime
+// migrator runs inside openDb() before the database is exposed, so every query
+// site sees an up-to-date schema.
+const globalForDb = globalThis as unknown as { __opencroftDb?: Promise<DB> }
+export const db = await (globalForDb.__opencroftDb ??= openDb().then((r) => r.db))
 
-import { schema } from './schema'
-
-// SQLite lives under the app's working directory. On a fresh data volume, seed
-// it from the baked schema copy.
-const dataDir = path.join(process.cwd(), 'data')
-const dbFile = path.join(dataDir, 'opencroft.db')
-const seedFile = path.join(process.cwd(), 'seed.db')
-
-if (!fs.existsSync(dbFile) && fs.existsSync(seedFile)) {
-  fs.mkdirSync(dataDir, { recursive: true })
-  fs.copyFileSync(seedFile, dbFile)
-}
-
-const globalForDb = globalThis as unknown as { __opencroftSqlite?: Database.Database }
-const sqlite = globalForDb.__opencroftSqlite ?? new Database(dbFile)
-if (process.env.NODE_ENV !== 'production') {
-  globalForDb.__opencroftSqlite = sqlite
-}
-
-export const db = drizzle({ client: sqlite, schema })
-
+export { migrationsFolder, openDb } from './connect'
 export * from './schema'
-export { schema }
-export type DB = typeof db
+export type { DB }

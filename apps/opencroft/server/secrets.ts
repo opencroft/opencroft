@@ -35,21 +35,19 @@ export const secrets: SecretsService = {
   },
   async set(storeId, key, value) {
     const encrypted = encrypt(value)
-    db.insert(secret)
+    await db
+      .insert(secret)
       .values({ storeId, key, value: encrypted })
       .onConflictDoUpdate({ target: [secret.storeId, secret.key], set: { value: encrypted, updatedAt: new Date() } })
-      .run()
   },
   async delete(storeId, key) {
-    db.delete(secret)
-      .where(and(eq(secret.storeId, storeId), eq(secret.key, key)))
-      .run()
+    await db.delete(secret).where(and(eq(secret.storeId, storeId), eq(secret.key, key)))
   },
   async deleteById(id) {
-    db.delete(secret).where(eq(secret.id, id)).run()
+    await db.delete(secret).where(eq(secret.id, id))
   },
   async deleteStore(storeId) {
-    db.delete(secret).where(eq(secret.storeId, storeId)).run()
+    await db.delete(secret).where(eq(secret.storeId, storeId))
   },
   async listStores() {
     const rows = await db.query.secret.findMany({ columns: { storeId: true, key: true }, orderBy: asc(secret.storeId) })

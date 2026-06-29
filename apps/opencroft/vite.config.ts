@@ -35,7 +35,8 @@ export default defineConfig({
       '@lydell/node-pty',
       'esbuild',
       'esbuild-wasm',
-      'better-sqlite3',
+      '@electric-sql/pglite',
+      'pg',
       '@tailwindcss/node',
       '@tailwindcss/oxide',
       'lightningcss',
@@ -48,14 +49,15 @@ export default defineConfig({
       '@lydell/node-pty',
       'esbuild',
       'esbuild-wasm',
-      'better-sqlite3',
+      '@electric-sql/pglite',
+      'pg',
       '@tailwindcss/node',
       '@tailwindcss/oxide',
       'lightningcss',
     ],
     // agent-client, @opencroft/terminal, and @opencroft/dashboards ship TS source
     // and must be transpiled for SSR; their native deps (ssh2, node-pty,
-    // better-sqlite3) stay external via the list above.
+    // @electric-sql/pglite, pg) stay external via the list above.
     noExternal: ['agent-client', '@opencroft/terminal', '@opencroft/dashboards'],
   },
   plugins: [
