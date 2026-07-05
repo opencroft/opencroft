@@ -13,7 +13,7 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
     id: 'anthropic',
     label: 'Anthropic',
     endpoints: { anthropic: '' },
-    models: ['claude-opus-4-8', 'claude-opus-4-7', 'claude-sonnet-4-6'],
+    models: ['claude-opus-4-8', 'claude-opus-4-7', 'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-fable-5'],
     keyEnv: 'ANTHROPIC_API_KEY',
   },
   {
@@ -23,7 +23,7 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
       anthropic: 'https://api.z.ai/api/anthropic',
       openai: 'https://api.z.ai/api/coding/paas/v4',
     },
-    models: ['glm-4.6', 'glm-5.1'],
+    models: ['glm-4.6', 'glm-5.1', 'glm-5.2'],
     keyEnv: 'ZAI_API_KEY',
   },
   {
