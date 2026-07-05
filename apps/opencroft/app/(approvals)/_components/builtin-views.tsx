@@ -268,6 +268,24 @@ function RemoteExecView({ request }: ApprovalViewProps) {
   )
 }
 
+function RemoteScriptView({ request }: ApprovalViewProps) {
+  const target = request.args.target as string | undefined
+  const script = request.args.script as string | undefined
+  const scriptArgs = request.args.args as string[] | undefined
+  const secrets = request.args.secrets as string[] | undefined
+  const description = request.args.description as string | undefined
+
+  return (
+    <div className='space-y-3 px-3 py-2'>
+      {target && <TargetRow target={target} />}
+      {description && <FieldRow label='Description' value={description} />}
+      {script && <FieldRow label='Script' value={script} />}
+      {scriptArgs && scriptArgs.length > 0 && <FieldRow label='Args' value={scriptArgs.join(' ')} />}
+      {secrets && secrets.length > 0 && <FieldRow label='Secrets' value={secrets.join(', ')} />}
+    </div>
+  )
+}
+
 function CallView({ request }: ApprovalViewProps) {
   const nodeId = request.args.nodeId as string | undefined
   const action = request.args.action as string | undefined
@@ -386,6 +404,11 @@ function UpdateNodesView({ request }: ApprovalViewProps) {
 
 registerApprovalView('remote_exec', {
   body: RemoteExecView,
+  getNodeId: (args) => (args.target as string | undefined)?.split('/')[0],
+})
+
+registerApprovalView('remote_script', {
+  body: RemoteScriptView,
   getNodeId: (args) => (args.target as string | undefined)?.split('/')[0],
 })
 

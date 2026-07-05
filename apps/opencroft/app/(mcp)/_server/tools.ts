@@ -777,6 +777,39 @@ export const toolDefinitions = [
       required: ['target', 'command'],
     },
   },
+  {
+    name: 'remote_script',
+    description:
+      'Execute a multiline bash script on a remote node. Unlike remote_exec, the script body is written to a temp file first, so it avoids quoting/escaping issues with heredocs, loops, and nested quotes. The target is a terminal-context output handle in "node-id/handle-id" format. Optionally inject secret values from any Secrets Store as env vars (reference them in the script via "$NAME").',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        target: {
+          type: 'string',
+          description: 'Terminal-context output handle (format: "node-id/handle-id").',
+        },
+        script: { type: 'string', description: 'Multiline bash script body to execute.' },
+        args: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Positional arguments passed to the script (available as $1, $2, ... inside it).',
+        },
+        secrets: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Names of secrets (keys in any Secrets Store) to decrypt and inject as env vars before the script runs. Reference them via "$NAME" inside the script. Values are never returned, only injected into the executor process.',
+        },
+        description: {
+          type: 'string',
+          description:
+            'Short, human-readable description of what the script does (5-10 words). Shown in the permission prompt UI.',
+        },
+        ...SPACE_PARAM,
+      },
+      required: ['target', 'script'],
+    },
+  },
 
   // ── Node Actions ────────────────────────────────────────────────────
   {
@@ -1435,10 +1468,8 @@ async function nodeHandles(
 }
 
 function nodeName(node: GraphNode, typeNames: Map<string, string>): string {
-  if (node.type && typeNames.has(node.type)) {
-    return typeNames.get(node.type)!
-  }
-  return node.type ?? node.id
+  const name = node.type ? typeNames.get(node.type) : undefined
+  return name ?? node.type ?? node.id
 }
 
 function globToRegex(pattern: string): RegExp {
@@ -1473,7 +1504,9 @@ function walkLeaves(value: unknown, path: string, out: Map<string, string>): voi
     return
   }
   if (Array.isArray(value)) {
-    value.forEach((item, i) => walkLeaves(item, `${path}[${i}]`, out))
+    value.forEach((item, i) => {
+      walkLeaves(item, `${path}[${i}]`, out)
+    })
     return
   }
   if (typeof value === 'object') {
@@ -1864,7 +1897,10 @@ function buildHandlers(): Record<string, ToolHandler> {
         }
         const updated: GraphNode[] = []
         for (const it of items) {
-          const node = index.get(it.nodeId as string)!
+          const node = index.get(it.nodeId as string)
+          if (!node) {
+            continue
+          }
           const data = it.data as Record<string, unknown> | undefined
           if (data) {
             node.data = { ...(node.data ?? {}), ...data }
@@ -2565,6 +2601,30 @@ function buildHandlers(): Record<string, ToolHandler> {
         return textResult(output)
       },
       { view: 'remote_exec' },
+    ),
+
+    // ── script (remote) ──────────────────────────────────────────────
+    remote_script: withApprovalRequired(
+      async (args) => {
+        const script = args.script as string | undefined
+        if (!script) {
+          fail(-32602, 'Missing required param: script')
+        }
+        const scriptArgs = (args.args as string[] | undefined) ?? []
+        const { ctx } = await resolveTerminalContext(args)
+        const prefix = await resolveSecretsForExec(args.secrets as string[] | undefined)
+        const trimmed = script.endsWith('\n') ? script.slice(0, -1) : script
+        const tmpPath = `/tmp/opencroft-script-${crypto.randomUUID()}.sh`
+        const heredoc = `cat > ${shellQuote(tmpPath)} << 'OPENCROFTEOF'\n${trimmed}\nOPENCROFTEOF`
+        await remoteExec(ctx, heredoc)
+        const argv = scriptArgs.map(shellQuote).join(' ')
+        const output = await remoteExec(
+          ctx,
+          `${prefix}bash ${shellQuote(tmpPath)} ${argv}; rc=$?; rm -f ${shellQuote(tmpPath)}; exit $rc`,
+        )
+        return textResult(output)
+      },
+      { view: 'remote_script' },
     ),
 
     // ── list_actions ─────────────────────────────────────────────────
