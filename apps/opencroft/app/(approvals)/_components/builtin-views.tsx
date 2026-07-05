@@ -286,6 +286,113 @@ function RemoteScriptView({ request }: ApprovalViewProps) {
   )
 }
 
+function useSkillBody(name: string | undefined, requestId: string) {
+  const [body, setBody] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies(requestId): re-read the skill for every new approval request
+  useEffect(() => {
+    if (!name) {
+      return
+    }
+    let cancelled = false
+    setBody(null)
+    setError(null)
+    fetch('/api/acp/skills')
+      .then((r) => r.json())
+      .then((skills: { name: string; body: string }[]) => {
+        if (cancelled) {
+          return
+        }
+        const found = skills.find((skill) => skill.name === name)
+        setBody(found ? found.body : '')
+      })
+      .catch((err: Error) => {
+        if (!cancelled) {
+          setError(err.message)
+          setBody('')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [name, requestId])
+
+  return { body, error }
+}
+
+function SkillWriteView({ request }: ApprovalViewProps) {
+  const name = request.args.name as string | undefined
+  const description = request.args.description as string | undefined
+  const newBody = (request.args.body as string | undefined) ?? ''
+  const { body, error } = useSkillBody(name, request.id)
+
+  const diffNode = useMemo(() => {
+    if (body === null) {
+      return null
+    }
+    return (
+      <div className='p-4'>
+        <NodeCard className='w-full'>
+          <div className='px-3 py-2 space-y-2'>
+            <div className='font-mono text-xs'>{name}</div>
+            <NodeDiffEditor current={body} next={newBody} />
+          </div>
+        </NodeCard>
+      </div>
+    )
+  }, [body, newBody, name])
+
+  useOverlay({ content: diffNode })
+
+  return (
+    <div className='space-y-3 px-3 py-2'>
+      {name && <FieldRow label='Skill' value={name} />}
+      {description && <FieldRow label='Description' value={description} />}
+      {error && <FieldRow label='Note' value={`Could not read existing skill: ${error}`} />}
+      {body === null && <div className='text-xs text-muted-foreground'>Loading current skill…</div>}
+    </div>
+  )
+}
+
+function SkillEditView({ request }: ApprovalViewProps) {
+  const name = request.args.name as string | undefined
+  const oldString = (request.args.oldString as string | undefined) ?? ''
+  const newString = (request.args.newString as string | undefined) ?? ''
+  const replaceAll = Boolean(request.args.replaceAll)
+  const { body, error } = useSkillBody(name, request.id)
+
+  const diffNode = useMemo(() => {
+    if (body === null) {
+      return null
+    }
+    const next = replaceAll ? body.split(oldString).join(newString) : body.replace(oldString, newString)
+    return (
+      <div className='p-4'>
+        <NodeCard className='w-full'>
+          <div className='px-3 py-2 space-y-2'>
+            <div className='font-mono text-xs'>{name}</div>
+            <NodeDiffEditor current={body} next={next} />
+          </div>
+        </NodeCard>
+      </div>
+    )
+  }, [body, oldString, newString, replaceAll, name])
+
+  useOverlay({ content: diffNode })
+
+  return (
+    <div className='space-y-3 px-3 py-2'>
+      {name && <FieldRow label='Skill' value={name} />}
+      <FieldRow label='Old' value={oldString} />
+      <FieldRow label='New' value={newString} />
+      {replaceAll && <div className='text-xs text-muted-foreground'>Replace all occurrences</div>}
+      {error && <FieldRow label='Note' value={`Could not read existing skill: ${error}`} />}
+      {body === null && <div className='text-xs text-muted-foreground'>Loading current skill…</div>}
+    </div>
+  )
+}
+
 function CallView({ request }: ApprovalViewProps) {
   const nodeId = request.args.nodeId as string | undefined
   const action = request.args.action as string | undefined
@@ -420,6 +527,14 @@ registerApprovalView('remote_write', {
 registerApprovalView('remote_edit', {
   body: RemoteEditView,
   getNodeId: (args) => (args.target as string | undefined)?.split('/')[0],
+})
+
+registerApprovalView('skill_write', {
+  body: SkillWriteView,
+})
+
+registerApprovalView('skill_edit', {
+  body: SkillEditView,
 })
 
 registerApprovalView('call', {

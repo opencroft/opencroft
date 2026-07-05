@@ -7,14 +7,15 @@
  * UI feedback (toasts, focus, comments) is broadcast via SSE.
  */
 
-import fs from 'fs/promises'
-import path from 'path'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 
 import { checkMcpServer } from 'agent-client/mcp-check'
 import type { KeyValue, McpServerConfig, McpTransport } from 'agent-client/mcp-types'
 
 import { agentClient } from '@/app/(agent)/_server/agent-client-instance'
 import { readMcpServers, writeMcpServers } from '@/app/(agent)/_server/mcp-store'
+import { readSkills, type SkillConfig, writeSkills } from '@/app/(agent)/_server/skill-store'
 import {
   ApprovalRejectedError,
   awaitApproval,
@@ -923,6 +924,48 @@ export const toolDefinitions = [
     },
   },
 
+  // ── Skills ───────────────────────────────────────────────────────────────
+  {
+    name: 'skill_write',
+    description:
+      'Create or overwrite a skill by name. Skills are shared by every local agent and loaded on demand when the agent invokes the skill tool.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string', description: 'Unique skill name — the key used for the upsert.' },
+        description: { type: 'string', description: 'Shown in the skill catalog — when to use this skill.' },
+        body: { type: 'string', description: 'Markdown instructions loaded when the agent invokes this skill.' },
+      },
+      required: ['name', 'description', 'body'],
+    },
+  },
+  {
+    name: 'skill_edit',
+    description:
+      "Replace an exact string in a skill's body. Fails if oldString is not unique unless replaceAll is true.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string', description: 'Name of the skill to edit.' },
+        oldString: { type: 'string', description: 'The exact text to replace.' },
+        newString: { type: 'string', description: 'The text to replace with.' },
+        replaceAll: { type: 'boolean', description: 'Replace every occurrence (default false).' },
+      },
+      required: ['name', 'oldString', 'newString'],
+    },
+  },
+  {
+    name: 'skill_delete',
+    description: 'Delete a skill by name.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string', description: 'Name of the skill to remove.' },
+      },
+      required: ['name'],
+    },
+  },
+
   // ── AskUser ────────────────────────────────────────────────────────────
   {
     name: 'ask_user',
@@ -1406,12 +1449,12 @@ async function expandDynamicHandles(node: GraphNode, declared: ExtensionHandle[]
   if (!dynamic) {
     return []
   }
-  const resolved = node.data?.['__resolvedContexts'] as Record<string, { sourceNodeId?: string }> | undefined
+  const resolved = node.data?.__resolvedContexts as Record<string, { sourceNodeId?: string }> | undefined
   const dockerNodeId = resolved?.['docker-in']?.sourceNodeId
   if (!dockerNodeId) {
     return []
   }
-  const service = (node.data?.['name'] as string) || node.id
+  const service = (node.data?.name as string) || node.id
   try {
     const containers = (await invokeExtensionAction({
       data: { extensionId: 'local/docker', actionName: 'docker.ps', args: [{ dockerNodeId, service }] },
@@ -1608,7 +1651,7 @@ export async function remoteExec(ctx: Record<string, unknown>, command: string):
 }
 
 export function shellQuote(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'"
+  return `'${s.replace(/'/g, "'\\''")}'`
 }
 
 async function resolveSecretsForExec(names: string[] | undefined): Promise<string> {
@@ -1624,7 +1667,7 @@ async function resolveSecretsForExec(names: string[] | undefined): Promise<strin
     const b64 = Buffer.from(value, 'utf8').toString('base64')
     lines.push(`export ${name}=$(echo ${b64} | base64 -d)`)
   }
-  const prefix = lines.join('; ') + '; '
+  const prefix = `${lines.join('; ')}; `
   console.error('[resolveSecretsForExec] PREFIX FIRST 80:', prefix.slice(0, 80))
   console.error('[resolveSecretsForExec] PREFIX LEN:', prefix.length)
   return prefix
@@ -1634,7 +1677,7 @@ function catN(content: string, startLine = 1): string {
   const lines = content.split('\n')
   const lastLineNo = startLine + lines.length - 1
   const width = String(lastLineNo).length
-  return lines.map((line, i) => String(startLine + i).padStart(width) + '\t' + line).join('\n')
+  return lines.map((line, i) => `${String(startLine + i).padStart(width)}\t${line}`).join('\n')
 }
 
 function sliceLines(content: string, offset?: number, limit?: number): string {
@@ -2747,6 +2790,76 @@ function buildHandlers(): Record<string, ToolHandler> {
       }
       return textResult(JSON.stringify(await checkMcpServer(config), null, 2))
     },
+
+    // ── Skills ──────────────────────────────────────────────────────────────
+    skill_write: withApprovalRequired(
+      async (args) => {
+        const name = typeof args.name === 'string' ? args.name.trim() : ''
+        const description = typeof args.description === 'string' ? args.description : ''
+        const body = typeof args.body === 'string' ? args.body : ''
+        if (!name || !description || !body) {
+          fail(-32602, 'Missing required params: name, description, body')
+        }
+        const skills = await readSkills()
+        const idx = skills.findIndex((skill) => skill.name === name)
+        const config: SkillConfig = { name, description, body }
+        if (idx >= 0) {
+          skills[idx] = config
+        } else {
+          skills.push(config)
+        }
+        await writeSkills(skills)
+        return textResult(`Skill "${name}" ${idx >= 0 ? 'updated' : 'created'}.`)
+      },
+      { view: 'skill_write' },
+    ),
+
+    skill_edit: withApprovalRequired(
+      async (args) => {
+        const name = typeof args.name === 'string' ? args.name.trim() : ''
+        const oldString = args.oldString as string | undefined
+        const newString = args.newString as string | undefined
+        if (!name || oldString === undefined || newString === undefined) {
+          fail(-32602, 'Missing required params: name, oldString, newString')
+        }
+        if (oldString === newString) {
+          fail(-32602, 'oldString and newString must differ')
+        }
+        const replaceAll = Boolean(args.replaceAll)
+        const skills = await readSkills()
+        const idx = skills.findIndex((skill) => skill.name === name)
+        if (idx === -1) {
+          fail(-32602, `No skill named "${name}"`)
+        }
+        const body = skills[idx].body
+        const occurrences = body.split(oldString).length - 1
+        if (occurrences === 0) {
+          fail(-32602, 'oldString not found in skill body')
+        }
+        if (occurrences > 1 && !replaceAll) {
+          fail(-32602, `oldString is not unique (${occurrences} matches). Set replaceAll=true or provide more context.`)
+        }
+        const nextBody = replaceAll ? body.split(oldString).join(newString) : body.replace(oldString, newString)
+        skills[idx] = { ...skills[idx], body: nextBody }
+        await writeSkills(skills)
+        return textResult(`Skill "${name}" updated.`)
+      },
+      { view: 'skill_edit' },
+    ),
+
+    skill_delete: withApprovalRequired(async (args) => {
+      const name = typeof args.name === 'string' ? args.name.trim() : ''
+      if (!name) {
+        fail(-32602, 'Missing required param: name')
+      }
+      const skills = await readSkills()
+      const next = skills.filter((skill) => skill.name !== name)
+      if (next.length === skills.length) {
+        fail(-32602, `No skill named "${name}"`)
+      }
+      await writeSkills(next)
+      return textResult(`Skill "${name}" removed.`)
+    }),
   }
 }
 
