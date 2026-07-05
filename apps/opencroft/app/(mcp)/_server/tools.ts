@@ -706,7 +706,6 @@ export const toolDefinitions = [
         path: { type: 'string', description: 'Absolute file path on the remote node.' },
         offset: { type: 'number', description: '1-indexed line to start from. Default 1.' },
         limit: { type: 'number', description: 'Number of lines to return. Default: read to end.' },
-        ...SPACE_PARAM,
       },
       required: ['target', 'path'],
     },
@@ -724,7 +723,6 @@ export const toolDefinitions = [
         },
         path: { type: 'string', description: 'Absolute file path on the remote node.' },
         content: { type: 'string', description: 'File content to write (UTF-8).' },
-        ...SPACE_PARAM,
       },
       required: ['target', 'path', 'content'],
     },
@@ -744,7 +742,6 @@ export const toolDefinitions = [
         oldString: { type: 'string', description: 'The exact text to replace.' },
         newString: { type: 'string', description: 'The text to replace with.' },
         replaceAll: { type: 'boolean', description: 'Replace every occurrence (default false).' },
-        ...SPACE_PARAM,
       },
       required: ['target', 'path', 'oldString', 'newString'],
     },
@@ -772,9 +769,40 @@ export const toolDefinitions = [
           description:
             'Short, human-readable description of what the command does (5-10 words). Shown in the permission prompt UI.',
         },
-        ...SPACE_PARAM,
       },
       required: ['target', 'command'],
+    },
+  },
+  {
+    name: 'remote_script',
+    description:
+      'Execute a multiline bash script on a remote node. Unlike remote_exec, the script body is written to a temp file first, so it avoids quoting/escaping issues with heredocs, loops, and nested quotes. The target is a terminal-context output handle in "node-id/handle-id" format. Optionally inject secret values from any Secrets Store as env vars (reference them in the script via "$NAME").',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        target: {
+          type: 'string',
+          description: 'Terminal-context output handle (format: "node-id/handle-id").',
+        },
+        script: { type: 'string', description: 'Multiline bash script body to execute.' },
+        args: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Positional arguments passed to the script (available as $1, $2, ... inside it).',
+        },
+        secrets: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Names of secrets (keys in any Secrets Store) to decrypt and inject as env vars before the script runs. Reference them via "$NAME" inside the script. Values are never returned, only injected into the executor process.',
+        },
+        description: {
+          type: 'string',
+          description:
+            'Short, human-readable description of what the script does (5-10 words). Shown in the permission prompt UI.',
+        },
+      },
+      required: ['target', 'script'],
     },
   },
 
@@ -1435,10 +1463,8 @@ async function nodeHandles(
 }
 
 function nodeName(node: GraphNode, typeNames: Map<string, string>): string {
-  if (node.type && typeNames.has(node.type)) {
-    return typeNames.get(node.type)!
-  }
-  return node.type ?? node.id
+  const name = node.type ? typeNames.get(node.type) : undefined
+  return name ?? node.type ?? node.id
 }
 
 function globToRegex(pattern: string): RegExp {
@@ -1473,7 +1499,9 @@ function walkLeaves(value: unknown, path: string, out: Map<string, string>): voi
     return
   }
   if (Array.isArray(value)) {
-    value.forEach((item, i) => walkLeaves(item, `${path}[${i}]`, out))
+    value.forEach((item, i) => {
+      walkLeaves(item, `${path}[${i}]`, out)
+    })
     return
   }
   if (typeof value === 'object') {
@@ -1523,6 +1551,18 @@ function requireArray<T = unknown>(value: unknown, name: string): T[] {
 
 const CORE_EXTENSION_ID = 'builtin/core'
 
+async function findNodeAcrossSpaces(nodeId: string): Promise<{ node: GraphNode; slug: string }> {
+  const spaces = await listSpaces()
+  for (const space of spaces) {
+    const graph = await loadSpaceGraph({ data: space.slug })
+    const node = graph?.nodes.find((n) => (n as { id?: string }).id === nodeId) as GraphNode | undefined
+    if (node) {
+      return { node, slug: space.slug }
+    }
+  }
+  fail(-32602, `Node not found: ${nodeId}`)
+}
+
 export async function resolveTerminalContext(
   args: Record<string, unknown>,
 ): Promise<{ ctx: Record<string, unknown>; slug: string }> {
@@ -1534,12 +1574,7 @@ export async function resolveTerminalContext(
   if (!ep.handle) {
     fail(-32602, 'target must include handle (format: "node-id/handle-id")')
   }
-  const slug = await resolveSpace(args)
-  const graph = await loadOrFail(slug)
-  const node = graph.nodes.find((n) => (n as { id?: string }).id === ep.nodeId) as GraphNode | undefined
-  if (!node) {
-    fail(-32602, `Node not found: ${ep.nodeId}`)
-  }
+  const { node, slug } = await findNodeAcrossSpaces(ep.nodeId)
   if (!node.type) {
     fail(-32602, `Node ${ep.nodeId} has no type`)
   }
@@ -1864,7 +1899,10 @@ function buildHandlers(): Record<string, ToolHandler> {
         }
         const updated: GraphNode[] = []
         for (const it of items) {
-          const node = index.get(it.nodeId as string)!
+          const node = index.get(it.nodeId as string)
+          if (!node) {
+            continue
+          }
           const data = it.data as Record<string, unknown> | undefined
           if (data) {
             node.data = { ...(node.data ?? {}), ...data }
@@ -2565,6 +2603,30 @@ function buildHandlers(): Record<string, ToolHandler> {
         return textResult(output)
       },
       { view: 'remote_exec' },
+    ),
+
+    // ── script (remote) ──────────────────────────────────────────────
+    remote_script: withApprovalRequired(
+      async (args) => {
+        const script = args.script as string | undefined
+        if (!script) {
+          fail(-32602, 'Missing required param: script')
+        }
+        const scriptArgs = (args.args as string[] | undefined) ?? []
+        const { ctx } = await resolveTerminalContext(args)
+        const prefix = await resolveSecretsForExec(args.secrets as string[] | undefined)
+        const trimmed = script.endsWith('\n') ? script.slice(0, -1) : script
+        const tmpPath = `/tmp/opencroft-script-${crypto.randomUUID()}.sh`
+        const heredoc = `cat > ${shellQuote(tmpPath)} << 'OPENCROFTEOF'\n${trimmed}\nOPENCROFTEOF`
+        await remoteExec(ctx, heredoc)
+        const argv = scriptArgs.map(shellQuote).join(' ')
+        const output = await remoteExec(
+          ctx,
+          `${prefix}bash ${shellQuote(tmpPath)} ${argv}; rc=$?; rm -f ${shellQuote(tmpPath)}; exit $rc`,
+        )
+        return textResult(output)
+      },
+      { view: 'remote_script' },
     ),
 
     // ── list_actions ─────────────────────────────────────────────────
