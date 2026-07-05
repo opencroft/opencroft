@@ -30,7 +30,7 @@ const JSON_HEADERS = { 'content-type': 'application/json' }
 const DASHBOARD_KEY = 'agent:dashboard'
 // Sent with every message: the space and the node currently selected on the canvas.
 const systemTag = (spaceName: string, spaceSlug: string, selectedNodeId: string | null) =>
-  `<opencroft-system>Sent from OpenCroft space: ${spaceName} (${spaceSlug}). Selected node: ${selectedNodeId ?? 'none'}.</opencroft-system>`
+  `<opencroft-system>Sent from OpenCroft space: ${spaceName} (${spaceSlug}). Selected node: ${selectedNodeId ?? 'none'}. This may or may not relate to the current request.</opencroft-system>`
 // Injected on the first message of a session: asks the agent to lead its reply
 // with a self-titled chat name, which use-acp-session parses out to rename the
 // tab. No literal nested opencroft tag here — a nested close would truncate the
@@ -365,7 +365,7 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
   const goToList = useCallback(() => {
     setInspectorListOpen(true)
     chatTabs?.setActiveKey(fallbackKey)
-  }, [chatTabs, fallbackKey])
+  }, [chatTabs])
 
   const activeEntry = sessions.find((s) => s.key === activeSessionKey)
   if (activeEntry) {
