@@ -706,7 +706,6 @@ export const toolDefinitions = [
         path: { type: 'string', description: 'Absolute file path on the remote node.' },
         offset: { type: 'number', description: '1-indexed line to start from. Default 1.' },
         limit: { type: 'number', description: 'Number of lines to return. Default: read to end.' },
-        ...SPACE_PARAM,
       },
       required: ['target', 'path'],
     },
@@ -724,7 +723,6 @@ export const toolDefinitions = [
         },
         path: { type: 'string', description: 'Absolute file path on the remote node.' },
         content: { type: 'string', description: 'File content to write (UTF-8).' },
-        ...SPACE_PARAM,
       },
       required: ['target', 'path', 'content'],
     },
@@ -744,7 +742,6 @@ export const toolDefinitions = [
         oldString: { type: 'string', description: 'The exact text to replace.' },
         newString: { type: 'string', description: 'The text to replace with.' },
         replaceAll: { type: 'boolean', description: 'Replace every occurrence (default false).' },
-        ...SPACE_PARAM,
       },
       required: ['target', 'path', 'oldString', 'newString'],
     },
@@ -772,7 +769,6 @@ export const toolDefinitions = [
           description:
             'Short, human-readable description of what the command does (5-10 words). Shown in the permission prompt UI.',
         },
-        ...SPACE_PARAM,
       },
       required: ['target', 'command'],
     },
@@ -805,7 +801,6 @@ export const toolDefinitions = [
           description:
             'Short, human-readable description of what the script does (5-10 words). Shown in the permission prompt UI.',
         },
-        ...SPACE_PARAM,
       },
       required: ['target', 'script'],
     },
@@ -1556,6 +1551,18 @@ function requireArray<T = unknown>(value: unknown, name: string): T[] {
 
 const CORE_EXTENSION_ID = 'builtin/core'
 
+async function findNodeAcrossSpaces(nodeId: string): Promise<{ node: GraphNode; slug: string }> {
+  const spaces = await listSpaces()
+  for (const space of spaces) {
+    const graph = await loadSpaceGraph({ data: space.slug })
+    const node = graph?.nodes.find((n) => (n as { id?: string }).id === nodeId) as GraphNode | undefined
+    if (node) {
+      return { node, slug: space.slug }
+    }
+  }
+  fail(-32602, `Node not found: ${nodeId}`)
+}
+
 export async function resolveTerminalContext(
   args: Record<string, unknown>,
 ): Promise<{ ctx: Record<string, unknown>; slug: string }> {
@@ -1567,12 +1574,7 @@ export async function resolveTerminalContext(
   if (!ep.handle) {
     fail(-32602, 'target must include handle (format: "node-id/handle-id")')
   }
-  const slug = await resolveSpace(args)
-  const graph = await loadOrFail(slug)
-  const node = graph.nodes.find((n) => (n as { id?: string }).id === ep.nodeId) as GraphNode | undefined
-  if (!node) {
-    fail(-32602, `Node not found: ${ep.nodeId}`)
-  }
+  const { node, slug } = await findNodeAcrossSpaces(ep.nodeId)
   if (!node.type) {
     fail(-32602, `Node ${ep.nodeId} has no type`)
   }
