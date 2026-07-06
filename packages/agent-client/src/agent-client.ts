@@ -599,7 +599,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return existing.connection
     }
     const child = spawn(spawnConfig.command, spawnConfig.args, {
-      cwd: spawnConfig.cwd,
+      // Empty cwd (docker-exec form sets the container workdir via `-w`) falls
+      // back to the host default rather than failing to resolve.
+      cwd: spawnConfig.cwd || undefined,
       env: { ...process.env, ...spawnConfig.env },
       stdio: ['pipe', 'pipe', 'pipe'],
       // On Windows, launchers like `npx`/`npm` are `.cmd` scripts that Node's

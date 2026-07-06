@@ -34,6 +34,9 @@ export interface AgentData {
   reasoningEffort?: string
   /** Sampling temperature for the Custom (native) harness. */
   temperature?: number
+  /** When set, the harness runs inside this Docker container via `docker exec`,
+   * with its workspace at /agents/<agent-slug>. Empty = run on the host. */
+  containerName?: string
 }
 
 function readAsDataUrl(file: File): Promise<string> {
@@ -303,10 +306,28 @@ function LocalProfileFields({
         />
         <p className='text-[10px] text-muted-foreground'>Optional OpenAI-compatible endpoint override.</p>
       </div>
+      <div className='flex flex-col gap-1'>
+        <Label className='text-xs'>Docker container</Label>
+        <Input
+          className='h-8 text-xs'
+          value={data.containerName ?? ''}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ containerName: e.target.value })}
+          placeholder='Run on host'
+        />
+        <p className='text-[10px] text-muted-foreground'>
+          Optional. Runs the harness inside this container via <code>docker exec</code>.
+        </p>
+      </div>
       {isNative ? <NativeProfileFields data={data} updateData={updateData} /> : null}
-      <p className='text-[10px] text-muted-foreground'>
-        Runs in a persistent per-agent workspace: <code>data/agent-workspace/&lt;agent-slug&gt;</code>.
-      </p>
+      {data.containerName ? (
+        <p className='text-[10px] text-muted-foreground'>
+          Runs in container <code>{data.containerName}</code> at <code>/agents/&lt;agent-slug&gt;</code>.
+        </p>
+      ) : (
+        <p className='text-[10px] text-muted-foreground'>
+          Runs in a persistent per-agent workspace: <code>data/agent-workspace/&lt;agent-slug&gt;</code>.
+        </p>
+      )}
     </div>
   )
 }

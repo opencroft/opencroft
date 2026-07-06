@@ -60,10 +60,39 @@ export function buildSpawnConfig(selection: AgentSelection): SpawnConfig {
     }
   }
 
-  return {
+  const spawnConfig: SpawnConfig = {
     command: adapter?.command ?? 'npx',
     args: adapter?.args ?? [],
     cwd: selection.cwd,
     env,
   }
+  if (selection.containerName) {
+    return wrapInDocker(spawnConfig, selection.containerName)
+  }
+  return spawnConfig
+}
+
+// Rewrap a host spawn config to run the harness inside a Docker container via
+// `docker exec`. Env vars are forwarded by name (`-e NAME`) so their values stay
+// out of the argv. The per-agent workdir may not exist in the container yet, so
+// it's created and entered before exec'ing the harness (which then inherits the
+// stdio pipes directly).
+function wrapInDocker(config: SpawnConfig, container: string): SpawnConfig {
+  const envFlags = Object.keys(config.env).flatMap((name) => ['-e', name])
+  const dir = shellQuote(config.cwd)
+  const inner = config.cwd
+    ? ['sh', '-c', `mkdir -p ${dir} && cd ${dir} && exec "$0" "$@"`, config.command, ...config.args]
+    : [config.command, ...config.args]
+  return {
+    command: 'docker',
+    args: ['exec', '-i', ...envFlags, container, ...inner],
+    // The docker client runs on the host; the container workdir is set above.
+    cwd: '',
+    env: config.env,
+  }
+}
+
+// Single-quote a value for safe embedding in a `sh -c` script.
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`
 }

@@ -29,6 +29,10 @@ export interface AgentSelection {
   // it to bind this session to a specific server-side session/agent; ACP agents
   // that don't recognize it ignore unknown `_meta` keys.
   sessionKey?: string
+  // When set, the harness subprocess runs inside this Docker container via
+  // `docker exec` instead of on the host. `cwd` and the auth/config env vars are
+  // forwarded into the container; unset means spawn on the host as before.
+  containerName?: string
 }
 
 export interface SessionMeta {

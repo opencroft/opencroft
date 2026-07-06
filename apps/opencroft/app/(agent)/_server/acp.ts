@@ -25,6 +25,7 @@ interface AgentNodeData {
   systemPrompt?: string
   reasoningEffort?: string
   temperature?: number
+  containerName?: string
 }
 
 async function findNodeData<T>(nodeId: string): Promise<T | null> {
@@ -111,6 +112,7 @@ async function openLocalSession(data: {
   // keyed by slug: <cwd>/data/agent-workspace/<agent-slug>.
   const workspaceSlug = slug(agent.name ?? '') || data.agentNodeId
   const adapterId = agent.adapterId ?? 'claude'
+  const containerName = agent.containerName || undefined
   const selection: AgentSelection = {
     providerId: agent.providerId ?? '',
     adapterId,
@@ -118,7 +120,10 @@ async function openLocalSession(data: {
     // The API token / base URL fall back to the OPENCLAW_GATEWAY_* env vars when
     // the node leaves them unset, so a deployment can supply them globally.
     apiKey: (await resolveSecret(agent.apiKeySecret ?? '')) || process.env.OPENCLAW_GATEWAY_TOKEN || '',
-    cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
+    // In a container the harness gets its own /agents/<slug> workdir (created in
+    // the container on spawn); on the host it's a persistent dir in the data volume.
+    cwd: containerName ? `/agents/${workspaceSlug}` : join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
+    containerName,
     baseUrl: agent.baseUrl || process.env.OPENCLAW_GATEWAY_URL,
     systemPrompt: agent.systemPrompt,
     reasoningEffort: agent.reasoningEffort,
@@ -129,8 +134,11 @@ async function openLocalSession(data: {
     // acp-bridge:<uuid> session.
     sessionKey: data.tabKey,
   }
-  // Spawn cwd must exist or spawn fails with ENOENT.
-  await mkdir(selection.cwd, { recursive: true })
+  // Host spawn cwd must exist or spawn fails with ENOENT; the container path is
+  // created inside the container when the harness is exec'd.
+  if (!containerName) {
+    await mkdir(selection.cwd, { recursive: true })
+  }
 
   // Cold start (the in-memory tab→session map is lost on a server restart): if
   // this tab's ACP session id was persisted, resume it by replaying history
