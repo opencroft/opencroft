@@ -26,10 +26,10 @@ import {
 } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { AgentAvatar } from 'ui/agent-avatar'
 import { Button } from 'ui/button'
 import { TypingDots } from 'ui/chat/typing-dots'
 import { Flex } from 'ui/layout/flex'
+import { AgentAvatar } from 'ui/media/agent-avatar'
 import { Textarea } from 'ui/textarea'
 
 import type { ChatMessage } from '@/app/(agent)/_lib/messages'

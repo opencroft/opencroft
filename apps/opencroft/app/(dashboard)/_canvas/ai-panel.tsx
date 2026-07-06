@@ -1,8 +1,13 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  type AgentSessionGroup,
+  AgentSessionList,
+  type AgentRef as SessionAgentRef,
+  type AgentJobRef as SessionJobRef,
+} from 'ui/sessions/agent-session-list'
 
-import { type AgentSessionGroup, AgentSessionList } from '@/app/(agent)/_components/agent-session-list'
 import { DashboardHost, LocalAgentHost } from '@/app/(agent)/_components/chat-hosts'
 import { useChatTabsMaybe } from '@/app/(agent)/_lib/chat-tabs-context'
 import { forgetLocalSession } from '@/app/(agent)/_server/acp'
@@ -198,7 +203,7 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
   )
 
   const createSession = useCallback(
-    (agent: AgentNodeRef, job: AgentJobRef) => {
+    (agent: SessionAgentRef, job: SessionJobRef) => {
       // Always start a fresh session — a job can have many. The unique suffix
       // keeps each session (and its lazily-created ACP session, keyed by tabKey)
       // distinct; resolution reads the stored entry, so the suffix never has to

@@ -2,11 +2,22 @@
 
 import { Briefcase, MessageSquare, Plus, Search, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { AgentAvatar } from 'ui/agent-avatar'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
-import { Input } from 'ui/input'
 
-import type { AgentJobRef, AgentNodeRef } from '@/app/(space)/_server/agents'
+import { AgentAvatar } from '@/components/ui/media/agent-avatar'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+
+export interface AgentJobRef {
+  nodeId: string
+  name: string
+}
+
+export interface AgentRef {
+  nodeId: string
+  name: string
+  avatar?: string
+  jobs: AgentJobRef[]
+}
 
 export interface AgentSessionSummary {
   key: string
@@ -14,15 +25,15 @@ export interface AgentSessionSummary {
 }
 
 export interface AgentSessionGroup {
-  agent: AgentNodeRef
+  agent: AgentRef
   sessions: AgentSessionSummary[]
 }
 
-interface AgentSessionListProps {
+export interface AgentSessionListProps {
   groups: AgentSessionGroup[]
   onOpenSession: (key: string) => void
-  onDeleteSession: (agent: AgentNodeRef, key: string) => void
-  onCreateSession: (agent: AgentNodeRef, job: AgentJobRef) => void
+  onDeleteSession: (agent: AgentRef, key: string) => void
+  onCreateSession: (agent: AgentRef, job: AgentJobRef) => void
 }
 
 // Searchable agents → their existing sessions list. Each agent has a + that
@@ -30,7 +41,7 @@ interface AgentSessionListProps {
 // deleted. Shared by the chat inspector's first page and the Ask-AI input menu.
 export function AgentSessionList({ groups, onOpenSession, onDeleteSession, onCreateSession }: AgentSessionListProps) {
   const [query, setQuery] = useState('')
-  const [jobsFor, setJobsFor] = useState<AgentNodeRef | null>(null)
+  const [jobsFor, setJobsFor] = useState<AgentRef | null>(null)
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -49,10 +60,6 @@ export function AgentSessionList({ groups, onOpenSession, onDeleteSession, onCre
   }, [groups, query])
 
   return (
-    // Content-sized (no self scroll/grow): the embedding container — the inspector
-    // ScrollArea or the command-bar menu's ScrollArea — owns scrolling. A nested
-    // overflow + flex-1 inside Radix ScrollArea oscillates its ResizeObserver into
-    // a "Maximum update depth exceeded" loop.
     <div className='flex flex-col'>
       <div className='relative px-2 pt-2'>
         <Search className='pointer-events-none absolute left-4 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground' />
@@ -69,24 +76,20 @@ export function AgentSessionList({ groups, onOpenSession, onDeleteSession, onCre
         ) : (
           filtered.map((group) => (
             <div key={group.agent.nodeId} className='mb-2 min-w-0'>
-              <div className='flex items-center gap-2 px-1 py-1'>
+              <button
+                type='button'
+                onClick={() => setJobsFor(group.agent)}
+                className='flex w-full items-center gap-2 rounded-md px-1 py-1 text-left transition-colors hover:bg-accent'
+                aria-label={`New session with ${group.agent.name}`}
+                title='New session'
+              >
                 <AgentAvatar avatar={group.agent.avatar} name={group.agent.name} size='md' />
                 <span className='min-w-0 flex-1 truncate text-xs font-medium'>{group.agent.name}</span>
-                <button
-                  type='button'
-                  onClick={() => setJobsFor(group.agent)}
-                  className='inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground'
-                  aria-label={`New session with ${group.agent.name}`}
-                  title='New session'
-                >
-                  <Plus className='size-4' />
-                </button>
-              </div>
-              <div className='flex flex-col gap-0.5 pl-7'>
-                {group.sessions.length === 0 ? (
-                  <div className='px-1 py-0.5 text-xs text-muted-foreground'>No sessions</div>
-                ) : (
-                  group.sessions.map((session) => (
+                <Plus className='size-4 shrink-0 text-muted-foreground' />
+              </button>
+              {group.sessions.length > 0 && (
+                <div className='flex flex-col gap-0.5 pl-7'>
+                  {group.sessions.map((session) => (
                     <div key={session.key} className='group flex min-w-0 items-center gap-1'>
                       <button
                         type='button'
@@ -105,9 +108,9 @@ export function AgentSessionList({ groups, onOpenSession, onDeleteSession, onCre
                         <Trash2 className='size-3' />
                       </button>
                     </div>
-                  ))
-                )}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           ))
         )}

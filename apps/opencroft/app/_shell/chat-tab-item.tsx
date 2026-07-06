@@ -1,7 +1,7 @@
 'use client'
 
 import { X } from 'lucide-react'
-import { AgentAvatar } from 'ui/agent-avatar'
+import { AgentAvatar } from 'ui/media/agent-avatar'
 import { SidebarMenuSubButton, SidebarMenuSubItem } from 'ui/sidebar'
 
 import type { ChatTab } from '@/app/(agent)/_lib/chat-tabs-context'
@@ -29,7 +29,7 @@ export function ChatTabItem({ tab, isActive, pending, onSelect, onClose }: ChatT
         }}
       >
         <button className='flex items-center gap-2 w-full min-w-0'>
-          <AgentAvatar avatar={tab.agentAvatar} size='md' pending={pending} />
+          <AgentAvatar avatar={tab.agentAvatar} size='md' statusIndicator={pending ? 'primary' : undefined} />
           <span className='flex flex-col min-w-0 flex-1 text-left leading-tight'>
             <span className='truncate text-xs font-medium text-foreground'>{tab.title ?? tab.label}</span>
             {tab.agentName ? <span className='truncate text-xs text-muted-foreground'>{tab.agentName}</span> : null}
