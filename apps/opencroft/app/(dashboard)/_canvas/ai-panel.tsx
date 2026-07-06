@@ -6,7 +6,7 @@ import {
   AgentSessionList,
   type AgentRef as SessionAgentRef,
   type AgentJobRef as SessionJobRef,
-} from 'ui/agent-session-list'
+} from 'ui/sessions/agent-session-list'
 
 import { DashboardHost, LocalAgentHost } from '@/app/(agent)/_components/chat-hosts'
 import { useChatTabsMaybe } from '@/app/(agent)/_lib/chat-tabs-context'

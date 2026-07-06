@@ -1,9 +1,9 @@
 'use client'
 
 import { User } from 'lucide-react'
-import { Avatar, AvatarFallback, AvatarImage } from 'ui/avatar'
-import { StatusIndicator } from 'ui/utils/status-indicator'
 
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { StatusIndicator, type StatusVariant } from '@/components/ui/utils/status-indicator'
 import { cn } from '@/lib/utils'
 
 export type AgentAvatarSize = 'sm' | 'md' | 'lg'
@@ -19,14 +19,15 @@ interface AgentAvatarProps {
   avatar?: string | null
   name?: string
   size?: AgentAvatarSize
-  pending?: boolean
+  /** Status dot variant; omit for no indicator. */
+  statusIndicator?: StatusVariant
   className?: string
 }
 
 // Agent avatar built on the shared Avatar: shows the agent's image when set,
-// falling back to a person icon. When `pending`, a primary status dot is
-// overlaid (e.g. a session awaiting a permission request).
-export function AgentAvatar({ avatar, name, size = 'md', pending, className }: AgentAvatarProps) {
+// falling back to a person icon. When `statusIndicator` is set, a status dot of
+// that variant is overlaid (e.g. 'primary' for a session awaiting a permission).
+export function AgentAvatar({ avatar, name, size = 'md', statusIndicator, className }: AgentAvatarProps) {
   const dims = SIZES[size]
   return (
     <span className='relative flex w-fit shrink-0'>
@@ -36,7 +37,7 @@ export function AgentAvatar({ avatar, name, size = 'md', pending, className }: A
           <User className={dims.icon} />
         </AvatarFallback>
       </Avatar>
-      {pending && <StatusIndicator variant='primary' className='absolute -bottom-0.5 -right-0.5' />}
+      {statusIndicator ? <StatusIndicator variant={statusIndicator} className='absolute -bottom-0.5 -right-0.5' /> : null}
     </span>
   )
 }
