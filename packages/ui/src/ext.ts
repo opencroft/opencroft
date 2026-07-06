@@ -4,6 +4,7 @@
 
 export * from './components/ui/accordion'
 export * from './components/ui/agent-avatar'
+export * from './components/ui/agent-session-list'
 export * from './components/ui/alert'
 export * from './components/ui/alert-dialog'
 export * from './components/ui/aspect-ratio'
