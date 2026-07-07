@@ -105,7 +105,13 @@ function shellQuote(value: string): string {
 // its own loopback, not this process's. Docker's embedded DNS resolves this
 // container's own name/hostname for any sibling container on the same
 // user-defined network, so swap in our hostname (Docker sets it to the short
-// container id by default, which is one of those resolvable names).
+// container id by default, which is one of those resolvable names) — this
+// assumes this process runs in a container on the same user-defined network
+// as containerName, which holds for opencroft-managed sandboxes but not every
+// deployment. OPENCROFT_MCP_ADVERTISE_HOST overrides it for setups where that
+// assumption doesn't hold (e.g. the app runs on the bare host, or the target
+// container is on a different network).
 export function containerReachableMcpUrl(url: string): string {
-  return url.replace('127.0.0.1', hostname())
+  const host = process.env.OPENCROFT_MCP_ADVERTISE_HOST || hostname()
+  return url.replace('127.0.0.1', host)
 }

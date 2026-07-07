@@ -183,6 +183,9 @@ export function createMcpServer(options: McpServerOptions): McpServerHandle {
         // needs to reach this port from outside this process's own network
         // namespace. handle() above requires an authenticated token from any
         // caller that isn't loopback to compensate for the wider exposure.
+        // This relies on the port staying ephemeral and unpublished — it must
+        // never be mapped to the host's external interface in compose/run
+        // config, or that exposure would extend past the docker network.
         http.listen(0, '0.0.0.0', resolve)
       })
       const address = http.address()
