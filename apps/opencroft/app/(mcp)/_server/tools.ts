@@ -832,6 +832,7 @@ export const toolDefinitions = [
         params: {
           type: 'object',
           description: 'Optional parameters for the action. Shape depends on the action.',
+          additionalProperties: true,
         },
       },
       required: ['nodeId', 'action'],
