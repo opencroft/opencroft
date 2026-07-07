@@ -7,8 +7,8 @@
  * UI feedback (toasts, focus, comments) is broadcast via SSE.
  */
 
-import fs from 'fs/promises'
-import path from 'path'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 
 import { checkMcpServer } from 'agent-client/mcp-check'
 import type { KeyValue, McpServerConfig, McpTransport } from 'agent-client/mcp-types'
@@ -45,6 +45,7 @@ import { dispatchNodeAction, listNodeActions } from '@/app/(extension-runtime)/_
 import { resolveExtensionRepo, searchRegistries } from '@/app/(extension-runtime)/_server/registry'
 import type { ExtensionHandle } from '@/app/(extension-runtime)/_types'
 import { recordAudit } from '@/app/(mcp)/_server/audit'
+import { skillToolDefinitions, skillToolHandlers } from '@/app/(mcp)/_server/skill-tools'
 import { isYoloMode } from '@/app/(mcp)/_server/yolo'
 import {
   createSpace,
@@ -923,6 +924,9 @@ export const toolDefinitions = [
     },
   },
 
+  // ── Skills ───────────────────────────────────────────────────────────────
+  ...skillToolDefinitions,
+
   // ── AskUser ────────────────────────────────────────────────────────────
   {
     name: 'ask_user',
@@ -1406,12 +1410,12 @@ async function expandDynamicHandles(node: GraphNode, declared: ExtensionHandle[]
   if (!dynamic) {
     return []
   }
-  const resolved = node.data?.['__resolvedContexts'] as Record<string, { sourceNodeId?: string }> | undefined
+  const resolved = node.data?.__resolvedContexts as Record<string, { sourceNodeId?: string }> | undefined
   const dockerNodeId = resolved?.['docker-in']?.sourceNodeId
   if (!dockerNodeId) {
     return []
   }
-  const service = (node.data?.['name'] as string) || node.id
+  const service = (node.data?.name as string) || node.id
   try {
     const containers = (await invokeExtensionAction({
       data: { extensionId: 'local/docker', actionName: 'docker.ps', args: [{ dockerNodeId, service }] },
@@ -1608,7 +1612,7 @@ export async function remoteExec(ctx: Record<string, unknown>, command: string):
 }
 
 export function shellQuote(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'"
+  return `'${s.replace(/'/g, "'\\''")}'`
 }
 
 async function resolveSecretsForExec(names: string[] | undefined): Promise<string> {
@@ -1624,7 +1628,7 @@ async function resolveSecretsForExec(names: string[] | undefined): Promise<strin
     const b64 = Buffer.from(value, 'utf8').toString('base64')
     lines.push(`export ${name}=$(echo ${b64} | base64 -d)`)
   }
-  const prefix = lines.join('; ') + '; '
+  const prefix = `${lines.join('; ')}; `
   console.error('[resolveSecretsForExec] PREFIX FIRST 80:', prefix.slice(0, 80))
   console.error('[resolveSecretsForExec] PREFIX LEN:', prefix.length)
   return prefix
@@ -1634,7 +1638,7 @@ function catN(content: string, startLine = 1): string {
   const lines = content.split('\n')
   const lastLineNo = startLine + lines.length - 1
   const width = String(lastLineNo).length
-  return lines.map((line, i) => String(startLine + i).padStart(width) + '\t' + line).join('\n')
+  return lines.map((line, i) => `${String(startLine + i).padStart(width)}\t${line}`).join('\n')
 }
 
 function sliceLines(content: string, offset?: number, limit?: number): string {
@@ -2747,6 +2751,9 @@ function buildHandlers(): Record<string, ToolHandler> {
       }
       return textResult(JSON.stringify(await checkMcpServer(config), null, 2))
     },
+
+    // ── Skills ──────────────────────────────────────────────────────────────
+    ...skillToolHandlers,
   }
 }
 
