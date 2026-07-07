@@ -1,14 +1,15 @@
-// Converts the raw JSON Schema objects used by the opencroft tool registry
-// (apps/opencroft/app/(mcp)/_server/tools.ts) into a Zod raw shape, so those
-// tools can be registered as agent-client LocalTools (whose inputSchema is a
-// ZodRawShape — the MCP SDK's high-level McpServer.registerTool() only accepts
-// a Zod shape/schema, not raw JSON Schema).
+// Converts raw JSON Schema objects (as a host's own tool registry might use)
+// into a Zod raw shape, so those tools can be registered as agent-client
+// LocalTools (whose inputSchema is a ZodRawShape — the MCP SDK's high-level
+// McpServer.registerTool() only accepts a Zod shape/schema, not raw JSON
+// Schema).
 //
-// Scope is deliberately narrow: only the JSON Schema constructs actually used
-// by that registry (object/string/number/boolean/array/enum/required/minItems/
-// maxItems/additionalProperties). Anything else (missing/unrecognized `type`)
-// falls back to `z.unknown()` rather than throwing, so a hand-authored
-// agent-tool graph node schema can't crash tool registration.
+// Scope is deliberately narrow: only the JSON Schema constructs a typical tool
+// registry actually uses (object/string/number/boolean/array/enum/required/
+// minItems/maxItems/additionalProperties). Anything else (missing/unrecognized
+// `type`) falls back to `z.unknown()` rather than throwing, so a
+// hand-authored schema (e.g. from a dynamically defined tool) can't crash
+// tool registration.
 
 import { type ZodRawShape, type ZodTypeAny, z } from 'zod'
 

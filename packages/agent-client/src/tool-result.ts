@@ -1,7 +1,7 @@
 // A LocalTool.handler may return either a plain string (the original,
 // simplest contract) or a full MCP content envelope (`{ content: [...],
-// isError?: true }` — what apps/opencroft's `handleToolCall()` already
-// returns). These helpers let both agent-client hosts (the ACP-facing
+// isError?: true }` — the shape a host's own tool dispatcher might already
+// return). These helpers let both agent-client hosts (the ACP-facing
 // mcp-server.ts and the in-process native-harness.ts) accept either shape
 // without each reimplementing the distinction.
 
