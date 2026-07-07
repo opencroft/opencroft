@@ -23,7 +23,7 @@ import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from '@agentclie
 
 import type { AgentConnection } from './connection'
 import { readMcpConfig, resolveMcpServers } from './mcp-config'
-import { createMcpServer, type LocalTool, type SkillHandler, type SkillsInput } from './mcp-server'
+import { createMcpServer, type SkillHandler, type SkillsInput, type ToolsInput } from './mcp-server'
 import type { McpServerConfig } from './mcp-types'
 import { createNativeHarness, type NativeHarnessConfig, type NativeSession } from './native-harness'
 import { type ResolvedPermissions, toolKey } from './permissions'
@@ -56,7 +56,7 @@ export type PermissionHandler = (context: PermissionContext) => PermissionOutcom
 
 export interface AgentClientOptions {
   mcpServerName?: string
-  tools?: LocalTool[]
+  tools?: ToolsInput
   skills?: SkillsInput
   skillHandler?: SkillHandler
   // Always-on MCP servers injected into every session, in addition to the
@@ -715,10 +715,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return [...keys]
     },
 
-    // The host's statically registered LocalTools (for role-permission editors).
-    // Per-session MCP and skill tools are dynamic and not listed here.
-    listTools(): { name: string; description: string }[] {
-      return (options.tools ?? []).map((tool) => ({ name: tool.name, description: tool.description }))
+    // The host's registered LocalTools (for role-permission editors). Resolves
+    // a dynamic tools source (e.g. live agent-tool graph nodes) same as a turn
+    // would. Per-session MCP and skill tools are separate and not listed here.
+    async listTools(): Promise<{ name: string; description: string }[]> {
+      const tools = options.tools ?? []
+      const resolved = typeof tools === 'function' ? await tools() : tools
+      return resolved.map((tool) => ({ name: tool.name, description: tool.description }))
     },
 
     async createSession(

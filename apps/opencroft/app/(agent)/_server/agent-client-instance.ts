@@ -2,20 +2,25 @@ import { createAgentClient, type PermissionContext, type PermissionOutcome } fro
 
 import { readMcpServers } from '@/app/(agent)/_server/mcp-store'
 import { loadSkillDefs, skillBodyHandler } from '@/app/(agent)/_server/skill-store'
+import { opencroftLocalTools } from '@/app/(agent)/_server/tools-bridge'
 import { isYoloMode } from '@/app/(mcp)/_server/yolo'
 import { approvalStore } from '@/lib/approval-store'
 
 // Single shared agent-client engine for the opencroft app. Every ACP route and
 // the SSE stream import this one instance so they share the session store.
 //
-// We register opencroft's own MCP server (graph + remote-exec tools, etc.) as an
-// always-on MCP server, so every local agent can call the same tools opencroft
-// exposes. Override the URL via OPENCROFT_MCP_URL when not on the dev port.
+// opencroft's own tools (graph + remote-exec + extensions + docs + MCP config +
+// skills — see tools-bridge.ts) are wired in-process via `tools`, exposed
+// through agent-client's built-in 'local' MCP server (ACP harness path) and
+// directly in the native harness's toolset. There is no network hop back into
+// this same process's /api/mcp route for the agent's own tool calls, so the
+// container-reachability bug class that route needed a URL rewrite to work
+// around doesn't apply to these tools at all. /api/mcp itself is unchanged and
+// still serves genuinely external MCP clients.
 //
-// The x-opencroft-internal header marks these calls as coming from the internal
-// agent: they bypass the MCP approval queue (the agent chat has its own
-// permission flow) instead of appearing in the MCP Requests inspector tab.
-const OPENCROFT_MCP_URL = process.env.OPENCROFT_MCP_URL ?? 'http://127.0.0.1:9999/api/mcp'
+// Calls made through this bridge are marked internal (see tools-bridge.ts):
+// they bypass the MCP approval queue (the agent chat has its own permission
+// flow) instead of appearing in the MCP Requests inspector tab.
 
 // ACP tool-call kinds that only read state — safe to auto-approve so the chat
 // only prompts for write/exec kinds (the destructive operations).
@@ -33,14 +38,7 @@ function resolvePermission({ toolKind }: PermissionContext): PermissionOutcome {
 }
 
 export const agentClient = createAgentClient({
-  extraMcpServers: [
-    {
-      type: 'http',
-      name: 'opencroft',
-      url: OPENCROFT_MCP_URL,
-      headers: [{ name: 'x-opencroft-internal', value: '1' }],
-    },
-  ],
+  tools: opencroftLocalTools,
   loadMcpServers: readMcpServers,
   // Global skill catalog from the settings DB, resolved per turn. For now every
   // configured skill is exposed to this agent client (not scoped per node).
