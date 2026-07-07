@@ -510,6 +510,15 @@ function sessionMeta(selection: AgentSelection): { sessionKey: string } | undefi
   return selection.sessionKey ? { sessionKey: selection.sessionKey } : undefined
 }
 
+// Most sessions never get a `permissions` argument (no roles wired up for this
+// deployment) — that has always meant "unrestricted", not "unauthenticated".
+// The mcp-server auth gate needs to tell those two states apart (a *known*
+// token with no configured restrictions vs. a token that doesn't resolve to
+// any session at all), so a known token always resolves to a concrete
+// ResolvedPermissions here — falling back to this unrestricted default rather
+// than surfacing `undefined`, which the gate reserves for "unknown token".
+const UNRESTRICTED_PERMISSIONS: ResolvedPermissions = { mode: 'all', allow: {}, defaultAccess: 'Allow' }
+
 export function createAgentClient(options: AgentClientOptions = {}) {
   const mcpServerName = options.mcpServerName ?? 'local'
   const clientInfo = options.clientInfo ?? { name: 'agent-client', version: '0.1.0' }
@@ -521,9 +530,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     permissionsFor: (token) => {
       const sessionId = store.acpTokenSession.get(token)
       if (sessionId) {
-        return store.sessions.get(sessionId)?.permissions
+        return store.sessions.get(sessionId)?.permissions ?? UNRESTRICTED_PERMISSIONS
       }
-      return store.acpTokenPermissions.get(token)
+      if (store.acpTokenPermissions.has(token)) {
+        return store.acpTokenPermissions.get(token) ?? UNRESTRICTED_PERMISSIONS
+      }
+      return undefined
     },
   })
 
