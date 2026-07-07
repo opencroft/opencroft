@@ -2,25 +2,32 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { type ZodRawShape, z } from 'zod'
 
 import { accessFor, type ResolvedPermissions, skillKey, toolKey } from './permissions'
 import type { SkillDef } from './skills'
+import { type ToolResult, toCallToolResult } from './tool-result'
 
 export interface LocalTool {
   name: string
   description: string
   inputSchema: ZodRawShape
-  handler: (args: Record<string, unknown>) => Promise<string> | string
+  handler: (args: Record<string, unknown>) => Promise<ToolResult> | ToolResult
 }
 
 export type SkillsInput = SkillDef[] | (() => Promise<SkillDef[]>)
+
+// Mirrors SkillsInput: a static array, or a function re-evaluated per request
+// so a live source (e.g. dynamic agent-tool graph nodes) stays current without
+// a restart.
+export type ToolsInput = LocalTool[] | (() => Promise<LocalTool[]>)
 
 export type SkillHandler = (name: string) => Promise<string>
 
 export interface McpServerOptions {
   name: string
-  tools: LocalTool[]
+  tools: ToolsInput
   skills: SkillsInput
   skillHandler?: SkillHandler
   // Resolve per-session permissions for an incoming request token (the
@@ -72,6 +79,10 @@ async function resolveSkills(skills: SkillsInput): Promise<SkillDef[]> {
   return typeof skills === 'function' ? skills() : skills
 }
 
+async function resolveTools(tools: ToolsInput): Promise<LocalTool[]> {
+  return typeof tools === 'function' ? tools() : tools
+}
+
 // Build a request-scoped server. When permissions are resolved for the request,
 // tools and skills the session can't reach are withheld from both tools/list
 // and tools/call.
@@ -103,12 +114,14 @@ async function buildServer(
       },
     )
   }
-  for (const tool of options.tools) {
+  for (const tool of await resolveTools(options.tools)) {
     if (accessFor(permissions, toolKey(tool.name)) === null) {
       continue
     }
-    server.registerTool(tool.name, { description: tool.description, inputSchema: tool.inputSchema }, async (args) =>
-      textResult(await tool.handler(args)),
+    server.registerTool(
+      tool.name,
+      { description: tool.description, inputSchema: tool.inputSchema },
+      async (args) => toCallToolResult(await tool.handler(args)) as CallToolResult,
     )
   }
   return server

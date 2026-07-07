@@ -9,22 +9,23 @@ import { z } from 'zod'
 import type { AgentConnection } from './connection'
 import { connectMcpToolset } from './mcp-client'
 import {
-  type LocalTool,
   SKILL_INPUT_SCHEMA,
   SKILL_TOOL_NAME,
   type SkillHandler,
   type SkillsInput,
   skillToolDescription,
+  type ToolsInput,
 } from './mcp-server'
 import { accessFor, type PermissionValue, type ResolvedPermissions, skillKey, toolKey } from './permissions'
 import { findProvider } from './resolve'
+import { flattenToolResult } from './tool-result'
 import { findTurnBoundary } from './turns'
 import type { AgentSelection } from './types'
 
 const DEFAULT_MAX_STEPS = 24
 
 export interface NativeHarnessConfig {
-  tools: LocalTool[]
+  tools: ToolsInput
   skills: SkillsInput
   skillHandler?: SkillHandler
   systemPrompt?: string
@@ -138,7 +139,8 @@ async function buildToolset(
 ): Promise<{ toolset: ToolSet; close: () => Promise<void> }> {
   const toolset: ToolSet = {}
 
-  for (const local of config.tools) {
+  const localTools = typeof config.tools === 'function' ? await config.tools() : config.tools
+  for (const local of localTools) {
     // Hidden tools never enter the session; AlwaysAllow tools skip the prompt.
     const access = accessFor(permissions, toolKey(local.name))
     if (access === null) {
@@ -152,7 +154,7 @@ async function buildToolset(
         if (denied) {
           return denied
         }
-        return await local.handler(input as Record<string, unknown>)
+        return flattenToolResult(await local.handler(input as Record<string, unknown>))
       },
     })
   }
