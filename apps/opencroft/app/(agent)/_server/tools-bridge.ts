@@ -39,13 +39,26 @@ function toLocalTool(def: ToolDef): LocalTool {
   }
 }
 
-// The static registry never changes at runtime; convert its schemas once.
-const staticTools = toolDefinitions.map(toLocalTool)
+// The static registry never changes at runtime, so its schemas only need
+// converting once — but lazily, on first actual use, not at module-load time:
+// tools.ts imports agentClient (agent-client-instance.ts) for
+// refreshMcpServers(), and agent-client-instance.ts imports this module for
+// `tools`, so tools.ts <-> this module is a real circular import. Reading
+// `toolDefinitions` at this module's top level would run before tools.ts has
+// finished evaluating in that cycle and see it as undefined.
+let staticTools: LocalTool[] | undefined
+
+function getStaticTools(): LocalTool[] {
+  if (!staticTools) {
+    staticTools = toolDefinitions.map(toLocalTool)
+  }
+  return staticTools
+}
 
 // Dynamic agent-tool graph nodes are re-read on every call (see
 // getAgentToolDefinitions()) so a tool created or edited on the canvas appears
 // without an app restart.
 export async function opencroftLocalTools(): Promise<LocalTool[]> {
   const dynamicDefs = await getAgentToolDefinitions()
-  return [...staticTools, ...dynamicDefs.map(toLocalTool)]
+  return [...getStaticTools(), ...dynamicDefs.map(toLocalTool)]
 }
