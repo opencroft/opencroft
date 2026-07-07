@@ -133,13 +133,29 @@ function permissionsForRequest(options: McpServerOptions, req: IncomingMessage):
   return options.permissionsFor(token)
 }
 
+function isLoopbackAddress(address: string | undefined): boolean {
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
+}
+
 async function handle(running: RunningServer, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const permissions = permissionsForRequest(running.options, req)
+  // The server listens on every interface (see ensureUrl below) so a harness
+  // running in a sibling container can reach it. A missing/unresolved session
+  // token means "unrestricted" (see accessFor), which was fine when this
+  // server was loopback-only; now that it's reachable from other containers on
+  // the same network, only a loopback caller keeps that trust — everyone else
+  // must carry a token that actually resolves.
+  if (!permissions && !isLoopbackAddress(req.socket.remoteAddress)) {
+    res.statusCode = 403
+    res.end()
+    return
+  }
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
   })
   res.on('close', () => void transport.close())
-  const server = await buildServer(running.options, permissionsForRequest(running.options, req))
+  const server = await buildServer(running.options, permissions)
   await server.connect(transport)
   await transport.handleRequest(req, res, await readBody(req))
 }
@@ -162,7 +178,12 @@ export function createMcpServer(options: McpServerOptions): McpServerHandle {
         })
       })
       await new Promise<void>((resolve) => {
-        http.listen(0, '127.0.0.1', resolve)
+        // Bound to every interface, not just loopback: a harness running via
+        // `docker exec` in a sibling container (see resolve.ts wrapInDocker)
+        // needs to reach this port from outside this process's own network
+        // namespace. handle() above requires an authenticated token from any
+        // caller that isn't loopback to compensate for the wider exposure.
+        http.listen(0, '0.0.0.0', resolve)
       })
       const address = http.address()
       const port = typeof address === 'object' && address ? address.port : 0

@@ -1,3 +1,5 @@
+import { hostname } from 'node:os'
+
 import { AGENT_PROVIDERS, type AgentProvider } from './agent-providers'
 import { HARNESS_ADAPTERS, type HarnessAdapter } from './harness-adapters'
 import type { AgentSelection, SpawnConfig } from './types'
@@ -95,4 +97,15 @@ function wrapInDocker(config: SpawnConfig, container: string): SpawnConfig {
 // Single-quote a value for safe embedding in a `sh -c` script.
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`
+}
+
+// The internal MCP server advertises 127.0.0.1 by default, since it normally
+// shares the harness's own network namespace. That breaks once the harness
+// runs via wrapInDocker() above: 127.0.0.1 inside that sibling container is
+// its own loopback, not this process's. Docker's embedded DNS resolves this
+// container's own name/hostname for any sibling container on the same
+// user-defined network, so swap in our hostname (Docker sets it to the short
+// container id by default, which is one of those resolvable names).
+export function containerReachableMcpUrl(url: string): string {
+  return url.replace('127.0.0.1', hostname())
 }

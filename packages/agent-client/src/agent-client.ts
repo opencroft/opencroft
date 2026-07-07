@@ -27,7 +27,7 @@ import { createMcpServer, type LocalTool, type SkillHandler, type SkillsInput } 
 import type { McpServerConfig } from './mcp-types'
 import { createNativeHarness, type NativeHarnessConfig, type NativeSession } from './native-harness'
 import { type ResolvedPermissions, toolKey } from './permissions'
-import { buildSpawnConfig, findAdapter } from './resolve'
+import { buildSpawnConfig, containerReachableMcpUrl, findAdapter } from './resolve'
 import { fileSkillHandler, fileSkills } from './skills'
 import { findTurnBoundary } from './turns'
 import type { AgentSelection, ChatEvent, SessionMeta, SessionMode, SpawnConfig } from './types'
@@ -546,8 +546,14 @@ export function createAgentClient(options: AgentClientOptions = {}) {
 
   // Built-in local server + extras + configured servers. The internal entry is
   // returned separately so a per-session header can be attached to it only.
-  async function buildMcpServers(): Promise<{ internal: AcpMcpServer; servers: AcpMcpServer[] }> {
-    const url = await mcp.ensureUrl()
+  async function buildMcpServers(
+    selection: AgentSelection,
+  ): Promise<{ internal: AcpMcpServer; servers: AcpMcpServer[] }> {
+    const rawUrl = await mcp.ensureUrl()
+    // A containerized harness reaches the internal server via `docker exec`
+    // (see resolve.ts wrapInDocker), so the loopback address it was given has
+    // to be swapped for one that sibling container can actually resolve.
+    const url = selection.containerName ? containerReachableMcpUrl(rawUrl) : rawUrl
     const internal: AcpMcpServer = {
       type: 'http',
       name: mcpServerName,
@@ -716,7 +722,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       let token: string | null = null
       let mcpServers: AcpMcpServer[] = []
       if (!native && supportsTools(selection)) {
-        const { internal, servers } = await buildMcpServers()
+        const { internal, servers } = await buildMcpServers(selection)
         token = randomUUID()
         store.acpTokenPermissions.set(token, permissions)
         mcpServers = tagInternal(internal, servers, token)
@@ -814,7 +820,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       let token: string | null = null
       let mcpServers: AcpMcpServer[] = []
       if (supportsTools(selection)) {
-        const { internal, servers } = await buildMcpServers()
+        const { internal, servers } = await buildMcpServers(selection)
         token = randomUUID()
         store.acpTokenPermissions.set(token, permissions)
         store.acpTokenSession.set(token, sessionId)
@@ -868,7 +874,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // repeated resumes (e.g. on every MCP-config refresh) don't leak tokens.
         // permissionsFor resolves via the session record, which is already set.
         dropSessionTokens(sessionId)
-        const { internal, servers } = await buildMcpServers()
+        const { internal, servers } = await buildMcpServers(session.selection)
         const token = randomUUID()
         store.acpTokenSession.set(token, sessionId)
         mcpServers = tagInternal(internal, servers, token)
