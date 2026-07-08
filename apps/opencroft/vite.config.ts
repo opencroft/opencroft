@@ -7,10 +7,20 @@ import { defineConfig } from 'vite'
 
 import { ssrWatchdog } from './vite-ssr-watchdog'
 
+// Deployed containers set this to the proxy hostname(s) they're
+// reachable at. Vite has its own internal handling of this env var, but it only
+// ever appends the raw string as a single allowedHosts entry (no comma-splitting),
+// so a multi-host value silently fails to match any real Host header. Parse it
+// ourselves so both the dev server and `vite preview` accept every listed host.
+const additionalAllowedHosts = process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS?.split(',')
+  .map((host) => host.trim())
+  .filter(Boolean)
+
 export default defineConfig({
   server: {
     port: 9999,
     host: '0.0.0.0',
+    allowedHosts: additionalAllowedHosts,
     // agent-client persists these JSON files next to the app cwd at runtime;
     // writing them must not trigger a dev reload (otherwise creating a session
     // reloads the page, which re-triggers session creation in a loop).
@@ -20,6 +30,11 @@ export default defineConfig({
     watch: {
       ignored: ['**/agent-profiles.json', '**/agent-config.json', '**/mcp-config.json', '**/dist/**'],
     },
+  },
+  preview: {
+    port: 9999,
+    host: '0.0.0.0',
+    allowedHosts: additionalAllowedHosts,
   },
   resolve: {
     tsconfigPaths: true,
