@@ -1,5 +1,5 @@
 import host from '@ext/host'
-import type { ServerConfig, TerminalContext } from '@opencroft/server'
+import type { ExecOptions, ServerConfig, TerminalContext } from '@opencroft/server'
 import { AGENT_PROVIDERS } from 'agent-client/agent-providers'
 import { HARNESS_ADAPTERS } from 'agent-client/harness-adapters'
 import { reasoningEfforts } from 'agent-client/reasoning'
@@ -249,6 +249,17 @@ interface ServerStats {
   storage: string
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Terminal exec (with optional cwd opt) — falls back to a server-built
+// `cd <cwd> &&` prefix; avoids depending on a structured ExecResult API
+// so this action keeps working even if the host wiring lags behind.
+// ═══════════════════════════════════════════════════════════════════
+
+async function terminalExecWithOpts(ctx: TerminalContext, command: string, opts?: ExecOptions): Promise<string> {
+  const cwdPrefix = opts?.cwd ? `cd '${opts.cwd.replace(/'/g, "'\\''")}' && ` : ''
+  return host.terminal.exec(ctx, cwdPrefix + command)
+}
+
 async function serverGetStats(config: ServerConfig): Promise<ServerStats> {
   const script = [
     'echo "OS=$(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME" || uname -s)"',
@@ -297,7 +308,8 @@ export const actions = {
   'server.installKey': async (config: ServerConfig, keyRef: string) =>
     installPublicKey(config, await resolvePublicKey(keyRef)),
   'terminal.run': (ctx: TerminalContext, args: string[]) => host.terminal.run(ctx, args),
-  'terminal.exec': (ctx: TerminalContext, command: string) => host.terminal.exec(ctx, command),
+  'terminal.exec': (ctx: TerminalContext, command: string, opts?: ExecOptions) =>
+    terminalExecWithOpts(ctx, command, opts),
   'script.run': (params: ScriptRunParams) => runScript(params),
   'handler.run': (params: HandlerRunParams) => runHandler(params),
   'openai.chat': (params: OpenAIChatParams) => openaiChat(params),

@@ -759,6 +759,7 @@ export const toolDefinitions = [
           description: 'Terminal-context output handle (format: "node-id/handle-id").',
         },
         command: { type: 'string', description: 'Shell command to execute.' },
+        cwd: { type: 'string', description: 'Working directory to run the command in (absolute path).' },
         secrets: {
           type: 'array',
           items: { type: 'string' },
@@ -791,6 +792,7 @@ export const toolDefinitions = [
           items: { type: 'string' },
           description: 'Positional arguments passed to the script (available as $1, $2, ... inside it).',
         },
+        cwd: { type: 'string', description: 'Working directory to run the script in (absolute path).' },
         secrets: {
           type: 'array',
           items: { type: 'string' },
@@ -1603,17 +1605,76 @@ export async function resolveTerminalContext(
   return { ctx: ctx as Record<string, unknown>, slug }
 }
 
-export async function remoteExec(ctx: Record<string, unknown>, command: string): Promise<string> {
+export async function remoteExec(
+  ctx: Record<string, unknown>,
+  command: string,
+  opts?: { cwd?: string },
+): Promise<string> {
   const core = await getExtensionModule(CORE_EXTENSION_ID)
   const execFn = core.actions['terminal.exec']
   if (!execFn) {
     fail(-32603, 'Core extension has no terminal.exec action')
   }
-  return execFn(ctx, command) as Promise<string>
+  return execFn(ctx, command, opts) as Promise<string>
 }
 
 export function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`
+}
+
+// Base64 chunk size (of encoded text, per command) for remote writes — keeps each `remoteExec`
+// invocation well under typical ARG_MAX limits while still writing large files in few round trips.
+const BASE64_WRITE_CHUNK_SIZE = 48 * 1024
+
+/**
+ * Build the shell commands that reconstruct `content` byte-for-byte on the remote as `filePath`:
+ * `printf '%s' <base64-chunk> | base64 -d >[>]  <file>`, first chunk truncating, the rest
+ * appending. Pure and side-effect free (no network calls) so it's unit-testable on its own —
+ * unlike the old `cat > file << 'OPENCROFTEOF' ... OPENCROFTEOF` heredoc, this can't be corrupted
+ * by a file that happens to contain the marker line, and never strips/adds a trailing newline.
+ */
+export function buildBase64WriteCommands(
+  filePath: string,
+  content: string,
+  chunkSize: number = BASE64_WRITE_CHUNK_SIZE,
+): string[] {
+  const quotedPath = shellQuote(filePath)
+  const b64 = Buffer.from(content, 'utf8').toString('base64')
+  if (b64.length === 0) {
+    return [`: > ${quotedPath}`]
+  }
+  const commands: string[] = []
+  for (let i = 0; i < b64.length; i += chunkSize) {
+    const chunk = b64.slice(i, i + chunkSize)
+    const redirect = i === 0 ? '>' : '>>'
+    commands.push(`printf '%s' ${shellQuote(chunk)} | base64 -d ${redirect} ${quotedPath}`)
+  }
+  return commands
+}
+
+/**
+ * Write `content` to `filePath` on the remote exactly byte-for-byte via base64 chunks, then
+ * verify the write with `wc -c` and fail loudly on any mismatch.
+ */
+async function writeRemoteFileExact(
+  ctx: Record<string, unknown>,
+  filePath: string,
+  content: string,
+  opts?: { cwd?: string },
+): Promise<void> {
+  for (const command of buildBase64WriteCommands(filePath, content)) {
+    await remoteExec(ctx, command, opts)
+  }
+  const expectedBytes = Buffer.byteLength(content, 'utf8')
+  const wcOut = await remoteExec(ctx, `wc -c < ${shellQuote(filePath)}`, opts)
+  const actualBytes = Number.parseInt(wcOut.trim(), 10)
+  if (!Number.isFinite(actualBytes) || actualBytes !== expectedBytes) {
+    const reported = Number.isFinite(actualBytes) ? String(actualBytes) : wcOut.trim() || '(empty)'
+    fail(
+      -32603,
+      `Write verification failed for ${filePath}: expected ${expectedBytes} bytes, remote reports ${reported}.`,
+    )
+  }
 }
 
 async function resolveSecretsForExec(names: string[] | undefined): Promise<string> {
@@ -1630,8 +1691,6 @@ async function resolveSecretsForExec(names: string[] | undefined): Promise<strin
     lines.push(`export ${name}=$(echo ${b64} | base64 -d)`)
   }
   const prefix = `${lines.join('; ')}; `
-  console.error('[resolveSecretsForExec] PREFIX FIRST 80:', prefix.slice(0, 80))
-  console.error('[resolveSecretsForExec] PREFIX LEN:', prefix.length)
   return prefix
 }
 
@@ -2553,9 +2612,7 @@ function buildHandlers(): Record<string, ToolHandler> {
           fail(-32602, 'Missing required params: path, content')
         }
         const { ctx } = await resolveTerminalContext(args)
-        const trimmed = content.endsWith('\n') ? content.slice(0, -1) : content
-        const heredoc = `cat > ${shellQuote(filePath)} << 'OPENCROFTEOF'\n${trimmed}\nOPENCROFTEOF`
-        await remoteExec(ctx, heredoc)
+        await writeRemoteFileExact(ctx, filePath, content)
         return textResult(`The file ${filePath} has been written.`)
       },
       { view: 'remote_write' },
@@ -2587,9 +2644,7 @@ function buildHandlers(): Record<string, ToolHandler> {
 
         const updated = replaceAll ? content.split(oldString).join(newString) : content.replace(oldString, newString)
 
-        const trimmed = updated.endsWith('\n') ? updated.slice(0, -1) : updated
-        const heredoc = `cat > ${shellQuote(filePath)} << 'OPENCROFTEOF'\n${trimmed}\nOPENCROFTEOF`
-        await remoteExec(ctx, heredoc)
+        await writeRemoteFileExact(ctx, filePath, updated)
         return textResult(`The file ${filePath} has been updated successfully.`)
       },
       { view: 'remote_edit' },
@@ -2602,9 +2657,10 @@ function buildHandlers(): Record<string, ToolHandler> {
         if (!command) {
           fail(-32602, 'Missing required param: command')
         }
+        const cwd = args.cwd as string | undefined
         const { ctx } = await resolveTerminalContext(args)
         const prefix = await resolveSecretsForExec(args.secrets as string[] | undefined)
-        const output = await remoteExec(ctx, prefix + command)
+        const output = await remoteExec(ctx, prefix + command, cwd ? { cwd } : undefined)
         return textResult(output)
       },
       { view: 'remote_exec' },
@@ -2618,18 +2674,30 @@ function buildHandlers(): Record<string, ToolHandler> {
           fail(-32602, 'Missing required param: script')
         }
         const scriptArgs = (args.args as string[] | undefined) ?? []
+        const cwd = args.cwd as string | undefined
         const { ctx } = await resolveTerminalContext(args)
         const prefix = await resolveSecretsForExec(args.secrets as string[] | undefined)
-        const trimmed = script.endsWith('\n') ? script.slice(0, -1) : script
         const tmpPath = `/tmp/opencroft-script-${crypto.randomUUID()}.sh`
-        const heredoc = `cat > ${shellQuote(tmpPath)} << 'OPENCROFTEOF'\n${trimmed}\nOPENCROFTEOF`
-        await remoteExec(ctx, heredoc)
-        const argv = scriptArgs.map(shellQuote).join(' ')
-        const output = await remoteExec(
-          ctx,
-          `${prefix}bash ${shellQuote(tmpPath)} ${argv}; rc=$?; rm -f ${shellQuote(tmpPath)}; exit $rc`,
-        )
-        return textResult(output)
+        try {
+          await writeRemoteFileExact(ctx, tmpPath, script)
+          const argv = scriptArgs.map(shellQuote).join(' ')
+          const output = await remoteExec(
+            ctx,
+            `${prefix}bash ${shellQuote(tmpPath)} ${argv}; rc=$?; rm -f ${shellQuote(tmpPath)}; exit $rc`,
+            cwd ? { cwd } : undefined,
+          )
+          return textResult(output)
+        } catch (err) {
+          // The happy path's `rm -f` never runs if the write itself failed (e.g. verification
+          // mismatch) or the exec command never reached the remote — best-effort clean up here too,
+          // otherwise a failed run leaves an orphaned script file in /tmp on every retry.
+          try {
+            await remoteExec(ctx, `rm -f ${shellQuote(tmpPath)}`, cwd ? { cwd } : undefined)
+          } catch {
+            /* best-effort; if the remote is unreachable there's nothing left to clean up */
+          }
+          throw err
+        }
       },
       { view: 'remote_script' },
     ),

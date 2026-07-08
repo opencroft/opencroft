@@ -6,8 +6,16 @@ import nodePath from 'node:path'
 
 import { db } from '@opencroft/db'
 import type { HostSecretsApi } from '@opencroft/server'
-import type { ServerConfig, TerminalContext } from '@opencroft/terminal'
-import { exec, resolveKeyContent, sshExec, terminalExec, terminalRun } from '@opencroft/terminal/server'
+import type { ExecOptions, ExecResult, ServerConfig, TerminalContext } from '@opencroft/terminal'
+import {
+  exec,
+  resolveKeyContent,
+  sshExec,
+  terminalExec,
+  terminalExecResult,
+  terminalRun,
+  terminalRunResult,
+} from '@opencroft/terminal/server'
 
 import { getSetting, setSetting } from '@/app/(settings)/_server/actions'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
@@ -265,6 +273,8 @@ export interface ExtensionHost {
   terminal: {
     exec(ctx: TerminalContext, command: string): Promise<string>
     run(ctx: TerminalContext, args: string[], env?: Record<string, string>): Promise<string>
+    execResult(ctx: TerminalContext, command: string, opts?: ExecOptions): Promise<ExecResult>
+    runResult(ctx: TerminalContext, args: string[], opts?: ExecOptions): Promise<ExecResult>
     getContext(nodeId: string, handleId: string): Promise<TerminalContext>
   }
   ssh: {
@@ -288,7 +298,13 @@ export function createHost(extensionId: string): ExtensionHost {
     settings: { get: getSetting, set: setSetting },
     graph: graphApi,
     storage: storageApi(extensionId),
-    terminal: { exec: terminalExec, run: terminalRun, getContext: getTerminalContext },
+    terminal: {
+      exec: terminalExec,
+      run: terminalRun,
+      execResult: terminalExecResult,
+      runResult: terminalRunResult,
+      getContext: getTerminalContext,
+    },
     ssh: { exec: sshExec, resolveKey: resolveKeyContent },
   }
 }

@@ -1,0 +1,372 @@
+import { randomUUID } from 'node:crypto'
+
+/** Minimal peer surface the manager needs — satisfied by crossws `Peer`. */
+export interface SocketPeer {
+  send(data: string): void
+}
+
+/**
+ * Transport-agnostic handle for a live shell — a `pty.IPty` or an `SshShell` adapted to this
+ * shape by socket.ts. The manager only ever talks to sessions through this interface, which is
+ * what makes it independently testable (a fake handle backed by a real child process stands in
+ * for a pty in tests, with no native bindings or ssh2 involved).
+ */
+export interface SessionHandle {
+  onData(fn: (data: string) => void): void
+  onExit(fn: () => void): void
+  write(data: string): void
+  resize(cols: number, rows: number): void
+  kill(): void
+  isAlive(): boolean
+}
+
+export type KillReason = 'explicit' | 'ttl' | 'evicted' | 'exit'
+
+export interface ManagedSession {
+  id: string
+  handle: SessionHandle
+  scrollback: ScrollbackBuffer
+  attachedPeer: SocketPeer | null
+  createdAt: number
+  detachedAt: number | null
+  sessionKey?: string
+  /** false ⇒ legacy client (no sessionKey): killed on socket close instead of detached. */
+  persistent: boolean
+}
+
+export const DETACHED_TTL_MS = 15 * 60 * 1000
+export const SWEEP_INTERVAL_MS = 30 * 1000
+export const MAX_SESSIONS = 20
+export const MAX_SCROLLBACK_BYTES = 512 * 1024
+
+/** Bounded byte ring buffer for scrollback replay — drops the oldest bytes once over cap. */
+export class ScrollbackBuffer {
+  private chunks: Buffer[] = []
+  private total = 0
+
+  constructor(private readonly maxBytes: number) {}
+
+  push(data: string): void {
+    if (this.maxBytes <= 0) {
+      return
+    }
+    const buf = Buffer.from(data, 'utf8')
+    this.chunks.push(buf)
+    this.total += buf.length
+    while (this.total > this.maxBytes && this.chunks.length > 0) {
+      const first = this.chunks[0]
+      if (!first) {
+        break
+      }
+      const excess = this.total - this.maxBytes
+      if (excess >= first.length) {
+        this.chunks.shift()
+        this.total -= first.length
+      } else {
+        this.chunks[0] = first.subarray(excess)
+        this.total -= excess
+      }
+    }
+  }
+
+  toString(): string {
+    return Buffer.concat(this.chunks).toString('utf8')
+  }
+}
+
+export interface SessionManagerOptions {
+  detachedTtlMs?: number
+  sweepIntervalMs?: number
+  maxSessions?: number
+  maxScrollbackBytes?: number
+  /** Injectable clock, for TTL tests. */
+  now?: () => number
+  /** One-line-per-event logger. Defaults to `console.log`. */
+  log?: (line: string) => void
+  /** Injectable transport, so tests can capture sent messages without a real peer. */
+  sendToPeer?: (peer: SocketPeer, message: { type: string; payload: Record<string, unknown> }) => void
+}
+
+export type ConnectDecision =
+  | { kind: 'reattached'; session: ManagedSession }
+  | { kind: 'create' }
+  | { kind: 'refused'; message: string }
+
+/**
+ * Server-owned registry of live shell sessions, keyed by sessionId and (optionally) by an opaque
+ * client-supplied sessionKey. Peers attach/detach; sessions outlive a single socket connection.
+ *
+ * Every method that removes a session (`kill`) is the single choke point that stops the
+ * underlying process/channel AND removes the map entry AND clears any peer→session pointers, in
+ * that order, synchronously — so a ManagedSession can never outlive its process, and a process
+ * can never outlive its manager entry. The only timer here is the one global sweep interval;
+ * there are no per-session timers to leak.
+ */
+export class SessionManager {
+  private readonly sessions = new Map<string, ManagedSession>()
+  private readonly peerSession = new Map<SocketPeer, string>()
+  private readonly sweepTimer: ReturnType<typeof setInterval>
+
+  private readonly detachedTtlMs: number
+  private readonly maxSessions: number
+  private readonly maxScrollbackBytes: number
+  private readonly now: () => number
+  private readonly log: (line: string) => void
+  private readonly sendToPeer: (peer: SocketPeer, message: { type: string; payload: Record<string, unknown> }) => void
+
+  constructor(opts: SessionManagerOptions = {}) {
+    this.detachedTtlMs = opts.detachedTtlMs ?? DETACHED_TTL_MS
+    this.maxSessions = opts.maxSessions ?? MAX_SESSIONS
+    this.maxScrollbackBytes = opts.maxScrollbackBytes ?? MAX_SCROLLBACK_BYTES
+    this.now = opts.now ?? (() => Date.now())
+    this.log = opts.log ?? ((line: string) => console.log(`[terminal-session] ${line}`))
+    this.sendToPeer = opts.sendToPeer ?? ((peer, message) => peer.send(JSON.stringify(message)))
+
+    const intervalMs = opts.sweepIntervalMs ?? SWEEP_INTERVAL_MS
+    this.sweepTimer = setInterval(() => this.sweep(), intervalMs)
+    this.sweepTimer.unref?.()
+  }
+
+  /** Stops the sweeper. For tests/shutdown — does not touch live sessions. */
+  dispose(): void {
+    clearInterval(this.sweepTimer)
+  }
+
+  size(): number {
+    return this.sessions.size
+  }
+
+  get(id: string): ManagedSession | undefined {
+    return this.sessions.get(id)
+  }
+
+  getSessionForPeer(peer: SocketPeer): ManagedSession | undefined {
+    const id = this.peerSession.get(peer)
+    return id ? this.sessions.get(id) : undefined
+  }
+
+  private findByKey(key: string): ManagedSession | undefined {
+    for (const session of this.sessions.values()) {
+      if (session.sessionKey === key) {
+        return session
+      }
+    }
+    return undefined
+  }
+
+  private reserveSlot(): { ok: true } | { ok: false; message: string } {
+    if (this.sessions.size < this.maxSessions) {
+      return { ok: true }
+    }
+    let oldest: ManagedSession | undefined
+    for (const session of this.sessions.values()) {
+      if (session.detachedAt !== null && (!oldest || session.detachedAt < (oldest.detachedAt as number))) {
+        oldest = session
+      }
+    }
+    if (oldest) {
+      this.kill(oldest.id, 'evicted', 'Evicted to make room for a new session')
+      return { ok: true }
+    }
+    return {
+      ok: false,
+      message: `Session limit reached (${this.maxSessions} active); close another session and retry.`,
+    }
+  }
+
+  /**
+   * Decide what a `connect`/`local`/`wsl` message should do before the caller spawns anything:
+   * reattach to a detached same-key session (no spawn needed), kill-and-replace a live same-key
+   * session then clear the way for a fresh spawn, or refuse outright when at capacity with
+   * nothing evictable. Callers must not spawn a process when this returns anything but `create`.
+   */
+  prepareConnect(peer: SocketPeer, sessionKey: string | undefined, cols: number, rows: number): ConnectDecision {
+    if (sessionKey) {
+      const existing = this.findByKey(sessionKey)
+      if (existing) {
+        if (existing.detachedAt !== null) {
+          this.doAttach(existing, peer, cols, rows)
+          return { kind: 'reattached', session: existing }
+        }
+        this.kill(existing.id, 'evicted', 'Session replaced by another connection')
+      }
+    }
+    const slot = this.reserveSlot()
+    if (!slot.ok) {
+      return { kind: 'refused', message: slot.message }
+    }
+    return { kind: 'create' }
+  }
+
+  /** Register a freshly spawned session, attached to `peer` from the start. */
+  create(peer: SocketPeer, handle: SessionHandle, opts: { sessionKey?: string; id?: string } = {}): ManagedSession {
+    const id = opts.id ?? randomUUID()
+    const persistent = !!opts.sessionKey
+
+    // `prepareConnect`'s same-key check and this insertion are separated by an async spawn/dial
+    // (the caller decides 'create', then awaits pty.spawn/sshShell, then calls this) — two
+    // concurrent connects for the same sessionKey (two tabs, or a reconnect racing a still-in-flight
+    // dial) can both observe "no existing session" and both reach here. Re-check at the actual,
+    // synchronous insertion point and kill any session that slipped in during that gap, so the
+    // invariant "at most one live session per key" holds regardless of interleaving — otherwise the
+    // loser's handle would stay registered but unreachable (peerSession only ever points at one id).
+    if (opts.sessionKey) {
+      const stale = this.findByKey(opts.sessionKey)
+      if (stale) {
+        this.kill(stale.id, 'evicted', 'Session replaced by another connection')
+      }
+    }
+
+    const managed: ManagedSession = {
+      id,
+      handle,
+      scrollback: new ScrollbackBuffer(this.maxScrollbackBytes),
+      attachedPeer: peer,
+      createdAt: this.now(),
+      detachedAt: null,
+      sessionKey: opts.sessionKey,
+      persistent,
+    }
+
+    handle.onData((data) => {
+      managed.scrollback.push(data)
+      if (managed.attachedPeer) {
+        this.sendToPeer(managed.attachedPeer, { type: 'data', payload: { data } })
+      }
+    })
+    handle.onExit(() => this.kill(id, 'exit'))
+
+    this.sessions.set(id, managed)
+    this.peerSession.set(peer, id)
+    this.log(`create id=${id} key=${opts.sessionKey ?? '-'} persistent=${persistent}`)
+    return managed
+  }
+
+  /** Handle a client `attach { sessionId?, sessionKey? }` message (explicit reconnect). */
+  attach(
+    peer: SocketPeer,
+    opts: { sessionId?: string; sessionKey?: string; cols: number; rows: number },
+  ): { ok: true; session: ManagedSession } | { ok: false } {
+    const { sessionId, sessionKey, cols, rows } = opts
+    let session: ManagedSession | undefined
+    if (sessionId) {
+      session = this.sessions.get(sessionId)
+    }
+    if (!session && sessionKey) {
+      session = this.findByKey(sessionKey)
+    }
+    if (!session) {
+      return { ok: false }
+    }
+    this.doAttach(session, peer, cols, rows)
+    return { ok: true, session }
+  }
+
+  private doAttach(session: ManagedSession, peer: SocketPeer, cols: number, rows: number): void {
+    const backlog = session.scrollback.toString()
+    if (backlog) {
+      this.sendToPeer(peer, { type: 'data', payload: { data: backlog } })
+    }
+    session.attachedPeer = peer
+    session.detachedAt = null
+    this.peerSession.set(peer, session.id)
+    try {
+      session.handle.resize(cols, rows)
+    } catch {
+      /* best-effort repaint trigger */
+    }
+    this.log(`attach id=${session.id} key=${session.sessionKey ?? '-'}`)
+  }
+
+  /** Client `data`/`resize` messages route here via the peer→session lookup. */
+  write(peer: SocketPeer, data: string): void {
+    this.getSessionForPeer(peer)?.handle.write(data)
+  }
+
+  resize(peer: SocketPeer, cols: number, rows: number): void {
+    this.getSessionForPeer(peer)?.handle.resize(cols, rows)
+  }
+
+  /** Client `disconnect` message: always kills, regardless of sessionKey. */
+  killByPeer(peer: SocketPeer): void {
+    const id = this.peerSession.get(peer)
+    this.peerSession.delete(peer)
+    if (!id) {
+      return
+    }
+    const session = this.sessions.get(id)
+    if (session && session.attachedPeer === peer) {
+      this.kill(id, 'explicit')
+    }
+  }
+
+  /** Socket close: detach persistent (keyed) sessions, kill legacy (unkeyed) ones. */
+  handleSocketClose(peer: SocketPeer): void {
+    const id = this.peerSession.get(peer)
+    this.peerSession.delete(peer)
+    if (!id) {
+      return
+    }
+    const session = this.sessions.get(id)
+    if (!session || session.attachedPeer !== peer) {
+      return
+    }
+    if (!session.persistent) {
+      this.kill(id, 'explicit', undefined, 'legacy-close')
+      return
+    }
+    session.attachedPeer = null
+    session.detachedAt = this.now()
+    this.log(`detach id=${id} key=${session.sessionKey ?? '-'}`)
+  }
+
+  /**
+   * The single choke point for ending a session: stops the process/channel, notifies the
+   * attached peer (if any and if a message applies), then removes the session and every
+   * peer→session pointer to it. Safe to call on an already-removed id (no-op).
+   */
+  kill(id: string, reason: KillReason, notifyMessage?: string, context?: string): void {
+    const session = this.sessions.get(id)
+    if (!session) {
+      return
+    }
+    try {
+      session.handle.kill()
+    } catch {
+      /* best-effort */
+    }
+    if (session.attachedPeer) {
+      const message = notifyMessage ?? (reason === 'exit' ? 'Shell exited' : undefined)
+      if (message) {
+        this.sendToPeer(session.attachedPeer, { type: 'disconnected', payload: { reason: message } })
+      }
+    }
+    this.sessions.delete(id)
+    for (const [peer, sid] of this.peerSession) {
+      if (sid === id) {
+        this.peerSession.delete(peer)
+      }
+    }
+    const suffix = context ? ` (${context})` : ''
+    this.log(`kill id=${id} key=${session.sessionKey ?? '-'} reason=${reason}${suffix}`)
+  }
+
+  private sweep(): void {
+    const now = this.now()
+    let killed = 0
+    for (const session of [...this.sessions.values()]) {
+      if (!session.handle.isAlive()) {
+        this.kill(session.id, 'exit', undefined, 'sweep-dead-process')
+        killed++
+        continue
+      }
+      if (session.detachedAt !== null && now - session.detachedAt > this.detachedTtlMs) {
+        this.kill(session.id, 'ttl')
+        killed++
+      }
+    }
+    if (killed > 0) {
+      this.log(`sweep killed=${killed} remaining=${this.sessions.size}`)
+    }
+  }
+}

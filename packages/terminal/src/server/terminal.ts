@@ -1,117 +1,35 @@
-import { execFile, spawn } from 'node:child_process'
+import type { ExecOptions, ExecResult, TerminalContext } from '../types'
+import { getBackend } from './backend'
 
-import type { TerminalContext } from '../types'
-import { exec } from './shell'
-import { sshExec } from './ssh'
-
-function execFilePromise(cmd: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, { windowsHide: true, maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) {
-        reject(new Error(stderr || err.message))
-        return
-      }
-      resolve(stdout)
-    })
-  })
+/** Structured exec: shell-interpreted `command`, identical `ExecResult` shape across backends. */
+export async function terminalExecResult(
+  ctx: TerminalContext,
+  command: string,
+  opts?: ExecOptions,
+): Promise<ExecResult> {
+  return getBackend(ctx).exec(ctx, command, opts)
 }
 
-function execViaStdin(cmd: string, args: string[], script: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
-    let out = ''
-    let err = ''
-    proc.stdout.on('data', (d) => {
-      out += d.toString()
-    })
-    proc.stderr.on('data', (d) => {
-      err += d.toString()
-    })
-    proc.on('error', reject)
-    proc.on('close', (code) => {
-      if (code === 0) {
-        resolve(out)
-      } else {
-        reject(new Error(err || `Exit ${code}`))
-      }
-    })
-    proc.stdin.end(script)
-  })
+/** Structured exec: argv form, no extra shell interpretation where the backend can avoid it. */
+export async function terminalRunResult(ctx: TerminalContext, argv: string[], opts?: ExecOptions): Promise<ExecResult> {
+  return getBackend(ctx).run(ctx, argv, opts)
 }
 
-function shellJoin(args: string[]): string {
-  return args
-    .map((a) => {
-      if (/^[\w./:@=,-]+$/.test(a)) {
-        return a
-      }
-      return `'${a.replace(/'/g, "'\\''")}'`
-    })
-    .join(' ')
-}
-
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`
-}
-
-function dockerExecPrefix(ctx: TerminalContext): string[] {
-  const ctxArgs = ctx.contextName ? ['--context', ctx.contextName] : []
-  return ['docker', ...ctxArgs, 'exec', '-i', ctx.containerId ?? '']
-}
-
-export async function terminalRun(ctx: TerminalContext, args: string[], env?: Record<string, string>): Promise<string> {
-  const envPrefix =
-    env && Object.keys(env).length > 0
-      ? `${Object.entries(env)
-          .map(([k, v]) => `export ${k}=${shellQuote(v)}`)
-          .join(' && ')} && `
-      : ''
-
-  if (ctx.type === 'docker-exec' && ctx.via) {
-    return terminalRun(ctx.via, [...dockerExecPrefix(ctx), 'sh', '-c', envPrefix + shellJoin(args)], undefined)
+function stdoutOrThrow(result: ExecResult): string {
+  if (result.exitCode !== 0) {
+    const detail = result.timedOut ? ' (timed out)' : ''
+    const suffix = result.stderr ? `: ${result.stderr}` : ''
+    throw new Error(`Command exited with code ${result.exitCode}${detail}${suffix}`)
   }
-
-  if (ctx.type === 'ssh') {
-    return sshExec(
-      {
-        address: ctx.host as string,
-        port: (ctx.port as number) || 22,
-        username: (ctx.username as string) || 'root',
-        password: ctx.password,
-        keyPath: ctx.keyPath,
-      },
-      envPrefix + shellJoin(args),
-    )
-  }
-
-  if (ctx.type === 'wsl' && ctx.distro) {
-    return execFilePromise('wsl', ['-d', ctx.distro, '--exec', 'bash', '-c', envPrefix + shellJoin(args)])
-  }
-
-  return exec(envPrefix + shellJoin(args))
+  return result.stdout
 }
 
+/** Back-compat: resolves with stdout, throws (message includes exit code + stderr) on non-zero exit. */
 export async function terminalExec(ctx: TerminalContext, command: string): Promise<string> {
-  if (ctx.type === 'docker-exec' && ctx.via) {
-    return terminalExec(ctx.via, `${shellJoin(dockerExecPrefix(ctx))} sh -c ${shellJoin([command])}`)
-  }
+  return stdoutOrThrow(await terminalExecResult(ctx, command))
+}
 
-  if (ctx.type === 'ssh') {
-    return sshExec(
-      {
-        address: ctx.host as string,
-        port: (ctx.port as number) || 22,
-        username: (ctx.username as string) || 'root',
-        password: ctx.password,
-        keyPath: ctx.keyPath,
-      },
-      command,
-    )
-  }
-
-  if (ctx.type === 'wsl' && ctx.distro) {
-    return execViaStdin('wsl', ['-d', ctx.distro, '--', 'bash'], command)
-  }
-
-  return exec(command)
+/** Back-compat: resolves with stdout, throws (message includes exit code + stderr) on non-zero exit. */
+export async function terminalRun(ctx: TerminalContext, args: string[], env?: Record<string, string>): Promise<string> {
+  return stdoutOrThrow(await terminalRunResult(ctx, args, env ? { env } : undefined))
 }

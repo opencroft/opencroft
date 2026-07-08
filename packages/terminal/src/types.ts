@@ -10,7 +10,31 @@ export interface TerminalContext {
   via?: TerminalContext
   contextName?: string
   containerId?: string
+  cwd?: string
+  /** docker-exec only: run as this user inside the container (`docker exec -u <user>`). */
+  user?: string
+  /** docker-exec only: preferred interactive shell (e.g. `/bin/zsh`) for shell sessions. */
+  shell?: string
   [key: string]: unknown
+}
+
+/** Options shared by every `TerminalBackend.exec`/`run` call. */
+export interface ExecOptions {
+  cwd?: string
+  env?: Record<string, string>
+  /** Kill the process/channel once this elapses. Default 120000ms. */
+  timeoutMs?: number
+  /** Stop accumulating output past this many bytes, per stream. Default 5MB. */
+  maxOutputBytes?: number
+}
+
+/** The result of a `TerminalBackend.exec`/`run` call — identical shape across every backend. */
+export interface ExecResult {
+  stdout: string
+  stderr: string
+  exitCode: number
+  truncated?: boolean
+  timedOut?: boolean
 }
 
 /** SSH connection parameters for one-shot command execution. */
@@ -57,14 +81,34 @@ export type TerminalConfig =
 export interface ConnectPayload extends SshConnectionConfig {
   cols: number
   rows: number
+  cwd?: string
+  /**
+   * Opaque client-supplied key (e.g. a terminal node id) identifying this logical session across
+   * reconnects. At most one live session exists per sessionKey — see AttachPayload. Omit for the
+   * legacy behavior: the session dies when the socket closes.
+   */
+  sessionKey?: string
 }
 
 export interface LocalPayload extends LocalConfig {
   cols: number
   rows: number
+  cwd?: string
+  sessionKey?: string
 }
 
 export interface WslPayload extends WslConfig {
+  cols: number
+  rows: number
+  cwd?: string
+  sessionKey?: string
+}
+
+export interface AttachPayload {
+  /** Prefer sessionId when known (survives across the same client's reconnects). */
+  sessionId?: string
+  /** Falls back to sessionKey lookup when sessionId is absent/unknown to the server. */
+  sessionKey?: string
   cols: number
   rows: number
 }
@@ -73,12 +117,15 @@ export type ClientMessage =
   | { type: 'connect'; payload: ConnectPayload }
   | { type: 'local'; payload: LocalPayload }
   | { type: 'wsl'; payload: WslPayload }
+  | { type: 'attach'; payload: AttachPayload }
   | { type: 'data'; payload: { data: string } }
   | { type: 'resize'; payload: { cols: number; rows: number } }
   | { type: 'disconnect' }
 
 export type ServerMessage =
   | { type: 'data'; payload: { data: string } }
-  | { type: 'connected'; payload: { sessionId: string } }
+  | { type: 'connected'; payload: { sessionId: string; reattached?: boolean } }
   | { type: 'error'; payload: { message: string } }
   | { type: 'disconnected'; payload: { reason: string } }
+  /** Sent in reply to `attach` when the sessionId/sessionKey is unknown or expired. */
+  | { type: 'session-gone'; payload: { message: string } }

@@ -7,9 +7,9 @@ import type * as nodeFs from 'node:fs'
 import type * as nodeOs from 'node:os'
 import type * as nodePath from 'node:path'
 
-import type { ServerConfig, TerminalContext } from '@opencroft/terminal'
+import type { ExecOptions, ExecResult, ServerConfig, TerminalContext } from '@opencroft/terminal'
 
-export type { ServerConfig, TerminalContext }
+export type { ExecOptions, ExecResult, ServerConfig, TerminalContext }
 
 export interface GraphNodeRecord {
   id: string
@@ -84,6 +84,8 @@ export interface ExtensionServerHost {
   terminal: {
     exec(ctx: TerminalContext, command: string): Promise<string>
     run(ctx: TerminalContext, args: string[], env?: Record<string, string>): Promise<string>
+    execResult(ctx: TerminalContext, command: string, opts?: ExecOptions): Promise<ExecResult>
+    runResult(ctx: TerminalContext, args: string[], opts?: ExecOptions): Promise<ExecResult>
     /** Resolve a terminal context from a node's output handle ("node-id" + "handle-id"). */
     getContext(nodeId: string, handleId: string): Promise<TerminalContext>
   }

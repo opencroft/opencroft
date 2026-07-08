@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import type { Readable } from 'node:stream'
 
 import { Client, type ClientChannel, type SFTPWrapper } from 'ssh2'
 
-import type { ServerConfig, SshCredentials } from '../types'
+import type { ExecOptions, ExecResult, ServerConfig, SshCredentials } from '../types'
+import { DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_TIMEOUT_MS, OutputCollector } from './exec-util'
 import { resolveKeyContent } from './keys'
 
 export interface SftpEntry {
@@ -30,7 +32,9 @@ async function connectSsh2(creds: SshCredentials): Promise<Client> {
       username: creds.username,
       password: creds.password || undefined,
       privateKey: keyContent,
-      readyTimeout: 5000,
+      readyTimeout: 10000,
+      keepaliveInterval: 15000,
+      keepaliveCountMax: 3,
     })
   })
 }
@@ -39,13 +43,141 @@ function openSftp(client: Client): Promise<SFTPWrapper> {
   return new Promise((resolve, reject) => {
     client.sftp((err, sftp) => {
       if (err) {
-        client.end()
         reject(err)
         return
       }
       resolve(sftp)
     })
   })
+}
+
+// --- Connection pool ---
+//
+// Every ssh2 entry point (one-shot exec, sftp, upload/download, interactive shell) shares one
+// `Client` per (host, port, username, auth) key instead of dialing fresh each time. `acquire()`
+// bumps a ref count and cancels any pending idle-close timer; `release()` drops the ref count and,
+// once it hits zero, arms a 60s idle timer that ends the client — this is what lets a long-lived
+// `shell()` session keep its client alive for as long as the channel is open, while short-lived
+// `exec`/`sftp` calls don't each pay a fresh TCP+SSH handshake.
+//
+// Native `ssh <alias>` spawns (string targets) go through OpenSSH's own connection, not this pool.
+
+const POOL_IDLE_MS = 60_000
+
+interface PoolEntry {
+  client: Client
+  activeChannels: number
+  idleTimer: ReturnType<typeof setTimeout> | undefined
+}
+
+const pool = new Map<string, PoolEntry>()
+const pendingDials = new Map<string, Promise<Client>>()
+
+/** Fingerprint the auth material without ever putting a plaintext password in the map key. */
+function authFingerprint(creds: SshCredentials): string {
+  if (creds.keyPath) {
+    return `key:${creds.keyPath}`
+  }
+  if (creds.password) {
+    return `pw:${createHash('sha256').update(creds.password).digest('hex')}`
+  }
+  return 'none'
+}
+
+function poolKey(creds: SshCredentials): string {
+  return `${creds.host}:${creds.port || 22}:${creds.username}:${authFingerprint(creds)}`
+}
+
+function armIdleTimer(key: string, entry: PoolEntry): void {
+  if (entry.idleTimer) {
+    clearTimeout(entry.idleTimer)
+  }
+  entry.idleTimer = setTimeout(() => {
+    if (pool.get(key) === entry && entry.activeChannels === 0) {
+      entry.client.end()
+    }
+  }, POOL_IDLE_MS)
+  entry.idleTimer.unref?.()
+}
+
+function bumpActive(entry: PoolEntry): void {
+  entry.activeChannels += 1
+  if (entry.idleTimer) {
+    clearTimeout(entry.idleTimer)
+    entry.idleTimer = undefined
+  }
+}
+
+function evict(key: string, entry: PoolEntry): void {
+  if (pool.get(key) === entry) {
+    pool.delete(key)
+  }
+  if (entry.idleTimer) {
+    clearTimeout(entry.idleTimer)
+  }
+}
+
+function dial(key: string, creds: SshCredentials): Promise<Client> {
+  const dialPromise = connectSsh2(creds).then((client) => {
+    const entry: PoolEntry = { client, activeChannels: 0, idleTimer: undefined }
+    pool.set(key, entry)
+    const onGone = () => evict(key, entry)
+    client.on('error', onGone)
+    client.on('close', onGone)
+    client.on('end', onGone)
+    return client
+  })
+  pendingDials.set(key, dialPromise)
+  dialPromise.finally(() => {
+    if (pendingDials.get(key) === dialPromise) {
+      pendingDials.delete(key)
+    }
+  })
+  return dialPromise
+}
+
+/** Acquire a pooled, ready `Client` for `creds` — reuses a live connection or dials a new one. */
+async function acquire(creds: SshCredentials): Promise<Client> {
+  const key = poolKey(creds)
+
+  const existing = pool.get(key)
+  if (existing) {
+    bumpActive(existing)
+    return existing.client
+  }
+
+  const client = await (pendingDials.get(key) ?? dial(key, creds))
+
+  const entry = pool.get(key)
+  if (entry) {
+    bumpActive(entry)
+  }
+  return client
+}
+
+/** Release a channel obtained via `acquire`; arms the idle-close timer once refs reach zero. */
+function release(creds: SshCredentials): void {
+  const key = poolKey(creds)
+  const entry = pool.get(key)
+  if (!entry) {
+    return
+  }
+  entry.activeChannels = Math.max(0, entry.activeChannels - 1)
+  if (entry.activeChannels === 0) {
+    armIdleTimer(key, entry)
+  }
+}
+
+/** Ends every pooled connection immediately. For tests/shutdown. */
+export function closeAllSshPools(): void {
+  for (const [key, entry] of pool) {
+    if (entry.idleTimer) {
+      clearTimeout(entry.idleTimer)
+    }
+    entry.client.end()
+    pool.delete(key)
+  }
+  pendingDials.clear()
 }
 
 // --- Native ssh helpers ---
@@ -82,12 +214,12 @@ function nativeExec(alias: string, command: string): Promise<string> {
 }
 
 async function ssh2Exec(creds: SshCredentials, command: string): Promise<string> {
-  const client = await connectSsh2(creds)
+  const client = await acquire(creds)
 
   return new Promise((resolve, reject) => {
     client.exec(command, (err, channel) => {
       if (err) {
-        client.end()
+        release(creds)
         reject(err)
         return
       }
@@ -101,7 +233,7 @@ async function ssh2Exec(creds: SshCredentials, command: string): Promise<string>
         stderr += data.toString()
       })
       channel.on('close', (code: number) => {
-        client.end()
+        release(creds)
         if (code !== 0) {
           reject(new Error(stderr || `exited with code ${code}`))
           return
@@ -122,53 +254,78 @@ export async function exec(target: SshTarget, command: string): Promise<string> 
 }
 
 /**
- * One-shot exec against a `ServerConfig`. Unlike `exec`, it tolerates non-zero
- * exit codes and only rejects when the command produced stderr with no stdout.
+ * Transport-level one-shot exec: connects, runs `command`, and resolves with an `ExecResult`
+ * for any command that ran — non-zero exit codes are NOT a rejection. Rejects only on
+ * connect/auth/exec failures. Enforces `timeoutMs` (closing the channel) and caps each stream
+ * at `maxOutputBytes`, matching every other `TerminalBackend`.
  */
-export async function sshExec(config: ServerConfig, command: string): Promise<string> {
-  const privateKey = await resolveKeyContent(config.keyPath)
-  return new Promise<string>((resolve, reject) => {
-    const client = new Client()
-    let stdout = ''
-    let stderr = ''
-    client.on('ready', () => {
-      client.exec(command, (err, stream) => {
-        if (err) {
-          client.end()
-          reject(err)
-          return
-        }
-        stream.on('data', (chunk: Buffer) => {
-          stdout += chunk.toString()
-        })
-        stream.stderr.on('data', (chunk: Buffer) => {
-          stderr += chunk.toString()
-        })
-        stream.on('close', () => {
-          client.end()
-          if (stderr && !stdout) {
-            reject(new Error(stderr))
-            return
-          }
-          resolve(stdout)
+export async function sshExecResult(
+  creds: SshCredentials,
+  command: string,
+  opts: ExecOptions = {},
+): Promise<ExecResult> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const maxBytes = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES
+
+  const client = await acquire(creds)
+
+  return new Promise<ExecResult>((resolve, reject) => {
+    const stdout = new OutputCollector(maxBytes)
+    const stderr = new OutputCollector(maxBytes)
+    let timedOut = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+
+    const clearTimer = () => {
+      if (timer) {
+        clearTimeout(timer)
+      }
+    }
+
+    client.exec(command, (err, stream) => {
+      if (err) {
+        clearTimer()
+        release(creds)
+        reject(err)
+        return
+      }
+      timer = setTimeout(() => {
+        timedOut = true
+        stream.close()
+      }, timeoutMs)
+      stream.on('data', (chunk: Buffer) => stdout.push(chunk))
+      stream.stderr.on('data', (chunk: Buffer) => stderr.push(chunk))
+      stream.on('close', (code: number | null) => {
+        clearTimer()
+        release(creds)
+        resolve({
+          stdout: stdout.toString(),
+          stderr: stderr.toString(),
+          exitCode: timedOut ? 124 : (code ?? 1),
+          truncated: stdout.truncated || stderr.truncated || undefined,
+          timedOut: timedOut || undefined,
         })
       })
     })
-    client.on('error', reject)
-    const connectOptions: Record<string, unknown> = {
-      host: config.address,
-      port: config.port || 22,
-      username: config.username || 'root',
-      readyTimeout: 10000,
-    }
-    if (config.password) {
-      connectOptions.password = config.password
-    }
-    if (privateKey) {
-      connectOptions.privateKey = privateKey
-    }
-    client.connect(connectOptions)
   })
+}
+
+/** One-shot exec against a `ServerConfig`. Throws (with exit code + stderr) on non-zero exit. */
+export async function sshExec(config: ServerConfig, command: string): Promise<string> {
+  const result = await sshExecResult(
+    {
+      host: config.address,
+      port: config.port,
+      username: config.username,
+      password: config.password,
+      keyPath: config.keyPath,
+    },
+    command,
+  )
+  if (result.exitCode !== 0) {
+    const suffix = result.stderr ? `: ${result.stderr}` : ''
+    throw new Error(`ssh exited with code ${result.exitCode}${suffix}`)
+  }
+  return result.stdout
 }
 
 export async function upload(target: SshTarget, remotePath: string, stream: Readable): Promise<void> {
@@ -193,17 +350,18 @@ export async function upload(target: SshTarget, remotePath: string, stream: Read
     })
   }
 
-  const client = await connectSsh2(target)
-  const sftp = await openSftp(client)
-
-  await new Promise<void>((resolve, reject) => {
-    const ws = sftp.createWriteStream(remotePath)
-    ws.on('close', () => resolve())
-    ws.on('error', reject)
-    stream.pipe(ws)
-  })
-
-  client.end()
+  const client = await acquire(target)
+  try {
+    const sftp = await openSftp(client)
+    await new Promise<void>((resolve, reject) => {
+      const ws = sftp.createWriteStream(remotePath)
+      ws.on('close', () => resolve())
+      ws.on('error', reject)
+      stream.pipe(ws)
+    })
+  } finally {
+    release(target)
+  }
 }
 
 export async function download(target: SshTarget, remotePath: string): Promise<Buffer> {
@@ -230,29 +388,32 @@ export async function download(target: SshTarget, remotePath: string): Promise<B
     })
   }
 
-  const client = await connectSsh2(target)
-  const sftp = await openSftp(client)
-
-  const data = await new Promise<Buffer>((resolve, reject) => {
-    const chunks: Buffer[] = []
-    const rs = sftp.createReadStream(remotePath)
-    rs.on('data', (chunk: Buffer) => chunks.push(chunk))
-    rs.on('end', () => resolve(Buffer.concat(chunks)))
-    rs.on('error', reject)
-  })
-
-  client.end()
-  return data
+  const client = await acquire(target)
+  try {
+    const sftp = await openSftp(client)
+    const data = await new Promise<Buffer>((resolve, reject) => {
+      const chunks: Buffer[] = []
+      const rs = sftp.createReadStream(remotePath)
+      rs.on('data', (chunk: Buffer) => chunks.push(chunk))
+      rs.on('end', () => resolve(Buffer.concat(chunks)))
+      rs.on('error', reject)
+    })
+    return data
+  } finally {
+    release(target)
+  }
 }
 
 // --- SFTP operations ---
 
 async function withSftp<T>(creds: SshCredentials, fn: (sftp: SFTPWrapper) => Promise<T>): Promise<T> {
-  const client = await connectSsh2(creds)
-  const sftp = await openSftp(client)
-  const result = await fn(sftp)
-  client.end()
-  return result
+  const client = await acquire(creds)
+  try {
+    const sftp = await openSftp(client)
+    return await fn(sftp)
+  } finally {
+    release(creds)
+  }
 }
 
 export const sftp = {
@@ -368,12 +529,23 @@ export interface SshShell {
 }
 
 export async function shell(creds: SshCredentials, cols: number, rows: number, command?: string): Promise<SshShell> {
-  const client = await connectSsh2(creds)
+  const client = await acquire(creds)
 
   return new Promise((resolve, reject) => {
+    // The shared client must stay open for as long as this interactive channel lives, so we hold
+    // one pool ref for the whole session and only release() it once — never end() the client
+    // directly, since other exec/sftp calls may be sharing it.
+    let released = false
+    const releaseOnce = () => {
+      if (!released) {
+        released = true
+        release(creds)
+      }
+    }
+
     const onChannel = (err: Error | undefined, channel: ClientChannel) => {
       if (err) {
-        client.end()
+        releaseOnce()
         reject(err)
         return
       }
@@ -383,7 +555,10 @@ export async function shell(creds: SshCredentials, cols: number, rows: number, c
           channel.stderr.on('data', (data: Buffer) => fn(data.toString('utf-8')))
         },
         onClose(fn) {
-          channel.on('close', fn)
+          channel.on('close', () => {
+            releaseOnce()
+            fn()
+          })
         },
         write(data) {
           channel.write(data)
@@ -393,7 +568,7 @@ export async function shell(creds: SshCredentials, cols: number, rows: number, c
         },
         close() {
           channel.close()
-          client.end()
+          releaseOnce()
         },
       })
     }
