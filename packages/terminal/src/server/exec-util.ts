@@ -39,6 +39,23 @@ export function cdPrefix(cwd?: string): string {
   return cwd ? `cd ${shellQuote(cwd)} && ` : ''
 }
 
+const SUMMARY_MAX_CHARS = 120
+
+/**
+ * Build a safe, single-line summary of a command for logging: just the first line, truncated,
+ * with a `(+N more lines)` marker when the command is multi-line. Full command/script bodies
+ * (which may contain heredocs, injected env values, or other secret material — e.g. an SSH
+ * private key piped in via a key-injection script) must never be logged verbatim.
+ */
+export function summarizeCommand(cmd: string, args: string[] = []): string {
+  const full = args.length > 0 ? `${cmd} ${args.join(' ')}` : cmd
+  const lines = full.split('\n')
+  const firstLine = lines[0] ?? ''
+  const extraLines = lines.length - 1
+  const truncated = firstLine.length > SUMMARY_MAX_CHARS ? `${firstLine.slice(0, SUMMARY_MAX_CHARS)}…` : firstLine
+  return extraLines > 0 ? `${truncated} … (+${extraLines} more lines)` : truncated
+}
+
 /** Accumulates a byte-capped stream, truncating (not erroring) once the cap is hit. */
 export class OutputCollector {
   private readonly chunks: Buffer[] = []

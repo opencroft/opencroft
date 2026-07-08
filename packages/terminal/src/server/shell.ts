@@ -2,10 +2,12 @@ import { execFile, spawn as nodeSpawn, type SpawnOptions } from 'node:child_proc
 import os from 'node:os'
 import type { Readable } from 'node:stream'
 
+import { summarizeCommand } from './exec-util'
+
 const isWindows = os.platform() === 'win32'
 
 function log(cmd: string, args: string[]) {
-  console.log(`$ ${cmd} ${args.join(' ')}`)
+  console.log(`$ ${summarizeCommand(cmd, args)}`)
 }
 
 export function exec(cmd: string, maxBuffer = 50 * 1024 * 1024): Promise<string> {
