@@ -3,7 +3,10 @@
  *
  * Graph tools are scoped by `space` (slug).
  * If omitted, the active space is used. Extension tools operate on v2
- * local extensions (folders under `data/extensions/local/<slug>/`).
+ * local extensions (folders under `data/extensions/local/<slug>/`). Source files are read and
+ * edited via the remote_* tools (remote_read/remote_write/remote_edit/remote_exec/remote_script)
+ * against the static handle "extensions/<slug>" — see `resolveLocalExtensionContext` — rather
+ * than a dedicated per-file extension tool.
  * UI feedback (toasts, focus, comments) is broadcast via SSE.
  */
 
@@ -37,11 +40,11 @@ import {
   deleteLocalExtension,
   getLocalExtension,
   listLocalExtensions,
-  updateLocalExtension,
 } from '@/app/(extension-editor)/_actions/local-extensions-actions'
 import { invokeExtensionAction } from '@/app/(extension-runtime)/_server/actions'
 import { getExtensionModule, loadAllManifests } from '@/app/(extension-runtime)/_server/loader'
 import { dispatchNodeAction, listNodeActions } from '@/app/(extension-runtime)/_server/node-actions'
+import { localExtRoot } from '@/app/(extension-runtime)/_server/paths'
 import { resolveExtensionRepo, searchRegistries } from '@/app/(extension-runtime)/_server/registry'
 import type { ExtensionHandle } from '@/app/(extension-runtime)/_types'
 import { recordAudit } from '@/app/(mcp)/_server/audit'
@@ -398,32 +401,19 @@ export const toolDefinitions = [
   {
     name: 'list_extensions',
     description:
-      'List all local extensions as lightweight summaries (id, name, version, description, node/file counts). Use get_extension for the full manifest and source files. Each extension is a folder under data/extensions/local/<slug>/ containing extension.json and source files. Built-in extensions are bundled with the app and not listed here.',
+      'List all local extensions as lightweight summaries (id, name, version, description, node/file counts, target). Use get_extension for the full manifest and source file list. Each extension is a folder under data/extensions/local/<slug>/ containing extension.json and source files — read and edit those files with the remote_* tools (remote_read/remote_write/remote_edit/remote_exec/remote_script) against the static handle given as `target` (format "extensions/<slug>"); paths passed to those tools are relative to the extension folder. Built-in extensions are bundled with the app and not listed here.',
     inputSchema: { type: 'object' as const, properties: {} },
   },
   {
     name: 'get_extension',
     description:
-      'Get a single local extension by its id (e.g. "local/my-node"). Returns the parsed manifest plus the list of source file paths. Use read_extension_file to read a file\'s contents.',
+      'Get a single local extension by its id (e.g. "local/my-node"). Returns the parsed manifest, the list of source file paths, and a `target` field ("extensions/<slug>"). Read and edit file contents with the remote_* tools (remote_read/remote_write/remote_edit/remote_exec/remote_script) against that target — paths are relative to the extension folder.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         extensionId: { type: 'string', description: 'The local extension id (must start with "local/")' },
       },
       required: ['extensionId'],
-    },
-  },
-  {
-    name: 'read_extension_file',
-    description:
-      'Read the contents of a single source file within a local extension. Use get_extension first to discover the available file paths.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        extensionId: { type: 'string', description: 'The local extension id (must start with "local/")' },
-        path: { type: 'string', description: 'File path relative to the extension folder (e.g. "src/client.tsx")' },
-      },
-      required: ['extensionId', 'path'],
     },
   },
   {
@@ -441,24 +431,6 @@ export const toolDefinitions = [
         },
       },
       required: ['files'],
-    },
-  },
-  {
-    name: 'update_extension',
-    description:
-      'Update files of an existing local extension. Replaces all provided files. Omitted files are left unchanged.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        extensionId: { type: 'string', description: 'The local extension id (must start with "local/")' },
-        files: {
-          type: 'object',
-          description:
-            'Map of relative file paths to content. Only the provided files will be updated; existing files not in the map are preserved. To delete a file, set its content to empty string and it will be removed.',
-          additionalProperties: { type: 'string' },
-        },
-      },
-      required: ['extensionId', 'files'],
     },
   },
   {
@@ -704,7 +676,11 @@ export const toolDefinitions = [
           type: 'string',
           description: 'Terminal-context output handle (format: "node-id/handle-id").',
         },
-        path: { type: 'string', description: 'Absolute file path on the remote node.' },
+        path: {
+          type: 'string',
+          description:
+            "Absolute file path on the remote node, or a path relative to the target's working directory when it has one.",
+        },
         offset: { type: 'number', description: '1-indexed line to start from. Default 1.' },
         limit: { type: 'number', description: 'Number of lines to return. Default: read to end.' },
       },
@@ -722,7 +698,11 @@ export const toolDefinitions = [
           type: 'string',
           description: 'Terminal-context output handle (format: "node-id/handle-id").',
         },
-        path: { type: 'string', description: 'Absolute file path on the remote node.' },
+        path: {
+          type: 'string',
+          description:
+            "Absolute file path on the remote node, or a path relative to the target's working directory when it has one.",
+        },
         content: { type: 'string', description: 'File content to write (UTF-8).' },
       },
       required: ['target', 'path', 'content'],
@@ -739,7 +719,11 @@ export const toolDefinitions = [
           type: 'string',
           description: 'Terminal-context output handle (format: "node-id/handle-id").',
         },
-        path: { type: 'string', description: 'Absolute file path on the remote node.' },
+        path: {
+          type: 'string',
+          description:
+            "Absolute file path on the remote node, or a path relative to the target's working directory when it has one.",
+        },
         oldString: { type: 'string', description: 'The exact text to replace.' },
         newString: { type: 'string', description: 'The text to replace with.' },
         replaceAll: { type: 'boolean', description: 'Replace every occurrence (default false).' },
@@ -759,7 +743,11 @@ export const toolDefinitions = [
           description: 'Terminal-context output handle (format: "node-id/handle-id").',
         },
         command: { type: 'string', description: 'Shell command to execute.' },
-        cwd: { type: 'string', description: 'Working directory to run the command in (absolute path).' },
+        cwd: {
+          type: 'string',
+          description:
+            "Working directory to run the command in (absolute path, or relative to the target's working directory; defaults to it when omitted).",
+        },
         secrets: {
           type: 'array',
           items: { type: 'string' },
@@ -792,7 +780,11 @@ export const toolDefinitions = [
           items: { type: 'string' },
           description: 'Positional arguments passed to the script (available as $1, $2, ... inside it).',
         },
-        cwd: { type: 'string', description: 'Working directory to run the script in (absolute path).' },
+        cwd: {
+          type: 'string',
+          description:
+            "Working directory to run the script in (absolute path, or relative to the target's working directory; defaults to it when omitted).",
+        },
         secrets: {
           type: 'array',
           items: { type: 'string' },
@@ -1570,6 +1562,83 @@ async function findNodeAcrossSpaces(nodeId: string): Promise<{ node: GraphNode; 
   fail(-32602, `Node not found: ${nodeId}`)
 }
 
+// The node-id sentinel used by the static per-extension terminal-context handle
+// ("extensions/<slug>"), resolved by `resolveLocalExtensionContext` below instead of a real
+// graph node lookup.
+const LOCAL_EXTENSION_HANDLE_NODE_ID = 'extensions'
+
+// Conservative allow-list for a local extension folder name: must start alphanumeric, then only
+// alphanumeric/dot/underscore/hyphen. This can never contain "/", "\", or "..", but both are also
+// rejected explicitly in `isValidLocalExtensionSlug` for defense in depth.
+const LOCAL_EXTENSION_SLUG_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/
+
+/**
+ * True for slugs that are safe to join onto `localExtRoot()` with no path-traversal risk. Pure
+ * and side-effect free, so it's unit-testable on its own.
+ */
+export function isValidLocalExtensionSlug(slug: string): boolean {
+  if (!slug || slug.includes('/') || slug.includes('\\') || slug.includes('..')) {
+    return false
+  }
+  return LOCAL_EXTENSION_SLUG_RE.test(slug)
+}
+
+/**
+ * Resolve a non-absolute `filePath` against `cwd` (when the resolved terminal context has one).
+ * Absolute paths, and any path when there's no cwd, pass through unchanged. Pure and side-effect
+ * free (no network/filesystem calls), so it's unit-testable on its own — this is what lets
+ * `remote_read target=extensions/git path=server/git.ts` resolve to
+ * `<localExtRoot>/git/server/git.ts` before it ever reaches a shell command.
+ */
+export function resolveRemoteFilePath(filePath: string, cwd?: string): string {
+  if (!cwd || path.isAbsolute(filePath)) {
+    return filePath
+  }
+  return path.posix.join(cwd, filePath)
+}
+
+/**
+ * Build the `local` terminal context for an already-syntax-validated extension `slug`, given the
+ * set of currently-installed local extension slugs and the local extensions root. Pure and
+ * side-effect free (no I/O, no listLocalExtensions() call, no MCP/server runtime needed), so
+ * it's unit-testable on its own — this is the part of extension-handle resolution that isn't
+ * just string validation.
+ */
+export function buildLocalExtensionCtx(
+  slug: string,
+  knownSlugs: string[],
+  extensionsRoot: string,
+): Record<string, unknown> {
+  if (!knownSlugs.includes(slug)) {
+    fail(-32602, `Unknown local extension: ${slug}`)
+  }
+  return { type: 'local', cwd: path.join(extensionsRoot, slug) }
+}
+
+/**
+ * Resolve the static "extensions/<slug>" handle to a `local` terminal context rooted at that
+ * local extension's folder on disk (`data/extensions/local/<slug>/`). Returns undefined when
+ * `ep.nodeId` isn't the "extensions" sentinel, so the caller falls back to normal node-graph
+ * resolution. The slug is validated both syntactically (no traversal — before any I/O happens)
+ * and against the actual set of installed local extensions (the same loader
+ * `list_extensions`/`get_extension` use) before ever being joined onto a filesystem path.
+ */
+async function resolveLocalExtensionContext(ep: ParsedEndpoint): Promise<Record<string, unknown> | undefined> {
+  if (ep.nodeId !== LOCAL_EXTENSION_HANDLE_NODE_ID) {
+    return undefined
+  }
+  const slug = ep.handle
+  if (!slug || !isValidLocalExtensionSlug(slug)) {
+    fail(-32602, `Invalid local extension handle: "${ep.handle ?? ''}"`)
+  }
+  const records = await listLocalExtensions()
+  return buildLocalExtensionCtx(
+    slug,
+    records.map((r) => r.slug),
+    localExtRoot(),
+  )
+}
+
 export async function resolveTerminalContext(
   args: Record<string, unknown>,
 ): Promise<{ ctx: Record<string, unknown>; slug: string }> {
@@ -1581,6 +1650,12 @@ export async function resolveTerminalContext(
   if (!ep.handle) {
     fail(-32602, 'target must include handle (format: "node-id/handle-id")')
   }
+
+  const localExtCtx = await resolveLocalExtensionContext(ep)
+  if (localExtCtx) {
+    return { ctx: localExtCtx, slug: ep.handle }
+  }
+
   const { node, slug } = await findNodeAcrossSpaces(ep.nodeId)
   if (!node.type) {
     fail(-32602, `Node ${ep.nodeId} has no type`)
@@ -2212,7 +2287,8 @@ function buildHandlers(): Record<string, ToolHandler> {
     // ── list_extensions ─────────────────────────────────────────────
     list_extensions: async () => {
       const records = await listLocalExtensions()
-      // Identity + counts only. Use get_extension for the manifest and source files.
+      // Identity + counts only. Use get_extension for the manifest and source file list; read/edit
+      // file contents via the remote_* tools against `target`.
       const summaries = records.map((record) => ({
         id: record.id,
         name: record.manifest.name,
@@ -2221,6 +2297,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         nodeCount: record.manifest.nodes?.length ?? 0,
         fileCount: Object.keys(record.files).length,
         updatedAt: record.updatedAt,
+        target: `${LOCAL_EXTENSION_HANDLE_NODE_ID}/${record.slug}`,
       }))
       return textResult(JSON.stringify(summaries, null, 2))
     },
@@ -2235,27 +2312,15 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!record) {
         fail(-32602, `Extension not found: ${extensionId}`)
       }
-      // Manifest + file paths only. Use read_extension_file for contents.
+      // Manifest + file paths only. Read/edit file contents via the remote_* tools against `target`.
       const { files, ...rest } = record
-      return textResult(JSON.stringify({ ...rest, files: Object.keys(files) }, null, 2))
-    },
-
-    // ── read_extension_file ─────────────────────────────────────────
-    read_extension_file: async (args) => {
-      const extensionId = args.extensionId as string | undefined
-      const filePath = args.path as string | undefined
-      if (!extensionId || !filePath) {
-        fail(-32602, 'Missing required params: extensionId and path')
-      }
-      const record = await getLocalExtension({ data: extensionId })
-      if (!record) {
-        fail(-32602, `Extension not found: ${extensionId}`)
-      }
-      const content = record.files[filePath]
-      if (content === undefined) {
-        fail(-32602, `File not found in ${extensionId}: ${filePath}`)
-      }
-      return textResult(content)
+      return textResult(
+        JSON.stringify(
+          { ...rest, files: Object.keys(files), target: `${LOCAL_EXTENSION_HANDLE_NODE_ID}/${record.slug}` },
+          null,
+          2,
+        ),
+      )
     },
 
     // ── create_extension ────────────────────────────────────────────
@@ -2277,28 +2342,6 @@ function buildHandlers(): Record<string, ToolHandler> {
       const record = await createLocalExtension({ data: files })
       broadcastExtensionsUpdated()
       return textResult(`Extension ${record.id} installed with ${Object.keys(files).length} files.`)
-    }),
-
-    // ── update_extension ────────────────────────────────────────────
-    update_extension: withApprovalRequired(async (args) => {
-      const extensionId = args.extensionId as string | undefined
-      const filesRaw = args.files as Record<string, unknown> | undefined
-      if (!extensionId) {
-        fail(-32602, 'Missing required param: extensionId')
-      }
-      if (!filesRaw || typeof filesRaw !== 'object') {
-        fail(-32602, 'Missing required param: files')
-      }
-      const files: Record<string, string> = {}
-      for (const [k, v] of Object.entries(filesRaw)) {
-        if (typeof k !== 'string' || typeof v !== 'string') {
-          fail(-32602, `Invalid file entry: ${k}`)
-        }
-        files[k] = v
-      }
-      await updateLocalExtension({ data: { extensionId, files } })
-      broadcastExtensionsUpdated()
-      return textResult(`Extension ${extensionId} updated with ${Object.keys(files).length} files.`)
     }),
 
     // ── delete_extension ───────────────────�����────────────────────────
@@ -2598,7 +2641,8 @@ function buildHandlers(): Record<string, ToolHandler> {
       const offset = args.offset as number | undefined
       const limit = args.limit as number | undefined
       const { ctx } = await resolveTerminalContext(args)
-      const content = await remoteExec(ctx, `cat ${shellQuote(filePath)}`)
+      const resolvedPath = resolveRemoteFilePath(filePath, ctx.cwd as string | undefined)
+      const content = await remoteExec(ctx, `cat ${shellQuote(resolvedPath)}`)
       const sliced = sliceLines(content, offset, limit)
       return textResult(catN(sliced, offset ?? 1))
     },
@@ -2612,8 +2656,9 @@ function buildHandlers(): Record<string, ToolHandler> {
           fail(-32602, 'Missing required params: path, content')
         }
         const { ctx } = await resolveTerminalContext(args)
-        await writeRemoteFileExact(ctx, filePath, content)
-        return textResult(`The file ${filePath} has been written.`)
+        const resolvedPath = resolveRemoteFilePath(filePath, ctx.cwd as string | undefined)
+        await writeRemoteFileExact(ctx, resolvedPath, content)
+        return textResult(`The file ${resolvedPath} has been written.`)
       },
       { view: 'remote_write' },
     ),
@@ -2632,8 +2677,9 @@ function buildHandlers(): Record<string, ToolHandler> {
         }
         const replaceAll = Boolean(args.replaceAll)
         const { ctx } = await resolveTerminalContext(args)
+        const resolvedPath = resolveRemoteFilePath(filePath, ctx.cwd as string | undefined)
 
-        const content = await remoteExec(ctx, `cat ${shellQuote(filePath)}`)
+        const content = await remoteExec(ctx, `cat ${shellQuote(resolvedPath)}`)
         const occurrences = content.split(oldString).length - 1
         if (occurrences === 0) {
           fail(-32602, 'oldString not found in file')
@@ -2644,8 +2690,8 @@ function buildHandlers(): Record<string, ToolHandler> {
 
         const updated = replaceAll ? content.split(oldString).join(newString) : content.replace(oldString, newString)
 
-        await writeRemoteFileExact(ctx, filePath, updated)
-        return textResult(`The file ${filePath} has been updated successfully.`)
+        await writeRemoteFileExact(ctx, resolvedPath, updated)
+        return textResult(`The file ${resolvedPath} has been updated successfully.`)
       },
       { view: 'remote_edit' },
     ),
@@ -2659,8 +2705,11 @@ function buildHandlers(): Record<string, ToolHandler> {
         }
         const cwd = args.cwd as string | undefined
         const { ctx } = await resolveTerminalContext(args)
+        const effectiveCwd = cwd
+          ? resolveRemoteFilePath(cwd, ctx.cwd as string | undefined)
+          : (ctx.cwd as string | undefined)
         const prefix = await resolveSecretsForExec(args.secrets as string[] | undefined)
-        const output = await remoteExec(ctx, prefix + command, cwd ? { cwd } : undefined)
+        const output = await remoteExec(ctx, prefix + command, effectiveCwd ? { cwd: effectiveCwd } : undefined)
         return textResult(output)
       },
       { view: 'remote_exec' },
@@ -2676,6 +2725,9 @@ function buildHandlers(): Record<string, ToolHandler> {
         const scriptArgs = (args.args as string[] | undefined) ?? []
         const cwd = args.cwd as string | undefined
         const { ctx } = await resolveTerminalContext(args)
+        const effectiveCwd = cwd
+          ? resolveRemoteFilePath(cwd, ctx.cwd as string | undefined)
+          : (ctx.cwd as string | undefined)
         const prefix = await resolveSecretsForExec(args.secrets as string[] | undefined)
         const tmpPath = `/tmp/opencroft-script-${crypto.randomUUID()}.sh`
         try {
@@ -2684,7 +2736,7 @@ function buildHandlers(): Record<string, ToolHandler> {
           const output = await remoteExec(
             ctx,
             `${prefix}bash ${shellQuote(tmpPath)} ${argv}; rc=$?; rm -f ${shellQuote(tmpPath)}; exit $rc`,
-            cwd ? { cwd } : undefined,
+            effectiveCwd ? { cwd: effectiveCwd } : undefined,
           )
           return textResult(output)
         } catch (err) {
@@ -2692,7 +2744,7 @@ function buildHandlers(): Record<string, ToolHandler> {
           // mismatch) or the exec command never reached the remote — best-effort clean up here too,
           // otherwise a failed run leaves an orphaned script file in /tmp on every retry.
           try {
-            await remoteExec(ctx, `rm -f ${shellQuote(tmpPath)}`, cwd ? { cwd } : undefined)
+            await remoteExec(ctx, `rm -f ${shellQuote(tmpPath)}`, effectiveCwd ? { cwd: effectiveCwd } : undefined)
           } catch {
             /* best-effort; if the remote is unreachable there's nothing left to clean up */
           }
