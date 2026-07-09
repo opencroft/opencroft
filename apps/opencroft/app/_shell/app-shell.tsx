@@ -3,9 +3,8 @@
 import type { DashboardMeta } from '@opencroft/dashboards'
 import { DashboardsSidebarSection } from '@opencroft/dashboards/client'
 import type { AppLink } from '@opencroft/db'
-import { Link, useLocation, useSearch } from '@tanstack/react-router'
+import { Link, useLocation } from '@tanstack/react-router'
 import {
-  BookOpen,
   ChevronRight,
   ExternalLink,
   Globe,
@@ -43,7 +42,6 @@ import { ChatTabItem } from '@/app/_shell/chat-tab-item'
 import { ChatTabsProvider, useChatTabs } from '@/app/(agent)/_lib/chat-tabs-context'
 import { listPendingPermissions } from '@/app/(agent)/_server/acp'
 import { getAppLinks } from '@/app/(applink)/_server/actions'
-import { type DocNamespace, listDocNamespaces } from '@/app/(docs)/_server/actions'
 import type { SpaceSummary } from '@/app/(space)/_server/types'
 
 interface Props {
@@ -104,10 +102,7 @@ function ChatModeToggle() {
 
 function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarProps) {
   const pathname = useLocation({ select: (l) => l.pathname })
-  const search = useSearch({ strict: false }) as { namespace?: string }
-  const activeNamespace = search.namespace ?? null
   const [appLinks, setAppLinks] = useState<AppLink[]>([])
-  const [repos, setRepos] = useState<DocNamespace[]>([])
   const inSpace = pathname.startsWith('/space/')
   const chatTabs = useChatTabs()
   const pinnedDashboards = dashboards.filter((d) => pinnedDashboardSlugs.includes(d.slug))
@@ -121,12 +116,6 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
   useEffect(() => {
     getAppLinks().then(setAppLinks)
   }, [])
-
-  useEffect(() => {
-    listDocNamespaces()
-      .then(setRepos)
-      .catch(() => setRepos([]))
-  }, [pathname])
 
   return (
     <Sidebar collapsible='icon'>
@@ -208,40 +197,6 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
             </SidebarMenu>
           </SidebarGroup>
         )}
-        <SidebarGroup>
-          <SidebarMenu>
-            <Collapsible defaultOpen className='group/collapsible'>
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip='Documentation'>
-                  <BookOpen />
-                  <span>Documentation</span>
-                </SidebarMenuButton>
-                {repos.length > 0 && (
-                  <>
-                    <CollapsibleTrigger asChild>
-                      <SidebarMenuAction>
-                        <ChevronRight className='transition-transform group-data-[state=open]/collapsible:rotate-90' />
-                      </SidebarMenuAction>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                      <SidebarMenuSub>
-                        {repos.map((repo) => (
-                          <SidebarMenuSubItem key={repo.namespace}>
-                            <SidebarMenuSubButton asChild isActive={activeNamespace === repo.namespace}>
-                              <Link to='/docs' search={{ namespace: repo.namespace, file: 'README.md' }}>
-                                <span className='truncate'>{repo.name}</span>
-                              </Link>
-                            </SidebarMenuSubButton>
-                          </SidebarMenuSubItem>
-                        ))}
-                      </SidebarMenuSub>
-                    </CollapsibleContent>
-                  </>
-                )}
-              </SidebarMenuItem>
-            </Collapsible>
-          </SidebarMenu>
-        </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
         {appLinks.length > 0 && (

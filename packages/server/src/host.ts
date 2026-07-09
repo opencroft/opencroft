@@ -75,11 +75,18 @@ export interface ExtensionServerHost {
   exec(cmd: string): Promise<string>
   execFile(cmd: string, args: string[]): Promise<string>
   cacheDir(...parts: string[]): string
+  /** Persistent per-extension data directory. Unlike cacheDir, this is not wiped and is safe for durable state such as git clones. */
+  dataDir(...parts: string[]): string
   crypto: { encrypt(value: string): string; decrypt(value: string): string; randomToken(bytes?: number): string }
   settings: { get(...args: unknown[]): Promise<unknown>; set(...args: unknown[]): Promise<unknown> }
   graph: HostGraphApi
   storage: ExtensionStorageApi
   secrets: HostSecretsApi
+  /**
+   * Fire-and-forget push to all connected clients; received in extension
+   * client code via getStream(extensionId, 'events').
+   */
+  events: { broadcast: (name: string, payload?: Record<string, unknown>) => void }
   openclaw: { call<T = unknown>(method: string, params?: object): Promise<T> }
   terminal: {
     exec(ctx: TerminalContext, command: string): Promise<string>
@@ -104,11 +111,13 @@ export declare const path: ExtensionServerHost['path']
 export declare const exec: ExtensionServerHost['exec']
 export declare const execFile: ExtensionServerHost['execFile']
 export declare const cacheDir: ExtensionServerHost['cacheDir']
+export declare const dataDir: ExtensionServerHost['dataDir']
 export declare const crypto: ExtensionServerHost['crypto']
 export declare const settings: ExtensionServerHost['settings']
 export declare const graph: ExtensionServerHost['graph']
 export declare const storage: ExtensionServerHost['storage']
 export declare const secrets: ExtensionServerHost['secrets']
+export declare const events: ExtensionServerHost['events']
 export declare const openclaw: ExtensionServerHost['openclaw']
 export declare const terminal: ExtensionServerHost['terminal']
 export declare const ssh: ExtensionServerHost['ssh']

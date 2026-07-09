@@ -7,6 +7,7 @@
 
 import { createContext, useCallback, useContext, useRef, useSyncExternalStore } from 'react'
 
+import { getStream } from '@/app/(extension-runtime)/_client/stream'
 import type { Comment, DockerContainerSnapshot, PendingApproval, PendingAskUser, SSEEvent } from '@/lib/sse-events'
 
 // ── State ───────────────────────────────────────────────────────────────
@@ -20,8 +21,6 @@ interface SSEEventsState {
   graphVersion: number
   /** Bumped whenever the server announces an extension mutation. */
   extensionsVersion: number
-  /** Per-doc version bumped whenever a doc's comments change. */
-  docCommentsVersion: Map<string, number>
   /** Pending MCP approval requests keyed by request id. */
   pendingApprovals: Map<string, PendingApproval>
   /** Currently selected pending approval id (drives the command bar approval state). */
@@ -42,7 +41,6 @@ function createInitialState(): SSEEventsState {
     comments: new Map(),
     graphVersion: 0,
     extensionsVersion: 0,
-    docCommentsVersion: new Map(),
     pendingApprovals: new Map(),
     selectedApprovalId: null,
     pendingAskUsers: new Map(),
@@ -105,12 +103,6 @@ class SSEEventsStore {
       case 'extensions_updated':
         this.state = { ...this.state, extensionsVersion: this.state.extensionsVersion + 1 }
         break
-      case 'doc_comments_updated': {
-        const versions = new Map(this.state.docCommentsVersion)
-        versions.set(event.docPath, (versions.get(event.docPath) ?? 0) + 1)
-        this.state = { ...this.state, docCommentsVersion: versions }
-        break
-      }
       case 'approval_pending': {
         const next = new Map(this.state.pendingApprovals)
         next.set(event.request.id, event.request)
@@ -151,6 +143,11 @@ class SSEEventsStore {
         this.state = { ...this.state, pendingAskUsers: next, selectedAskUserId: selected }
         break
       }
+      case 'extension_event':
+        // Forwarded into the extension client stream registry for
+        // getStream(extensionId, 'events') subscribers; no store state to update.
+        getStream(event.extensionId, 'events').broadcast({ name: event.name, payload: event.payload })
+        return
       case 'toast':
         // Handled by useSSE directly (sonner), nothing to store.
         return
@@ -241,7 +238,6 @@ function useSSEEventsStore(): SSEEventsStore {
 
 // Cached server snapshots — must be stable references to avoid infinite re-renders
 const SERVER_COMMENTS = new Map<string, Comment>()
-const SERVER_DOC_COMMENTS_VERSION = new Map<string, number>()
 const SERVER_PENDING_APPROVALS = new Map<string, PendingApproval>()
 const SERVER_DOCKER_CONTAINERS = new Map<string, DockerContainerSnapshot[]>()
 const SERVER_PENDING_ASK_USERS = new Map<string, PendingAskUser>()
@@ -250,7 +246,6 @@ const SERVER_STATE: SSEEventsState = {
   comments: SERVER_COMMENTS,
   graphVersion: 0,
   extensionsVersion: 0,
-  docCommentsVersion: SERVER_DOC_COMMENTS_VERSION,
   pendingApprovals: SERVER_PENDING_APPROVALS,
   selectedApprovalId: null,
   pendingAskUsers: SERVER_PENDING_ASK_USERS,

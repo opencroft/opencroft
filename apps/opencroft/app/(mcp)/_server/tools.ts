@@ -10,7 +10,6 @@
  * UI feedback (toasts, focus, comments) is broadcast via SSE.
  */
 
-import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { checkMcpServer } from 'agent-client/mcp-check'
@@ -24,10 +23,6 @@ import {
   getApprovalMeta,
   withApprovalRequired,
 } from '@/app/(approvals)/_server/with-approval'
-import { getGitFileAtRef } from '@/app/(docs)/_server/actions'
-import { appendComment, createComment, readComments } from '@/app/(docs)/_server/comments'
-import { getDocsRoot } from '@/app/(docs)/_server/docs-root'
-import { searchDocsAtRoot } from '@/app/(docs)/_server/search'
 import {
   type InstallAuth,
   installExtensionFromUrl,
@@ -48,6 +43,7 @@ import { localExtRoot } from '@/app/(extension-runtime)/_server/paths'
 import { resolveExtensionRepo, searchRegistries } from '@/app/(extension-runtime)/_server/registry'
 import type { ExtensionHandle } from '@/app/(extension-runtime)/_types'
 import { recordAudit } from '@/app/(mcp)/_server/audit'
+import { executeExtensionTool, getExtensionToolDefinitions } from '@/app/(mcp)/_server/extension-tools'
 import { skillToolDefinitions, skillToolHandlers } from '@/app/(mcp)/_server/skill-tools'
 import { isYoloMode } from '@/app/(mcp)/_server/yolo'
 import {
@@ -561,109 +557,6 @@ export const toolDefinitions = [
     },
   },
 
-  // ── Docs ──────────────────────────────────────────────────────────
-  {
-    name: 'doc_list_namespaces',
-    description:
-      'List every Documentation node available as a namespace. Use to discover which `namespace` value to pass to other doc_* tools.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {},
-    },
-  },
-  {
-    name: 'doc_search',
-    description:
-      'Search committed (HEAD) markdown content in a documentation namespace. Returns matching files with line snippets.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        namespace: {
-          type: 'string',
-          description: 'Documentation namespace (slug). Use doc_list_namespaces to discover.',
-        },
-        pattern: { type: 'string', description: 'Regex pattern (case-insensitive).' },
-        maxResults: { type: 'number', description: 'Maximum matches to return (default 50).' },
-      },
-      required: ['namespace', 'pattern'],
-    },
-  },
-  {
-    name: 'doc_read',
-    description:
-      'Read the content of a doc by its relative path within a namespace (e.g. "guides/intro.md"). Paths must end with .md. Optional offset/limit slice the result by 1-indexed line.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        namespace: { type: 'string', description: 'Documentation namespace (slug).' },
-        path: { type: 'string', description: 'Relative path within the namespace.' },
-        offset: { type: 'number', description: '1-indexed line to start from. Default 1.' },
-        limit: { type: 'number', description: 'Number of lines to return. Default: read to end.' },
-      },
-      required: ['namespace', 'path'],
-    },
-  },
-  {
-    name: 'doc_edit',
-    description:
-      'Replace an exact string in a doc within a namespace. Fails if oldString is not unique unless replaceAll is true. Mirrors the behavior of the regular Edit tool.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        namespace: { type: 'string', description: 'Documentation namespace (slug).' },
-        path: { type: 'string', description: 'Relative path within the namespace.' },
-        oldString: { type: 'string', description: 'The exact text to replace.' },
-        newString: { type: 'string', description: 'The text to replace with.' },
-        replaceAll: { type: 'boolean', description: 'Replace every occurrence (default false).' },
-      },
-      required: ['namespace', 'path', 'oldString', 'newString'],
-    },
-  },
-  {
-    name: 'doc_write',
-    description:
-      'Create or overwrite a doc within a namespace. Creates parent directories as needed. Path must end with .md.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        namespace: { type: 'string', description: 'Documentation namespace (slug).' },
-        path: { type: 'string', description: 'Relative path within the namespace.' },
-        content: { type: 'string', description: 'Full file content (UTF-8).' },
-      },
-      required: ['namespace', 'path', 'content'],
-    },
-  },
-  {
-    name: 'doc_reply',
-    description:
-      'Post a reply to a comment thread anchored on a doc within a namespace. Use when responding to a user comment the agent was mentioned in.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        namespace: { type: 'string', description: 'Documentation namespace (slug).' },
-        docPath: { type: 'string', description: 'Relative path of the doc the comment is anchored to.' },
-        commentId: { type: 'string', description: 'The id of the comment being replied to.' },
-        message: { type: 'string', description: 'Reply text.' },
-        author: { type: 'string', description: 'Author label shown in the thread. Defaults to "agent".' },
-      },
-      required: ['namespace', 'docPath', 'commentId', 'message'],
-    },
-  },
-  {
-    name: 'doc_publish',
-    description:
-      'Commit and push a single file in a documentation namespace. Other staged changes are not pulled into the commit.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        namespace: { type: 'string', description: 'Documentation namespace (slug).' },
-        path: { type: 'string', description: 'Relative path of the file to commit.' },
-        message: { type: 'string', description: 'Git commit message.' },
-      },
-      required: ['namespace', 'path', 'message'],
-    },
-  },
-
   // ── Remote File & Exec Ops ──────────────────────────────────────────
   {
     name: 'remote_read',
@@ -966,11 +859,12 @@ interface AgentToolNodeData {
   requireApproval: boolean
 }
 
-export async function getAgentToolDefinitions() {
+export async function getAgentToolDefinitions(extraReservedNames: Set<string> = new Set()) {
   const defs: { name: string; description: string; inputSchema: Record<string, unknown> }[] = []
 
-  // Collect all existing static tool names to avoid collisions
-  const staticNames = new Set(toolDefinitions.map((t) => t.name))
+  // Collect all existing static tool names (plus any caller-supplied reserved
+  // names, e.g. extension-contributed tools) to avoid collisions
+  const staticNames = new Set([...toolDefinitions.map((t) => t.name), ...extraReservedNames])
 
   try {
     const registry = getSpacesRegistry()
@@ -1786,46 +1680,6 @@ function sliceLines(content: string, offset?: number, limit?: number): string {
   return lines.slice(start, end).join('\n')
 }
 
-// ── Doc helpers ─────────────────────────────────────────────────────────
-
-async function resolveDocPath(namespace: string, relative: string): Promise<string> {
-  if (!relative.endsWith('.md')) {
-    fail(-32602, 'Doc path must end with .md')
-  }
-  const root = await getDocsRoot(namespace)
-  if (!root) {
-    fail(-32602, `No documentation repository configured for namespace "${namespace}"`)
-  }
-  const resolved = path.resolve(root, relative)
-  if (!resolved.startsWith(root)) {
-    fail(-32602, 'Access denied')
-  }
-  return resolved
-}
-
-async function findDocNodeIdForNamespace(namespace: string): Promise<string | null> {
-  try {
-    const { callDocsAction } = await import('@/app/(docs)/_server/docs-provider')
-    return (await callDocsAction('docs.findDocNodeId', { namespace })) as string | null
-  } catch {
-    return null
-  }
-}
-
-/** Best-effort git-add for the matching namespace's Documentation node. */
-async function docsGitAdd(namespace: string, relativePath: string): Promise<void> {
-  try {
-    const nodeId = await findDocNodeIdForNamespace(namespace)
-    if (!nodeId) {
-      return
-    }
-    const { callDocsAction } = await import('@/app/(docs)/_server/docs-provider')
-    await callDocsAction('docs.addFile', { nodeId, filePath: relativePath })
-  } catch {
-    // best-effort — do not block doc operations if git-add fails
-  }
-}
-
 function buildHandlers(): Record<string, ToolHandler> {
   return {
     // ── send_toast ──────────────────────────────────────────────────
@@ -2487,151 +2341,6 @@ function buildHandlers(): Record<string, ToolHandler> {
       return textResult(`Uninstalled ${extensionId}.`)
     }),
 
-    // ── doc_list_namespaces ─────────────────────────────────────────
-    doc_list_namespaces: async () => {
-      const { callDocsAction } = await import('@/app/(docs)/_server/docs-provider')
-      const list = ((await callDocsAction('docs.listNamespaces')) ?? []) as Array<{
-        id: string
-        namespace: string
-        name: string
-      }>
-      return textResult(JSON.stringify(list, null, 2))
-    },
-
-    // ── doc_search ──────────────────────────────────────────────────
-    // Searches committed (HEAD) content via `git grep` for HEAD-only
-    // correctness and O(repo) speed.
-    doc_search: async (args) => {
-      const namespace = args.namespace as string | undefined
-      const pattern = args.pattern as string | undefined
-      if (!namespace) {
-        fail(-32602, 'Missing required param: namespace')
-      }
-      if (!pattern) {
-        fail(-32602, 'Missing required param: pattern')
-      }
-      const maxResults = (args.maxResults as number | undefined) ?? 50
-      const root = await getDocsRoot(namespace)
-      if (!root) {
-        return textResult('[]')
-      }
-      const enriched = await searchDocsAtRoot(root, pattern, maxResults)
-      return textResult(JSON.stringify(enriched, null, 2))
-    },
-
-    // ── doc_read ────────────────────────────────────────────────────
-    // Prefers committed (HEAD) content — agents see the published version.
-    // Falls back to working tree only if HEAD has no such file.
-    doc_read: async (args) => {
-      const namespace = args.namespace as string | undefined
-      const relative = args.path as string | undefined
-      if (!namespace) {
-        fail(-32602, 'Missing required param: namespace')
-      }
-      if (!relative) {
-        fail(-32602, 'Missing required param: path')
-      }
-      const offset = args.offset as number | undefined
-      const limit = args.limit as number | undefined
-      const resolved = await resolveDocPath(namespace, relative)
-      const head = await getGitFileAtRef({ data: { namespace, filePath: relative, ref: 'HEAD' } })
-      if (head !== null) {
-        return textResult(sliceLines(head, offset, limit))
-      }
-      try {
-        const content = await fs.readFile(resolved, 'utf-8')
-        return textResult(sliceLines(content, offset, limit))
-      } catch {
-        fail(-32602, `File not found: ${relative}`)
-      }
-    },
-
-    // ── doc_edit ────────────────────────────────────────────────────
-    doc_edit: async (args) => {
-      const namespace = args.namespace as string | undefined
-      const relative = args.path as string | undefined
-      const oldString = args.oldString as string | undefined
-      const newString = args.newString as string | undefined
-      if (!namespace || !relative || oldString === undefined || newString === undefined) {
-        fail(-32602, 'Missing required params: namespace, path, oldString, newString')
-      }
-      if (oldString === newString) {
-        fail(-32602, 'oldString and newString must differ')
-      }
-      const replaceAll = Boolean(args.replaceAll)
-      const resolved = await resolveDocPath(namespace, relative)
-      let content: string
-      try {
-        content = await fs.readFile(resolved, 'utf-8')
-      } catch {
-        fail(-32602, `File not found: ${relative}`)
-      }
-      const occurrences = content.split(oldString).length - 1
-      if (occurrences === 0) {
-        fail(-32602, 'oldString not found in file')
-      }
-      if (occurrences > 1 && !replaceAll) {
-        fail(-32602, `oldString is not unique (${occurrences} matches). Set replaceAll=true or provide more context.`)
-      }
-      const next = replaceAll ? content.split(oldString).join(newString) : content.replace(oldString, newString)
-      await fs.writeFile(resolved, next, 'utf-8')
-      await docsGitAdd(namespace, relative)
-      return textResult(`Replaced ${replaceAll ? occurrences : 1} occurrence(s) in ${namespace}/${relative}.`)
-    },
-
-    // ── doc_write ───────────────────────────────────────────────────
-    doc_write: async (args) => {
-      const namespace = args.namespace as string | undefined
-      const relative = args.path as string | undefined
-      const content = args.content as string | undefined
-      if (!namespace || !relative || content === undefined) {
-        fail(-32602, 'Missing required params: namespace, path, content')
-      }
-      const resolved = await resolveDocPath(namespace, relative)
-      await fs.mkdir(path.dirname(resolved), { recursive: true })
-      await fs.writeFile(resolved, content, 'utf-8')
-      await docsGitAdd(namespace, relative)
-      return textResult(`Wrote ${content.length} bytes to ${namespace}/${relative}.`)
-    },
-
-    // ── doc_reply ───────────────────────────────────────────────────
-    doc_reply: async (args) => {
-      const namespace = args.namespace as string | undefined
-      const docPath = args.docPath as string | undefined
-      const commentId = args.commentId as string | undefined
-      const message = args.message as string | undefined
-      if (!namespace || !docPath || !commentId || !message) {
-        fail(-32602, 'Missing required params: namespace, docPath, commentId, message')
-      }
-      const author = (args.author as string | undefined) ?? 'agent'
-      await resolveDocPath(namespace, docPath)
-      const existing = await readComments(namespace, docPath)
-      const reply = createComment(author, message)
-      await appendComment(namespace, docPath, reply, commentId)
-      toastStore.broadcast({ type: 'doc_comments_updated', docPath })
-      return textResult(JSON.stringify({ replyId: reply.id, parentId: commentId, threads: existing.length }, null, 2))
-    },
-
-    // ── doc_publish ─────────────────────────────────────────────────
-    doc_publish: async (args) => {
-      const namespace = args.namespace as string | undefined
-      const filePath = args.path as string | undefined
-      const message = args.message as string | undefined
-      if (!namespace || !filePath || !message) {
-        fail(-32602, 'Missing required params: namespace, path, message')
-      }
-      const nodeId = await findDocNodeIdForNamespace(namespace)
-      if (!nodeId) {
-        fail(-32602, `No Documentation node found for namespace "${namespace}".`)
-      }
-      const { callDocsAction } = await import('@/app/(docs)/_server/docs-provider')
-      const result = await callDocsAction('docs.publish', { nodeId, filePath, message })
-      if (result === null) {
-        fail(-32602, 'docs.publish action not available from any Documentation provider.')
-      }
-      return textResult(JSON.stringify({ nodeId, namespace, path: filePath, ...(result as object) }, null, 2))
-    },
-
     // ── read (remote) ────────────────────────────────────────────────
     remote_read: async (args) => {
       const filePath = args.path as string | undefined
@@ -2895,6 +2604,47 @@ export async function handleToolCall(
   const start = Date.now()
   const handler = handlers[name]
   if (!handler) {
+    const staticNames = new Set(toolDefinitions.map((t) => t.name))
+    const extensionDef = (await getExtensionToolDefinitions(staticNames)).find((t) => t.name === name)
+    if (extensionDef) {
+      const approvalRequired = extensionDef.requireApproval && !isYoloMode() && !opts.internal
+      try {
+        if (approvalRequired) {
+          const spaceId = typeof args.space === 'string' ? await resolveSpace(args) : undefined
+          await awaitApproval({ tool: name, args, signal: opts.signal, spaceId })
+        }
+        const result = await executeExtensionTool(extensionDef.extensionId, name, args)
+        await recordAudit({
+          tool: name,
+          args,
+          result,
+          status: approvalRequired ? 'approved' : 'auto-approved',
+          durationMs: Date.now() - start,
+        })
+        return result
+      } catch (e) {
+        if (e instanceof ApprovalRejectedError) {
+          await recordAudit({
+            tool: name,
+            args,
+            error: e.reason || '(no reason)',
+            status: 'rejected',
+            durationMs: Date.now() - start,
+          })
+          return rejectionResult(e.reason)
+        }
+        const err = e as { message?: string }
+        await recordAudit({
+          tool: name,
+          args,
+          error: err.message ?? String(e),
+          status: 'error',
+          durationMs: Date.now() - start,
+        })
+        throw e
+      }
+    }
+
     // Fall back to graph-defined agent tools
     const execResult = await executeAgentTool(name, args, opts)
     await recordAudit({

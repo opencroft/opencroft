@@ -52,8 +52,8 @@ export type SSEEvent = BaseEvent &
     | { type: 'clear_comment'; nodeId: string }
     | { type: 'graph_updated' }
     | { type: 'extensions_updated' }
+    | { type: 'extension_event'; extensionId: string; name: string; payload?: Record<string, unknown> }
     | { type: 'open_space'; slug: string; nodeId?: string }
-    | { type: 'doc_comments_updated'; docPath: string }
     | { type: 'approval_pending'; request: PendingApproval }
     | { type: 'approval_resolved'; id: string }
     | { type: 'ask_user_pending'; request: PendingAskUser }

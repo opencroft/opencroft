@@ -15,6 +15,8 @@ export type NodeActionHandler = (ctx: unknown) => Promise<unknown>
 
 type ExtensionLifecycle = (context: opencroft.ExtensionContext) => void | Promise<void>
 
+export type ExtensionToolHandlers = Record<string, (args: Record<string, unknown>) => Promise<unknown>>
+
 interface CachedModule {
   updatedAt: number
   manifest: ExtensionManifest
@@ -22,6 +24,7 @@ interface CachedModule {
   exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
   nodeActions?: Record<string, Record<string, NodeActionHandler>>
   routes?: Record<string, ExtensionRouteHandler>
+  tools?: ExtensionToolHandlers
   load?: ExtensionLifecycle
   unload?: ExtensionLifecycle
   context: opencroft.ExtensionContext
@@ -151,6 +154,7 @@ interface ExtensionServerModule {
   exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
   nodeActions?: Record<string, Record<string, NodeActionHandler>>
   routes?: Record<string, ExtensionRouteHandler>
+  tools?: ExtensionToolHandlers
   load?: ExtensionLifecycle
   unload?: ExtensionLifecycle
   default?: {
@@ -158,6 +162,7 @@ interface ExtensionServerModule {
     exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
     nodeActions?: Record<string, Record<string, NodeActionHandler>>
     routes?: Record<string, ExtensionRouteHandler>
+    tools?: ExtensionToolHandlers
     load?: ExtensionLifecycle
     unload?: ExtensionLifecycle
   }
@@ -212,6 +217,7 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
     const exposeOutput = exported.exposeOutput ?? exported.default?.exposeOutput
     const nodeActions = exported.nodeActions ?? exported.default?.nodeActions
     const routes = exported.routes ?? exported.default?.routes
+    const tools = exported.tools ?? exported.default?.tools
     const load = exported.load ?? exported.default?.load
     const unload = exported.unload ?? exported.default?.unload
     return {
@@ -221,6 +227,7 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
       exposeOutput,
       nodeActions,
       routes,
+      tools,
       load,
       unload,
       context: reg.context,

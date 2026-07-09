@@ -1,6 +1,7 @@
 import { jsonSchemaToZodShape } from 'agent-client/json-schema'
 import type { LocalTool } from 'agent-client/mcp-server'
 
+import { getExtensionToolDefinitions } from '@/app/(mcp)/_server/extension-tools'
 import { getAgentToolDefinitions, handleToolCall, toolDefinitions } from '@/app/(mcp)/_server/tools'
 
 // Bridges opencroft's own MCP tool registry (spaces, nodes, extensions, docs,
@@ -55,10 +56,13 @@ function getStaticTools(): LocalTool[] {
   return staticTools
 }
 
-// Dynamic agent-tool graph nodes are re-read on every call (see
-// getAgentToolDefinitions()) so a tool created or edited on the canvas appears
-// without an app restart.
+// Extension-contributed tools and dynamic agent-tool graph nodes are re-read
+// on every call (see getExtensionToolDefinitions()/getAgentToolDefinitions())
+// so a tool installed, edited, or created on the canvas appears without an
+// app restart.
 export async function opencroftLocalTools(): Promise<LocalTool[]> {
-  const dynamicDefs = await getAgentToolDefinitions()
-  return [...getStaticTools(), ...dynamicDefs.map(toLocalTool)]
+  const staticNames = new Set(toolDefinitions.map((t) => t.name))
+  const extensionDefs = await getExtensionToolDefinitions(staticNames)
+  const dynamicDefs = await getAgentToolDefinitions(new Set(extensionDefs.map((t) => t.name)))
+  return [...getStaticTools(), ...extensionDefs.map(toLocalTool), ...dynamicDefs.map(toLocalTool)]
 }

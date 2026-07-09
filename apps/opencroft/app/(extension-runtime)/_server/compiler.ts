@@ -124,7 +124,9 @@ export const {
   useState, useEffect, useCallback, useMemo, useRef, useContext,
   useReducer, useId, useLayoutEffect, useSyncExternalStore,
   useTransition, useDeferredValue, useImperativeHandle, useDebugValue,
-  createElement, createContext, forwardRef, memo, lazy,
+  useInsertionEffect, startTransition,
+  createElement, createContext, createRef, forwardRef, memo, lazy,
+  Component, PureComponent, version,
   Fragment, Suspense, StrictMode, Children, cloneElement, isValidElement,
 } = React;
 `,
@@ -308,6 +310,7 @@ export const path = host.path;
 export const exec = host.exec;
 export const execFile = host.execFile;
 export const cacheDir = host.cacheDir;
+export const dataDir = host.dataDir;
 export const crypto = host.crypto;
 export const secrets = host.secrets;
 export const settings = host.settings;
@@ -319,6 +322,7 @@ export const localhost = host.localhost;
 export const wsl = host.wsl;
 export const terminal = host.terminal;
 export const ssh = host.ssh;
+export const events = host.events;
 export const extensionId = host.extensionId;
 `,
     loader: 'js',

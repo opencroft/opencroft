@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import { getExtensionToolDefinitions } from '@/app/(mcp)/_server/extension-tools'
 import { getAgentToolDefinitions, handleToolCall, toolDefinitions } from '@/app/(mcp)/_server/tools'
 
 type MCPRequest = {
@@ -41,8 +42,16 @@ async function handleMethod(
       return null
 
     case 'tools/list': {
-      const agentTools = await getAgentToolDefinitions()
-      return { tools: [...toolDefinitions, ...agentTools] }
+      const staticNames = new Set(toolDefinitions.map((t) => t.name))
+      const extensionTools = await getExtensionToolDefinitions(staticNames)
+      const agentTools = await getAgentToolDefinitions(new Set(extensionTools.map((t) => t.name)))
+      return {
+        tools: [
+          ...toolDefinitions,
+          ...extensionTools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+          ...agentTools,
+        ],
+      }
     }
 
     case 'tools/call': {

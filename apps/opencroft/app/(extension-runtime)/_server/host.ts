@@ -20,8 +20,10 @@ import {
 import { getSetting, setSetting } from '@/app/(settings)/_server/actions'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
 import type { GraphData } from '@/app/(space)/_server/types'
+import { toastStore } from '@/lib/toast-store'
 import { cacheDir } from '@/server/cache'
 import { decrypt, encrypt } from '@/server/crypto'
+import { dataDir } from '@/server/data-dir'
 import { secrets } from '@/server/secrets'
 
 function randomToken(bytes = 32): string {
@@ -264,12 +266,18 @@ export interface ExtensionHost {
   exec: (cmd: string) => Promise<string>
   execFile: (cmd: string, args: string[]) => Promise<string>
   cacheDir: (...parts: string[]) => string
+  dataDir: (...parts: string[]) => string
   crypto: { encrypt: typeof encrypt; decrypt: typeof decrypt; randomToken: typeof randomToken }
   db: typeof db
   secrets: HostSecretsApi
   settings: { get: typeof getSetting; set: typeof setSetting }
   graph: HostGraphApi
   storage: ExtensionStorageApi
+  /**
+   * Fire-and-forget push to all connected clients; received in extension
+   * client code via getStream(extensionId, 'events').
+   */
+  events: { broadcast: (name: string, payload?: Record<string, unknown>) => void }
   terminal: {
     exec(ctx: TerminalContext, command: string): Promise<string>
     run(ctx: TerminalContext, args: string[], env?: Record<string, string>): Promise<string>
@@ -292,12 +300,18 @@ export function createHost(extensionId: string): ExtensionHost {
     exec,
     execFile: execFilePromise,
     cacheDir: (...parts) => cacheDir('extensions', extensionId, ...parts),
+    dataDir: (...parts) => dataDir('extension-data', extensionId, ...parts),
     crypto: { encrypt, decrypt, randomToken },
     db,
     secrets,
     settings: { get: getSetting, set: setSetting },
     graph: graphApi,
     storage: storageApi(extensionId),
+    events: {
+      broadcast: (name, payload) => {
+        toastStore.broadcast({ type: 'extension_event', extensionId, name, payload })
+      },
+    },
     terminal: {
       exec: terminalExec,
       run: terminalRun,
