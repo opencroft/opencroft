@@ -38,13 +38,6 @@ export const secret = pgTable(
   (t) => [uniqueIndex('Secret_storeId_key_key').on(t.storeId, t.key), index('Secret_storeId_idx').on(t.storeId)],
 )
 
-export const appLink = pgTable('AppLink', {
-  id: text().primaryKey().notNull().$defaultFn(uuid),
-  title: text().notNull(),
-  url: text().notNull(),
-  order: integer().default(0).notNull(),
-})
-
 export const space = pgTable(
   'Space',
   {
@@ -78,10 +71,9 @@ export const mcpAuditLog = pgTable(
   ],
 )
 
-export const schema = { setting, secret, appLink, space, mcpAuditLog }
+export const schema = { setting, secret, space, mcpAuditLog }
 
 export type Setting = typeof setting.$inferSelect
 export type Secret = typeof secret.$inferSelect
-export type AppLink = typeof appLink.$inferSelect
 export type Space = typeof space.$inferSelect
 export type McpAuditLog = typeof mcpAuditLog.$inferSelect

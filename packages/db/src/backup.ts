@@ -1,7 +1,7 @@
 import type { PgTable } from 'drizzle-orm/pg-core'
 
 import type { DB } from './connect'
-import { appLink, mcpAuditLog, secret, setting, space } from './schema'
+import { mcpAuditLog, secret, setting, space } from './schema'
 
 // Connector-agnostic logical backup: a plain-JSON, per-table row dump that
 // restores into any Postgres-dialect backend (embedded PGlite or remote
@@ -18,7 +18,6 @@ interface TableSpec {
 const TABLES: TableSpec[] = [
   { name: 'Setting', table: setting, dateCols: ['createdAt', 'updatedAt'] },
   { name: 'Secret', table: secret, dateCols: ['createdAt', 'updatedAt'] },
-  { name: 'AppLink', table: appLink, dateCols: [] },
   { name: 'Space', table: space, dateCols: ['createdAt', 'updatedAt'] },
   { name: 'McpAuditLog', table: mcpAuditLog, dateCols: ['createdAt'] },
 ]

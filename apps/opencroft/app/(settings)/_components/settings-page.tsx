@@ -1,12 +1,11 @@
 'use client'
 
-import { ExternalLink, ScrollText } from 'lucide-react'
+import { ScrollText } from 'lucide-react'
 import type React from 'react'
 import { Suspense, useCallback } from 'react'
 import { MenuLayout } from 'ui/layout/menulayout'
 import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
 
-import AppLinksSettings from '@/app/(applink)/_components/applinks-settings'
 import AuditSettings from '@/app/(settings)/_components/audit-settings'
 import {
   ExtensionSettingsMenu,
@@ -23,10 +22,7 @@ interface BuiltinPage {
   component: React.ComponentType
 }
 
-const BUILTIN_PAGES: BuiltinPage[] = [
-  { id: 'applinks', label: 'App Links', icon: ExternalLink, component: AppLinksSettings },
-  { id: 'audit', label: 'MCP Audit', icon: ScrollText, component: AuditSettings },
-]
+const BUILTIN_PAGES: BuiltinPage[] = [{ id: 'audit', label: 'MCP Audit', icon: ScrollText, component: AuditSettings }]
 
 function SettingsContent() {
   const [section, setSection] = useUrlState<string>('section', '')

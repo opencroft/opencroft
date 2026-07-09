@@ -2,18 +2,8 @@
 
 import type { DashboardMeta } from '@opencroft/dashboards'
 import { DashboardsSidebarSection } from '@opencroft/dashboards/client'
-import type { AppLink } from '@opencroft/db'
 import { Link, useLocation } from '@tanstack/react-router'
-import {
-  ChevronRight,
-  ExternalLink,
-  Globe,
-  MessageSquare,
-  Network,
-  PanelRightOpen,
-  Puzzle,
-  SettingsIcon,
-} from 'lucide-react'
+import { ChevronRight, MessageSquare, Network, PanelRightOpen, Puzzle, SettingsIcon } from 'lucide-react'
 import { Suspense, useEffect, useState } from 'react'
 import { Button } from 'ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/collapsible'
@@ -23,7 +13,6 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuAction,
@@ -41,7 +30,6 @@ import { DevBuildBadge } from '@/app/_components/dev-build-badge'
 import { ChatTabItem } from '@/app/_shell/chat-tab-item'
 import { ChatTabsProvider, useChatTabs } from '@/app/(agent)/_lib/chat-tabs-context'
 import { listPendingPermissions } from '@/app/(agent)/_server/acp'
-import { getAppLinks } from '@/app/(applink)/_server/actions'
 import type { SpaceSummary } from '@/app/(space)/_server/types'
 
 interface Props {
@@ -102,7 +90,6 @@ function ChatModeToggle() {
 
 function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarProps) {
   const pathname = useLocation({ select: (l) => l.pathname })
-  const [appLinks, setAppLinks] = useState<AppLink[]>([])
   const inSpace = pathname.startsWith('/space/')
   const chatTabs = useChatTabs()
   const pinnedDashboards = dashboards.filter((d) => pinnedDashboardSlugs.includes(d.slug))
@@ -111,10 +98,6 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
 
   useEffect(() => {
     setMounted(true)
-  }, [])
-
-  useEffect(() => {
-    getAppLinks().then(setAppLinks)
   }, [])
 
   return (
@@ -199,24 +182,6 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
         )}
       </SidebarContent>
       <SidebarFooter>
-        {appLinks.length > 0 && (
-          <SidebarGroup>
-            <SidebarGroupLabel>Links</SidebarGroupLabel>
-            <SidebarMenu>
-              {appLinks.map((link) => (
-                <SidebarMenuItem key={link.id}>
-                  <SidebarMenuButton asChild tooltip={link.title}>
-                    <a href={link.url} target='_blank' rel='noopener noreferrer'>
-                      <Globe />
-                      <span>{link.title}</span>
-                      <ExternalLink className='ml-auto size-3 opacity-50' />
-                    </a>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroup>
-        )}
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild tooltip='Extensions' isActive={pathname.startsWith('/extensions')}>
