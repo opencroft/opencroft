@@ -165,7 +165,7 @@ async function buildToolset(
   const skillHandler = config.skillHandler
   if (skills.length > 0 && skillHandler) {
     toolset[SKILL_TOOL_NAME] = tool({
-      description: skillToolDescription(skills),
+      description: skillToolDescription(),
       inputSchema: z.object(SKILL_INPUT_SCHEMA),
       // Guard the handler too: a model could still name a non-permitted skill.
       execute: async ({ skill }) =>

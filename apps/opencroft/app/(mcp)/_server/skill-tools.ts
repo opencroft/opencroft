@@ -13,6 +13,14 @@ function fail(code: number, message: string): never {
 
 export const skillToolDefinitions = [
   {
+    name: 'skill_list',
+    description: 'List available skills (name and description) for the skill tool.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
+  {
     name: 'skill_write',
     description:
       'Create or overwrite a skill by name. Skills are shared by every local agent and loaded on demand when the agent invokes the skill tool.',
@@ -55,6 +63,15 @@ export const skillToolDefinitions = [
 ]
 
 export const skillToolHandlers: Record<string, ToolHandler> = {
+  skill_list: async () => {
+    const skills = await readSkills()
+    if (skills.length === 0) {
+      return textResult('No skills configured yet.')
+    }
+    const catalog = skills.map((skill) => `- ${skill.name}: ${skill.description}`).join('\n')
+    return textResult(catalog)
+  },
+
   skill_write: withApprovalRequired(
     async (args) => {
       const name = typeof args.name === 'string' ? args.name.trim() : ''

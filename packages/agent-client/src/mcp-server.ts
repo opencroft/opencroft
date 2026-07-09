@@ -66,9 +66,11 @@ export const SKILL_INPUT_SCHEMA = {
   skill: z.string().describe('Name of the skill to load'),
 }
 
-export function skillToolDescription(skills: SkillDef[]): string {
-  const catalog = skills.map((skill) => `- ${skill.name}: ${skill.description}`).join('\n')
-  return `Load a skill to learn how to perform a task. Available skills:\n${catalog}`
+// The catalog itself is served by the skill_list tool, not embedded here — a
+// large skill count previously bloated this description enough to get
+// truncated in tool listings.
+export function skillToolDescription(): string {
+  return 'Load a skill to learn how to perform a task. Call skill_list first to see available skills and when to use them.'
 }
 
 function textResult(text: string) {
@@ -102,7 +104,7 @@ async function buildServer(
     server.registerTool(
       SKILL_TOOL_NAME,
       {
-        description: skillToolDescription(skills),
+        description: skillToolDescription(),
         inputSchema: SKILL_INPUT_SCHEMA,
       },
       // Guard the handler too: a model could still name a non-permitted skill.
