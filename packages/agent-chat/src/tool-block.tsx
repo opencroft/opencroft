@@ -61,15 +61,15 @@ export function ToolCallBlock({ name, args, result }: ToolCallBlockProps) {
       <button
         type='button'
         onClick={() => setOpen((v) => !v)}
-        className='flex w-full min-w-0 items-start gap-2 text-xs text-left cursor-pointer'
+        className='flex min-w-0 items-start gap-2 text-xs text-left cursor-pointer'
       >
         <ChevronRight
           className={cn('h-3 w-3 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')}
         />
-        <span className='font-mono font-medium shrink-0'>{name}</span>
+        <span className='font-mono font-medium break-all'>{name}</span>
         {preview && <span className='font-mono text-muted-foreground min-w-0 flex-1 break-all'>{preview}</span>}
-        {!result && !open && <Loader2 className='size-3 shrink-0 animate-spin text-muted-foreground' />}
-        {isError && <span className='text-destructive shrink-0'>error</span>}
+        {!result && !open && <Loader2 className='size-3 animate-spin text-muted-foreground' />}
+        {isError && <span className='text-destructive'>error</span>}
       </button>
       {open && (
         <div

@@ -75,7 +75,7 @@ function SplitDiff({ current, next }: { current: string; next: string }) {
 
 function ModeToggle({ mode, onChange }: { mode: DiffMode; onChange: (mode: DiffMode) => void }) {
   return (
-    <div className='flex gap-0.5 rounded-md border p-0.5'>
+    <div className='flex gap-0.5 rounded-md border bg-background/90 p-0.5 shadow-sm backdrop-blur-sm'>
       <Button
         variant='ghost'
         size='icon'
@@ -102,7 +102,7 @@ export function NodeDiffEditor({ current, next }: NodeDiffEditorProps) {
   const [mode, setMode] = useState<DiffMode>('split')
 
   return (
-    <div className='space-y-1.5'>
+    <div className='relative'>
       <style>{`
         .cm-merge-a .cm-changedText,
         .cm-deletedChunk .cm-deletedText {
@@ -113,7 +113,9 @@ export function NodeDiffEditor({ current, next }: NodeDiffEditorProps) {
           background: rgba(34, 187, 34, 0.3) !important;
         }
       `}</style>
-      <div className='flex justify-end'>
+      {/* Overlaid on top of the diff instead of its own row, so it doesn't cost
+          a whole line of vertical space. */}
+      <div className='absolute right-2 top-2 z-10'>
         <ModeToggle mode={mode} onChange={setMode} />
       </div>
       <div className='rounded-md border overflow-auto text-xs'>

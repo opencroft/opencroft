@@ -22,6 +22,7 @@ import type {
 import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
 
 import type { AgentConnection } from './connection'
+import { errorMessage } from './errors'
 import { readMcpConfig, resolveMcpServers } from './mcp-config'
 import { createMcpServer, type SkillHandler, type SkillsInput, type ToolsInput } from './mcp-server'
 import type { McpServerConfig } from './mcp-types'
@@ -243,13 +244,6 @@ function toolOutputText(content: ToolCallContent[] | null | undefined, rawOutput
   }
   const text = blockText(rawOutput)
   return text !== null ? stripCodeFence(text) : JSON.stringify(rawOutput, null, 2)
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message
-  }
-  return String(error)
 }
 
 function emit(sessionId: string, event: ChatEvent): void {

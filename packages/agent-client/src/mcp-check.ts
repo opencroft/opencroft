@@ -1,5 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 
+import { errorMessage } from './errors'
 import { buildTransport, MCP_TIMEOUT } from './mcp-client'
 import { toAcpMcpServer } from './mcp-config'
 import type { McpServerConfig } from './mcp-types'
@@ -8,10 +9,6 @@ export interface McpCheckResult {
   ok: boolean
   tools?: number
   error?: string
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 export async function checkMcpServer(config: McpServerConfig): Promise<McpCheckResult> {

@@ -1,6 +1,7 @@
 'use client'
 
-import '@/app/(approvals)/_components/builtin-views'
+import '@/components/tool-views/builtin-views'
+
 import { AskUser } from 'agent-chat/ask-user'
 import { Check, Crosshair, type LucideIcon, MessageCircleQuestion, ShieldQuestion, X } from 'lucide-react'
 import { type KeyboardEvent, useCallback, useEffect, useState, useTransition } from 'react'
@@ -9,7 +10,6 @@ import { Input } from 'ui/input'
 import { Flex } from 'ui/layout/flex'
 import { ScrollArea } from 'ui/layout/scroll-area'
 
-import { resolveApprovalView } from '@/app/(approvals)/_components/approval-views'
 import {
   answerAskUser,
   approveRequest,
@@ -19,6 +19,7 @@ import {
   rejectRequest,
 } from '@/app/(approvals)/_server/actions'
 import { sseEventsStore, useSSEEvents } from '@/app/(sse)/_lib/sse-events-store'
+import { resolveToolView } from '@/components/tool-views/registry'
 import type { PendingApproval, PendingAskUser } from '@/lib/sse-events'
 import { cn } from '@/lib/utils'
 
@@ -81,7 +82,7 @@ export function usePendingRequestEntries(): PendingRequestEntry[] {
 function ApprovalDetail({ request }: { request: PendingApproval }) {
   const [reason, setReason] = useState('')
   const [pending, startTransition] = useTransition()
-  const view = resolveApprovalView(request.view)
+  const view = resolveToolView(request.view)
   const ViewComponent = view.body
   const focusNodeId = view.getNodeId?.(request.args)
 
@@ -130,7 +131,7 @@ function ApprovalDetail({ request }: { request: PendingApproval }) {
         )}
       </div>
       <div className='max-h-72 overflow-y-auto border-t'>
-        <ViewComponent request={request} />
+        <ViewComponent tool={request.tool} args={request.args} requestId={request.id} mode='approval' />
       </div>
       <div className='flex flex-col gap-1.5 px-3 py-2 border-t'>
         <Button size='sm' onClick={onApprove} disabled={pending} className='justify-start w-full'>

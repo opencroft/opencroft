@@ -1,5 +1,6 @@
 'use client'
 
+import '@/components/tool-views/builtin-views'
 import { ChainDot, type ChainDotVariant, Chained } from 'agent-chat/chain'
 import { ThinkingBlock } from 'agent-chat/thinking-block'
 import { ToolCallBlock } from 'agent-chat/tool-block'
@@ -35,6 +36,7 @@ import { Textarea } from 'ui/textarea'
 import type { ChatMessage } from '@/app/(agent)/_lib/messages'
 import { getAutoApprove, setAutoApprove } from '@/app/(approvals)/_server/actions'
 import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
+import { lookupToolView } from '@/components/tool-views/registry'
 import { cn } from '@/lib/utils'
 
 export interface AgentSession {
@@ -205,7 +207,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
 type DetailItem =
   | { kind: 'assistant-text'; text: string }
   | { kind: 'thinking'; text: string }
-  | { kind: 'tool'; name: string; args: unknown; result?: { text: string; isError?: boolean } }
+  | { kind: 'tool'; id: string; name: string; args: unknown; result?: { text: string; isError?: boolean } }
 
 type Block = { kind: 'user'; text: string } | { kind: 'details'; items: DetailItem[] }
 
@@ -247,7 +249,7 @@ function buildBlocks(messages: ChatMessage[]): Block[] {
         }
         details.push({ kind: 'thinking', text: p.text })
       } else {
-        details.push({ kind: 'tool', name: p.name, args: p.args, result: p.result })
+        details.push({ kind: 'tool', id: p.id, name: p.name, args: p.args, result: p.result })
       }
     }
   }
@@ -285,6 +287,26 @@ function toolDotVariant(item: DetailItem): ChainDotVariant {
     return 'default'
   }
   return item.result.isError ? 'destructive' : 'success'
+}
+
+// A registered tool view (see components/tool-views) renders in place of the
+// plain tool-call block, giving e.g. remote_edit/edit_node_property a real
+// diff instead of a raw args dump. Falls back to the plain block otherwise.
+function ToolCallView({ item }: { item: Extract<DetailItem, { kind: 'tool' }> }) {
+  const spec = lookupToolView(item.name)
+  if (spec) {
+    const ViewComponent = spec.body
+    return (
+      <ViewComponent
+        tool={item.name}
+        args={(item.args ?? {}) as Record<string, unknown>}
+        requestId={item.id}
+        mode='history'
+        result={item.result}
+      />
+    )
+  }
+  return <ToolCallBlock name={item.name} args={item.args} result={item.result} />
 }
 
 type DetailEntry = { kind: 'header' } | { kind: 'item'; item: DetailItem }
@@ -364,11 +386,6 @@ function Details({
               <div className='text-xs font-medium text-foreground'>{botName}</div>
               {toggle}
             </Flex>
-            {items.map((it, idx) =>
-              it.kind === 'thinking' ? (
-                <ThinkingBlock key={idx} text={it.text} pending={pending && idx === items.length - 1} />
-              ) : null,
-            )}
             {/* Text — no animation, stable */}
             {lastTextEntry &&
               lastTextEntry.kind === 'item' &&
@@ -380,12 +397,8 @@ function Details({
               )}
             {/* Tool call — animate on changes */}
             {lastToolAfterText && (
-              <div key={lastToolAfterText.name}>
-                <ToolCallBlock
-                  name={lastToolAfterText.name}
-                  args={lastToolAfterText.args}
-                  result={lastToolAfterText.result}
-                />
+              <div key={lastToolAfterText.id}>
+                <ToolCallView item={lastToolAfterText} />
               </div>
             )}
             {/* If no text entry found, show the very last entry */}
@@ -394,7 +407,7 @@ function Details({
                 const last = entries[entries.length - 1]
                 if (last?.kind === 'item') {
                   if (last.item.kind === 'tool') {
-                    return <ToolCallBlock name={last.item.name} args={last.item.args} result={last.item.result} />
+                    return <ToolCallView item={last.item} />
                   }
                   if (last.item.kind === 'assistant-text') {
                     return last.item.text.trim() ? (
@@ -469,7 +482,7 @@ function renderEntry(entry: DetailEntry, botName?: string, toggle?: React.ReactN
   if (item.kind === 'thinking') {
     return <ThinkingBlock text={item.text} pending={pending} />
   }
-  return <ToolCallBlock name={item.name} args={item.args} result={item.result} />
+  return <ToolCallView item={item} />
 }
 
 function AssistantText({ text, botName, toggle }: { text: string; botName?: string; toggle?: React.ReactNode }) {

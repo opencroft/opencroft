@@ -7,6 +7,7 @@ import { type LanguageModel, type ModelMessage, stepCountIs, streamText, type To
 import { z } from 'zod'
 
 import type { AgentConnection } from './connection'
+import { errorMessage } from './errors'
 import { connectMcpToolset } from './mcp-client'
 import {
   SKILL_INPUT_SCHEMA,
@@ -403,6 +404,7 @@ export function createNativeHarness(
                   sessionUpdate: 'tool_call_update',
                   toolCallId: part.toolCallId,
                   status: 'failed',
+                  rawOutput: errorMessage(part.error),
                 },
               })
               break
