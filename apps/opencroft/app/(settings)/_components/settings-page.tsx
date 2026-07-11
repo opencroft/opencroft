@@ -1,12 +1,13 @@
 'use client'
 
-import { ScrollText } from 'lucide-react'
+import { Archive, ScrollText } from 'lucide-react'
 import type React from 'react'
 import { Suspense, useCallback } from 'react'
 import { MenuLayout } from 'ui/layout/menulayout'
 import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
 
 import AuditSettings from '@/app/(settings)/_components/audit-settings'
+import BackupSettings from '@/app/(settings)/_components/backup-settings'
 import {
   ExtensionSettingsMenu,
   findExtensionPage,
@@ -22,7 +23,10 @@ interface BuiltinPage {
   component: React.ComponentType
 }
 
-const BUILTIN_PAGES: BuiltinPage[] = [{ id: 'audit', label: 'MCP Audit', icon: ScrollText, component: AuditSettings }]
+const BUILTIN_PAGES: BuiltinPage[] = [
+  { id: 'audit', label: 'MCP Audit', icon: ScrollText, component: AuditSettings },
+  { id: 'backup', label: 'Backup & Restore', icon: Archive, component: BackupSettings },
+]
 
 function SettingsContent() {
   const [section, setSection] = useUrlState<string>('section', '')

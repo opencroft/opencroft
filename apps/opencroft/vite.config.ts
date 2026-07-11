@@ -73,7 +73,7 @@ export default defineConfig({
     // agent-client, @opencroft/terminal, and @opencroft/dashboards ship TS source
     // and must be transpiled for SSR; their native deps (ssh2, node-pty,
     // @electric-sql/pglite, pg) stay external via the list above.
-    noExternal: ['agent-client', '@opencroft/terminal', '@opencroft/dashboards'],
+    noExternal: ['agent-client', '@opencroft/terminal', '@opencroft/dashboards', '@opencroft/db-backups'],
   },
   plugins: [
     ssrWatchdog(),

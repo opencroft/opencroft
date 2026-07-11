@@ -1,3 +1,5 @@
+import { startDbBackupScheduler } from '@opencroft/db-backups'
+
 import { startDockerPsPoller } from '@/server/scheduler/docker-ps-poller'
 import { startEventScheduler } from '@/server/scheduler/event-scheduler'
 
@@ -16,6 +18,7 @@ export function ensureServerStarted(): void {
 
   startEventScheduler()
   startDockerPsPoller()
+  startDbBackupScheduler()
   void preload()
 }
 
