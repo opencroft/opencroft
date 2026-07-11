@@ -653,7 +653,7 @@ export const toolDefinitions = [
             'Short, human-readable description of what the command does (5-10 words). Shown in the permission prompt UI.',
         },
       },
-      required: ['target', 'command'],
+      required: ['target', 'command', 'description'],
     },
   },
   {
@@ -690,7 +690,7 @@ export const toolDefinitions = [
             'Short, human-readable description of what the script does (5-10 words). Shown in the permission prompt UI.',
         },
       },
-      required: ['target', 'script'],
+      required: ['target', 'script', 'description'],
     },
   },
 

@@ -1,9 +1,7 @@
 'use client'
 
-import '@/components/tool-views/builtin-views'
 import { ChainDot, type ChainDotVariant, Chained } from 'agent-chat/chain'
 import { ThinkingBlock } from 'agent-chat/thinking-block'
-import { ToolCallBlock } from 'agent-chat/tool-block'
 import {
   Maximize2,
   Minimize2,
@@ -36,6 +34,7 @@ import { Textarea } from 'ui/textarea'
 import type { ChatMessage } from '@/app/(agent)/_lib/messages'
 import { getAutoApprove, setAutoApprove } from '@/app/(approvals)/_server/actions'
 import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
+import { GenericToolView } from '@/components/tool-views/builtin-views'
 import { lookupToolView } from '@/components/tool-views/registry'
 import { cn } from '@/lib/utils'
 
@@ -290,23 +289,18 @@ function toolDotVariant(item: DetailItem): ChainDotVariant {
 }
 
 // A registered tool view (see components/tool-views) renders in place of the
-// plain tool-call block, giving e.g. remote_edit/edit_node_property a real
-// diff instead of a raw args dump. Falls back to the plain block otherwise.
+// generic block, giving e.g. remote_edit/edit_node_property a real diff
+// instead of a raw args dump. Falls back to the same chrome without a target
+// line otherwise (e.g. an external MCP server's tool, with no node/handle to
+// point at).
 function ToolCallView({ item }: { item: Extract<DetailItem, { kind: 'tool' }> }) {
   const spec = lookupToolView(item.name)
+  const args = (item.args ?? {}) as Record<string, unknown>
   if (spec) {
     const ViewComponent = spec.body
-    return (
-      <ViewComponent
-        tool={item.name}
-        args={(item.args ?? {}) as Record<string, unknown>}
-        requestId={item.id}
-        mode='history'
-        result={item.result}
-      />
-    )
+    return <ViewComponent tool={item.name} args={args} requestId={item.id} mode='history' result={item.result} />
   }
-  return <ToolCallBlock name={item.name} args={item.args} result={item.result} />
+  return <GenericToolView tool={item.name} args={args} result={item.result} />
 }
 
 type DetailEntry = { kind: 'header' } | { kind: 'item'; item: DetailItem }

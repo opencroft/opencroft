@@ -1,9 +1,10 @@
 'use client'
 
 import { useReactFlow } from '@xyflow/react'
-import { GitCompare } from 'lucide-react'
+import { GitCompare, Loader2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
+import { Flex } from 'ui/layout/flex'
 
 import { readRemoteFile } from '@/app/(approvals)/_server/actions'
 import { NodeCard } from '@/app/(dashboard)/_canvas/node-card'
@@ -163,16 +164,28 @@ function RemoteReadView({ args, mode, result }: ToolViewProps) {
       detail={filePath}
       target={target}
       isError={result?.isError}
+      pending={!result}
       overflowing={exceedsClamp(result?.text)}
     >
       <OpRow label='output'>
-        <pre className='m-0 whitespace-pre-wrap break-all text-[11px] text-muted-foreground'>{result?.text ?? ''}</pre>
+        {result ? (
+          result.text ? (
+            <pre className='m-0 whitespace-pre-wrap break-all text-[11px] text-muted-foreground'>{result.text}</pre>
+          ) : (
+            <span className='text-muted-foreground'>No output</span>
+          )
+        ) : (
+          <Flex row align='center' className='gap-1.5 text-muted-foreground'>
+            <Loader2 className='size-3 animate-spin' />
+            <span>running…</span>
+          </Flex>
+        )}
       </OpRow>
     </OpBlock>
   )
 }
 
-function RemoteWriteView({ args, requestId, mode }: ToolViewProps) {
+function RemoteWriteView({ args, requestId, mode, result }: ToolViewProps) {
   const target = args.target as string | undefined
   const space = args.space as string | undefined
   const filePath = args.path as string | undefined
@@ -197,7 +210,14 @@ function RemoteWriteView({ args, requestId, mode }: ToolViewProps) {
   // Whole-overwrite: the prior content is gone once the write has executed —
   // show the resulting content on its own rather than a fabricated diff.
   return (
-    <OpBlock verb='Write' detail={filePath} target={target} overflowing={exceedsClamp(newContent)}>
+    <OpBlock
+      verb='Write'
+      detail={filePath}
+      target={target}
+      isError={result?.isError}
+      pending={!result}
+      overflowing={exceedsClamp(newContent)}
+    >
       <OpRow label='content'>
         <pre className='m-0 whitespace-pre-wrap break-all text-[11px] text-muted-foreground'>{newContent}</pre>
       </OpRow>
@@ -205,7 +225,7 @@ function RemoteWriteView({ args, requestId, mode }: ToolViewProps) {
   )
 }
 
-function RemoteEditView({ args, requestId, mode }: ToolViewProps) {
+function RemoteEditView({ args, requestId, mode, result }: ToolViewProps) {
   const target = args.target as string | undefined
   const space = args.space as string | undefined
   const filePath = args.path as string | undefined
@@ -236,7 +256,14 @@ function RemoteEditView({ args, requestId, mode }: ToolViewProps) {
   }
 
   return (
-    <OpBlock verb='Edit' detail={filePath} target={target} overflowing={current !== null}>
+    <OpBlock
+      verb='Edit'
+      detail={filePath}
+      target={target}
+      isError={result?.isError}
+      pending={!result}
+      overflowing={current !== null}
+    >
       {current !== null && <NodeDiffEditor current={current} next={next} />}
     </OpBlock>
   )
@@ -320,7 +347,8 @@ function EditNodePropertyView({ args, mode }: ToolViewProps) {
 }
 
 // Shared expanded body for Exec/Script: an input row (command/script text)
-// and an output row (the result), mirroring agent-chat's ToolCallBlock.
+// and an output row (the result), mirroring agent-chat's ToolCallBlock —
+// including its "running…" spinner while the call hasn't resolved yet.
 function OpInputOutput({ input, result }: { input?: string; result?: ToolViewProps['result'] }) {
   return (
     <>
@@ -332,12 +360,45 @@ function OpInputOutput({ input, result }: { input?: string; result?: ToolViewPro
       <div className='border-t' />
       <OpRow label='output'>
         {result ? (
-          <pre className='m-0 whitespace-pre-wrap break-all text-[11px] text-muted-foreground'>{result.text}</pre>
+          result.text ? (
+            <pre className='m-0 whitespace-pre-wrap break-all text-[11px] text-muted-foreground'>{result.text}</pre>
+          ) : (
+            <span className='text-muted-foreground'>No output</span>
+          )
         ) : (
-          <span className='text-muted-foreground'>No output</span>
+          <Flex row align='center' className='gap-1.5 text-muted-foreground'>
+            <Loader2 className='size-3 animate-spin' />
+            <span>running…</span>
+          </Flex>
         )}
       </OpRow>
     </>
+  )
+}
+
+// Fallback for a tool call with no registered view (e.g. an external MCP
+// server's tool) — same chrome as Exec/Script (bold name, input/output rows,
+// clamped preview, view-full dialog), just without a target line: a generic
+// tool call isn't tied to one of our node/handle targets.
+export function GenericToolView({
+  tool,
+  args,
+  result,
+}: {
+  tool: string
+  args: Record<string, unknown>
+  result?: ToolViewProps['result']
+}) {
+  const argsText = Object.keys(args).length > 0 ? JSON.stringify(args, null, 2) : undefined
+  return (
+    <OpBlock
+      verb={tool}
+      isError={result?.isError}
+      pending={!result}
+      overflowing={exceedsClamp(argsText) || exceedsClamp(result?.text)}
+    >
+      <OpInputOutput input={argsText} result={result} />
+    </OpBlock>
   )
 }
 
@@ -361,9 +422,10 @@ function RemoteExecView({ args, mode, result }: ToolViewProps) {
   return (
     <OpBlock
       verb='Exec'
-      detail={description ?? command}
+      detail={description}
       target={target}
       isError={result?.isError}
+      pending={!result}
       overflowing={exceedsClamp(command) || exceedsClamp(result?.text)}
     >
       <OpInputOutput input={command} result={result} />
@@ -393,9 +455,10 @@ function RemoteScriptView({ args, mode, result }: ToolViewProps) {
   return (
     <OpBlock
       verb='Script'
-      detail={description ?? script}
+      detail={description}
       target={target}
       isError={result?.isError}
+      pending={!result}
       overflowing={exceedsClamp(script) || exceedsClamp(result?.text)}
     >
       <OpInputOutput input={script} result={result} />
@@ -503,6 +566,7 @@ function CallView({ args, mode, result }: ToolViewProps) {
       detail={action}
       target={nodeId}
       isError={result?.isError}
+      pending={!result}
       overflowing={exceedsClamp(paramsText ?? undefined) || exceedsClamp(result?.text)}
     >
       {paramsText && (

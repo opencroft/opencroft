@@ -1,7 +1,7 @@
 'use client'
 
 import { useReactFlow } from '@xyflow/react'
-import { Maximize2 } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Flex } from 'ui/layout/flex'
@@ -13,25 +13,26 @@ import { cn } from '@/lib/utils'
 // threshold callers use to decide whether to pass `overflowing`.
 export const CLAMP_LINES = 3
 
-// A one-line header (label + a "view full" button) with the target shown as a
-// small clickable line underneath, and the body always expanded below —
-// matching agent-chat's ToolCallBlock styling, so the remote op views
-// (Read/Write/Edit/Script/Exec) read consistently with plain tool calls in
-// the chat transcript.
+// A one-line header (label) with the target shown as a small clickable line
+// underneath, and the body always expanded below — matching agent-chat's
+// ToolCallBlock styling, so the remote op views (Read/Write/Edit/Script/Exec)
+// read consistently with plain tool calls in the chat transcript.
 //
 // The inline preview is capped to a few lines and can't be scrolled — a chat
 // transcript already scrolls, and a nested scroll area inside it is a bad
 // interaction. `overflowing` (the caller knows whether its own content — text
 // or a diff — actually exceeds the cap) adds an inset shadow at the bottom
-// edge as a "there's more" cue. "View full" opens the SAME children raw
-// (uncapped, interactive) in a dialog sized to the viewport, which is the only
-// way to see the rest / interact with a diff — the preview clamp is applied
-// here, once, around the inline copy only, not around the dialog's.
+// edge as a "there's more" cue. Clicking the header or the preview (anywhere
+// but the separate target line) opens the SAME children raw (uncapped,
+// interactive) in a dialog sized to the viewport — the only way to see the
+// rest / interact with a diff. The preview clamp is applied here, once,
+// around the inline copy only, not around the dialog's.
 export function OpBlock({
   verb,
   detail,
   target,
   isError,
+  pending,
   overflowing,
   children,
 }: {
@@ -41,34 +42,35 @@ export function OpBlock({
   detail?: string
   target?: string
   isError?: boolean
+  // True while the call hasn't resolved yet — shows a spinner in the header,
+  // same as agent-chat's ToolCallBlock.
+  pending?: boolean
   overflowing?: boolean
   children?: ReactNode
 }) {
   const [fullOpen, setFullOpen] = useState(false)
+  const openFull = () => children && setFullOpen(true)
   return (
     <Flex className='w-full min-w-0 gap-1'>
-      <div className='flex w-full min-w-0 items-center gap-2 text-xs'>
+      <button
+        type='button'
+        onClick={openFull}
+        className='flex w-full min-w-0 items-center gap-2 text-left text-xs cursor-pointer'
+      >
         <span className='font-mono min-w-0 flex-1 break-all'>
           <span className='font-semibold'>{verb}</span>
           {detail && <> {detail}</>}
         </span>
+        {pending && <Loader2 className='size-3 shrink-0 animate-spin text-muted-foreground' />}
         {isError && <span className='text-destructive shrink-0'>error</span>}
-        {children && (
-          <button
-            type='button'
-            onClick={() => setFullOpen(true)}
-            title='View full'
-            className='shrink-0 rounded-md border p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground'
-          >
-            <Maximize2 className='size-3' />
-          </button>
-        )}
-      </div>
+      </button>
       {target && <TargetLine target={target} />}
       {children && (
-        <div
+        <button
+          type='button'
+          onClick={openFull}
           className={cn(
-            'w-full rounded-md border bg-muted/30 text-xs overflow-hidden',
+            'w-full rounded-md border bg-muted/30 text-left text-xs overflow-hidden cursor-pointer',
             isError && 'border-destructive/60',
           )}
         >
@@ -80,7 +82,7 @@ export function OpBlock({
           >
             {children}
           </div>
-        </div>
+        </button>
       )}
       {children && (
         <Dialog open={fullOpen} onOpenChange={setFullOpen}>
