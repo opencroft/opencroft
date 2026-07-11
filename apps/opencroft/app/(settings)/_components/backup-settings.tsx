@@ -9,6 +9,7 @@ import {
   getBackupSchedule,
   getBackupStats,
   listBackups,
+  resetDatabase,
   restoreBackupNow,
   setBackupSchedule,
   uploadBackup,
@@ -330,6 +331,25 @@ export default function BackupSettings() {
     })
   }
 
+  function handleReset() {
+    if (
+      !confirm(
+        'This permanently deletes ALL data — settings, secrets, spaces, and the MCP audit log — from every table. This cannot be undone. Consider creating a backup first. Continue?',
+      )
+    ) {
+      return
+    }
+    startTransition(async () => {
+      try {
+        await resetDatabase()
+        toast.success('Database reset — reloading…')
+        window.location.reload()
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err))
+      }
+    })
+  }
+
   return (
     <div className='p-6 space-y-6'>
       <div className='flex items-center justify-between gap-4'>
@@ -358,6 +378,18 @@ export default function BackupSettings() {
       <StorageCard stats={stats} />
 
       <ScheduleCard backups={backups} />
+
+      <div className='rounded-lg border border-destructive/50 p-4 flex items-center justify-between gap-4'>
+        <div>
+          <div className='text-sm font-medium text-destructive'>Danger zone</div>
+          <div className='text-xs text-muted-foreground'>
+            Permanently wipe every table (settings, secrets, spaces, MCP audit log). Back up first.
+          </div>
+        </div>
+        <Button variant='destructive' size='sm' onClick={handleReset} disabled={pending}>
+          <Trash2 /> Reset database
+        </Button>
+      </div>
 
       <div className='rounded-lg border'>
         <Table>

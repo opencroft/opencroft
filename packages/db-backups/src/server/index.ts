@@ -11,6 +11,7 @@ import {
   getBackupStorageStats,
   listBackupFiles,
   pruneOldBackups,
+  resetDatabase as resetDatabaseTables,
   restoreBackupFile,
   saveUploadedBackup,
   setBackupScheduleConfig,
@@ -44,6 +45,10 @@ export const deleteBackup = createServerFn({ method: 'POST' })
   .handler(async ({ data: filename }): Promise<void> => {
     await deleteBackupFile(filename)
   })
+
+export const resetDatabase = createServerFn({ method: 'POST' }).handler(async (): Promise<void> => {
+  await resetDatabaseTables()
+})
 
 export const uploadBackup = createServerFn({ method: 'POST' })
   .inputValidator((data: { filename: string; backup: unknown }) => data)

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { db, setting } from '@opencroft/db'
-import { type Backup, createBackup, restoreBackup } from '@opencroft/db/backup'
+import { type Backup, createBackup, resetDatabase as resetAllTables, restoreBackup } from '@opencroft/db/backup'
 import { eq } from 'drizzle-orm'
 
 export type { Backup }
@@ -98,6 +98,11 @@ export async function restoreBackupFile(filename: string): Promise<void> {
 
 export async function deleteBackupFile(filename: string): Promise<void> {
   await fs.unlink(backupFilePath(filename))
+}
+
+/** Wipes every row from every table. Does not touch backup files on disk. */
+export async function resetDatabase(): Promise<void> {
+  await resetAllTables(db)
 }
 
 /** Deletes backups older than retentionDays, always keeping the minRecentBackups most recent ones. */

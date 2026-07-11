@@ -80,3 +80,13 @@ export async function restoreBackup(db: DB, backup: Backup): Promise<void> {
     }
   })
 }
+
+/** Deletes every row from every table, leaving the schema and migrations intact. */
+export async function resetDatabase(db: DB): Promise<void> {
+  await db.transaction(async (tx) => {
+    // No foreign keys between these tables, so delete order is irrelevant.
+    for (const { table } of TABLES) {
+      await tx.delete(table)
+    }
+  })
+}
