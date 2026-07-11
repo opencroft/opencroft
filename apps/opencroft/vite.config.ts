@@ -89,7 +89,15 @@ export default defineConfig({
       // the bundled copy can't resolve its conpty worker script or per-platform
       // native binary at runtime. traceDeps copies the package (+ its platform
       // binary subpackage) into .output so the build stays self-contained.
-      rollupConfig: { external: [/^@sentry\//, /^@lydell\/node-pty/, /^@tailwindcss\/(node|oxide)/, /^lightningcss/] },
+      rollupConfig: {
+        external: [
+          /^@sentry\//,
+          /^@lydell\/node-pty/,
+          /^@tailwindcss\/(node|oxide)/,
+          /^lightningcss/,
+          /^@electric-sql\/pglite/,
+        ],
+      },
       traceDeps: [
         '@lydell/node-pty*',
         'tailwindcss',
@@ -97,6 +105,11 @@ export default defineConfig({
         '@tailwindcss/oxide*',
         'lightningcss*',
         'tw-animate-css',
+        // postgres.wasm/postgres.data ship next to pglite's JS and are resolved via
+        // `new URL(..., import.meta.url)` at runtime — Nitro's import-graph tracer
+        // doesn't follow that, so without this the WASM data file is missing from
+        // .output and PGlite fails with ENOENT on first query.
+        '@electric-sql/pglite*',
       ],
     }),
     tailwindcss(),
