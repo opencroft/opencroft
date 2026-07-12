@@ -7,7 +7,7 @@ import { createServerFn } from '@tanstack/react-start'
 
 import { buildExtension } from '@/app/(extension-runtime)/_server/compiler'
 import { flushCache } from '@/app/(extension-runtime)/_server/loader'
-import { extDir, installedExtRoot } from '@/app/(extension-runtime)/_server/paths'
+import { extDir, installedExtRoot, localExtRoot } from '@/app/(extension-runtime)/_server/paths'
 import type { ExtensionManifest } from '@/app/(extension-runtime)/_types'
 import { getSecretValue } from '@/app/(secrets-store)/_server/actions'
 import { toastStore } from '@/lib/toast-store'
@@ -289,8 +289,8 @@ async function listFilesRecursive(dir: string, base: string = ''): Promise<Recor
   return out
 }
 
-async function readRecord(slug: string): Promise<InstalledExtensionRecord | null> {
-  const dir = path.join(installedExtRoot(), slug)
+async function readRecord(slug: string, root: string, idPrefix: string): Promise<InstalledExtensionRecord | null> {
+  const dir = path.join(root, slug)
   const sidecar = await readSidecar(dir)
   if (!sidecar) {
     return null
@@ -303,7 +303,7 @@ async function readRecord(slug: string): Promise<InstalledExtensionRecord | null
   }
   const manifest = JSON.parse(manifestRaw) as ExtensionManifest
   return {
-    id: `installed/${slug}`,
+    id: `${idPrefix}/${slug}`,
     slug,
     manifest,
     sidecar,
@@ -312,8 +312,7 @@ async function readRecord(slug: string): Promise<InstalledExtensionRecord | null
   }
 }
 
-async function pickFreshSlug(owner: string, repo: string): Promise<string> {
-  const root = installedExtRoot()
+async function pickFreshSlug(owner: string, repo: string, root: string): Promise<string> {
   let entries: string[]
   try {
     entries = await fs.readdir(root)
@@ -337,9 +336,12 @@ async function performInstall(
   parsed: ParsedRepo,
   auth: InstallAuth | undefined,
   refSpec?: string,
+  asLocal?: boolean,
 ): Promise<InstalledExtensionRecord> {
-  const id = `installed/${slug}`
-  const dir = path.join(installedExtRoot(), slug)
+  const root = asLocal ? localExtRoot() : installedExtRoot()
+  const idPrefix = asLocal ? 'local' : 'installed'
+  const id = `${idPrefix}/${slug}`
+  const dir = path.join(root, slug)
   const creds = await resolveAuth(auth)
 
   const resolved = refSpec ? { ref: refSpec, kind: 'tag' as const } : await resolveInstallRef(parsed.url, creds)
@@ -364,7 +366,7 @@ async function performInstall(
     throw new Error(`Extension built with errors:\n${summary}`)
   }
 
-  const record = await readRecord(slug)
+  const record = await readRecord(slug, root, idPrefix)
   if (!record) {
     throw new Error(`Failed to read installed extension after install: ${id}`)
   }
@@ -372,11 +374,12 @@ async function performInstall(
 }
 
 export const installExtensionFromUrl = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((input: { url: string; ref?: string; auth?: InstallAuth }) => input)
+  .inputValidator((input: { url: string; ref?: string; auth?: InstallAuth; asLocal?: boolean }) => input)
   .handler(async ({ data: input }): Promise<InstalledExtensionRecord> => {
     const parsed = parseRepoUrl(input.url)
-    const slug = await pickFreshSlug(parsed.owner, parsed.repo)
-    return performInstall(slug, parsed, input.auth, input.ref)
+    const root = input.asLocal ? localExtRoot() : installedExtRoot()
+    const slug = await pickFreshSlug(parsed.owner, parsed.repo, root)
+    return performInstall(slug, parsed, input.auth, input.ref, input.asLocal)
   })
 
 export const listInstalledExtensions = createServerFn({ strict: { output: false } }).handler(
@@ -389,7 +392,7 @@ export const listInstalledExtensions = createServerFn({ strict: { output: false 
     }
     const records: InstalledExtensionRecord[] = []
     for (const slug of entries) {
-      const record = await readRecord(slug)
+      const record = await readRecord(slug, installedExtRoot(), 'installed')
       if (record) {
         records.push(record)
       }

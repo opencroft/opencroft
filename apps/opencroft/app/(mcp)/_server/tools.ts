@@ -456,7 +456,7 @@ export const toolDefinitions = [
   {
     name: 'extension_install',
     description:
-      'Install an extension from a public Git repository (GitHub, GitLab, Gitea, Bitbucket, any git remote). Clones at the latest tag by default (falls back to default branch HEAD if no tags). Runs `npm install` if the repo has a package.json. Stored under data/extensions/installed/<slug>/. Resulting id is "installed/<slug>".',
+      'Install an extension from a public Git repository (GitHub, GitLab, Gitea, Bitbucket, any git remote). Clones at the latest tag by default (falls back to default branch HEAD if no tags). Runs `npm install` if the repo has a package.json. Stored under data/extensions/installed/<slug>/. Resulting id is "installed/<slug>" — unless asLocal is set, which stores it under data/extensions/local/<slug>/ as "local/<slug>" (live-editable, managed like any local extension: compile_extension, delete_extension).',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -479,6 +479,11 @@ export const toolDefinitions = [
             usernameKey: { type: 'string', description: 'Secret key for the username. Defaults to "username".' },
           },
           required: ['storeId'],
+        },
+        asLocal: {
+          type: 'boolean',
+          description:
+            'Clone as a local, live-editable extension (data/extensions/local/<slug>/, id "local/<slug>") instead of the default data/extensions/installed/<slug>/. Not managed by extension_update/extension_remove afterward — use compile_extension/delete_extension instead.',
         },
       },
       required: ['url'],
@@ -2216,6 +2221,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         fail(-32602, 'Missing required param: url')
       }
       const ref = args.ref as string | undefined
+      const asLocal = args.asLocal === true
       const authRaw = args.auth as { storeId?: string; tokenKey?: string; usernameKey?: string } | undefined
       let auth: InstallAuth | undefined
       if (authRaw) {
@@ -2229,7 +2235,7 @@ function buildHandlers(): Record<string, ToolHandler> {
           usernameKey: authRaw.usernameKey,
         }
       }
-      const record = await installExtensionFromUrl({ data: { url, ref, auth } })
+      const record = await installExtensionFromUrl({ data: { url, ref, auth, asLocal } })
       broadcastExtensionsUpdated()
       return textResult(`Installed ${record.id} at ${record.sidecar.ref} from ${record.sidecar.source.url}.`)
     }),
