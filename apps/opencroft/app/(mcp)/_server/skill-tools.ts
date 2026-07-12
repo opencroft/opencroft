@@ -11,6 +11,13 @@ function fail(code: number, message: string): never {
   throw { code, message }
 }
 
+export function formatSkillCatalog(skills: SkillConfig[]): string {
+  return [...skills]
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+    .map((skill) => `${skill.name}: ${skill.description}`)
+    .join('\n')
+}
+
 export const skillToolDefinitions = [
   {
     name: 'skill_list',
@@ -68,8 +75,7 @@ export const skillToolHandlers: Record<string, ToolHandler> = {
     if (skills.length === 0) {
       return textResult('No skills configured yet.')
     }
-    const catalog = skills.map((skill) => `- ${skill.name}: ${skill.description}`).join('\n')
-    return textResult(catalog)
+    return textResult(formatSkillCatalog(skills))
   },
 
   skill_write: withApprovalRequired(
