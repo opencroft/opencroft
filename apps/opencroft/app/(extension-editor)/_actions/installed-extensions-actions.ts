@@ -212,6 +212,7 @@ async function gitClone(
   ref: string,
   dest: string,
   creds: ResolvedAuth | null,
+  keepGit: boolean,
 ): Promise<string> {
   await fs.mkdir(path.dirname(dest), { recursive: true })
   await fs.rm(dest, { recursive: true, force: true })
@@ -223,7 +224,9 @@ async function gitClone(
   await execFile('git', args, { maxBuffer: GIT_BUFFER })
   const { stdout } = await execFile('git', ['-C', dest, 'rev-parse', 'HEAD'], {})
   const sha = stdout.trim().slice(0, 7)
-  await fs.rm(path.join(dest, '.git'), { recursive: true, force: true })
+  if (!keepGit) {
+    await fs.rm(path.join(dest, '.git'), { recursive: true, force: true })
+  }
   return sha
 }
 
@@ -346,7 +349,7 @@ async function performInstall(
 
   const resolved = refSpec ? { ref: refSpec, kind: 'tag' as const } : await resolveInstallRef(parsed.url, creds)
 
-  const sha = await gitClone(parsed.url, resolved.kind, resolved.ref, dir, creds)
+  const sha = await gitClone(parsed.url, resolved.kind, resolved.ref, dir, creds, Boolean(asLocal))
   const finalRef = resolved.kind === 'tag' ? resolved.ref : `HEAD@${sha}`
 
   const manifest = await rewriteManifestId(dir, id)
