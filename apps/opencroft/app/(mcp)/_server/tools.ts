@@ -586,6 +586,70 @@ export const toolDefinitions = [
     },
   },
   {
+    name: 'remote_glob',
+    description:
+      'Find file paths by glob on a remote node\'s filesystem (`**` spans directories, `*` doesn\'t, `?` = one char), e.g. "src/**/*.tsx". The target is a terminal-context output handle in "node-id/handle-id" format. Read-only. Returns one matching path per line, relative to `path`. No matches (or a missing `path`) return "(no matches)" rather than an error.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        target: {
+          type: 'string',
+          description: 'Terminal-context output handle (format: "node-id/handle-id").',
+        },
+        pattern: {
+          type: 'string',
+          description: 'Glob pattern, e.g. "**/*.tsx" or "src/*.ts".',
+        },
+        path: {
+          type: 'string',
+          description:
+            "Directory to search from, absolute or relative to the target's working directory. Defaults to the target's working directory.",
+        },
+        limit: {
+          type: 'number',
+          description: 'Max number of matching paths to return. Default 200; result notes if truncated.',
+        },
+      },
+      required: ['target', 'pattern'],
+    },
+  },
+  {
+    name: 'remote_grep',
+    description:
+      'Search file contents by regular expression (POSIX extended, i.e. `grep -E`) on a remote node\'s filesystem, recursively under `path`. The target is a terminal-context output handle in "node-id/handle-id" format. Read-only. Returns matching lines as "path:line:text", one per line. No matches (or a missing `path`) return "(no matches)" rather than an error.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        target: {
+          type: 'string',
+          description: 'Terminal-context output handle (format: "node-id/handle-id").',
+        },
+        pattern: {
+          type: 'string',
+          description: 'POSIX extended regular expression, e.g. "TODO|FIXME".',
+        },
+        path: {
+          type: 'string',
+          description:
+            "File or directory to search, absolute or relative to the target's working directory. Defaults to the target's working directory.",
+        },
+        glob: {
+          type: 'string',
+          description: 'Only search files matching this glob, e.g. "*.ts" (maps to `grep --include`).',
+        },
+        caseInsensitive: {
+          type: 'boolean',
+          description: 'Case-insensitive match (`grep -i`).',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max number of matching lines to return. Default 200; result notes if truncated.',
+        },
+      },
+      required: ['target', 'pattern'],
+    },
+  },
+  {
     name: 'remote_write',
     description:
       'Write or overwrite a file on a remote node. The target is a terminal-context output handle in "node-id/handle-id" format.',
@@ -1596,6 +1660,35 @@ export function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`
 }
 
+/**
+ * Translate a glob pattern (** spans "/", * doesn't, ? = one char) into an anchored POSIX
+ * extended regex suitable for grep -E. remote_glob enumerates files with plain find and filters
+ * with grep instead of doing unquoted shell glob expansion, which would need pattern left
+ * unescaped in the command string and would be an injection risk since it comes from the caller.
+ */
+export function globPatternToEre(pattern: string): string {
+  const special = '.+^$(){}|[]\\'
+  let ere = ''
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i]
+    if (c === '*') {
+      if (pattern[i + 1] === '*') {
+        ere += '.*'
+        i++
+      } else {
+        ere += '[^/]*'
+      }
+    } else if (c === '?') {
+      ere += '[^/]'
+    } else if (special.includes(c)) {
+      ere += `\\${c}`
+    } else {
+      ere += c
+    }
+  }
+  return `^${ere}$`
+}
+
 // Base64 chunk size (of encoded text, per command) for remote writes — keeps each `remoteExec`
 // invocation well under typical ARG_MAX limits while still writing large files in few round trips.
 const BASE64_WRITE_CHUNK_SIZE = 48 * 1024
@@ -2360,6 +2453,61 @@ function buildHandlers(): Record<string, ToolHandler> {
       const content = await remoteExec(ctx, `cat ${shellQuote(resolvedPath)}`)
       const sliced = sliceLines(content, offset, limit)
       return textResult(catN(sliced, offset ?? 1))
+    },
+
+    // ── glob (remote) ────────────────────────────────────────────────
+    remote_glob: async (args) => {
+      const pattern = args.pattern as string | undefined
+      if (!pattern) {
+        fail(-32602, 'Missing required param: pattern')
+      }
+      const { ctx } = await resolveTerminalContext(args)
+      const dirArg = args.path as string | undefined
+      const searchDir = dirArg
+        ? resolveRemoteFilePath(dirArg, ctx.cwd as string | undefined)
+        : (ctx.cwd as string | undefined)
+      const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.floor(args.limit) : 200
+      const ere = globPatternToEre(pattern)
+      const command = `find . -type f | sed 's|^\\./||' | grep -E -- ${shellQuote(ere)}; true`
+      const output = await remoteExec(ctx, command, searchDir ? { cwd: searchDir } : undefined)
+      const lines = output.split('\n').filter(Boolean)
+      if (lines.length === 0) {
+        return textResult('(no matches)')
+      }
+      const truncated = lines.length > limit
+      const results = truncated ? lines.slice(0, limit) : lines
+      const body = results.join('\n')
+      return textResult(truncated ? `${body}\n… (truncated at ${limit} results)` : body)
+    },
+
+    // ── grep (remote) ────────────────────────────────────────────────
+    remote_grep: async (args) => {
+      const pattern = args.pattern as string | undefined
+      if (!pattern) {
+        fail(-32602, 'Missing required param: pattern')
+      }
+      const { ctx } = await resolveTerminalContext(args)
+      const pathArg = args.path as string | undefined
+      const searchPath = pathArg
+        ? resolveRemoteFilePath(pathArg, ctx.cwd as string | undefined)
+        : ((ctx.cwd as string | undefined) ?? '.')
+      const glob = args.glob as string | undefined
+      const caseInsensitive = args.caseInsensitive === true
+      const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.floor(args.limit) : 200
+      const flags = ['-r', '-n', '-E', caseInsensitive ? '-i' : ''].filter(Boolean).join(' ')
+      const includeFlag = glob ? `--include=${shellQuote(glob)}` : ''
+      const command =
+        [`grep ${flags}`, includeFlag, '--', shellQuote(pattern), shellQuote(searchPath)].filter(Boolean).join(' ') +
+        '; true'
+      const output = await remoteExec(ctx, command)
+      const lines = output.split('\n').filter(Boolean)
+      if (lines.length === 0) {
+        return textResult('(no matches)')
+      }
+      const truncated = lines.length > limit
+      const results = truncated ? lines.slice(0, limit) : lines
+      const body = results.join('\n')
+      return textResult(truncated ? `${body}\n… (truncated at ${limit} results)` : body)
     },
 
     // ── write (remote) ───────────────────────────────────────────────
