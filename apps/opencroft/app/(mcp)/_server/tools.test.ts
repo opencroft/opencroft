@@ -152,7 +152,7 @@ test('replaceExact replaces a unique occurrence', () => {
   assert.equal(replaceExact('a b c', { oldString: 'b', newString: 'x', replaceAll: false }, 'file'), 'a x c')
 })
 
-test('replaceExact inserts $-substitution patterns literally (regression)', () => {
+test('replaceExact inserts $-substitution patterns literally (regression guard)', () => {
   const content = 'const re = /x/\nrest of file'
   const edit = { oldString: 'const re = /x/', newString: "match(/\\.tsx$/, '$&', `$'`, '$$1')", replaceAll: false }
   assert.equal(replaceExact(content, edit, 'file'), "match(/\\.tsx$/, '$&', `$'`, '$$1')\nrest of file")
