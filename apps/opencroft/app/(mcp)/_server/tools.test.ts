@@ -9,6 +9,7 @@ import {
   globPatternToEre,
   insideExcludedDir,
   isValidLocalExtensionSlug,
+  replaceExact,
   resolveRemoteFilePath,
   resolveTerminalContext,
 } from './tools'
@@ -143,4 +144,40 @@ test('capColumns leaves short lines alone and truncates long ones with a note', 
 
 test('buildBase64WriteCommands still round-trips an empty file (regression guard)', () => {
   assert.deepEqual(buildBase64WriteCommands('/tmp/x', ''), [": > '/tmp/x'"])
+})
+
+// ── replaceExact (remote_edit / edit_node_property) ─────────────────────────
+
+test('replaceExact replaces a unique occurrence', () => {
+  assert.equal(replaceExact('a b c', { oldString: 'b', newString: 'x', replaceAll: false }, 'file'), 'a x c')
+})
+
+test('replaceExact inserts $-substitution patterns literally (regression)', () => {
+  const content = 'const re = /x/\nrest of file'
+  const edit = { oldString: 'const re = /x/', newString: "match(/\\.tsx$/, '$&', `$'`, '$$1')", replaceAll: false }
+  assert.equal(replaceExact(content, edit, 'file'), "match(/\\.tsx$/, '$&', `$'`, '$$1')\nrest of file")
+})
+
+test('replaceExact replaceAll keeps $ patterns literal in every occurrence', () => {
+  assert.equal(
+    replaceExact('a a', { oldString: 'a', newString: "$'", replaceAll: true }, 'file'),
+    "$' $'",
+  )
+})
+
+test('replaceExact fails when oldString is missing or ambiguous', () => {
+  assert.throws(
+    () => replaceExact('a', { oldString: 'x', newString: 'y', replaceAll: false }, 'file'),
+    (err: { message?: string }) => {
+      assert.match(err.message ?? '', /oldString not found in file/)
+      return true
+    },
+  )
+  assert.throws(
+    () => replaceExact('a a', { oldString: 'a', newString: 'y', replaceAll: false }, 'property'),
+    (err: { message?: string }) => {
+      assert.match(err.message ?? '', /not unique \(2 matches\)/)
+      return true
+    },
+  )
 })

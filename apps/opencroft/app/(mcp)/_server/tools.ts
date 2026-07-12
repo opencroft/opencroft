@@ -1699,6 +1699,29 @@ export function shellQuote(s: string): string {
 }
 
 /**
+ * Exact-string replacement shared by remote_edit and edit_node_property: enforces the
+ * found/unique contract, and uses a function replacer so dollar-prefixed substitution patterns
+ * in newString are inserted literally instead of being expanded.
+ */
+export function replaceExact(
+  content: string,
+  edit: { oldString: string; newString: string; replaceAll: boolean },
+  subject: string,
+): string {
+  const occurrences = content.split(edit.oldString).length - 1
+  if (occurrences === 0) {
+    fail(-32602, `oldString not found in ${subject}`)
+  }
+  if (occurrences > 1 && !edit.replaceAll) {
+    fail(-32602, `oldString is not unique (${occurrences} matches). Set replaceAll=true or provide more context.`)
+  }
+  if (edit.replaceAll) {
+    return content.split(edit.oldString).join(edit.newString)
+  }
+  return content.replace(edit.oldString, () => edit.newString)
+}
+
+/**
  * Translate a glob pattern (** spans "/", * doesn't, ? = one char) into an anchored POSIX
  * extended regex suitable for grep -E. remote_glob enumerates files with plain find and filters
  * with grep instead of doing unquoted shell glob expansion, which would need pattern left
@@ -2156,14 +2179,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         if (typeof current !== 'string') {
           fail(-32602, `Property ${propPath} is not a string`)
         }
-        const occurrences = current.split(oldString).length - 1
-        if (occurrences === 0) {
-          fail(-32602, 'oldString not found in property')
-        }
-        if (occurrences > 1 && !replaceAll) {
-          fail(-32602, `oldString is not unique (${occurrences} matches). Set replaceAll=true or provide more context.`)
-        }
-        const updated = replaceAll ? current.split(oldString).join(newString) : current.replace(oldString, newString)
+        const updated = replaceExact(current, { oldString, newString, replaceAll }, 'property')
         if (!node.data) {
           node.data = {}
         }
@@ -2645,15 +2661,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         const resolvedPath = resolveRemoteFilePath(filePath, ctx.cwd as string | undefined)
 
         const content = await remoteExec(ctx, `cat ${shellQuote(resolvedPath)}`)
-        const occurrences = content.split(oldString).length - 1
-        if (occurrences === 0) {
-          fail(-32602, 'oldString not found in file')
-        }
-        if (occurrences > 1 && !replaceAll) {
-          fail(-32602, `oldString is not unique (${occurrences} matches). Set replaceAll=true or provide more context.`)
-        }
-
-        const updated = replaceAll ? content.split(oldString).join(newString) : content.replace(oldString, newString)
+        const updated = replaceExact(content, { oldString, newString, replaceAll }, 'file')
 
         await writeRemoteFileExact(ctx, resolvedPath, updated)
         return textResult(`The file ${resolvedPath} has been updated successfully.`)
