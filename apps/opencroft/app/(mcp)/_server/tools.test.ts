@@ -5,6 +5,9 @@ import test from 'node:test'
 import {
   buildBase64WriteCommands,
   buildLocalExtensionCtx,
+  capColumns,
+  globPatternToEre,
+  insideExcludedDir,
   isValidLocalExtensionSlug,
   resolveRemoteFilePath,
   resolveTerminalContext,
@@ -107,6 +110,33 @@ test('resolveTerminalContext rejects a bare "extensions" target with no handle',
     assert.match(err.message ?? '', /target must include handle/)
     return true
   })
+})
+
+// ── remote search helpers (remote_glob / remote_grep) ──────────────────────
+
+test('globPatternToEre spans directories only with **', () => {
+  assert.equal(globPatternToEre('src/**/*.tsx'), '^src/.*/[^/]*\\.tsx$')
+  assert.equal(globPatternToEre('*.ts'), '^[^/]*\\.ts$')
+  assert.equal(globPatternToEre('a?c'), '^a[^/]c$')
+})
+
+test('globPatternToEre escapes regex metacharacters', () => {
+  assert.equal(globPatternToEre('a+b(c)|d'), '^a\\+b\\(c\\)\\|d$')
+})
+
+test('insideExcludedDir matches whole path segments only', () => {
+  assert.equal(insideExcludedDir('/app/node_modules/lodash'), true)
+  assert.equal(insideExcludedDir('repo/dist'), true)
+  assert.equal(insideExcludedDir('/app/src/components'), false)
+  assert.equal(insideExcludedDir('/app/distributed/lib'), false)
+})
+
+test('capColumns leaves short lines alone and truncates long ones with a note', () => {
+  assert.equal(capColumns('short'), 'short')
+  const long = 'x'.repeat(700)
+  const capped = capColumns(long)
+  assert.equal(capped.startsWith('x'.repeat(500)), true)
+  assert.match(capped, /\[\+200 chars\]$/)
 })
 
 // ── buildBase64WriteCommands (pre-existing helper — smoke test kept minimal) ─

@@ -81,6 +81,30 @@ const POSITION_SCHEMA = {
 
 const EDGE_ENDPOINT_DESCRIPTION = 'Node ID, optionally with handle after a slash (e.g. "node-id/out").'
 
+/**
+ * Directory names remote_glob/remote_grep skip by default (dependency, VCS and build output
+ * folders) — the ripgrep/fd-style default agents expect. Both tools re-include them when the
+ * search `path` itself points inside one, or when `includeIgnored` is passed.
+ */
+export const SEARCH_EXCLUDED_DIRS = [
+  '.git',
+  'node_modules',
+  'dist',
+  'build',
+  'out',
+  '.next',
+  'coverage',
+  'vendor',
+  '__pycache__',
+]
+
+const SEARCH_INCLUDE_IGNORED_PARAM = {
+  includeIgnored: {
+    type: 'boolean',
+    description: `Also search normally-skipped directories (${SEARCH_EXCLUDED_DIRS.join(', ')}). Off by default; skipping is auto-disabled when \`path\` itself points inside one of them.`,
+  },
+}
+
 export const toolDefinitions = [
   // ── Toasts ────────────────────────────────────────────────────────
   {
@@ -588,7 +612,7 @@ export const toolDefinitions = [
   {
     name: 'remote_glob',
     description:
-      'Find file paths by glob on a remote node\'s filesystem (`**` spans directories, `*` doesn\'t, `?` = one char), e.g. "src/**/*.tsx". The target is a terminal-context output handle in "node-id/handle-id" format. Read-only. Returns one matching path per line, relative to `path`. No matches (or a missing `path`) return "(no matches)" rather than an error.',
+      'Find file paths by glob on a remote node\'s filesystem (`**` spans directories, `*` doesn\'t, `?` = one char), e.g. "src/**/*.tsx". The target is a terminal-context output handle in "node-id/handle-id" format. Read-only. Returns one matching path per line, relative to `path`. Dependency/VCS/build directories (node_modules, .git, dist, …) are skipped unless `includeIgnored` is set or `path` points inside one. No matches (or a missing `path`) return "(no matches)" rather than an error.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -605,6 +629,11 @@ export const toolDefinitions = [
           description:
             "Directory to search from, absolute or relative to the target's working directory. Defaults to the target's working directory.",
         },
+        exclude: {
+          type: 'string',
+          description: 'Drop paths matching this glob, e.g. "**/*.test.ts".',
+        },
+        ...SEARCH_INCLUDE_IGNORED_PARAM,
         limit: {
           type: 'number',
           description: 'Max number of matching paths to return. Default 200; result notes if truncated.',
@@ -616,7 +645,7 @@ export const toolDefinitions = [
   {
     name: 'remote_grep',
     description:
-      'Search file contents by regular expression (POSIX extended, i.e. `grep -E`) on a remote node\'s filesystem, recursively under `path`. The target is a terminal-context output handle in "node-id/handle-id" format. Read-only. Returns matching lines as "path:line:text", one per line. No matches (or a missing `path`) return "(no matches)" rather than an error.',
+      'Search file contents by regular expression (POSIX extended, i.e. `grep -E`) on a remote node\'s filesystem, recursively under `path`. The target is a terminal-context output handle in "node-id/handle-id" format. Read-only. Returns matching lines as "path:line:text", one per line, with paths echoed in the same form `path` was given (relative when omitted). Dependency/VCS/build directories (node_modules, .git, dist, …) are skipped unless `includeIgnored` is set or `path` points inside one; overlong lines are column-truncated. No matches (or a missing `path`) return "(no matches)" rather than an error.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -641,9 +670,18 @@ export const toolDefinitions = [
           type: 'boolean',
           description: 'Case-insensitive match (`grep -i`).',
         },
+        contextLines: {
+          type: 'number',
+          description: 'Show this many lines of context around each match (`grep -C`).',
+        },
+        filesOnly: {
+          type: 'boolean',
+          description: 'Return only the paths of files containing a match (`grep -l`), not the matching lines.',
+        },
+        ...SEARCH_INCLUDE_IGNORED_PARAM,
         limit: {
           type: 'number',
-          description: 'Max number of matching lines to return. Default 200; result notes if truncated.',
+          description: 'Max number of result lines to return. Default 200; result notes if truncated.',
         },
       },
       required: ['target', 'pattern'],
@@ -1689,6 +1727,63 @@ export function globPatternToEre(pattern: string): string {
   return `^${ere}$`
 }
 
+// Byte cap piped through `head -c` on the remote so a match-heavy search transfers a bounded
+// amount, and per-line column cap applied client-side so one minified bundle line can't eat the
+// whole result budget on its own.
+const SEARCH_BYTE_CAP = 256 * 1024
+const SEARCH_MAX_COLUMNS = 500
+const SEARCH_LIMIT_DEFAULT = 200
+
+/** True when `p` has a path segment remote search skips by default — the caller explicitly
+ * targeting e.g. node_modules is the signal to search it after all. */
+export function insideExcludedDir(p: string): boolean {
+  return p.split('/').some((segment) => SEARCH_EXCLUDED_DIRS.includes(segment))
+}
+
+function searchSkipsExcludedDirs(args: Record<string, unknown>, resolvedPath: string): boolean {
+  if (args.includeIgnored === true) {
+    return false
+  }
+  return !insideExcludedDir(resolvedPath)
+}
+
+/** Column-truncate one result line, noting how much was cut. */
+export function capColumns(line: string): string {
+  if (line.length <= SEARCH_MAX_COLUMNS) {
+    return line
+  }
+  return `${line.slice(0, SEARCH_MAX_COLUMNS)} … [+${line.length - SEARCH_MAX_COLUMNS} chars]`
+}
+
+function searchLimit(args: Record<string, unknown>): number {
+  if (typeof args.limit === 'number' && args.limit > 0) {
+    return Math.floor(args.limit)
+  }
+  return SEARCH_LIMIT_DEFAULT
+}
+
+/** Shared tail of remote_glob/remote_grep: strip "./" prefixes, apply the line limit and column
+ * cap, and append a truncation note instead of silently dropping the rest. */
+function renderSearchResult(output: string, limit: number): Record<string, unknown> {
+  const capped = Buffer.byteLength(output, 'utf8') >= SEARCH_BYTE_CAP
+  let lines = output.split('\n').filter(Boolean)
+  if (capped) {
+    lines = lines.slice(0, -1)
+  }
+  if (lines.length === 0) {
+    return textResult('(no matches)')
+  }
+  const truncated = capped || lines.length > limit
+  const body = lines
+    .slice(0, limit)
+    .map((line) => capColumns(line.replace(/^\.\//, '')))
+    .join('\n')
+  if (!truncated) {
+    return textResult(body)
+  }
+  return textResult(`${body}\n… (truncated — narrow the pattern, path, or glob to see the rest)`)
+}
+
 // Base64 chunk size (of encoded text, per command) for remote writes — keeps each `remoteExec`
 // invocation well under typical ARG_MAX limits while still writing large files in few round trips.
 const BASE64_WRITE_CHUNK_SIZE = 48 * 1024
@@ -2466,18 +2561,19 @@ function buildHandlers(): Record<string, ToolHandler> {
       const searchDir = dirArg
         ? resolveRemoteFilePath(dirArg, ctx.cwd as string | undefined)
         : (ctx.cwd as string | undefined)
-      const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.floor(args.limit) : 200
-      const ere = globPatternToEre(pattern)
-      const command = `find . -type f | sed 's|^\\./||' | grep -E -- ${shellQuote(ere)}; true`
-      const output = await remoteExec(ctx, command, searchDir ? { cwd: searchDir } : undefined)
-      const lines = output.split('\n').filter(Boolean)
-      if (lines.length === 0) {
-        return textResult('(no matches)')
+      const steps = [`sed 's|^\\./||'`, `grep -E -- ${shellQuote(globPatternToEre(pattern))}`]
+      const exclude = args.exclude as string | undefined
+      if (exclude) {
+        steps.push(`grep -Ev -- ${shellQuote(globPatternToEre(exclude))}`)
       }
-      const truncated = lines.length > limit
-      const results = truncated ? lines.slice(0, limit) : lines
-      const body = results.join('\n')
-      return textResult(truncated ? `${body}\n… (truncated at ${limit} results)` : body)
+      let prune = ''
+      if (searchSkipsExcludedDirs(args, searchDir ?? '')) {
+        const names = SEARCH_EXCLUDED_DIRS.map((dir) => `-name ${shellQuote(dir)}`).join(' -o ')
+        prune = `'(' ${names} ')' -prune -o `
+      }
+      const command = `find . ${prune}-type f -print | ${steps.join(' | ')} | head -c ${SEARCH_BYTE_CAP}; true`
+      const output = await remoteExec(ctx, command, searchDir ? { cwd: searchDir } : undefined)
+      return renderSearchResult(output, searchLimit(args))
     },
 
     // ── grep (remote) ────────────────────────────────────────────────
@@ -2487,27 +2583,33 @@ function buildHandlers(): Record<string, ToolHandler> {
         fail(-32602, 'Missing required param: pattern')
       }
       const { ctx } = await resolveTerminalContext(args)
-      const pathArg = args.path as string | undefined
-      const searchPath = pathArg
-        ? resolveRemoteFilePath(pathArg, ctx.cwd as string | undefined)
-        : ((ctx.cwd as string | undefined) ?? '.')
-      const glob = args.glob as string | undefined
-      const caseInsensitive = args.caseInsensitive === true
-      const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.floor(args.limit) : 200
-      const flags = ['-r', '-n', '-E', caseInsensitive ? '-i' : ''].filter(Boolean).join(' ')
-      const includeFlag = glob ? `--include=${shellQuote(glob)}` : ''
-      const command =
-        [`grep ${flags}`, includeFlag, '--', shellQuote(pattern), shellQuote(searchPath)].filter(Boolean).join(' ') +
-        '; true'
-      const output = await remoteExec(ctx, command)
-      const lines = output.split('\n').filter(Boolean)
-      if (lines.length === 0) {
-        return textResult('(no matches)')
+      const cwd = ctx.cwd as string | undefined
+      // Run grep from the target's cwd and pass `path` in the caller's own form, so result lines
+      // echo that form back (relative by default) instead of repeating an absolute prefix.
+      const searchPath = (args.path as string | undefined) ?? '.'
+      // -H keeps the "path:line:text" shape even when `path` is a single file.
+      const parts = ['grep', '-r', '-n', '-H', '-E']
+      if (args.caseInsensitive === true) {
+        parts.push('-i')
       }
-      const truncated = lines.length > limit
-      const results = truncated ? lines.slice(0, limit) : lines
-      const body = results.join('\n')
-      return textResult(truncated ? `${body}\n… (truncated at ${limit} results)` : body)
+      if (args.filesOnly === true) {
+        parts.push('-l')
+      }
+      const context = args.contextLines
+      if (typeof context === 'number' && context > 0 && args.filesOnly !== true) {
+        parts.push(`-C ${Math.floor(context)}`)
+      }
+      const glob = args.glob as string | undefined
+      if (glob) {
+        parts.push(`--include=${shellQuote(glob)}`)
+      }
+      if (searchSkipsExcludedDirs(args, resolveRemoteFilePath(searchPath, cwd))) {
+        parts.push(...SEARCH_EXCLUDED_DIRS.map((dir) => `--exclude-dir=${shellQuote(dir)}`))
+      }
+      parts.push('--', shellQuote(pattern), shellQuote(searchPath))
+      const command = `${parts.join(' ')} | head -c ${SEARCH_BYTE_CAP}; true`
+      const output = await remoteExec(ctx, command, cwd ? { cwd } : undefined)
+      return renderSearchResult(output, searchLimit(args))
     },
 
     // ── write (remote) ───────────────────────────────────────────────
