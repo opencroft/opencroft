@@ -1,4 +1,4 @@
-import { getExtensionModule } from '@/app/(extension-runtime)/_server/loader'
+import { getExtensionModule, loadAllManifests } from '@/app/(extension-runtime)/_server/loader'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
 import type { DockerContainerSnapshot } from '@/lib/sse-events'
 import { toastStore } from '@/lib/toast-store'
@@ -68,8 +68,17 @@ function sortContainers(list: DockerContainerSnapshot[]): DockerContainerSnapsho
   return [...list].sort((a, b) => a.id.localeCompare(b.id))
 }
 
+// Resolve whichever extension currently declares the "docker" node typeId, the same way
+// node-actions.ts does for dispatched node actions — the docker extension isn't guaranteed to be
+// installed under the literal slug "docker" (e.g. an asLocal install can land under a different
+// slug, such as "opencroft-docker", giving it the id "local/opencroft-docker").
 async function callDockerPs(dockerNodeId: string): Promise<DockerContainerSnapshot[]> {
-  const mod = await getExtensionModule('local/docker')
+  const manifests = await loadAllManifests()
+  const owning = manifests.find((m) => m.nodes?.some((n) => n.typeId === 'docker'))
+  if (!owning) {
+    return []
+  }
+  const mod = await getExtensionModule(owning.id)
   const fn = mod.actions['docker.ps']
   if (!fn) {
     return []

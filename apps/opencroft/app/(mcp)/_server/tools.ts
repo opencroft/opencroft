@@ -1413,8 +1413,13 @@ async function expandDynamicHandles(node: GraphNode, declared: ExtensionHandle[]
   }
   const service = (node.data?.name as string) || node.id
   try {
+    const manifests = await loadAllManifests()
+    const owning = manifests.find((m) => m.nodes?.some((n) => n.typeId === 'docker'))
+    if (!owning) {
+      return []
+    }
     const containers = (await invokeExtensionAction({
-      data: { extensionId: 'local/docker', actionName: 'docker.ps', args: [{ dockerNodeId, service }] },
+      data: { extensionId: owning.id, actionName: 'docker.ps', args: [{ dockerNodeId, service }] },
     })) as Array<{
       id: string
       name: string
