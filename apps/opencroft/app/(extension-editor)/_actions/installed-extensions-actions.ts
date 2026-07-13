@@ -315,7 +315,12 @@ async function readRecord(slug: string, root: string, idPrefix: string): Promise
   }
 }
 
-async function pickFreshSlug(owner: string, repo: string, root: string): Promise<string> {
+// A `local/<slug>` extension should end up with the same id regardless of how it got installed —
+// a repo cloned directly by hand (the main instance's registered live checkouts, e.g. "docker",
+// "git") uses just the repo name, so an asLocal install needs to match that instead of the
+// owner-prefixed slug used for "installed/<slug>" registry installs (where collisions across
+// unrelated repos sharing a repo name are the actual concern this prefixing guards against).
+async function pickFreshSlug(owner: string, repo: string, root: string, asLocal?: boolean): Promise<string> {
   let entries: string[]
   try {
     entries = await fs.readdir(root)
@@ -323,7 +328,7 @@ async function pickFreshSlug(owner: string, repo: string, root: string): Promise
     entries = []
   }
   const taken = new Set(entries)
-  const base = slugify(`${owner}-${repo}`)
+  const base = slugify(asLocal ? repo : `${owner}-${repo}`)
   if (!taken.has(base)) {
     return base
   }
@@ -381,7 +386,7 @@ export const installExtensionFromUrl = createServerFn({ method: 'POST', strict: 
   .handler(async ({ data: input }): Promise<InstalledExtensionRecord> => {
     const parsed = parseRepoUrl(input.url)
     const root = input.asLocal ? localExtRoot() : installedExtRoot()
-    const slug = await pickFreshSlug(parsed.owner, parsed.repo, root)
+    const slug = await pickFreshSlug(parsed.owner, parsed.repo, root, input.asLocal)
     return performInstall(slug, parsed, input.auth, input.ref, input.asLocal)
   })
 
