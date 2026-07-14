@@ -76,6 +76,9 @@ class StreamImpl<T> implements Stream<T> {
       handleId: this.handleId,
       chunk: chunk as unknown as StreamChunkPayload,
     })
+    if (chunk !== null && typeof chunk === 'object') {
+      void dispatchDownstreamChunkActions(this.spaceId, this.nodeId, this.handleId, chunk as Record<string, unknown>)
+    }
     const tc = chunk as unknown as { text?: string; final?: boolean }
     if (typeof tc.text === 'string' && typeof tc.final === 'boolean') {
       this.accBuffer += tc.text
@@ -165,15 +168,17 @@ async function persistToDownstreamLogs(
   }
 }
 
-// When a text-stream completes, dispatch the accumulated text to any downstream
-// node whose target handle declares a `streamAction` in its manifest. The action
-// receives the text as `ctx.params.text`. This keeps per-integration logic inside
-// the owning extension — core never names specific node types.
-async function dispatchDownstreamTextActions(
+// Shared by the `streamAction` (on completion) and `streamChunkAction` (on every
+// chunk) mechanisms below: find downstream nodes whose target handle declares
+// the given action field, and dispatch it with the given params. This keeps
+// per-integration logic inside the owning extension — core never names
+// specific node types.
+async function dispatchToHandleAction(
   spaceId: string | undefined,
   sourceNodeId: string,
   sourceHandleId: string,
-  text: string,
+  actionField: 'streamAction' | 'streamChunkAction',
+  params: Record<string, unknown>,
 ): Promise<void> {
   if (!spaceId) {
     return
@@ -205,18 +210,43 @@ async function dispatchDownstreamTextActions(
     const target = nodes.find((n) => n.id === edge.target)
     const meta = target?.type ? metaByType.get(target.type) : undefined
     const handle = meta?.handles ? findExtensionHandle(meta.handles, edge.targetHandle ?? '', 'target') : undefined
-    if (!target || !handle?.streamAction) {
+    const actionId = handle?.[actionField]
+    if (!target || !actionId) {
       continue
     }
     try {
-      await dispatchNodeAction({ data: { nodeId: target.id, actionId: handle.streamAction, params: { text } } })
+      await dispatchNodeAction({ data: { nodeId: target.id, actionId, params } })
     } catch (err) {
-      console.error(
-        `[stream→${target.type}.${handle.streamAction}] dispatch failed:`,
-        err instanceof Error ? err.message : String(err),
-      )
+      console.error(`[stream→${target.type}.${actionId}] dispatch failed:`, err instanceof Error ? err.message : String(err))
     }
   }
+}
+
+// When a text-stream completes, dispatch the accumulated text to any downstream
+// node whose target handle declares a `streamAction` in its manifest. The action
+// receives the text as `ctx.params.text`.
+async function dispatchDownstreamTextActions(
+  spaceId: string | undefined,
+  sourceNodeId: string,
+  sourceHandleId: string,
+  text: string,
+): Promise<void> {
+  await dispatchToHandleAction(spaceId, sourceNodeId, sourceHandleId, 'streamAction', { text })
+}
+
+// On every chunk of any stream (not gated on completion), dispatch it to any
+// downstream node whose target handle declares a `streamChunkAction`. The
+// action receives the chunk's own fields as `ctx.params` — e.g. `{ text, final }`
+// for a text-stream chunk. Lets a node do incremental work as a stream arrives
+// (e.g. start synthesizing speech sentence-by-sentence) instead of waiting for
+// the whole stream to finish.
+async function dispatchDownstreamChunkActions(
+  spaceId: string | undefined,
+  sourceNodeId: string,
+  sourceHandleId: string,
+  chunk: Record<string, unknown>,
+): Promise<void> {
+  await dispatchToHandleAction(spaceId, sourceNodeId, sourceHandleId, 'streamChunkAction', chunk)
 }
 
 async function persistToDownstreamSendMessages(

@@ -24,6 +24,12 @@ export interface ExtensionHandle {
    *  node consume a text-stream server-side (like the Log node) without core knowing
    *  the node type. */
   streamAction?: string
+  /** The node action to dispatch on EVERY inbound chunk (not just completion),
+   *  receiving the chunk's own fields as `ctx.params` (e.g. `{ text, final }`).
+   *  Lets a node react incrementally to a stream server-side — e.g. starting
+   *  work on partial output before the stream finishes — without core knowing
+   *  the node type or chunk shape. */
+  streamChunkAction?: string
 }
 
 /** Resolve a runtime handle id against a node's static handle declarations, supporting prefix-matched dynamic handles. */

@@ -38,10 +38,10 @@ export interface DockerContainerSnapshot {
   running: boolean
 }
 
-export interface StreamChunkPayload {
-  text: string
-  final: boolean
-}
+// A stream chunk's shape is owned by whichever node produced it (text, audio,
+// or anything else JSON-safe), not by core — this event just carries it
+// verbatim from the server stream registry to the client stream registry.
+export type StreamChunkPayload = Record<string, unknown>
 
 export type SSEEvent = BaseEvent &
   (
