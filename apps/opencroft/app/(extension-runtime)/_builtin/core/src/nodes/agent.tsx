@@ -37,6 +37,18 @@ export interface AgentData {
   /** When set, the harness runs inside this Docker container via `docker exec`,
    * with its workspace at /agents/<agent-slug>. Empty = run on the host. */
   containerName?: string
+  /** Speech profile (Speech tab): OpenAI-compatible speech endpoint and
+   * output-format knobs, read from the node's data by speech consumers. */
+  ttsApiBase?: string
+  ttsApiKey?: string
+  ttsModel?: string
+  voice?: string
+  ttsSpeed?: number
+  ttsInstructions?: string
+  pcmSampleRate?: number
+  pcmBitDepth?: 16 | 32
+  trimStartSamples?: number
+  trimEndSamples?: number
 }
 
 function readAsDataUrl(file: File): Promise<string> {

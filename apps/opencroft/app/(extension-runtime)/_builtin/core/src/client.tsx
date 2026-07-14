@@ -4,6 +4,7 @@ import { AgentInspector, AgentNode, AgentProfileTab } from './nodes/agent'
 import { AgentInstructionInspector, AgentInstructionNode } from './nodes/agent-instruction'
 import { AgentJobInspector, AgentJobNode } from './nodes/agent-job'
 import { AgentMcpTab } from './nodes/agent-mcp'
+import { AgentSpeechTab } from './nodes/agent-speech'
 import { AgentSkillsTab } from './nodes/agent-skills'
 import { AGENT_TOOL_HANDLES, AgentToolInspector, AgentToolNode, agentToolExposeOutput } from './nodes/agent-tool'
 import { API_ROUTE_HANDLES, ApiRouteInspector, ApiRouteNode, apiRouteExposeOutput } from './nodes/api-route'
@@ -333,6 +334,13 @@ export default defineExtension({
           fullHeight: true,
           component: AgentProfileTab as unknown as never,
         },
+        {
+          id: 'speech',
+          label: 'Speech',
+          icon: 'Speech',
+          fullHeight: true,
+          component: AgentSpeechTab as unknown as never,
+        },
         { id: 'mcp', label: 'MCP', icon: 'Wrench', fullHeight: true, component: AgentMcpTab as unknown as never },
         {
           id: 'skills',
@@ -393,16 +401,6 @@ export default defineExtension({
         chatApiKey: '',
         chatModel: 'gpt-4o-mini',
         temperature: 0.7,
-        ttsApiBase: 'http://localhost:8880/v1',
-        ttsApiKey: 'not-needed',
-        ttsModel: '0.6B-CustomVoice',
-        voice: 'Vivian',
-        ttsSpeed: 1.0,
-        ttsInstructions: '',
-        pcmSampleRate: 24000,
-        pcmBitDepth: 32,
-        trimStartSamples: 0,
-        trimEndSamples: 0,
       },
       component: OpenAIAssistantNode as unknown as never,
       inspector: OpenAIAssistantInspector as unknown as never,
