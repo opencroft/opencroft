@@ -47,6 +47,11 @@ class StreamImpl<T> implements Stream<T> {
   private handlers = new Set<(chunk: T) => void>()
   private buffer: T[] = []
   private accBuffer = ''
+  // Chunk actions dispatch through a per-stream FIFO chain. A detached
+  // dispatch per chunk would let dispatches overtake each other — each one
+  // awaits registry and manifest loads before reaching the action — and
+  // deliver chunks to the downstream action out of order.
+  private chunkActionQueue: Promise<void> = Promise.resolve()
 
   constructor(
     private spaceId: string | undefined,
@@ -77,7 +82,12 @@ class StreamImpl<T> implements Stream<T> {
       chunk: chunk as unknown as StreamChunkPayload,
     })
     if (chunk !== null && typeof chunk === 'object') {
-      void dispatchDownstreamChunkActions(this.spaceId, this.nodeId, this.handleId, chunk as Record<string, unknown>)
+      const record = chunk as Record<string, unknown>
+      this.chunkActionQueue = this.chunkActionQueue
+        .then(() => dispatchDownstreamChunkActions(this.spaceId, this.nodeId, this.handleId, record))
+        .catch((err) => {
+          console.error('[stream chunk action] dispatch failed:', err instanceof Error ? err.message : String(err))
+        })
     }
     const tc = chunk as unknown as { text?: string; final?: boolean }
     if (typeof tc.text === 'string' && typeof tc.final === 'boolean') {
