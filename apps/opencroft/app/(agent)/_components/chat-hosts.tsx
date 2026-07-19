@@ -1,7 +1,7 @@
 'use client'
 
 import { PermissionRequest } from 'agent-chat/messages'
-import { ArrowLeft, Pencil, X } from 'lucide-react'
+import { ArrowLeft, Pencil } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from 'ui/dialog'
@@ -128,19 +128,23 @@ function ChatHost({
   // start icon (`forceListMenu`) opens the same list while a chat is docked.
   const focusMenu = forceListMenu || (focused && inspectorPage === 'none') ? listView : undefined
 
+  // ChatHost renders no visible DOM of its own: it mounts inside the canvas
+  // container underneath the absolutely-positioned canvas/overlay layers, so
+  // anything emitted here is painted over. All real UI — the conversation, the
+  // composer, and the queued-messages list — is published into overlay slots
+  // (content/header above, bar via AgentChatInput).
   return (
-    <div className='flex min-w-0 flex-col gap-1'>
-      {queued && queued.length > 0 && onRemoveQueued && <QueuedMessages items={queued} onRemove={onRemoveQueued} />}
-      <AgentChatInput
-        session={session}
-        agentNodeId={agentNodeId}
-        placeholder='Ask AI...'
-        onFocus={() => onFocusChange(true)}
-        leadingBarContent={createButton}
-        focusMenu={focusMenu}
-        onStartIconClick={onOpenSessions}
-      />
-    </div>
+    <AgentChatInput
+      session={session}
+      agentNodeId={agentNodeId}
+      placeholder='Ask AI...'
+      onFocus={() => onFocusChange(true)}
+      leadingBarContent={createButton}
+      focusMenu={focusMenu}
+      onStartIconClick={onOpenSessions}
+      queued={queued}
+      onRemoveQueued={onRemoveQueued}
+    />
   )
 }
 
@@ -212,27 +216,6 @@ function ChatHeader({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
-  )
-}
-
-function QueuedMessages({ items, onRemove }: { items: QueuedMessage[]; onRemove: (id: string) => void }) {
-  return (
-    <div className='flex min-w-0 flex-col gap-1 px-2'>
-      {items.map((m) => (
-        <div key={m.id} className='flex min-w-0 items-center gap-2 rounded-md border bg-muted/40 px-2 py-1 text-xs'>
-          <span className='shrink-0 text-muted-foreground'>Queued</span>
-          <span className='min-w-0 flex-1 truncate'>{m.text}</span>
-          <button
-            type='button'
-            onClick={() => onRemove(m.id)}
-            className='shrink-0 text-muted-foreground transition-colors hover:text-foreground'
-            title='Remove from queue'
-          >
-            <X className='size-3.5' />
-          </button>
-        </div>
-      ))}
     </div>
   )
 }

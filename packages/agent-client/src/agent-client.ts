@@ -31,7 +31,7 @@ import { type ResolvedPermissions, toolKey } from './permissions'
 import { buildSpawnConfig, containerReachableMcpUrl, findAdapter } from './resolve'
 import { fileSkillHandler, fileSkills } from './skills'
 import { findTurnBoundary } from './turns'
-import type { AgentSelection, ChatEvent, SessionMeta, SessionMode, SpawnConfig } from './types'
+import type { AgentSelection, ChatEvent, QueuedPrompt, SessionMeta, SessionMode, SpawnConfig } from './types'
 
 export interface ClientInfo {
   name: string
@@ -97,6 +97,14 @@ interface SessionState {
   modes: SessionModes | null
   // Effective per-tool / per-skill permissions; undefined = unrestricted.
   permissions?: ResolvedPermissions
+  // True from the moment a prompt is handed to the agent until its terminal
+  // event (turn_end or error) is emitted. ACP allows one prompt-turn at a time
+  // per session, and this flag is the single source of truth for that guard —
+  // every caller of prompt() (chat UI, server-side senders) is serialized here.
+  turnActive: boolean
+  // Prompts received while a turn was active, delivered FIFO as turns end.
+  // Every change is published as a 'queue' snapshot event.
+  queue: QueuedPrompt[]
 }
 
 interface ConnEntry {
@@ -691,6 +699,73 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     }
   }
 
+  // Publish the current queue as a snapshot event. The copy matters: events are
+  // stored for replay, so a stored snapshot must not alias the live array that
+  // later pushes/shifts would mutate.
+  function emitQueue(sessionId: string, queue: QueuedPrompt[]): void {
+    emit(sessionId, { kind: 'queue', items: [...queue] })
+  }
+
+  // Hand one prompt-turn to the agent. The turn guard is taken synchronously
+  // (before any await), so a concurrent prompt() arriving in the same tick sees
+  // turnActive and queues instead of starting a second turn. The guard is
+  // released — and the next queued prompt delivered — only by finishTurn, after
+  // the turn's terminal event (turn_end or error) has been emitted.
+  async function deliverPrompt(sessionId: string, text: string): Promise<void> {
+    const session = store.sessions.get(sessionId)
+    if (!session) {
+      return
+    }
+    session.turnActive = true
+    let connection: AgentConnection
+    try {
+      connection = await connectionForSession(sessionId)
+    } catch (error) {
+      // No turn ever started (e.g. the harness failed to spawn) — release the
+      // guard and drain, so queued prompts aren't stranded behind the failure;
+      // each failed delivery surfaces its own error event.
+      finishTurn(sessionId)
+      throw error
+    }
+    store.lastSessionId = sessionId
+    const entry = connEntryFor(session.selection)
+    if (entry) {
+      entry.lastSessionId = sessionId
+    }
+    emit(sessionId, { kind: 'user', text })
+    void connection
+      .prompt({ sessionId, prompt: [{ type: 'text', text }] })
+      .then((response) =>
+        emit(sessionId, {
+          kind: 'turn_end',
+          stopReason: response.stopReason,
+        }),
+      )
+      .catch((error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }))
+      // Both arms end here, so cancelled and failed turns drain the queue just
+      // like clean ones — a queued message never waits behind a dead turn.
+      .then(() => finishTurn(sessionId))
+  }
+
+  // Release the turn guard and deliver the next queued prompt, if any. Queue
+  // depth is small (hand-typed messages), so the self-call chain stays shallow —
+  // each delivery runs a full agent turn before the next drain.
+  function finishTurn(sessionId: string): void {
+    const session = store.sessions.get(sessionId)
+    if (!session) {
+      return
+    }
+    session.turnActive = false
+    const next = session.queue?.shift()
+    if (!next) {
+      return
+    }
+    emitQueue(sessionId, session.queue)
+    void deliverPrompt(sessionId, next.text).catch((error: unknown) =>
+      emit(sessionId, { kind: 'error', message: errorMessage(error) }),
+    )
+  }
+
   return {
     listSessions(): SessionMeta[] {
       return [...store.sessions.values()].map((session) => session.meta).sort((a, b) => a.createdAt - b.createdAt)
@@ -766,6 +841,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         subscribers: new Set(),
         modes: response.modes ? toSessionModes(response.modes) : null,
         permissions,
+        turnActive: false,
+        queue: [],
       })
       if (response.modes) {
         emitSessionModes(sessionId)
@@ -852,6 +929,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         subscribers: new Set(),
         modes: null,
         permissions,
+        turnActive: false,
+        queue: [],
       })
       try {
         await connection.loadSession({ sessionId, cwd: selection.cwd, mcpServers, _meta: sessionMeta(selection) })
@@ -951,8 +1030,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         }
       })
       const boundary = findTurnBoundary(userEvents, dropFromTurn)
-      const forkedEvents =
+      // The fork starts idle with an empty queue, so the source session's
+      // 'queue' snapshots must not carry over — replaying one would resurrect
+      // queue state the fork doesn't actually hold.
+      const forkedEvents = (
         boundary === null ? session.events.filter((event) => event.kind === 'modes') : session.events.slice(0, boundary)
+      ).filter((event) => event.kind !== 'queue')
       const meta: SessionMeta = {
         id: response.sessionId,
         title: `${session.meta.title} (fork)`,
@@ -967,31 +1050,47 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         subscribers: new Set(),
         modes: response.modes ? toSessionModes(response.modes) : session.modes,
         permissions: session.permissions,
+        turnActive: false,
+        queue: [],
       })
       return meta
     },
 
-    async prompt(sessionId: string, text: string): Promise<void> {
+    async prompt(sessionId: string, text: string, opts?: { front?: boolean }): Promise<void> {
       const session = store.sessions.get(sessionId)
       if (!session) {
         return
       }
-      const connection = await connectionForSession(sessionId)
-      store.lastSessionId = sessionId
-      const entry = connEntryFor(session.selection)
-      if (entry) {
-        entry.lastSessionId = sessionId
+      // Session records that survived a dev hot-reload may predate the queue
+      // fields (the store outlives createStore); backfill in place.
+      session.queue ??= []
+      if (session.turnActive) {
+        // A turn is running and ACP takes one prompt-turn at a time — hold the
+        // message here (server-side, so it survives the client that typed it)
+        // and publish the snapshot. `front` puts it ahead of earlier queued
+        // messages, e.g. corrective guidance after a rejected permission that
+        // must reach the agent before anything else.
+        const item: QueuedPrompt = { id: randomUUID(), text }
+        if (opts?.front) {
+          session.queue.unshift(item)
+        } else {
+          session.queue.push(item)
+        }
+        emitQueue(sessionId, session.queue)
+        return
       }
-      emit(sessionId, { kind: 'user', text })
-      void connection
-        .prompt({ sessionId, prompt: [{ type: 'text', text }] })
-        .then((response) =>
-          emit(sessionId, {
-            kind: 'turn_end',
-            stopReason: response.stopReason,
-          }),
-        )
-        .catch((error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }))
+      await deliverPrompt(sessionId, text)
+    },
+
+    // Drop a still-queued prompt before it's delivered. Unknown ids are a
+    // no-op — the message may have just been shifted out for delivery.
+    removeQueued(sessionId: string, id: string): void {
+      const session = store.sessions.get(sessionId)
+      if (!session?.queue?.some((item) => item.id === id)) {
+        return
+      }
+      session.queue = session.queue.filter((item) => item.id !== id)
+      emitQueue(sessionId, session.queue)
     },
 
     resolvePermission(requestId: string, optionId?: string): void {

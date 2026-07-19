@@ -1,12 +1,19 @@
 'use client'
 
-import type { ChatEvent, PermissionOpt } from 'agent-client/types'
+import type { ChatEvent, PermissionOpt, QueuedPrompt } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 
 import type { AgentSession } from '@/app/(agent)/_components/agent-chat'
 import { type AcpStreamEvent, HISTORY_END_KIND } from '@/app/(agent)/_lib/acp-stream'
 import type { ChatMessage, ChatPart } from '@/app/(agent)/_lib/messages'
-import { cancelLocal, ensureLocalSession, forkLocal, promptLocal, respondLocal } from '@/app/(agent)/_server/acp'
+import {
+  cancelLocal,
+  ensureLocalSession,
+  forkLocal,
+  promptLocal,
+  removeQueuedLocal,
+  respondLocal,
+} from '@/app/(agent)/_server/acp'
 
 export interface LocalSource {
   agentNodeId: string
@@ -25,16 +32,16 @@ export interface PendingAsk {
   message: string
 }
 
-export interface QueuedMessage {
-  id: string
-  text: string
-}
+// The queue lives server-side in agent-client; this is its wire shape, aliased
+// (not redeclared) so there is a single source of truth for the fields.
+export type QueuedMessage = QueuedPrompt
 
 export interface AcpSession {
   session: AgentSession
   permissions: PendingPermission[]
   asks: PendingAsk[]
-  // Messages typed while a turn is in progress, awaiting delivery.
+  // Messages typed while a turn was in progress, held server-side awaiting
+  // delivery — the latest 'queue' snapshot from the event stream.
   queue: QueuedMessage[]
   resolvePermission: (requestId: string, optionId?: string) => void
   resolveAsk: (requestId: string, answer?: string) => void
@@ -57,6 +64,8 @@ interface Folded {
   permissions: PendingPermission[]
   asks: PendingAsk[]
   waiting: boolean
+  // Server-held prompts awaiting delivery — the last 'queue' snapshot wins.
+  queue: QueuedMessage[]
 }
 
 // Reduce the agent-client event log into the message shape AgentChat renders,
@@ -68,6 +77,7 @@ function fold(events: ChatEvent[]): Folded {
   const asks = new Map<string, PendingAsk>()
   let assistant: ChatMessage | null = null
   let waiting = false
+  let queue: QueuedMessage[] = []
 
   const ensureAssistant = (): ChatMessage => {
     if (!assistant) {
@@ -143,6 +153,11 @@ function fold(events: ChatEvent[]): Folded {
         asks.delete(event.requestId)
         break
       }
+      case 'queue': {
+        // Snapshots are complete, so the latest one IS the queue state.
+        queue = event.items
+        break
+      }
       case 'turn_end': {
         assistant = null
         waiting = false
@@ -163,6 +178,7 @@ function fold(events: ChatEvent[]): Folded {
     permissions: [...permissions.values()],
     asks: [...asks.values()],
     waiting,
+    queue,
   }
 }
 
@@ -186,13 +202,11 @@ export function useAcpSession(
   const [sending, startSending] = useTransition()
   // A message typed before the ACP session finished being created, queued so
   // the first message isn't dropped during the (slow first-spawn) handshake.
+  // This is the only client-held queue: the server can't hold a message for a
+  // session that doesn't exist yet. Once the session is live, mid-turn messages
+  // are queued server-side by agent-client (one prompt-turn at a time is an ACP
+  // constraint it owns) and observed here via 'queue' snapshot events.
   const pending = useRef<string | null>(null)
-  // Messages typed while a turn is in progress. ACP allows only one prompt-turn
-  // at a time, so they're held here and delivered one-by-one as each turn ends
-  // (removable until pulled). When ACP gains native mid-turn input, deliver()
-  // can target the live turn instead of routing through this queue.
-  const [queue, setQueue] = useState<QueuedMessage[]>([])
-  const queueIdRef = useRef(0)
   // Historical events accumulate here while a subscribe's synchronous replay is
   // in flight (see acp-stream.ts), committed to `events` in one `setEvents` call
   // when the history_end marker arrives — so a long reopened session paints once
@@ -200,7 +214,6 @@ export function useAcpSession(
   const historyBufferRef = useRef<ChatEvent[]>([])
   const replayingHistoryRef = useRef(true)
   // Read inside callbacks/effects to avoid stale closures.
-  const waitingRef = useRef(false)
   const isFirstRef = useRef(true)
   // Armed only when we deliver a live first message (which carries the title
   // request). This keeps auto-titling off history replay and later turns: a
@@ -219,7 +232,6 @@ export function useAcpSession(
     setLoading(true)
     setLocalWaiting(false)
     setCanFork(false)
-    setQueue([])
     ensureLocalSession({ data: { agentNodeId, jobNodeId, tabKey } })
       .then((result) => {
         if (!cancelled) {
@@ -277,7 +289,12 @@ export function useAcpSession(
 
   const folded = useMemo(() => fold(events), [events])
 
-  isFirstRef.current = folded.messages.length === 0
+  // "First message" drives the title request in the outgoing transform, which
+  // runs client-side at send time — before the server decides queue-vs-deliver.
+  // A queued-but-undelivered first message keeps `messages` empty until its
+  // turn starts, so a message typed behind it must NOT also claim first: it's
+  // first only when nothing has been delivered AND nothing is queued ahead.
+  isFirstRef.current = folded.messages.length === 0 && folded.queue.length === 0
 
   // Pull the self-reported title out of the first reply and apply it once. Gated
   // on titleRequestedRef so it only fires for the live first turn — never on the
@@ -302,11 +319,12 @@ export function useAcpSession(
     }
   }, [folded.messages])
 
-  // The single seam where a message reaches the agent (applies the outgoing
-  // transform). Used for an immediate send and for draining the queue. When ACP
-  // gains native mid-turn input, this is what changes — not the queue/UX.
+  // The single seam where a message leaves the client (applies the outgoing
+  // transform, so it runs for every message — including ones the server will
+  // queue rather than deliver right away). The server owns the queue-vs-prompt
+  // decision; `front` asks it to queue ahead of anything already held.
   const deliver = useCallback(
-    (value: string) => {
+    (value: string, opts?: { front?: boolean }) => {
       if (!sessionId) {
         return
       }
@@ -319,7 +337,7 @@ export function useAcpSession(
       setLocalWaiting(true)
       startSending(async () => {
         try {
-          await promptLocal({ data: { sessionId, text } })
+          await promptLocal({ data: { sessionId, text, front: opts?.front } })
         } catch (error) {
           console.error('promptLocal failed', error)
           setLocalWaiting(false)
@@ -337,14 +355,8 @@ export function useAcpSession(
         setLocalWaiting(true)
         return
       }
-      if (waitingRef.current) {
-        // A turn is in progress — ACP can't take a second prompt, so queue it.
-        // The turn-end effect drains the queue one message at a time.
-        queueIdRef.current += 1
-        const id = `q${queueIdRef.current}`
-        setQueue((q) => [...q, { id, text: value }])
-        return
-      }
+      // Always hand the message to the server: it delivers immediately when the
+      // session is idle and queues it when a turn is running.
       deliver(value)
     },
     [sessionId, deliver],
@@ -407,8 +419,9 @@ export function useAcpSession(
   }, [])
 
   // "Tell what to do different": ACP can't attach a reason to a rejection, so we
-  // reject the request, cancel the run, then queue the typed guidance at the
-  // front — the queue delivers it once the interrupted turn has stopped.
+  // reject the request, cancel the run, then send the guidance with `front` set
+  // — the server queues it ahead of anything else held for the session and
+  // delivers it as soon as the interrupted turn ends.
   const respondPermissionText = useCallback(
     (requestId: string, text: string) => {
       resolvePermission(requestId)
@@ -417,27 +430,10 @@ export function useAcpSession(
         return
       }
       void cancelLocal({ data: sessionId })
-      queueIdRef.current += 1
-      const id = `q${queueIdRef.current}`
-      setQueue((q) => [{ id, text: value }, ...q])
+      deliver(value, { front: true })
     },
-    [sessionId, resolvePermission],
+    [sessionId, resolvePermission, deliver],
   )
-
-  const waiting = folded.waiting || localWaiting
-  waitingRef.current = waiting
-
-  // Drain the queue one message per turn: when no turn is active and messages
-  // are waiting, deliver the next. deliver() sets waiting again, so subsequent
-  // messages wait for the turn each one starts to finish.
-  useEffect(() => {
-    if (waiting || !sessionId || queue.length === 0) {
-      return
-    }
-    const [next, ...rest] = queue
-    setQueue(rest)
-    deliver(next.text)
-  }, [waiting, sessionId, queue, deliver])
 
   const session = useMemo<AgentSession>(
     () => ({
@@ -469,16 +465,23 @@ export function useAcpSession(
     ],
   )
 
-  const removeQueued = useCallback((id: string) => {
-    setQueue((q) => q.filter((m) => m.id !== id))
-  }, [])
+  // The server drops the message and confirms via a 'queue' snapshot on the
+  // stream — no optimistic local state to keep in sync.
+  const removeQueued = useCallback(
+    (id: string) => {
+      if (sessionId) {
+        void removeQueuedLocal({ data: { sessionId, id } })
+      }
+    },
+    [sessionId],
+  )
 
   return useMemo(
     () => ({
       session,
       permissions: folded.permissions,
       asks: folded.asks,
-      queue,
+      queue: folded.queue,
       resolvePermission,
       resolveAsk,
       respondPermissionText,
@@ -488,7 +491,7 @@ export function useAcpSession(
       session,
       folded.permissions,
       folded.asks,
-      queue,
+      folded.queue,
       resolvePermission,
       resolveAsk,
       respondPermissionText,

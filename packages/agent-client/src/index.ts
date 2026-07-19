@@ -18,6 +18,7 @@ export type {
   ChatEvent,
   PermissionOpt,
   PlanItem,
+  QueuedPrompt,
   SessionMeta,
   SessionMode,
   SpawnConfig,

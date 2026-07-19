@@ -163,10 +163,12 @@ async function openLocalSession(data: {
   return { sessionId: meta.id, canFork }
 }
 
+// `front` queues the message ahead of anything already held for the session
+// when a turn is running (e.g. corrective guidance after a rejected permission).
 export const promptLocal = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { sessionId: string; text: string }) => data)
+  .inputValidator((data: { sessionId: string; text: string; front?: boolean }) => data)
   .handler(async ({ data }): Promise<void> => {
-    await agentClient.prompt(data.sessionId, data.text)
+    await agentClient.prompt(data.sessionId, data.text, { front: data.front })
     // Persist the tab→session pointer now that the session has real history, so a
     // later restart can resume it via session/load. We never persist — and so
     // never try to load — an empty, never-prompted session.
@@ -213,6 +215,14 @@ export const findTargetSession = createServerFn({ method: 'POST', strict: { outp
       }
     }
     return best ? { sessionId: best.id } : null
+  })
+
+// Drop a message from the session's server-side queue before it's delivered.
+// Clients observe the result via the 'queue' snapshot event on the stream.
+export const removeQueuedLocal = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { sessionId: string; id: string }) => data)
+  .handler(async ({ data }): Promise<void> => {
+    agentClient.removeQueued(data.sessionId, data.id)
   })
 
 export const setLocalMode = createServerFn({ method: 'POST', strict: { output: false } })

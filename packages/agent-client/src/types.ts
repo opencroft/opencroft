@@ -56,6 +56,14 @@ export interface PermissionOpt {
   kind: string
 }
 
+// A prompt held while a turn is running. ACP allows one prompt-turn at a time
+// per session, so mid-turn messages are queued in the session state and
+// delivered in order as turns end. Surfaced to clients via the 'queue' event.
+export interface QueuedPrompt {
+  id: string
+  text: string
+}
+
 export type ChatEvent =
   | { kind: 'user'; text: string }
   | { kind: 'agent_message'; text: string }
@@ -88,6 +96,10 @@ export type ChatEvent =
   | { kind: 'ask_user_resolved'; requestId: string }
   | { kind: 'modes'; available: SessionMode[]; current: string }
   | { kind: 'mode_changed'; current: string }
+  // Full snapshot of the session's undelivered prompt queue, emitted on every
+  // queue change. Snapshot (not delta) so the stored-event replay leaves any
+  // (re)connecting client with the current queue: fold the LAST one seen.
+  | { kind: 'queue'; items: QueuedPrompt[] }
   | { kind: 'usage'; used: number; size?: number }
   | { kind: 'turn_end'; stopReason: string }
   | { kind: 'error'; message: string }

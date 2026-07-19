@@ -2,6 +2,7 @@
 
 import { ChainDot, type ChainDotVariant, Chained } from 'agent-chat/chain'
 import { ThinkingBlock } from 'agent-chat/thinking-block'
+import type { QueuedPrompt } from 'agent-client/types'
 import {
   Maximize2,
   Minimize2,
@@ -12,6 +13,7 @@ import {
   ShieldCog,
   Sparkles,
   Square,
+  X,
 } from 'lucide-react'
 import {
   type ComponentType,
@@ -730,6 +732,33 @@ export function ThinkingIndicator() {
   )
 }
 
+// Messages held in the session's server-side queue (typed while a turn was
+// running, delivered in order as turns end). Rendered inside the command bar so
+// the feedback sits directly above the composer that produced the messages.
+function QueuedMessages({ items, onRemove }: { items: QueuedPrompt[]; onRemove: (id: string) => void }) {
+  return (
+    <div className='flex min-w-0 flex-col gap-1'>
+      {items.map((m) => (
+        <div key={m.id} className='flex min-w-0 items-center gap-2 rounded-md border bg-muted/40 px-2 py-1 text-xs'>
+          <span className='shrink-0 text-muted-foreground'>Queued</span>
+          {/* Queued text is already transformed for the agent (system/context
+              tags applied at send time); show only the user's own words, same
+              as delivered user bubbles. */}
+          <span className='min-w-0 flex-1 truncate'>{stripOpencroftTags(m.text)}</span>
+          <button
+            type='button'
+            onClick={() => onRemove(m.id)}
+            className='shrink-0 text-muted-foreground transition-colors hover:text-foreground'
+            title='Remove from queue'
+          >
+            <X className='size-3.5' />
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 interface AgentChatInputProps {
   session: AgentSession
   /** Active agent's node id. When set, extension-provided input controls (e.g.
@@ -747,6 +776,13 @@ interface AgentChatInputProps {
   /** When set, the Sparkles start icon becomes a button that runs this (e.g. open
    * the session picker). Must be stable — it feeds the memoized command bar. */
   onStartIconClick?: () => void
+  /** Messages held in the session's server-side queue while a turn runs. They
+   * render inside the published bar, above the input row, so the "your message
+   * is held" feedback appears wherever the composer itself is shown. */
+  queued?: QueuedPrompt[]
+  /** Drop a still-queued message before delivery. Must be stable — it feeds the
+   * memoized command bar. */
+  onRemoveQueued?: (id: string) => void
 }
 
 export function AgentChatInput({
@@ -759,6 +795,8 @@ export function AgentChatInput({
   leadingBarContent,
   focusMenu,
   onStartIconClick,
+  queued,
+  onRemoveQueued,
 }: AgentChatInputProps) {
   const [text, setText] = useState('')
   const [autoApprove, setAutoApproveState] = useState(false)
@@ -840,88 +878,95 @@ export function AgentChatInput({
     }
   }
 
+  // The wrapper column is rendered even with an empty queue so the bar's
+  // element structure (and thus the Textarea's identity) never changes when
+  // messages queue up or drain — a shape change would remount the composer and
+  // drop its focus mid-typing.
   const barNode = useMemo(
     () => (
-      <>
-        {leadingBarContent}
-        {onStartIconClick ? (
-          <Button
-            type='button'
-            size='icon'
-            variant='ghost'
-            className='h-7 w-7 shrink-0 mt-0.5'
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={onStartIconClick}
-            title='Sessions'
-          >
-            <Sparkles className='h-4 w-4 text-primary' />
-          </Button>
-        ) : (
-          <Sparkles className='h-4 w-4 ml-1 mt-1.5 shrink-0 text-primary' />
-        )}
-        <Textarea
-          ref={textareaRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKeyDown}
-          onFocus={onFocus}
-          onBlur={onBlur}
-          placeholder={inputPlaceholder}
-          rows={1}
-          autoFocus={autoFocus}
-          className='min-h-8 max-h-60 border-0 shadow-none focus-visible:ring-0 focus-visible:border-0 bg-transparent resize-none py-1.5'
-        />
-        {voiceControls}
-        <Button
-          type='button'
-          size='icon'
-          variant='ghost'
-          className='h-7 w-7 shrink-0 mt-0.5'
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={yoloMode ? undefined : toggleAutoApprove}
-          disabled={yoloMode}
-          title={
-            yoloMode
-              ? 'YOLO Mode — all MCP tool approvals skipped (set via OPENCROFT_YOLO_MODE env or /settings?section=audit)'
-              : autoApprove
-                ? 'Auto-approve ON — all MCP tool calls approved automatically (click to require approval)'
-                : 'Auto-approve OFF — MCP tool calls require approval (click to auto-approve)'
-          }
-        >
-          {yoloMode ? (
-            <ShieldAlert className='h-4 w-4 text-red-500 animate-pulse' />
-          ) : autoApprove ? (
-            <ShieldCog className='h-4 w-4 text-amber-500' />
+      <div className='flex min-w-0 flex-1 flex-col gap-1'>
+        {queued && queued.length > 0 && onRemoveQueued && <QueuedMessages items={queued} onRemove={onRemoveQueued} />}
+        <div className='flex min-w-0 items-start gap-2'>
+          {leadingBarContent}
+          {onStartIconClick ? (
+            <Button
+              type='button'
+              size='icon'
+              variant='ghost'
+              className='h-7 w-7 shrink-0 mt-0.5'
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={onStartIconClick}
+              title='Sessions'
+            >
+              <Sparkles className='h-4 w-4 text-primary' />
+            </Button>
           ) : (
-            <ShieldCheck className='h-4 w-4 text-primary' />
+            <Sparkles className='h-4 w-4 ml-1 mt-1.5 shrink-0 text-primary' />
           )}
-        </Button>
-        {session.waiting && session.stop ? (
+          <Textarea
+            ref={textareaRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={onKeyDown}
+            onFocus={onFocus}
+            onBlur={onBlur}
+            placeholder={inputPlaceholder}
+            rows={1}
+            autoFocus={autoFocus}
+            className='min-h-8 max-h-60 border-0 shadow-none focus-visible:ring-0 focus-visible:border-0 bg-transparent resize-none py-1.5'
+          />
+          {voiceControls}
           <Button
             type='button'
             size='icon'
             variant='ghost'
             className='h-7 w-7 shrink-0 mt-0.5'
             onMouseDown={(e) => e.preventDefault()}
-            onClick={session.stop}
-            title='Stop'
+            onClick={yoloMode ? undefined : toggleAutoApprove}
+            disabled={yoloMode}
+            title={
+              yoloMode
+                ? 'YOLO Mode — all MCP tool approvals skipped (set via OPENCROFT_YOLO_MODE env or /settings?section=audit)'
+                : autoApprove
+                  ? 'Auto-approve ON — all MCP tool calls approved automatically (click to require approval)'
+                  : 'Auto-approve OFF — MCP tool calls require approval (click to auto-approve)'
+            }
           >
-            <Square className='h-4 w-4' />
+            {yoloMode ? (
+              <ShieldAlert className='h-4 w-4 text-red-500 animate-pulse' />
+            ) : autoApprove ? (
+              <ShieldCog className='h-4 w-4 text-amber-500' />
+            ) : (
+              <ShieldCheck className='h-4 w-4 text-primary' />
+            )}
           </Button>
-        ) : (
-          <Button
-            type='button'
-            size='icon'
-            variant='ghost'
-            className='h-7 w-7 shrink-0 mt-0.5'
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={submit}
-            disabled={!text.trim() || session.sending || session.disabled}
-          >
-            <SendIcon className='h-4 w-4' />
-          </Button>
-        )}
-      </>
+          {session.waiting && session.stop ? (
+            <Button
+              type='button'
+              size='icon'
+              variant='ghost'
+              className='h-7 w-7 shrink-0 mt-0.5'
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={session.stop}
+              title='Stop'
+            >
+              <Square className='h-4 w-4' />
+            </Button>
+          ) : (
+            <Button
+              type='button'
+              size='icon'
+              variant='ghost'
+              className='h-7 w-7 shrink-0 mt-0.5'
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={submit}
+              disabled={!text.trim() || session.sending || session.disabled}
+            >
+              <SendIcon className='h-4 w-4' />
+            </Button>
+          )}
+        </div>
+      </div>
       // eslint-disable-next-line react-hooks/exhaustive-deps
     ),
     [
@@ -936,6 +981,8 @@ export function AgentChatInput({
       autoFocus,
       autoApprove,
       voiceControls,
+      queued,
+      onRemoveQueued,
     ],
   )
 
