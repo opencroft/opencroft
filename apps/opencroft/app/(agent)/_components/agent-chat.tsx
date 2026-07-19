@@ -14,6 +14,7 @@ import {
   Square,
 } from 'lucide-react'
 import {
+  type ComponentType,
   type FormEvent,
   type KeyboardEvent,
   useCallback,
@@ -34,6 +35,8 @@ import { Textarea } from 'ui/textarea'
 import type { ChatMessage } from '@/app/(agent)/_lib/messages'
 import { getAutoApprove, setAutoApprove } from '@/app/(approvals)/_server/actions'
 import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
+import { loadAllExtensions } from '@/app/(extension-runtime)/_client/loader'
+import { useProvided } from '@/app/(extension-runtime)/_client/provides'
 import { GenericToolView } from '@/components/tool-views/builtin-views'
 import { lookupToolView } from '@/components/tool-views/registry'
 import { cn } from '@/lib/utils'
@@ -576,6 +579,9 @@ export function ThinkingIndicator() {
 
 interface AgentChatInputProps {
   session: AgentSession
+  /** Active agent's node id. When set, extension-provided input controls (e.g.
+   *  voice) declared for the `agent-chat-input-controls` point are rendered. */
+  agentNodeId?: string
   placeholder?: string
   autoFocus?: boolean
   onFocus?: () => void
@@ -592,6 +598,7 @@ interface AgentChatInputProps {
 
 export function AgentChatInput({
   session,
+  agentNodeId,
   placeholder,
   autoFocus,
   onFocus,
@@ -621,6 +628,34 @@ export function AgentChatInput({
       textareaRef.current?.focus()
     }
   }, [session.draft])
+
+  // Extension-provided input controls (e.g. voice) get a stable context: insert
+  // transcribed text into the composer, send a message, or read the live reply
+  // stream — all via stable refs so the memoized command bar below doesn't churn.
+  const insertText = useCallback((piece: string) => {
+    const value = piece.trim()
+    if (value) {
+      setText((prev) => (prev ? `${prev} ${value}` : value))
+    }
+  }, [])
+  const sendRef = useRef(session.send)
+  sendRef.current = session.send
+  const messagesRef = useRef(session.messages)
+  messagesRef.current = session.messages
+  const sendMessage = useCallback((value: string) => sendRef.current(value), [])
+  const getMessages = useCallback(() => messagesRef.current, [])
+  const voiceControls = useMemo(
+    () =>
+      agentNodeId ? (
+        <AgentChatInputControls
+          agentNodeId={agentNodeId}
+          insertText={insertText}
+          send={sendMessage}
+          getMessages={getMessages}
+        />
+      ) : null,
+    [agentNodeId, insertText, sendMessage, getMessages],
+  )
 
   const toggleAutoApprove = async () => {
     const next = await setAutoApprove({ data: !autoApprove })
@@ -682,6 +717,7 @@ export function AgentChatInput({
           autoFocus={autoFocus}
           className='min-h-8 max-h-60 border-0 shadow-none focus-visible:ring-0 focus-visible:border-0 bg-transparent resize-none py-1.5'
         />
+        {voiceControls}
         <Button
           type='button'
           size='icon'
@@ -745,12 +781,46 @@ export function AgentChatInput({
       inputPlaceholder,
       autoFocus,
       autoApprove,
+      voiceControls,
     ],
   )
 
   useOverlay({ menu: focusMenu ?? null, bar: barNode })
 
   return null
+}
+
+// ── Extension-provided chat-input controls (e.g. voice) ──────────────────────
+// Core owns only the injection point and this contract. The actual controls
+// (mic capture, TTS playback) live in an extension that declares
+// `provides: { 'agent-chat-input-controls': [{ id, component }] }` and resolves
+// the agent's ASR/TTS config server-side from `agentNodeId`. Core never
+// references any specific extension.
+export interface AgentVoiceControlProps {
+  /** The active agent's node id; the control resolves its ASR/TTS config from it. */
+  agentNodeId: string
+  /** Append transcribed text to the composer draft. */
+  insertText: (text: string) => void
+  /** Send a message as the user. */
+  send: (text: string) => void
+  /** Read the live message list (e.g. to speak the latest reply). */
+  getMessages: () => ChatMessage[]
+}
+
+export interface AgentChatInputControl {
+  id: string
+  component: ComponentType<AgentVoiceControlProps>
+}
+
+function AgentChatInputControls(props: AgentVoiceControlProps) {
+  const { items } = useProvided<AgentChatInputControl>('agent-chat-input-controls', loadAllExtensions)
+  return (
+    <>
+      {items.map((control) => (
+        <control.component key={control.id} {...props} />
+      ))}
+    </>
+  )
 }
 
 function stripOpencroftTags(text: string): string {

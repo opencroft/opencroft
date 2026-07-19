@@ -54,6 +54,7 @@ interface HostProps {
 
 function ChatHost({
   session,
+  agentNodeId,
   activeAgent,
   createButton,
   focused,
@@ -71,6 +72,7 @@ function ChatHost({
   onOpenSessions,
 }: {
   session: AgentSession
+  agentNodeId?: string
   activeAgent?: AgentMeta
   createButton: ReactNode
   focused: boolean
@@ -131,6 +133,7 @@ function ChatHost({
       {queued && queued.length > 0 && onRemoveQueued && <QueuedMessages items={queued} onRemove={onRemoveQueued} />}
       <AgentChatInput
         session={session}
+        agentNodeId={agentNodeId}
         placeholder='Ask AI...'
         onFocus={() => onFocusChange(true)}
         leadingBarContent={createButton}
@@ -312,6 +315,7 @@ export function LocalAgentHost({
   return (
     <ChatHost
       session={acp.session}
+      agentNodeId={source.agentNodeId}
       activeAgent={activeAgent}
       createButton={createButton}
       focused={focused}
