@@ -336,7 +336,7 @@ export default defineExtension({
           component: AgentProfileTab as unknown as never,
         },
         {
-          id: 'speech',
+          id: 'tts',
           label: 'TTS',
           icon: 'Speech',
           fullHeight: true,
