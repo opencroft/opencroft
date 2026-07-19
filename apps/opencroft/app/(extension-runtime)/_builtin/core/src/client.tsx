@@ -337,14 +337,14 @@ export default defineExtension({
         },
         {
           id: 'speech',
-          label: 'Speech',
+          label: 'TTS',
           icon: 'Speech',
           fullHeight: true,
           component: AgentSpeechTab as unknown as never,
         },
         {
           id: 'asr',
-          label: 'Speech Recognition',
+          label: 'ASR',
           icon: 'Ear',
           fullHeight: true,
           component: AgentSpeechRecognitionTab as unknown as never,
