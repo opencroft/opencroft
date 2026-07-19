@@ -86,19 +86,29 @@ function useStickToBottom(resetKey: string, contentKey: number) {
     [],
   )
 
-  const scrollToBottom = useCallback(() => {
-    const el = viewport()
-    if (!el) {
-      return
-    }
+  // Marks a scrollTop mutation as "ours" for two animation frames so the scroll
+  // listener below doesn't read it as the user scrolling — shared by the
+  // bottom-follow logic here and by the windowed-history scroll-position
+  // restore in AgentChat (which also mutates scrollTop programmatically).
+  const runProgrammatic = useCallback((mutate: () => void) => {
     programmatic.current = true
-    el.scrollTop = el.scrollHeight
+    mutate()
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         programmatic.current = false
       })
     })
-  }, [viewport])
+  }, [])
+
+  const scrollToBottom = useCallback(() => {
+    const el = viewport()
+    if (!el) {
+      return
+    }
+    runProgrammatic(() => {
+      el.scrollTop = el.scrollHeight
+    })
+  }, [viewport, runProgrammatic])
 
   useEffect(() => {
     const el = viewport()
@@ -148,11 +158,31 @@ function useStickToBottom(resetKey: string, contentKey: number) {
     scrollToBottom()
   }, [resetKey, scrollToBottom])
 
-  return rootRef
+  return {
+    rootRef,
+    viewport,
+    runProgrammatic,
+    // Read, not subscribed to — callers poll this at the moment they need it
+    // (e.g. deciding whether to shrink the render window) rather than
+    // re-rendering on every pin/unpin.
+    isPinned: useCallback(() => pinned.current, []),
+  }
 }
+
+// Render window over `blocks`: only the last `visibleCount` are mounted, so a
+// long history doesn't pay for thousands of ReactMarkdown/tool-view renders
+// (and the ResizeObserver-driven scroll-to-bottom in useStickToBottom doesn't
+// visually scroll through all of them) just to open at the end. Scrolling the
+// sentinel above the window into view grows it; staying pinned while new live
+// content arrives shrinks it back, so old DOM naturally unloads.
+const INITIAL_VISIBLE_BLOCKS = 30
+const LOAD_MORE_STEP = 30
 
 export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultExpanded }: AgentChatProps) {
   const displayName = agentName ?? session.botName
+  // Computed over the FULL message list, not the visible window: turn indices
+  // (for edit/fork) must stay correct regardless of how much is rendered, and
+  // folding/building is cheap next to the cost of actually rendering blocks.
   const blocks = useMemo(() => buildBlocks(session.messages), [session.messages])
   // 0-based user-turn index per user block, so "fork from here" rewinds to it.
   const turnByBlock = useMemo(() => {
@@ -167,11 +197,90 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
     return map
   }, [blocks])
   const edit = session.canFork === true ? session.editMessage : undefined
-  const rootRef = useStickToBottom(session.sessionKey, blocks.length)
+  const { rootRef, viewport, runProgrammatic, isPinned } = useStickToBottom(session.sessionKey, blocks.length)
   const detailsCollapsedRef = useRef(!defaultExpanded)
   const onDetailsCollapseChange = useCallback((collapsed: boolean) => {
     detailsCollapsedRef.current = collapsed
   }, [])
+
+  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_BLOCKS)
+  // A new session's window starts fresh — otherwise a previous chat's grown
+  // (or shrunk) count would carry over and render the wrong slice for a beat.
+  useEffect(() => {
+    setVisibleCount(INITIAL_VISIBLE_BLOCKS)
+  }, [session.sessionKey])
+
+  const startIndex = Math.max(0, blocks.length - visibleCount)
+  const hasOlder = startIndex > 0
+  const visibleBlocks = blocks.slice(startIndex)
+
+  // Set by loadOlder() just before growing the window; consumed by the layout
+  // effect below once the older blocks have actually been added to the DOM.
+  // Left null for any other visibleCount change (e.g. the pinned-shrink path),
+  // which is how that path avoids fighting over scrollTop with this one.
+  const pendingScrollRestoreRef = useRef<number | null>(null)
+
+  const loadOlder = useCallback(() => {
+    const el = viewport()
+    if (el) {
+      // Record how far the bottom of the viewport is from the current scroll
+      // position — after older blocks are prepended above it, restoring to the
+      // same distance from the (now taller) scrollHeight keeps the reader's
+      // place instead of jumping them to the top of the newly loaded chunk.
+      pendingScrollRestoreRef.current = el.scrollHeight - el.scrollTop
+    }
+    setVisibleCount((prev) => Math.min(blocks.length, prev + LOAD_MORE_STEP))
+  }, [viewport, blocks.length])
+
+  useLayoutEffect(() => {
+    const delta = pendingScrollRestoreRef.current
+    if (delta === null) {
+      return
+    }
+    pendingScrollRestoreRef.current = null
+    const el = viewport()
+    if (!el) {
+      return
+    }
+    // Programmatic: without this guard, moving scrollTop away from the top
+    // would read as the user scrolling and could unpin them from the bottom.
+    runProgrammatic(() => {
+      el.scrollTop = el.scrollHeight - delta
+    })
+  }, [visibleCount, viewport, runProgrammatic])
+
+  const sentinelRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!hasOlder) {
+      return
+    }
+    const el = sentinelRef.current
+    const root = viewport()
+    if (!el || !root) {
+      return
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          loadOlder()
+        }
+      },
+      { root },
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [hasOlder, viewport, loadOlder])
+
+  // Recycle: while pinned at the bottom, a live chat growing past the initial
+  // window doesn't need everything it's grown to keep — shrink back down so old
+  // blocks unmount, same as if the chat had just been opened. Never runs while
+  // the user has scrolled up to read history (isPinned() false), which would
+  // otherwise yank content out from under them.
+  useEffect(() => {
+    if (isPinned() && visibleCount > INITIAL_VISIBLE_BLOCKS) {
+      setVisibleCount(INITIAL_VISIBLE_BLOCKS)
+    }
+  }, [blocks.length, isPinned, visibleCount])
 
   return (
     <Flex ref={rootRef} justify='end' className='min-h-full min-w-0 gap-3 px-4 py-4'>
@@ -180,26 +289,37 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
       ) : session.messages.length === 0 ? (
         <div className='text-sm text-muted-foreground'>{emptyText ?? 'no messages yet'}</div>
       ) : (
-        blocks.map((b, i) =>
-          b.kind === 'user' ? (
-            <UserMessage
-              key={i}
-              text={b.text}
-              editDisabled={session.waiting}
-              onEdit={edit ? () => edit(turnByBlock.get(i) ?? 0, b.text) : undefined}
-            />
-          ) : (
-            <Details
-              key={i}
-              items={b.items}
-              botName={displayName}
-              agentAvatar={agentAvatar}
-              defaultCollapsed={detailsCollapsedRef.current}
-              onCollapseChange={onDetailsCollapseChange}
-              pending={i === blocks.length - 1 && session.waiting}
-            />
-          ),
-        )
+        <>
+          {hasOlder && (
+            <div ref={sentinelRef} className='py-1 text-center text-xs text-muted-foreground'>
+              · · ·
+            </div>
+          )}
+          {visibleBlocks.map((b, i) => {
+            // Original index into `blocks`, not the window — keeps React keys
+            // (and thus Details' per-block collapsed state) and turnByBlock
+            // lookups stable as the window grows or slides.
+            const index = startIndex + i
+            return b.kind === 'user' ? (
+              <UserMessage
+                key={index}
+                text={b.text}
+                editDisabled={session.waiting}
+                onEdit={edit ? () => edit(turnByBlock.get(index) ?? 0, b.text) : undefined}
+              />
+            ) : (
+              <Details
+                key={index}
+                items={b.items}
+                botName={displayName}
+                agentAvatar={agentAvatar}
+                defaultCollapsed={detailsCollapsedRef.current}
+                onCollapseChange={onDetailsCollapseChange}
+                pending={index === blocks.length - 1 && session.waiting}
+              />
+            )
+          })}
+        </>
       )}
       {session.waiting && <ThinkingIndicator />}
       <AgentChatStatusIndicators />

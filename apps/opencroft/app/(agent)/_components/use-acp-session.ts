@@ -4,6 +4,7 @@ import type { ChatEvent, PermissionOpt } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 
 import type { AgentSession } from '@/app/(agent)/_components/agent-chat'
+import { type AcpStreamEvent, HISTORY_END_KIND } from '@/app/(agent)/_lib/acp-stream'
 import type { ChatMessage, ChatPart } from '@/app/(agent)/_lib/messages'
 import { cancelLocal, ensureLocalSession, forkLocal, promptLocal, respondLocal } from '@/app/(agent)/_server/acp'
 
@@ -192,6 +193,12 @@ export function useAcpSession(
   // can target the live turn instead of routing through this queue.
   const [queue, setQueue] = useState<QueuedMessage[]>([])
   const queueIdRef = useRef(0)
+  // Historical events accumulate here while a subscribe's synchronous replay is
+  // in flight (see acp-stream.ts), committed to `events` in one `setEvents` call
+  // when the history_end marker arrives — so a long reopened session paints once
+  // instead of one React state update (and one fold() re-run) per stored event.
+  const historyBufferRef = useRef<ChatEvent[]>([])
+  const replayingHistoryRef = useRef(true)
   // Read inside callbacks/effects to avoid stale closures.
   const waitingRef = useRef(false)
   const isFirstRef = useRef(true)
@@ -237,15 +244,28 @@ export function useAcpSession(
       return
     }
     const eventSource = new EventSource(`/api/acp/stream?sessionId=${encodeURIComponent(sessionId)}`)
-    // subscribe replays the session's full history on connect, so reset on each
-    // (re)connection to avoid duplicating it — and to cleanly swap in a fork's
-    // rewound transcript when the session id changes.
+    // subscribe replays the session's full history on every (re)connect — including
+    // native EventSource auto-reconnects and a fork's sessionId swap — so onopen
+    // re-enters buffering mode each time: historical events queue in the ref below
+    // instead of hitting setEvents, and are only committed (replacing, not
+    // appending, to cleanly swap in a fork's rewound transcript) once history_end
+    // confirms the replay is done.
     eventSource.onopen = () => {
-      setEvents([])
-      setLoading(false)
+      historyBufferRef.current = []
+      replayingHistoryRef.current = true
     }
     eventSource.onmessage = (e) => {
-      const event = JSON.parse(e.data) as ChatEvent
+      const event = JSON.parse(e.data) as AcpStreamEvent
+      if (event.kind === HISTORY_END_KIND) {
+        replayingHistoryRef.current = false
+        setEvents(historyBufferRef.current)
+        setLoading(false)
+        return
+      }
+      if (replayingHistoryRef.current) {
+        historyBufferRef.current.push(event)
+        return
+      }
       setEvents((prev) => [...prev, event])
       if (event.kind === 'turn_end' || event.kind === 'error') {
         setLocalWaiting(false)
