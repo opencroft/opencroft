@@ -215,6 +215,21 @@ export function useAcpSession(
   const replayingHistoryRef = useRef(true)
   // Read inside callbacks/effects to avoid stale closures.
   const isFirstRef = useRef(true)
+  // Latched the moment deliver() hands off any message for this tab source.
+  // Folded state (messages/queue) lags the server by an SSE round trip, so two
+  // quick sends could otherwise BOTH see an empty transcript and both claim
+  // "first" — attaching the title request twice and re-titling the chat on the
+  // second reply. The latch closes that in-flight window synchronously; the
+  // folded terms still cover the reopened-session case (history exists while
+  // the latch is fresh). Reset only when the tab source changes — a fork's
+  // sessionId swap must not clear it mid-conversation.
+  const deliveredOnceRef = useRef(false)
+  // Outgoing prompts are serialized through this chain. The server assigns
+  // queue/turn order by request arrival, so two concurrent promptLocal calls
+  // could otherwise arrive reordered on the network and invert the messages.
+  // Each link swallows its own failure so one failed send never blocks (or
+  // reorders) the sends behind it.
+  const sendChainRef = useRef<Promise<void>>(Promise.resolve())
   // Armed only when we deliver a live first message (which carries the title
   // request). This keeps auto-titling off history replay and later turns: a
   // remounted hook starts disarmed, so reconnecting a session never re-titles.
@@ -232,6 +247,8 @@ export function useAcpSession(
     setLoading(true)
     setLocalWaiting(false)
     setCanFork(false)
+    deliveredOnceRef.current = false
+    sendChainRef.current = Promise.resolve()
     ensureLocalSession({ data: { agentNodeId, jobNodeId, tabKey } })
       .then((result) => {
         if (!cancelled) {
@@ -293,8 +310,10 @@ export function useAcpSession(
   // runs client-side at send time — before the server decides queue-vs-deliver.
   // A queued-but-undelivered first message keeps `messages` empty until its
   // turn starts, so a message typed behind it must NOT also claim first: it's
-  // first only when nothing has been delivered AND nothing is queued ahead.
-  isFirstRef.current = folded.messages.length === 0 && folded.queue.length === 0
+  // first only when nothing has been delivered, nothing is queued ahead, AND
+  // nothing has been handed off in this mount (the latch covers the window
+  // before the server's user/queue events echo back over SSE).
+  isFirstRef.current = folded.messages.length === 0 && folded.queue.length === 0 && !deliveredOnceRef.current
 
   // Pull the self-reported title out of the first reply and apply it once. Gated
   // on titleRequestedRef so it only fires for the live first turn — never on the
@@ -322,26 +341,40 @@ export function useAcpSession(
   // The single seam where a message leaves the client (applies the outgoing
   // transform, so it runs for every message — including ones the server will
   // queue rather than deliver right away). The server owns the queue-vs-prompt
-  // decision; `front` asks it to queue ahead of anything already held.
+  // decision, but NOT the order of concurrent requests — it queues by arrival —
+  // so requests are chained here to reach it in send order. `front` asks the
+  // server to queue ahead of anything already held.
   const deliver = useCallback(
     (value: string, opts?: { front?: boolean }) => {
       if (!sessionId) {
         return
       }
       const transform = transformRef.current
-      const isFirst = isFirstRef.current
+      // isFirstRef is a render-time snapshot; the live latch check covers a
+      // second deliver() landing before the next render.
+      const isFirst = isFirstRef.current && !deliveredOnceRef.current
+      deliveredOnceRef.current = true
+      // Transform at send time (not when the chain link runs): the chain
+      // preserves order, so "first" and the canvas context are decided the
+      // moment the user hit send.
       const text = transform ? transform(value, isFirst) : value
       if (isFirst) {
         titleRequestedRef.current = true
       }
       setLocalWaiting(true)
-      startSending(async () => {
+      const chained = sendChainRef.current.then(async () => {
         try {
           await promptLocal({ data: { sessionId, text, front: opts?.front } })
         } catch (error) {
           console.error('promptLocal failed', error)
           setLocalWaiting(false)
         }
+      })
+      sendChainRef.current = chained
+      // `sending` tracks the chain tail, so it stays set while earlier sends
+      // are still in flight ahead of this one.
+      startSending(async () => {
+        await chained
       })
     },
     [sessionId],
@@ -356,7 +389,8 @@ export function useAcpSession(
         return
       }
       // Always hand the message to the server: it delivers immediately when the
-      // session is idle and queues it when a turn is running.
+      // session is idle and queues it when a turn is running. deliver() chains
+      // the requests so rapid sends reach the server in send order.
       deliver(value)
     },
     [sessionId, deliver],
