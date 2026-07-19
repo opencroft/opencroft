@@ -173,8 +173,11 @@ function useStickToBottom(resetKey: string, contentKey: number) {
 // long history doesn't pay for thousands of ReactMarkdown/tool-view renders
 // (and the ResizeObserver-driven scroll-to-bottom in useStickToBottom doesn't
 // visually scroll through all of them) just to open at the end. Scrolling the
-// sentinel above the window into view grows it; staying pinned while new live
-// content arrives shrinks it back, so old DOM naturally unloads.
+// sentinel above the window into view grows it. The window's anchoring depends
+// on pin state: pinned at the bottom it slides with the conversation and
+// shrinks back to the initial size as new blocks arrive (recycling old DOM);
+// un-pinned (reading history) its start is frozen — appends grow it below —
+// so content never shifts under the reader.
 const INITIAL_VISIBLE_BLOCKS = 30
 const LOAD_MORE_STEP = 30
 
@@ -229,8 +232,13 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
       // place instead of jumping them to the top of the newly loaded chunk.
       pendingScrollRestoreRef.current = el.scrollHeight - el.scrollTop
     }
-    setVisibleCount((prev) => Math.min(blocks.length, prev + LOAD_MORE_STEP))
-  }, [viewport, blocks.length])
+    // No cap at blocks.length: startIndex already clamps at 0, an oversized
+    // count renders the same slice, and once everything is visible the sentinel
+    // unmounts so growth stops. Capping would put blocks.length in this
+    // callback's deps and rebuild the IntersectionObserver on every appended
+    // block for nothing.
+    setVisibleCount((prev) => prev + LOAD_MORE_STEP)
+  }, [viewport])
 
   useLayoutEffect(() => {
     const delta = pendingScrollRestoreRef.current
@@ -250,6 +258,14 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   }, [visibleCount, viewport, runProgrammatic])
 
   const sentinelRef = useRef<HTMLDivElement>(null)
+  // Whether the sentinel is currently in view, per the observer below. Read by
+  // the recycle effect: while the sentinel is visible, shrinking would put it
+  // right back in view and re-trigger loadOlder — an infinite grow/shrink loop
+  // whenever the whole window fits inside the viewport (short collapsed blocks,
+  // tall panel: nothing scrollable, so pinned AND sentinel-visible hold at
+  // once). Blocking the shrink instead lets an under-filled window grow until
+  // it fills the viewport and then rest there.
+  const sentinelVisibleRef = useRef(false)
   useEffect(() => {
     if (!hasOlder) {
       return
@@ -261,26 +277,42 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
     }
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting) {
+        sentinelVisibleRef.current = entries[0]?.isIntersecting ?? false
+        if (sentinelVisibleRef.current) {
           loadOlder()
         }
       },
       { root },
     )
     observer.observe(el)
-    return () => observer.disconnect()
+    return () => {
+      observer.disconnect()
+      // An unmounted (or about-to-be-reobserved) sentinel is not in view; a
+      // stale true here would block recycling indefinitely.
+      sentinelVisibleRef.current = false
+    }
   }, [hasOlder, viewport, loadOlder])
 
-  // Recycle: while pinned at the bottom, a live chat growing past the initial
-  // window doesn't need everything it's grown to keep — shrink back down so old
-  // blocks unmount, same as if the chat had just been opened. Never runs while
-  // the user has scrolled up to read history (isPinned() false), which would
-  // otherwise yank content out from under them.
+  // React to the conversation growing, per the window-anchoring rules above.
+  // Pinned: shrink a grown window back so old blocks unmount, same as if the
+  // chat had just been opened (guarded on the sentinel being out of view, see
+  // sentinelVisibleRef). Un-pinned: freeze startIndex by widening the window by
+  // exactly the number of appended blocks — otherwise the end-anchored slice
+  // would drop the top visible block on every append and yank the content the
+  // reader is on. The frozen window is recycled later, once the user re-pins
+  // and the next block arrives.
+  const prevBlockCountRef = useRef(blocks.length)
   useEffect(() => {
-    if (isPinned() && visibleCount > INITIAL_VISIBLE_BLOCKS) {
-      setVisibleCount(INITIAL_VISIBLE_BLOCKS)
+    const appended = blocks.length - prevBlockCountRef.current
+    prevBlockCountRef.current = blocks.length
+    if (isPinned()) {
+      if (!sentinelVisibleRef.current) {
+        setVisibleCount((prev) => Math.min(prev, INITIAL_VISIBLE_BLOCKS))
+      }
+    } else if (appended > 0) {
+      setVisibleCount((prev) => prev + appended)
     }
-  }, [blocks.length, isPinned, visibleCount])
+  }, [blocks.length, isPinned])
 
   return (
     <Flex ref={rootRef} justify='end' className='min-h-full min-w-0 gap-3 px-4 py-4'>
