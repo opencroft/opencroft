@@ -4,6 +4,7 @@ import { AgentInspector, AgentNode, AgentProfileTab } from './nodes/agent'
 import { AgentInstructionInspector, AgentInstructionNode } from './nodes/agent-instruction'
 import { AgentJobInspector, AgentJobNode } from './nodes/agent-job'
 import { AgentMcpTab } from './nodes/agent-mcp'
+import { AgentSpeechRecognitionTab } from './nodes/agent-asr'
 import { AgentSpeechTab } from './nodes/agent-speech'
 import { AgentSkillsTab } from './nodes/agent-skills'
 import { AGENT_TOOL_HANDLES, AgentToolInspector, AgentToolNode, agentToolExposeOutput } from './nodes/agent-tool'
@@ -340,6 +341,13 @@ export default defineExtension({
           icon: 'Speech',
           fullHeight: true,
           component: AgentSpeechTab as unknown as never,
+        },
+        {
+          id: 'asr',
+          label: 'Speech Recognition',
+          icon: 'Ear',
+          fullHeight: true,
+          component: AgentSpeechRecognitionTab as unknown as never,
         },
         { id: 'mcp', label: 'MCP', icon: 'Wrench', fullHeight: true, component: AgentMcpTab as unknown as never },
         {

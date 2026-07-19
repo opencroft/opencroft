@@ -49,6 +49,13 @@ export interface AgentData {
   pcmBitDepth?: 16 | 32
   trimStartSamples?: number
   trimEndSamples?: number
+  /** Speech-recognition profile (Speech Recognition tab): OpenAI-compatible
+   * transcription endpoint, read from the node's data by speech-to-text
+   * consumers. */
+  asrApiBase?: string
+  asrApiKey?: string
+  asrModel?: string
+  asrLanguage?: string
 }
 
 function readAsDataUrl(file: File): Promise<string> {
