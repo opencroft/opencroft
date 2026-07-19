@@ -1,4 +1,4 @@
-import { type React } from '@ext/host'
+import { invoke, React } from '@ext/host'
 import {
   Input,
   Label,
@@ -14,8 +14,22 @@ import {
 
 import type { AgentData } from './agent'
 
-// Suggested voices for OpenAI-compatible speech endpoints.
+const { useCallback, useEffect, useState } = React
+
+// Suggested voices for OpenAI-compatible speech endpoints that expose no
+// `/audio/voices` list of their own.
 const VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'onyx', 'nova', 'sage', 'shimmer']
+
+// What the endpoint supports, probed server-side from `<base>/audio/voices` and
+// its OpenAPI schema (see core `tts.capabilities`). Lets the tab offer the real
+// voice presets and only show / enable knobs the endpoint actually accepts.
+interface TtsCapabilities {
+  voices: string[]
+  supportsInstructions: boolean
+  supportsTemperature: boolean
+  supportsSeed: boolean
+  schemaKnown: boolean
+}
 
 // Speech (text-to-speech) profile of an agent: an OpenAI-compatible speech
 // endpoint plus output-format knobs. Consumers (e.g. audio nodes) read these
@@ -29,6 +43,30 @@ export function AgentSpeechTab({
   data: AgentData
   updateData: (p: Partial<AgentData>) => void
 }) {
+  const [caps, setCaps] = useState<TtsCapabilities | null>(null)
+
+  const loadCaps = useCallback(async () => {
+    if (!data.ttsApiBase?.startsWith('http')) {
+      setCaps(null)
+      return
+    }
+    try {
+      setCaps(await invoke<TtsCapabilities>('tts.capabilities', { baseUrl: data.ttsApiBase, apiKey: data.ttsApiKey }))
+    } catch {
+      setCaps(null)
+    }
+  }, [data.ttsApiBase, data.ttsApiKey])
+
+  // Refresh whenever the endpoint or key changes — voices and supported knobs
+  // are endpoint-specific.
+  useEffect(() => {
+    loadCaps()
+  }, [loadCaps])
+
+  const voices = caps?.voices ?? []
+  const voiceOptions = Array.from(new Set([...(data.voice ? [data.voice] : []), ...voices]))
+  const instructionsBlocked = Boolean(caps?.schemaKnown && !caps.supportsInstructions)
+
   return (
     <ScrollArea className='h-full'>
       <div className='flex flex-col gap-3 p-1'>
@@ -59,17 +97,34 @@ export function AgentSpeechTab({
         </div>
         <div className='flex flex-col gap-1'>
           <Label>Voice</Label>
-          <Input
-            value={data.voice ?? ''}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ voice: e.target.value })}
-            placeholder='Vivian'
-            list='agent-speech-voices'
-          />
-          <datalist id='agent-speech-voices'>
-            {VOICES.map((v) => (
-              <option key={v} value={v} />
-            ))}
-          </datalist>
+          {voices.length > 0 ? (
+            <Select value={data.voice ?? ''} onValueChange={(v: string) => updateData({ voice: v })}>
+              <SelectTrigger>
+                <SelectValue placeholder='Select a voice' />
+              </SelectTrigger>
+              <SelectContent>
+                {voiceOptions.map((v) => (
+                  <SelectItem key={v} value={v}>
+                    {v}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <>
+              <Input
+                value={data.voice ?? ''}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ voice: e.target.value })}
+                placeholder='Vivian'
+                list='agent-speech-voices'
+              />
+              <datalist id='agent-speech-voices'>
+                {VOICES.map((v) => (
+                  <option key={v} value={v} />
+                ))}
+              </datalist>
+            </>
+          )}
         </div>
         <div className='flex flex-col gap-1'>
           <Label>Speed</Label>
@@ -87,10 +142,44 @@ export function AgentSpeechTab({
           <Textarea
             value={data.ttsInstructions ?? ''}
             onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateData({ ttsInstructions: e.target.value })}
-            placeholder='Speak cheerfully, like a friendly radio host.'
+            placeholder={instructionsBlocked ? 'Not supported by this endpoint' : 'Speak cheerfully, like a friendly radio host.'}
             className='text-xs min-h-[60px]'
+            disabled={instructionsBlocked}
           />
+          {instructionsBlocked ? (
+            <span className='text-[10px] text-muted-foreground'>This endpoint does not accept voice instructions.</span>
+          ) : null}
         </div>
+        {caps?.supportsTemperature ? (
+          <div className='flex flex-col gap-1'>
+            <Label>Temperature</Label>
+            <Input
+              type='number'
+              step='0.05'
+              min='0'
+              max='2'
+              value={data.ttsTemperature ?? ''}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                updateData({ ttsTemperature: e.target.value === '' ? undefined : Number(e.target.value) })
+              }
+              placeholder='1.0'
+            />
+          </div>
+        ) : null}
+        {caps?.supportsSeed ? (
+          <div className='flex flex-col gap-1'>
+            <Label>Seed</Label>
+            <Input
+              type='number'
+              step='1'
+              value={data.ttsSeed ?? ''}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                updateData({ ttsSeed: e.target.value === '' ? undefined : Math.floor(Number(e.target.value)) })
+              }
+              placeholder='(random)'
+            />
+          </div>
+        ) : null}
         <div className='flex flex-col gap-1'>
           <Label>PCM Sample Rate (Hz)</Label>
           <Input

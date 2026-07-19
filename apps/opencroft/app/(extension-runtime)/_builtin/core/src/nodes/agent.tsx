@@ -45,6 +45,9 @@ export interface AgentData {
   voice?: string
   ttsSpeed?: number
   ttsInstructions?: string
+  /** Optional sampling knobs, shown only when the endpoint advertises them. */
+  ttsTemperature?: number
+  ttsSeed?: number
   pcmSampleRate?: number
   pcmBitDepth?: 16 | 32
   trimStartSamples?: number

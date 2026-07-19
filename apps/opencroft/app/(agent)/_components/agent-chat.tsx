@@ -202,6 +202,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
         )
       )}
       {session.waiting && <ThinkingIndicator />}
+      <AgentChatStatusIndicators />
     </Flex>
   )
 }
@@ -652,9 +653,10 @@ export function AgentChatInput({
           insertText={insertText}
           send={sendMessage}
           getMessages={getMessages}
+          streaming={session.waiting}
         />
       ) : null,
-    [agentNodeId, insertText, sendMessage, getMessages],
+    [agentNodeId, insertText, sendMessage, getMessages, session.waiting],
   )
 
   const toggleAutoApprove = async () => {
@@ -805,6 +807,8 @@ export interface AgentVoiceControlProps {
   send: (text: string) => void
   /** Read the live message list (e.g. to speak the latest reply). */
   getMessages: () => ChatMessage[]
+  /** True while the agent is generating a reply; flips false when the turn completes. */
+  streaming: boolean
 }
 
 export interface AgentChatInputControl {
@@ -818,6 +822,28 @@ function AgentChatInputControls(props: AgentVoiceControlProps) {
     <>
       {items.map((control) => (
         <control.component key={control.id} {...props} />
+      ))}
+    </>
+  )
+}
+
+// ── Extension-provided chat status indicators (e.g. voice visualizer) ─────────
+// Rendered at the foot of the message list, alongside the thinking indicator.
+// Each component mounts continuously and decides its own visibility (e.g. a TTS
+// playback visualizer that only appears while audio is playing). Same pattern as
+// the input controls above — core owns only the injection point, no extension is
+// referenced by name.
+export interface AgentChatStatusIndicator {
+  id: string
+  component: ComponentType
+}
+
+function AgentChatStatusIndicators() {
+  const { items } = useProvided<AgentChatStatusIndicator>('agent-chat-status-indicators', loadAllExtensions)
+  return (
+    <>
+      {items.map((indicator) => (
+        <indicator.component key={indicator.id} />
       ))}
     </>
   )

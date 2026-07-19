@@ -79,6 +79,94 @@ async function listModels(params: { baseUrl?: string; apiKeySecret?: string }): 
     .sort()
 }
 
+// TTS capability probe for the agent Speech tab. Reads the endpoint's voice
+// presets (`<baseUrl>/audio/voices`) and, when the server exposes an OpenAPI
+// schema (FastAPI-style, e.g. VibeVoice), which optional synthesis params its
+// `/audio/speech` accepts — so the UI can offer the discovered voices and show
+// or disable instructions / temperature / seed to match the endpoint.
+interface TtsCapabilities {
+  voices: string[]
+  supportsInstructions: boolean
+  supportsTemperature: boolean
+  supportsSeed: boolean
+  schemaKnown: boolean
+}
+
+interface OpenApiSpec {
+  paths?: Record<string, { post?: { requestBody?: { content?: Record<string, { schema?: { $ref?: string } }> } } }>
+  components?: { schemas?: Record<string, { properties?: Record<string, unknown> }> }
+}
+
+function speechRequestProps(spec: OpenApiSpec): Record<string, unknown> | null {
+  const paths = spec.paths ?? {}
+  const key = Object.keys(paths).find((k) => /audio\/speech\/?$/.test(k))
+  if (!key) {
+    return null
+  }
+  const ref = paths[key]?.post?.requestBody?.content?.['application/json']?.schema?.$ref
+  if (!ref) {
+    return null
+  }
+  const name = ref.split('/').pop()
+  return (name ? spec.components?.schemas?.[name]?.properties : null) ?? null
+}
+
+async function ttsCapabilities(params: { baseUrl?: string; apiKey?: string }): Promise<TtsCapabilities> {
+  const base = (params.baseUrl ?? '').replace(/\/+$/, '')
+  const caps: TtsCapabilities = {
+    voices: [],
+    supportsInstructions: false,
+    supportsTemperature: false,
+    supportsSeed: false,
+    schemaKnown: false,
+  }
+  if (!base) {
+    return caps
+  }
+  const headers: Record<string, string> = {}
+  if (params.apiKey?.trim()) {
+    headers.Authorization = `Bearer ${params.apiKey}`
+  }
+
+  try {
+    const res = await fetch(`${base}/audio/voices`, { headers })
+    if (res.ok) {
+      const body = (await res.json()) as { data?: { id?: string }[] }
+      caps.voices = (body.data ?? []).map((v) => v.id).filter((id): id is string => Boolean(id))
+    }
+  } catch {
+    // no voices endpoint — leave the list empty
+  }
+
+  // OpenAPI usually lives at the server root, not under the /v1 base path.
+  const candidates: string[] = []
+  try {
+    candidates.push(`${new URL(base).origin}/openapi.json`)
+  } catch {
+    // base is not an absolute URL
+  }
+  candidates.push(`${base}/openapi.json`)
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url, { headers })
+      if (!res.ok) {
+        continue
+      }
+      const props = speechRequestProps((await res.json()) as OpenApiSpec)
+      if (props) {
+        caps.schemaKnown = true
+        caps.supportsInstructions = 'instructions' in props
+        caps.supportsTemperature = 'temperature' in props
+        caps.supportsSeed = 'seed' in props
+        break
+      }
+    } catch {
+      // not an OpenAPI endpoint — capabilities stay unknown
+    }
+  }
+  return caps
+}
+
 const isWindows = host.os.platform() === 'win32'
 
 // ═══════════════════════════════════════════════════════════════════
@@ -315,6 +403,7 @@ export const actions = {
   'openai.chat': (params: OpenAIChatParams) => openaiChat(params),
   'agent.listAgentCatalog': () => listAgentCatalog(),
   'agent.listModels': (params: { baseUrl?: string; apiKeySecret?: string }) => listModels(params),
+  'tts.capabilities': (params: { baseUrl?: string; apiKey?: string }) => ttsCapabilities(params),
 }
 
 // ═══════════════════════════════════════════════════════════════════
