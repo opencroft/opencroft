@@ -6,40 +6,48 @@ import type { AgentConnection } from './connection'
 import { buildSpawnConfig } from './resolve'
 import type { AgentSelection, ChatEvent } from './types'
 
-// ── prompt queue / turn guard ──────────────────────────────────────────────
+// ── prompt queue / turn guard / mid-turn input ─────────────────────────────
 //
 // The engine keys live connections by their spawn config and reuses a seeded
 // entry instead of spawning a subprocess — the seam these tests use: a mock
 // connection is registered under the selection's key, and its prompt() hands
-// back a promise the test resolves/rejects to end turns by hand. The adapter is
-// one that opts out of per-session MCP servers, so createSession never starts
-// the built-in MCP server.
+// back a promise the test resolves/rejects to end turns by hand. Overlapping
+// prompts (mid-turn input) each get their own deferred; endTurn/failTurn
+// settle a specific one by index, defaulting to the oldest. The default
+// adapter opts out of per-session MCP servers, so createSession never starts
+// the built-in MCP server; steering tests use an adapter that supports
+// mid-turn input (and clean up with reset() to close the MCP server that
+// adapter's tool support brings up).
 
 interface AcpStoreShape {
   connections: Map<string, unknown>
 }
 
+interface TurnDeferred {
+  resolve: (value: { stopReason: string }) => void
+  reject: (error: Error) => void
+}
+
 let counter = 0
 
-async function setup() {
+async function setup(adapterId: 'openclaw' | 'claude' = 'openclaw') {
   counter += 1
   const selection: AgentSelection = {
     providerId: 'test-provider',
-    adapterId: 'openclaw',
+    adapterId,
     model: 'test-model',
     apiKey: '',
     cwd: `/tmp/agent-client-test-${counter}`,
   }
   const promptCalls: string[] = []
-  let resolveTurn: ((value: { stopReason: string }) => void) | undefined
-  let rejectTurn: ((error: Error) => void) | undefined
+  const turns: TurnDeferred[] = []
+  const takeTurn = (index?: number) => (index === undefined ? turns.shift() : turns.splice(index, 1)[0])
   const connection = {
     newSession: async () => ({ sessionId: `test-session-${counter}` }),
     prompt: (params: { prompt: Array<{ text: string }> }) => {
       promptCalls.push(params.prompt[0].text)
       return new Promise((resolve, reject) => {
-        resolveTurn = resolve
-        rejectTurn = reject
+        turns.push({ resolve, reject })
       })
     },
     cancel: async () => {},
@@ -61,8 +69,8 @@ async function setup() {
     sessionId: meta.id,
     events,
     promptCalls,
-    endTurn: () => resolveTurn?.({ stopReason: 'end_turn' }),
-    failTurn: (message: string) => rejectTurn?.(new Error(message)),
+    endTurn: (index?: number) => takeTurn(index)?.resolve({ stopReason: 'end_turn' }),
+    failTurn: (message: string, index?: number) => takeTurn(index)?.reject(new Error(message)),
   }
 }
 
@@ -159,4 +167,48 @@ test('a failed turn emits an error and still drains the queue', async () => {
   const secondUser = h.events.findIndex((event) => event.kind === 'user' && event.text === 'second')
   assert.ok(secondUser > errorIndex, 'drain must follow the terminal error event')
   h.client.deleteSession(h.sessionId)
+})
+
+// ── mid-turn input (steering adapters) ─────────────────────────────────────
+
+test('a mid-turn prompt on a steering adapter goes straight through, unqueued', async () => {
+  const h = await setup('claude')
+  await h.client.prompt(h.sessionId, 'first')
+  await h.client.prompt(h.sessionId, 'steer')
+  // Both prompts reached the connection while the first turn was still open.
+  assert.deepEqual(h.promptCalls, ['first', 'steer'])
+  assert.equal(h.events.filter((event) => event.kind === 'user').length, 2)
+  assert.equal(queueSnapshots(h.events).length, 0)
+  h.endTurn()
+  h.endTurn()
+  await settle()
+  await h.client.reset()
+})
+
+test('overlapping prompts emit turn_end only on the last settlement', async () => {
+  const h = await setup('claude')
+  await h.client.prompt(h.sessionId, 'first')
+  await h.client.prompt(h.sessionId, 'steer')
+  h.endTurn()
+  await settle()
+  // One of two prompts settled — the turn is still running.
+  assert.equal(h.events.filter((event) => event.kind === 'turn_end').length, 0)
+  h.endTurn()
+  await settle()
+  assert.equal(h.events.filter((event) => event.kind === 'turn_end').length, 1)
+  await h.client.reset()
+})
+
+test('an intermediate failure surfaces immediately; turn_end still waits for the last settlement', async () => {
+  const h = await setup('claude')
+  await h.client.prompt(h.sessionId, 'first')
+  await h.client.prompt(h.sessionId, 'steer')
+  h.failTurn('boom')
+  await settle()
+  assert.equal(h.events.filter((event) => event.kind === 'error').length, 1)
+  assert.equal(h.events.filter((event) => event.kind === 'turn_end').length, 0)
+  h.endTurn()
+  await settle()
+  assert.equal(h.events.filter((event) => event.kind === 'turn_end').length, 1)
+  await h.client.reset()
 })

@@ -97,11 +97,12 @@ interface SessionState {
   modes: SessionModes | null
   // Effective per-tool / per-skill permissions; undefined = unrestricted.
   permissions?: ResolvedPermissions
-  // True from the moment a prompt is handed to the agent until its terminal
-  // event (turn_end or error) is emitted. ACP allows one prompt-turn at a time
-  // per session, and this flag is the single source of truth for that guard —
-  // every caller of prompt() (chat UI, server-side senders) is serialized here.
-  turnActive: boolean
+  // Number of prompt promises currently in flight for this session — the
+  // single source of truth for the turn guard every caller of prompt() goes
+  // through. Sessions without mid-turn input only ever see 0/1 (one
+  // prompt-turn at a time, the ACP default); a steering-capable agent can hold
+  // several, and the turn is over only when the count returns to 0.
+  activeTurns: number
   // Prompts received while a turn was active, delivered FIFO as turns end.
   // Every change is published as a 'queue' snapshot event.
   queue: QueuedPrompt[]
@@ -505,6 +506,15 @@ function supportsTools(selection: AgentSelection): boolean {
   return findAdapter(selection.adapterId)?.supportsTools !== false
 }
 
+// Whether this agent accepts a prompt while a turn is running, feeding it into
+// the live turn as streaming input ("steering"). Declared per adapter — ACP
+// has no capability for it — and off by default, in which case the engine
+// queues mid-turn prompts and delivers them as turns end. Exported so hosts
+// can adapt their turn-control UX to the same single flag.
+export function supportsMidTurnInput(selection: AgentSelection): boolean {
+  return findAdapter(selection.adapterId)?.supportsMidTurnInput === true
+}
+
 // Forward the host's external session key to bridges that route by their own
 // session key (e.g. OpenClaw's ACP bridge → Gateway). ACP agents that don't
 // recognize `_meta.sessionKey` ignore it, so this stays harness-agnostic.
@@ -706,25 +716,25 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     emit(sessionId, { kind: 'queue', items: [...queue] })
   }
 
-  // Hand one prompt-turn to the agent. The turn guard is taken synchronously
-  // (before any await), so a concurrent prompt() arriving in the same tick sees
-  // turnActive and queues instead of starting a second turn. The guard is
-  // released — and the next queued prompt delivered — only by finishTurn, after
-  // the turn's terminal event (turn_end or error) has been emitted.
+  // Hand one prompt to the agent. The in-flight counter is incremented
+  // synchronously (before any await), so a concurrent prompt() arriving in the
+  // same tick sees the active turn and queues (or steers) instead of racing
+  // past the guard. The counter is released — and the next queued prompt
+  // delivered — only by settleTurn, once this prompt's promise settles.
   async function deliverPrompt(sessionId: string, text: string): Promise<void> {
     const session = store.sessions.get(sessionId)
     if (!session) {
       return
     }
-    session.turnActive = true
+    session.activeTurns += 1
     let connection: AgentConnection
     try {
       connection = await connectionForSession(sessionId)
     } catch (error) {
       // No turn ever started (e.g. the harness failed to spawn) — release the
-      // guard and drain, so queued prompts aren't stranded behind the failure;
-      // each failed delivery surfaces its own error event.
-      finishTurn(sessionId)
+      // counter and drain, so queued prompts aren't stranded behind the
+      // failure; each failed delivery surfaces its own error event.
+      settleTurn(sessionId, {})
       throw error
     }
     store.lastSessionId = sessionId
@@ -733,29 +743,41 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       entry.lastSessionId = sessionId
     }
     emit(sessionId, { kind: 'user', text })
-    void connection
-      .prompt({ sessionId, prompt: [{ type: 'text', text }] })
-      .then((response) =>
-        emit(sessionId, {
-          kind: 'turn_end',
-          stopReason: response.stopReason,
-        }),
-      )
-      .catch((error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }))
-      // Both arms end here, so cancelled and failed turns drain the queue just
-      // like clean ones — a queued message never waits behind a dead turn.
-      .then(() => finishTurn(sessionId))
+    void connection.prompt({ sessionId, prompt: [{ type: 'text', text }] }).then(
+      (response) => settleTurn(sessionId, { stopReason: response.stopReason }),
+      (error: unknown) => {
+        // Failures surface immediately, even while other prompts are still in
+        // flight on this session — visibility beats state purity, at the cost
+        // of a transient not-waiting blip in consumers that fold an error as
+        // the end of a turn. The terminal bookkeeping still waits for the last
+        // settlement (see settleTurn).
+        emit(sessionId, { kind: 'error', message: errorMessage(error) })
+        settleTurn(sessionId, {})
+      },
+    )
   }
 
-  // Release the turn guard and deliver the next queued prompt, if any. Queue
-  // depth is small (hand-typed messages), so the self-call chain stays shallow —
-  // each delivery runs a full agent turn before the next drain.
-  function finishTurn(sessionId: string): void {
+  // Bookkeeping for one settled prompt promise. With mid-turn input several
+  // prompts can overlap on one session, and only the LAST settlement ends the
+  // turn: it emits turn_end (with its own stopReason — intermediate
+  // stopReasons are dropped, they describe a turn that kept running) and
+  // drains the next queued prompt. A failed settlement has already emitted its
+  // error, so `stopReason` is absent and a failed final settlement just
+  // releases and drains — exactly the single-prompt error path of old. Queue
+  // depth is small (hand-typed messages), so the drain's self-call chain stays
+  // shallow: each delivery runs a full agent turn before the next drain.
+  function settleTurn(sessionId: string, outcome: { stopReason?: string }): void {
     const session = store.sessions.get(sessionId)
     if (!session) {
       return
     }
-    session.turnActive = false
+    session.activeTurns = Math.max(0, session.activeTurns - 1)
+    if (session.activeTurns > 0) {
+      return
+    }
+    if (outcome.stopReason !== undefined) {
+      emit(sessionId, { kind: 'turn_end', stopReason: outcome.stopReason })
+    }
     const next = session.queue?.shift()
     if (!next) {
       return
@@ -841,7 +863,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         subscribers: new Set(),
         modes: response.modes ? toSessionModes(response.modes) : null,
         permissions,
-        turnActive: false,
+        activeTurns: 0,
         queue: [],
       })
       if (response.modes) {
@@ -929,7 +951,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         subscribers: new Set(),
         modes: null,
         permissions,
-        turnActive: false,
+        activeTurns: 0,
         queue: [],
       })
       try {
@@ -1050,7 +1072,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         subscribers: new Set(),
         modes: response.modes ? toSessionModes(response.modes) : session.modes,
         permissions: session.permissions,
-        turnActive: false,
+        activeTurns: 0,
         queue: [],
       })
       return meta
@@ -1064,12 +1086,16 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // Session records that survived a dev hot-reload may predate the queue
       // fields (the store outlives createStore); backfill in place.
       session.queue ??= []
-      if (session.turnActive) {
-        // A turn is running and ACP takes one prompt-turn at a time — hold the
-        // message here (server-side, so it survives the client that typed it)
-        // and publish the snapshot. `front` puts it ahead of earlier queued
-        // messages, e.g. corrective guidance after a rejected permission that
-        // must reach the agent before anything else.
+      session.activeTurns ??= 0
+      // A running turn normally means the message must wait: ACP takes one
+      // prompt-turn at a time, so it's held here (server-side, surviving the
+      // client that typed it) and the snapshot published. `front` puts it
+      // ahead of earlier queued messages, e.g. corrective guidance after a
+      // rejected permission that must reach the agent before anything else.
+      // Steering-capable agents (see supportsMidTurnInput) skip the queue
+      // entirely: the prompt goes straight through and the live turn picks it
+      // up as streaming input.
+      if (session.activeTurns > 0 && !supportsMidTurnInput(session.selection)) {
         const item: QueuedPrompt = { id: randomUUID(), text }
         if (opts?.front) {
           session.queue.unshift(item)

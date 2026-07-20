@@ -197,6 +197,11 @@ export function useAcpSession(
   const [loading, setLoading] = useState(true)
   const [localWaiting, setLocalWaiting] = useState(false)
   const [canFork, setCanFork] = useState(false)
+  // Whether the tab's agent accepts mid-turn prompts as live-turn input
+  // (adapter-declared, resolved server-side). Steers the permission-rejection
+  // flow below; plain sends need no gating — the server already delivers
+  // instead of queueing for such agents.
+  const [canSteer, setCanSteer] = useState(false)
   const [draft, setDraft] = useState<{ text: string; key: number } | undefined>(undefined)
   const draftKey = useRef(0)
   const [sending, startSending] = useTransition()
@@ -247,6 +252,7 @@ export function useAcpSession(
     setLoading(true)
     setLocalWaiting(false)
     setCanFork(false)
+    setCanSteer(false)
     deliveredOnceRef.current = false
     sendChainRef.current = Promise.resolve()
     ensureLocalSession({ data: { agentNodeId, jobNodeId, tabKey } })
@@ -254,6 +260,7 @@ export function useAcpSession(
         if (!cancelled) {
           setSessionId(result.sessionId)
           setCanFork(result.canFork)
+          setCanSteer(result.canSteer)
         }
       })
       .catch((error) => {
@@ -452,9 +459,12 @@ export function useAcpSession(
     void respondLocal({ data: { type: 'ask', requestId, answer } })
   }, [])
 
-  // "Tell what to do different": ACP can't attach a reason to a rejection, so we
-  // reject the request, cancel the run, then send the guidance with `front` set
-  // — the server queues it ahead of anything else held for the session and
+  // "Tell what to do different": ACP can't attach a reason to a rejection, so
+  // the request is rejected and the typed guidance sent separately. On an
+  // agent that takes mid-turn input, the guidance simply streams into the
+  // live turn — the model course-corrects without losing the turn's progress.
+  // Otherwise the run is cancelled and the guidance sent with `front` set, so
+  // the server queues it ahead of anything else held for the session and
   // delivers it as soon as the interrupted turn ends.
   const respondPermissionText = useCallback(
     (requestId: string, text: string) => {
@@ -463,10 +473,14 @@ export function useAcpSession(
       if (!value || !sessionId) {
         return
       }
+      if (canSteer) {
+        deliver(value)
+        return
+      }
       void cancelLocal({ data: sessionId })
       deliver(value, { front: true })
     },
-    [sessionId, resolvePermission, deliver],
+    [sessionId, resolvePermission, deliver, canSteer],
   )
 
   const session = useMemo<AgentSession>(

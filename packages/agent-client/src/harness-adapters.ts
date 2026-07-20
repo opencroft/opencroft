@@ -17,6 +17,12 @@ export interface HarnessAdapter {
   // support). Defaults to true. Set false for agents whose ACP bridge rejects
   // per-session MCP servers (e.g. OpenClaw), so the client sends an empty list.
   supportsTools?: boolean
+  // Whether the agent accepts `session/prompt` while a turn is already running
+  // and feeds it into the live turn as streaming input ("steering"). This is
+  // NOT an ACP capability — the protocol declares none for it — so the flag
+  // encodes verified behavior of the specific bridge binary. Defaults to
+  // false, meaning the engine queues mid-turn prompts until the turn ends.
+  supportsMidTurnInput?: boolean
 }
 
 export const HARNESS_ADAPTERS: HarnessAdapter[] = [
@@ -43,6 +49,11 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     baseUrlEnv: 'ANTHROPIC_BASE_URL',
     keyEnv: 'ANTHROPIC_AUTH_TOKEN',
     modelEnv: 'ANTHROPIC_MODEL',
+    // The bridge enqueues an overlapping session/prompt onto the SDK's
+    // streaming input, so the live turn picks it up at the next step boundary
+    // (verified against claude-agent-acp v0.60.0; implementation-defined since
+    // the adapter spawns @latest).
+    supportsMidTurnInput: true,
   },
   {
     id: 'claude-subscription',
@@ -54,6 +65,8 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     // OAuth token (subscription), never a provider override.
     keyEnv: 'CLAUDE_CODE_OAUTH_TOKEN',
     modelEnv: 'ANTHROPIC_MODEL',
+    // Same bridge binary as 'claude' — see the note there.
+    supportsMidTurnInput: true,
     note: 'Auth with a Claude Pro/Max subscription: run `claude setup-token`, then paste the OAuth token as the API key secret.',
   },
   {

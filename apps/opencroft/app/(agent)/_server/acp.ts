@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { createServerFn } from '@tanstack/react-start'
+import { supportsMidTurnInput } from 'agent-client'
 import type { AgentSelection } from 'agent-client/types'
 
 import {
@@ -55,6 +56,9 @@ interface TabSession {
   id: string
   // Whether this tab's agent can fork its history (native harness only).
   canFork: boolean
+  // Whether this tab's agent accepts mid-turn prompts as live-turn input
+  // (adapter-declared; see agent-client's supportsMidTurnInput).
+  canSteer: boolean
 }
 
 // ACP sessions live only in agentClient's memory, so they don't survive a dev
@@ -63,7 +67,7 @@ interface TabSession {
 // and self-heals after a restart, without persisting fragile ids to the client.
 const globalRef = globalThis as typeof globalThis & {
   __acpTabSessions?: Map<string, TabSession>
-  __acpEnsureInFlight?: Map<string, Promise<{ sessionId: string; canFork: boolean }>>
+  __acpEnsureInFlight?: Map<string, Promise<{ sessionId: string; canFork: boolean; canSteer: boolean }>>
 }
 if (!globalRef.__acpTabSessions) {
   globalRef.__acpTabSessions = new Map()
@@ -81,7 +85,7 @@ const ensureInFlight = globalRef.__acpEnsureInFlight
 // (no on-disk profile store), and open (or reuse) the ACP session for this tab.
 export const ensureLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { agentNodeId: string; jobNodeId: string; tabKey: string }) => data)
-  .handler(async ({ data }): Promise<{ sessionId: string; canFork: boolean }> => {
+  .handler(async ({ data }): Promise<{ sessionId: string; canFork: boolean; canSteer: boolean }> => {
     const pending = ensureInFlight.get(data.tabKey)
     if (pending) {
       return pending
@@ -99,10 +103,12 @@ async function openLocalSession(data: {
   agentNodeId: string
   jobNodeId: string
   tabKey: string
-}): Promise<{ sessionId: string; canFork: boolean }> {
+}): Promise<{ sessionId: string; canFork: boolean; canSteer: boolean }> {
   const known = tabSessions.get(data.tabKey)
   if (known && agentClient.listSessions().some((s) => s.id === known.id)) {
-    return { sessionId: known.id, canFork: known.canFork }
+    // `?? false` covers entries recorded before canSteer existed (the map
+    // survives dev hot-reloads).
+    return { sessionId: known.id, canFork: known.canFork, canSteer: known.canSteer ?? false }
   }
   const agent = await findNodeData<AgentNodeData>(data.agentNodeId)
   if (!agent) {
@@ -139,6 +145,10 @@ async function openLocalSession(data: {
   if (!containerName) {
     await mkdir(selection.cwd, { recursive: true })
   }
+  // Whether this agent takes mid-turn prompts as live-turn input — decided by
+  // the adapter (single source: agent-client's table), surfaced to the client
+  // so it can pick the right permission-rejection flow.
+  const canSteer = supportsMidTurnInput(selection)
 
   // Cold start (the in-memory tab→session map is lost on a server restart): if
   // this tab's ACP session id was persisted, resume it by replaying history
@@ -150,8 +160,8 @@ async function openLocalSession(data: {
     const resumed = await agentClient.loadSession(persistedId, selection).catch(() => null)
     if (resumed) {
       const canFork = resumed.canFork ?? false
-      tabSessions.set(data.tabKey, { id: resumed.id, canFork })
-      return { sessionId: resumed.id, canFork }
+      tabSessions.set(data.tabKey, { id: resumed.id, canFork, canSteer })
+      return { sessionId: resumed.id, canFork, canSteer }
     }
   }
 
@@ -159,8 +169,8 @@ async function openLocalSession(data: {
   // Forking rewinds an agent's own message history, which only the in-process
   // (native) harness owns — external ACP agents can't truncate it.
   const canFork = meta.canFork ?? false
-  tabSessions.set(data.tabKey, { id: meta.id, canFork })
-  return { sessionId: meta.id, canFork }
+  tabSessions.set(data.tabKey, { id: meta.id, canFork, canSteer })
+  return { sessionId: meta.id, canFork, canSteer }
 }
 
 // `front` queues the message ahead of anything already held for the session
@@ -259,7 +269,8 @@ export const forkLocal = createServerFn({ method: 'POST', strict: { output: fals
     if (!meta) {
       return null
     }
-    tabSessions.set(data.tabKey, { id: meta.id, canFork: true })
+    // The fork keeps the same agent, so steering capability carries over.
+    tabSessions.set(data.tabKey, { id: meta.id, canFork: true, canSteer: tabSessions.get(data.tabKey)?.canSteer ?? false })
     // Re-point the durable pointer at the fork so a restart resumes the branch.
     await writePersistedSession(data.tabKey, meta.id)
     return { sessionId: meta.id }

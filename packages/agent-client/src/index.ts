@@ -1,7 +1,7 @@
 // Server entry: API routes import the engine from here.
 
 export type { AgentClientOptions, ClientInfo } from './agent-client'
-export { agentClient, createAgentClient } from './agent-client'
+export { agentClient, createAgentClient, supportsMidTurnInput } from './agent-client'
 export type { ChatBlock, ChatMessage } from './fold'
 export { buildBlocks, foldEvents } from './fold'
 // Tool / skill registration surface.
