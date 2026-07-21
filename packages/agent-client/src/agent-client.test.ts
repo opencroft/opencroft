@@ -3,7 +3,7 @@ import test from 'node:test'
 
 import { createAgentClient } from './agent-client'
 import type { AgentConnection } from './connection'
-import { buildSpawnConfig } from './resolve'
+import { buildSpawnConfig, findAdapter } from './resolve'
 import type { AgentSelection, ChatEvent } from './types'
 
 // ── prompt queue / turn guard / mid-turn input ─────────────────────────────
@@ -15,9 +15,9 @@ import type { AgentSelection, ChatEvent } from './types'
 // prompts (mid-turn input) each get their own deferred; endTurn/failTurn
 // settle a specific one by index, defaulting to the oldest. The default
 // adapter opts out of per-session MCP servers, so createSession never starts
-// the built-in MCP server; steering tests use an adapter that supports
-// mid-turn input (and clean up with reset() to close the MCP server that
-// adapter's tool support brings up).
+// the built-in MCP server; steering tests enable mid-turn input on their
+// adapter's table entry for their duration (and clean up with reset() to
+// close the MCP server that adapter's tool support brings up).
 
 interface AcpStoreShape {
   connections: Map<string, unknown>
@@ -171,44 +171,89 @@ test('a failed turn emits an error and still drains the queue', async () => {
 
 // ── mid-turn input (steering adapters) ─────────────────────────────────────
 
+// The capability is per-adapter data and may be enabled for no adapter at any
+// given time (see harness-adapters.ts). These tests cover the engine mechanism
+// itself, so they switch it on for the adapter entry — module-level state
+// shared by the whole process — and restore it before the next test.
+function enableMidTurnInput(adapterId: string): () => void {
+  const adapter = findAdapter(adapterId)
+  assert.ok(adapter, `adapter ${adapterId} must exist`)
+  const previous = adapter.supportsMidTurnInput
+  adapter.supportsMidTurnInput = true
+  return () => {
+    adapter.supportsMidTurnInput = previous
+  }
+}
+
 test('a mid-turn prompt on a steering adapter goes straight through, unqueued', async () => {
-  const h = await setup('claude')
-  await h.client.prompt(h.sessionId, 'first')
-  await h.client.prompt(h.sessionId, 'steer')
-  // Both prompts reached the connection while the first turn was still open.
-  assert.deepEqual(h.promptCalls, ['first', 'steer'])
-  assert.equal(h.events.filter((event) => event.kind === 'user').length, 2)
-  assert.equal(queueSnapshots(h.events).length, 0)
-  h.endTurn()
-  h.endTurn()
-  await settle()
-  await h.client.reset()
+  const restore = enableMidTurnInput('claude')
+  try {
+    const h = await setup('claude')
+    await h.client.prompt(h.sessionId, 'first')
+    await h.client.prompt(h.sessionId, 'steer')
+    // Both prompts reached the connection while the first turn was still open.
+    assert.deepEqual(h.promptCalls, ['first', 'steer'])
+    assert.equal(h.events.filter((event) => event.kind === 'user').length, 2)
+    assert.equal(queueSnapshots(h.events).length, 0)
+    h.endTurn()
+    h.endTurn()
+    await settle()
+    await h.client.reset()
+  } finally {
+    restore()
+  }
 })
 
 test('overlapping prompts emit turn_end only on the last settlement', async () => {
-  const h = await setup('claude')
-  await h.client.prompt(h.sessionId, 'first')
-  await h.client.prompt(h.sessionId, 'steer')
-  h.endTurn()
-  await settle()
-  // One of two prompts settled — the turn is still running.
-  assert.equal(h.events.filter((event) => event.kind === 'turn_end').length, 0)
-  h.endTurn()
-  await settle()
-  assert.equal(h.events.filter((event) => event.kind === 'turn_end').length, 1)
-  await h.client.reset()
+  const restore = enableMidTurnInput('claude')
+  try {
+    const h = await setup('claude')
+    await h.client.prompt(h.sessionId, 'first')
+    await h.client.prompt(h.sessionId, 'steer')
+    h.endTurn()
+    await settle()
+    // One of two prompts settled — the turn is still running.
+    assert.equal(h.events.filter((event) => event.kind === 'turn_end').length, 0)
+    h.endTurn()
+    await settle()
+    assert.equal(h.events.filter((event) => event.kind === 'turn_end').length, 1)
+    await h.client.reset()
+  } finally {
+    restore()
+  }
 })
 
 test('an intermediate failure surfaces immediately; turn_end still waits for the last settlement', async () => {
+  const restore = enableMidTurnInput('claude')
+  try {
+    const h = await setup('claude')
+    await h.client.prompt(h.sessionId, 'first')
+    await h.client.prompt(h.sessionId, 'steer')
+    h.failTurn('boom')
+    await settle()
+    assert.equal(h.events.filter((event) => event.kind === 'error').length, 1)
+    assert.equal(h.events.filter((event) => event.kind === 'turn_end').length, 0)
+    h.endTurn()
+    await settle()
+    assert.equal(h.events.filter((event) => event.kind === 'turn_end').length, 1)
+    await h.client.reset()
+  } finally {
+    restore()
+  }
+})
+
+// With the capability off (the current table state), the same adapter queues
+// mid-turn prompts like any other — the flag alone decides.
+test('a mid-turn prompt without the capability queues even on the claude adapter', async () => {
   const h = await setup('claude')
   await h.client.prompt(h.sessionId, 'first')
-  await h.client.prompt(h.sessionId, 'steer')
-  h.failTurn('boom')
-  await settle()
-  assert.equal(h.events.filter((event) => event.kind === 'error').length, 1)
-  assert.equal(h.events.filter((event) => event.kind === 'turn_end').length, 0)
+  await h.client.prompt(h.sessionId, 'second')
+  assert.deepEqual(h.promptCalls, ['first'])
+  assert.deepEqual(queueSnapshots(h.events), [['second']])
   h.endTurn()
   await settle()
-  assert.equal(h.events.filter((event) => event.kind === 'turn_end').length, 1)
+  assert.deepEqual(h.promptCalls, ['first', 'second'])
+  h.endTurn()
+  await settle()
   await h.client.reset()
 })

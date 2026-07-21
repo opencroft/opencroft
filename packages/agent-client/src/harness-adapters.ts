@@ -52,8 +52,13 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     // The bridge enqueues an overlapping session/prompt onto the SDK's
     // streaming input, so the live turn picks it up at the next step boundary
     // (verified against claude-agent-acp v0.60.0; implementation-defined since
-    // the adapter spawns @latest).
-    supportsMidTurnInput: true,
+    // the adapter spawns @latest). Disabled for now: overlapping responses
+    // stream back with no rendered boundary between them and concatenate into
+    // one block. Flip back once clients split responses on the messageId the
+    // bridge stamps on its message chunks — and require the same verification
+    // pair (steering semantics + a boundary signal) before enabling any other
+    // adapter.
+    supportsMidTurnInput: false,
   },
   {
     id: 'claude-subscription',
@@ -66,7 +71,7 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     keyEnv: 'CLAUDE_CODE_OAUTH_TOKEN',
     modelEnv: 'ANTHROPIC_MODEL',
     // Same bridge binary as 'claude' — see the note there.
-    supportsMidTurnInput: true,
+    supportsMidTurnInput: false,
     note: 'Auth with a Claude Pro/Max subscription: run `claude setup-token`, then paste the OAuth token as the API key secret.',
   },
   {
