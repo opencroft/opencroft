@@ -31,6 +31,7 @@ import { DevBuildBadge } from '@/app/_components/dev-build-badge'
 import { ChatTabsProvider, useChatTabs } from '@/app/(agent)/_lib/chat-tabs-context'
 import { listPendingPermissions } from '@/app/(agent)/_server/acp'
 import type { SpaceSummary } from '@/app/(space)/_server/types'
+import { cn } from '@/lib/utils'
 
 interface Props {
   pinnedSpaces: SpaceSummary[]
@@ -161,7 +162,14 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
                     </SidebarMenuAction>
                   </CollapsibleTrigger>
                   <CollapsibleContent>
-                    <div className='flex flex-col gap-0.5 px-1.5 py-0.5'>
+                    {/* Structural classes must stay in sync with `SidebarMenuSub` (packages/ui sidebar.tsx):
+                        a plain div is used instead because ChatListItem rows are divs, not <li>. */}
+                    <div
+                      className={cn(
+                        'mx-3.5 flex min-w-0 translate-x-px flex-col gap-0.5 border-l border-sidebar-border px-1.5 py-0.5',
+                        'group-data-[collapsible=icon]:hidden',
+                      )}
+                    >
                       {mounted &&
                         chatTabs.tabs.map((tab) => (
                           <ChatListItem
