@@ -6,6 +6,7 @@ import { Link, useLocation } from '@tanstack/react-router'
 import { ChevronRight, MessageSquare, Network, PanelRightOpen, Puzzle, SettingsIcon } from 'lucide-react'
 import { Suspense, useEffect, useState } from 'react'
 import { Button } from 'ui/button'
+import { ChatListItem } from 'ui/chat/chat-list-item'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/collapsible'
 import { TitlebarProvider } from 'ui/layout/titlebar'
 import {
@@ -27,7 +28,6 @@ import {
 } from 'ui/sidebar'
 
 import { DevBuildBadge } from '@/app/_components/dev-build-badge'
-import { ChatTabItem } from '@/app/_shell/chat-tab-item'
 import { ChatTabsProvider, useChatTabs } from '@/app/(agent)/_lib/chat-tabs-context'
 import { listPendingPermissions } from '@/app/(agent)/_server/acp'
 import type { SpaceSummary } from '@/app/(space)/_server/types'
@@ -161,19 +161,22 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
                     </SidebarMenuAction>
                   </CollapsibleTrigger>
                   <CollapsibleContent>
-                    <SidebarMenuSub>
+                    <div className='flex flex-col gap-0.5 px-1.5 py-0.5'>
                       {mounted &&
                         chatTabs.tabs.map((tab) => (
-                          <ChatTabItem
+                          <ChatListItem
                             key={tab.key}
-                            tab={tab}
-                            isActive={chatTabs.activeSessionKey === tab.key}
+                            id={tab.key}
+                            title={tab.title ?? tab.label}
+                            description={tab.agentName}
+                            avatarUrl={tab.agentAvatar}
+                            active={chatTabs.activeSessionKey === tab.key}
                             pending={pendingKeys.has(tab.key)}
                             onSelect={chatTabs.selectSession}
                             onClose={chatTabs.closeTab}
                           />
                         ))}
-                    </SidebarMenuSub>
+                    </div>
                   </CollapsibleContent>
                 </SidebarMenuItem>
               </Collapsible>
