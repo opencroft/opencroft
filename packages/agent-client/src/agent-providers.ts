@@ -23,7 +23,7 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
       anthropic: 'https://api.z.ai/api/anthropic',
       openai: 'https://api.z.ai/api/coding/paas/v4',
     },
-    models: ['glm-4.6', 'glm-5.1', 'glm-5.2'],
+    models: ['glm-4.6', 'glm-5.1', 'glm-5.2[1m]'],
     keyEnv: 'ZAI_API_KEY',
   },
   {
