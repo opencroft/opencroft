@@ -223,7 +223,11 @@ export const toolDefinitions = [
             properties: {
               type: { type: 'string', description: 'Extension typeId' },
               position: POSITION_SCHEMA,
-              data: { type: 'object', description: 'Initial node data (shape depends on the extension)' },
+              data: {
+                type: 'object',
+                description: 'Initial node data (shape depends on the extension)',
+                additionalProperties: true,
+              },
             },
             required: ['type'],
           },
@@ -247,7 +251,11 @@ export const toolDefinitions = [
             type: 'object',
             properties: {
               nodeId: { type: 'string', description: 'The unique node ID' },
-              data: { type: 'object', description: "Partial data to merge into the node's data" },
+              data: {
+                type: 'object',
+                description: "Partial data to merge into the node's data",
+                additionalProperties: true,
+              },
               position: POSITION_SCHEMA,
             },
             required: ['nodeId'],
