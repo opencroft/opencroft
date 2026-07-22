@@ -7,7 +7,7 @@ import type * as opencroft from '@opencroft/server'
 import { buildExtension } from '@/app/(extension-runtime)/_server/compiler'
 import { createHost } from '@/app/(extension-runtime)/_server/host'
 import { listAllExtensionIds, readManifest } from '@/app/(extension-runtime)/_server/manifest'
-import { extDir, extDistFile } from '@/app/(extension-runtime)/_server/paths'
+import { extDir, extDistFile, projectRoot } from '@/app/(extension-runtime)/_server/paths'
 import type { ExtensionManifest, ExtensionRouteHandler } from '@/app/(extension-runtime)/_types'
 import { toastStore } from '@/lib/toast-store'
 
@@ -82,6 +82,33 @@ async function statMaybe(file: string): Promise<number> {
   }
 }
 
+// Extensions can import any workspace package (agent-client, agent-chat, …)
+// via the monorepo's shared node_modules symlinks — esbuild resolves and
+// bundles their TS source directly into the extension (see
+// ALWAYS_BUNDLED_PACKAGES in compiler.ts; that list isn't exhaustive — any
+// workspace package actually imported gets bundled the same way). A merge
+// touching only packages/* never changes anything under an extension's own
+// directory, so sourceMtime alone can't see it — walk every workspace
+// package's source too. Conservative on purpose: any package change
+// invalidates every extension's cache, even ones that don't import it,
+// rather than risk missing one that does — the walk itself is cheap (a
+// handful of top-level dirs, same cost class as walking one extension's src).
+async function workspacePackagesMtime(): Promise<number> {
+  const dir = path.join(projectRoot(), '..', '..', 'packages')
+  let entries: string[]
+  try {
+    entries = await fs.readdir(dir)
+  } catch {
+    return 0
+  }
+  let max = 0
+  for (const entry of entries) {
+    max = Math.max(max, await walkMtime(path.join(dir, entry, 'src')))
+    max = Math.max(max, await statMaybe(path.join(dir, entry, 'package.json')))
+  }
+  return max
+}
+
 async function sourceMtime(extensionId: string): Promise<number> {
   const dir = extDir(extensionId)
   const candidates = [
@@ -92,7 +119,7 @@ async function sourceMtime(extensionId: string): Promise<number> {
     path.join(dir, 'extension.ts'),
     path.join(dir, 'extension.tsx'),
   ]
-  let max = 0
+  let max = await workspacePackagesMtime()
   for (const p of candidates) {
     max = Math.max(max, await walkMtime(p))
   }
