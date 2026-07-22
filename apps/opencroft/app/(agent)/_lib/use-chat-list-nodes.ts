@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import type { SessionEntry } from '@/app/(agent)/_server/agent-sessions-store'
 import type { ChatListLayoutEntry } from '@/app/(agent)/_server/chat-list-layout-store'
+import { listAgentNodes } from '@/app/(space)/_server/agents'
 
 const LAYOUT_ENDPOINT = '/api/acp/chat-list-layout'
 const JSON_HEADERS = { 'content-type': 'application/json' }
@@ -23,11 +24,12 @@ function saveLayout(entries: ChatListLayoutEntry[]): void {
   }).catch((err) => console.error('Failed to save chat list layout', err))
 }
 
-function toLeaf(session: SessionEntry, pendingKeys: Set<string>) {
+function toLeaf(session: SessionEntry, pendingKeys: Set<string>, avatarByAgentId: Map<string, string>) {
   return {
     id: session.key,
     title: session.title ?? session.jobName,
     description: session.agentName,
+    avatarUrl: avatarByAgentId.get(session.agentNodeId),
     statusIndicator: pendingKeys.has(session.key) ? ('primary' as const) : undefined,
   }
 }
@@ -38,7 +40,12 @@ function toLeaf(session: SessionEntry, pendingKeys: Set<string>) {
 // A session missing from the layout (new, or created on another device) is
 // appended at the top level; a layout entry whose session no longer exists is
 // dropped (the next onChange persists the cleaned-up layout).
-function buildNodes(layout: ChatListLayoutEntry[], sessions: SessionEntry[], pendingKeys: Set<string>): ChatListNode[] {
+function buildNodes(
+  layout: ChatListLayoutEntry[],
+  sessions: SessionEntry[],
+  pendingKeys: Set<string>,
+  avatarByAgentId: Map<string, string>,
+): ChatListNode[] {
   const byKey = new Map(sessions.map((s) => [s.key, s]))
   const seen = new Set<string>()
   const nodes: ChatListNode[] = []
@@ -49,7 +56,7 @@ function buildNodes(layout: ChatListLayoutEntry[], sessions: SessionEntry[], pen
         continue
       }
       seen.add(entry.key)
-      nodes.push({ type: 'item', item: toLeaf(session, pendingKeys) })
+      nodes.push({ type: 'item', item: toLeaf(session, pendingKeys, avatarByAgentId) })
     } else {
       const items = entry.folder.itemKeys.map((key) => byKey.get(key)).filter((s): s is SessionEntry => Boolean(s))
       for (const session of items) {
@@ -57,13 +64,18 @@ function buildNodes(layout: ChatListLayoutEntry[], sessions: SessionEntry[], pen
       }
       nodes.push({
         type: 'folder',
-        folder: { id: entry.folder.id, name: entry.folder.name, open: entry.folder.open, items: items.map((s) => toLeaf(s, pendingKeys)) },
+        folder: {
+          id: entry.folder.id,
+          name: entry.folder.name,
+          open: entry.folder.open,
+          items: items.map((s) => toLeaf(s, pendingKeys, avatarByAgentId)),
+        },
       })
     }
   }
   for (const session of sessions) {
     if (!seen.has(session.key)) {
-      nodes.push({ type: 'item', item: toLeaf(session, pendingKeys) })
+      nodes.push({ type: 'item', item: toLeaf(session, pendingKeys, avatarByAgentId) })
     }
   }
   return nodes
@@ -99,6 +111,7 @@ export interface UseChatListNodesResult {
 export function useChatListNodes(sessions: SessionEntry[], pendingKeys: Set<string>): UseChatListNodesResult {
   const [layout, setLayout] = useState<ChatListLayoutEntry[]>([])
   const [loaded, setLoaded] = useState(false)
+  const [avatarByAgentId, setAvatarByAgentId] = useState<Map<string, string>>(new Map())
 
   useEffect(() => {
     let cancelled = false
@@ -122,23 +135,53 @@ export function useChatListNodes(sessions: SessionEntry[], pendingKeys: Set<stri
     }
   }, [])
 
-  const nodes = useMemo(() => (loaded ? buildNodes(layout, sessions, pendingKeys) : []), [loaded, layout, sessions, pendingKeys])
+  useEffect(() => {
+    let cancelled = false
+    // Same source AiPanel uses to stamp `agentAvatar` onto open tabs — read
+    // directly here instead, since sidebar rows have no tab meta to borrow
+    // from (most have no open tab at all). A failed fetch just leaves rows on
+    // their initials fallback (ChatListItem's default), so no catch-driven
+    // state flip is needed the way the layout fetch needs one.
+    listAgentNodes()
+      .then((agents) => {
+        if (!cancelled) {
+          setAvatarByAgentId(new Map(agents.filter((a) => a.avatar).map((a) => [a.nodeId, a.avatar as string])))
+        }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const nodes = useMemo(
+    () => (loaded ? buildNodes(layout, sessions, pendingKeys, avatarByAgentId) : []),
+    [loaded, layout, sessions, pendingKeys, avatarByAgentId],
+  )
   // Key on external inputs only (see UseChatListNodesResult.nodesKey): each
-  // session's identity, display text and status dot — deliberately NOT the
-  // layout order/folders the component owns after mount. Sorted by key so a
-  // reordered session fetch alone doesn't trigger a spurious remount. `loaded`
-  // is folded in so the initial false->true flip remounts once with the real
-  // tree: sessions can arrive (via SSE) before the layout GET returns, which
-  // seeds an empty `nodes`, and without this the list would stay empty until
-  // the next external change.
+  // session's identity, display text, avatar and status dot — deliberately NOT
+  // the layout order/folders the component owns after mount. Sorted by key so
+  // a reordered session fetch alone doesn't trigger a spurious remount.
+  // `loaded` is folded in so the initial false->true flip remounts once with
+  // the real tree: sessions can arrive (via SSE) before the layout GET
+  // returns, which seeds an empty `nodes`, and without this the list would
+  // stay empty until the next external change. Avatars resolve async too
+  // (their own fetch), so including them lets that arrival trigger its own
+  // one-time remount instead of leaving rows stuck on initials.
   const nodesKey = useMemo(
     () =>
       `${loaded}:${JSON.stringify(
         sessions
-          .map((s) => ({ id: s.key, title: s.title ?? s.jobName, agent: s.agentName, pending: pendingKeys.has(s.key) }))
+          .map((s) => ({
+            id: s.key,
+            title: s.title ?? s.jobName,
+            agent: s.agentName,
+            avatar: avatarByAgentId.get(s.agentNodeId),
+            pending: pendingKeys.has(s.key),
+          }))
           .sort((a, b) => a.id.localeCompare(b.id)),
       )}`,
-    [loaded, sessions, pendingKeys],
+    [loaded, sessions, pendingKeys, avatarByAgentId],
   )
 
   const onChange = (next: ChatListNode[]) => {
