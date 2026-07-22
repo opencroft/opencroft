@@ -135,7 +135,16 @@ export function EventNode({ id, data, selected }: { id: string; data: EventData;
   const run = useCallback(async () => {
     setRunning(true)
     try {
-      await dispatch(id, 'run')
+      // fireEvent no longer throws for a handler-side failure (e.g. an
+      // unsupported script language) — it resolves with an `error` field via
+      // the shared exec-dispatch primary result instead. Both cases must
+      // surface the same way here, or a dispatch-level failure silently
+      // "succeeds" with no toast.
+      const result = (await dispatch(id, 'run')) as { error?: string } | undefined
+      if (result?.error) {
+        toast.error(`Event run failed: ${result.error}`)
+        return
+      }
       setNodes((nds: { id: string; data: Record<string, unknown> }[]) =>
         nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, lastRunAt: Date.now() } } : n)),
       )
