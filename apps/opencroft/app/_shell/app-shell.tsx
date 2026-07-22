@@ -6,7 +6,7 @@ import { Link, useLocation } from '@tanstack/react-router'
 import { ChevronRight, MessageSquare, Network, PanelRightOpen, Puzzle, SettingsIcon } from 'lucide-react'
 import { Suspense, useEffect, useState } from 'react'
 import { Button } from 'ui/button'
-import { ChatListItem } from 'ui/chat/chat-list-item'
+import { ChatList } from 'ui/chat/chat-list'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/collapsible'
 import { TitlebarProvider } from 'ui/layout/titlebar'
 import {
@@ -28,7 +28,10 @@ import {
 } from 'ui/sidebar'
 
 import { DevBuildBadge } from '@/app/_components/dev-build-badge'
+import { RenameDialog } from '@/app/(agent)/_components/chat-hosts'
 import { ChatTabsProvider, useChatTabs } from '@/app/(agent)/_lib/chat-tabs-context'
+import { useAgentSessions } from '@/app/(agent)/_lib/use-agent-sessions'
+import { useChatListNodes } from '@/app/(agent)/_lib/use-chat-list-nodes'
 import { listPendingPermissions } from '@/app/(agent)/_server/acp'
 import type { SpaceSummary } from '@/app/(space)/_server/types'
 import { cn } from '@/lib/utils'
@@ -47,7 +50,7 @@ interface SidebarProps {
 }
 
 // Poll for chat sessions blocked on a permission request, so their sidebar
-// avatars can show a pending dot. Gated off when no chats are open.
+// avatars can show a pending dot. Gated off when there are no sessions at all.
 function usePendingPermissionKeys(enabled: boolean): Set<string> {
   const [keys, setKeys] = useState<Set<string>>(() => new Set())
   useEffect(() => {
@@ -93,9 +96,12 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
   const pathname = useLocation({ select: (l) => l.pathname })
   const inSpace = pathname.startsWith('/space/')
   const chatTabs = useChatTabs()
+  const { sessions, renameSession, deleteSession } = useAgentSessions()
   const pinnedDashboards = dashboards.filter((d) => pinnedDashboardSlugs.includes(d.slug))
   const [mounted, setMounted] = useState(false)
-  const pendingKeys = usePendingPermissionKeys(inSpace && mounted && chatTabs.tabs.length > 0)
+  const pendingKeys = usePendingPermissionKeys(inSpace && mounted && sessions.length > 0)
+  const { nodes, nodesKey, onChange } = useChatListNodes(sessions, pendingKeys)
+  const [renaming, setRenaming] = useState<{ key: string; title: string } | null>(null)
 
   useEffect(() => {
     setMounted(true)
@@ -162,29 +168,36 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
                     </SidebarMenuAction>
                   </CollapsibleTrigger>
                   <CollapsibleContent>
-                    {/* Structural classes must stay in sync with `SidebarMenuSub` (packages/ui sidebar.tsx):
-                        a plain div is used instead because ChatListItem rows are divs, not <li>. */}
-                    <div
-                      className={cn(
-                        'mx-3.5 flex min-w-0 translate-x-px flex-col gap-0.5 border-l border-sidebar-border px-1.5 py-0.5',
-                        'group-data-[collapsible=icon]:hidden',
-                      )}
-                    >
-                      {mounted &&
-                        chatTabs.tabs.map((tab) => (
-                          <ChatListItem
-                            key={tab.key}
-                            id={tab.key}
-                            title={tab.title ?? tab.label}
-                            description={tab.agentName}
-                            avatarUrl={tab.agentAvatar}
-                            active={chatTabs.activeSessionKey === tab.key}
-                            pending={pendingKeys.has(tab.key)}
-                            onSelect={chatTabs.selectSession}
-                            onClose={chatTabs.closeTab}
-                          />
-                        ))}
-                    </div>
+                    {mounted && (
+                      <ChatList
+                        key={nodesKey}
+                        nodes={nodes}
+                        activeId={chatTabs.activeSessionKey}
+                        onSelect={(key) => {
+                          // A session opened from history (never an open tab)
+                          // has no tab meta yet — resolve it from the registry
+                          // so the tab doesn't render as its raw key suffix.
+                          const session = sessions.find((s) => s.key === key)
+                          chatTabs.selectSession(key, {
+                            label: session ? `${session.agentName}: ${session.title ?? session.jobName}` : undefined,
+                            agentName: session?.agentName,
+                            title: session?.title,
+                          })
+                        }}
+                        onClose={chatTabs.closeTab}
+                        onDelete={deleteSession}
+                        onRename={(key) => {
+                          const session = sessions.find((s) => s.key === key)
+                          setRenaming({ key, title: session?.title ?? session?.jobName ?? '' })
+                        }}
+                        onChange={onChange}
+                        // Structural classes must stay in sync with `SidebarMenuSub` (packages/ui sidebar.tsx).
+                        className={cn(
+                          'mx-3.5 min-w-0 translate-x-px border-l border-sidebar-border px-1.5 py-0.5',
+                          'group-data-[collapsible=icon]:hidden',
+                        )}
+                      />
+                    )}
                   </CollapsibleContent>
                 </SidebarMenuItem>
               </Collapsible>
@@ -216,6 +229,18 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
         <DevBuildBadge />
       </SidebarFooter>
       <SidebarRail />
+      {renaming && (
+        <RenameDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setRenaming(null)
+            }
+          }}
+          title={renaming.title}
+          onSubmit={(title) => renameSession(renaming.key, title)}
+        />
+      )}
     </Sidebar>
   )
 }

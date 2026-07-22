@@ -10,7 +10,7 @@ import {
 
 import { DashboardHost, LocalAgentHost } from '@/app/(agent)/_components/chat-hosts'
 import { useChatTabsMaybe } from '@/app/(agent)/_lib/chat-tabs-context'
-import { forgetLocalSession } from '@/app/(agent)/_server/acp'
+import { useAgentSessions } from '@/app/(agent)/_lib/use-agent-sessions'
 import type { SessionEntry } from '@/app/(agent)/_server/agent-sessions-store'
 import { slug } from '@/app/(server)/_server/types'
 import { type AgentJobRef, type AgentNodeRef, listAgentNodes } from '@/app/(space)/_server/agents'
@@ -23,13 +23,9 @@ interface AiPanelProps {
   onFocusChange: (focused: boolean) => void
 }
 
-// SessionEntry now lives in the server store (agent-sessions-store.ts) so the
-// session registry is shared across devices; the type is imported above.
+// SessionEntry now lives in the server store (agent-sessions-store.ts), synced
+// via the shared useAgentSessions hook; the type is imported above.
 
-// Legacy per-browser store, migrated into the DB once on mount then cleared.
-const LEGACY_SESSIONS_KEY = 'opencroft.aiPanel.sessions'
-const SESSIONS_ENDPOINT = '/api/acp/sessions'
-const JSON_HEADERS = { 'content-type': 'application/json' }
 // Sentinel key for the "no session selected" state; namespaces the chat-tabs
 // fallback so a dashboard view never collides with a real session.
 const DASHBOARD_KEY = 'agent:dashboard'
@@ -42,46 +38,6 @@ const systemTag = (spaceName: string, spaceSlug: string, selectedNodeId: string 
 // render-time stripOpencroftTags match and leak the instruction into the bubble.
 const TITLE_REQUEST =
   '<opencroft-title-request>Begin your very first reply with a concise title that summarizes this request: maximum 5 words, Title Case, no quotes or trailing punctuation. Put it on its own first line wrapped in an opencroft-title tag (opening and closing), then continue your normal reply on the next lines. Do this only in this first reply.</opencroft-title-request>'
-
-async function fetchSessions(): Promise<SessionEntry[]> {
-  const res = await fetch(SESSIONS_ENDPOINT)
-  const list = (await res.json()) as SessionEntry[]
-  return Array.isArray(list) ? list : []
-}
-
-function upsertSessionRemote(entry: Partial<SessionEntry> & { key: string }): Promise<SessionEntry[]> {
-  return fetch(SESSIONS_ENDPOINT, {
-    method: 'POST',
-    headers: JSON_HEADERS,
-    body: JSON.stringify({ op: 'upsert', entry }),
-  }).then((r) => r.json() as Promise<SessionEntry[]>)
-}
-
-function deleteSessionRemote(key: string): Promise<SessionEntry[]> {
-  return fetch(SESSIONS_ENDPOINT, {
-    method: 'POST',
-    headers: JSON_HEADERS,
-    body: JSON.stringify({ op: 'delete', key }),
-  }).then((r) => r.json() as Promise<SessionEntry[]>)
-}
-
-// Sessions that only ever lived in this browser's localStorage, lifted into the
-// shared DB once so pre-existing chats aren't lost when we switch stores.
-function readLegacySessions(): SessionEntry[] {
-  if (typeof window === 'undefined') {
-    return []
-  }
-  const raw = window.localStorage.getItem(LEGACY_SESSIONS_KEY)
-  if (!raw) {
-    return []
-  }
-  try {
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
 
 function resolveJobForSession(
   sessionKey: string,
@@ -105,9 +61,9 @@ function resolveJobForSession(
 
 export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocusChange }: AiPanelProps) {
   const [agents, setAgents] = useState<AgentNodeRef[]>([])
-  const [sessions, setSessions] = useState<SessionEntry[]>([])
   const [sessionPickerOpen, setSessionPickerOpen] = useState(false)
   const chatTabs = useChatTabsMaybe()
+  const { sessions, upsertSession, renameSession, deleteSession } = useAgentSessions()
 
   // Set fallback key for chat tabs context
   useEffect(() => {
@@ -115,44 +71,6 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
       chatTabs.setFallbackKey(DASHBOARD_KEY)
     }
   }, [chatTabs])
-
-  // Subscribe to the shared session registry over SSE so sessions created on any
-  // device appear here live (no polling). Legacy localStorage sessions are lifted
-  // into the DB once first; the stream then pushes the full list on connect and
-  // on every change.
-  useEffect(() => {
-    let cancelled = false
-    let source: EventSource | null = null
-    const start = async () => {
-      const legacy = readLegacySessions()
-      if (legacy.length) {
-        const current = await fetchSessions().catch(() => [] as SessionEntry[])
-        for (const entry of legacy) {
-          if (!current.some((s) => s.key === entry.key)) {
-            await upsertSessionRemote(entry).catch(() => {})
-          }
-        }
-        window.localStorage.removeItem(LEGACY_SESSIONS_KEY)
-      }
-      if (cancelled) {
-        return
-      }
-      source = new EventSource('/api/acp/sessions-stream')
-      source.onmessage = (e) => {
-        try {
-          const list = JSON.parse(e.data) as SessionEntry[]
-          if (!cancelled) {
-            setSessions(Array.isArray(list) ? list : [])
-          }
-        } catch {}
-      }
-    }
-    void start()
-    return () => {
-      cancelled = true
-      source?.close()
-    }
-  }, [])
 
   // The active session is owned by the chat-tabs provider (single source of
   // truth, mirrored to the URL there). Fall back to the dashboard key = "none".
@@ -188,20 +106,6 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
     listAgentNodes().then(setAgents)
   }, [])
 
-  const deleteLocalSessionEntry = useCallback(
-    (key: string) => {
-      chatTabs?.closeTab(key)
-      setSessions((prev) => prev.filter((s) => s.key !== key))
-      deleteSessionRemote(key)
-        .then((list) => setSessions(list))
-        .catch((err) => console.error('Failed to delete session', key, err))
-      forgetLocalSession({ data: key }).catch((err) => {
-        console.error('Failed to forget local session', key, err)
-      })
-    },
-    [chatTabs],
-  )
-
   const createSession = useCallback(
     (agent: SessionAgentRef, job: SessionJobRef) => {
       // Always start a fresh session — a job can have many. The unique suffix
@@ -211,7 +115,7 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
       const key = `agent:${slug(agent.name)}:${slug(job.name)}:${Date.now().toString(36)}`
       const sameJob = sessions.filter((s) => s.agentNodeId === agent.nodeId && s.jobNodeId === job.nodeId).length
       const title = sameJob === 0 ? job.name : `${job.name} ${sameJob + 1}`
-      const entry: SessionEntry = {
+      upsertSession({
         key,
         agentNodeId: agent.nodeId,
         agentName: agent.name,
@@ -219,30 +123,14 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
         jobName: job.name,
         title,
         createdAt: Date.now(),
-      }
-      setSessions((prev) => [...prev, entry])
-      upsertSessionRemote(entry)
-        .then((list) => setSessions(list))
-        .catch((err) => console.error('Failed to save session', key, err))
+      })
       setSessionPickerOpen(false)
-      chatTabs?.selectSession(key)
+      // Open with meta so a freshly created session doesn't render as its raw
+      // key suffix before the updateTabMeta effect catches up — same shape the
+      // effect and the sidebar use.
+      chatTabs?.selectSession(key, { label: `${agent.name}: ${title}`, agentName: agent.name, title })
     },
-    [sessions, chatTabs],
-  )
-
-  const renameSession = useCallback(
-    (key: string, title: string) => {
-      const trimmed = title.trim()
-      if (!trimmed) {
-        return
-      }
-      setSessions((prev) => prev.map((s) => (s.key === key ? { ...s, title: trimmed } : s)))
-      upsertSessionRemote({ key, title: trimmed })
-        .then((list) => setSessions(list))
-        .catch((err) => console.error('Failed to rename session', key, err))
-      chatTabs?.updateTabMeta(key, { label: trimmed })
-    },
-    [chatTabs],
+    [sessions, upsertSession, chatTabs],
   )
 
   // Stable per active session: an inline arrow here would give the docked
@@ -350,15 +238,15 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
   // the element's identity tracks ONLY the data (sessionGroups) — depending on
   // the callbacks (whose identity can churn) re-set the slot every render and
   // drove an infinite setState loop.
-  const actionsRef = useRef({ openSession, createSession, deleteLocalSessionEntry })
-  actionsRef.current = { openSession, createSession, deleteLocalSessionEntry }
+  const actionsRef = useRef({ openSession, createSession, deleteSession })
+  actionsRef.current = { openSession, createSession, deleteSession }
 
   const listView = useMemo(
     () => (
       <AgentSessionList
         groups={sessionGroups}
         onOpenSession={(key) => actionsRef.current.openSession(key)}
-        onDeleteSession={(_agent, key) => actionsRef.current.deleteLocalSessionEntry(key)}
+        onDeleteSession={(_agent, key) => actionsRef.current.deleteSession(key)}
         onCreateSession={(agent, job) => actionsRef.current.createSession(agent, job)}
       />
     ),

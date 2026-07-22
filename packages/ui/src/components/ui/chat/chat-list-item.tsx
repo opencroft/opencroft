@@ -1,10 +1,24 @@
 'use client'
 
-import { useState } from 'react'
+import type { ReactNode } from 'react'
 import { MoreVertical, Pencil, Trash2, X } from 'lucide-react'
 
 import { AgentAvatar } from '@/components/ui/media/agent-avatar'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import type { StatusVariant } from '@/components/ui/utils/status-indicator'
 import { cn } from '@/lib/utils'
+
+export interface ChatListItemAction {
+  label: string
+  onSelect: (id: string) => void
+  icon?: ReactNode
+  destructive?: boolean
+}
 
 interface ChatListItemProps {
   id: string
@@ -12,25 +26,21 @@ interface ChatListItemProps {
   description?: string
   avatarUrl?: string | null
   active?: boolean
-  pending?: boolean
+  statusIndicator?: StatusVariant
   onSelect?: (id: string) => void
   onRename?: (id: string) => void
   onClose?: (id: string) => void
   onDelete?: (id: string) => void
+  actions?: ChatListItemAction[]
 }
 
 // A single row in a chat list: avatar (with an optional pending dot) beside a
 // title and dimmed description, plus an optional actions menu (Rename / Close /
-// Delete). Self-contained, so it works in any list — not only a sidebar.
-// Title/description truncate; long content never grows the row.
-export function ChatListItem({ id, title, description, avatarUrl, active = false, pending = false, onSelect, onRename, onClose, onDelete }: ChatListItemProps) {
-  const [menuOpen, setMenuOpen] = useState(false)
-  const hasMenu = Boolean(onRename || onClose || onDelete)
-
-  const run = (fn?: (id: string) => void) => {
-    setMenuOpen(false)
-    fn?.(id)
-  }
+// Delete, plus any extra `actions`) built on the shadcn dropdown-menu primitive.
+// Self-contained, so it works in any list — not only a sidebar. Title/description
+// truncate; long content never grows the row.
+export function ChatListItem({ id, title, description, avatarUrl, active = false, statusIndicator, onSelect, onRename, onClose, onDelete, actions }: ChatListItemProps) {
+  const hasMenu = Boolean(onRename || onClose || onDelete || actions?.length)
 
   return (
     <div
@@ -49,85 +59,56 @@ export function ChatListItem({ id, title, description, avatarUrl, active = false
         'hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring data-[active=true]:bg-muted',
       )}
     >
-      <AgentAvatar avatar={avatarUrl} name={title} statusIndicator={pending ? 'primary' : undefined} />
+      <AgentAvatar avatar={avatarUrl} name={title} statusIndicator={statusIndicator} />
       <span className='flex min-w-0 flex-1 flex-col overflow-hidden leading-tight'>
         <span className='truncate text-xs font-medium text-foreground'>{title}</span>
         {description ? <span className='truncate text-xs text-muted-foreground'>{description}</span> : null}
       </span>
       {hasMenu ? (
-        <div className='relative ml-auto shrink-0'>
-          <button
-            type='button'
-            aria-label='Open actions menu'
-            aria-haspopup='menu'
-            aria-expanded={menuOpen}
-            onClick={(e) => {
-              e.stopPropagation()
-              setMenuOpen((o) => !o)
-            }}
-            className='inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-background hover:text-foreground'
-          >
-            <MoreVertical className='size-4' />
-          </button>
-          {menuOpen ? (
-            <>
-              <div
-                className='fixed inset-0 z-40'
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setMenuOpen(false)
-                }}
-              />
-              <div
-                role='menu'
-                className='absolute right-0 top-full z-50 mt-1 min-w-[7rem] overflow-hidden rounded-md border border-border bg-popover p-0.5 text-xs shadow-md'
-              >
-                {onRename ? (
-                  <button
-                    type='button'
-                    role='menuitem'
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      run(onRename)
-                    }}
-                    className='flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-foreground hover:bg-muted'
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type='button'
+              aria-label='Open actions menu'
+              onClick={(e) => e.stopPropagation()}
+              className='ml-auto inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+            >
+              <MoreVertical className='size-4' />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align='end' className='min-w-[8rem]'>
+            {onRename ? (
+              <DropdownMenuItem onClick={() => onRename(id)}>
+                <Pencil className='size-3' />
+                Rename
+              </DropdownMenuItem>
+            ) : null}
+            {actions?.length
+              ? actions.map((a) => (
+                  <DropdownMenuItem
+                    key={a.label}
+                    className={a.destructive ? 'text-destructive focus:text-destructive' : undefined}
+                    onClick={() => a.onSelect(id)}
                   >
-                    <Pencil className='size-3' />
-                    Rename
-                  </button>
-                ) : null}
-                {onClose ? (
-                  <button
-                    type='button'
-                    role='menuitem'
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      run(onClose)
-                    }}
-                    className='flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-foreground hover:bg-muted'
-                  >
-                    <X className='size-3' />
-                    Close
-                  </button>
-                ) : null}
-                {onDelete ? (
-                  <button
-                    type='button'
-                    role='menuitem'
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      run(onDelete)
-                    }}
-                    className='flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-destructive hover:bg-destructive/10'
-                  >
-                    <Trash2 className='size-3' />
-                    Delete
-                  </button>
-                ) : null}
-              </div>
-            </>
-          ) : null}
-        </div>
+                    {a.icon}
+                    {a.label}
+                  </DropdownMenuItem>
+                ))
+              : null}
+            {onClose ? (
+              <DropdownMenuItem onClick={() => onClose(id)}>
+                <X className='size-3' />
+                Close
+              </DropdownMenuItem>
+            ) : null}
+            {onDelete ? (
+              <DropdownMenuItem className='text-destructive focus:text-destructive' onClick={() => onDelete(id)}>
+                <Trash2 className='size-3' />
+                Delete
+              </DropdownMenuItem>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
       ) : null}
     </div>
   )

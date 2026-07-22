@@ -17,7 +17,7 @@ export interface ChatTab {
 // floating canvas overlay.
 export type ChatMode = 'docked' | 'focused'
 
-interface TabMeta {
+export interface TabMeta {
   label?: string
   agentName?: string
   title?: string
@@ -52,7 +52,7 @@ function makeTab(key: string, meta?: TabMeta): ChatTab {
 interface ChatTabsContextValue {
   tabs: ChatTab[]
   activeSessionKey: string
-  selectSession: (key: string) => void
+  selectSession: (key: string, meta?: TabMeta) => void
   closeTab: (key: string) => void
   setActiveKey: (key: string) => void
   openTab: (key: string, meta?: TabMeta) => void
@@ -183,13 +183,13 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  const selectSession = useCallback((key: string) => {
+  const selectSession = useCallback((key: string, meta?: TabMeta) => {
     setActiveSessionKey(key)
     setTabs((prev) => {
       if (prev.some((t) => t.key === key)) {
         return prev
       }
-      const next = [...prev, makeTab(key)]
+      const next = [...prev, makeTab(key, meta)]
       return next
     })
   }, [])

@@ -158,6 +158,55 @@ function ChatHost({
   )
 }
 
+export function RenameDialog({
+  open,
+  onOpenChange,
+  title,
+  onSubmit,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  title: string
+  onSubmit: (title: string) => void
+}) {
+  const [draft, setDraft] = useState(title)
+  useEffect(() => {
+    if (open) {
+      setDraft(title)
+    }
+  }, [open, title])
+  const commit = () => {
+    onSubmit(draft)
+    onOpenChange(false)
+  }
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className='max-w-sm'>
+        <DialogHeader>
+          <DialogTitle>Rename session</DialogTitle>
+        </DialogHeader>
+        <Input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder='Session name'
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              commit()
+            }
+          }}
+        />
+        <DialogFooter>
+          <Button variant='ghost' onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={commit}>Save</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function ChatHeader({
   onBack,
   title,
@@ -168,7 +217,6 @@ function ChatHeader({
   onRename?: (title: string) => void
 }) {
   const [renaming, setRenaming] = useState(false)
-  const [draft, setDraft] = useState('')
   return (
     <div className='flex min-w-0 flex-1 items-center gap-1'>
       <button
@@ -183,10 +231,7 @@ function ChatHeader({
       {onRename && (
         <button
           type='button'
-          onClick={() => {
-            setDraft(title ?? '')
-            setRenaming(true)
-          }}
+          onClick={() => setRenaming(true)}
           className='inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground cursor-pointer'
           aria-label='Rename session'
           title='Rename session'
@@ -194,38 +239,7 @@ function ChatHeader({
           <Pencil className='size-3.5' />
         </button>
       )}
-      <Dialog open={renaming} onOpenChange={setRenaming}>
-        <DialogContent className='max-w-sm'>
-          <DialogHeader>
-            <DialogTitle>Rename session</DialogTitle>
-          </DialogHeader>
-          <Input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder='Session name'
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                onRename?.(draft)
-                setRenaming(false)
-              }
-            }}
-          />
-          <DialogFooter>
-            <Button variant='ghost' onClick={() => setRenaming(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => {
-                onRename?.(draft)
-                setRenaming(false)
-              }}
-            >
-              Save
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {onRename && <RenameDialog open={renaming} onOpenChange={setRenaming} title={title ?? ''} onSubmit={onRename} />}
     </div>
   )
 }
