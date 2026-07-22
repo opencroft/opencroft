@@ -5,6 +5,7 @@ import { fireEvent } from './event'
 import { keyStoreCreateKey, keyStoreDeleteKey, keyStoreListKeys } from './key-store'
 import { openaiChat } from './openai'
 import { runScript, type ScriptResult } from './script'
+import { type GenerateSecretResult, type SecretFormat, secretsStoreGenerate } from './secrets-store'
 import { acceptHostKey, type HostKeyStatus, installPublicKey, resolvePublicKey } from './ssh-setup'
 
 interface Stream<T> {
@@ -198,6 +199,20 @@ async function keyStoreDeleteAction(ctx: ActionCtx): Promise<{ deleted: string }
   return { deleted: name }
 }
 
+// ── Secrets Store node actions ────────────────────────────────────────────
+// Agent-invokable. The generated value is never part of the result — only
+// the name and whether it was created or rotated.
+
+async function secretsStoreGenerateAction(ctx: ActionCtx): Promise<GenerateSecretResult> {
+  const name = typeof ctx.params.name === 'string' ? ctx.params.name.trim() : ''
+  if (!name) {
+    throw new Error('Secret name is required (params.name)')
+  }
+  const length = typeof ctx.params.length === 'number' ? ctx.params.length : undefined
+  const format: SecretFormat | undefined = ctx.params.format === 'symbols' ? 'symbols' : undefined
+  return secretsStoreGenerate(ctx.nodeId, name, { length, format })
+}
+
 // ── Server node actions ───────────────────────────────────────────────────
 
 function serverConfigFromData(data: Record<string, unknown>): ServerConfig {
@@ -244,6 +259,9 @@ export const nodeActions = {
     generate: keyStoreGenerate,
     list: keyStoreListAction,
     delete: keyStoreDeleteAction,
+  },
+  'core-secrets-store': {
+    generate: secretsStoreGenerateAction,
   },
   server: {
     setKey: serverSetKey,

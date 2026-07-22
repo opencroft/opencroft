@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomInt } from 'node:crypto'
 import { promises as fsPromises } from 'node:fs'
 import nodeOs from 'node:os'
 import nodePath from 'node:path'
@@ -28,6 +28,20 @@ import { secrets } from '@/server/secrets'
 
 function randomToken(bytes = 32): string {
   return randomBytes(bytes).toString('hex')
+}
+
+// CSPRNG-backed, uniform over `charset` (crypto.randomInt rejection-samples
+// internally — no modulo bias). For generating secret values from a specific
+// charset/format, unlike randomToken which is always hex.
+function randomString(length: number, charset: string): string {
+  if (!charset) {
+    throw new Error('charset must not be empty')
+  }
+  let out = ''
+  for (let i = 0; i < length; i++) {
+    out += charset[randomInt(charset.length)]
+  }
+  return out
 }
 
 export interface GraphNodeRecord {
@@ -267,7 +281,12 @@ export interface ExtensionHost {
   execFile: (cmd: string, args: string[]) => Promise<string>
   cacheDir: (...parts: string[]) => string
   dataDir: (...parts: string[]) => string
-  crypto: { encrypt: typeof encrypt; decrypt: typeof decrypt; randomToken: typeof randomToken }
+  crypto: {
+    encrypt: typeof encrypt
+    decrypt: typeof decrypt
+    randomToken: typeof randomToken
+    randomString: typeof randomString
+  }
   db: typeof db
   secrets: HostSecretsApi
   settings: { get: typeof getSetting; set: typeof setSetting }
@@ -301,7 +320,7 @@ export function createHost(extensionId: string): ExtensionHost {
     execFile: execFilePromise,
     cacheDir: (...parts) => cacheDir('extensions', extensionId, ...parts),
     dataDir: (...parts) => dataDir('extension-data', extensionId, ...parts),
-    crypto: { encrypt, decrypt, randomToken },
+    crypto: { encrypt, decrypt, randomToken, randomString },
     db,
     secrets,
     settings: { get: getSetting, set: setSetting },

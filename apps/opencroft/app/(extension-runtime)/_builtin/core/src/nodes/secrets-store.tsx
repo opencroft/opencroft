@@ -1,5 +1,14 @@
 import { icons, invoke, NodeFrame, React, toast } from '@ext/host'
-import { Button, Input, Label } from '@ext/ui'
+import {
+  Button,
+  Input,
+  Label,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@ext/ui'
 
 const { useCallback, useEffect, useState } = React
 
@@ -106,6 +115,13 @@ interface OrphanRow {
   updatedAt: string
 }
 
+type SecretFormat = 'alphanumeric' | 'symbols'
+
+interface GenerateSecretResult {
+  name: string
+  status: 'created' | 'rotated'
+}
+
 export function SecretsStoreInspector({
   nodeId,
   updateData,
@@ -118,6 +134,10 @@ export function SecretsStoreInspector({
   const [removed, setRemoved] = useState<string[]>([])
   const [dirty, setDirty] = useState(false)
   const [orphans, setOrphans] = useState<OrphanRow[]>([])
+  const [genName, setGenName] = useState('')
+  const [genLength, setGenLength] = useState('32')
+  const [genFormat, setGenFormat] = useState<SecretFormat>('alphanumeric')
+  const [generating, setGenerating] = useState(false)
 
   const reload = useCallback(async () => {
     const secrets = await invoke<{ id: string; key: string; value: string; updatedAt: string }[]>(
@@ -209,6 +229,30 @@ export function SecretsStoreInspector({
     [rows, nodeId, reload],
   )
 
+  // Server-generated value — never touches this component's state, only the
+  // name and created/rotated status come back.
+  const handleGenerate = useCallback(async () => {
+    const name = genName.trim()
+    if (!name) {
+      return
+    }
+    const length = Number.parseInt(genLength, 10)
+    setGenerating(true)
+    try {
+      const result = await invoke<GenerateSecretResult>('secretsStore.generate', nodeId, name, {
+        length: Number.isFinite(length) ? length : undefined,
+        format: genFormat,
+      })
+      setGenName('')
+      await reload()
+      toast.success(`${result.name} ${result.status}`)
+    } catch (err) {
+      toast.error(`Could not generate ${name}: ${String(err)}`)
+    } finally {
+      setGenerating(false)
+    }
+  }, [genName, genLength, genFormat, nodeId, reload])
+
   return (
     <div className='flex flex-col gap-3'>
       <Label className='text-xs'>Secrets</Label>
@@ -230,6 +274,46 @@ export function SecretsStoreInspector({
         <Button size='sm' className='h-7 text-xs' onClick={persist} disabled={!dirty}>
           Save
         </Button>
+      </div>
+      <div className='flex flex-col gap-1 pt-2 border-t'>
+        <Label className='text-xs'>Generate secret</Label>
+        <div className='text-[10px] text-muted-foreground'>
+          Value is created server-side and never shown — absent name creates, existing name rotates.
+        </div>
+        <div className='flex gap-1'>
+          <Input
+            value={genName}
+            onChange={(e) => setGenName(e.target.value)}
+            placeholder='KEY'
+            className='h-7 text-xs font-mono flex-1'
+          />
+          <Input
+            value={genLength}
+            onChange={(e) => setGenLength(e.target.value)}
+            type='number'
+            min={8}
+            max={256}
+            placeholder='32'
+            className='h-7 text-xs w-16'
+          />
+          <Select value={genFormat} onValueChange={(v: SecretFormat) => setGenFormat(v)}>
+            <SelectTrigger className='h-7 text-xs w-32'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='alphanumeric'>Alphanumeric</SelectItem>
+              <SelectItem value='symbols'>With symbols</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            size='sm'
+            className='h-7 text-xs'
+            onClick={handleGenerate}
+            disabled={!genName.trim() || generating}
+          >
+            <icons.Dices className='h-3 w-3' />
+          </Button>
+        </div>
       </div>
       {orphans.length > 0 ? (
         <div className='flex flex-col gap-1 mt-3 pt-3 border-t'>

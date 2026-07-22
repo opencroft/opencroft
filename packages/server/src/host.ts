@@ -77,7 +77,13 @@ export interface ExtensionServerHost {
   cacheDir(...parts: string[]): string
   /** Persistent per-extension data directory. Unlike cacheDir, this is not wiped and is safe for durable state such as git clones. */
   dataDir(...parts: string[]): string
-  crypto: { encrypt(value: string): string; decrypt(value: string): string; randomToken(bytes?: number): string }
+  crypto: {
+    encrypt(value: string): string
+    decrypt(value: string): string
+    randomToken(bytes?: number): string
+    /** CSPRNG-uniform random string of `length` characters drawn from `charset`. */
+    randomString(length: number, charset: string): string
+  }
   settings: { get(...args: unknown[]): Promise<unknown>; set(...args: unknown[]): Promise<unknown> }
   graph: HostGraphApi
   storage: ExtensionStorageApi

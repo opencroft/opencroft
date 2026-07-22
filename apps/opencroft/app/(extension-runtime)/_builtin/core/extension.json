@@ -104,7 +104,33 @@
         }
       ]
     },
-    { "typeId": "core-secrets-store", "name": "Secrets Store", "category": "Storage", "icon": "ShieldCheck" },
+    {
+      "typeId": "core-secrets-store",
+      "name": "Secrets Store",
+      "category": "Storage",
+      "icon": "ShieldCheck",
+      "actions": [
+        {
+          "id": "generate",
+          "label": "Generate Secret",
+          "icon": "Dices",
+          "description": "Create or rotate a secret with a server-side random value. Absent name creates it, existing name rotates it. Returns the name and created/rotated status — never the value.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "description": "Secret name to create or rotate" },
+              "length": { "type": "number", "description": "Value length in characters (default: 32, 8-256)" },
+              "format": {
+                "type": "string",
+                "enum": ["alphanumeric", "symbols"],
+                "description": "Charset preset (default: alphanumeric)"
+              }
+            },
+            "required": ["name"]
+          }
+        }
+      ]
+    },
     {
       "typeId": "terminal",
       "name": "Terminal Window",

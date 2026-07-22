@@ -16,6 +16,7 @@ import {
 import { nodeActions } from './node-actions'
 import { type OpenAIChatParams, openaiChat } from './openai'
 import { type HandlerRunParams, runHandler, runScript, type ScriptRunParams } from './script'
+import { type GenerateSecretOptions, type GenerateSecretResult, secretsStoreGenerate } from './secrets-store'
 import { acceptHostKey, hostKeyStatus, installPublicKey, resolvePublicKey } from './ssh-setup'
 
 export { nodeActions }
@@ -387,6 +388,8 @@ export const actions = {
   'secretsStore.setSecret': (storeId: string, key: string, value: string) => secretsStoreSetSecret(storeId, key, value),
   'secretsStore.deleteSecret': (storeId: string, key: string) => secretsStoreDeleteSecret(storeId, key),
   'secretsStore.rotateSecret': (storeId: string, key: string) => secretsStoreRotateSecret(storeId, key),
+  'secretsStore.generate': (storeId: string, name: string, options?: GenerateSecretOptions): Promise<GenerateSecretResult> =>
+    secretsStoreGenerate(storeId, name, options),
   'secretsStore.listOrphans': (storeId: string) => secretsStoreListOrphans(storeId),
   'secretsStore.deleteOrphan': (id: string) => secretsStoreDeleteOrphan(id),
   'server.getStats': (config: ServerConfig) => serverGetStats(config),
