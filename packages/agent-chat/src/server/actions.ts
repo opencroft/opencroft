@@ -212,6 +212,15 @@ const _setAgentMode = createServerFn({ method: 'POST' })
   })
 export const setAgentMode = (sessionId: string, modeId: string) => _setAgentMode({ data: { sessionId, modeId } })
 
+const _setAgentConfigOption = createServerFn({ method: 'POST' })
+  .inputValidator((data: { sessionId: string; configId: string; value: string | boolean }) => data)
+  .handler(async ({ data }) => {
+    await getRuntime().agent.setConfigOption(data.sessionId, data.configId, data.value)
+    return { ok: true }
+  })
+export const setAgentConfigOption = (sessionId: string, configId: string, value: string | boolean) =>
+  _setAgentConfigOption({ data: { sessionId, configId, value } })
+
 // ---- MCP server (single optional server, edited via dialog) ----
 
 const _getMcpServers = createServerFn({ method: 'GET' }).handler(

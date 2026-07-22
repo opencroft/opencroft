@@ -1,5 +1,6 @@
 'use client'
 
+import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { buildBlocks, type ChatBlock, foldEvents } from 'agent-client/fold'
 import type { AgentProfile } from 'agent-client/profiles'
 import type { AgentSelection, ChatEvent, SessionMode } from 'agent-client/types'
@@ -22,6 +23,7 @@ import {
   saveAgentProfile,
   sendAgentPrompt,
   setActiveProfile,
+  setAgentConfigOption,
   setAgentMode,
   startAgentSession,
 } from './server/actions'
@@ -51,6 +53,10 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
   const [turnActive, setTurnActive] = useState(false)
   const [modes, setModes] = useState<SessionMode[]>([])
   const [currentMode, setCurrentMode] = useState('')
+  // The session's dynamically advertised config options (model/effort/mode/…,
+  // ACP agents only) — see agent-client's config_options event. Empty for
+  // adapters that don't advertise any.
+  const [configOptions, setConfigOptions] = useState<SessionConfigOption[]>([])
   const [usage, setUsage] = useState<AgentUsage | null>(null)
   const [starting, setStarting] = useState(false)
   const [loadedModels, setLoadedModels] = useState<string[]>([])
@@ -114,6 +120,9 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
           break
         case 'mode_changed':
           setCurrentMode(event.current)
+          break
+        case 'config_options':
+          setConfigOptions(event.options)
           break
         case 'usage':
           setUsage({ used: event.used, size: event.size })
@@ -213,6 +222,7 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
     setEvents([])
     setModes([])
     setCurrentMode('')
+    setConfigOptions([])
     setUsage(null)
     setTurnActive(false)
   }, [])
@@ -304,6 +314,17 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
     [sessionId],
   )
 
+  // Change one of the session's advertised config options (model/effort/mode/
+  // …). Applies to this session only — never written back into the active
+  // profile, which stays defaults-only for future sessions.
+  const setConfigOption = useCallback(
+    async (configId: string, value: string | boolean) => {
+      if (!sessionId) return
+      await setAgentConfigOption(sessionId, configId, value)
+    },
+    [sessionId],
+  )
+
   // Guidance queued by "tell what to do different", sent once the run it
   // interrupted has fully stopped (a prompt can't be sent mid-turn).
   const pendingPrompt = useRef<string | null>(null)
@@ -362,6 +383,8 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
     turnActive,
     modes,
     currentMode,
+    configOptions,
+    setConfigOption,
     usage,
     starting,
     canStart,

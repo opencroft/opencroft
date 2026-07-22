@@ -1,6 +1,8 @@
 'use client'
 
+import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { ChainDot, type ChainDotVariant, Chained } from 'agent-chat/chain'
+import { ConfigOptionsBar } from 'agent-chat/config-options-bar'
 import { ThinkingBlock } from 'agent-chat/thinking-block'
 import type { QueuedPrompt } from 'agent-client/types'
 import {
@@ -783,6 +785,15 @@ interface AgentChatInputProps {
   /** Drop a still-queued message before delivery. Must be stable — it feeds the
    * memoized command bar. */
   onRemoveQueued?: (id: string) => void
+  /** The session's agent-advertised config options (model/effort/mode/…) —
+   * rendered as selectors below the input row. Empty for adapters that don't
+   * advertise any. */
+  configOptions?: SessionConfigOption[]
+  /** Change one of the session's config options. Must be stable — it feeds the
+   * memoized command bar. */
+  onSetConfigOption?: (configId: string, value: string | boolean) => void
+  /** Context usage meter (tokens used / window), shown alongside the selectors. */
+  usage?: { used: number; size?: number }
 }
 
 export function AgentChatInput({
@@ -797,6 +808,9 @@ export function AgentChatInput({
   onStartIconClick,
   queued,
   onRemoveQueued,
+  configOptions,
+  onSetConfigOption,
+  usage,
 }: AgentChatInputProps) {
   const [text, setText] = useState('')
   const [autoApprove, setAutoApproveState] = useState(false)
@@ -966,6 +980,17 @@ export function AgentChatInput({
             </Button>
           )}
         </div>
+        {configOptions && onSetConfigOption && (
+          // ConfigOptionsBar itself renders nothing when there's no config
+          // option and no usage to show — this only decides whether the props
+          // to check for that are even wired up.
+          <ConfigOptionsBar
+            options={configOptions}
+            onSetOption={onSetConfigOption}
+            usage={usage}
+            className='flex-wrap gap-2 px-1 pb-0.5 text-xs text-muted-foreground'
+          />
+        )}
       </div>
       // eslint-disable-next-line react-hooks/exhaustive-deps
     ),
@@ -983,6 +1008,9 @@ export function AgentChatInput({
       voiceControls,
       queued,
       onRemoveQueued,
+      configOptions,
+      onSetConfigOption,
+      usage,
     ],
   )
 

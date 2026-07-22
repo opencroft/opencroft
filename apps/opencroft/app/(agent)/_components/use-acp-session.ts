@@ -1,5 +1,6 @@
 'use client'
 
+import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import type { ChatEvent, PermissionOpt, QueuedPrompt } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 
@@ -13,6 +14,7 @@ import {
   promptLocal,
   removeQueuedLocal,
   respondLocal,
+  setLocalConfigOption,
 } from '@/app/(agent)/_server/acp'
 
 export interface LocalSource {
@@ -36,6 +38,11 @@ export interface PendingAsk {
 // (not redeclared) so there is a single source of truth for the fields.
 export type QueuedMessage = QueuedPrompt
 
+export interface AgentUsage {
+  used: number
+  size?: number
+}
+
 export interface AcpSession {
   session: AgentSession
   permissions: PendingPermission[]
@@ -43,11 +50,20 @@ export interface AcpSession {
   // Messages typed while a turn was in progress, held server-side awaiting
   // delivery — the latest 'queue' snapshot from the event stream.
   queue: QueuedMessage[]
+  // The session's agent-advertised config options (model/effort/mode/…) —
+  // the latest 'config_options' snapshot. Empty for adapters that don't
+  // advertise any.
+  configOptions: SessionConfigOption[]
+  // Context usage meter (tokens used / window) from the latest 'usage' event.
+  usage?: AgentUsage
   resolvePermission: (requestId: string, optionId?: string) => void
   resolveAsk: (requestId: string, answer?: string) => void
   respondPermissionText: (requestId: string, text: string) => void
   // Drop a still-queued message before it's delivered.
   removeQueued: (id: string) => void
+  // Change one of the session's advertised config options. Applies to this
+  // session only — never written back into the profile it was started from.
+  setConfigOption: (configId: string, value: string | boolean) => void
 }
 
 type ToolPart = Extract<ChatPart, { type: 'tool-call' }>
@@ -66,6 +82,9 @@ interface Folded {
   waiting: boolean
   // Server-held prompts awaiting delivery — the last 'queue' snapshot wins.
   queue: QueuedMessage[]
+  // The last 'config_options' snapshot wins.
+  configOptions: SessionConfigOption[]
+  usage?: AgentUsage
 }
 
 // Reduce the agent-client event log into the message shape AgentChat renders,
@@ -78,6 +97,8 @@ function fold(events: ChatEvent[]): Folded {
   let assistant: ChatMessage | null = null
   let waiting = false
   let queue: QueuedMessage[] = []
+  let configOptions: SessionConfigOption[] = []
+  let usage: AgentUsage | undefined
 
   const ensureAssistant = (): ChatMessage => {
     if (!assistant) {
@@ -158,6 +179,14 @@ function fold(events: ChatEvent[]): Folded {
         queue = event.items
         break
       }
+      case 'config_options': {
+        configOptions = event.options
+        break
+      }
+      case 'usage': {
+        usage = { used: event.used, size: event.size }
+        break
+      }
       case 'turn_end': {
         assistant = null
         waiting = false
@@ -179,6 +208,8 @@ function fold(events: ChatEvent[]): Folded {
     asks: [...asks.values()],
     waiting,
     queue,
+    configOptions,
+    usage,
   }
 }
 
@@ -524,26 +555,43 @@ export function useAcpSession(
     [sessionId],
   )
 
+  // The server confirms via a fresh 'config_options' snapshot on the stream —
+  // no optimistic local state to keep in sync.
+  const setConfigOption = useCallback(
+    (configId: string, value: string | boolean) => {
+      if (sessionId) {
+        void setLocalConfigOption({ data: { sessionId, configId, value } })
+      }
+    },
+    [sessionId],
+  )
+
   return useMemo(
     () => ({
       session,
       permissions: folded.permissions,
       asks: folded.asks,
       queue: folded.queue,
+      configOptions: folded.configOptions,
+      usage: folded.usage,
       resolvePermission,
       resolveAsk,
       respondPermissionText,
       removeQueued,
+      setConfigOption,
     }),
     [
       session,
       folded.permissions,
       folded.asks,
       folded.queue,
+      folded.configOptions,
+      folded.usage,
       resolvePermission,
       resolveAsk,
       respondPermissionText,
       removeQueued,
+      setConfigOption,
     ],
   )
 }

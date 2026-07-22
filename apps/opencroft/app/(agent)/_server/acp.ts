@@ -241,6 +241,15 @@ export const setLocalMode = createServerFn({ method: 'POST', strict: { output: f
     await agentClient.setMode(data.sessionId, data.modeId)
   })
 
+// Change one of the session's agent-advertised config options (model/effort/
+// mode/…). Applies to this session only — never written back into the
+// profile the session was started from.
+export const setLocalConfigOption = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { sessionId: string; configId: string; value: string | boolean }) => data)
+  .handler(async ({ data }): Promise<void> => {
+    await agentClient.setConfigOption(data.sessionId, data.configId, data.value)
+  })
+
 export const cancelLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((sessionId: string) => sessionId)
   .handler(async ({ data: sessionId }): Promise<void> => {

@@ -11,6 +11,7 @@ import { cn } from 'ui/lib/utils'
 
 import { AgentChatInput } from './chat-input'
 import { ChatView } from './chat-view'
+import { ConfigOptionsBar } from './config-options-bar'
 import { McpServerDialog } from './mcp-form'
 import { AgentPresetForm, AgentProfilePicker } from './preset-form'
 import { imageToolView, type ToolViewRegistry } from './tool-views'
@@ -34,11 +35,6 @@ export interface AgentChatProps {
   // once a session exposes them via `agent-client`'s config_options event.
   composerSlot?: ReactNode
   className?: string
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k`
-  return String(n)
 }
 
 const DEFAULT_TOOL_VIEWS: ToolViewRegistry = { generate_image: imageToolView }
@@ -137,13 +133,6 @@ export function AgentChat({
 
         <div className='flex-1' />
 
-        {session.usage && (
-          <span className='text-xs text-muted-foreground tabular-nums' title='Context: tokens in context / window'>
-            {formatTokens(session.usage.used)}
-            {session.usage.size ? ` / ${formatTokens(session.usage.size)}` : ''} ctx
-          </span>
-        )}
-
         <Flex row align='center' className='gap-1.5 text-xs text-muted-foreground'>
           <span className={cn('w-2 h-2 rounded-full', session.sessionId ? 'bg-green-500' : 'bg-muted-foreground/40')} />
           {session.sessionId ? 'Active' : 'No session'}
@@ -192,6 +181,11 @@ export function AgentChat({
               onStop={session.stop}
               disabled={!session.sessionId && !session.canStart}
               placeholder={session.sessionId || session.canStart ? 'Message the agent…' : 'Configure an agent to begin'}
+            />
+            <ConfigOptionsBar
+              options={session.configOptions}
+              onSetOption={session.setConfigOption}
+              usage={session.usage ?? undefined}
             />
             {composerSlot}
           </Flex>

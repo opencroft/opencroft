@@ -1,5 +1,6 @@
 'use client'
 
+import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { PermissionRequest } from 'agent-chat/messages'
 import { ArrowLeft, Pencil } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
@@ -63,6 +64,9 @@ function ChatHost({
   defaultExpanded,
   queued,
   onRemoveQueued,
+  configOptions,
+  onSetConfigOption,
+  usage,
   listView,
   inspectorPage = 'chat',
   onBack,
@@ -81,6 +85,9 @@ function ChatHost({
   defaultExpanded?: boolean
   queued?: QueuedMessage[]
   onRemoveQueued?: (id: string) => void
+  configOptions?: SessionConfigOption[]
+  onSetConfigOption?: (configId: string, value: string | boolean) => void
+  usage?: { used: number; size?: number }
   listView?: ReactNode
   inspectorPage?: 'list' | 'chat' | 'none'
   onBack?: () => void
@@ -144,6 +151,9 @@ function ChatHost({
       onStartIconClick={onOpenSessions}
       queued={queued}
       onRemoveQueued={onRemoveQueued}
+      configOptions={configOptions}
+      onSetConfigOption={onSetConfigOption}
+      usage={usage}
     />
   )
 }
@@ -307,6 +317,9 @@ export function LocalAgentHost({
       defaultExpanded
       queued={acp.queue}
       onRemoveQueued={acp.removeQueued}
+      configOptions={acp.configOptions}
+      onSetConfigOption={acp.setConfigOption}
+      usage={acp.usage}
       listView={listView}
       inspectorPage={inspectorPage}
       onBack={onBack}
