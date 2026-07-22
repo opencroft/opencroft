@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createAgentClient } from './agent-client'
+import { createAgentClient, handleUpdate } from './agent-client'
 import type { AgentConnection } from './connection'
 import { buildSpawnConfig, findAdapter } from './resolve'
 import type { AgentSelection, ChatEvent } from './types'
@@ -44,7 +44,7 @@ async function setup(
     ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
   }
   const promptCalls: string[] = []
-  const configOptionCalls: Array<{ sessionId: string; configId: string; value: string }> = []
+  const configOptionCalls: Array<{ sessionId: string; configId: string; value: unknown }> = []
   const turns: TurnDeferred[] = []
   const takeTurn = (index?: number) => (index === undefined ? turns.shift() : turns.splice(index, 1)[0])
   const connection = {
@@ -59,9 +59,9 @@ async function setup(
       })
     },
     cancel: async () => {},
-    setSessionConfigOption: async (params: { sessionId: string; configId: string; value: string }) => {
+    setSessionConfigOption: async (params: { sessionId: string; configId: string; value: unknown }) => {
       configOptionCalls.push(params)
-      return {}
+      return { configOptions: options.configOptions }
     },
   } as unknown as AgentConnection
   const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
@@ -145,6 +145,110 @@ test('an explicit "off" is never overridden by the claude default', async () => 
   const h = await setup('claude', { reasoningEffort: 'off', configOptions: THOUGHT_LEVEL_OPTIONS })
   await settle()
   assert.deepEqual(h.configOptionCalls, [])
+  h.client.deleteSession(h.sessionId)
+})
+
+// ── dynamic config options / session info ──────────────────────────────────
+
+const MODEL_OPTIONS = [
+  { id: 'model-option', category: 'model', type: 'select', options: [{ name: 'A', value: 'a' }] },
+]
+
+test('a session created with configOptions stores and emits them', async () => {
+  const h = await setup('openclaw', { configOptions: MODEL_OPTIONS })
+  await settle()
+  const snapshots = h.events.filter((event) => event.kind === 'config_options')
+  assert.deepEqual(snapshots.at(-1), { kind: 'config_options', options: MODEL_OPTIONS })
+  h.client.deleteSession(h.sessionId)
+})
+
+test('setConfigOption calls through, replaces state, and emits a snapshot', async () => {
+  const h = await setup('openclaw', { configOptions: MODEL_OPTIONS })
+  await h.client.setConfigOption(h.sessionId, 'model-option', 'b')
+  assert.deepEqual(h.configOptionCalls, [{ sessionId: h.sessionId, configId: 'model-option', value: 'b' }])
+  const snapshots = h.events.filter((event) => event.kind === 'config_options')
+  assert.deepEqual(snapshots.at(-1), { kind: 'config_options', options: MODEL_OPTIONS })
+  h.client.deleteSession(h.sessionId)
+})
+
+test('setConfigOption sends the boolean shape for boolean options', async () => {
+  const boolOption = [{ id: 'bool-option', category: 'mode', type: 'boolean', currentValue: false }]
+  const h = await setup('openclaw', { configOptions: boolOption })
+  await h.client.setConfigOption(h.sessionId, 'bool-option', true)
+  assert.deepEqual(h.configOptionCalls, [{ sessionId: h.sessionId, configId: 'bool-option', type: 'boolean', value: true }])
+  h.client.deleteSession(h.sessionId)
+})
+
+test('a config_option_update notification replaces session config options and emits a snapshot', async () => {
+  const h = await setup('openclaw')
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'config_option_update', configOptions: MODEL_OPTIONS },
+  } as Parameters<typeof handleUpdate>[0])
+  const snapshots = h.events.filter((event) => event.kind === 'config_options')
+  assert.deepEqual(snapshots.at(-1), { kind: 'config_options', options: MODEL_OPTIONS })
+  h.client.deleteSession(h.sessionId)
+})
+
+test('replayed config_option_update notifications leave the last one in state (last update wins)', async () => {
+  const h = await setup('openclaw')
+  const first = [{ id: 'model-option', category: 'model', type: 'select', options: [{ name: 'A', value: 'a' }] }]
+  const second = [{ id: 'model-option', category: 'model', type: 'select', options: [{ name: 'B', value: 'b' }] }]
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'config_option_update', configOptions: first },
+  } as Parameters<typeof handleUpdate>[0])
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'config_option_update', configOptions: second },
+  } as Parameters<typeof handleUpdate>[0])
+  const snapshots = h.events.filter((event) => event.kind === 'config_options')
+  assert.deepEqual(snapshots.at(-1), { kind: 'config_options', options: second })
+  h.client.deleteSession(h.sessionId)
+})
+
+test('loadSession seeds configOptions from the response when nothing was replayed', async () => {
+  counter += 1
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: '',
+    cwd: `/tmp/agent-client-test-${counter}`,
+  }
+  const sessionId = `loaded-session-${counter}`
+  const connection = {
+    loadSession: async () => ({ configOptions: MODEL_OPTIONS }),
+  } as unknown as AgentConnection
+  const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
+  assert.ok(store, 'agent-client global store must exist after import')
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: true,
+    initialized: Promise.resolve(),
+  })
+  const client = createAgentClient()
+  const meta = await client.loadSession(sessionId, selection)
+  assert.ok(meta, 'loadSession must resume when the connection advertises the capability')
+  const events: ChatEvent[] = []
+  // Subscribing after loadSession resolves still sees the config_options
+  // event — subscribe() replays every stored event to a new subscriber.
+  client.subscribe(sessionId, (event) => events.push(event))
+  const snapshots = events.filter((event) => event.kind === 'config_options')
+  assert.deepEqual(snapshots.at(-1), { kind: 'config_options', options: MODEL_OPTIONS })
+  client.deleteSession(sessionId)
+})
+
+test('a session_info_update notification updates the session title and emits it', async () => {
+  const h = await setup('openclaw')
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'session_info_update', title: 'Renamed chat' },
+  } as Parameters<typeof handleUpdate>[0])
+  const snapshots = h.events.filter((event) => event.kind === 'session_info')
+  assert.deepEqual(snapshots.at(-1), { kind: 'session_info', title: 'Renamed chat' })
+  assert.equal(h.client.listSessions().find((s) => s.id === h.sessionId)?.title, 'Renamed chat')
   h.client.deleteSession(h.sessionId)
 })
 

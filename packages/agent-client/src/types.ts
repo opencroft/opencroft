@@ -1,3 +1,5 @@
+import type { SessionConfigOption } from '@agentclientprotocol/sdk'
+
 export interface SpawnConfig {
   command: string
   args: string[]
@@ -96,6 +98,13 @@ export type ChatEvent =
   | { kind: 'ask_user_resolved'; requestId: string }
   | { kind: 'modes'; available: SessionMode[]; current: string }
   | { kind: 'mode_changed'; current: string }
+  // Full snapshot of the session's dynamic config options (mode/model/thought
+  // level/etc., ACP agents only), replacing any prior snapshot wholesale —
+  // same "last update wins" semantics as `modes`/`queue`.
+  | { kind: 'config_options'; options: SessionConfigOption[] }
+  // Agent-pushed session metadata (currently just title); undefined title
+  // means the agent didn't set one on this update.
+  | { kind: 'session_info'; title?: string }
   // Full snapshot of the session's undelivered prompt queue, emitted on every
   // queue change. Snapshot (not delta) so the stored-event replay leaves any
   // (re)connecting client with the current queue: fold the LAST one seen.

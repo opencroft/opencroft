@@ -14,6 +14,7 @@ import type {
   ReadTextFileResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
+  SessionConfigOption,
   SessionNotification,
   ToolCallContent,
   WriteTextFileRequest,
@@ -95,6 +96,10 @@ interface SessionState {
   subscribers: Set<Subscriber>
   // Per-session approval modes (replaces a single global slot).
   modes: SessionModes | null
+  // Dynamic config options (mode/model/thought_level/etc.) the agent
+  // advertised at session start, replaced wholesale on every
+  // config_option_update. ACP agents only; empty for the native harness.
+  configOptions: SessionConfigOption[]
   // Effective per-tool / per-skill permissions; undefined = unrestricted.
   permissions?: ResolvedPermissions
   // Number of prompt promises currently in flight for this session — the
@@ -277,7 +282,11 @@ function dropSessionTokens(sessionId: string): void {
   }
 }
 
-function handleUpdate(notification: SessionNotification): void {
+// Dispatches an inbound session/update notification to store state + a
+// ChatEvent. Exported so tests can drive it directly — the real caller is the
+// ACP Client wired up per spawned connection (buildClient below), which test
+// mocks bypass entirely by seeding store.connections with a fake AgentConnection.
+export function handleUpdate(notification: SessionNotification): void {
   const { sessionId, update } = notification
   switch (update.sessionUpdate) {
     case 'user_message_chunk': {
@@ -343,6 +352,25 @@ function handleUpdate(notification: SessionNotification): void {
         used: update.used,
         size: update.size > 0 ? update.size : undefined,
       })
+      break
+    }
+    case 'config_option_update': {
+      const session = store.sessions.get(sessionId)
+      if (session) {
+        session.configOptions = update.configOptions
+      }
+      emit(sessionId, { kind: 'config_options', options: update.configOptions })
+      break
+    }
+    case 'session_info_update': {
+      // Per spec, `title: null` means "clear the title" — not handled here,
+      // so a clear leaves the last known title in session.meta (the event
+      // still emits with title: undefined either way).
+      const session = store.sessions.get(sessionId)
+      if (session && update.title) {
+        session.meta.title = update.title
+      }
+      emit(sessionId, { kind: 'session_info', title: update.title ?? undefined })
       break
     }
     default:
@@ -725,6 +753,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     }
   }
 
+  function emitConfigOptions(sessionId: string): void {
+    const options = store.sessions.get(sessionId)?.configOptions
+    if (options) {
+      emit(sessionId, { kind: 'config_options', options })
+    }
+  }
+
   // Publish the current queue as a snapshot event. The copy matters: events are
   // stored for replay, so a stored snapshot must not alias the live array that
   // later pushes/shifts would mutate.
@@ -878,12 +913,16 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         events: [],
         subscribers: new Set(),
         modes: response.modes ? toSessionModes(response.modes) : null,
+        configOptions: response.configOptions ?? [],
         permissions,
         activeTurns: 0,
         queue: [],
       })
       if (response.modes) {
         emitSessionModes(sessionId)
+      }
+      if (response.configOptions) {
+        emitConfigOptions(sessionId)
       }
       // Apply the requested initial approval mode, when offered.
       if (
@@ -913,8 +952,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         const value =
           option && option.type === 'select' ? matchReasoningValue(option.options, effort) : undefined
         if (option && value) {
-          await connection
-            .setSessionConfigOption({ sessionId, configId: option.id, value })
+          await this
+            .setConfigOption(sessionId, option.id, value)
             .catch((error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }))
         }
       }
@@ -965,12 +1004,32 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         events: [],
         subscribers: new Set(),
         modes: null,
+        configOptions: [],
         permissions,
         activeTurns: 0,
         queue: [],
       })
       try {
-        await connection.loadSession({ sessionId, cwd: selection.cwd, mcpServers, _meta: sessionMeta(selection) })
+        const response = await connection.loadSession({
+          sessionId,
+          cwd: selection.cwd,
+          mcpServers,
+          _meta: sessionMeta(selection),
+        })
+        // Seed from the response the same way newSession does — the agent may
+        // not replay a config_option_update for state it already had before
+        // this load, so relying on replay alone can leave configOptions empty.
+        // Replay notifications land via handleUpdate while this call is
+        // pending, i.e. strictly before this response resolves, so a replayed
+        // update is the newer state — only fall back to this "initial"
+        // snapshot when nothing was replayed, rather than overwriting it.
+        if (response.configOptions) {
+          const session = store.sessions.get(sessionId)
+          if (session && session.configOptions.length === 0) {
+            session.configOptions = response.configOptions
+            emitConfigOptions(sessionId)
+          }
+        }
       } catch (error) {
         // Transcript gone or agent refused — unwind the half-registered session
         // so the caller can cleanly create a fresh one.
@@ -1027,6 +1086,26 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         session.modes.current = modeId
       }
       emit(sessionId, { kind: 'mode_changed', current: modeId })
+    },
+
+    // Change a dynamic session config option (mode/model/thought_level/etc.)
+    // and reconcile state from the response. The agent may also push the same
+    // change back as a config_option_update notification (handled in
+    // handleUpdate) — both paths write the same "last update wins" state, so
+    // whichever arrives is harmless to apply twice.
+    async setConfigOption(sessionId: string, configId: string, value: string | boolean): Promise<void> {
+      const connection = await connectionForSession(sessionId)
+      const session = store.sessions.get(sessionId)
+      const option = session?.configOptions.find((entry) => entry.id === configId)
+      const request =
+        option?.type === 'boolean'
+          ? { sessionId, configId, type: 'boolean' as const, value: Boolean(value) }
+          : { sessionId, configId, value: String(value) }
+      const response = await connection.setSessionConfigOption(request)
+      if (session) {
+        session.configOptions = response.configOptions
+      }
+      emit(sessionId, { kind: 'config_options', options: response.configOptions })
     },
 
     deleteSession(sessionId: string): void {
@@ -1086,6 +1165,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         events: forkedEvents,
         subscribers: new Set(),
         modes: response.modes ? toSessionModes(response.modes) : session.modes,
+        // Shares the source session's array reference — safe because every
+        // write path (config_option_update, setConfigOption, the loadSession
+        // seed above) replaces it wholesale rather than mutating in place.
+        configOptions: session.configOptions,
         permissions: session.permissions,
         activeTurns: 0,
         queue: [],
