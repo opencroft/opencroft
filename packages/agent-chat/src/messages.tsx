@@ -11,7 +11,7 @@ import { cn } from 'ui/lib/utils'
 
 import { ThinkingBlock } from './thinking-block'
 import { ToolCallBlock } from './tool-block'
-import type { ToolMessage, ToolViewRegistry } from './tool-views'
+import { toolViewProps, type ToolMessage, type ToolViewRegistry } from './tool-views'
 
 export type PermissionMessage = Extract<ChatMessage, { kind: 'permission' }>
 export type AskMessage = Extract<ChatMessage, { kind: 'ask' }>
@@ -28,15 +28,6 @@ export function statusVariant(status: string): 'secondary' | 'destructive' | 'ou
   if (status === 'completed') return 'secondary'
   if (status === 'failed') return 'destructive'
   return 'outline'
-}
-
-function formatValue(value: unknown): string {
-  if (typeof value === 'string') return value
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
 }
 
 // Renders a single non-user message (assistant text, thought, tool call, plan,
@@ -221,41 +212,31 @@ export function ToolView({
   toolViews: ToolViewRegistry
   hideToolCall?: boolean
 }) {
-  const view = toolViews[message.title]
-  const custom = view?.render(message) ?? null
+  const spec = toolViews[message.title]
+  const props = toolViewProps(message, 'history')
+  // hasContent (default true once a spec is registered) decides whether the
+  // view has something to show — the component itself is only ever rendered
+  // through JSX below, never called as a plain function, so this pre-render
+  // check is what layout decisions key off instead of inspecting its output.
+  const showCustom = spec !== undefined && (spec.hasContent ? spec.hasContent(props) : true)
+  const custom = showCustom && spec ? <spec.component {...props} /> : null
 
   // Tools hidden: show only the custom view (<ChatView> only keeps tool messages
-  // whose custom view renders, so `custom` is present here).
+  // whose custom view has content, so `custom` is present here).
   if (hideToolCall) {
     return <>{custom}</>
   }
-  // A settled call (or one that already has output) shows its result; until then
-  // ToolCallBlock renders a running indicator (no `result`).
-  const settled = message.status === 'completed' || message.status === 'failed'
-  const toolCall = (
-    <ToolCallBlock
-      name={message.title}
-      args={message.input}
-      result={
-        settled || message.output !== undefined
-          ? {
-              text: message.output === undefined ? '' : formatValue(message.output),
-              isError: message.status === 'failed',
-            }
-          : undefined
-      }
-    />
-  )
+  const toolCall = <ToolCallBlock name={message.title} args={message.input} result={props.result} />
   // Nothing custom to show (yet) → just the tool call.
   if (!custom) {
     return toolCall
   }
-  if (view?.display === 'replace') {
+  if (spec?.display === 'replace') {
     return <>{custom}</>
   }
   return (
     <Flex withGaps className='gap-2'>
-      {view?.display === 'before' ? (
+      {spec?.display === 'before' ? (
         <>
           {custom}
           {toolCall}

@@ -46,12 +46,17 @@ export {
 } from './tool-block'
 export {
   extractUrl,
+  formatToolValue,
   hasToolView,
   imageToolView,
   type ToolMessage,
-  type ToolViewDef,
   type ToolViewDisplay,
+  type ToolViewMode,
+  type ToolViewProps,
   type ToolViewRegistry,
+  type ToolViewResult,
+  type ToolViewSpec,
+  toolViewProps,
 } from './tool-views'
 export {
   type AgentSessionController,

@@ -1,7 +1,7 @@
 'use client'
 
 import { Bot, Loader2, Plug, Settings2, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 import { Button } from 'ui/components/ui/button'
 import { AdaptivePopup, PopupContent, PopupHeader } from 'ui/components/ui/layout/adaptive-popup'
 import { Flex } from 'ui/components/ui/layout/flex'
@@ -23,6 +23,16 @@ export interface AgentChatProps {
   // Custom views for specific tools, keyed by tool name. Defaults to rendering
   // a `generate_image` tool's URL result as an inline image.
   toolViews?: ToolViewRegistry
+  // Host UI slot: extra content rendered at the trailing end of the toolbar,
+  // after the built-in profile/MCP/mode/visibility controls and "New chat".
+  // For host-specific actions the package can't know about (e.g. a link back
+  // to whatever entity this chat is bound to in the host app).
+  headerActions?: ReactNode
+  // Host UI slot: extra content rendered below the composer input, inside the
+  // same sticky footer card. For host-provided controls tied to the active
+  // session — e.g. dynamic ACP config-option selectors (model/effort/mode)
+  // once a session exposes them via `agent-client`'s config_options event.
+  composerSlot?: ReactNode
   className?: string
 }
 
@@ -36,7 +46,13 @@ const DEFAULT_TOOL_VIEWS: ToolViewRegistry = { generate_image: imageToolView }
 // A complete, self-contained agent chat: a configuration toolbar (profiles,
 // preset editor, MCP server, mode, visibility toggles) above a streaming
 // transcript with a composer. Drop it in and point it at the SSE route.
-export function AgentChat({ eventsUrl, toolViews = DEFAULT_TOOL_VIEWS, className }: AgentChatProps) {
+export function AgentChat({
+  eventsUrl,
+  toolViews = DEFAULT_TOOL_VIEWS,
+  headerActions,
+  composerSlot,
+  className,
+}: AgentChatProps) {
   const session = useAgentSession({ eventsUrl })
   const [showThinking, setShowThinking] = useState(true)
   const [showTools, setShowTools] = useState(false)
@@ -142,6 +158,8 @@ export function AgentChat({ eventsUrl, toolViews = DEFAULT_TOOL_VIEWS, className
         <Button size='sm' onClick={session.start} disabled={!session.canStart || session.starting}>
           {session.starting ? <Loader2 className='animate-spin' /> : <Bot />} New chat
         </Button>
+
+        {headerActions}
       </Flex>
 
       {/* Transcript + composer */}
@@ -165,15 +183,18 @@ export function AgentChat({ eventsUrl, toolViews = DEFAULT_TOOL_VIEWS, className
           </>
         }
         footer={
-          <AgentChatInput
-            value={session.input}
-            onValueChange={session.setInput}
-            onSend={session.send}
-            busy={session.turnActive}
-            onStop={session.stop}
-            disabled={!session.sessionId && !session.canStart}
-            placeholder={session.sessionId || session.canStart ? 'Message the agent…' : 'Configure an agent to begin'}
-          />
+          <Flex withGaps className='gap-1.5'>
+            <AgentChatInput
+              value={session.input}
+              onValueChange={session.setInput}
+              onSend={session.send}
+              busy={session.turnActive}
+              onStop={session.stop}
+              disabled={!session.sessionId && !session.canStart}
+              placeholder={session.sessionId || session.canStart ? 'Message the agent…' : 'Configure an agent to begin'}
+            />
+            {composerSlot}
+          </Flex>
         }
       />
     </Flex>

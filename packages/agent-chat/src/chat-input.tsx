@@ -17,8 +17,8 @@ export interface AgentChatInputProps {
   // Disables sending (e.g. the agent isn't configured yet). Stop stays available.
   disabled?: boolean
   placeholder?: string
-  // Optional trailing slot — e.g. a popover of extra actions. Rendered after the
-  // send/stop button.
+  // Host UI slot: extra content rendered after the send/stop button — e.g. a
+  // popover of extra actions.
   menu?: ReactNode
   className?: string
 }
