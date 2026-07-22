@@ -22,4 +22,5 @@ export type AgentConnection = Pick<
   | 'prompt'
   | 'cancel'
   | 'unstable_forkSession'
+  | 'closeSession'
 >

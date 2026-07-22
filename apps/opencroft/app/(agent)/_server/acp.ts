@@ -261,7 +261,7 @@ export const forgetLocalSession = createServerFn({ method: 'POST', strict: { out
   .handler(async ({ data: tabKey }): Promise<void> => {
     const entry = tabSessions.get(tabKey)
     if (entry) {
-      agentClient.deleteSession(entry.id)
+      await agentClient.deleteSession(entry.id)
       tabSessions.delete(tabKey)
     }
     // Drop the durable pointer too, so a later restart doesn't resurrect it.

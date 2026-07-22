@@ -272,6 +272,14 @@ export function createNativeHarness(
       return {}
     },
 
+    // No subprocess to free — the engine never calls this for native selections
+    // (deleteSession skips them), but the harness still has to satisfy
+    // AgentConnection. Just drop the in-memory conversation state.
+    async closeSession({ sessionId }) {
+      sessions.delete(sessionId)
+      return {}
+    },
+
     async setSessionMode({ sessionId, modeId }) {
       const session = sessions.get(sessionId)
       if (session) {

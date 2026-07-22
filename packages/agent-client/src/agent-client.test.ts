@@ -21,6 +21,13 @@ import type { AgentSelection, ChatEvent } from './types'
 
 interface AcpStoreShape {
   connections: Map<string, unknown>
+  sessions: Map<string, unknown>
+}
+
+function acpStore(): AcpStoreShape {
+  const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
+  assert.ok(store, 'agent-client global store must exist after import')
+  return store
 }
 
 interface TurnDeferred {
@@ -45,6 +52,7 @@ async function setup(
   }
   const promptCalls: string[] = []
   const configOptionCalls: Array<{ sessionId: string; configId: string; value: unknown }> = []
+  const closeSessionCalls: string[] = []
   const turns: TurnDeferred[] = []
   const takeTurn = (index?: number) => (index === undefined ? turns.shift() : turns.splice(index, 1)[0])
   const connection = {
@@ -63,10 +71,15 @@ async function setup(
       configOptionCalls.push(params)
       return { configOptions: options.configOptions }
     },
+    closeSession: async (params: { sessionId: string }) => {
+      closeSessionCalls.push(params.sessionId)
+      return {}
+    },
   } as unknown as AgentConnection
   const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  const key = JSON.stringify(buildSpawnConfig(selection))
+  store.connections.set(key, {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -79,9 +92,12 @@ async function setup(
   return {
     client,
     sessionId: meta.id,
+    selection,
+    connectionKey: key,
     events,
     promptCalls,
     configOptionCalls,
+    closeSessionCalls,
     endTurn: (index?: number) => takeTurn(index)?.resolve({ stopReason: 'end_turn' }),
     failTurn: (message: string, index?: number) => takeTurn(index)?.reject(new Error(message)),
   }
@@ -122,7 +138,7 @@ test('a claude session with no reasoningEffort set defaults thought_level to med
   assert.deepEqual(h.configOptionCalls, [
     { sessionId: h.sessionId, configId: 'thought-level-option', value: 'medium' },
   ])
-  h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(h.sessionId)
 })
 
 test('an explicit reasoningEffort still wins over the claude default', async () => {
@@ -131,21 +147,21 @@ test('an explicit reasoningEffort still wins over the claude default', async () 
   assert.deepEqual(h.configOptionCalls, [
     { sessionId: h.sessionId, configId: 'thought-level-option', value: 'high' },
   ])
-  h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(h.sessionId)
 })
 
 test('non-claude adapters get no reasoning default applied', async () => {
   const h = await setup('openclaw', { configOptions: THOUGHT_LEVEL_OPTIONS })
   await settle()
   assert.deepEqual(h.configOptionCalls, [])
-  h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(h.sessionId)
 })
 
 test('an explicit "off" is never overridden by the claude default', async () => {
   const h = await setup('claude', { reasoningEffort: 'off', configOptions: THOUGHT_LEVEL_OPTIONS })
   await settle()
   assert.deepEqual(h.configOptionCalls, [])
-  h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(h.sessionId)
 })
 
 // ── dynamic config options / session info ──────────────────────────────────
@@ -159,7 +175,7 @@ test('a session created with configOptions stores and emits them', async () => {
   await settle()
   const snapshots = h.events.filter((event) => event.kind === 'config_options')
   assert.deepEqual(snapshots.at(-1), { kind: 'config_options', options: MODEL_OPTIONS })
-  h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(h.sessionId)
 })
 
 test('setConfigOption calls through, replaces state, and emits a snapshot', async () => {
@@ -168,7 +184,7 @@ test('setConfigOption calls through, replaces state, and emits a snapshot', asyn
   assert.deepEqual(h.configOptionCalls, [{ sessionId: h.sessionId, configId: 'model-option', value: 'b' }])
   const snapshots = h.events.filter((event) => event.kind === 'config_options')
   assert.deepEqual(snapshots.at(-1), { kind: 'config_options', options: MODEL_OPTIONS })
-  h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(h.sessionId)
 })
 
 test('setConfigOption sends the boolean shape for boolean options', async () => {
@@ -176,7 +192,7 @@ test('setConfigOption sends the boolean shape for boolean options', async () => 
   const h = await setup('openclaw', { configOptions: boolOption })
   await h.client.setConfigOption(h.sessionId, 'bool-option', true)
   assert.deepEqual(h.configOptionCalls, [{ sessionId: h.sessionId, configId: 'bool-option', type: 'boolean', value: true }])
-  h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(h.sessionId)
 })
 
 test('a config_option_update notification replaces session config options and emits a snapshot', async () => {
@@ -187,7 +203,7 @@ test('a config_option_update notification replaces session config options and em
   } as Parameters<typeof handleUpdate>[0])
   const snapshots = h.events.filter((event) => event.kind === 'config_options')
   assert.deepEqual(snapshots.at(-1), { kind: 'config_options', options: MODEL_OPTIONS })
-  h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(h.sessionId)
 })
 
 test('replayed config_option_update notifications leave the last one in state (last update wins)', async () => {
@@ -204,7 +220,7 @@ test('replayed config_option_update notifications leave the last one in state (l
   } as Parameters<typeof handleUpdate>[0])
   const snapshots = h.events.filter((event) => event.kind === 'config_options')
   assert.deepEqual(snapshots.at(-1), { kind: 'config_options', options: second })
-  h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(h.sessionId)
 })
 
 test('loadSession seeds configOptions from the response when nothing was replayed', async () => {
@@ -237,7 +253,7 @@ test('loadSession seeds configOptions from the response when nothing was replaye
   client.subscribe(sessionId, (event) => events.push(event))
   const snapshots = events.filter((event) => event.kind === 'config_options')
   assert.deepEqual(snapshots.at(-1), { kind: 'config_options', options: MODEL_OPTIONS })
-  client.deleteSession(sessionId)
+  await client.deleteSession(sessionId)
 })
 
 test('a session_info_update notification updates the session title and emits it', async () => {
@@ -249,7 +265,7 @@ test('a session_info_update notification updates the session title and emits it'
   const snapshots = h.events.filter((event) => event.kind === 'session_info')
   assert.deepEqual(snapshots.at(-1), { kind: 'session_info', title: 'Renamed chat' })
   assert.equal(h.client.listSessions().find((s) => s.id === h.sessionId)?.title, 'Renamed chat')
-  h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(h.sessionId)
 })
 
 test('prompt during an active turn queues and emits a snapshot', async () => {
@@ -260,7 +276,7 @@ test('prompt during an active turn queues and emits a snapshot', async () => {
   // Only the first prompt reached the agent; the rest were held.
   assert.deepEqual(h.promptCalls, ['first'])
   assert.deepEqual(queueSnapshots(h.events), [['second'], ['second', 'third']])
-  h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(h.sessionId)
 })
 
 test('turn end drains the queue in order, one message per turn', async () => {
@@ -284,7 +300,7 @@ test('turn end drains the queue in order, one message per turn', async () => {
     kinds(h.events).filter((kind) => kind === 'user' || kind === 'turn_end'),
     ['user', 'turn_end', 'user', 'turn_end', 'user', 'turn_end'],
   )
-  h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(h.sessionId)
 })
 
 test('front-queued prompt jumps the line', async () => {
@@ -296,7 +312,7 @@ test('front-queued prompt jumps the line', async () => {
   h.endTurn()
   await settle()
   assert.deepEqual(h.promptCalls, ['first', 'urgent'])
-  h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(h.sessionId)
 })
 
 test('removeQueued drops a held message and is a no-op for unknown ids', async () => {
@@ -315,7 +331,7 @@ test('removeQueued drops a held message and is a no-op for unknown ids', async (
   h.endTurn()
   await settle()
   assert.deepEqual(h.promptCalls, ['first', 'third'])
-  h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(h.sessionId)
 })
 
 test('a failed turn emits an error and still drains the queue', async () => {
@@ -330,7 +346,7 @@ test('a failed turn emits an error and still drains the queue', async () => {
   assert.deepEqual(h.promptCalls, ['first', 'second'])
   const secondUser = h.events.findIndex((event) => event.kind === 'user' && event.text === 'second')
   assert.ok(secondUser > errorIndex, 'drain must follow the terminal error event')
-  h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(h.sessionId)
 })
 
 // ── mid-turn input (steering adapters) ─────────────────────────────────────
@@ -420,4 +436,92 @@ test('a mid-turn prompt without the capability queues even on the claude adapter
   h.endTurn()
   await settle()
   await h.client.reset()
+})
+
+// ── deleteSession / session-close propagation ────
+//
+// store.connections is keyed by spawn config, not sessionId, so these tests
+// exercise the three cases that matter: the common single-session case
+// (graceful close, nothing left to kill), the fallback (close unavailable,
+// no sibling — kill the subprocess), and the guard that must never fire the
+// fallback while a sibling session still shares the connection.
+
+test('deleteSession closes the session on the agent and leaves the shared connection alone', async () => {
+  const h = await setup()
+  await h.client.deleteSession(h.sessionId)
+  assert.deepEqual(h.closeSessionCalls, [h.sessionId])
+  assert.ok(acpStore().connections.has(h.connectionKey), 'a successful close must not also kill the connection')
+})
+
+test('deleteSession kills the subprocess when close fails and no sibling session remains', async () => {
+  let killed = false
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: '',
+    cwd: '/tmp/agent-client-test-kill-fallback',
+  }
+  const connection = {
+    newSession: async () => ({ sessionId: 'kill-fallback-session' }),
+    closeSession: async () => {
+      throw new Error('agent does not support session.close')
+    },
+  } as unknown as AgentConnection
+  const key = JSON.stringify(buildSpawnConfig(selection))
+  const store = acpStore()
+  store.connections.set(key, {
+    connection,
+    process: { kill: () => { killed = true } },
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+  const client = createAgentClient()
+  const meta = await client.createSession(selection)
+  await client.deleteSession(meta.id)
+  assert.equal(killed, true)
+  assert.equal(store.connections.has(key), false)
+})
+
+test('deleteSession does not kill the subprocess while a sibling session still shares it', async () => {
+  let killed = false
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: '',
+    cwd: '/tmp/agent-client-test-sibling-guard',
+  }
+  let nextId = 0
+  const connection = {
+    newSession: async () => ({ sessionId: `sibling-guard-session-${++nextId}` }),
+    closeSession: async () => {
+      throw new Error('agent does not support session.close')
+    },
+  } as unknown as AgentConnection
+  const key = JSON.stringify(buildSpawnConfig(selection))
+  const store = acpStore()
+  store.connections.set(key, {
+    connection,
+    process: { kill: () => { killed = true } },
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+  const client = createAgentClient()
+  const first = await client.createSession(selection)
+  const second = await client.createSession(selection)
+  const originalWarn = console.warn
+  const warnings: unknown[][] = []
+  console.warn = (...args: unknown[]) => warnings.push(args)
+  try {
+    await client.deleteSession(first.id)
+  } finally {
+    console.warn = originalWarn
+  }
+  assert.equal(killed, false, 'a sibling session on the same connection must block the kill fallback')
+  assert.equal(store.connections.has(key), true)
+  assert.ok(store.sessions.has(second.id), 'the sibling session itself must be untouched')
+  assert.equal(warnings.length, 1, 'a blocked kill fallback must log a warning so the leak is diagnosable')
 })

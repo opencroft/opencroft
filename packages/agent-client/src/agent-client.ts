@@ -1108,7 +1108,47 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       emit(sessionId, { kind: 'config_options', options: response.configOptions })
     },
 
-    deleteSession(sessionId: string): void {
+    // Ends the session on the agent side before dropping our own state, so its
+    // subprocess doesn't outlive the chat.
+    // `store.connections` is keyed by spawn config, not sessionId — a
+    // subprocess/connection is shared by every session on the same agent+job
+    // — so this is deliberately session-scoped first: graceful
+    // `closeSession` asks the agent to free just this one session, and only
+    // when that isn't possible AND no sibling session still uses the
+    // connection do we fall back to killing the whole subprocess.
+    async deleteSession(sessionId: string): Promise<void> {
+      const session = store.sessions.get(sessionId)
+      if (session && !isNativeSelection(session.selection)) {
+        const key = spawnKey(buildSpawnConfig(session.selection))
+        const entry = store.connections.get(key)
+        if (entry) {
+          let closed = false
+          try {
+            await entry.connection.closeSession({ sessionId })
+            closed = true
+          } catch {
+            // The agent may not support session.close, the session may never
+            // have reached this connection, or the subprocess may already be
+            // gone — deletion must not be blocked on any of that.
+          }
+          if (!closed) {
+            const hasSibling = [...store.sessions.values()].some(
+              (other) =>
+                other !== session &&
+                !isNativeSelection(other.selection) &&
+                spawnKey(buildSpawnConfig(other.selection)) === key,
+            )
+            if (!hasSibling) {
+              entry.process?.kill()
+              store.connections.delete(key)
+            } else {
+              console.warn(
+                `[agent-client] deleteSession(${sessionId}): closeSession failed and a sibling session still shares connection ${key} — subprocess left running.`,
+              )
+            }
+          }
+        }
+      }
       store.sessions.delete(sessionId)
       store.nativeSessions.delete(sessionId)
       dropSessionTokens(sessionId)
