@@ -38,7 +38,7 @@ const DEFAULT_TOOL_VIEWS: ToolViewRegistry = { generate_image: imageToolView }
 // transcript with a composer. Drop it in and point it at the SSE route.
 export function AgentChat({ eventsUrl, toolViews = DEFAULT_TOOL_VIEWS, className }: AgentChatProps) {
   const session = useAgentSession({ eventsUrl })
-  const [showThinking, setShowThinking] = useState(false)
+  const [showThinking, setShowThinking] = useState(true)
   const [showTools, setShowTools] = useState(false)
   const [agentOpen, setAgentOpen] = useState(false)
 

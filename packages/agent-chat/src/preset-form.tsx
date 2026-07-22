@@ -266,7 +266,12 @@ export function AgentPresetForm({
           <FieldLabel>Reasoning</FieldLabel>
           <Select
             value={selection.reasoningEffort || 'off'}
-            onValueChange={(value) => onSelectionChange({ reasoningEffort: value === 'off' ? '' : value })}
+            // Store 'off' literally so an explicit choice survives — leaving it
+            // as '' would be indistinguishable from "unset", which claude
+            // adapters now default to 'medium' (see resolveReasoningEffort in
+            // agent-client.ts). Existing profiles with '' still mean "unset"
+            // and pick up that new default, which is the intended migration.
+            onValueChange={(value) => onSelectionChange({ reasoningEffort: value })}
           >
             <SelectTrigger className='w-full'>
               <SelectValue />

@@ -30,7 +30,10 @@ interface TurnDeferred {
 
 let counter = 0
 
-async function setup(adapterId: 'openclaw' | 'claude' = 'openclaw') {
+async function setup(
+  adapterId: 'openclaw' | 'claude' = 'openclaw',
+  options: { reasoningEffort?: string; configOptions?: unknown } = {},
+) {
   counter += 1
   const selection: AgentSelection = {
     providerId: 'test-provider',
@@ -38,12 +41,17 @@ async function setup(adapterId: 'openclaw' | 'claude' = 'openclaw') {
     model: 'test-model',
     apiKey: '',
     cwd: `/tmp/agent-client-test-${counter}`,
+    ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
   }
   const promptCalls: string[] = []
+  const configOptionCalls: Array<{ sessionId: string; configId: string; value: string }> = []
   const turns: TurnDeferred[] = []
   const takeTurn = (index?: number) => (index === undefined ? turns.shift() : turns.splice(index, 1)[0])
   const connection = {
-    newSession: async () => ({ sessionId: `test-session-${counter}` }),
+    newSession: async () => ({
+      sessionId: `test-session-${counter}`,
+      configOptions: options.configOptions,
+    }),
     prompt: (params: { prompt: Array<{ text: string }> }) => {
       promptCalls.push(params.prompt[0].text)
       return new Promise((resolve, reject) => {
@@ -51,6 +59,10 @@ async function setup(adapterId: 'openclaw' | 'claude' = 'openclaw') {
       })
     },
     cancel: async () => {},
+    setSessionConfigOption: async (params: { sessionId: string; configId: string; value: string }) => {
+      configOptionCalls.push(params)
+      return {}
+    },
   } as unknown as AgentConnection
   const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
@@ -69,6 +81,7 @@ async function setup(adapterId: 'openclaw' | 'claude' = 'openclaw') {
     sessionId: meta.id,
     events,
     promptCalls,
+    configOptionCalls,
     endTurn: (index?: number) => takeTurn(index)?.resolve({ stopReason: 'end_turn' }),
     failTurn: (message: string, index?: number) => takeTurn(index)?.reject(new Error(message)),
   }
@@ -87,6 +100,53 @@ function queueSnapshots(events: ChatEvent[]): string[][] {
 function kinds(events: ChatEvent[]): string[] {
   return events.map((event) => event.kind)
 }
+
+// ── reasoning effort defaults ──────────────────────────────────────────────
+
+const THOUGHT_LEVEL_OPTIONS = [
+  {
+    id: 'thought-level-option',
+    category: 'thought_level',
+    type: 'select',
+    options: [
+      { name: 'Low', value: 'low' },
+      { name: 'Medium', value: 'medium' },
+      { name: 'High', value: 'high' },
+    ],
+  },
+]
+
+test('a claude session with no reasoningEffort set defaults thought_level to medium', async () => {
+  const h = await setup('claude', { configOptions: THOUGHT_LEVEL_OPTIONS })
+  await settle()
+  assert.deepEqual(h.configOptionCalls, [
+    { sessionId: h.sessionId, configId: 'thought-level-option', value: 'medium' },
+  ])
+  h.client.deleteSession(h.sessionId)
+})
+
+test('an explicit reasoningEffort still wins over the claude default', async () => {
+  const h = await setup('claude', { reasoningEffort: 'high', configOptions: THOUGHT_LEVEL_OPTIONS })
+  await settle()
+  assert.deepEqual(h.configOptionCalls, [
+    { sessionId: h.sessionId, configId: 'thought-level-option', value: 'high' },
+  ])
+  h.client.deleteSession(h.sessionId)
+})
+
+test('non-claude adapters get no reasoning default applied', async () => {
+  const h = await setup('openclaw', { configOptions: THOUGHT_LEVEL_OPTIONS })
+  await settle()
+  assert.deepEqual(h.configOptionCalls, [])
+  h.client.deleteSession(h.sessionId)
+})
+
+test('an explicit "off" is never overridden by the claude default', async () => {
+  const h = await setup('claude', { reasoningEffort: 'off', configOptions: THOUGHT_LEVEL_OPTIONS })
+  await settle()
+  assert.deepEqual(h.configOptionCalls, [])
+  h.client.deleteSession(h.sessionId)
+})
 
 test('prompt during an active turn queues and emits a snapshot', async () => {
   const h = await setup()

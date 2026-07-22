@@ -499,6 +499,22 @@ function isNativeSelection(selection: AgentSelection): boolean {
   return findAdapter(selection.adapterId)?.kind === 'native'
 }
 
+// The Claude Code bridge ships with extended thinking off unless a session
+// explicitly requests it via the thought_level config option. Sensible-default
+// these adapters to 'medium' so thought chunks flow without every profile
+// having to opt in by hand; other adapters keep the current "off unless asked"
+// behavior. An explicit 'off' from the user is never overridden — it's
+// distinct from an unset ('') selection, which is what picks up this default.
+function resolveReasoningEffort(selection: AgentSelection): string {
+  if (selection.reasoningEffort === 'off') {
+    return ''
+  }
+  if (selection.reasoningEffort) {
+    return selection.reasoningEffort
+  }
+  return selection.adapterId === 'claude' || selection.adapterId === 'claude-subscription' ? 'medium' : ''
+}
+
 // Whether this agent accepts per-session MCP servers (tool support). Adapters
 // opt out via `supportsTools: false` (e.g. OpenClaw's bridge rejects them), in
 // which case the client sends an empty server list.
@@ -889,14 +905,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       }
       // Apply the reasoning preference to ACP agents that expose a thought_level
       // config option (the native harness handles reasoning via providerOptions).
-      if (!native && selection.reasoningEffort && response.configOptions) {
+      const effort = resolveReasoningEffort(selection)
+      if (!native && effort && response.configOptions) {
         const option = response.configOptions.find(
           (entry) => entry.category === 'thought_level' && entry.type === 'select',
         )
         const value =
-          option && option.type === 'select'
-            ? matchReasoningValue(option.options, selection.reasoningEffort)
-            : undefined
+          option && option.type === 'select' ? matchReasoningValue(option.options, effort) : undefined
         if (option && value) {
           await connection
             .setSessionConfigOption({ sessionId, configId: option.id, value })

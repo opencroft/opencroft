@@ -333,14 +333,16 @@ export function createNativeHarness(
       const gate: ToolGate = { sessionId, client, getMode: () => session.mode }
       const { toolset, close } = await buildToolset(config, gate, session.permissions)
       // Reasoning effort goes to the OpenAI-compatible provider, keyed by the
-      // provider name used in resolveModel (selection.providerId).
-      const providerOptions = selection.reasoningEffort
-        ? {
-            [selection.providerId]: {
-              reasoningEffort: selection.reasoningEffort,
-            },
-          }
-        : undefined
+      // provider name used in resolveModel (selection.providerId). 'off' is an
+      // explicit "no preference" choice from the UI, not a literal effort value.
+      const providerOptions =
+        selection.reasoningEffort && selection.reasoningEffort !== 'off'
+          ? {
+              [selection.providerId]: {
+                reasoningEffort: selection.reasoningEffort,
+              },
+            }
+          : undefined
       const result = streamText({
         model: resolveModel(selection),
         system: systemPrompt || undefined,
