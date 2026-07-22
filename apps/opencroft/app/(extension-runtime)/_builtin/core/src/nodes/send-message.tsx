@@ -1,5 +1,5 @@
 import { InputHandle, icons, NodeFrame, React, useGraphEdges, useGraphNodes } from '@ext/host'
-import { Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@ext/ui'
+import { Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@ext/ui'
 
 import {
   buildSessionKey,
@@ -14,6 +14,7 @@ import {
 export interface SendMessageData {
   defaultAgent?: string
   defaultJob?: string
+  titleOverride?: string
 }
 
 const NONE = '__none__'
@@ -66,9 +67,11 @@ export function SendMessageInspector({
   return (
     <div className='flex flex-col gap-3'>
       <p className='text-[10px] text-muted-foreground'>
-        Accepts JSON <code>{'{ session, message }'}</code> on the input. Session must look like
-        <code> agent:&lt;agent-slug&gt;:&lt;job-slug&gt;</code>; the message is sent only when both slugs match nodes in
-        this space. Fallback target below is used when the input is plain text.
+        Accepts JSON <code>{'{ agent?, job?, key?, title?, message }'}</code> on the input. The target agent and job
+        fall back to the defaults below when omitted; the message is sent only when both resolve to matching Agent and
+        Agent Job nodes in this space. An optional <code>key</code> gives the same agent+job several independent
+        sessions; an optional <code>title</code> names a session when it is first created (a legacy
+        <code> agent:&lt;agent&gt;:&lt;job&gt;</code> <code>session</code> string is also accepted).
       </p>
 
       <div className='flex flex-col gap-1'>
@@ -103,6 +106,16 @@ export function SendMessageInspector({
             ))}
           </SelectContent>
         </Select>
+      </div>
+
+      <div className='flex flex-col gap-1'>
+        <Label className='text-xs'>Title Override</Label>
+        <Input
+          className='h-8 text-xs'
+          placeholder='Session title (optional)'
+          value={data.titleOverride || ''}
+          onChange={(e) => updateData({ titleOverride: e.target.value })}
+        />
       </div>
     </div>
   )

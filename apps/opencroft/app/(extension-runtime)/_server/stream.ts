@@ -19,6 +19,7 @@ import { updateNodeData } from '@/app/(extension-runtime)/_server/node-data'
 import {
   type AgentContext,
   buildSessionKey,
+  parseSessionKey,
   resolveSessionOnGraph,
   type EdgeLike as SmEdgeLike,
   type NodeLike as SmNodeLike,
@@ -325,7 +326,7 @@ async function persistToDownstreamSendMessages(
           agentName: route.ctx.agentName,
           jobNodeId: route.ctx.jobNodeId,
           jobName: route.ctx.jobName,
-          title: route.ctx.jobName,
+          title: route.title,
           createdAt: Date.now(),
         }).catch(() => {})
       }
@@ -340,12 +341,14 @@ async function persistToDownstreamSendMessages(
 interface SendMessageNodeData {
   defaultAgent?: string
   defaultJob?: string
+  titleOverride?: string
 }
 
 interface RouteResolution {
   sessionKey: string
   message: string
   ctx: AgentContext
+  title: string
 }
 
 function resolveRoute(
@@ -356,28 +359,38 @@ function resolveRoute(
 ): RouteResolution | null {
   const smNodes = nodes as unknown as SmNodeLike[]
   const smEdges = edges as unknown as SmEdgeLike[]
-
-  const parsed = tryParseJsonMessage(text)
-  if (parsed) {
-    const ctx = resolveSessionOnGraph(parsed.session, smNodes, smEdges)
-    if (!ctx) {
-      return null
-    }
-    return { sessionKey: parsed.session, message: parsed.message, ctx }
-  }
-
   const data = (target.data ?? {}) as SendMessageNodeData
-  const a = (data.defaultAgent || '').trim()
-  const j = (data.defaultJob || '').trim()
-  if (!a || !j) {
+
+  // Input is either a JSON envelope `{ agent?, job?, key?, title?, message }` or plain text.
+  const parsed = tryParseJsonMessage(text)
+  const message = parsed ? parsed.message : text
+
+  // A legacy `session` string ("agent:<agent>:<job>") supplies agent/job when the
+  // dedicated fields are absent.
+  const legacy = parsed?.session ? parseSessionKey(parsed.session) : null
+
+  // Payload fields win; the node's configured defaults fill any that are omitted.
+  const agentName = parsed?.agent || legacy?.agentSlug || data.defaultAgent || ''
+  const jobName = parsed?.job || legacy?.jobSlug || data.defaultJob || ''
+  if (!agentName.trim() || !jobName.trim()) {
+    // Nothing resolvable to route to — drop silently.
     return null
   }
-  const sessionKey = buildSessionKey(a, j)
+
+  // The optional key widens the session identity so one agent+job can hold several
+  // stable, independent sessions (one per key); it does not change which agent/job
+  // nodes the session binds to.
+  const sessionKey = buildSessionKey(agentName, jobName, parsed?.key)
   const ctx = resolveSessionOnGraph(sessionKey, smNodes, smEdges)
   if (!ctx) {
     return null
   }
-  return { sessionKey, message: text, ctx }
+
+  // Applied only when the session is first created (see caller). Payload title wins
+  // over the node's override, then falls back to the job name.
+  const title = parsed?.title || (data.titleOverride || '').trim() || ctx.jobName
+
+  return { sessionKey, message, ctx, title }
 }
 
 const g = globalThis as Record<string, unknown>

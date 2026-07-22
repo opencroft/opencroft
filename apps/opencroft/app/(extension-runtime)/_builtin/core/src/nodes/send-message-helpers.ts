@@ -31,8 +31,18 @@ export interface AgentContext {
 }
 
 export interface ParsedMessage {
-  session: string
+  /** Message body to deliver. */
   message: string
+  /** Explicit target agent slug; falls back to the node's default agent when absent. */
+  agent?: string
+  /** Explicit target job slug; falls back to the node's default job when absent. */
+  job?: string
+  /** Optional session discriminator: same agent+job but a distinct key = a distinct stable session. */
+  key?: string
+  /** Optional session title, applied only when the session is first created. */
+  title?: string
+  /** Legacy combined key `agent:<agent>:<job>`; honored when `agent`/`job` are absent. */
+  session?: string
 }
 
 // ─── slug / session key ──────────────────────────────────────────────
@@ -45,12 +55,16 @@ export function slug(name: string): string {
     .replace(/^-|-$/g, '')
 }
 
-export function buildSessionKey(agentName: string, jobName: string): string {
-  return `agent:${slug(agentName)}:${slug(jobName)}`
+export function buildSessionKey(agentName: string, jobName: string, key?: string): string {
+  const base = `agent:${slug(agentName)}:${slug(jobName)}`
+  const k = (key ?? '').trim()
+  return k ? `${base}:${slug(k)}` : base
 }
 
 export function parseSessionKey(sessionKey: string): { agentSlug: string; jobSlug: string } | null {
-  const m = sessionKey.match(/^agent:([^:]+):([^:]+)$/)
+  // The optional third segment is a session discriminator key; it does not affect
+  // which agent/job the session binds to, so it is accepted but ignored here.
+  const m = sessionKey.match(/^agent:([^:]+):([^:]+)(?::.+)?$/)
   if (!m) {
     return null
   }
@@ -69,14 +83,19 @@ export function tryParseJsonMessage(text: string): ParsedMessage | null {
   if (!parsed || typeof parsed !== 'object') {
     return null
   }
-  const obj = parsed as { session?: unknown; message?: unknown }
-  if (typeof obj.session !== 'string' || !obj.session.trim()) {
+  const obj = parsed as Record<string, unknown>
+  if (typeof obj['message'] !== 'string') {
     return null
   }
-  if (typeof obj.message !== 'string') {
-    return null
+  const optStr = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
+  return {
+    message: obj['message'],
+    agent: optStr(obj['agent']),
+    job: optStr(obj['job']),
+    key: optStr(obj['key']),
+    title: optStr(obj['title']),
+    session: optStr(obj['session']),
   }
-  return { session: obj.session.trim(), message: obj.message }
 }
 
 // ─── Graph lookups ───────────────────────────────────────────────────
