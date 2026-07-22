@@ -322,6 +322,7 @@ export const localhost = host.localhost;
 export const wsl = host.wsl;
 export const terminal = host.terminal;
 export const ssh = host.ssh;
+export const execContext = host.execContext;
 export const events = host.events;
 export const extensionId = host.extensionId;
 `,

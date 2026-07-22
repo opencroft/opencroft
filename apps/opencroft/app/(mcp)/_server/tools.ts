@@ -37,6 +37,7 @@ import {
   listLocalExtensions,
 } from '@/app/(extension-editor)/_actions/local-extensions-actions'
 import { invokeExtensionAction } from '@/app/(extension-runtime)/_server/actions'
+import { dispatchExecutionContext, NoExecTargetError } from '@/app/(extension-runtime)/_server/exec-dispatch'
 import { getExtensionModule, loadAllManifests } from '@/app/(extension-runtime)/_server/loader'
 import { dispatchNodeAction, listNodeActions } from '@/app/(extension-runtime)/_server/node-actions'
 import { localExtRoot } from '@/app/(extension-runtime)/_server/paths'
@@ -1045,19 +1046,6 @@ interface AgentToolExecResult {
   requiredApproval: boolean
 }
 
-async function hasHandleNodeAction(typeId: string | undefined): Promise<boolean> {
-  if (!typeId) {
-    return false
-  }
-  const manifests = await loadAllManifests()
-  const owning = manifests.find((m) => m.nodes?.some((n) => n.typeId === typeId))
-  if (!owning) {
-    return false
-  }
-  const mod = await getExtensionModule(owning.id)
-  return Boolean(mod.nodeActions?.[typeId]?.handle)
-}
-
 export interface ToolCallOptions {
   signal?: AbortSignal
   /** Call made by the internal agent: skip the MCP approval queue (the agent chat has its own permission flow). */
@@ -1080,7 +1068,6 @@ export async function executeAgentTool(
     }
 
     const nodes = runtime.graph.nodes as unknown as GraphNode[]
-    const edges = runtime.graph.edges as unknown as StoredEdge[]
 
     const toolNode = nodes.find(
       (n) => n.type === 'agent-tool' && ((n.data ?? {}) as Record<string, unknown>).name === toolName,
@@ -1096,111 +1083,37 @@ export async function executeAgentTool(
       await awaitApproval({ tool: toolName, args, view: 'default', signal: opts.signal, spaceId: space.slug })
     }
 
-    // Find connected handler via exec-out edge
-    const handlerEdge = edges.find((e) => e.source === toolNode.id && e.sourceHandle === 'exec-out')
-    if (!handlerEdge) {
-      return {
-        result: textResult(`Agent tool "${toolName}" has no connected handler script.`),
-        requiredApproval: false,
-      }
-    }
-
-    const handlerNode = nodes.find((n) => n.id === handlerEdge.target)
-    if (!handlerNode) {
-      return { result: textResult(`Agent tool "${toolName}": handler node not found.`), requiredApproval: false }
-    }
-
-    // Build event for the handler
+    // Build event for the handler, then dispatch through the shared
+    // execution-context dispatcher (handles both extension `handle` actions
+    // and built-in script-node handlers — see exec-dispatch.ts).
     const event = { params: args, context: { toolName: toolName } }
 
-    // Extension-implemented handler: the node's extension exports a "handle" node action
-    if (await hasHandleNodeAction(handlerNode.type)) {
-      try {
-        const result = (await dispatchNodeAction({
-          data: { nodeId: handlerNode.id, actionId: 'handle', params: event },
-        })) as { body?: unknown } | undefined
-        const body = result?.body
-        if (typeof body === 'object' && body !== null) {
-          return { result: textResult(JSON.stringify(body)), requiredApproval }
-        }
-        return { result: textResult(String(body ?? '')), requiredApproval }
-      } catch (e) {
+    try {
+      const { primary } = await dispatchExecutionContext({
+        sourceNodeId: toolNode.id,
+        sourceHandleId: 'exec-out',
+        event,
+      })
+
+      if (primary.error) {
+        return { result: textResult(`Agent tool "${toolName}" error: ${primary.error}`), requiredApproval }
+      }
+      if (typeof primary.body === 'object' && primary.body !== null) {
+        return { result: textResult(JSON.stringify(primary.body)), requiredApproval }
+      }
+      return { result: textResult(String(primary.body ?? '')), requiredApproval }
+    } catch (err) {
+      if (err instanceof NoExecTargetError) {
         return {
-          result: textResult(`Agent tool "${toolName}" error: ${e instanceof Error ? e.message : String(e)}`),
-          requiredApproval,
+          result: textResult(`Agent tool "${toolName}" has no connected handler script.`),
+          requiredApproval: false,
         }
       }
-    }
-
-    const language = (handlerNode.data as Record<string, unknown>)?.language as string | undefined
-    if (language !== 'python' && language !== 'node') {
       return {
-        result: textResult(
-          `Agent tool "${toolName}": handler must be Python or Node.js script, got ${language ?? 'none'}.`,
-        ),
-        requiredApproval: false,
+        result: textResult(`Agent tool "${toolName}" error: ${err instanceof Error ? err.message : String(err)}`),
+        requiredApproval,
       }
     }
-
-    const resolvedContexts = (handlerNode.data as Record<string, unknown>)?.__resolvedContexts as
-      | Record<string, { value?: Record<string, unknown> }>
-      | undefined
-    const terminalContext = resolvedContexts?.['ctx-in']?.value ?? { type: 'local' }
-
-    // Resolve env: parse data.env (KEY=value lines) + decrypt data.secrets (key names)
-    const handlerData = (handlerNode.data ?? {}) as Record<string, unknown>
-    const env: Record<string, string> = {}
-    const envLines = ((handlerData.env as string | undefined) ?? '')
-      .split('\n')
-      .map((s) => s.trim())
-      .filter(Boolean)
-    for (const line of envLines) {
-      const eq = line.indexOf('=')
-      if (eq > 0) {
-        env[line.slice(0, eq).trim()] = line.slice(eq + 1)
-      }
-    }
-    const secretNames = ((handlerData.secrets as string | undefined) ?? '')
-      .split('\n')
-      .map((s) => s.trim())
-      .filter(Boolean)
-    for (const name of secretNames) {
-      const value = await secrets.resolve(name)
-      if (value === null) {
-        return {
-          result: textResult(`Agent tool "${toolName}" error: secret "${name}" not found in any Secrets Store.`),
-          requiredApproval,
-        }
-      }
-      env[name] = value
-    }
-
-    // Execute handler
-    const result = (await invokeExtensionAction({
-      data: {
-        extensionId: 'builtin/core',
-        actionName: 'handler.run',
-        args: [
-          {
-            script: ((handlerNode.data as Record<string, unknown>)?.script as string) ?? '',
-            language,
-            context: terminalContext,
-            event,
-            env,
-          },
-        ],
-      },
-    })) as { status?: number; headers?: Record<string, string>; body?: unknown; error?: string; logs?: string }
-
-    if (result.error) {
-      return { result: textResult(`Agent tool "${toolName}" error: ${result.error}`), requiredApproval }
-    }
-
-    if (typeof result.body === 'object' && result.body !== null) {
-      return { result: textResult(JSON.stringify(result.body)), requiredApproval }
-    }
-
-    return { result: textResult(String(result.body ?? '')), requiredApproval }
   }
 
   throw { code: -32601, message: `Agent tool not found: ${toolName}` }

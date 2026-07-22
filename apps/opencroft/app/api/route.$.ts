@@ -1,7 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { invokeExtensionAction } from '@/app/(extension-runtime)/_server/actions'
-import { getStream } from '@/app/(extension-runtime)/_server/stream'
+import { dispatchExecutionContext, NoExecTargetError } from '@/app/(extension-runtime)/_server/exec-dispatch'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
 
 // ═══════════════════════════════════════════════════════════════════
@@ -43,21 +42,6 @@ interface GraphNode {
   id: string
   type?: string
   data: Record<string, unknown>
-}
-
-interface GraphEdge {
-  source: string
-  target: string
-  sourceHandle?: string
-  targetHandle?: string
-}
-
-interface HandlerResult {
-  status?: number
-  headers?: Record<string, string>
-  body?: unknown
-  error?: string
-  logs?: string
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -117,42 +101,6 @@ async function handleRequest(request: Request, params: { _splat?: string }) {
     )
   }
 
-  // Find edges from the api-route node's exec-out handle
-  const space = registry.getBySlug(matchedSpaceSlug)
-  if (!space) {
-    return Response.json({ error: 'Space not found' }, { status: 500 })
-  }
-
-  const handlerEdge = (space.graph.edges as unknown as GraphEdge[]).find(
-    (e) => e.source === matchedRouteNode!.id && e.sourceHandle === 'exec-out',
-  )
-
-  if (!handlerEdge) {
-    return Response.json({ error: 'API Route has no connected handler' }, { status: 502 })
-  }
-
-  // Find the target handler node
-  const handlerNode = (space.graph.nodes as unknown as GraphNode[]).find((n) => n.id === handlerEdge.target)
-
-  if (!handlerNode) {
-    return Response.json({ error: 'Handler node not found' }, { status: 500 })
-  }
-
-  const language = handlerNode.data.language as string | undefined
-  if (language !== 'python' && language !== 'node') {
-    return Response.json(
-      {
-        error: `Unsupported handler language: ${language ?? 'none'}. Only Python and Node.js scripts support ExecutionContext.`,
-      },
-      { status: 400 },
-    )
-  }
-
-  const resolvedContexts = handlerNode.data.__resolvedContexts as
-    | Record<string, { value?: Record<string, unknown> }>
-    | undefined
-  const terminalContext = resolvedContexts?.['ctx-in']?.value ?? { type: 'local' }
-
   // Build request event
   let body: unknown
   const contentType = request.headers.get('content-type')
@@ -176,41 +124,27 @@ async function handleRequest(request: Request, params: { _splat?: string }) {
     body,
   }
 
-  // Invoke handler.run server action
+  // Dispatch to every target connected to the route's exec-out handle;
+  // the primary target's result becomes the HTTP response.
   try {
-    const result = (await invokeExtensionAction({
-      data: {
-        extensionId: 'builtin/core',
-        actionName: 'handler.run',
-        args: [
-          {
-            script: handlerNode.data.script ?? '',
-            language,
-            context: terminalContext,
-            event,
-          },
-        ],
-      },
-    })) as HandlerResult
+    const { primary } = await dispatchExecutionContext({
+      sourceNodeId: matchedRouteNode.id,
+      sourceHandleId: 'exec-out',
+      event,
+    })
 
-    const stream = getStream<{ text: string; final: boolean }>(matchedSpaceSlug, handlerNode.id, 'stdout-out')
-    if (result.logs) {
-      stream.broadcast({ text: result.logs, final: false })
-    }
-    stream.broadcast({ text: '', final: true })
-
-    if (result.error) {
-      return Response.json({ error: result.error }, { status: result.status ?? 500 })
+    if (primary.error) {
+      return Response.json({ error: primary.error }, { status: primary.status ?? 500 })
     }
 
-    const status = result.status ?? 200
-    const headers = result.headers ?? {}
+    const status = primary.status ?? 200
+    const headers = primary.headers ?? {}
 
-    if (typeof result.body === 'object' && result.body !== null) {
-      return Response.json(result.body, { status, headers })
+    if (typeof primary.body === 'object' && primary.body !== null) {
+      return Response.json(primary.body, { status, headers })
     }
 
-    return new Response(String(result.body ?? ''), {
+    return new Response(String(primary.body ?? ''), {
       status,
       headers: {
         'content-type': 'text/plain',
@@ -218,6 +152,9 @@ async function handleRequest(request: Request, params: { _splat?: string }) {
       },
     })
   } catch (err) {
+    if (err instanceof NoExecTargetError) {
+      return Response.json({ error: 'API Route has no connected handler' }, { status: 502 })
+    }
     const message = err instanceof Error ? err.message : String(err)
     return Response.json({ error: message }, { status: 500 })
   }

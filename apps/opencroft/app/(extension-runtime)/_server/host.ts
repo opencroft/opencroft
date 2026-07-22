@@ -17,6 +17,7 @@ import {
   terminalRunResult,
 } from '@opencroft/terminal/server'
 
+import { dispatchExecutionContext, type ExecDispatchSummary } from '@/app/(extension-runtime)/_server/exec-dispatch'
 import { getSetting, setSetting } from '@/app/(settings)/_server/actions'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
 import type { GraphData } from '@/app/(space)/_server/types'
@@ -215,6 +216,14 @@ async function getTerminalContext(nodeId: string, handleId: string): Promise<Ter
   return value as TerminalContext
 }
 
+function dispatchExecutionContextForHost(
+  sourceNodeId: string,
+  sourceHandleId: string,
+  event: unknown,
+): Promise<ExecDispatchSummary> {
+  return dispatchExecutionContext({ sourceNodeId, sourceHandleId, event })
+}
+
 function execFilePromise(cmd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(cmd, args, { windowsHide: true, maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
@@ -308,6 +317,13 @@ export interface ExtensionHost {
     exec(config: ServerConfig, command: string): Promise<string>
     resolveKey(keyPath?: string): Promise<string | undefined>
   }
+  execContext: {
+    /** Dispatch an execution-context event to every target connected to
+     *  `sourceHandleId` on `sourceNodeId` (broadcast). Returns the primary
+     *  target's result plus every target's outcome — see
+     *  `_server/exec-dispatch.ts` for the resolution and fan-out contract. */
+    dispatch(sourceNodeId: string, sourceHandleId: string, event: unknown): Promise<ExecDispatchSummary>
+  }
 }
 
 export function createHost(extensionId: string): ExtensionHost {
@@ -339,5 +355,6 @@ export function createHost(extensionId: string): ExtensionHost {
       getContext: getTerminalContext,
     },
     ssh: { exec: sshExec, resolveKey: resolveKeyContent },
+    execContext: { dispatch: dispatchExecutionContextForHost },
   }
 }
