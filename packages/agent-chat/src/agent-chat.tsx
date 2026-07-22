@@ -14,6 +14,7 @@ import { ChatView } from './chat-view'
 import { ConfigOptionsBar } from './config-options-bar'
 import { McpServerDialog } from './mcp-form'
 import { AgentPresetForm, AgentProfilePicker } from './preset-form'
+import { QueuedMessages } from './queued-messages'
 import { imageToolView, type ToolViewRegistry } from './tool-views'
 import { useAgentSession } from './use-agent-session'
 
@@ -34,6 +35,15 @@ export interface AgentChatProps {
   // session — e.g. dynamic ACP config-option selectors (model/effort/mode)
   // once a session exposes them via `agent-client`'s config_options event.
   composerSlot?: ReactNode
+  // Host UI slot: extra content rendered before the composer's textarea —
+  // e.g. a button that opens a session picker.
+  composerLeading?: ReactNode
+  // Host UI slot: extra content rendered at the foot of the message list,
+  // beside the typing indicator — e.g. a voice/status visualizer.
+  transcriptFooter?: ReactNode
+  // Shown beside each turn's first item (and its collapsed summary).
+  botName?: string
+  agentAvatar?: string
   className?: string
 }
 
@@ -47,6 +57,10 @@ export function AgentChat({
   toolViews = DEFAULT_TOOL_VIEWS,
   headerActions,
   composerSlot,
+  composerLeading,
+  transcriptFooter,
+  botName,
+  agentAvatar,
   className,
 }: AgentChatProps) {
   const session = useAgentSession({ eventsUrl })
@@ -157,6 +171,10 @@ export function AgentChat({
         toolViews={toolViews}
         hideThinking={!showThinking}
         hideToolCalls={!showTools}
+        botName={botName}
+        agentAvatar={agentAvatar}
+        resetKey={session.sessionId ?? undefined}
+        transcriptFooter={transcriptFooter}
         turnActive={session.turnActive}
         canFork={session.isNative}
         onFork={session.fork}
@@ -164,15 +182,20 @@ export function AgentChat({
         onRespondText={session.respondPermissionText}
         onRespondAsk={session.respondAsk}
         emptyState={
-          <>
-            <Bot className='size-8 opacity-40' />
-            {session.sessionId
-              ? 'Send a message to start the conversation.'
-              : 'Configure an agent and start a new chat.'}
-          </>
+          session.loading ? (
+            <Loader2 className='size-8 animate-spin opacity-40' />
+          ) : (
+            <>
+              <Bot className='size-8 opacity-40' />
+              {session.sessionId
+                ? 'Send a message to start the conversation.'
+                : 'Configure an agent and start a new chat.'}
+            </>
+          )
         }
         footer={
           <Flex withGaps className='gap-1.5'>
+            <QueuedMessages items={session.queue} onRemove={session.removeQueued} />
             <AgentChatInput
               value={session.input}
               onValueChange={session.setInput}
@@ -181,6 +204,7 @@ export function AgentChat({
               onStop={session.stop}
               disabled={!session.sessionId && !session.canStart}
               placeholder={session.sessionId || session.canStart ? 'Message the agent…' : 'Configure an agent to begin'}
+              leading={composerLeading}
             />
             <ConfigOptionsBar
               options={session.configOptions}

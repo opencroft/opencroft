@@ -2,7 +2,9 @@
 
 import type { ChatMessage } from 'agent-client/fold'
 import { Check, CheckCheck, X } from 'lucide-react'
-import { useState } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { Badge } from 'ui/components/ui/badge'
 import { Button } from 'ui/components/ui/button'
 import { Input } from 'ui/components/ui/input'
@@ -11,7 +13,7 @@ import { cn } from 'ui/lib/utils'
 
 import { ThinkingBlock } from './thinking-block'
 import { ToolCallBlock } from './tool-block'
-import { toolViewProps, type ToolMessage, type ToolViewRegistry } from './tool-views'
+import { lookupToolView, toolViewProps, type ToolMessage, type ToolViewRegistry } from './tool-views'
 
 export type PermissionMessage = Extract<ChatMessage, { kind: 'permission' }>
 export type AskMessage = Extract<ChatMessage, { kind: 'ask' }>
@@ -28,6 +30,28 @@ export function statusVariant(status: string): 'secondary' | 'destructive' | 'ou
   if (status === 'completed') return 'secondary'
   if (status === 'failed') return 'destructive'
   return 'outline'
+}
+
+// A permission/ask request can arrive while the user is mid-tap on something
+// else. Animate it in and ignore pointer input until the entrance settles, so
+// a tap meant for the chat doesn't accidentally resolve a freshly-appeared
+// request.
+const APPEAR_LOCKOUT_MS = 550
+
+function AppearGuard({ children }: { children: ReactNode }) {
+  const [locked, setLocked] = useState(true)
+  useEffect(() => {
+    const timer = setTimeout(() => setLocked(false), APPEAR_LOCKOUT_MS)
+    return () => clearTimeout(timer)
+  }, [])
+  return (
+    <div
+      className={cn('animate-in fade-in slide-in-from-bottom-2 duration-500', locked && 'pointer-events-none')}
+      aria-busy={locked}
+    >
+      {children}
+    </div>
+  )
 }
 
 // Renders a single non-user message (assistant text, thought, tool call, plan,
@@ -49,7 +73,11 @@ export function MessageView({
 } & MessageHandlers) {
   switch (message.kind) {
     case 'assistant':
-      return <div className='text-sm whitespace-pre-wrap wrap-break-word'>{message.text}</div>
+      return (
+        <div className='prose-chat'>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
+        </div>
+      )
 
     case 'thought':
       return <ThinkingBlock text={message.text} pending={pending} />
@@ -60,11 +88,20 @@ export function MessageView({
     case 'plan':
       return <PlanView message={message} />
 
-    case 'permission':
-      return <PermissionRequest message={message} onRespond={onRespondPermission} onRespondText={onRespondText} />
+    case 'permission': {
+      const request = (
+        <PermissionRequest message={message} onRespond={onRespondPermission} onRespondText={onRespondText} />
+      )
+      // Only guard a freshly-arrived, still-unresolved request — a resolved
+      // one (e.g. replayed history on reconnect) doesn't need the entrance
+      // animation or the accidental-tap lockout.
+      return message.resolved ? request : <AppearGuard>{request}</AppearGuard>
+    }
 
-    case 'ask':
-      return <AskPrompt message={message} onRespond={onRespondAsk} />
+    case 'ask': {
+      const prompt = <AskPrompt message={message} onRespond={onRespondAsk} />
+      return message.resolved ? prompt : <AppearGuard>{prompt}</AppearGuard>
+    }
 
     case 'error':
       return (
@@ -212,7 +249,7 @@ export function ToolView({
   toolViews: ToolViewRegistry
   hideToolCall?: boolean
 }) {
-  const spec = toolViews[message.title]
+  const spec = lookupToolView(toolViews, message.title)
   const props = toolViewProps(message, 'history')
   // hasContent (default true once a spec is registered) decides whether the
   // view has something to show — the component itself is only ever rendered

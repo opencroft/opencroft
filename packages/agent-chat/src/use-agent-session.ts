@@ -3,7 +3,7 @@
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { buildBlocks, type ChatBlock, foldEvents } from 'agent-client/fold'
 import type { AgentProfile } from 'agent-client/profiles'
-import type { AgentSelection, ChatEvent, SessionMode } from 'agent-client/types'
+import type { AgentSelection, ChatEvent, QueuedPrompt, SessionMode } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -18,6 +18,7 @@ import {
   listAgentProfiles,
   listAgentSessions,
   listOpenAiModels,
+  removeQueuedPrompt,
   respondAsk,
   respondPermission,
   saveAgentProfile,
@@ -48,6 +49,10 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
   const [activeId, setActiveId] = useState('')
   const [name, setName] = useState('')
   const [sessionId, setSessionId] = useState<string | null>(null)
+  // True until the initial profiles + session load resolves — lets a host
+  // show a distinct "loading" state instead of momentarily flashing "no
+  // messages yet" before anything's been fetched.
+  const [loading, setLoading] = useState(true)
   const [events, setEvents] = useState<ChatEvent[]>([])
   const [input, setInput] = useState('')
   const [turnActive, setTurnActive] = useState(false)
@@ -57,6 +62,7 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
   // ACP agents only) — see agent-client's config_options event. Empty for
   // adapters that don't advertise any.
   const [configOptions, setConfigOptions] = useState<SessionConfigOption[]>([])
+  const [queue, setQueue] = useState<QueuedPrompt[]>([])
   const [usage, setUsage] = useState<AgentUsage | null>(null)
   const [starting, setStarting] = useState(false)
   const [loadedModels, setLoadedModels] = useState<string[]>([])
@@ -95,7 +101,9 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
       setProfiles(store.profiles)
       applyProfile(store.profiles.find((entry) => entry.id === store.activeProfileId) ?? store.profiles[0])
     })
-    listAgentSessions().then((list) => list[0] && setSessionId(list[0].id))
+    listAgentSessions()
+      .then((list) => list[0] && setSessionId(list[0].id))
+      .finally(() => setLoading(false))
   }, [applyProfile])
 
   // Stream the active session's events. `subscribe` replays history on connect,
@@ -126,6 +134,9 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
           break
         case 'usage':
           setUsage({ used: event.used, size: event.size })
+          break
+        case 'queue':
+          setQueue(event.items)
           break
         case 'user':
           setTurnActive(true)
@@ -225,6 +236,7 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
     setConfigOptions([])
     setUsage(null)
     setTurnActive(false)
+    setQueue([])
   }, [])
 
   const start = useCallback(async () => {
@@ -325,6 +337,17 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
     [sessionId],
   )
 
+  // Drop a held prompt before it's delivered. A no-op for an id the server
+  // no longer has (e.g. it was already delivered as the queue was draining).
+  const removeQueued = useCallback(
+    (id: string) => {
+      if (!sessionId) return
+      setQueue((prev) => prev.filter((item) => item.id !== id))
+      void removeQueuedPrompt(sessionId, id)
+    },
+    [sessionId],
+  )
+
   // Guidance queued by "tell what to do different", sent once the run it
   // interrupted has fully stopped (a prompt can't be sent mid-turn).
   const pendingPrompt = useRef<string | null>(null)
@@ -379,6 +402,7 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
     loadModels,
     // session + transcript
     sessionId,
+    loading,
     blocks,
     turnActive,
     modes,
@@ -395,6 +419,9 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
     stop,
     fork,
     setMode,
+    // prompts held server-side while a turn was active
+    queue,
+    removeQueued,
     // composer input
     input,
     setInput,

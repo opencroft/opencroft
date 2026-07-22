@@ -1,7 +1,8 @@
 'use client'
 
 import { ChevronRight, Loader2 } from 'lucide-react'
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/components/ui/dialog'
 import { Flex } from 'ui/components/ui/layout/flex'
 import { cn } from 'ui/lib/utils'
 
@@ -50,12 +51,57 @@ export function previewArg(name: string, args: unknown): string | null {
   return value
 }
 
+// The args/output content shared between the inline (clamped) preview and the
+// fullscreen dialog — identical markup, just constrained differently by the
+// caller's wrapping element.
+function ToolCallContent({ args, result }: { args?: unknown; result?: ToolCallResult }) {
+  return (
+    <>
+      <ToolRow label='args'>
+        <pre className='whitespace-pre text-[11px] text-muted-foreground'>{JSON.stringify(args, null, 2)}</pre>
+      </ToolRow>
+      <div className='border-t' />
+      <ToolRow label='output'>
+        {result ? (
+          <pre className='whitespace-pre text-[11px] text-muted-foreground'>{result.text}</pre>
+        ) : (
+          <Flex row align='center' className='gap-1.5 text-muted-foreground'>
+            <Loader2 className='size-3 animate-spin' />
+            <span>running…</span>
+          </Flex>
+        )}
+      </ToolRow>
+    </>
+  )
+}
+
 // A collapsible tool-call row: a one-line header (name + arg preview + running /
-// error state) that expands to reveal the full args and output.
+// error state) that expands to reveal a clamped preview of the full args and
+// output. Clicking the preview (once expanded) opens the same content raw
+// (uncapped, scrollable) in a fullscreen dialog — the preview itself never
+// scrolls, since it already sits inside a scrolling transcript.
 export function ToolCallBlock({ name, args, result }: ToolCallBlockProps) {
   const isError = result?.isError === true
   const [open, setOpen] = useState(false)
+  const [fullOpen, setFullOpen] = useState(false)
   const preview = previewArg(name, args)
+
+  // The preview clamps to a fixed height (below) and routes clicks to a
+  // fullscreen dialog instead of scrolling in place — a chat transcript
+  // already scrolls, and a nested scroll area inside it is a bad interaction.
+  // Whether the "there's more" shadow shows must match that real clamp, not
+  // an estimated line count: pretty-printed JSON is short-but-wide as often
+  // as it's long, so a line-count heuristic both over- and under-fires.
+  const [overflowing, setOverflowing] = useState(false)
+  const contentRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    const el = contentRef.current
+    setOverflowing(el ? el.scrollHeight > el.clientHeight : false)
+  }, [open, args, result])
+
   return (
     <Flex className='w-full min-w-0 gap-1.5'>
       <button
@@ -72,26 +118,39 @@ export function ToolCallBlock({ name, args, result }: ToolCallBlockProps) {
         {isError && <span className='text-destructive'>error</span>}
       </button>
       {open && (
-        <div
-          className={cn('rounded-md border bg-muted/30 text-xs overflow-hidden', isError && 'border-destructive/60')}
-        >
-          <ToolRow label='args'>
-            <pre className='max-h-48 overflow-auto whitespace-pre text-[11px] text-muted-foreground'>
-              {JSON.stringify(args, null, 2)}
-            </pre>
-          </ToolRow>
-          <div className='border-t' />
-          <ToolRow label='output'>
-            {result ? (
-              <pre className='overflow-x-auto whitespace-pre text-[11px] text-muted-foreground'>{result.text}</pre>
-            ) : (
-              <Flex row align='center' className='gap-1.5 text-muted-foreground'>
-                <Loader2 className='size-3 animate-spin' />
-                <span>running…</span>
-              </Flex>
+        <>
+          <button
+            type='button'
+            onClick={() => setFullOpen(true)}
+            className={cn(
+              'w-full rounded-md border bg-muted/30 text-left text-xs overflow-hidden cursor-pointer',
+              isError && 'border-destructive/60',
             )}
-          </ToolRow>
-        </div>
+          >
+            <div
+              ref={contentRef}
+              className={cn(
+                'max-h-48 overflow-hidden pointer-events-none',
+                overflowing && 'shadow-[inset_0_-12px_8px_-8px_rgba(0,0,0,0.35)]',
+              )}
+            >
+              <ToolCallContent args={args} result={result} />
+            </div>
+          </button>
+          <Dialog open={fullOpen} onOpenChange={setFullOpen}>
+            <DialogContent className='flex h-[90vh] w-[95vw] max-w-[95vw] flex-col gap-3 sm:max-w-[95vw]'>
+              <DialogHeader>
+                <DialogTitle className='font-mono text-sm font-normal'>
+                  <span className='font-semibold'>{name}</span>
+                  {preview && <> {preview}</>}
+                </DialogTitle>
+              </DialogHeader>
+              <div className='min-h-0 flex-1 overflow-auto text-xs'>
+                <ToolCallContent args={args} result={result} />
+              </div>
+            </DialogContent>
+          </Dialog>
+        </>
       )}
     </Flex>
   )

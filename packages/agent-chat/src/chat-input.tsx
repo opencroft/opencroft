@@ -17,6 +17,9 @@ export interface AgentChatInputProps {
   // Disables sending (e.g. the agent isn't configured yet). Stop stays available.
   disabled?: boolean
   placeholder?: string
+  // Host UI slot: extra content rendered before the textarea — e.g. a button
+  // that opens a session picker.
+  leading?: ReactNode
   // Host UI slot: extra content rendered after the send/stop button — e.g. a
   // popover of extra actions.
   menu?: ReactNode
@@ -35,6 +38,7 @@ export function AgentChatInput({
   onStop,
   disabled = false,
   placeholder = 'Message the agent…',
+  leading,
   menu,
   className,
 }: AgentChatInputProps) {
@@ -51,11 +55,17 @@ export function AgentChatInput({
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       if (!busy && canSend) send()
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      onValueChange('')
     }
   }
 
   return (
     <Flex row align='center' className={cn('w-full gap-1', className)}>
+      {leading}
       <Textarea
         value={value}
         onChange={(event) => onValueChange(event.target.value)}

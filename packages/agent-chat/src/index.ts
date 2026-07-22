@@ -36,20 +36,19 @@ export {
   canStartSelection,
   EMPTY_SELECTION,
 } from './preset-form'
+export { QueuedMessages, type QueuedMessagesProps } from './queued-messages'
 export { SkillEditor, type SkillEditorProps } from './skill-editor'
 export { type SkillRecord, SkillsManager, type SkillsManagerProps } from './skills-manager'
 export { ThinkingBlock, type ThinkingBlockProps } from './thinking-block'
-export {
-  previewArg,
-  ToolCallBlock,
-  type ToolCallBlockProps,
-  type ToolCallResult,
-} from './tool-block'
+export { ThinkingIndicator } from './thinking-indicator'
+export { previewArg, ToolCallBlock, type ToolCallBlockProps, type ToolCallResult } from './tool-block'
 export {
   extractUrl,
   formatToolValue,
   hasToolView,
   imageToolView,
+  lookupToolView,
+  normalizeToolId,
   type ToolMessage,
   type ToolViewDisplay,
   type ToolViewMode,
@@ -65,3 +64,4 @@ export {
   type UseAgentSessionOptions,
   useAgentSession,
 } from './use-agent-session'
+export { TurnDetails, type TurnDetailsProps } from './turn-details'

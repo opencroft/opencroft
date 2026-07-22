@@ -55,6 +55,22 @@ export interface ToolViewSpec {
 // tools (e.g. an image for an image-generation tool).
 export type ToolViewRegistry = Record<string, ToolViewSpec>
 
+// Some MCP clients (e.g. Claude Code) report tool names prefixed with the
+// server they came from — `mcp__<server>__<tool>` — to disambiguate multiple
+// connected servers. Registered ids are always the bare tool name, so strip
+// that prefix before matching one. The tool call's own `tool`/`title` field
+// (see toolViewProps below) is left untouched — a view still sees the full
+// name it was actually called with, only registry lookup is normalized.
+export function normalizeToolId(id: string): string {
+  return id.replace(/^mcp__[\w-]+?__/, '')
+}
+
+// Resolve a registered view by tool name, normalizing an `mcp__<server>__`
+// prefix first. Prefer this over indexing the registry directly.
+export function lookupToolView(registry: ToolViewRegistry, toolId: string): ToolViewSpec | undefined {
+  return registry[normalizeToolId(toolId)]
+}
+
 // Build the props a registered view (or a host's own lookup) needs from a
 // folded tool message. Exported so hosts with their own rendering path (e.g.
 // a standalone approval list, which never gets a ChatMessage) can still reuse
@@ -89,7 +105,7 @@ export function formatToolValue(value: unknown): string {
 // plain tool calls.
 export function hasToolView(message: ChatMessage, registry: ToolViewRegistry): boolean {
   if (message.kind !== 'tool') return false
-  const spec = registry[message.title]
+  const spec = lookupToolView(registry, message.title)
   if (!spec) return false
   if (!spec.hasContent) return true
   return spec.hasContent(toolViewProps(message, 'history'))

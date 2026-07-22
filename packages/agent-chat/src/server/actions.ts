@@ -221,6 +221,14 @@ const _setAgentConfigOption = createServerFn({ method: 'POST' })
 export const setAgentConfigOption = (sessionId: string, configId: string, value: string | boolean) =>
   _setAgentConfigOption({ data: { sessionId, configId, value } })
 
+const _removeQueuedPrompt = createServerFn({ method: 'POST' })
+  .inputValidator((data: { sessionId: string; id: string }) => data)
+  .handler(async ({ data }) => {
+    getRuntime().agent.removeQueued(data.sessionId, data.id)
+    return { ok: true }
+  })
+export const removeQueuedPrompt = (sessionId: string, id: string) => _removeQueuedPrompt({ data: { sessionId, id } })
+
 // ---- MCP server (single optional server, edited via dialog) ----
 
 const _getMcpServers = createServerFn({ method: 'GET' }).handler(
