@@ -75,14 +75,11 @@ export default defineConfig({
     // @electric-sql/pglite, pg) stay external via the list above.
     noExternal: ['agent-client', '@opencroft/terminal', '@opencroft/dashboards', '@opencroft/db-backups'],
   },
-  // INTERIM: the same native/server-only modules also
-  // need to be external for the CLIENT build. They're reachable there because
-  // _server/actions.ts's plain (non-createServerFn) invokeExtensionActionImpl
-  // shares a module with createServerFn exports _client/loader.ts imports —
-  // TanStack's server-fn code splitting elides handler bodies, not a file's own
-  // top-level imports, so the whole loader.ts -> compiler.ts -> tailwindcss/
-  // lightningcss chain gets pulled into client dependency analysis. The proper
-  // fix is separating that plain helper from the client-reachable module.
+  // Defense-in-depth: the same native/server-only modules
+  // external for the SSR build above are external here for the CLIENT build too, in
+  // case a future change accidentally makes one reachable from client code again the
+  // way _server/actions.ts's invokeExtensionActionImpl did (see extension-action-impl.ts
+  // and node-actions-impl.ts for the actual fix — this is a backstop, not the fix).
   build: {
     rollupOptions: {
       external: [

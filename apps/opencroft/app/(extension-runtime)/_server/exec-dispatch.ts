@@ -17,8 +17,8 @@
 //   3. Neither -> the same "Unsupported handler language" error producers
 //      have always returned, scoped to that one target.
 
-import { invokeExtensionActionImpl } from '@/app/(extension-runtime)/_server/actions'
-import { dispatchNodeActionImpl } from '@/app/(extension-runtime)/_server/node-actions'
+import { invokeExtensionActionImpl } from '@/app/(extension-runtime)/_server/extension-action-impl'
+import { dispatchNodeActionImpl } from '@/app/(extension-runtime)/_server/node-actions-impl'
 import { getExtensionModule, loadAllManifests } from '@/app/(extension-runtime)/_server/loader'
 import { getStream } from '@/app/(extension-runtime)/_server/stream'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
