@@ -213,6 +213,27 @@ async function secretsStoreGenerateAction(ctx: ActionCtx): Promise<GenerateSecre
   return secretsStoreGenerate(ctx.nodeId, name, { length, format })
 }
 
+// ── Send Message node actions ─────────────────────────────────────────────
+// Thin entry points only — all routing/delivery logic lives behind
+// `host.sendMessage` (`_server/host.ts`), which reuses the exact mechanism
+// the node's own `text-in` wiring already goes through: session reuse/create,
+// envelope composition, hidden-by-default registration.
+
+async function sendMessageSendAction(ctx: ActionCtx): Promise<{ sessionKey: string; created: boolean }> {
+  // Schema already requires `message` (see extension.json) — checked again
+  // here (mirrors secretsStoreGenerateAction's `name` check above) since a
+  // caller can still pass a payload that resolves empty/non-string.
+  const message = typeof ctx.params.message === 'string' ? ctx.params.message.trim() : ''
+  if (!message) {
+    throw new Error('"message" is required and must be a non-empty string')
+  }
+  return host.sendMessage.send(ctx.nodeId, ctx.params)
+}
+
+function sendMessageListAgentsAction(ctx: ActionCtx): Promise<{ agent: string; jobs: string[] }[]> {
+  return host.sendMessage.listAgents(ctx.nodeId)
+}
+
 // ── Server node actions ───────────────────────────────────────────────────
 
 function serverConfigFromData(data: Record<string, unknown>): ServerConfig {
@@ -262,6 +283,10 @@ export const nodeActions = {
   },
   'core-secrets-store': {
     generate: secretsStoreGenerateAction,
+  },
+  'send-message': {
+    send: sendMessageSendAction,
+    listAgents: sendMessageListAgentsAction,
   },
   server: {
     setKey: serverSetKey,

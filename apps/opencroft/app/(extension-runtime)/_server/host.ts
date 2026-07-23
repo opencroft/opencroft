@@ -18,6 +18,12 @@ import {
 } from '@opencroft/terminal/server'
 
 import { dispatchExecutionContext, type ExecDispatchSummary } from '@/app/(extension-runtime)/_server/exec-dispatch'
+import {
+  deliverToSendMessageNode,
+  type GraphEdgeLike as SendMessageEdgeLike,
+  type GraphNodeLike as SendMessageNodeLike,
+} from '@/app/(extension-runtime)/_server/stream'
+import { slug } from '@/app/(server)/_server/types'
 import { getSetting, setSetting } from '@/app/(settings)/_server/actions'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
 import type { GraphData } from '@/app/(space)/_server/types'
@@ -194,6 +200,92 @@ const graphApi: HostGraphApi = {
   },
 }
 
+// Locate a `send-message` node and its OWN space's full node/edge list — every
+// lookup below (listAgents, and deliverToSendMessageNode's own agent/job
+// resolution) is scoped to that one space, matching how the node's `text-in`
+// wiring already resolves (by design: agents/jobs
+// from other spaces are never reachable from a given SendMessage node, so
+// listing them would suggest targets `send` could never actually route to).
+async function findSendMessageNode(
+  nodeId: string,
+): Promise<{ node: GraphNodeRecord; nodes: SendMessageNodeLike[]; edges: SendMessageEdgeLike[] } | null> {
+  const spaces = await loadAllSpaces()
+  const found = findNodeAcrossSpaces(spaces, nodeId)
+  if (!found) {
+    return null
+  }
+  const space = spaces.find((s) => s.slug === found.slug)
+  if (!space) {
+    return null
+  }
+  return {
+    node: found.node,
+    nodes: space.graph.nodes as unknown as SendMessageNodeLike[],
+    edges: space.graph.edges as unknown as SendMessageEdgeLike[],
+  }
+}
+
+export interface HostSendMessageApi {
+  send(nodeId: string, payload: Record<string, unknown>): Promise<{ sessionKey: string; created: boolean }>
+  listAgents(nodeId: string): Promise<{ agent: string; jobs: string[] }[]>
+}
+
+const sendMessageApi: HostSendMessageApi = {
+  async send(nodeId, payload) {
+    // Schema already requires `message` (see extension.json) — checked again
+    // here since a caller can still pass one that resolves empty/non-string,
+    // which would otherwise silently deliver the literal JSON payload as the
+    // chat message via tryParseJsonMessage's plain-text fallback.
+    const message = typeof payload.message === 'string' ? payload.message.trim() : ''
+    if (!message) {
+      throw new Error('"message" is required and must be a non-empty string')
+    }
+    const found = await findSendMessageNode(nodeId)
+    if (!found || found.node.type !== 'send-message') {
+      throw new Error(`Send Message node not found: ${nodeId}`)
+    }
+    const result = await deliverToSendMessageNode(
+      found.node as unknown as SendMessageNodeLike,
+      found.nodes,
+      found.edges,
+      JSON.stringify(payload),
+    )
+    if (!result) {
+      throw new Error('No agent/job resolved for this message — check the agent/job slugs (or this node’s own defaults) against listAgents')
+    }
+    return result
+  },
+  async listAgents(nodeId) {
+    const found = await findSendMessageNode(nodeId)
+    if (!found) {
+      throw new Error(`Node not found: ${nodeId}`)
+    }
+    const jobsByAgentId = new Map<string, string[]>()
+    for (const edge of found.edges) {
+      const job = found.nodes.find((n) => n.id === edge.source && n.type === 'agent-job')
+      const jobName = (job?.data?.['name'] as string | undefined)?.trim()
+      if (!job || !jobName) {
+        continue
+      }
+      const list = jobsByAgentId.get(edge.target) ?? []
+      list.push(slug(jobName))
+      jobsByAgentId.set(edge.target, list)
+    }
+    const out: { agent: string; jobs: string[] }[] = []
+    for (const node of found.nodes) {
+      if (node.type !== 'agent') {
+        continue
+      }
+      const name = (node.data?.['name'] as string | undefined)?.trim()
+      if (!name) {
+        continue
+      }
+      out.push({ agent: slug(name), jobs: jobsByAgentId.get(node.id) ?? [] })
+    }
+    return out
+  },
+}
+
 // Resolve a terminal-context value from a node's output handle by invoking the
 // owning extension's exposeOutput. Lazy imports avoid the host<->loader cycle.
 async function getTerminalContext(nodeId: string, handleId: string): Promise<TerminalContext> {
@@ -301,6 +393,10 @@ export interface ExtensionHost {
   settings: { get: typeof getSetting; set: typeof setSetting }
   graph: HostGraphApi
   storage: ExtensionStorageApi
+  /** Deliver a message through a SendMessage node's own path (session reuse/
+   *  create, envelope composition, hidden-by-default registration) — the same
+   *  mechanism its `text-in` wiring uses, not a parallel implementation. */
+  sendMessage: HostSendMessageApi
   /**
    * Fire-and-forget push to all connected clients; received in extension
    * client code via getStream(extensionId, 'events').
@@ -342,6 +438,7 @@ export function createHost(extensionId: string): ExtensionHost {
     settings: { get: getSetting, set: setSetting },
     graph: graphApi,
     storage: storageApi(extensionId),
+    sendMessage: sendMessageApi,
     events: {
       broadcast: (name, payload) => {
         toastStore.broadcast({ type: 'extension_event', extensionId, name, payload })

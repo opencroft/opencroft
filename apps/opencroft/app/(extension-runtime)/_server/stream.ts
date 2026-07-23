@@ -119,14 +119,14 @@ class StreamImpl<T> implements Stream<T> {
   }
 }
 
-interface GraphEdgeLike {
+export interface GraphEdgeLike {
   source: string
   target: string
   sourceHandle?: string
   targetHandle?: string
 }
 
-interface GraphNodeLike {
+export interface GraphNodeLike {
   id: string
   type?: string
   data?: Record<string, unknown>
@@ -286,67 +286,85 @@ async function persistToDownstreamSendMessages(
     if (target?.type !== 'send-message') {
       continue
     }
-
-    const route = resolveRoute(text, target, nodes, edges)
-    if (!route) {
-      continue
-    }
-
     try {
-      // Reuse an existing live session for this agent+job (the node's own
-      // remembered session, or a chat tab the user has open) so messages land in
-      // one stable conversation. Only create a fresh session when none exists;
-      // promptLocal then persists the pointer so it's remembered and reused next time.
-      const existing = await findTargetSession({ data: { baseKey: route.sessionKey } })
-      let sessionId: string
-      let created: boolean
-      if (existing?.sessionId) {
-        sessionId = existing.sessionId
-        created = false
-      } else {
-        const opened = await ensureLocalSession({
-          data: { agentNodeId: route.ctx.agentNodeId, jobNodeId: route.ctx.jobNodeId, tabKey: route.sessionKey },
-        })
-        sessionId = opened.sessionId
-        created = opened.created
-        // Register in the shared registry (keyed by the node's base session key)
-        // so the node-driven conversation shows up in the chat list and is
-        // resumable on every device, like a UI-started chat. Idempotent, so it's
-        // safe to call even when `opened` resumed a persisted session rather than
-        // creating a fresh one.
-        await upsertSession({
-          key: route.sessionKey,
-          agentNodeId: route.ctx.agentNodeId,
-          agentName: route.ctx.agentName,
-          jobNodeId: route.ctx.jobNodeId,
-          jobName: route.ctx.jobName,
-          title: route.title,
-          createdAt: Date.now(),
-        }).catch(() => {})
-        // A dispatch-created session is registered but never activated by the
-        // user — the sidebar shows active chats, not existing ones, so
-        // it starts hidden. `created` (not just "no live session found") keeps
-        // this from re-hiding a session the user has already interacted with,
-        // e.g. one they closed and dispatch happens to reuse the key for later.
-        if (created) {
-          await hideSessionByDefault(route.sessionKey).catch(() => {})
-        }
-      }
-
-      // Automated senders never include the selected-node/space system context
-      // (chat-only); task context + instructions are session-scoped, so only a
-      // freshly created ACP session gets them.
-      const message = composeEnvelope(route.message, {
-        sessionInit: { jobContext: route.ctx.jobContext, instructions: route.ctx.instructions },
-        isNewSession: created,
-      })
-
-      await promptLocal({ data: { sessionId, text: message } })
+      await deliverToSendMessageNode(target, nodes, edges, text)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      console.error(`[send-message] Failed to send to session ${route.sessionKey}:`, msg)
+      console.error(`[send-message] Failed to send via node ${target.id}:`, msg)
     }
   }
+}
+
+// The one delivery mechanism behind every path that hands a message to a
+// SendMessage node — the `text-in` stream wiring above, and
+// the node's own `send` action via `host.sendMessage.send`. Resolves the
+// target agent/job (payload fields win, the node's own defaults fill the
+// rest), reuses a live session or creates one (registering + hiding it by
+// default only on a genuine creation), and composes the
+// envelope with instructions/task context gated on that same `created` flag
+// too — so every caller gets identical session and envelope
+// semantics, not a re-implementation of them.
+export async function deliverToSendMessageNode(
+  target: GraphNodeLike,
+  nodes: GraphNodeLike[],
+  edges: GraphEdgeLike[],
+  text: string,
+): Promise<{ sessionKey: string; created: boolean } | null> {
+  const route = resolveRoute(text, target, nodes, edges)
+  if (!route) {
+    return null
+  }
+
+  // Reuse an existing live session for this agent+job (the node's own
+  // remembered session, or a chat tab the user has open) so messages land in
+  // one stable conversation. Only create a fresh session when none exists;
+  // promptLocal then persists the pointer so it's remembered and reused next time.
+  const existing = await findTargetSession({ data: { baseKey: route.sessionKey } })
+  let sessionId: string
+  let created: boolean
+  if (existing?.sessionId) {
+    sessionId = existing.sessionId
+    created = false
+  } else {
+    const opened = await ensureLocalSession({
+      data: { agentNodeId: route.ctx.agentNodeId, jobNodeId: route.ctx.jobNodeId, tabKey: route.sessionKey },
+    })
+    sessionId = opened.sessionId
+    created = opened.created
+    // Register in the shared registry (keyed by the node's base session key)
+    // so the node-driven conversation shows up in the chat list and is
+    // resumable on every device, like a UI-started chat. Idempotent, so it's
+    // safe to call even when `opened` resumed a persisted session rather than
+    // creating a fresh one.
+    await upsertSession({
+      key: route.sessionKey,
+      agentNodeId: route.ctx.agentNodeId,
+      agentName: route.ctx.agentName,
+      jobNodeId: route.ctx.jobNodeId,
+      jobName: route.ctx.jobName,
+      title: route.title,
+      createdAt: Date.now(),
+    }).catch(() => {})
+    // A dispatch-created session is registered but never activated by the
+    // user — the sidebar shows active chats, not existing ones, so
+    // it starts hidden. `created` (not just "no live session found") keeps
+    // this from re-hiding a session the user has already interacted with,
+    // e.g. one they closed and dispatch happens to reuse the key for later.
+    if (created) {
+      await hideSessionByDefault(route.sessionKey).catch(() => {})
+    }
+  }
+
+  // Automated senders never include the selected-node/space system context
+  // (chat-only); task context + instructions are session-scoped, so only a
+  // freshly created ACP session gets them.
+  const message = composeEnvelope(route.message, {
+    sessionInit: { jobContext: route.ctx.jobContext, instructions: route.ctx.instructions },
+    isNewSession: created,
+  })
+
+  await promptLocal({ data: { sessionId, text: message } })
+  return { sessionKey: route.sessionKey, created }
 }
 
 interface SendMessageNodeData {
