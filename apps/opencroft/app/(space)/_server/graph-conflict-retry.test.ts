@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { GraphConflictError } from '@/app/(space)/_server/store'
-
-import { MAX_GRAPH_CONFLICT_RETRIES, withGraphConflictRetry } from './tools'
+import { GraphConflictError, MAX_GRAPH_CONFLICT_RETRIES, withGraphConflictRetry } from './graph-conflict-retry'
 
 // `load`/`save` are faked here (see the injectable deps on withGraphConflictRetry)
 // so these tests exercise the retry/give-up control flow in isolation, without a

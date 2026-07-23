@@ -55,9 +55,9 @@ import {
   listSpaces,
   loadSpaceGraph,
   renameSpace,
-  saveSpaceGraph,
 } from '@/app/(space)/_server/actions'
-import { GraphConflictError, getSpacesRegistry } from '@/app/(space)/_server/store'
+import { withGraphConflictRetry } from '@/app/(space)/_server/graph-conflict-retry'
+import { getSpacesRegistry } from '@/app/(space)/_server/store'
 import type { GraphData } from '@/app/(space)/_server/types'
 import { askUserStore } from '@/lib/ask-user-store'
 import { toastStore } from '@/lib/toast-store'
@@ -1249,47 +1249,6 @@ async function loadOrFail(slug: string): Promise<{ graph: GraphData; updatedAt: 
     fail(-32602, `Space not found: ${slug}`)
   }
   return result
-}
-
-export const MAX_GRAPH_CONFLICT_RETRIES = 3
-
-// Runs a load-mutate-save cycle against a space graph, retrying when a concurrent
-// writer's save lands first (`GraphConflictError`). Each retry reloads the graph
-// from scratch and re-runs `mutate` against that fresh state, so it's a reapply
-// rather than a blind replay: a target that vanished in the interim fails the same
-// "not found" validation `mutate` already does on the first pass, instead of being
-// silently recreated. Safe for the MCP tools because each call is a small,
-// self-contained mutation (one field, one node, a handful of edges) — NOT used by
-// the canvas autosave, which persists the whole graph and can't tell which of its
-// pending changes are still wanted after a stranger's edit landed; that path
-// rejects once and asks the user to redo (see flow-editor.tsx).
-// `load`/`save` are injectable (defaulting to the real space store) purely so tests can
-// exercise the retry/give-up control flow without a live TanStack Start request context,
-// which `loadSpaceGraph`/`saveSpaceGraph` require — production call sites never pass these.
-export async function withGraphConflictRetry<T>(
-  slug: string,
-  mutate: (graph: GraphData, updatedAt: string) => Promise<T> | T,
-  {
-    load = loadOrFail,
-    save = (s: string, graph: GraphData, expectedUpdatedAt: string) =>
-      saveSpaceGraph({ data: { slug: s, graph, expectedUpdatedAt } }),
-  }: {
-    load?: (slug: string) => Promise<{ graph: GraphData; updatedAt: string }>
-    save?: (slug: string, graph: GraphData, expectedUpdatedAt: string) => Promise<unknown>
-  } = {},
-): Promise<T> {
-  for (let attempt = 1; ; attempt++) {
-    const { graph, updatedAt } = await load(slug)
-    const result = await mutate(graph, updatedAt)
-    try {
-      await save(slug, graph, updatedAt)
-      return result
-    } catch (err) {
-      if (!(err instanceof GraphConflictError) || attempt >= MAX_GRAPH_CONFLICT_RETRIES) {
-        throw err
-      }
-    }
-  }
 }
 
 function broadcastExtensionsUpdated(): void {
