@@ -64,7 +64,19 @@ export async function withGraphConflictRetry<T>(
   } = {},
 ): Promise<T> {
   for (let attempt = 1; ; attempt++) {
-    const { graph, updatedAt } = await load(slug)
+    const { graph: loaded, updatedAt } = await load(slug)
+    // Both load implementations return the space registry's live, shared graph
+    // object by reference (not a copy) — loadGraphPlain directly, loadViaAction
+    // because calling a createServerFn in-process returns its raw handler
+    // result with no serialization boundary. Mutating that object before
+    // `save` is known to succeed means a failed attempt's mutation is never
+    // rolled back: it stays on the live object, and the *next* attempt's
+    // `load` returns that same already-dirty object, so a retry compounds
+    // instead of reapplying cleanly (concretely: two entries appended for one
+    // scheduler fire when a concurrent canvas save raced it).
+    // Clone before handing it to `mutate` so every attempt starts from an
+    // isolated copy of the last known-good state.
+    const graph = structuredClone(loaded)
     const result = await mutate(graph, updatedAt)
     try {
       await save(slug, graph, updatedAt)

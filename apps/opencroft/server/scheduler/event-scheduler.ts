@@ -136,8 +136,17 @@ async function persistRunOutcome(
   slug: string,
   nodeId: string,
   dueRuleIds: string[],
+  firedAt: number,
   outcome: { status: RunStatus; durationMs: number; error?: string },
 ): Promise<void> {
+  // Deterministic, not Date.now()+Math.random() computed inside the mutate
+  // closure: tied to the actual fire, not to whichever moment the mutate
+  // callback happens to run. Belt-and-suspenders against an earlier bug
+  // (a shared-object aliasing bug, fixed at its root in withGraphConflictRetry)
+  // — even if some other bug someday causes this same outcome to be applied
+  // twice, the dedup check below makes a second application a no-op instead of
+  // a second history entry.
+  const entryId = `run-${nodeId}-${firedAt}`
   try {
     await withGraphConflictRetry(
       slug,
@@ -161,9 +170,12 @@ async function persistRunOutcome(
           }
         }
         const history = (data.runHistory ??= [])
+        if (history.some((e) => e.id === entryId)) {
+          return
+        }
         const entry: RunHistoryEntry = {
-          id: `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-          at: Date.now(),
+          id: entryId,
+          at: firedAt,
           status: outcome.status,
           durationMs: outcome.durationMs,
           error: outcome.error,
@@ -192,13 +204,13 @@ async function fireAndRecord(slug: string, nodeId: string, dueRuleIds: string[])
       sourceHandleId: 'exec-out',
       event: { type: 'event', nodeId, firedAt: startedAt, payload: {} },
     })
-    await persistRunOutcome(slug, nodeId, dueRuleIds, {
+    await persistRunOutcome(slug, nodeId, dueRuleIds, startedAt, {
       status: summary.primary.error ? 'error' : 'success',
       durationMs: Date.now() - startedAt,
       error: summary.primary.error,
     })
   } catch (err) {
-    await persistRunOutcome(slug, nodeId, dueRuleIds, {
+    await persistRunOutcome(slug, nodeId, dueRuleIds, startedAt, {
       status: 'error',
       durationMs: Date.now() - startedAt,
       error: err instanceof Error ? err.message : String(err),

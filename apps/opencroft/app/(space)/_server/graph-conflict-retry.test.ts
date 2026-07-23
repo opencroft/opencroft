@@ -66,6 +66,52 @@ test('withGraphConflictRetry reloads and reapplies the mutation after a simulate
   assert.deepEqual(savedGraphs[1], { nodes: [{ id: 'competitor' }, { id: 'mine' }], edges: [] })
 })
 
+// Regression test: both real `load` implementations
+// (loadGraphPlain and loadViaAction) return the space registry's live, shared
+// graph object by reference, not a copy — calling a createServerFn in-process
+// has no serialization boundary, same as the plain path. If `mutate` runs
+// directly against that shared object, a failed attempt's mutation is never
+// rolled back: it stays on the live object, and the next attempt's `load`
+// returns that same already-dirty object, so retrying compounds the mutation
+// instead of cleanly reapplying it (concretely: two run-history entries
+// persisted for one scheduler fire, when a concurrent canvas autosave raced
+// the scheduler's own save).
+test('withGraphConflictRetry does not compound a failed attempt onto a shared, mutable graph object', async () => {
+  const sharedGraph = { nodes: [] as { id: string }[], edges: [] }
+  let loadCalls = 0
+  let saveCalls = 0
+  const savedGraphs: unknown[] = []
+  await withGraphConflictRetry(
+    'slug',
+    (graph) => {
+      ;(graph.nodes as { id: string }[]).push({ id: `entry-${loadCalls}` })
+    },
+    {
+      load: async () => {
+        loadCalls++
+        // Same object every call — mimics the real registry, unlike the test
+        // above which hands back a fresh literal each time.
+        return { graph: sharedGraph, updatedAt: `v${loadCalls}` }
+      },
+      save: async (_slug, graph) => {
+        saveCalls++
+        savedGraphs.push(structuredClone(graph))
+        if (saveCalls === 1) {
+          throw new GraphConflictError('slug')
+        }
+      },
+    },
+  )
+  assert.equal(loadCalls, 2)
+  assert.equal(saveCalls, 2)
+  // The successful (second) save must reflect only the retry's own mutation —
+  // not the first, failed attempt's mutation compounded on top via the shared
+  // reference.
+  assert.deepEqual(savedGraphs[1], { nodes: [{ id: 'entry-2' }], edges: [] })
+  // The caller's own object must never be directly mutated by a failed attempt.
+  assert.deepEqual(sharedGraph.nodes, [])
+})
+
 test('withGraphConflictRetry gives up after MAX_GRAPH_CONFLICT_RETRIES and rethrows GraphConflictError', async () => {
   let loadCalls = 0
   let saveCalls = 0
