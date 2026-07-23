@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import { deleteSpace, loadSpaceGraph, renameSpace, saveSpaceGraph } from '@/app/(space)/_server/actions'
+import { GraphConflictError } from '@/app/(space)/_server/store'
 import type { GraphData } from '@/app/(space)/_server/types'
 
 export const Route = createFileRoute('/(space)/api/spaces/$slug')({
@@ -8,20 +9,29 @@ export const Route = createFileRoute('/(space)/api/spaces/$slug')({
     handlers: {
       GET: async ({ params }) => {
         const { slug } = params
-        const graph = await loadSpaceGraph({ data: slug })
-        if (!graph) {
+        const result = await loadSpaceGraph({ data: slug })
+        if (!result) {
           return Response.json({ error: 'Space not found' }, { status: 404 })
         }
-        return Response.json({ graph })
+        return Response.json(result)
       },
       PUT: async ({ request, params }) => {
         const { slug } = params
-        const body = (await request.json()) as { graph?: GraphData }
+        const body = (await request.json()) as { graph?: GraphData; expectedUpdatedAt?: string }
         if (!body.graph) {
           return Response.json({ error: 'Missing graph' }, { status: 400 })
         }
-        await saveSpaceGraph({ data: { slug, graph: body.graph } })
-        return Response.json({ ok: true })
+        try {
+          const { updatedAt } = await saveSpaceGraph({
+            data: { slug, graph: body.graph, expectedUpdatedAt: body.expectedUpdatedAt },
+          })
+          return Response.json({ ok: true, updatedAt })
+        } catch (err) {
+          if (err instanceof GraphConflictError) {
+            return Response.json({ error: 'conflict' }, { status: 409 })
+          }
+          throw err
+        }
       },
       PATCH: async ({ request, params }) => {
         const { slug } = params

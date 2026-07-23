@@ -87,16 +87,30 @@ function nodeFrameDefaults(category?: string): Partial<Node> {
   return {}
 }
 
-function useDebouncedSave(slug: string, delay: number) {
+function useDebouncedSave(
+  slug: string,
+  delay: number,
+  versionRef: React.MutableRefObject<string | null>,
+  onConflict: () => void,
+) {
   const timer = useRef<NodeJS.Timeout>(undefined)
   const save = useCallback(
     (nodes: Node[], edges: Edge[]) => {
       clearTimeout(timer.current)
-      timer.current = setTimeout(() => {
-        saveSpaceGraph(slug, { nodes: stripVirtualNodes(nodes), edges })
+      timer.current = setTimeout(async () => {
+        const result = await saveSpaceGraph(slug, { nodes: stripVirtualNodes(nodes), edges }, versionRef.current)
+        if (result.ok) {
+          versionRef.current = result.updatedAt
+        } else if (result.conflict) {
+          onConflict()
+        } else {
+          // Leave versionRef untouched — we don't know whether the write landed, so
+          // asserting a version we didn't confirm could mask a real future conflict.
+          toast.error('Failed to save changes. Your next edit will retry.')
+        }
       }, delay)
     },
-    [slug, delay],
+    [slug, delay, versionRef, onConflict],
   )
   useEffect(() => () => clearTimeout(timer.current), [])
   return save
@@ -136,7 +150,19 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   useBackIntercept(isMobile && mobileInspectorVisible, () => setMobileInspectorVisible(false))
   const { resolvedTheme } = useTheme()
   const { screenToFlowPosition, setCenter } = useReactFlow()
-  const debouncedSave = useDebouncedSave(slug, 500)
+  // Tracks the `updatedAt` this tab last saw for the space's graph row, so
+  // saves can assert they're not overwriting a newer write from another tab
+  // or an MCP tool call (see GraphConflictError in _server/store.ts).
+  const graphVersionRef = useRef<string | null>(null)
+  const handleSaveConflict = useCallback(() => {
+    toast.warning('This space changed elsewhere — refreshed to the latest version. Redo your last change if needed.')
+    fetchSpaceGraph(slug).then(({ graph, updatedAt }) => {
+      setNodes(graph.nodes as Node[])
+      setEdges(graph.edges as Edge[])
+      graphVersionRef.current = updatedAt
+    })
+  }, [slug, setNodes, setEdges])
+  const debouncedSave = useDebouncedSave(slug, 500, graphVersionRef, handleSaveConflict)
   const sse = useSSEEvents()
   useSeedPendingRequests()
 
@@ -203,9 +229,10 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   useEffect(() => {
     async function boot() {
       await loadLocalExtensions()
-      const graph = await fetchSpaceGraph(slug)
+      const { graph, updatedAt } = await fetchSpaceGraph(slug)
       setNodes(graph.nodes as Node[])
       setEdges(graph.edges as Edge[])
+      graphVersionRef.current = updatedAt
       setExtensionsVersion((v) => v + 1)
       setLoaded(true)
     }
@@ -217,9 +244,18 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     if (!loaded || sse.graphVersion === 0) {
       return
     }
-    fetchSpaceGraph(slug).then((graph) => {
+    fetchSpaceGraph(slug).then(({ graph, updatedAt }) => {
+      // graph_updated now also fires from this tab's own saves, so this resync
+      // fetch is frequently a self-echo. Skip applying it when we already have
+      // this exact version — otherwise it clobbers anything typed in the
+      // save-broadcast-fetch window with the (identical, but stale-by-now) data
+      // we just saved.
+      if (updatedAt === graphVersionRef.current) {
+        return
+      }
       setNodes(graph.nodes as Node[])
       setEdges(graph.edges as Edge[])
+      graphVersionRef.current = updatedAt
     })
   }, [slug, sse.graphVersion, loaded, setNodes, setEdges])
 
@@ -231,9 +267,10 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       extensionRegistry.clear()
       await loadLocalExtensions()
       setExtensionsVersion((v) => v + 1)
-      const graph = await fetchSpaceGraph(slug)
+      const { graph, updatedAt } = await fetchSpaceGraph(slug)
       setNodes(graph.nodes as Node[])
       setEdges(graph.edges as Edge[])
+      graphVersionRef.current = updatedAt
     }
     reload()
   }, [slug, sse.extensionsVersion, loaded, setNodes, setEdges])

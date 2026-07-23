@@ -57,7 +57,7 @@ import {
   renameSpace,
   saveSpaceGraph,
 } from '@/app/(space)/_server/actions'
-import { getSpacesRegistry } from '@/app/(space)/_server/store'
+import { GraphConflictError, getSpacesRegistry } from '@/app/(space)/_server/store'
 import type { GraphData } from '@/app/(space)/_server/types'
 import { askUserStore } from '@/lib/ask-user-store'
 import { toastStore } from '@/lib/toast-store'
@@ -1243,16 +1243,53 @@ async function resolveSpace(args: Record<string, unknown>): Promise<string> {
   fail(-32602, `Space not found: ${input} (use a slug — see list_spaces)`)
 }
 
-async function loadOrFail(slug: string): Promise<GraphData> {
-  const graph = await loadSpaceGraph({ data: slug })
-  if (!graph) {
+async function loadOrFail(slug: string): Promise<{ graph: GraphData; updatedAt: string }> {
+  const result = await loadSpaceGraph({ data: slug })
+  if (!result) {
     fail(-32602, `Space not found: ${slug}`)
   }
-  return graph
+  return result
 }
 
-function broadcastGraphUpdated(spaceId: string): void {
-  toastStore.broadcast({ type: 'graph_updated', spaceId })
+export const MAX_GRAPH_CONFLICT_RETRIES = 3
+
+// Runs a load-mutate-save cycle against a space graph, retrying when a concurrent
+// writer's save lands first (`GraphConflictError`). Each retry reloads the graph
+// from scratch and re-runs `mutate` against that fresh state, so it's a reapply
+// rather than a blind replay: a target that vanished in the interim fails the same
+// "not found" validation `mutate` already does on the first pass, instead of being
+// silently recreated. Safe for the MCP tools because each call is a small,
+// self-contained mutation (one field, one node, a handful of edges) — NOT used by
+// the canvas autosave, which persists the whole graph and can't tell which of its
+// pending changes are still wanted after a stranger's edit landed; that path
+// rejects once and asks the user to redo (see flow-editor.tsx).
+// `load`/`save` are injectable (defaulting to the real space store) purely so tests can
+// exercise the retry/give-up control flow without a live TanStack Start request context,
+// which `loadSpaceGraph`/`saveSpaceGraph` require — production call sites never pass these.
+export async function withGraphConflictRetry<T>(
+  slug: string,
+  mutate: (graph: GraphData, updatedAt: string) => Promise<T> | T,
+  {
+    load = loadOrFail,
+    save = (s: string, graph: GraphData, expectedUpdatedAt: string) =>
+      saveSpaceGraph({ data: { slug: s, graph, expectedUpdatedAt } }),
+  }: {
+    load?: (slug: string) => Promise<{ graph: GraphData; updatedAt: string }>
+    save?: (slug: string, graph: GraphData, expectedUpdatedAt: string) => Promise<unknown>
+  } = {},
+): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    const { graph, updatedAt } = await load(slug)
+    const result = await mutate(graph, updatedAt)
+    try {
+      await save(slug, graph, updatedAt)
+      return result
+    } catch (err) {
+      if (!(err instanceof GraphConflictError) || attempt >= MAX_GRAPH_CONFLICT_RETRIES) {
+        throw err
+      }
+    }
+  }
 }
 
 function broadcastExtensionsUpdated(): void {
@@ -1480,8 +1517,8 @@ const CORE_EXTENSION_ID = 'builtin/core'
 async function findNodeAcrossSpaces(nodeId: string): Promise<{ node: GraphNode; slug: string }> {
   const spaces = await listSpaces()
   for (const space of spaces) {
-    const graph = await loadSpaceGraph({ data: space.slug })
-    const node = graph?.nodes.find((n) => (n as { id?: string }).id === nodeId) as GraphNode | undefined
+    const result = await loadSpaceGraph({ data: space.slug })
+    const node = result?.graph.nodes.find((n) => (n as { id?: string }).id === nodeId) as GraphNode | undefined
     if (node) {
       return { node, slug: space.slug }
     }
@@ -1887,7 +1924,7 @@ function buildHandlers(): Record<string, ToolHandler> {
     // ── list_nodes ──────────────────────────────────────────────────
     list_nodes: async (args) => {
       const slug = await resolveSpace(args)
-      const graph = await loadOrFail(slug)
+      const { graph } = await loadOrFail(slug)
       const typeNames = await buildTypeNameMap()
       const entries = graph.nodes.map((n) => {
         const node = n as unknown as GraphNode
@@ -1900,7 +1937,7 @@ function buildHandlers(): Record<string, ToolHandler> {
     find_nodes: async (args) => {
       const patterns = requireArray<string>(args.patterns, 'patterns')
       const slug = await resolveSpace(args)
-      const graph = await loadOrFail(slug)
+      const { graph } = await loadOrFail(slug)
       const typeNames = await buildTypeNameMap()
       const regexes = patterns.map((p) => ({ pattern: p, regex: globToRegex(p) }))
       const results: Record<string, unknown>[] = []
@@ -1950,7 +1987,7 @@ function buildHandlers(): Record<string, ToolHandler> {
     get_nodes: async (args) => {
       const nodeIds = requireArray<string>(args.nodeIds, 'nodeIds')
       const slug = await resolveSpace(args)
-      const graph = await loadOrFail(slug)
+      const { graph } = await loadOrFail(slug)
       const typeHandles = await buildTypeHandlesMap()
       const edges = graph.edges as StoredEdge[]
       const index = new Map<string, GraphNode>()
@@ -1979,32 +2016,32 @@ function buildHandlers(): Record<string, ToolHandler> {
         }
       }
       const slug = await resolveSpace(args)
-      const graph = await loadOrFail(slug)
-      let maxY = graph.nodes.reduce((max, n) => {
-        const py = (n as { position?: { y?: number } }).position?.y ?? 0
-        return Math.max(max, py)
-      }, 0)
-      const created: GraphNode[] = []
-      for (const it of items) {
-        const userPos = it.position as { x: number; y: number } | undefined
-        if (userPos) {
-          maxY = Math.max(maxY, userPos.y)
-        } else {
-          maxY += 150
+      const created = await withGraphConflictRetry(slug, (graph) => {
+        let maxY = graph.nodes.reduce((max, n) => {
+          const py = (n as { position?: { y?: number } }).position?.y ?? 0
+          return Math.max(max, py)
+        }, 0)
+        const createdNodes: GraphNode[] = []
+        for (const it of items) {
+          const userPos = it.position as { x: number; y: number } | undefined
+          if (userPos) {
+            maxY = Math.max(maxY, userPos.y)
+          } else {
+            maxY += 150
+          }
+          const position = userPos ?? { x: 100, y: maxY }
+          const data = (it.data as Record<string, unknown>) ?? {}
+          const node: GraphNode = {
+            id: crypto.randomUUID(),
+            type: it.type as string,
+            position,
+            data,
+          }
+          graph.nodes.push(node)
+          createdNodes.push(node)
         }
-        const position = userPos ?? { x: 100, y: maxY }
-        const data = (it.data as Record<string, unknown>) ?? {}
-        const node: GraphNode = {
-          id: crypto.randomUUID(),
-          type: it.type as string,
-          position,
-          data,
-        }
-        graph.nodes.push(node)
-        created.push(node)
-      }
-      await saveSpaceGraph({ data: { slug, graph } })
-      broadcastGraphUpdated(slug)
+        return createdNodes
+      })
       return textResult(JSON.stringify(created, null, 2))
     }),
 
@@ -2013,43 +2050,43 @@ function buildHandlers(): Record<string, ToolHandler> {
       async (args) => {
         const items = requireArray<Record<string, unknown>>(args.updates, 'updates')
         const slug = await resolveSpace(args)
-        const graph = await loadOrFail(slug)
-        const index = new Map<string, GraphNode>()
-        for (const n of graph.nodes) {
-          const node = n as unknown as GraphNode
-          index.set(node.id, node)
-        }
-        const missing: string[] = []
-        for (const it of items) {
-          const nodeId = it.nodeId as string | undefined
-          if (!nodeId) {
-            fail(-32602, 'Each update must include "nodeId"')
+        const updated = await withGraphConflictRetry(slug, (graph) => {
+          const index = new Map<string, GraphNode>()
+          for (const n of graph.nodes) {
+            const node = n as unknown as GraphNode
+            index.set(node.id, node)
           }
-          if (!index.has(nodeId)) {
-            missing.push(nodeId)
+          const missing: string[] = []
+          for (const it of items) {
+            const nodeId = it.nodeId as string | undefined
+            if (!nodeId) {
+              fail(-32602, 'Each update must include "nodeId"')
+            }
+            if (!index.has(nodeId)) {
+              missing.push(nodeId)
+            }
           }
-        }
-        if (missing.length > 0) {
-          fail(-32602, `Nodes not found: ${missing.join(', ')}`)
-        }
-        const updated: GraphNode[] = []
-        for (const it of items) {
-          const node = index.get(it.nodeId as string)
-          if (!node) {
-            continue
+          if (missing.length > 0) {
+            fail(-32602, `Nodes not found: ${missing.join(', ')}`)
           }
-          const data = it.data as Record<string, unknown> | undefined
-          if (data) {
-            node.data = { ...(node.data ?? {}), ...data }
+          const updatedNodes: GraphNode[] = []
+          for (const it of items) {
+            const node = index.get(it.nodeId as string)
+            if (!node) {
+              continue
+            }
+            const data = it.data as Record<string, unknown> | undefined
+            if (data) {
+              node.data = { ...(node.data ?? {}), ...data }
+            }
+            const position = it.position as { x: number; y: number } | undefined
+            if (position) {
+              node.position = position
+            }
+            updatedNodes.push(node)
           }
-          const position = it.position as { x: number; y: number } | undefined
-          if (position) {
-            node.position = position
-          }
-          updated.push(node)
-        }
-        await saveSpaceGraph({ data: { slug, graph } })
-        broadcastGraphUpdated(slug)
+          return updatedNodes
+        })
         return textResult(JSON.stringify(updated, null, 2))
       },
       { view: 'update_nodes' },
@@ -2065,17 +2102,16 @@ function buildHandlers(): Record<string, ToolHandler> {
           fail(-32602, 'Missing required params: nodeId, path, value')
         }
         const slug = await resolveSpace(args)
-        const graph = await loadOrFail(slug)
-        const node = graph.nodes.find((n) => (n as { id: string }).id === nodeId) as GraphNode | undefined
-        if (!node) {
-          fail(-32602, `Node not found: ${nodeId}`)
-        }
-        if (!node.data) {
-          node.data = {}
-        }
-        setByPath(node.data, propPath, value)
-        await saveSpaceGraph({ data: { slug, graph } })
-        broadcastGraphUpdated(slug)
+        await withGraphConflictRetry(slug, (graph) => {
+          const node = graph.nodes.find((n) => (n as { id: string }).id === nodeId) as GraphNode | undefined
+          if (!node) {
+            fail(-32602, `Node not found: ${nodeId}`)
+          }
+          if (!node.data) {
+            node.data = {}
+          }
+          setByPath(node.data, propPath, value)
+        })
         return textResult(`Property ${propPath} on ${nodeId} written.`)
       },
       { view: 'write_node_property' },
@@ -2096,22 +2132,21 @@ function buildHandlers(): Record<string, ToolHandler> {
         }
         const replaceAll = Boolean(args.replaceAll)
         const slug = await resolveSpace(args)
-        const graph = await loadOrFail(slug)
-        const node = graph.nodes.find((n) => (n as { id: string }).id === nodeId) as GraphNode | undefined
-        if (!node) {
-          fail(-32602, `Node not found: ${nodeId}`)
-        }
-        const current = getByPath(node.data ?? {}, propPath)
-        if (typeof current !== 'string') {
-          fail(-32602, `Property ${propPath} is not a string`)
-        }
-        const updated = replaceExact(current, { oldString, newString, replaceAll }, 'property')
-        if (!node.data) {
-          node.data = {}
-        }
-        setByPath(node.data, propPath, updated)
-        await saveSpaceGraph({ data: { slug, graph } })
-        broadcastGraphUpdated(slug)
+        await withGraphConflictRetry(slug, (graph) => {
+          const node = graph.nodes.find((n) => (n as { id: string }).id === nodeId) as GraphNode | undefined
+          if (!node) {
+            fail(-32602, `Node not found: ${nodeId}`)
+          }
+          const current = getByPath(node.data ?? {}, propPath)
+          if (typeof current !== 'string') {
+            fail(-32602, `Property ${propPath} is not a string`)
+          }
+          const updated = replaceExact(current, { oldString, newString, replaceAll }, 'property')
+          if (!node.data) {
+            node.data = {}
+          }
+          setByPath(node.data, propPath, updated)
+        })
         return textResult(`Property ${propPath} on ${nodeId} updated.`)
       },
       { view: 'edit_node_property' },
@@ -2121,29 +2156,28 @@ function buildHandlers(): Record<string, ToolHandler> {
     delete_nodes: withApprovalRequired(async (args) => {
       const nodeIds = requireArray<string>(args.nodeIds, 'nodeIds')
       const slug = await resolveSpace(args)
-      const graph = await loadOrFail(slug)
-      const existing = new Set(graph.nodes.map((n) => (n as { id: string }).id))
-      const missing = nodeIds.filter((id) => !existing.has(id))
-      if (missing.length > 0) {
-        fail(-32602, `Nodes not found: ${missing.join(', ')}`)
-      }
-      const targets = new Set(nodeIds)
-      graph.nodes = graph.nodes.filter((n) => !targets.has((n as { id: string }).id))
-      const beforeEdges = graph.edges.length
-      graph.edges = graph.edges.filter((e) => {
-        const edge = e as { source: string; target: string }
-        return !targets.has(edge.source) && !targets.has(edge.target)
+      const removedEdges = await withGraphConflictRetry(slug, (graph) => {
+        const existing = new Set(graph.nodes.map((n) => (n as { id: string }).id))
+        const missing = nodeIds.filter((id) => !existing.has(id))
+        if (missing.length > 0) {
+          fail(-32602, `Nodes not found: ${missing.join(', ')}`)
+        }
+        const targets = new Set(nodeIds)
+        graph.nodes = graph.nodes.filter((n) => !targets.has((n as { id: string }).id))
+        const beforeEdges = graph.edges.length
+        graph.edges = graph.edges.filter((e) => {
+          const edge = e as { source: string; target: string }
+          return !targets.has(edge.source) && !targets.has(edge.target)
+        })
+        return beforeEdges - graph.edges.length
       })
-      const removedEdges = beforeEdges - graph.edges.length
-      await saveSpaceGraph({ data: { slug, graph } })
-      broadcastGraphUpdated(slug)
       return textResult(JSON.stringify({ deleted: nodeIds, removedEdges }, null, 2))
     }),
 
     // ── list_edges ──────────────────────────────────────────────────
     list_edges: async (args) => {
       const slug = await resolveSpace(args)
-      const graph = await loadOrFail(slug)
+      const { graph } = await loadOrFail(slug)
       const edges = graph.edges.map((e) => edgeToApi(e as StoredEdge))
       return textResult(JSON.stringify(edges, null, 2))
     },
@@ -2152,44 +2186,44 @@ function buildHandlers(): Record<string, ToolHandler> {
     connect_nodes: withApprovalRequired(async (args) => {
       const items = requireArray<Record<string, unknown>>(args.edges, 'edges')
       const slug = await resolveSpace(args)
-      const graph = await loadOrFail(slug)
-      const nodeIds = new Set(graph.nodes.map((n) => (n as { id: string }).id))
-      const parsed = items.map((it) => {
-        if (!it.source || !it.target || typeof it.source !== 'string' || typeof it.target !== 'string') {
-          fail(-32602, 'Each edge must include "source" and "target"')
+      const created = await withGraphConflictRetry(slug, (graph) => {
+        const nodeIds = new Set(graph.nodes.map((n) => (n as { id: string }).id))
+        const parsed = items.map((it) => {
+          if (!it.source || !it.target || typeof it.source !== 'string' || typeof it.target !== 'string') {
+            fail(-32602, 'Each edge must include "source" and "target"')
+          }
+          const source = parseEndpoint(it.source as string)
+          const target = parseEndpoint(it.target as string)
+          if (!nodeIds.has(source.nodeId)) {
+            fail(-32602, `Source node not found: ${source.nodeId}`)
+          }
+          if (!nodeIds.has(target.nodeId)) {
+            fail(-32602, `Target node not found: ${target.nodeId}`)
+          }
+          const exists = (graph.edges as StoredEdge[]).some((e) => edgeMatches(e, { source, target }))
+          if (exists) {
+            fail(-32602, `Edge already exists: ${it.source} -> ${it.target}`)
+          }
+          return { source, target }
+        })
+        const createdEdges: Record<string, unknown>[] = []
+        for (const p of parsed) {
+          const edge: StoredEdge = {
+            id: crypto.randomUUID(),
+            source: p.source.nodeId,
+            target: p.target.nodeId,
+          }
+          if (p.source.handle) {
+            edge.sourceHandle = p.source.handle
+          }
+          if (p.target.handle) {
+            edge.targetHandle = p.target.handle
+          }
+          graph.edges.push(edge)
+          createdEdges.push(edgeToApi(edge))
         }
-        const source = parseEndpoint(it.source as string)
-        const target = parseEndpoint(it.target as string)
-        if (!nodeIds.has(source.nodeId)) {
-          fail(-32602, `Source node not found: ${source.nodeId}`)
-        }
-        if (!nodeIds.has(target.nodeId)) {
-          fail(-32602, `Target node not found: ${target.nodeId}`)
-        }
-        const exists = (graph.edges as StoredEdge[]).some((e) => edgeMatches(e, { source, target }))
-        if (exists) {
-          fail(-32602, `Edge already exists: ${it.source} -> ${it.target}`)
-        }
-        return { source, target }
+        return createdEdges
       })
-      const created: Record<string, unknown>[] = []
-      for (const p of parsed) {
-        const edge: StoredEdge = {
-          id: crypto.randomUUID(),
-          source: p.source.nodeId,
-          target: p.target.nodeId,
-        }
-        if (p.source.handle) {
-          edge.sourceHandle = p.source.handle
-        }
-        if (p.target.handle) {
-          edge.targetHandle = p.target.handle
-        }
-        graph.edges.push(edge)
-        created.push(edgeToApi(edge))
-      }
-      await saveSpaceGraph({ data: { slug, graph } })
-      broadcastGraphUpdated(slug)
       return textResult(JSON.stringify(created, null, 2))
     }),
 
@@ -2197,30 +2231,30 @@ function buildHandlers(): Record<string, ToolHandler> {
     disconnect_nodes: withApprovalRequired(async (args) => {
       const items = requireArray<Record<string, unknown>>(args.edges, 'edges')
       const slug = await resolveSpace(args)
-      const graph = await loadOrFail(slug)
-      const indices: number[] = []
-      for (const it of items) {
-        if (!it.source || !it.target || typeof it.source !== 'string' || typeof it.target !== 'string') {
-          fail(-32602, 'Each edge must include "source" and "target"')
+      const removed = await withGraphConflictRetry(slug, (graph) => {
+        const indices: number[] = []
+        for (const it of items) {
+          if (!it.source || !it.target || typeof it.source !== 'string' || typeof it.target !== 'string') {
+            fail(-32602, 'Each edge must include "source" and "target"')
+          }
+          const source = parseEndpoint(it.source as string)
+          const target = parseEndpoint(it.target as string)
+          const idx = (graph.edges as StoredEdge[]).findIndex(
+            (e, i) => !indices.includes(i) && edgeMatches(e, { source, target }),
+          )
+          if (idx === -1) {
+            fail(-32602, `Edge not found: ${it.source} -> ${it.target}`)
+          }
+          indices.push(idx)
         }
-        const source = parseEndpoint(it.source as string)
-        const target = parseEndpoint(it.target as string)
-        const idx = (graph.edges as StoredEdge[]).findIndex(
-          (e, i) => !indices.includes(i) && edgeMatches(e, { source, target }),
-        )
-        if (idx === -1) {
-          fail(-32602, `Edge not found: ${it.source} -> ${it.target}`)
+        indices.sort((a, b) => b - a)
+        const removedIds: string[] = []
+        for (const idx of indices) {
+          const edge = graph.edges.splice(idx, 1)[0] as StoredEdge
+          removedIds.push(edge.id)
         }
-        indices.push(idx)
-      }
-      indices.sort((a, b) => b - a)
-      const removed: string[] = []
-      for (const idx of indices) {
-        const edge = graph.edges.splice(idx, 1)[0] as StoredEdge
-        removed.push(edge.id)
-      }
-      await saveSpaceGraph({ data: { slug, graph } })
-      broadcastGraphUpdated(slug)
+        return removedIds
+      })
       return textResult(JSON.stringify({ removed }, null, 2))
     }),
 

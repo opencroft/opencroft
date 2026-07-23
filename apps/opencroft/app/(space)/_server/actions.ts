@@ -5,6 +5,7 @@ import type { GraphSnapshot } from '@/app/(extension-runtime)/_server/host'
 import { slugify, uniqueSlug } from '@/app/(space)/_server/slug'
 import { getSpacesRegistry, type SpaceRuntime } from '@/app/(space)/_server/store'
 import { DEFAULT_SPACE_SLUG, type GraphData, type SpaceExport, type SpaceSummary } from '@/app/(space)/_server/types'
+import { toastStore } from '@/lib/toast-store'
 
 async function registry() {
   const r = getSpacesRegistry()
@@ -42,21 +43,29 @@ export const listSpaces = createServerFn({ strict: { output: false } }).handler(
 
 export const loadSpaceGraph = createServerFn({ strict: { output: false } })
   .inputValidator((slug: string) => slug)
-  .handler(async ({ data: slug }): Promise<GraphData | null> => {
+  .handler(async ({ data: slug }): Promise<{ graph: GraphData; updatedAt: string } | null> => {
     const r = await registry()
     const space = r.getBySlug(slug)
     if (!space) {
       return null
     }
-    return space.graph
+    return { graph: space.graph, updatedAt: space.updatedAt.toISOString() }
   })
 
 export const saveSpaceGraph = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { slug: string; graph: GraphData }) => data)
-  .handler(async ({ data }): Promise<void> => {
+  .inputValidator((data: { slug: string; graph: GraphData; expectedUpdatedAt?: string }) => data)
+  .handler(async ({ data }): Promise<{ updatedAt: string }> => {
     const r = await registry()
     const resolved = await resolveGraph(data.graph)
-    await r.saveGraph(data.slug, resolved)
+    const runtime = await r.saveGraph(data.slug, resolved, data.expectedUpdatedAt)
+    if (!runtime) {
+      throw new Error(`Space not found: ${data.slug}`)
+    }
+    // Single broadcast point for every graph mutation (canvas autosave and
+    // MCP node/edge tools alike) so any other open tab resyncs instead of
+    // later overwriting this write with a stale snapshot.
+    toastStore.broadcast({ type: 'graph_updated', spaceId: data.slug })
+    return { updatedAt: runtime.updatedAt.toISOString() }
   })
 
 export const createSpace = createServerFn({ method: 'POST', strict: { output: false } })
