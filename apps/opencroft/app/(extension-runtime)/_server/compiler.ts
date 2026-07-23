@@ -207,6 +207,15 @@ export const InspectorTerminalBody = ui.InspectorTerminalBody;
 export const CommandBar = ui.CommandBar;
 export const CommandBarMenu = ui.CommandBarMenu;
 export const CommandBarMenuItem = ui.CommandBarMenuItem;
+export const Collapsible = ui.Collapsible;
+export const CollapsibleTrigger = ui.CollapsibleTrigger;
+export const CollapsibleContent = ui.CollapsibleContent;
+export const Switch = ui.Switch;
+export const Tabs = ui.Tabs;
+export const TabsList = ui.TabsList;
+export const TabsTrigger = ui.TabsTrigger;
+export const TabsContent = ui.TabsContent;
+export const Schedules = ui.Schedules;
 export default ui;
 `,
       loader: 'js',

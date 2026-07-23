@@ -496,11 +496,8 @@ export default defineExtension({
       accent: 'oklch(0.65 0.24 25)',
       handles: EVENT_HANDLES as unknown as never[],
       defaultData: {
-        mode: 'manual',
-        intervalValue: 5,
-        intervalUnit: 'minutes',
-        dailyTime: '09:00',
-        dailyDays: [1, 2, 3, 4, 5],
+        schedules: [],
+        runHistory: [],
       },
       component: EventNode as unknown as never,
       inspector: EventInspector as unknown as never,

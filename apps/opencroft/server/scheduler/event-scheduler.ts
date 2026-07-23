@@ -39,6 +39,14 @@ export interface ScheduleRule {
   cron: string
   /** Present for simple rules so the editor can repopulate the builder. */
   simple?: SimpleSchedule
+  /**
+   * Epoch ms, opportunistic. Refreshed for every enabled rule on a node
+   * whenever that node is written for another reason (a fire) — never on an
+   * idle tick, so it stays absent until a node's first fire. The canvas node
+   * face and inspector use this (when present) as the server-authoritative
+   * next-run time instead of re-deriving it from `cron` client-side.
+   */
+  nextRunAt?: number
 }
 
 // Raw/stored shape — deliberately not the component's `RunHistoryEntry` (which
@@ -83,6 +91,16 @@ function isDue(cron: string, windowStart: number, now: number): boolean {
 
 export function computeDueRuleIds(rules: ScheduleRule[], windowStart: number, now: number): string[] {
   return rules.filter((r) => r.enabled && isDue(r.cron, windowStart, now)).map((r) => r.id)
+}
+
+// The rule's next occurrence strictly after `now`. Undefined for an invalid
+// expression — matches isDue's "never due" treatment rather than throwing.
+export function computeNextRunAt(cron: string, now: number): number | undefined {
+  try {
+    return CronExpressionParser.parse(cron, { currentDate: new Date(now) }).next().toDate().getTime()
+  } catch {
+    return undefined
+  }
 }
 
 function collectEventNodesBySpace(): Map<string, GraphNode[]> {
@@ -131,6 +149,17 @@ async function persistRunOutcome(
           return
         }
         const data = (node.data ??= {})
+        // Opportunistic refresh: since this node is being written anyway,
+        // recompute nextRunAt for every enabled rule too — not just the one(s)
+        // that fired. Piggybacks on this write rather than adding a new class
+        // of write; a rule that hasn't fired yet stays without a nextRunAt
+        // until this node's first fire, same as any other rule here.
+        const refreshedAt = Date.now()
+        for (const rule of data.schedules ?? []) {
+          if (rule.enabled) {
+            rule.nextRunAt = computeNextRunAt(rule.cron, refreshedAt)
+          }
+        }
         const history = (data.runHistory ??= [])
         const entry: RunHistoryEntry = {
           id: `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,

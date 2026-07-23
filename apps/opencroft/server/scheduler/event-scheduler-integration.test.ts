@@ -10,6 +10,12 @@ import { getSpacesRegistry } from '@/app/(space)/_server/store'
 
 import { MAX_HISTORY, processDueEvents, type RunHistoryEntry, type ScheduleRule } from './event-scheduler'
 
+function schedulesOf(slug: string, eventId: string): ScheduleRule[] {
+  return (getSpacesRegistry().getBySlug(slug)?.graph.nodes.find((n) => (n as { id: string }).id === eventId) as {
+    data?: { schedules?: ScheduleRule[] }
+  })?.data?.schedules ?? []
+}
+
 // dispatchExecutionContext resolves a node by id alone, searching every space
 // (safe in production since node ids are real UUIDs, globally unique) — so
 // each test space here needs its own unique node ids too, not shared literals
@@ -56,6 +62,12 @@ test('processDueEvents fires a due rule, persists success, and broadcasts once',
   assert.equal(history[0].status, 'success')
   assert.equal(history[0].ruleId, 'r1')
   assert.equal(typeof history[0].durationMs, 'number')
+
+  // Opportunistic nextRunAt refresh: piggybacks on this same write, so it's
+  // populated right after the first fire even though nothing edited the rule.
+  const [rule] = schedulesOf(slug, eventId)
+  assert.equal(typeof rule.nextRunAt, 'number')
+  assert.ok((rule.nextRunAt as number) > Date.now(), 'nextRunAt should be in the future')
 })
 
 test('processDueEvents does not touch the graph when nothing is due', async () => {

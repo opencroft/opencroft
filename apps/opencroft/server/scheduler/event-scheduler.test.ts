@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { computeDueRuleIds, type ScheduleRule } from './event-scheduler'
+import { computeDueRuleIds, computeNextRunAt, type ScheduleRule } from './event-scheduler'
 
 function rule(overrides: Partial<ScheduleRule> = {}): ScheduleRule {
   return { id: 'r1', enabled: true, mode: 'cron', cron: '*/30 * * * *', ...overrides }
@@ -49,4 +49,16 @@ test('computeDueRuleIds returns every rule due in the same window', () => {
     now,
   )
   assert.deepEqual(due.sort(), ['a', 'b'])
+})
+
+// ── computeNextRunAt ─────────────────────────────────────────────────────
+
+test('computeNextRunAt returns the next occurrence strictly after now', () => {
+  const now = new Date('2026-07-23T04:03:00.000Z').getTime()
+  const next = computeNextRunAt('*/30 * * * *', now)
+  assert.equal(next, new Date('2026-07-23T04:30:00.000Z').getTime())
+})
+
+test('computeNextRunAt returns undefined for an invalid expression, not a crash', () => {
+  assert.equal(computeNextRunAt('not a cron', Date.now()), undefined)
 })
