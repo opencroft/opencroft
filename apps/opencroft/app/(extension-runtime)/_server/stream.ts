@@ -15,6 +15,7 @@
 
 import { ensureLocalSession, findTargetSession, promptLocal } from '@/app/(agent)/_server/acp'
 import { upsertSession } from '@/app/(agent)/_server/agent-sessions-store'
+import { composeEnvelope } from '@/app/(agent)/_shared/message-envelope'
 import { updateNodeData } from '@/app/(extension-runtime)/_server/node-data'
 import {
   type AgentContext,
@@ -24,7 +25,6 @@ import {
   type EdgeLike as SmEdgeLike,
   type NodeLike as SmNodeLike,
   tryParseJsonMessage,
-  wrapMessageWithContext,
 } from '@/app/(extension-runtime)/_server/send-message-helpers'
 import { findExtensionHandle, type NodeMetadata } from '@/app/(extension-runtime)/_types'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
@@ -291,17 +291,6 @@ async function persistToDownstreamSendMessages(
       continue
     }
 
-    let message = route.message
-    if (!message.trim().startsWith('/')) {
-      message = wrapMessageWithContext(
-        message,
-        { name: space.name, slug: spaceId },
-        sourceNodeId,
-        route.ctx.jobContext,
-        route.ctx.instructions,
-      )
-    }
-
     try {
       // Reuse an existing live session for this agent+job (the node's own
       // remembered session, or a chat tab the user has open) so messages land in
@@ -309,17 +298,21 @@ async function persistToDownstreamSendMessages(
       // promptLocal then persists the pointer so it's remembered and reused next time.
       const existing = await findTargetSession({ data: { baseKey: route.sessionKey } })
       let sessionId: string
+      let created: boolean
       if (existing?.sessionId) {
         sessionId = existing.sessionId
+        created = false
       } else {
-        sessionId = (
-          await ensureLocalSession({
-            data: { agentNodeId: route.ctx.agentNodeId, jobNodeId: route.ctx.jobNodeId, tabKey: route.sessionKey },
-          })
-        ).sessionId
-        // A brand-new session: register it in the shared registry (keyed by the
-        // node's base session key) so the node-driven conversation shows up in
-        // the chat list and is resumable on every device, like a UI-started chat.
+        const opened = await ensureLocalSession({
+          data: { agentNodeId: route.ctx.agentNodeId, jobNodeId: route.ctx.jobNodeId, tabKey: route.sessionKey },
+        })
+        sessionId = opened.sessionId
+        created = opened.created
+        // Register in the shared registry (keyed by the node's base session key)
+        // so the node-driven conversation shows up in the chat list and is
+        // resumable on every device, like a UI-started chat. Idempotent, so it's
+        // safe to call even when `opened` resumed a persisted session rather than
+        // creating a fresh one.
         await upsertSession({
           key: route.sessionKey,
           agentNodeId: route.ctx.agentNodeId,
@@ -330,6 +323,15 @@ async function persistToDownstreamSendMessages(
           createdAt: Date.now(),
         }).catch(() => {})
       }
+
+      // Automated senders never include the selected-node/space system context
+      // (chat-only); task context + instructions are session-scoped, so only a
+      // freshly created ACP session gets them.
+      const message = composeEnvelope(route.message, {
+        sessionInit: { jobContext: route.ctx.jobContext, instructions: route.ctx.instructions },
+        isNewSession: created,
+      })
+
       await promptLocal({ data: { sessionId, text: message } })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)

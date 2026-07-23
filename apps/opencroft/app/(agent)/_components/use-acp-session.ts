@@ -249,16 +249,17 @@ export function useAcpSession(
   // instead of one React state update (and one fold() re-run) per stored event.
   const historyBufferRef = useRef<ChatEvent[]>([])
   const replayingHistoryRef = useRef(true)
-  // Read inside callbacks/effects to avoid stale closures.
-  const isFirstRef = useRef(true)
-  // Latched the moment deliver() hands off any message for this tab source.
-  // Folded state (messages/queue) lags the server by an SSE round trip, so two
-  // quick sends could otherwise BOTH see an empty transcript and both claim
+  // Whether `ensureLocalSession` just created a brand-new ACP session for this
+  // tab (vs. resuming a tab-cache hit or a cold-start session/load) — the same
+  // authoritative signal the send-message path keys session-scoped envelope
+  // content off (see acp.ts / message-envelope.ts). Read inside callbacks to
+  // avoid stale closures.
+  const createdRef = useRef(false)
+  // Latched the moment deliver() hands off any message for this tab source, so
+  // two quick sends can't both see `createdRef.current` true and both claim
   // "first" — attaching the title request twice and re-titling the chat on the
-  // second reply. The latch closes that in-flight window synchronously; the
-  // folded terms still cover the reopened-session case (history exists while
-  // the latch is fresh). Reset only when the tab source changes — a fork's
-  // sessionId swap must not clear it mid-conversation.
+  // second reply. Reset only when the tab source changes — a fork's sessionId
+  // swap must not clear it mid-conversation.
   const deliveredOnceRef = useRef(false)
   // Outgoing prompts are serialized through this chain. The server assigns
   // queue/turn order by request arrival, so two concurrent promptLocal calls
@@ -292,6 +293,7 @@ export function useAcpSession(
           setSessionId(result.sessionId)
           setCanFork(result.canFork)
           setCanSteer(result.canSteer)
+          createdRef.current = result.created
         }
       })
       .catch((error) => {
@@ -344,15 +346,6 @@ export function useAcpSession(
 
   const folded = useMemo(() => fold(events), [events])
 
-  // "First message" drives the title request in the outgoing transform, which
-  // runs client-side at send time — before the server decides queue-vs-deliver.
-  // A queued-but-undelivered first message keeps `messages` empty until its
-  // turn starts, so a message typed behind it must NOT also claim first: it's
-  // first only when nothing has been delivered, nothing is queued ahead, AND
-  // nothing has been handed off in this mount (the latch covers the window
-  // before the server's user/queue events echo back over SSE).
-  isFirstRef.current = folded.messages.length === 0 && folded.queue.length === 0 && !deliveredOnceRef.current
-
   // Pull the self-reported title out of the first reply and apply it once. Gated
   // on titleRequestedRef so it only fires for the live first turn — never on the
   // replayed transcript of a reopened session or on any later message.
@@ -388,9 +381,7 @@ export function useAcpSession(
         return
       }
       const transform = transformRef.current
-      // isFirstRef is a render-time snapshot; the live latch check covers a
-      // second deliver() landing before the next render.
-      const isFirst = isFirstRef.current && !deliveredOnceRef.current
+      const isFirst = createdRef.current && !deliveredOnceRef.current
       deliveredOnceRef.current = true
       // Transform at send time (not when the chain link runs): the chain
       // preserves order, so "first" and the canvas context are decided the

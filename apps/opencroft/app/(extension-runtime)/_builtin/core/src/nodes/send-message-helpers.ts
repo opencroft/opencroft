@@ -1,5 +1,10 @@
 /**
- * Shared helpers for SendMessage node — used by both client (UI) and server (stream.ts).
+ * Graph-lookup helpers backing the SendMessage node's own UI (inspector subtitle,
+ * agent/job pickers) — this file is bundled into the extension-runtime client and
+ * never runs server-side. Actual message routing/delivery lives server-side in
+ * `apps/opencroft/app/(extension-runtime)/_server/send-message-helpers.ts` and
+ * `stream.ts`; keep session-key parsing (`buildSessionKey`/`parseSessionKey`) in
+ * sync with that copy since both must agree on the same key format.
  *
  * Routing model: SendMessage receives JSON `{ session, message }` on its `text-in`
  * handle. `session` looks like `agent:<agent-slug>:<job-slug>`. The message is
@@ -30,21 +35,6 @@ export interface AgentContext {
   instructions: string[]
 }
 
-export interface ParsedMessage {
-  /** Message body to deliver. */
-  message: string
-  /** Explicit target agent slug; falls back to the node's default agent when absent. */
-  agent?: string
-  /** Explicit target job slug; falls back to the node's default job when absent. */
-  job?: string
-  /** Optional session discriminator: same agent+job but a distinct key = a distinct stable session. */
-  key?: string
-  /** Optional session title, applied only when the session is first created. */
-  title?: string
-  /** Legacy combined key `agent:<agent>:<job>`; honored when `agent`/`job` are absent. */
-  session?: string
-}
-
 // ─── slug / session key ──────────────────────────────────────────────
 
 export function slug(name: string): string {
@@ -69,33 +59,6 @@ export function parseSessionKey(sessionKey: string): { agentSlug: string; jobSlu
     return null
   }
   return { agentSlug: m[1], jobSlug: m[2] }
-}
-
-// ─── JSON envelope parsing ───────────────────────────────────────────
-
-export function tryParseJsonMessage(text: string): ParsedMessage | null {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    return null
-  }
-  if (!parsed || typeof parsed !== 'object') {
-    return null
-  }
-  const obj = parsed as Record<string, unknown>
-  if (typeof obj['message'] !== 'string') {
-    return null
-  }
-  const optStr = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
-  return {
-    message: obj['message'],
-    agent: optStr(obj['agent']),
-    job: optStr(obj['job']),
-    key: optStr(obj['key']),
-    title: optStr(obj['title']),
-    session: optStr(obj['session']),
-  }
 }
 
 // ─── Graph lookups ───────────────────────────────────────────────────
@@ -175,29 +138,4 @@ export function listJobNames(nodes: NodeLike[]): string[] {
     .filter((n) => n.type === 'agent-job')
     .map(nodeName)
     .filter(Boolean)
-}
-
-// ─── Message wrapping ────────────────────────────────────────────────
-
-/**
- * Wrap a message with opencroft XML tags (system, task, instruction),
- * matching the AI overlay transformOutgoing convention.
- */
-export function wrapMessageWithContext(
-  message: string,
-  space: { name: string; slug: string },
-  sourceNodeId: string | null,
-  jobContext: string,
-  instructions: string[],
-): string {
-  const selectedPart = sourceNodeId ?? 'none'
-  const system = `<opencroft-system>Sent from OpenCroft space: ${space.name} (${space.slug}). Selected node: ${selectedPart}. This may or may not relate to the current request.</opencroft-system>`
-  let prefix = system
-  if (jobContext) {
-    prefix += `\n<opencroft-task>${jobContext}</opencroft-task>`
-  }
-  for (const instr of instructions) {
-    prefix += `\n<opencroft-instruction>${instr}</opencroft-instruction>`
-  }
-  return `${prefix}\n${message}`
 }

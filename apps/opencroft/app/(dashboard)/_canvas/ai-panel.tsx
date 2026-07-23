@@ -12,6 +12,7 @@ import { DashboardHost, LocalAgentHost } from '@/app/(agent)/_components/chat-ho
 import { useChatTabsMaybe } from '@/app/(agent)/_lib/chat-tabs-context'
 import { useAgentSessions } from '@/app/(agent)/_lib/use-agent-sessions'
 import type { SessionEntry } from '@/app/(agent)/_server/agent-sessions-store'
+import { composeEnvelope } from '@/app/(agent)/_shared/message-envelope'
 import { slug } from '@/app/(server)/_server/types'
 import { type AgentJobRef, type AgentNodeRef, listAgentNodes } from '@/app/(space)/_server/agents'
 
@@ -29,9 +30,6 @@ interface AiPanelProps {
 // Sentinel key for the "no session selected" state; namespaces the chat-tabs
 // fallback so a dashboard view never collides with a real session.
 const DASHBOARD_KEY = 'agent:dashboard'
-// Sent with every message: the space and the node currently selected on the canvas.
-const systemTag = (spaceName: string, spaceSlug: string, selectedNodeId: string | null) =>
-  `<opencroft-system>Sent from OpenCroft space: ${spaceName} (${spaceSlug}). Selected node: ${selectedNodeId ?? 'none'}. This may or may not relate to the current request.</opencroft-system>`
 // Injected on the first message of a session: asks the agent to lead its reply
 // with a self-titled chat name, which use-acp-session parses out to rename the
 // tab. No literal nested opencroft tag here — a nested close would truncate the
@@ -78,26 +76,16 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
 
   const transformOutgoing = useCallback(
     (text: string, isFirstMessage: boolean) => {
-      if (text.trim().startsWith('/')) {
-        return text
-      }
-      const system = systemTag(spaceName, spaceSlug, selectedNodeId)
-      if (!isFirstMessage) {
-        return `${system}\n${text}`
-      }
       const { job, agent } = resolveJobForSession(activeSessionKey, sessions, agents)
-      const ctx = job?.context.trim()
-      let prefix = `${system}\n${TITLE_REQUEST}`
-      if (ctx) {
-        prefix += `\n<opencroft-task>${ctx}</opencroft-task>`
-      }
-      for (const instr of agent?.instructions ?? []) {
-        const trimmed = instr.instruction.trim()
-        if (trimmed) {
-          prefix += `\n<opencroft-instruction>${trimmed}</opencroft-instruction>`
-        }
-      }
-      return `${prefix}\n${text}`
+      return composeEnvelope(text, {
+        system: { spaceName, spaceSlug, selectedNodeId },
+        sessionInit: {
+          jobContext: job?.context,
+          instructions: agent?.instructions.map((i) => i.instruction) ?? [],
+          titleRequest: TITLE_REQUEST,
+        },
+        isNewSession: isFirstMessage,
+      })
     },
     [spaceName, spaceSlug, selectedNodeId, activeSessionKey, sessions, agents],
   )

@@ -67,7 +67,7 @@ interface TabSession {
 // and self-heals after a restart, without persisting fragile ids to the client.
 const globalRef = globalThis as typeof globalThis & {
   __acpTabSessions?: Map<string, TabSession>
-  __acpEnsureInFlight?: Map<string, Promise<{ sessionId: string; canFork: boolean; canSteer: boolean }>>
+  __acpEnsureInFlight?: Map<string, Promise<{ sessionId: string; canFork: boolean; canSteer: boolean; created: boolean }>>
 }
 if (!globalRef.__acpTabSessions) {
   globalRef.__acpTabSessions = new Map()
@@ -85,7 +85,7 @@ const ensureInFlight = globalRef.__acpEnsureInFlight
 // (no on-disk profile store), and open (or reuse) the ACP session for this tab.
 export const ensureLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { agentNodeId: string; jobNodeId: string; tabKey: string }) => data)
-  .handler(async ({ data }): Promise<{ sessionId: string; canFork: boolean; canSteer: boolean }> => {
+  .handler(async ({ data }): Promise<{ sessionId: string; canFork: boolean; canSteer: boolean; created: boolean }> => {
     const pending = ensureInFlight.get(data.tabKey)
     if (pending) {
       return pending
@@ -99,16 +99,21 @@ export const ensureLocalSession = createServerFn({ method: 'POST', strict: { out
     }
   })
 
+// `created` is the one authoritative signal for whether a brand-new ACP
+// session was just spun up (agentClient.createSession) vs. an existing one
+// reused (in-memory tab-cache hit or a cold-start session/load resume).
+// Callers key session-scoped envelope content (task context, instructions) off
+// this instead of inferring it themselves — see the message-envelope module.
 async function openLocalSession(data: {
   agentNodeId: string
   jobNodeId: string
   tabKey: string
-}): Promise<{ sessionId: string; canFork: boolean; canSteer: boolean }> {
+}): Promise<{ sessionId: string; canFork: boolean; canSteer: boolean; created: boolean }> {
   const known = tabSessions.get(data.tabKey)
   if (known && agentClient.listSessions().some((s) => s.id === known.id)) {
     // `?? false` covers entries recorded before canSteer existed (the map
     // survives dev hot-reloads).
-    return { sessionId: known.id, canFork: known.canFork, canSteer: known.canSteer ?? false }
+    return { sessionId: known.id, canFork: known.canFork, canSteer: known.canSteer ?? false, created: false }
   }
   const agent = await findNodeData<AgentNodeData>(data.agentNodeId)
   if (!agent) {
@@ -161,7 +166,7 @@ async function openLocalSession(data: {
     if (resumed) {
       const canFork = resumed.canFork ?? false
       tabSessions.set(data.tabKey, { id: resumed.id, canFork, canSteer })
-      return { sessionId: resumed.id, canFork, canSteer }
+      return { sessionId: resumed.id, canFork, canSteer, created: false }
     }
   }
 
@@ -170,7 +175,7 @@ async function openLocalSession(data: {
   // (native) harness owns — external ACP agents can't truncate it.
   const canFork = meta.canFork ?? false
   tabSessions.set(data.tabKey, { id: meta.id, canFork, canSteer })
-  return { sessionId: meta.id, canFork, canSteer }
+  return { sessionId: meta.id, canFork, canSteer, created: true }
 }
 
 // `front` queues the message ahead of anything already held for the session

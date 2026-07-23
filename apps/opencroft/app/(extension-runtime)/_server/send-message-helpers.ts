@@ -140,21 +140,3 @@ export function resolveSessionOnGraph(sessionKey: string, nodes: NodeLike[], edg
   }
 }
 
-export function wrapMessageWithContext(
-  message: string,
-  space: { name: string; slug: string },
-  sourceNodeId: string | null,
-  jobContext: string,
-  instructions: string[],
-): string {
-  const selectedPart = sourceNodeId ?? 'none'
-  const system = `<opencroft-system>Sent from OpenCroft space: ${space.name} (${space.slug}). Selected node: ${selectedPart}. This may or may not relate to the current request.</opencroft-system>`
-  let prefix = system
-  if (jobContext) {
-    prefix += `\n<opencroft-task>${jobContext}</opencroft-task>`
-  }
-  for (const instr of instructions) {
-    prefix += `\n<opencroft-instruction>${instr}</opencroft-instruction>`
-  }
-  return `${prefix}\n${message}`
-}
