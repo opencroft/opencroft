@@ -100,7 +100,7 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
   const pinnedDashboards = dashboards.filter((d) => pinnedDashboardSlugs.includes(d.slug))
   const [mounted, setMounted] = useState(false)
   const pendingKeys = usePendingPermissionKeys(inSpace && mounted && sessions.length > 0)
-  const { nodes, nodesKey, onChange } = useChatListNodes(sessions, pendingKeys)
+  const { nodes, nodesKey, onChange, closeSession } = useChatListNodes(sessions, pendingKeys, chatTabs.activeSessionKey)
   const [renaming, setRenaming] = useState<{ key: string; title: string } | null>(null)
 
   useEffect(() => {
@@ -184,7 +184,15 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
                             title: session?.title,
                           })
                         }}
-                        onClose={chatTabs.closeTab}
+                        onClose={(key) => {
+                          // Close = drop the row from the sidebar list without
+                          // deleting the session — the
+                          // list is sourced from the full session registry, not
+                          // open tabs, so closeTab alone is invisible unless the
+                          // session also happens to be the active tab.
+                          closeSession(key)
+                          chatTabs.closeTab(key)
+                        }}
                         onDelete={deleteSession}
                         onRename={(key) => {
                           const session = sessions.find((s) => s.key === key)
