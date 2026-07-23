@@ -314,9 +314,15 @@ export const forkLocal = createServerFn({ method: 'POST', strict: { output: fals
   })
 
 // Tab keys of chat sessions currently blocked on an unresolved permission
-// request — the sidebar polls this to badge those chats' avatars.
-export const listPendingPermissions = createServerFn({ method: 'GET', strict: { output: false } }).handler(
-  async (): Promise<string[]> => agentClient.pendingPermissionSessionKeys(),
+// request, and tab keys with a turn actively running — the sidebar polls this
+// once to badge chats with either state (pending wins if a session were ever
+// somehow both, though a turn blocked on a permission request has already
+// paused so in practice the two are mutually exclusive).
+export const listSessionActivity = createServerFn({ method: 'GET', strict: { output: false } }).handler(
+  async (): Promise<{ pending: string[]; active: string[] }> => ({
+    pending: agentClient.pendingPermissionSessionKeys(),
+    active: agentClient.activeSessionKeys(),
+  }),
 )
 
 export const respondLocal = createServerFn({ method: 'POST', strict: { output: false } })

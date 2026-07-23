@@ -15,6 +15,10 @@ export interface SessionEntry {
   jobName: string
   title?: string
   createdAt: number
+  // Unsent composer text for this session, persisted so it survives a session
+  // switch or a page reload. Empty/absent means no draft (chat list shows no
+  // pencil indicator). Cleared on send or when the composer is emptied.
+  draft?: string
 }
 
 export async function readSessions(): Promise<SessionEntry[]> {

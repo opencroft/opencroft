@@ -51,6 +51,14 @@ interface HostProps {
   forceListMenu?: boolean
   // Clicking the command bar's Sparkles start icon opens that session picker.
   onOpenSessions?: () => void
+  // This session's persisted composer draft (unsent text), loaded into the
+  // composer when it opens. Distinct from AgentSession.draft, which stages
+  // edit-message text — this is the session-list-level persisted value.
+  savedDraft?: string
+  // Save (or clear, with '') the given session's draft. Debounced by the
+  // composer; called with the session key so a flush during a session switch
+  // always targets the session the text actually belongs to.
+  onDraftChange?: (key: string, text: string) => void
 }
 
 function ChatHost({
@@ -74,6 +82,8 @@ function ChatHost({
   onRename,
   forceListMenu,
   onOpenSessions,
+  savedDraft,
+  onDraftChange,
 }: {
   session: AgentSession
   agentNodeId?: string
@@ -95,6 +105,8 @@ function ChatHost({
   onRename?: (title: string) => void
   forceListMenu?: boolean
   onOpenSessions?: () => void
+  savedDraft?: string
+  onDraftChange?: (key: string, text: string) => void
 }) {
   const showChat = focused
 
@@ -154,6 +166,8 @@ function ChatHost({
       configOptions={configOptions}
       onSetConfigOption={onSetConfigOption}
       usage={usage}
+      savedDraft={savedDraft}
+      onDraftChange={onDraftChange}
     />
   )
 }
@@ -314,6 +328,8 @@ export function LocalAgentHost({
   onAutoTitle,
   forceListMenu,
   onOpenSessions,
+  savedDraft,
+  onDraftChange,
 }: HostProps & { source: LocalSource }) {
   const acp = useAcpSession(source, transformOutgoing, activeAgent?.name, onAutoTitle)
   // Stable element identity so ChatHost's memoized content (and the published
@@ -341,6 +357,8 @@ export function LocalAgentHost({
       onRename={onRename}
       forceListMenu={forceListMenu}
       onOpenSessions={onOpenSessions}
+      savedDraft={savedDraft}
+      onDraftChange={onDraftChange}
     />
   )
 }

@@ -54,6 +54,11 @@ export interface UseAgentSessionsResult {
   sessions: SessionEntry[]
   upsertSession: (entry: SessionEntry) => void
   renameSession: (key: string, title: string) => void
+  // Save (or clear, with an empty string) this session's composer draft. Unlike
+  // `upsertSession` (which replaces its local entry wholesale — callers always
+  // have the full entry in hand when creating one), this does a proper partial
+  // merge locally, matching what the server-side store already does.
+  setDraft: (key: string, draft: string) => void
   // Full cleanup: closes the tab (if open), drops the local ACP session, and
   // removes the registry entry. Use this — not a raw store call — anywhere a
   // session needs to actually go away (sidebar Delete, canvas session list).
@@ -127,6 +132,16 @@ export function useAgentSessions(): UseAgentSessionsResult {
     [chatTabs],
   )
 
+  // Unlike upsertSession/renameSession, deliberately doesn't re-sync `sessions`
+  // from the POST response: this fires on every debounced keystroke while
+  // typing, and the optimistic update above is already correct — chaining a
+  // second setSessions per tick would needlessly re-trigger the sidebar's
+  // nodesKey-driven remount more than the SSE broadcast alone already does.
+  const setDraft = useCallback((key: string, draft: string) => {
+    setSessions((prev) => prev.map((s) => (s.key === key ? { ...s, draft } : s)))
+    upsertSessionRemote({ key, draft }).catch((err) => console.error('Failed to save draft', key, err))
+  }, [])
+
   const deleteSession = useCallback(
     (key: string) => {
       chatTabs?.closeTab(key)
@@ -141,5 +156,5 @@ export function useAgentSessions(): UseAgentSessionsResult {
     [chatTabs],
   )
 
-  return { sessions, upsertSession, renameSession, deleteSession }
+  return { sessions, upsertSession, renameSession, setDraft, deleteSession }
 }

@@ -13,6 +13,7 @@ export interface ChatListLeaf {
   description?: string
   avatarUrl?: string | null
   statusIndicator?: StatusVariant
+  hasDraft?: boolean
 }
 
 export interface ChatListFolderInput {
@@ -54,11 +55,18 @@ interface ListState {
   itemOrder: string[]
 }
 
+// A drag payload. Items carry their source list so they can move across lists;
+// folders only reorder among themselves.
 type Drag =
+  | { kind: 'item'; id: string; from: string }
   | { kind: 'folder'; id: string }
-  | { kind: 'item'; id: string; list: string }
 
-type Over = { list: string; index: number; pos: 'before' | 'after' }
+// Where a drop would land: between two items in a list, onto a folder (append),
+// or onto the top-level drop zone.
+type Over =
+  | { kind: 'item-slot'; list: string; index: number; pos: 'before' | 'after' }
+  | { kind: 'folder'; folderId: string }
+  | { kind: 'top-level' }
 
 function initState(nodes: ChatListNode[], defaultFolderOpen: boolean): ListState {
   const items: Record<string, ChatListLeaf> = {}
@@ -91,14 +99,23 @@ function stateToNodes(s: ListState): ChatListNode[] {
   return out
 }
 
-// Reorder within a single list only. Folders never mix with items, and an item
-// never leaves its container via drag — it enters a folder only through the
-// "Move to new folder" row-menu action.
-function applyDrop(s: ListState, drag: Drag, over: Over): ListState {
-  const next: ListState = JSON.parse(JSON.stringify(s))
+function clone(s: ListState): ListState {
+  return JSON.parse(JSON.stringify(s))
+}
 
+// Resolve a list id ('items' | `folder:${id}`) to the live order array in s.
+function listRef(s: ListState, list: string): string[] | null {
+  if (list === 'items') return s.itemOrder
+  if (list.startsWith('folder:')) return s.folders[list.slice(7)]?.itemIds ?? null
+  return null
+}
+
+// Apply a drop to a cloned state. Items may cross lists (move between folders,
+// in/out of the top level); folders only reorder within the folder list.
+function applyDrop(s: ListState, drag: Drag, over: Over): ListState {
   if (drag.kind === 'folder') {
-    if (over.list !== 'folders') return s
+    if (over.kind !== 'item-slot' || over.list !== 'folders') return s
+    const next = clone(s)
     const list = next.folderOrder
     const from = list.indexOf(drag.id)
     if (from < 0) return s
@@ -110,25 +127,44 @@ function applyDrop(s: ListState, drag: Drag, over: Over): ListState {
     return next
   }
 
-  // item — must stay in its own list
-  if (drag.list !== over.list) return s
-  const list = over.list === 'items' ? next.itemOrder : next.folders[over.list.slice(7)].itemIds
-  const from = list.indexOf(drag.id)
-  if (from < 0) return s
-  const to = over.index + (over.pos === 'after' ? 1 : 0)
-  list.splice(from, 1)
-  let target = from < to ? to - 1 : to
-  target = Math.max(0, Math.min(target, list.length))
-  list.splice(target, 0, drag.id)
+  // item
+  const next = clone(s)
+  const fromList = listRef(next, drag.from)
+  if (!fromList) return s
+  const fromIdx = fromList.indexOf(drag.id)
+  if (fromIdx < 0) return s
+  fromList.splice(fromIdx, 1)
+
+  if (over.kind === 'folder') {
+    const f = next.folders[over.folderId]
+    if (!f) return s
+    f.itemIds.push(drag.id)
+    return next
+  }
+  if (over.kind === 'top-level') {
+    next.itemOrder.push(drag.id)
+    return next
+  }
+
+  // item-slot — items never enter the folder-order list
+  if (over.list === 'folders') return s
+  const toList = listRef(next, over.list)
+  if (!toList) return s
+  let to = over.index + (over.pos === 'after' ? 1 : 0)
+  // same-list moves need to account for the just-removed element shifting indices
+  if (drag.from === over.list && fromIdx < to) to -= 1
+  to = Math.max(0, Math.min(to, toList.length))
+  toList.splice(to, 0, drag.id)
   return next
 }
 
 // A container for chat-list-items. **Folders always sit above loose items.**
-// Reorder within a section only (folders with folders, items with items) — you
-// can't drag chats between folders. File a chat into a folder via **Move to new
-// folder** in its row menu (creates a folder after the last folder). Folder
-// headers have always-visible rename + delete (delete returns the chats to the
-// loose list). Self-contained; calls onChange on every structural change.
+// Items drag freely: between folders, into a folder (drop on its header), out to
+// the top level (drop on the 'Move to top level' zone), or before/after another
+// item. Folders reorder among themselves. File an item into a brand-new folder
+// via **Move to new folder** in its row menu. Folder headers have always-visible
+// rename + delete (delete returns the chats to the loose list). Self-contained;
+// calls onChange on every structural change.
 export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, onRename, onClose, onDelete, onChange, onRenameFolder, onCreateFolder, onDeleteFolder, className }: ChatListProps) {
   const [state, setState] = useState<ListState>(() => initState(nodes, defaultFolderOpen))
   const [drag, setDrag] = useState<Drag | null>(null)
@@ -183,22 +219,11 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
     return id
   }
 
-  // "Move to new folder": create a folder after the last folder and move the
+  // 'Move to new folder': create a folder after the last folder and move the
   // item into it.
   const moveToNewFolder = (itemId: string) => {
-    const next: ListState = JSON.parse(JSON.stringify(state))
-    let fromList: string[] | null = null
-    const io = next.itemOrder.indexOf(itemId)
-    if (io >= 0) fromList = next.itemOrder
-    else {
-      for (const fid of next.folderOrder) {
-        const j = next.folders[fid].itemIds.indexOf(itemId)
-        if (j >= 0) {
-          fromList = next.folders[fid].itemIds
-          break
-        }
-      }
-    }
+    const next: ListState = clone(state)
+    const fromList = listRef(next, 'items')?.includes(itemId) ? listRef(next, 'items') : next.folderOrder.map((fid) => next.folders[fid].itemIds).find((l) => l.includes(itemId))
     if (!fromList) return
     fromList.splice(fromList.indexOf(itemId), 1)
     const id = newFolderId()
@@ -210,7 +235,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
   }
 
   const deleteFolder = (id: string) => {
-    const next: ListState = JSON.parse(JSON.stringify(state))
+    const next: ListState = clone(state)
     const f = next.folders[id]
     if (!f) return
     next.itemOrder.push(...f.itemIds)
@@ -228,24 +253,27 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
     const leaf = state.items[id]
     if (!leaf) return null
     const isDragged = drag?.kind === 'item' && drag.id === id
-    const line = over && over.list === list && over.index === index ? over.pos : null
+    const slotOver = over?.kind === 'item-slot' && over.list === list && over.index === index ? over : null
     return (
       <div key={id} className='relative'>
-        {line === 'before' ? <div className='absolute -top-0.5 left-1 right-1 z-10 h-0.5 rounded-full bg-primary' /> : null}
+        {slotOver && slotOver.pos === 'before' ? (
+          <div className='absolute -top-0.5 left-1 right-1 z-10 h-0.5 rounded-full bg-primary' />
+        ) : null}
         <div
           draggable
           onDragStart={(e) => {
-            setDrag({ kind: 'item', id, list })
+            setDrag({ kind: 'item', id, from: list })
             e.dataTransfer.effectAllowed = 'move'
             e.dataTransfer.setData('text/plain', id)
           }}
           onDragOver={(e) => {
-            if (!drag || drag.kind !== 'item' || drag.list !== list) return
+            // Any item can land before/after any other item, across lists.
+            if (!drag || drag.kind !== 'item') return
             e.preventDefault()
             e.stopPropagation()
             e.dataTransfer.dropEffect = 'move'
             const r = e.currentTarget.getBoundingClientRect()
-            setOver({ list, index, pos: e.clientY < r.top + r.height / 2 ? 'before' : 'after' })
+            setOver({ kind: 'item-slot', list, index, pos: e.clientY < r.top + r.height / 2 ? 'before' : 'after' })
           }}
           onDrop={performDrop}
           className={cn(isDragged && 'opacity-40')}
@@ -256,6 +284,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
             description={leaf.description}
             avatarUrl={leaf.avatarUrl}
             statusIndicator={leaf.statusIndicator}
+            hasDraft={leaf.hasDraft}
             active={leaf.id === activeId}
             onSelect={onSelect}
             onRename={onRename}
@@ -264,7 +293,9 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
             actions={itemActions}
           />
         </div>
-        {line === 'after' ? <div className='absolute -bottom-0.5 left-1 right-1 z-10 h-0.5 rounded-full bg-primary' /> : null}
+        {slotOver && slotOver.pos === 'after' ? (
+          <div className='absolute -bottom-0.5 left-1 right-1 z-10 h-0.5 rounded-full bg-primary' />
+        ) : null}
       </div>
     )
   }
@@ -274,10 +305,13 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
       {state.folderOrder.map((fid, i) => {
         const f = state.folders[fid]
         const isDraggedFolder = drag?.kind === 'folder' && drag.id === fid
-        const line = over && over.list === 'folders' && over.index === i ? over.pos : null
+        const folderSlotOver = over?.kind === 'item-slot' && over.list === 'folders' && over.index === i ? over : null
+        const intoThis = over?.kind === 'folder' && over.folderId === fid
         return (
           <div key={fid} className='relative'>
-            {line === 'before' ? <div className='absolute -top-0.5 left-1 right-1 z-10 h-0.5 rounded-full bg-primary' /> : null}
+            {folderSlotOver && folderSlotOver.pos === 'before' ? (
+              <div className='absolute -top-0.5 left-1 right-1 z-10 h-0.5 rounded-full bg-primary' />
+            ) : null}
             <div
               draggable={editing !== fid}
               onDragStart={(e) => {
@@ -286,17 +320,27 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
                 e.dataTransfer.setData('text/plain', fid)
               }}
               onDragOver={(e) => {
-                if (!drag || drag.kind !== 'folder') return
-                e.preventDefault()
-                e.stopPropagation()
-                e.dataTransfer.dropEffect = 'move'
-                const r = e.currentTarget.getBoundingClientRect()
-                setOver({ list: 'folders', index: i, pos: e.clientY < r.top + r.height / 2 ? 'before' : 'after' })
+                if (!drag) return
+                if (drag.kind === 'item') {
+                  // Dropping an item on a folder header files it in.
+                  e.preventDefault()
+                  e.stopPropagation()
+                  e.dataTransfer.dropEffect = 'move'
+                  setOver({ kind: 'folder', folderId: fid })
+                } else if (drag.kind === 'folder' && drag.id !== fid) {
+                  // Dropping a folder on another reorders them.
+                  e.preventDefault()
+                  e.stopPropagation()
+                  e.dataTransfer.dropEffect = 'move'
+                  const r = e.currentTarget.getBoundingClientRect()
+                  setOver({ kind: 'item-slot', list: 'folders', index: i, pos: e.clientY < r.top + r.height / 2 ? 'before' : 'after' })
+                }
               }}
               onDrop={performDrop}
               className={cn(
                 'flex cursor-grab items-center gap-1 rounded-md px-1 py-1 text-xs font-medium text-muted-foreground hover:bg-muted',
                 isDraggedFolder && 'opacity-40',
+                intoThis && 'ring-2 ring-primary bg-primary/10',
               )}
             >
               {editing === fid ? (
@@ -362,12 +406,33 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
                 {f.itemIds.map((itemId, j) => renderItem(itemId, `folder:${fid}`, j))}
               </div>
             ) : null}
-            {line === 'after' ? <div className='absolute -bottom-0.5 left-1 right-1 z-10 h-0.5 rounded-full bg-primary' /> : null}
+            {folderSlotOver && folderSlotOver.pos === 'after' ? (
+              <div className='absolute -bottom-0.5 left-1 right-1 z-10 h-0.5 rounded-full bg-primary' />
+            ) : null}
           </div>
         )
       })}
 
       {state.itemOrder.map((id, i) => renderItem(id, 'items', i))}
+
+      {/* While dragging an item, surface a clear 'out of any folder' target. */}
+      {drag?.kind === 'item' ? (
+        <div
+          onDragOver={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            e.dataTransfer.dropEffect = 'move'
+            setOver({ kind: 'top-level' })
+          }}
+          onDrop={performDrop}
+          className={cn(
+            'mt-1 flex items-center justify-center rounded-md border border-dashed py-1.5 text-[10px]',
+            over?.kind === 'top-level' ? 'border-primary bg-primary/10 text-primary' : 'text-muted-foreground',
+          )}
+        >
+          Move to top level
+        </div>
+      ) : null}
     </div>
   )
 }

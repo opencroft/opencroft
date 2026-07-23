@@ -857,6 +857,23 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return [...keys]
     },
 
+    // Session keys of every session with a turn currently in flight (one or
+    // more prompt promises unsettled — see `activeTurns`) — lets a host badge
+    // sessions that are actively thinking/streaming/running tools, independent
+    // of the pending-permission state above (a session can only be one or the
+    // other in practice: a turn blocked on a permission request has already
+    // paused, but both reads are separate so a host can tell them apart).
+    activeSessionKeys(): string[] {
+      const keys = new Set<string>()
+      for (const session of store.sessions.values()) {
+        const key = session.selection.sessionKey
+        if (session.activeTurns > 0 && key) {
+          keys.add(key)
+        }
+      }
+      return [...keys]
+    },
+
     // The host's registered LocalTools (for role-permission editors). Resolves
     // a dynamic tools source (e.g. live agent-tool graph nodes) same as a turn
     // would. Per-session MCP and skill tools are separate and not listed here.

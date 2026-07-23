@@ -794,7 +794,19 @@ interface AgentChatInputProps {
   onSetConfigOption?: (configId: string, value: string | boolean) => void
   /** Context usage meter (tokens used / window), shown alongside the selectors. */
   usage?: { used: number; size?: number }
+  /** This session's persisted composer draft, loaded once when the session
+   * (identified by `session.sessionKey`) opens. Distinct from `session.draft`
+   * (edit-message staging). */
+  savedDraft?: string
+  /** Save (or clear, with '') the given session's draft. Debounced internally;
+   * called with the session key so a flush during a session switch always
+   * targets the session the text actually belongs to. */
+  onDraftChange?: (key: string, text: string) => void
 }
+
+// Debounce composer draft saves so normal typing doesn't POST every keystroke.
+// Flushed immediately (bypassing this delay) on send and on session switch.
+const DRAFT_SAVE_DEBOUNCE_MS = 600
 
 export function AgentChatInput({
   session,
@@ -811,8 +823,14 @@ export function AgentChatInput({
   configOptions,
   onSetConfigOption,
   usage,
+  savedDraft,
+  onDraftChange,
 }: AgentChatInputProps) {
-  const [text, setText] = useState('')
+  // Lazy init so a session opened with an existing draft paints with it
+  // already in place — no separate fetch-then-fill flicker, since the parent
+  // already has `savedDraft` (from the same sessions payload/SSE stream that
+  // gated rendering this composer at all) before this component ever mounts.
+  const [text, setText] = useState(() => savedDraft ?? '')
   const [autoApprove, setAutoApproveState] = useState(false)
   const [yoloMode, setYoloMode] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -834,15 +852,84 @@ export function AgentChatInput({
     }
   }, [session.draft])
 
+  // This component isn't remounted when the user switches sessions (only
+  // `session` prop changes), so the composer's own text has to be swapped
+  // manually on a sessionKey change: flush whatever was pending for the
+  // OUTGOING session first (so its last few keystrokes aren't lost or,
+  // worse, saved under the wrong session), then load the incoming session's
+  // saved draft. A layout effect (not a plain effect) so the swap happens
+  // before paint — otherwise the outgoing session's stale text would flash
+  // in the composer for a frame under the new session's header.
+  const onDraftChangeRef = useRef(onDraftChange)
+  onDraftChangeRef.current = onDraftChange
+  const draftDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingDraftRef = useRef<{ key: string; text: string } | null>(null)
+  const sessionKeyRef = useRef(session.sessionKey)
+
+  const flushPendingDraft = useCallback(() => {
+    if (draftDebounceRef.current) {
+      clearTimeout(draftDebounceRef.current)
+      draftDebounceRef.current = null
+    }
+    const pending = pendingDraftRef.current
+    if (pending) {
+      pendingDraftRef.current = null
+      onDraftChangeRef.current?.(pending.key, pending.text)
+    }
+  }, [])
+
+  useLayoutEffect(() => {
+    if (sessionKeyRef.current === session.sessionKey) {
+      return
+    }
+    flushPendingDraft()
+    sessionKeyRef.current = session.sessionKey
+    setText(savedDraft ?? '')
+    // biome-ignore lint/correctness/useExhaustiveDependencies(savedDraft): only read at the moment sessionKey changes, not on every savedDraft echo (e.g. from this same composer's own debounced save)
+  }, [session.sessionKey, flushPendingDraft])
+
+  // Flush on unmount (e.g. navigating away entirely) so the very last
+  // keystrokes before the debounce would have fired aren't dropped.
+  useEffect(() => () => flushPendingDraft(), [flushPendingDraft])
+
+  const onChangeText = useCallback(
+    (value: string) => {
+      setText(value)
+      const key = sessionKeyRef.current
+      pendingDraftRef.current = { key, text: value }
+      if (draftDebounceRef.current) {
+        clearTimeout(draftDebounceRef.current)
+      }
+      draftDebounceRef.current = setTimeout(() => {
+        draftDebounceRef.current = null
+        const pending = pendingDraftRef.current
+        if (pending) {
+          pendingDraftRef.current = null
+          onDraftChangeRef.current?.(pending.key, pending.text)
+        }
+      }, DRAFT_SAVE_DEBOUNCE_MS)
+    },
+    [],
+  )
+
   // Extension-provided input controls (e.g. voice) get a stable context: insert
   // transcribed text into the composer, send a message, or read the live reply
   // stream — all via stable refs so the memoized command bar below doesn't churn.
-  const insertText = useCallback((piece: string) => {
-    const value = piece.trim()
-    if (value) {
-      setText((prev) => (prev ? `${prev} ${value}` : value))
-    }
-  }, [])
+  // Routed through onChangeText (not a raw setText) so voice-inserted text is
+  // draft-tracked the same as typed text; reads `text` via a ref (not a dep) so
+  // this callback's own identity stays stable.
+  const textRef = useRef(text)
+  textRef.current = text
+  const insertText = useCallback(
+    (piece: string) => {
+      const value = piece.trim()
+      if (value) {
+        const prev = textRef.current
+        onChangeText(prev ? `${prev} ${value}` : value)
+      }
+    },
+    [onChangeText],
+  )
   const sendRef = useRef(session.send)
   sendRef.current = session.send
   const messagesRef = useRef(session.messages)
@@ -878,6 +965,14 @@ export function AgentChatInput({
     }
     setText('')
     session.send(value)
+    // Clear immediately — bypass the debounce, don't wait for a stray timer to
+    // resave the now-stale pending text over this.
+    if (draftDebounceRef.current) {
+      clearTimeout(draftDebounceRef.current)
+      draftDebounceRef.current = null
+    }
+    pendingDraftRef.current = null
+    onDraftChangeRef.current?.(sessionKeyRef.current, '')
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -920,7 +1015,7 @@ export function AgentChatInput({
           <Textarea
             ref={textareaRef}
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => onChangeText(e.target.value)}
             onKeyDown={onKeyDown}
             onFocus={onFocus}
             onBlur={onBlur}

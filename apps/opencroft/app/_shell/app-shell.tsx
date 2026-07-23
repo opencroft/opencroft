@@ -32,7 +32,7 @@ import { RenameDialog } from '@/app/(agent)/_components/chat-hosts'
 import { ChatTabsProvider, useChatTabs } from '@/app/(agent)/_lib/chat-tabs-context'
 import { useAgentSessions } from '@/app/(agent)/_lib/use-agent-sessions'
 import { useChatListNodes } from '@/app/(agent)/_lib/use-chat-list-nodes'
-import { listPendingPermissions } from '@/app/(agent)/_server/acp'
+import { listSessionActivity } from '@/app/(agent)/_server/acp'
 import type { SpaceSummary } from '@/app/(space)/_server/types'
 import { cn } from '@/lib/utils'
 
@@ -49,20 +49,25 @@ interface SidebarProps {
   pinnedDashboardSlugs: string[]
 }
 
-// Poll for chat sessions blocked on a permission request, so their sidebar
-// avatars can show a pending dot. Gated off when there are no sessions at all.
-function usePendingPermissionKeys(enabled: boolean): Set<string> {
-  const [keys, setKeys] = useState<Set<string>>(() => new Set())
+// Poll for chat sessions blocked on a permission request (pending, blue) and
+// sessions with a turn actively running (active, green), so their sidebar rows
+// can badge either state. One shared poll for both — gated off when there are
+// no sessions at all.
+function useSessionActivityKeys(enabled: boolean): { pendingKeys: Set<string>; activeKeys: Set<string> } {
+  const [pendingKeys, setPendingKeys] = useState<Set<string>>(() => new Set())
+  const [activeKeys, setActiveKeys] = useState<Set<string>>(() => new Set())
   useEffect(() => {
     if (!enabled) {
-      setKeys(new Set())
+      setPendingKeys(new Set())
+      setActiveKeys(new Set())
       return
     }
     let cancelled = false
     const poll = () => {
-      listPendingPermissions().then((list) => {
+      listSessionActivity().then((result) => {
         if (!cancelled) {
-          setKeys(new Set(list))
+          setPendingKeys(new Set(result.pending))
+          setActiveKeys(new Set(result.active))
         }
       })
     }
@@ -73,7 +78,7 @@ function usePendingPermissionKeys(enabled: boolean): Set<string> {
       window.clearInterval(id)
     }
   }, [enabled])
-  return keys
+  return { pendingKeys, activeKeys }
 }
 
 function ChatModeToggle() {
@@ -99,8 +104,13 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
   const { sessions, renameSession, deleteSession } = useAgentSessions()
   const pinnedDashboards = dashboards.filter((d) => pinnedDashboardSlugs.includes(d.slug))
   const [mounted, setMounted] = useState(false)
-  const pendingKeys = usePendingPermissionKeys(inSpace && mounted && sessions.length > 0)
-  const { nodes, nodesKey, onChange, closeSession } = useChatListNodes(sessions, pendingKeys, chatTabs.activeSessionKey)
+  const { pendingKeys, activeKeys } = useSessionActivityKeys(inSpace && mounted && sessions.length > 0)
+  const { nodes, nodesKey, onChange, closeSession } = useChatListNodes(
+    sessions,
+    pendingKeys,
+    activeKeys,
+    chatTabs.activeSessionKey,
+  )
   const [renaming, setRenaming] = useState<{ key: string; title: string } | null>(null)
 
   useEffect(() => {

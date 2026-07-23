@@ -39,7 +39,7 @@ let counter = 0
 
 async function setup(
   adapterId: 'openclaw' | 'claude' = 'openclaw',
-  options: { reasoningEffort?: string; configOptions?: unknown } = {},
+  options: { reasoningEffort?: string; configOptions?: unknown; sessionKey?: string } = {},
 ) {
   counter += 1
   const selection: AgentSelection = {
@@ -49,6 +49,7 @@ async function setup(
     apiKey: '',
     cwd: `/tmp/agent-client-test-${counter}`,
     ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
+    ...(options.sessionKey ? { sessionKey: options.sessionKey } : {}),
   }
   const promptCalls: string[] = []
   const configOptionCalls: Array<{ sessionId: string; configId: string; value: unknown }> = []
@@ -524,4 +525,31 @@ test('deleteSession does not kill the subprocess while a sibling session still s
   assert.equal(store.connections.has(key), true)
   assert.ok(store.sessions.has(second.id), 'the sibling session itself must be untouched')
   assert.equal(warnings.length, 1, 'a blocked kill fallback must log a warning so the leak is diagnosable')
+})
+
+// ── activeSessionKeys ────────────────────────────────────────────────────
+//
+// Mirrors pendingPermissionSessionKeys: the session key only appears while a
+// turn is actually in flight (activeTurns > 0), and only when the selection
+// carried a sessionKey at all — a session without one (e.g. an internal/ad
+// hoc harness use) must never surface as a bare falsy entry.
+
+test('activeSessionKeys is empty before any prompt is sent', async () => {
+  const h = await setup('openclaw', { sessionKey: 'agent:carol:test' })
+  assert.deepEqual(h.client.activeSessionKeys(), [])
+})
+
+test('activeSessionKeys includes the key while a turn is in flight, and drops it once the turn ends', async () => {
+  const h = await setup('openclaw', { sessionKey: 'agent:carol:test' })
+  await h.client.prompt(h.sessionId, 'hello')
+  assert.deepEqual(h.client.activeSessionKeys(), ['agent:carol:test'])
+  h.endTurn()
+  await settle()
+  assert.deepEqual(h.client.activeSessionKeys(), [])
+})
+
+test('a session created without a sessionKey never appears, even mid-turn', async () => {
+  const h = await setup()
+  await h.client.prompt(h.sessionId, 'hello')
+  assert.deepEqual(h.client.activeSessionKeys(), [])
 })

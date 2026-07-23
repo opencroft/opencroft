@@ -61,7 +61,7 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
   const [agents, setAgents] = useState<AgentNodeRef[]>([])
   const [sessionPickerOpen, setSessionPickerOpen] = useState(false)
   const chatTabs = useChatTabsMaybe()
-  const { sessions, upsertSession, renameSession, deleteSession } = useAgentSessions()
+  const { sessions, upsertSession, renameSession, setDraft, deleteSession } = useAgentSessions()
 
   // Set fallback key for chat tabs context
   useEffect(() => {
@@ -266,6 +266,8 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
         onAutoTitle={handleRename}
         forceListMenu={sessionPickerOpen}
         onOpenSessions={openSessionsMenu}
+        savedDraft={activeEntry.draft}
+        onDraftChange={setDraft}
       />
     )
   }
