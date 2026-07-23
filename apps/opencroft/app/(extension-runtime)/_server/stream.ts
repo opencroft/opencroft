@@ -15,6 +15,7 @@
 
 import { ensureLocalSession, findTargetSession, promptLocal } from '@/app/(agent)/_server/acp'
 import { upsertSession } from '@/app/(agent)/_server/agent-sessions-store'
+import { hideSessionByDefault } from '@/app/(agent)/_server/chat-list-layout-store'
 import { composeEnvelope } from '@/app/(agent)/_shared/message-envelope'
 import { updateNodeData } from '@/app/(extension-runtime)/_server/node-data'
 import {
@@ -322,6 +323,14 @@ async function persistToDownstreamSendMessages(
           title: route.title,
           createdAt: Date.now(),
         }).catch(() => {})
+        // A dispatch-created session is registered but never activated by the
+        // user — the sidebar shows active chats, not existing ones, so
+        // it starts hidden. `created` (not just "no live session found") keeps
+        // this from re-hiding a session the user has already interacted with,
+        // e.g. one they closed and dispatch happens to reuse the key for later.
+        if (created) {
+          await hideSessionByDefault(route.sessionKey).catch(() => {})
+        }
       }
 
       // Automated senders never include the selected-node/space system context

@@ -48,3 +48,19 @@ export async function readChatListLayout(): Promise<ChatListLayout> {
 export async function writeChatListLayout(layout: ChatListLayout): Promise<void> {
   await upsertSetting(SETTING_ID, JSON.stringify(layout))
 }
+
+// A session the user never opened shouldn't crowd their working set — mark it
+// hidden at registration time instead. The existing un-hide-on-activation
+// path (use-chat-list-nodes.ts) brings it into the sidebar the moment the
+// user actually opens it, same as a manually-closed session.
+// Unguarded read-modify-write on the same row the client replaces wholesale —
+// a concurrent layout save can race it (the lost-update class fixed for
+// graphs). Worst case is one cosmetic miss, not worth the machinery for a
+// single writer today; give this the graphs' guard if the row gains more writers.
+export async function hideSessionByDefault(key: string): Promise<void> {
+  const layout = await readChatListLayout()
+  if (layout.hiddenKeys.includes(key)) {
+    return
+  }
+  await writeChatListLayout({ entries: layout.entries, hiddenKeys: [...layout.hiddenKeys, key] })
+}
