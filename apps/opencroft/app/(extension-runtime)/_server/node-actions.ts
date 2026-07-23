@@ -244,41 +244,52 @@ async function persistData(found: FoundNode, patch: Record<string, unknown>): Pr
   await r.saveGraph(found.slug, space.graph)
 }
 
+// Plain (non-server-fn) implementation — see invokeExtensionActionImpl in actions.ts
+// for why this exists alongside the createServerFn-wrapped version below: calling a
+// createServerFn from inside another createServerFn's handler is fragile, and a
+// caller with no request context at all (a background scheduler tick) can't use the
+// wrapper regardless. exec-dispatch.ts uses this directly for that reason.
+export async function dispatchNodeActionImpl(data: {
+  nodeId: string
+  actionId: string
+  params?: Record<string, unknown>
+}): Promise<unknown> {
+  const { nodeId, actionId } = data
+  const params = data.params ?? {}
+  const found = await findNodeWithGraph(nodeId)
+  if (!found) {
+    throw new Error(`Node not found: ${nodeId}`)
+  }
+  const typeId = found.node.type
+  if (!typeId) {
+    throw new Error(`Node ${nodeId} has no typeId`)
+  }
+  const manifests = await loadAllManifests()
+  const owning = manifests.find((m) => m.nodes?.some((n) => n.typeId === typeId))
+  if (!owning) {
+    throw new Error(`No extension declares node typeId "${typeId}"`)
+  }
+  const mod = await getExtensionModule(owning.id)
+  const handler = mod.nodeActions?.[typeId]?.[actionId]
+  if (!handler) {
+    throw new Error(`Extension ${owning.id} has no nodeAction "${typeId}.${actionId}"`)
+  }
+  const pending: Record<string, unknown> = {}
+  const ctx = buildCtx(found.graph, found.node, params, found.slug, pending)
+  await persistErrors(found, [])
+  try {
+    const result = await handler(ctx)
+    if (Object.keys(pending).length > 0) {
+      await persistData(found, pending)
+    }
+    return result
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    await persistErrors(found, [message])
+    throw err
+  }
+}
+
 export const dispatchNodeAction = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { nodeId: string; actionId: string; params?: Record<string, unknown> }) => data)
-  .handler(async ({ data }): Promise<unknown> => {
-    const { nodeId, actionId } = data
-    const params = data.params ?? {}
-    const found = await findNodeWithGraph(nodeId)
-    if (!found) {
-      throw new Error(`Node not found: ${nodeId}`)
-    }
-    const typeId = found.node.type
-    if (!typeId) {
-      throw new Error(`Node ${nodeId} has no typeId`)
-    }
-    const manifests = await loadAllManifests()
-    const owning = manifests.find((m) => m.nodes?.some((n) => n.typeId === typeId))
-    if (!owning) {
-      throw new Error(`No extension declares node typeId "${typeId}"`)
-    }
-    const mod = await getExtensionModule(owning.id)
-    const handler = mod.nodeActions?.[typeId]?.[actionId]
-    if (!handler) {
-      throw new Error(`Extension ${owning.id} has no nodeAction "${typeId}.${actionId}"`)
-    }
-    const pending: Record<string, unknown> = {}
-    const ctx = buildCtx(found.graph, found.node, params, found.slug, pending)
-    await persistErrors(found, [])
-    try {
-      const result = await handler(ctx)
-      if (Object.keys(pending).length > 0) {
-        await persistData(found, pending)
-      }
-      return result
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      await persistErrors(found, [message])
-      throw err
-    }
-  })
+  .handler(async ({ data }): Promise<unknown> => dispatchNodeActionImpl(data))

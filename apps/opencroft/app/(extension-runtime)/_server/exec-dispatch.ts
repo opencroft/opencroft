@@ -17,8 +17,8 @@
 //   3. Neither -> the same "Unsupported handler language" error producers
 //      have always returned, scoped to that one target.
 
-import { invokeExtensionAction } from '@/app/(extension-runtime)/_server/actions'
-import { dispatchNodeAction } from '@/app/(extension-runtime)/_server/node-actions'
+import { invokeExtensionActionImpl } from '@/app/(extension-runtime)/_server/actions'
+import { dispatchNodeActionImpl } from '@/app/(extension-runtime)/_server/node-actions'
 import { getExtensionModule, loadAllManifests } from '@/app/(extension-runtime)/_server/loader'
 import { getStream } from '@/app/(extension-runtime)/_server/stream'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
@@ -168,8 +168,10 @@ async function dispatchToTarget(
 ): Promise<ExecDispatchResult> {
   if (await hasHandleAction(node.type)) {
     try {
-      const result = (await dispatchNodeAction({
-        data: { nodeId: node.id, actionId: 'handle', params: event as Record<string, unknown> },
+      const result = (await dispatchNodeActionImpl({
+        nodeId: node.id,
+        actionId: 'handle',
+        params: event as Record<string, unknown>,
       })) as ExecDispatchResult | undefined
       return result ?? {}
     } catch (err) {
@@ -191,13 +193,16 @@ async function dispatchToTarget(
   const resolvedContexts = data.__resolvedContexts as Record<string, { value?: Record<string, unknown> }> | undefined
   const context = resolvedContexts?.['ctx-in']?.value ?? { type: 'local' }
 
-  const result = (await invokeExtensionAction({
-    data: {
+  let result: ExecDispatchResult
+  try {
+    result = ((await invokeExtensionActionImpl({
       extensionId: 'builtin/core',
       actionName: 'handler.run',
       args: [{ script: (data.script as string) ?? '', language, context, event, env }],
-    },
-  })) as ExecDispatchResult
+    })) ?? {}) as ExecDispatchResult
+  } catch (err) {
+    return { status: 500, error: err instanceof Error ? err.message : String(err) }
+  }
 
   const stream = getStream<{ text: string; final: boolean }>(spaceSlug, node.id, 'stdout-out')
   if (result.logs) {
