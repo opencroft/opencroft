@@ -257,6 +257,11 @@ export async function dispatchNodeActionImpl(data: {
     return result
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
+    // The node's own __errors only ever gets the bare message (surfaced in the
+    // UI/MCP response) — without this, the *only* diagnostic signal for a node
+    // action failure was that string, no stack, nowhere to find the actual
+    // throw site.
+    console.error(`[node-action] ${typeId}.${actionId} (node ${nodeId}) failed:`, err)
     await persistErrors(found, [message])
     throw err
   }
