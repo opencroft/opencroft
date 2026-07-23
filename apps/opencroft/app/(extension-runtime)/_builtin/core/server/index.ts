@@ -28,17 +28,9 @@ export { nodeActions }
 interface AgentCatalog {
   adapters: { id: string; label: string; protocol: string; kind: 'acp' | 'native' }[]
   providers: { id: string; label: string; models: string[]; protocols: string[] }[]
-  // model id -> supported reasoning-effort levels ([] when the model has none).
-  reasoning: Record<string, string[]>
 }
 
 function listAgentCatalog(): AgentCatalog {
-  const reasoning: Record<string, string[]> = {}
-  for (const provider of AGENT_PROVIDERS) {
-    for (const model of provider.models) {
-      reasoning[model] = reasoningEfforts(model)
-    }
-  }
   return {
     adapters: HARNESS_ADAPTERS.map((a) => ({
       id: a.id,
@@ -52,7 +44,6 @@ function listAgentCatalog(): AgentCatalog {
       models: p.models,
       protocols: Object.keys(p.endpoints),
     })),
-    reasoning,
   }
 }
 
@@ -406,6 +397,10 @@ export const actions = {
   'openai.chat': (params: OpenAIChatParams) => openaiChat(params),
   'agent.listAgentCatalog': () => listAgentCatalog(),
   'agent.listModels': (params: { baseUrl?: string; apiKeySecret?: string }) => listModels(params),
+  // Computed per-model on demand (not baked into listAgentCatalog) so it also
+  // covers models discovered from an OpenAI-compatible endpoint or typed in by
+  // hand, not just the static AGENT_PROVIDERS catalog.
+  'agent.reasoningEfforts': (model: string) => reasoningEfforts(String(model ?? '')),
   'tts.capabilities': (params: { baseUrl?: string; apiKey?: string }) => ttsCapabilities(params),
 }
 

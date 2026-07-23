@@ -142,7 +142,6 @@ export function AgentInspector({
 interface AgentCatalog {
   adapters: { id: string; label: string; protocol: string; kind: 'acp' | 'native' }[]
   providers: { id: string; label: string; models: string[]; protocols: string[] }[]
-  reasoning: Record<string, string[]>
 }
 
 const NO_SECRET = '__none__'
@@ -195,8 +194,33 @@ function LocalProfileFields({
     (a) => a.protocol === 'native' || (provider ? provider.protocols.includes(a.protocol) : true),
   )
   const models = provider?.models ?? []
-  const efforts = catalog.reasoning[data.model ?? ''] ?? []
   const isNative = adapter?.kind === 'native'
+
+  // Computed per the actual selected model (not a static catalog), so it also
+  // covers a model discovered from an OpenAI-compatible endpoint or typed in
+  // by hand — the static AGENT_PROVIDERS list never has those.
+  const [efforts, setEfforts] = useState<string[]>([])
+  useEffect(() => {
+    let cancelled = false
+    if (!data.model) {
+      setEfforts([])
+      return
+    }
+    invoke<string[]>('agent.reasoningEfforts', data.model)
+      .then((levels) => {
+        if (!cancelled) {
+          setEfforts(levels)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setEfforts([])
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [data.model])
 
   const [discovered, setDiscovered] = useState<string[]>([])
   const [loadingModels, setLoadingModels] = useState(false)

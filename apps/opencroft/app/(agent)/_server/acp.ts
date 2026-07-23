@@ -6,8 +6,11 @@ import { supportsMidTurnInput } from 'agent-client'
 import type { AgentSelection } from 'agent-client/types'
 
 import {
+  deletePersistedConfigOptions,
   deletePersistedSession,
+  readPersistedConfigOptions,
   readPersistedSession,
+  writePersistedConfigOption,
   writePersistedSession,
 } from '@/app/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/(agent)/_server/agent-client-instance'
@@ -166,6 +169,14 @@ async function openLocalSession(data: {
     if (resumed) {
       const canFork = resumed.canFork ?? false
       tabSessions.set(data.tabKey, { id: resumed.id, canFork, canSteer })
+      // Re-apply any per-session config overrides (e.g. reasoning effort) the
+      // user set before this tab's in-memory session was lost — loadSession
+      // only reflects the agent's own resumed state, which has no way to know
+      // about a change that was never written back to the agent's profile.
+      const overrides = await readPersistedConfigOptions(data.tabKey)
+      for (const [configId, value] of Object.entries(overrides)) {
+        await agentClient.setConfigOption(resumed.id, configId, value).catch(() => {})
+      }
       return { sessionId: resumed.id, canFork, canSteer, created: false }
     }
   }
@@ -253,6 +264,17 @@ export const setLocalConfigOption = createServerFn({ method: 'POST', strict: { o
   .inputValidator((data: { sessionId: string; configId: string; value: string | boolean }) => data)
   .handler(async ({ data }): Promise<void> => {
     await agentClient.setConfigOption(data.sessionId, data.configId, data.value)
+    // Also persist it per-tab so a later cold-start resume (openLocalSession's
+    // session/load path) can replay it — see the comment there. Assumes the
+    // sessionId is already in tabSessions (true for every current caller, all
+    // of which go through a tab); an override set through any future path
+    // that bypasses the tab map would silently skip persistence.
+    for (const [tabKey, entry] of tabSessions) {
+      if (entry.id === data.sessionId) {
+        await writePersistedConfigOption(tabKey, data.configId, data.value)
+        break
+      }
+    }
   })
 
 export const cancelLocal = createServerFn({ method: 'POST', strict: { output: false } })
@@ -271,6 +293,7 @@ export const forgetLocalSession = createServerFn({ method: 'POST', strict: { out
     }
     // Drop the durable pointer too, so a later restart doesn't resurrect it.
     await deletePersistedSession(tabKey)
+    await deletePersistedConfigOptions(tabKey)
   })
 
 // Branch the tab's session into a new one rewound to a user turn (0-based;

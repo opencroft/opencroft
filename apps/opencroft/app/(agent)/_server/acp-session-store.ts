@@ -41,3 +41,49 @@ export async function deletePersistedSession(tabKey: string): Promise<void> {
   delete store[tabKey]
   await writeStore(store)
 }
+
+// Durable map of chat tab -> config-option overrides the user set on that
+// session (e.g. reasoning effort), stored the same way as the session
+// pointer above. setConfigOption's changes are session-only in agentClient's
+// memory — they never survive a cold-start session/load resume, which
+// recreates the agentClient-side session object from scratch. Persisting
+// them here lets openLocalSession replay them right after a successful
+// resume, so a per-session override actually stays set.
+const CONFIG_OPTIONS_SETTING_ID = 'agent-tab-config-options'
+
+type ConfigOptionsStore = Record<string, Record<string, string | boolean>>
+
+async function readConfigOptionsStore(): Promise<ConfigOptionsStore> {
+  const row = await getSetting(CONFIG_OPTIONS_SETTING_ID)
+  if (!row) {
+    return {}
+  }
+  return (JSON.parse(row.data) as { options?: ConfigOptionsStore }).options ?? {}
+}
+
+async function writeConfigOptionsStore(store: ConfigOptionsStore): Promise<void> {
+  await upsertSetting(CONFIG_OPTIONS_SETTING_ID, JSON.stringify({ options: store }))
+}
+
+export async function readPersistedConfigOptions(tabKey: string): Promise<Record<string, string | boolean>> {
+  return (await readConfigOptionsStore())[tabKey] ?? {}
+}
+
+export async function writePersistedConfigOption(
+  tabKey: string,
+  configId: string,
+  value: string | boolean,
+): Promise<void> {
+  const store = await readConfigOptionsStore()
+  store[tabKey] = { ...(store[tabKey] ?? {}), [configId]: value }
+  await writeConfigOptionsStore(store)
+}
+
+export async function deletePersistedConfigOptions(tabKey: string): Promise<void> {
+  const store = await readConfigOptionsStore()
+  if (!(tabKey in store)) {
+    return
+  }
+  delete store[tabKey]
+  await writeConfigOptionsStore(store)
+}
