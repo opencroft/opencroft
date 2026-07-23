@@ -86,7 +86,11 @@ export function ChatListItem({ id, title, description, avatarUrl, active = false
                   <MoreVertical className='size-4' />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align='end' className='min-w-[8rem]'>
+              <DropdownMenuContent
+                align='end'
+                className='min-w-[8rem]'
+                onClick={(e) => e.stopPropagation()}
+              >
                 {onRename ? (
                   <DropdownMenuItem onClick={() => onRename(id)}>
                     <Pencil className='size-3' />
