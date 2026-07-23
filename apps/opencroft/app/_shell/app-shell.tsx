@@ -32,7 +32,7 @@ import { RenameDialog } from '@/app/(agent)/_components/chat-hosts'
 import { ChatTabsProvider, useChatTabs } from '@/app/(agent)/_lib/chat-tabs-context'
 import { useAgentSessions } from '@/app/(agent)/_lib/use-agent-sessions'
 import { useChatListNodes } from '@/app/(agent)/_lib/use-chat-list-nodes'
-import { listSessionActivity } from '@/app/(agent)/_server/acp'
+import { listSessionActivity, stopProcessLocal } from '@/app/(agent)/_server/acp'
 import type { SpaceSummary } from '@/app/(space)/_server/types'
 import { cn } from '@/lib/utils'
 
@@ -49,17 +49,24 @@ interface SidebarProps {
   pinnedDashboardSlugs: string[]
 }
 
-// Poll for chat sessions blocked on a permission request (pending, blue) and
-// sessions with a turn actively running (active, green), so their sidebar rows
-// can badge either state. One shared poll for both — gated off when there are
-// no sessions at all.
-function useSessionActivityKeys(enabled: boolean): { pendingKeys: Set<string>; activeKeys: Set<string> } {
+// Poll for each chat's process-visibility state:
+// blocked on a permission request (pending, warning), a turn actively running
+// (active, primary), and a live agent process at all (alive, success — a
+// superset of the other two, since both imply a process exists). One shared
+// poll for all three — gated off when there are no sessions at all.
+function useSessionActivityKeys(enabled: boolean): {
+  pendingKeys: Set<string>
+  activeKeys: Set<string>
+  aliveKeys: Set<string>
+} {
   const [pendingKeys, setPendingKeys] = useState<Set<string>>(() => new Set())
   const [activeKeys, setActiveKeys] = useState<Set<string>>(() => new Set())
+  const [aliveKeys, setAliveKeys] = useState<Set<string>>(() => new Set())
   useEffect(() => {
     if (!enabled) {
       setPendingKeys(new Set())
       setActiveKeys(new Set())
+      setAliveKeys(new Set())
       return
     }
     let cancelled = false
@@ -68,6 +75,7 @@ function useSessionActivityKeys(enabled: boolean): { pendingKeys: Set<string>; a
         if (!cancelled) {
           setPendingKeys(new Set(result.pending))
           setActiveKeys(new Set(result.active))
+          setAliveKeys(new Set(result.alive))
         }
       })
     }
@@ -78,7 +86,7 @@ function useSessionActivityKeys(enabled: boolean): { pendingKeys: Set<string>; a
       window.clearInterval(id)
     }
   }, [enabled])
-  return { pendingKeys, activeKeys }
+  return { pendingKeys, activeKeys, aliveKeys }
 }
 
 function ChatModeToggle() {
@@ -104,11 +112,12 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
   const { sessions, renameSession, deleteSession } = useAgentSessions()
   const pinnedDashboards = dashboards.filter((d) => pinnedDashboardSlugs.includes(d.slug))
   const [mounted, setMounted] = useState(false)
-  const { pendingKeys, activeKeys } = useSessionActivityKeys(inSpace && mounted && sessions.length > 0)
+  const { pendingKeys, activeKeys, aliveKeys } = useSessionActivityKeys(inSpace && mounted && sessions.length > 0)
   const { nodes, nodesKey, onChange, closeSession } = useChatListNodes(
     sessions,
     pendingKeys,
     activeKeys,
+    aliveKeys,
     chatTabs.activeSessionKey,
   )
   const [renaming, setRenaming] = useState<{ key: string; title: string } | null>(null)
@@ -202,6 +211,16 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
                           // session also happens to be the active tab.
                           closeSession(key)
                           chatTabs.closeTab(key)
+                        }}
+                        onStopProcess={(key) => {
+                          // Stop the agent process only — the chat, its history,
+                          // and the row all stay; the indicator falls back to
+                          // none until the next message respawns the process
+                          // again. Distinct from onClose
+                          // (row) and onDelete (chat + session).
+                          stopProcessLocal({ data: key }).catch((err) => {
+                            console.error('Failed to stop process', key, err)
+                          })
                         }}
                         onDelete={deleteSession}
                         onRename={(key) => {

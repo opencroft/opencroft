@@ -33,6 +33,7 @@ interface ChatListProps {
   defaultFolderOpen?: boolean
   onSelect?: (id: string) => void
   onRename?: (id: string) => void
+  onStopProcess?: (id: string) => void
   onClose?: (id: string) => void
   onDelete?: (id: string) => void
   onChange?: (nodes: ChatListNode[]) => void
@@ -165,7 +166,7 @@ function applyDrop(s: ListState, drag: Drag, over: Over): ListState {
 // via **Move to new folder** in its row menu. Folder headers have always-visible
 // rename + delete (delete returns the chats to the loose list). Self-contained;
 // calls onChange on every structural change.
-export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, onRename, onClose, onDelete, onChange, onRenameFolder, onCreateFolder, onDeleteFolder, className }: ChatListProps) {
+export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, onRename, onStopProcess, onClose, onDelete, onChange, onRenameFolder, onCreateFolder, onDeleteFolder, className }: ChatListProps) {
   const [state, setState] = useState<ListState>(() => initState(nodes, defaultFolderOpen))
   const [drag, setDrag] = useState<Drag | null>(null)
   const [over, setOver] = useState<Over | null>(null)
@@ -288,6 +289,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
             active={leaf.id === activeId}
             onSelect={onSelect}
             onRename={onRename}
+            onStopProcess={onStopProcess}
             onClose={onClose}
             onDelete={onDelete}
             actions={itemActions}
@@ -416,7 +418,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
       {state.itemOrder.map((id, i) => renderItem(id, 'items', i))}
 
       {/* While dragging an item, surface a clear 'out of any folder' target. */}
-      {drag?.kind === 'item' ? (
+      {drag?.kind === 'item' && drag.from !== 'items' ? (
         <div
           onDragOver={(e) => {
             e.preventDefault()

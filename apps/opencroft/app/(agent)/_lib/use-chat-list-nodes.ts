@@ -33,6 +33,7 @@ export function toLeaf(
   session: SessionEntry,
   pendingKeys: Set<string>,
   activeKeys: Set<string>,
+  aliveKeys: Set<string>,
   avatarByAgentId: Map<string, string>,
 ) {
   return {
@@ -40,14 +41,18 @@ export function toLeaf(
     title: session.title ?? session.jobName,
     description: session.agentName,
     avatarUrl: avatarByAgentId.get(session.agentNodeId),
-    // Pending (blocked on a permission request) takes the dot over active
-    // (turn running) — in practice a session is never both at once, since a
-    // turn blocked on a permission request has already paused.
+    // The indicator reflects the session's *process* state:
+    // warning (pending) beats primary (active) beats success (alive but idle)
+    // beats no indicator (no process) — pending and active are never both true
+    // in practice (a turn blocked on a permission request has already
+    // paused), but both are subsets of alive, so the order matters for those two.
     statusIndicator: pendingKeys.has(session.key)
-      ? ('primary' as const)
+      ? ('warning' as const)
       : activeKeys.has(session.key)
-        ? ('success' as const)
-        : undefined,
+        ? ('primary' as const)
+        : aliveKeys.has(session.key)
+          ? ('success' as const)
+          : undefined,
     hasDraft: Boolean(session.draft?.trim()),
   }
 }
@@ -67,6 +72,7 @@ function buildNodes(
   hiddenKeys: Set<string>,
   pendingKeys: Set<string>,
   activeKeys: Set<string>,
+  aliveKeys: Set<string>,
   avatarByAgentId: Map<string, string>,
 ): ChatListNode[] {
   const sessions = allSessions.filter((s) => !hiddenKeys.has(s.key))
@@ -80,7 +86,7 @@ function buildNodes(
         continue
       }
       seen.add(entry.key)
-      nodes.push({ type: 'item', item: toLeaf(session, pendingKeys, activeKeys, avatarByAgentId) })
+      nodes.push({ type: 'item', item: toLeaf(session, pendingKeys, activeKeys, aliveKeys, avatarByAgentId) })
     } else {
       const items = entry.folder.itemKeys.map((key) => byKey.get(key)).filter((s): s is SessionEntry => Boolean(s))
       for (const session of items) {
@@ -92,14 +98,14 @@ function buildNodes(
           id: entry.folder.id,
           name: entry.folder.name,
           open: entry.folder.open,
-          items: items.map((s) => toLeaf(s, pendingKeys, activeKeys, avatarByAgentId)),
+          items: items.map((s) => toLeaf(s, pendingKeys, activeKeys, aliveKeys, avatarByAgentId)),
         },
       })
     }
   }
   for (const session of sessions) {
     if (!seen.has(session.key)) {
-      nodes.push({ type: 'item', item: toLeaf(session, pendingKeys, activeKeys, avatarByAgentId) })
+      nodes.push({ type: 'item', item: toLeaf(session, pendingKeys, activeKeys, aliveKeys, avatarByAgentId) })
     }
   }
   return nodes
@@ -145,6 +151,7 @@ export function useChatListNodes(
   sessions: SessionEntry[],
   pendingKeys: Set<string>,
   activeKeys: Set<string>,
+  aliveKeys: Set<string>,
   activeSessionKey: string,
 ): UseChatListNodesResult {
   const [entries, setEntries] = useState<ChatListLayoutEntry[]>([])
@@ -186,8 +193,8 @@ export function useChatListNodes(
   }, [])
 
   const nodes = useMemo(
-    () => (loaded ? buildNodes(entries, sessions, hiddenKeys, pendingKeys, activeKeys, avatarByAgentId) : []),
-    [loaded, entries, sessions, hiddenKeys, pendingKeys, activeKeys, avatarByAgentId],
+    () => (loaded ? buildNodes(entries, sessions, hiddenKeys, pendingKeys, activeKeys, aliveKeys, avatarByAgentId) : []),
+    [loaded, entries, sessions, hiddenKeys, pendingKeys, activeKeys, aliveKeys, avatarByAgentId],
   )
   // Key on external inputs only (see UseChatListNodesResult.nodesKey): each
   // session's identity, display text, avatar, hidden state, and status dot —
@@ -211,11 +218,12 @@ export function useChatListNodes(
             avatar: avatarByAgentId.get(s.agentNodeId),
             pending: pendingKeys.has(s.key),
             active: activeKeys.has(s.key),
+            alive: aliveKeys.has(s.key),
             hasDraft: Boolean(s.draft?.trim()),
           }))
           .sort((a, b) => a.id.localeCompare(b.id)),
       )}`,
-    [loaded, sessions, hiddenKeys, pendingKeys, activeKeys, avatarByAgentId],
+    [loaded, sessions, hiddenKeys, pendingKeys, activeKeys, aliveKeys, avatarByAgentId],
   )
 
   const onChange = (next: ChatListNode[]) => {

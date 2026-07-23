@@ -882,6 +882,24 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return (store.sessions.get(sessionId)?.activeTurns ?? 0) > 0
     },
 
+    // Session keys of every session with a *live agent process* right now —
+    // i.e. present in `store.sessions` at all, whether idle, working, or
+    // pending permission. A restarted server (or a session ended via
+    // deleteSession without a matching close) has none until the tab's
+    // session is next opened — see openLocalSession's cold-start resume.
+    // Lets a host show "process alive" independent of activeSessionKeys
+    // (working) and pendingPermissionSessionKeys (blocked).
+    aliveSessionKeys(): string[] {
+      const keys = new Set<string>()
+      for (const session of store.sessions.values()) {
+        const key = session.selection.sessionKey
+        if (key) {
+          keys.add(key)
+        }
+      }
+      return [...keys]
+    },
+
     // The host's registered LocalTools (for role-permission editors). Resolves
     // a dynamic tools source (e.g. live agent-tool graph nodes) same as a turn
     // would. Per-session MCP and skill tools are separate and not listed here.

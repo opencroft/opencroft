@@ -554,6 +554,41 @@ test('a session created without a sessionKey never appears, even mid-turn', asyn
   assert.deepEqual(h.client.activeSessionKeys(), [])
 })
 
+// ── aliveSessionKeys ─────────────────────────────────────────────────────
+//
+// Unlike activeSessionKeys (needs a turn in flight) or pendingPermissionSessionKeys
+// (needs a blocked permission), this is "does a live agent process exist for
+// this key at all" — true the moment the session is created, false once it's
+// deleted. The process-visibility indicator's base signal.
+//
+// Every test in this file shares one module-level store (see acpStore()), and
+// many reuse the literal key 'agent:carol:test' without deleting their session
+// afterward — so asserting a bare [] here would be order-dependent on
+// whatever earlier tests happened to leave behind. These assert deltas
+// (does creating/deleting *this* test's own session change the set the
+// expected way) instead of the store's total contents.
+
+test('aliveSessionKeys includes the key as soon as the session is created, before any prompt', async () => {
+  const h = await setup('openclaw', { sessionKey: `agent:test-${counter}` })
+  const uniqueKey = h.selection.sessionKey as string
+  assert.equal(h.client.aliveSessionKeys().includes(uniqueKey), true)
+})
+
+test('aliveSessionKeys drops the key once the session is deleted, if nothing else still holds it', async () => {
+  const h = await setup('openclaw', { sessionKey: `agent:test-${counter}` })
+  const uniqueKey = h.selection.sessionKey as string
+  assert.equal(h.client.aliveSessionKeys().includes(uniqueKey), true)
+  await h.client.deleteSession(h.sessionId)
+  assert.equal(h.client.aliveSessionKeys().includes(uniqueKey), false)
+})
+
+test('a session created without a sessionKey never changes aliveSessionKeys', async () => {
+  const before = createAgentClient().aliveSessionKeys()
+  await setup()
+  const after = createAgentClient().aliveSessionKeys()
+  assert.deepEqual(after, before)
+})
+
 // ── hasActiveTurn ────────────────────────────────────────────────────────
 //
 // Same underlying read as activeSessionKeys, by raw session id — the check a

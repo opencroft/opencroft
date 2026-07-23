@@ -19,8 +19,8 @@ export function StatusIndicator({ variant, className, ...props }: StatusIndicato
           'group-[.secondary]:bg-secondary',
           'group-[.muted]:bg-muted',
           'group-[.accent]:bg-accent',
-          'group-[.success]:bg-green-500',
-          'group-[.warning]:bg-amber-500',
+          'group-[.success]:bg-success',
+          'group-[.warning]:bg-warning',
           'group-[.destructive]:bg-destructive',
         )}
       />
@@ -31,8 +31,8 @@ export function StatusIndicator({ variant, className, ...props }: StatusIndicato
           'group-[.secondary]:bg-secondary',
           'group-[.muted]:bg-muted',
           'group-[.accent]:bg-accent',
-          'group-[.success]:bg-green-500',
-          'group-[.warning]:bg-amber-500',
+          'group-[.success]:bg-success',
+          'group-[.warning]:bg-warning',
           'group-[.destructive]:bg-destructive',
         )}
       />

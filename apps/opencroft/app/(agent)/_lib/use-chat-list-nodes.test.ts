@@ -17,33 +17,48 @@ function session(overrides: Partial<SessionEntry> = {}): SessionEntry {
   }
 }
 
-test('no status dot when neither pending nor active, and no draft', () => {
-  const leaf = toLeaf(session(), new Set(), new Set(), new Map())
+const KEY = new Set(['agent:carol:test'])
+const NONE = new Set<string>()
+
+test('no status dot when the session has no live process at all', () => {
+  const leaf = toLeaf(session(), NONE, NONE, NONE, new Map())
   assert.equal(leaf.statusIndicator, undefined)
   assert.equal(leaf.hasDraft, false)
 })
 
-test('active (turn running) shows the success (green) dot', () => {
-  const leaf = toLeaf(session(), new Set(), new Set(['agent:carol:test']), new Map())
+test('alive (process running, idle) shows the success dot', () => {
+  const leaf = toLeaf(session(), NONE, NONE, KEY, new Map())
   assert.equal(leaf.statusIndicator, 'success')
 })
 
-test('pending (blocked on a permission request) shows the primary dot', () => {
-  const leaf = toLeaf(session(), new Set(['agent:carol:test']), new Set(), new Map())
+test('active (turn running) shows the primary dot', () => {
+  // active implies alive, matching what listSessionActivity actually reports.
+  const leaf = toLeaf(session(), NONE, KEY, KEY, new Map())
   assert.equal(leaf.statusIndicator, 'primary')
+})
+
+test('pending (blocked on a permission request) shows the warning dot', () => {
+  // pending implies alive too.
+  const leaf = toLeaf(session(), KEY, NONE, KEY, new Map())
+  assert.equal(leaf.statusIndicator, 'warning')
 })
 
 // Pending wins if a session were ever somehow flagged as both at once (see the
 // comment in toLeaf — in practice this shouldn't happen, but the row's
 // approval-needed state must never be masked by the less urgent running dot).
 test('pending takes priority over active when both are set', () => {
-  const leaf = toLeaf(session(), new Set(['agent:carol:test']), new Set(['agent:carol:test']), new Map())
+  const leaf = toLeaf(session(), KEY, KEY, KEY, new Map())
+  assert.equal(leaf.statusIndicator, 'warning')
+})
+
+test('active takes priority over alive when both are set', () => {
+  const leaf = toLeaf(session(), NONE, KEY, KEY, new Map())
   assert.equal(leaf.statusIndicator, 'primary')
 })
 
 test('hasDraft is true only for a non-blank draft', () => {
-  assert.equal(toLeaf(session({ draft: 'unsent text' }), new Set(), new Set(), new Map()).hasDraft, true)
-  assert.equal(toLeaf(session({ draft: '' }), new Set(), new Set(), new Map()).hasDraft, false)
-  assert.equal(toLeaf(session({ draft: '   ' }), new Set(), new Set(), new Map()).hasDraft, false)
-  assert.equal(toLeaf(session({ draft: undefined }), new Set(), new Set(), new Map()).hasDraft, false)
+  assert.equal(toLeaf(session({ draft: 'unsent text' }), NONE, NONE, NONE, new Map()).hasDraft, true)
+  assert.equal(toLeaf(session({ draft: '' }), NONE, NONE, NONE, new Map()).hasDraft, false)
+  assert.equal(toLeaf(session({ draft: '   ' }), NONE, NONE, NONE, new Map()).hasDraft, false)
+  assert.equal(toLeaf(session({ draft: undefined }), NONE, NONE, NONE, new Map()).hasDraft, false)
 })

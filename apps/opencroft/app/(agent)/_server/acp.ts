@@ -318,16 +318,35 @@ export const forkLocal = createServerFn({ method: 'POST', strict: { output: fals
   })
 
 // Tab keys of chat sessions currently blocked on an unresolved permission
-// request, and tab keys with a turn actively running — the sidebar polls this
-// once to badge chats with either state (pending wins if a session were ever
-// somehow both, though a turn blocked on a permission request has already
-// paused so in practice the two are mutually exclusive).
+// request, tab keys with a turn actively running, and tab keys with a live
+// agent process at all (alive is a superset of the other two — see
+// aliveSessionKeys) — the sidebar polls this once to set each chat's
+// process-visibility indicator: warning (pending),
+// primary (active), success (alive but neither), or none (not in `alive`).
 export const listSessionActivity = createServerFn({ method: 'GET', strict: { output: false } }).handler(
-  async (): Promise<{ pending: string[]; active: string[] }> => ({
+  async (): Promise<{ pending: string[]; active: string[]; alive: string[] }> => ({
     pending: agentClient.pendingPermissionSessionKeys(),
     active: agentClient.activeSessionKeys(),
+    alive: agentClient.aliveSessionKeys(),
   }),
 )
+
+// Stop a session's agent process without closing the chat: ends the ACP
+// session (gracefully, or kills the underlying subprocess if nothing else
+// shares it — see agentClient.deleteSession) but, unlike forgetLocalSession,
+// deliberately keeps the persisted tabKey->sessionId pointer and config
+// overrides. The next message to this tab falls through to
+// openLocalSession's cold-start session/load path and resumes the same
+// session — the chat and its history are untouched.
+export const stopProcessLocal = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((tabKey: string) => tabKey)
+  .handler(async ({ data: tabKey }): Promise<void> => {
+    const entry = tabSessions.get(tabKey)
+    if (entry) {
+      await agentClient.deleteSession(entry.id)
+      tabSessions.delete(tabKey)
+    }
+  })
 
 export const respondLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { type: 'permission' | 'ask'; requestId: string; optionId?: string; answer?: string }) => data)
