@@ -33,6 +33,9 @@ export interface ParsedMessage {
   title?: string
   /** Legacy combined key `agent:<agent>:<job>`; honored when `agent`/`job` are absent. */
   session?: string
+  /** Cancel an in-flight turn and enqueue this message after whatever's
+   *  already queued, instead of waiting behind it. */
+  force?: boolean
 }
 
 function slug(name: string): string {
@@ -85,6 +88,7 @@ export function tryParseJsonMessage(text: string): ParsedMessage | null {
     key: optStr(obj['key']),
     title: optStr(obj['title']),
     session: optStr(obj['session']),
+    force: obj['force'] === true,
   }
 }
 

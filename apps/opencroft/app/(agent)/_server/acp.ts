@@ -283,6 +283,10 @@ export const cancelLocal = createServerFn({ method: 'POST', strict: { output: fa
     await agentClient.cancel(sessionId)
   })
 
+export const hasActiveTurn = createServerFn({ method: 'GET', strict: { output: false } })
+  .inputValidator((sessionId: string) => sessionId)
+  .handler(async ({ data: sessionId }): Promise<boolean> => agentClient.hasActiveTurn(sessionId))
+
 export const forgetLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((tabKey: string) => tabKey)
   .handler(async ({ data: tabKey }): Promise<void> => {

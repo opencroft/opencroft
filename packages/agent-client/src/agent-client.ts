@@ -874,6 +874,14 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return [...keys]
     },
 
+    // Same underlying read as activeSessionKeys, but by raw session id and for
+    // a single session — for a caller that already has the id (e.g. a `force`
+    // send deciding whether there's actually a turn worth cancelling) and has
+    // no reason to resolve it back to a selection.sessionKey first.
+    hasActiveTurn(sessionId: string): boolean {
+      return (store.sessions.get(sessionId)?.activeTurns ?? 0) > 0
+    },
+
     // The host's registered LocalTools (for role-permission editors). Resolves
     // a dynamic tools source (e.g. live agent-tool graph nodes) same as a turn
     // would. Per-session MCP and skill tools are separate and not listed here.

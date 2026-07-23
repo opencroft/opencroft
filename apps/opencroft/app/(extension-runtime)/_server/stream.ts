@@ -13,7 +13,7 @@
 // text — letting extensions consume a text-stream server-side without core
 // knowing the node type.
 
-import { ensureLocalSession, findTargetSession, promptLocal } from '@/app/(agent)/_server/acp'
+import { cancelLocal, ensureLocalSession, findTargetSession, hasActiveTurn, promptLocal } from '@/app/(agent)/_server/acp'
 import { upsertSession } from '@/app/(agent)/_server/agent-sessions-store'
 import { hideSessionByDefault } from '@/app/(agent)/_server/chat-list-layout-store'
 import { composeEnvelope } from '@/app/(agent)/_shared/message-envelope'
@@ -303,13 +303,14 @@ async function persistToDownstreamSendMessages(
 // default only on a genuine creation), and composes the
 // envelope with instructions/task context gated on that same `created` flag
 // too — so every caller gets identical session and envelope
-// semantics, not a re-implementation of them.
+// semantics, not a re-implementation of them. `force` is part of the
+// same shared payload schema, so either entry point can carry it.
 export async function deliverToSendMessageNode(
   target: GraphNodeLike,
   nodes: GraphNodeLike[],
   edges: GraphEdgeLike[],
   text: string,
-): Promise<{ sessionKey: string; created: boolean } | null> {
+): Promise<{ sessionKey: string; created: boolean; forced: boolean } | null> {
   const route = resolveRoute(text, target, nodes, edges)
   if (!route) {
     return null
@@ -355,6 +356,21 @@ export async function deliverToSendMessageNode(
     }
   }
 
+  // `force`: interrupt an in-flight turn instead of waiting behind it.
+  // cancelLocal only signals the agent to stop — it doesn't touch activeTurns
+  // or the queue itself; whatever ends the cancelled turn's in-flight prompt
+  // is what actually drains it (see agent-client's settleTurn). Only
+  // meaningful against a session that already has a turn running, so `forced`
+  // reports honestly: a force call against an idle or brand-new session never
+  // claims to have interrupted anything.
+  let forced = false
+  if (route.force) {
+    forced = await hasActiveTurn({ data: sessionId })
+    if (forced) {
+      await cancelLocal({ data: sessionId })
+    }
+  }
+
   // Automated senders never include the selected-node/space system context
   // (chat-only); task context + instructions are session-scoped, so only a
   // freshly created ACP session gets them.
@@ -363,8 +379,12 @@ export async function deliverToSendMessageNode(
     isNewSession: created,
   })
 
+  // Not `front`: activeTurns is still >0 the instant this call is made (the
+  // cancel above hasn't resolved yet), so this lands at the END of whatever's
+  // already queued — queued messages first, then this one — and the existing
+  // drain (unchanged) delivers all of it once the cancelled turn settles.
   await promptLocal({ data: { sessionId, text: message } })
-  return { sessionKey: route.sessionKey, created }
+  return { sessionKey: route.sessionKey, created, forced }
 }
 
 interface SendMessageNodeData {
@@ -378,6 +398,7 @@ interface RouteResolution {
   message: string
   ctx: AgentContext
   title: string
+  force: boolean
 }
 
 function resolveRoute(
@@ -419,7 +440,7 @@ function resolveRoute(
   // over the node's override, then falls back to the job name.
   const title = parsed?.title || (data.titleOverride || '').trim() || ctx.jobName
 
-  return { sessionKey, message, ctx, title }
+  return { sessionKey, message, ctx, title, force: parsed?.force === true }
 }
 
 const g = globalThis as Record<string, unknown>

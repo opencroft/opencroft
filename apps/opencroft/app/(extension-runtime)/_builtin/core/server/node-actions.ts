@@ -219,7 +219,7 @@ async function secretsStoreGenerateAction(ctx: ActionCtx): Promise<GenerateSecre
 // the node's own `text-in` wiring already goes through: session reuse/create,
 // envelope composition, hidden-by-default registration.
 
-async function sendMessageSendAction(ctx: ActionCtx): Promise<{ sessionKey: string; created: boolean }> {
+async function sendMessageSendAction(ctx: ActionCtx): Promise<{ sessionKey: string; created: boolean; forced: boolean }> {
   // Schema already requires `message` (see extension.json) — checked again
   // here (mirrors secretsStoreGenerateAction's `name` check above) since a
   // caller can still pass a payload that resolves empty/non-string.

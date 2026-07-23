@@ -218,7 +218,7 @@
           "id": "send",
           "label": "Send",
           "icon": "Send",
-          "description": "Deliver a message to an agent through this node — same routing as a wired text-in delivery (session reuse/create, envelope composition, hidden-by-default registration). agent/job fall back to this node's configured defaults when omitted. Returns the target session key and whether a new session was created — never the message content.",
+          "description": "Deliver a message to an agent through this node — same routing as a wired text-in delivery (session reuse/create, envelope composition, hidden-by-default registration). agent/job fall back to this node's configured defaults when omitted. Returns the target session key, whether a new session was created, and whether force actually interrupted a running turn — never the message content.",
           "inputSchema": {
             "type": "object",
             "properties": {
@@ -227,7 +227,11 @@
               "job": { "type": "string", "description": "Target job slug; falls back to this node's default job" },
               "key": { "type": "string", "description": "Optional session discriminator — same agent+job with a different key is a distinct, stable session" },
               "title": { "type": "string", "description": "Optional session title, applied only when the session is first created" },
-              "session": { "type": "string", "description": "Legacy combined \"agent:<agent>:<job>\" key, honored when agent/job are omitted" }
+              "session": { "type": "string", "description": "Legacy combined \"agent:<agent>:<job>\" key, honored when agent/job are omitted" },
+              "force": {
+                "type": "boolean",
+                "description": "Cancel the agent's in-flight turn (if any) and enqueue this message after whatever's already queued, instead of waiting behind it. This interrupts the agent mid-work — use for urgent/corrective messages, not routine sends. No effect if the session isn't currently running a turn."
+              }
             },
             "required": ["message"]
           }

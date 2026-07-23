@@ -226,7 +226,7 @@ async function findSendMessageNode(
 }
 
 export interface HostSendMessageApi {
-  send(nodeId: string, payload: Record<string, unknown>): Promise<{ sessionKey: string; created: boolean }>
+  send(nodeId: string, payload: Record<string, unknown>): Promise<{ sessionKey: string; created: boolean; forced: boolean }>
   listAgents(nodeId: string): Promise<{ agent: string; jobs: string[] }[]>
 }
 

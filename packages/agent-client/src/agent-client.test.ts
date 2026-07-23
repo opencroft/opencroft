@@ -553,3 +553,48 @@ test('a session created without a sessionKey never appears, even mid-turn', asyn
   await h.client.prompt(h.sessionId, 'hello')
   assert.deepEqual(h.client.activeSessionKeys(), [])
 })
+
+// ── hasActiveTurn ────────────────────────────────────────────────────────
+//
+// Same underlying read as activeSessionKeys, by raw session id — the check a
+// `force` send uses to decide whether there's actually a turn worth
+// cancelling before it does anything.
+
+test('hasActiveTurn is false before any prompt and true while one is in flight', async () => {
+  const h = await setup()
+  assert.equal(h.client.hasActiveTurn(h.sessionId), false)
+  await h.client.prompt(h.sessionId, 'hello')
+  assert.equal(h.client.hasActiveTurn(h.sessionId), true)
+  h.endTurn()
+  await settle()
+  assert.equal(h.client.hasActiveTurn(h.sessionId), false)
+})
+
+test('an unknown session id reports no active turn rather than throwing', async () => {
+  const h = await setup()
+  assert.equal(h.client.hasActiveTurn(`${h.sessionId}-does-not-exist`), false)
+})
+
+// ── cancel + queue drain (the mechanics a force send relies on) ───────────
+//
+// cancel() only forwards session/cancel to the connection — it does not
+// itself touch activeTurns or the queue. Whatever ends the cancelled turn's
+// in-flight prompt (the agent honoring the signal, standing in for `endTurn`
+// here) is what actually settles it and drains the next queued message. A
+// force send's own message is enqueued (non-front) before that settlement,
+// same as any other queued prompt — proven here by queuing it, cancelling,
+// then settling and checking it still delivers, in order.
+
+test('cancelling the active turn does not disrupt the queue; the queued message still drains once the turn settles', async () => {
+  const h = await setup()
+  await h.client.prompt(h.sessionId, 'first')
+  await h.client.prompt(h.sessionId, 'second') // queues: a turn is already active
+  assert.deepEqual(queueSnapshots(h.events).at(-1), ['second'])
+  await h.client.cancel(h.sessionId) // the mock connection's cancel is a no-op; real settlement is separate
+  assert.equal(h.client.hasActiveTurn(h.sessionId), true, 'cancel alone must not touch activeTurns')
+  h.endTurn() // stands in for the agent ending its turn in response to the cancel
+  await settle()
+  assert.equal(h.promptCalls.length, 2)
+  assert.equal(h.promptCalls[1], 'second')
+  assert.deepEqual(queueSnapshots(h.events).at(-1), [])
+})
