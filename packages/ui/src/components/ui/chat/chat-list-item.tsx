@@ -20,13 +20,17 @@ export interface ChatListItemAction {
   destructive?: boolean
 }
 
+// The row's process state. A single `status` drives BOTH the status word shown
+// in the description line and the status dot, so they can never disagree.
+export type ChatStatus = 'offline' | 'idle' | 'working' | 'waiting'
+
 interface ChatListItemProps {
   id: string
   title: string
   description?: string
   avatarUrl?: string | null
   active?: boolean
-  statusIndicator?: StatusVariant
+  status?: ChatStatus
   hasDraft?: boolean
   onSelect?: (id: string) => void
   onRename?: (id: string) => void
@@ -36,13 +40,24 @@ interface ChatListItemProps {
   actions?: ChatListItemAction[]
 }
 
-// The row's status indicator reflects the session's *process* state:
-//   success  -> process alive (agent process running, idle)
-//   primary  -> working (active turn in progress)
-//   warning  -> waiting for approval (pending permission request)
-//   omitted  -> no process (also what the indicator returns to after
-//               "Stop process" -- the chat and its history stay).
-// The concrete colours live in the shared status-indicator primitive.
+// The description line carries the process state as text, and a status dot is
+// shown only for the two *active* states. `status` derives both:
+//   offline  -> no process          -> "Offline",  no dot
+//   idle     -> process alive/idle  -> "Idle",     no dot
+//   working  -> active turn         -> "Working",  green (success) dot
+//   waiting  -> pending approval    -> "Waiting",  blue (primary) dot
+// The concrete dot colours live in the shared status-indicator primitive.
+const STATUS_WORD: Record<ChatStatus, string> = {
+  offline: 'Offline',
+  idle: 'Idle',
+  working: 'Working',
+  waiting: 'Waiting',
+}
+// A dot is shown only for the active states; offline/idle rely on the text.
+const STATUS_DOT: Partial<Record<ChatStatus, StatusVariant>> = {
+  working: 'success',
+  waiting: 'primary',
+}
 
 // A single row in a chat list: avatar (with an optional status dot) beside a
 // title and dimmed description, an optional unsent-draft pencil indicator, and
@@ -51,8 +66,15 @@ interface ChatListItemProps {
 // via right-click or long-press -- there is no visible trigger button -- so it
 // stays out of the way on both desktop and touch. Title/description truncate;
 // long content never grows the row. Self-contained, so it works in any list.
-export function ChatListItem({ id, title, description, avatarUrl, active = false, statusIndicator, hasDraft = false, onSelect, onRename, onStopProcess, onClose, onDelete, actions }: ChatListItemProps) {
+export function ChatListItem({ id, title, description, avatarUrl, active = false, status, hasDraft = false, onSelect, onRename, onStopProcess, onClose, onDelete, actions }: ChatListItemProps) {
   const hasMenu = Boolean(onRename || onStopProcess || onClose || onDelete || actions?.length)
+
+  // Derive the dot and the description's status word from the single `status`.
+  const dot = status ? STATUS_DOT[status] : undefined
+  const statusWord = status ? STATUS_WORD[status] : null
+  // "Name · Status" when both are present; either alone otherwise; nothing when
+  // neither is set (no description and no status).
+  const secondary = description && statusWord ? `${description} · ${statusWord}` : description ?? statusWord
 
   const row = (
     <div
@@ -71,10 +93,10 @@ export function ChatListItem({ id, title, description, avatarUrl, active = false
         'hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring data-[active=true]:bg-muted',
       )}
     >
-      <AgentAvatar avatar={avatarUrl} name={title} statusIndicator={statusIndicator} />
+      <AgentAvatar avatar={avatarUrl} name={title} statusIndicator={dot} />
       <span className='flex min-w-0 flex-1 flex-col overflow-hidden leading-tight'>
         <span className='truncate text-xs font-medium text-foreground'>{title}</span>
-        {description ? <span className='truncate text-xs text-muted-foreground'>{description}</span> : null}
+        {secondary ? <span className='truncate text-xs text-muted-foreground'>{secondary}</span> : null}
       </span>
       {hasDraft ? (
         <span title='Unsent draft' className='ml-auto inline-flex items-center text-muted-foreground'>

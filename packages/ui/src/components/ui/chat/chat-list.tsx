@@ -3,8 +3,7 @@
 import { useState, useRef, type DragEvent } from 'react'
 import { ChevronDown, ChevronRight, Folder, FolderOpen, FolderPlus, Pencil, Trash2 } from 'lucide-react'
 
-import { ChatListItem, type ChatListItemAction } from '@/components/ui/chat/chat-list-item'
-import type { StatusVariant } from '@/components/ui/utils/status-indicator'
+import { ChatListItem, type ChatListItemAction, type ChatStatus } from '@/components/ui/chat/chat-list-item'
 import { cn } from '@/lib/utils'
 
 export interface ChatListLeaf {
@@ -12,7 +11,7 @@ export interface ChatListLeaf {
   title: string
   description?: string
   avatarUrl?: string | null
-  statusIndicator?: StatusVariant
+  status?: ChatStatus
   hasDraft?: boolean
 }
 
@@ -284,7 +283,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
             title={leaf.title}
             description={leaf.description}
             avatarUrl={leaf.avatarUrl}
-            statusIndicator={leaf.statusIndicator}
+            status={leaf.status}
             hasDraft={leaf.hasDraft}
             active={leaf.id === activeId}
             onSelect={onSelect}

@@ -41,18 +41,19 @@ export function toLeaf(
     title: session.title ?? session.jobName,
     description: session.agentName,
     avatarUrl: avatarByAgentId.get(session.agentNodeId),
-    // The indicator reflects the session's *process* state:
-    // warning (pending) beats primary (active) beats success (alive but idle)
-    // beats no indicator (no process) — pending and active are never both true
-    // in practice (a turn blocked on a permission request has already
-    // paused), but both are subsets of alive, so the order matters for those two.
-    statusIndicator: pendingKeys.has(session.key)
-      ? ('warning' as const)
+    // The row's process state: waiting (pending) beats working (active)
+    // beats idle (alive) beats offline (no process) — pending and active are
+    // never both true in practice (a turn blocked on a permission request
+    // has already paused), but both are subsets of alive, so the order
+    // matters for those two. Always set (never undefined) — offline is a
+    // real, always-shown state, not "no status".
+    status: pendingKeys.has(session.key)
+      ? ('waiting' as const)
       : activeKeys.has(session.key)
-        ? ('primary' as const)
+        ? ('working' as const)
         : aliveKeys.has(session.key)
-          ? ('success' as const)
-          : undefined,
+          ? ('idle' as const)
+          : ('offline' as const),
     hasDraft: Boolean(session.draft?.trim()),
   }
 }
