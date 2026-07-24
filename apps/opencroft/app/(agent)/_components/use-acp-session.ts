@@ -1,7 +1,7 @@
 'use client'
 
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
-import { usePaginatedHistory } from 'agent-chat'
+import { usePaginatedHistory } from 'agent-chat/use-paginated-history'
 import type { ChatEvent, PermissionOpt, QueuedPrompt } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 
@@ -77,7 +77,7 @@ function toolText(output: unknown): string {
   return JSON.stringify(output ?? '', null, 2)
 }
 
-interface Folded {
+export interface Folded {
   messages: ChatMessage[]
   permissions: PendingPermission[]
   asks: PendingAsk[]
@@ -90,8 +90,13 @@ interface Folded {
 }
 
 // Reduce the agent-client event log into the message shape AgentChat renders,
-// plus the set of still-pending approval / elicitation prompts.
-function fold(events: ChatEvent[]): Folded {
+// plus the set of still-pending approval / elicitation prompts. `baseIndex` is
+// the absolute (server-side) index of `events[0]` — each created message is
+// stamped with `baseIndex + <its event's position>` as a stable id, so a
+// "load older" prepend (which shifts every existing event's position within
+// `events`, but not its absolute index) never changes an already-rendered
+// message's id. See ChatMessage.id.
+export function fold(events: ChatEvent[], baseIndex: number): Folded {
   const messages: ChatMessage[] = []
   const tools = new Map<string, ToolPart>()
   const permissions = new Map<string, PendingPermission>()
@@ -102,24 +107,25 @@ function fold(events: ChatEvent[]): Folded {
   let configOptions: SessionConfigOption[] = []
   let usage: AgentUsage | undefined
 
-  const ensureAssistant = (): ChatMessage => {
+  const ensureAssistant = (id: number): ChatMessage => {
     if (!assistant) {
-      assistant = { role: 'assistant', parts: [], timestamp: 0 }
+      assistant = { id, role: 'assistant', parts: [], timestamp: 0 }
       messages.push(assistant)
     }
     return assistant
   }
 
-  for (const event of events) {
+  events.forEach((event, offset) => {
+    const id = baseIndex + offset
     switch (event.kind) {
       case 'user': {
         assistant = null
-        messages.push({ role: 'user', parts: [{ type: 'text', text: event.text }], timestamp: 0 })
+        messages.push({ id, role: 'user', parts: [{ type: 'text', text: event.text }], timestamp: 0 })
         waiting = true
         break
       }
       case 'agent_message': {
-        const message = ensureAssistant()
+        const message = ensureAssistant(id)
         const last = message.parts[message.parts.length - 1]
         if (last && last.type === 'text') {
           last.text += event.text
@@ -129,7 +135,7 @@ function fold(events: ChatEvent[]): Folded {
         break
       }
       case 'agent_thought': {
-        const message = ensureAssistant()
+        const message = ensureAssistant(id)
         const last = message.parts[message.parts.length - 1]
         if (last && last.type === 'thinking') {
           last.text += event.text
@@ -139,7 +145,7 @@ function fold(events: ChatEvent[]): Folded {
         break
       }
       case 'tool_call': {
-        const message = ensureAssistant()
+        const message = ensureAssistant(id)
         const part: ToolPart = { type: 'tool-call', id: event.toolCallId, name: event.title, args: event.input }
         message.parts.push(part)
         tools.set(event.toolCallId, part)
@@ -195,14 +201,14 @@ function fold(events: ChatEvent[]): Folded {
         break
       }
       case 'error': {
-        ensureAssistant().parts.push({ type: 'text', text: `⚠️ ${event.message}` })
+        ensureAssistant(id).parts.push({ type: 'text', text: `⚠️ ${event.message}` })
         waiting = false
         break
       }
       default:
         break
     }
-  }
+  })
 
   return {
     messages,
@@ -251,6 +257,11 @@ export function useAcpSession(
   // instead of one React state update (and one fold() re-run) per stored event.
   const historyBufferRef = useRef<ChatEvent[]>([])
   const replayingHistoryRef = useRef(true)
+  // Absolute (server-side) index of `events[0]` — see fold()'s doc comment.
+  // Set from the stream's history_end payload on every (re)connect; decremented
+  // as older pages are prepended by loadMoreHistory. Live-appended events don't
+  // move events[0], so they never touch this.
+  const baseIndexRef = useRef(0)
   // Whether `ensureLocalSession` just created a brand-new ACP session for this
   // tab (vs. resuming a tab-cache hit or a cold-start session/load) — the same
   // authoritative signal the send-message path keys session-scoped envelope
@@ -342,6 +353,7 @@ export function useAcpSession(
       const event = JSON.parse(e.data) as AcpStreamEvent
       if (event.kind === HISTORY_END_KIND) {
         replayingHistoryRef.current = false
+        baseIndexRef.current = event.startIndex
         setEvents(historyBufferRef.current)
         setLoading(false)
         // The replayed history is a bounded tail (see acp.stream.ts), not
@@ -363,7 +375,7 @@ export function useAcpSession(
     return () => eventSource.close()
   }, [sessionId, paginatedHistory.reset])
 
-  const folded = useMemo(() => fold(events), [events])
+  const folded = useMemo(() => fold(events, baseIndexRef.current), [events])
 
   // Pull the self-reported title out of the first reply and apply it once. Gated
   // on titleRequestedRef so it only fires for the live first turn — never on the
@@ -534,6 +546,7 @@ export function useAcpSession(
   const loadMoreHistory = useCallback(async () => {
     const older = await paginatedHistory.loadOlder()
     if (older.length > 0) {
+      baseIndexRef.current -= older.length
       setEvents((prev) => [...older, ...prev])
     }
   }, [paginatedHistory.loadOlder])

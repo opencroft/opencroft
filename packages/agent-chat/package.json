@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./styles.css": "./src/styles.css",
     "./use-agent-session": "./src/use-agent-session.ts",
+    "./use-paginated-history": "./src/use-paginated-history.ts",
     "./server": "./src/server/index.ts",
     "./server/*": "./src/server/*.ts",
     "./*": "./src/*.tsx"

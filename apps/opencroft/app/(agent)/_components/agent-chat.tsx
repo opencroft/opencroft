@@ -36,6 +36,7 @@ import { Flex } from 'ui/layout/flex'
 import { AgentAvatar } from 'ui/media/agent-avatar'
 import { Textarea } from 'ui/textarea'
 
+import { buildBlocks, type DetailItem, stripOpencroftTags } from '@/app/(agent)/_lib/build-blocks'
 import type { ChatMessage } from '@/app/(agent)/_lib/messages'
 import { getAutoApprove, setAutoApprove } from '@/app/(approvals)/_server/actions'
 import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
@@ -252,6 +253,20 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
     return el ? el.scrollHeight - el.scrollTop : null
   }, [viewport])
 
+  // Read fresh inside loadOlder instead of closing over `session` directly, so
+  // loadOlder's own identity doesn't change every time loadingMoreHistory
+  // flips mid-fetch. It used to depend on the whole `session` object, which
+  // the IntersectionObserver effect below depends on in turn — so every
+  // fetch start/end was tearing down and recreating the observer. A freshly
+  // created IntersectionObserver reports its CURRENT intersection state
+  // immediately, and — combined with the scroll-restore bug this same PR
+  // fixes — the sentinel was still visually at the top when that fired,
+  // re-triggering loadOlder before the user did anything: a runaway load
+  // cascade that didn't stop until history was exhausted (reported
+  // soon after the pagination this bug was in first shipped).
+  const sessionRef = useRef(session)
+  sessionRef.current = session
+
   const loadOlder = useCallback(() => {
     // More of the already-downloaded `blocks` to reveal locally — same tick,
     // so the usual capture-then-grow pairing (consumed by the layout effect
@@ -267,14 +282,15 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
     // both eagerly here (before the fetch resolves) would let the layout
     // effect consume+restore the anchor against a scrollHeight that hasn't
     // grown yet, missing the actual content change entirely.
-    if (!session.hasMoreHistory || session.loadingMoreHistory) {
+    const current = sessionRef.current
+    if (!current.hasMoreHistory || current.loadingMoreHistory) {
       return
     }
-    void session.loadMoreHistory?.().then(() => {
+    void current.loadMoreHistory?.().then(() => {
       pendingScrollRestoreRef.current = captureScrollAnchor()
       setVisibleCount((prev) => prev + LOAD_MORE_STEP)
     })
-  }, [startIndex, session, captureScrollAnchor])
+  }, [startIndex, captureScrollAnchor])
 
   useLayoutEffect(() => {
     const delta = pendingScrollRestoreRef.current
@@ -364,20 +380,23 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
             </div>
           )}
           {visibleBlocks.map((b, i) => {
-            // Original index into `blocks`, not the window — keeps React keys
-            // (and thus Details' per-block collapsed state) and turnByBlock
-            // lookups stable as the window grows or slides.
+            // Position within the full `blocks` array — turnByBlock is keyed
+            // by this (rebuilt fresh every render, so shifting under a prepend
+            // is fine), but the React `key` below uses b.id instead: it must
+            // stay the SAME value for the SAME content across a "load older"
+            // prepend, which this position does not (see buildBlocks and
+            // ChatMessage.id).
             const index = startIndex + i
             return b.kind === 'user' ? (
               <UserMessage
-                key={index}
+                key={b.id}
                 text={b.text}
                 editDisabled={session.waiting}
                 onEdit={edit ? () => edit(turnByBlock.get(index) ?? 0, b.text) : undefined}
               />
             ) : (
               <Details
-                key={index}
+                key={b.id}
                 items={b.items}
                 botName={displayName}
                 agentAvatar={agentAvatar}
@@ -393,59 +412,6 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
       <AgentChatStatusIndicators />
     </Flex>
   )
-}
-
-type DetailItem =
-  | { kind: 'assistant-text'; text: string }
-  | { kind: 'thinking'; text: string }
-  | { kind: 'tool'; id: string; name: string; args: unknown; result?: { text: string; isError?: boolean } }
-
-type Block = { kind: 'user'; text: string } | { kind: 'details'; items: DetailItem[] }
-
-function buildBlocks(messages: ChatMessage[]): Block[] {
-  const blocks: Block[] = []
-  let details: DetailItem[] = []
-  const flush = () => {
-    if (details.length === 0) {
-      return
-    }
-    blocks.push({ kind: 'details', items: details })
-    details = []
-  }
-  for (const m of messages) {
-    if (m.role === 'user') {
-      flush()
-      for (const p of m.parts) {
-        if (p.type !== 'text') {
-          continue
-        }
-        const v = stripOpencroftTags(p.text || '')
-        if (!v.trim()) {
-          continue
-        }
-        blocks.push({ kind: 'user', text: v })
-      }
-      continue
-    }
-    for (const p of m.parts) {
-      if (p.type === 'text') {
-        const v = stripOpencroftTags(p.text || '…')
-        if (!v.trim()) {
-          continue
-        }
-        details.push({ kind: 'assistant-text', text: v })
-      } else if (p.type === 'thinking') {
-        if (!p.text.trim()) {
-          continue
-        }
-        details.push({ kind: 'thinking', text: p.text })
-      } else {
-        details.push({ kind: 'tool', id: p.id, name: p.name, args: p.args, result: p.result })
-      }
-    }
-  }
-  flush()
-  return blocks
 }
 
 function UserMessage({ text, editDisabled, onEdit }: { text: string; editDisabled?: boolean; onEdit?: () => void }) {
@@ -1198,10 +1164,6 @@ function AgentChatStatusIndicators() {
       ))}
     </>
   )
-}
-
-function stripOpencroftTags(text: string): string {
-  return text.replace(/<opencroft-[a-z0-9-]+>[\s\S]*?<\/opencroft-[a-z0-9-]+>\s*/gi, '')
 }
 
 function shortKey(key: string): string {
