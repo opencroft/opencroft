@@ -9,7 +9,7 @@ import { agentClient } from '@/app/(agent)/_server/agent-client-instance'
 // pulled into a browser tab (or re-sent on every reconnect) — see
 // why it matters: sending the whole replay on every open was the
 // actual cause of a server OOM, independent of a separate wire-decode bug.
-export const INITIAL_HISTORY_TURNS = 40
+export const INITIAL_HISTORY_TURNS = 10
 
 export const Route = createFileRoute('/(agent)/api/acp/stream')({
   server: {

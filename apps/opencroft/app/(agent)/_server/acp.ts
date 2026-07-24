@@ -359,7 +359,7 @@ export const stopProcessLocal = createServerFn({ method: 'POST', strict: { outpu
 // How many turns a single "load older" scroll fetches — independent of
 // acp.stream.ts's INITIAL_HISTORY_TURNS (the two don't need to match, though
 // keeping them equal makes each older page roughly one screenful).
-const HISTORY_PAGE_TURNS = 40
+const HISTORY_PAGE_TURNS = 10
 
 // The "older messages" half of the tail-first + scroll-up pagination pattern
 // is a plain request/response fetch against the
