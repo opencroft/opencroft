@@ -19,7 +19,7 @@ import {
 } from '@xyflow/react'
 import { SelectionMode } from '@xyflow/system'
 import '@xyflow/react/dist/style.css'
-import { Box, GripVertical, Lock, LockOpen, PanelLeft, Trash2, Wrench } from 'lucide-react'
+import { Box, GripVertical, Lock, LockOpen, PanelLeft } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -37,6 +37,7 @@ import { useSidebar } from 'ui/sidebar'
 import { Spinner } from 'ui/spinner'
 
 import { InspectorContext, useInspectorState } from '@/app/(dashboard)/_canvas/inspector-context'
+import { NodeContextMenu } from '@/app/(dashboard)/_canvas/node-context-menu'
 import { subscribeNodeDataUpdates } from '@/app/(dashboard)/_canvas/node-data-events'
 import { type BrowserTab, NodeInspector } from '@/app/(dashboard)/_canvas/node-inspector'
 import { buildNodeTypes } from '@/app/(dashboard)/_canvas/node-wrapper'
@@ -140,16 +141,14 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const isMobile = useIsMobile()
   const [mobileInspectorVisible, setMobileInspectorVisible] = useState(false)
   const [nodesLocked, setNodesLocked] = useState(false)
-  const [mobileNodeMenu, setMobileNodeMenu] = useState<{ screen: { x: number; y: number }; nodeId: string } | null>(
-    null,
-  )
+  const [nodeMenu, setNodeMenu] = useState<{ screen: { x: number; y: number }; nodeId: string } | null>(null)
   const [overlayActive, setOverlayActive] = useState(false)
   const { toggleSidebar } = useSidebar()
 
   // Back button closes inspector on mobile
   useBackIntercept(isMobile && mobileInspectorVisible, () => setMobileInspectorVisible(false))
   const { resolvedTheme } = useTheme()
-  const { screenToFlowPosition, setCenter } = useReactFlow()
+  const { screenToFlowPosition, setCenter, deleteElements } = useReactFlow()
   // Tracks the `updatedAt` this tab last saw for the space's graph row, so
   // saves can assert they're not overwriting a newer write from another tab
   // or an MCP tool call (see GraphConflictError in _server/store.ts).
@@ -290,7 +289,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     })
   }, [setNodes])
 
-  useClipboard({ nodes, edges, setNodes, setEdges, onChange: scheduleSave })
+  const { copy: copySelectedNodes } = useClipboard({ nodes, edges, setNodes, setEdges, onChange: scheduleSave })
 
   const sectionDrag = useRef<{
     sectionId: string
@@ -631,6 +630,37 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     [screenToFlowPosition],
   )
 
+  // Right-click (desktop) or long-press (mobile) on a node: make it the sole
+  // selection unless it's already part of a multi-selection, then open the
+  // shared node context menu for it.
+  const openNodeMenu = useCallback(
+    (nodeId: string, screen: { x: number; y: number }) => {
+      setNodes((nds) =>
+        nds.find((n) => n.id === nodeId)?.selected ? nds : nds.map((n) => ({ ...n, selected: n.id === nodeId })),
+      )
+      setNodeMenu({ screen, nodeId })
+    },
+    [setNodes],
+  )
+
+  const onNodeContextMenu = useCallback(
+    (event: React.MouseEvent, node: Node) => {
+      event.preventDefault()
+      openNodeMenu(node.id, { x: event.clientX, y: event.clientY })
+    },
+    [openNodeMenu],
+  )
+
+  // Deletes the current node selection through the same path the built-in
+  // Backspace/Delete key already uses, so there's one source of truth for
+  // node deletion (including connected-edge cleanup and the debounced save).
+  const onDeleteSelected = useCallback(() => {
+    const targets = nodes.filter((n) => n.selected).map((n) => ({ id: n.id }))
+    if (targets.length > 0) {
+      deleteElements({ nodes: targets })
+    }
+  }, [nodes, deleteElements])
+
   const onConnectEnd = useCallback(
     (event: MouseEvent | TouchEvent, state: FinalConnectionState) => {
       if (state.isValid) {
@@ -726,11 +756,10 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
         const el = (target instanceof Element ? target : null) ?? document.elementFromPoint(x ?? 0, y ?? 0)
         const nodeEl = el?.closest('.react-flow__node')
         if (nodeEl) {
-          // Long press on node -> show mobile context menu
+          // Long press on node -> show node context menu
           const nodeId = nodeEl.getAttribute('data-id')
           if (nodeId) {
-            setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === nodeId })))
-            setMobileNodeMenu({ screen: { x: x ?? 0, y: y ?? 0 }, nodeId })
+            openNodeMenu(nodeId, { x: x ?? 0, y: y ?? 0 })
           }
         } else {
           // Long press on empty pane -> open context menu
@@ -739,7 +768,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
         }
       }, 500)
     },
-    [isMobile, cancelLongPress, setNodes, screenToFlowPosition],
+    [isMobile, cancelLongPress, openNodeMenu, screenToFlowPosition],
   )
 
   const handleTouchEnd = useCallback(
@@ -821,18 +850,10 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
               onConnectEnd={onConnectEnd}
               isValidConnection={isValidConnection}
               onPaneContextMenu={onPaneContextMenu}
-              onNodeContextMenu={
-                isMobile
-                  ? (e: React.MouseEvent, node: Node) => {
-                      e.preventDefault()
-                      setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === node.id })))
-                      setMobileNodeMenu({ screen: { x: e.clientX, y: e.clientY }, nodeId: node.id })
-                    }
-                  : onPaneContextMenu
-              }
+              onNodeContextMenu={onNodeContextMenu}
               onPaneClick={() => {
                 closeMenu()
-                setMobileNodeMenu(null)
+                setNodeMenu(null)
                 if (isMobile) {
                   deselect()
                   setMobileInspectorVisible(false)
@@ -853,47 +874,31 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
             >
               <Background variant={BackgroundVariant.Dots} gap={10} />
             </ReactFlow>
-            {/* Mobile node context menu */}
-            {isMobile && mobileNodeMenu && (
-              <div
-                className='fixed inset-0 z-50'
-                onClick={() => setMobileNodeMenu(null)}
-                onTouchEnd={() => setMobileNodeMenu(null)}
-              >
-                <div
-                  className='absolute bg-popover border rounded-lg shadow-lg py-1 min-w-[140px]'
-                  style={{
-                    left: Math.min(mobileNodeMenu.screen.x, window.innerWidth - 160),
-                    top: Math.min(mobileNodeMenu.screen.y, window.innerHeight - 100),
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  onTouchEnd={(e) => e.stopPropagation()}
-                >
-                  <button
-                    type='button'
-                    className='flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-accent/50 transition-colors'
-                    onClick={() => {
-                      setMobileInspectorVisible(true)
-                      setMobileNodeMenu(null)
-                    }}
-                  >
-                    <Wrench className='size-4' />
-                    Details
-                  </button>
-                  <button
-                    type='button'
-                    className='flex items-center gap-2 w-full px-3 py-2 text-sm text-destructive hover:bg-accent/50 transition-colors'
-                    onClick={() => {
-                      setNodes((nds) => nds.filter((n) => !n.selected))
-                      setMobileNodeMenu(null)
-                    }}
-                  >
-                    <Trash2 className='size-4' />
-                    Delete
-                  </button>
-                </div>
-              </div>
-            )}
+            {/* Node context menu: desktop right-click and mobile long-press */}
+            {nodeMenu &&
+              (() => {
+                const target = nodes.find((n) => n.id === nodeMenu.nodeId)
+                if (!target) {
+                  return null
+                }
+                return (
+                  <NodeContextMenu
+                    position={nodeMenu.screen}
+                    node={target}
+                    resolvedNode={target.type ? extensionRegistry.resolveNode(target.type) : undefined}
+                    onCopy={() => copySelectedNodes()}
+                    onDelete={onDeleteSelected}
+                    onDetails={
+                      isMobile
+                        ? () => {
+                            setMobileInspectorVisible(true)
+                          }
+                        : undefined
+                    }
+                    onClose={() => setNodeMenu(null)}
+                  />
+                )
+              })()}
             {/* Mobile overlay toolbar */}
             {isMobile && !overlayActive && (
               <div className='absolute top-3 left-3 z-40 flex flex-col gap-2'>

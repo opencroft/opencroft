@@ -86,7 +86,11 @@ function remap(payload: Payload): { nodes: Node[]; edges: Edge[] } {
   return { nodes, edges }
 }
 
-export function useClipboard({ nodes, edges, setNodes, setEdges, onChange }: Options) {
+export interface ClipboardControls {
+  copy: () => Promise<void>
+}
+
+export function useClipboard({ nodes, edges, setNodes, setEdges, onChange }: Options): ClipboardControls {
   const copy = useCallback(async () => {
     const picked = selectedSet(nodes)
     if (picked.length === 0) {
@@ -128,6 +132,11 @@ export function useClipboard({ nodes, edges, setNodes, setEdges, onChange }: Opt
     onChange(nextNodes, nextEdges)
   }, [nodes, edges, setNodes, setEdges, onChange])
 
+  // Copy has no hotkey — it hijacked every Ctrl+C on the page (the isEditing()
+  // guard below only recognizes focus on an input/textarea/select/contentEditable,
+  // so copying selected text anywhere else, e.g. a log viewer, still got
+  // overwritten with node JSON). Copy is now only reachable from the node
+  // context menu. Cut/paste keep their hotkeys — not implicated in that bug.
   useEffect(() => {
     function handler(e: KeyboardEvent) {
       if (!(e.ctrlKey || e.metaKey)) {
@@ -137,11 +146,6 @@ export function useClipboard({ nodes, edges, setNodes, setEdges, onChange }: Opt
         return
       }
       const key = e.key.toLowerCase()
-      if (key === 'c') {
-        e.preventDefault()
-        copy()
-        return
-      }
       if (key === 'x') {
         e.preventDefault()
         cut()
@@ -154,5 +158,7 @@ export function useClipboard({ nodes, edges, setNodes, setEdges, onChange }: Opt
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [copy, cut, paste])
+  }, [cut, paste])
+
+  return { copy }
 }

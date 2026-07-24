@@ -62,6 +62,28 @@ export interface InspectorTab<D = Record<string, unknown>> {
   component: React.ComponentType<ExtensionInspectorProps<D>>
 }
 
+/** Context passed to a node context-menu item's `isEnabled`/`onSelect`. */
+export interface NodeContextMenuContext<D = Record<string, unknown>> {
+  nodeId: string
+  typeId: string
+  data: D
+}
+
+export interface NodeContextMenuItem<D = Record<string, unknown>> {
+  /** Unique item id, used as the React key */
+  id: string
+  /** Item label shown in the menu */
+  label: string
+  /** Icon name from lucide-react (optional) */
+  icon?: string
+  /** Styles the item as a destructive (red) action */
+  destructive?: boolean
+  /** Whether the item is selectable; omit to always enable. May be async (e.g. checking live node state). */
+  isEnabled?: (ctx: NodeContextMenuContext<D>) => boolean | Promise<boolean>
+  /** Invoked when the item is selected. */
+  onSelect: (ctx: NodeContextMenuContext<D>) => void | Promise<void>
+}
+
 export interface NodeDefinition<D = Record<string, unknown>> {
   typeId: string
   name: string
@@ -75,6 +97,8 @@ export interface NodeDefinition<D = Record<string, unknown>> {
   inspector?: React.ComponentType<ExtensionInspectorProps<D>>
   /** Additional inspector tabs beyond the default "Details" tab */
   inspectorTabs?: InspectorTab<D>[]
+  /** Entries this node type contributes to its right-click context menu, after the built-in Copy/Delete actions. */
+  contextMenuItems?: NodeContextMenuItem<D>[]
   exposeOutput?: (handleId: string, data: D, typeId: string, nodeId: string) => unknown
 }
 

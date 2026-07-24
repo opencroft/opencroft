@@ -6,6 +6,7 @@ import type { ComponentType } from 'react'
 import type {
   CommandModeDefinition,
   ExtensionDeclaration,
+  NodeContextMenuItem,
   SettingsPageDefinition,
 } from '@/app/(extension-runtime)/_client/host'
 import { providerRegistry } from '@/app/(extension-runtime)/_client/provides'
@@ -46,6 +47,8 @@ export interface ResolvedNode {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     component: ComponentType<any>
   }>
+
+  contextMenuItems?: NodeContextMenuItem[]
 
   exposeOutput?: (handleId: string, data: Record<string, unknown>, typeId: string, nodeId: string) => unknown
 }
@@ -124,6 +127,7 @@ class ExtensionRegistry {
       component: node.component,
       inspector: node.inspector,
       inspectorTabs: node.inspectorTabs,
+      contextMenuItems: node.contextMenuItems,
       exposeOutput: node.exposeOutput,
     }
   }

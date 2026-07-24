@@ -12,6 +12,8 @@ import {
   CommandSeparator,
 } from 'ui/command'
 
+import { clampPosition } from '@/app/(dashboard)/_canvas/clamp-position'
+import { useEscapeKey } from '@/app/(dashboard)/_canvas/use-escape-key'
 import type { ResolvedNode } from '@/app/(extension-runtime)/_client/registry'
 
 interface FlowContextMenuProps {
@@ -33,17 +35,6 @@ function groupByCategory(nodes: ResolvedNode[]): Map<string, ResolvedNode[]> {
   return map
 }
 
-function clampPosition(x: number, y: number, width: number, height: number) {
-  const clamped = { x, y }
-  if (x + width > window.innerWidth) {
-    clamped.x = window.innerWidth - width - 8
-  }
-  if (y + height > window.innerHeight) {
-    clamped.y = window.innerHeight - height - 8
-  }
-  return clamped
-}
-
 export function FlowContextMenu({ position, extensions, onSelect, onNewExtension, onClose }: FlowContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
   const groups = groupByCategory(extensions)
@@ -59,15 +50,7 @@ export function FlowContextMenu({ position, extensions, onSelect, onNewExtension
     return () => document.removeEventListener('mousedown', handle)
   }, [onClose])
 
-  useEffect(() => {
-    const handle = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose()
-      }
-    }
-    document.addEventListener('keydown', handle)
-    return () => document.removeEventListener('keydown', handle)
-  }, [onClose])
+  useEscapeKey(onClose)
 
   return (
     <div
