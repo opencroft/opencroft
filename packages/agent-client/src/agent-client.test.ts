@@ -136,18 +136,14 @@ const THOUGHT_LEVEL_OPTIONS = [
 test('a claude session with no reasoningEffort set defaults thought_level to medium', async () => {
   const h = await setup('claude', { configOptions: THOUGHT_LEVEL_OPTIONS })
   await settle()
-  assert.deepEqual(h.configOptionCalls, [
-    { sessionId: h.sessionId, configId: 'thought-level-option', value: 'medium' },
-  ])
+  assert.deepEqual(h.configOptionCalls, [{ sessionId: h.sessionId, configId: 'thought-level-option', value: 'medium' }])
   await h.client.deleteSession(h.sessionId)
 })
 
 test('an explicit reasoningEffort still wins over the claude default', async () => {
   const h = await setup('claude', { reasoningEffort: 'high', configOptions: THOUGHT_LEVEL_OPTIONS })
   await settle()
-  assert.deepEqual(h.configOptionCalls, [
-    { sessionId: h.sessionId, configId: 'thought-level-option', value: 'high' },
-  ])
+  assert.deepEqual(h.configOptionCalls, [{ sessionId: h.sessionId, configId: 'thought-level-option', value: 'high' }])
   await h.client.deleteSession(h.sessionId)
 })
 
@@ -167,9 +163,7 @@ test('an explicit "off" is never overridden by the claude default', async () => 
 
 // ── dynamic config options / session info ──────────────────────────────────
 
-const MODEL_OPTIONS = [
-  { id: 'model-option', category: 'model', type: 'select', options: [{ name: 'A', value: 'a' }] },
-]
+const MODEL_OPTIONS = [{ id: 'model-option', category: 'model', type: 'select', options: [{ name: 'A', value: 'a' }] }]
 
 test('a session created with configOptions stores and emits them', async () => {
   const h = await setup('openclaw', { configOptions: MODEL_OPTIONS })
@@ -192,7 +186,9 @@ test('setConfigOption sends the boolean shape for boolean options', async () => 
   const boolOption = [{ id: 'bool-option', category: 'mode', type: 'boolean', currentValue: false }]
   const h = await setup('openclaw', { configOptions: boolOption })
   await h.client.setConfigOption(h.sessionId, 'bool-option', true)
-  assert.deepEqual(h.configOptionCalls, [{ sessionId: h.sessionId, configId: 'bool-option', type: 'boolean', value: true }])
+  assert.deepEqual(h.configOptionCalls, [
+    { sessionId: h.sessionId, configId: 'bool-option', type: 'boolean', value: true },
+  ])
   await h.client.deleteSession(h.sessionId)
 })
 
@@ -473,7 +469,11 @@ test('deleteSession kills the subprocess when close fails and no sibling session
   const store = acpStore()
   store.connections.set(key, {
     connection,
-    process: { kill: () => { killed = true } },
+    process: {
+      kill: () => {
+        killed = true
+      },
+    },
     lastSessionId: null,
     loadSession: false,
     initialized: Promise.resolve(),
@@ -505,7 +505,11 @@ test('deleteSession does not kill the subprocess while a sibling session still s
   const store = acpStore()
   store.connections.set(key, {
     connection,
-    process: { kill: () => { killed = true } },
+    process: {
+      kill: () => {
+        killed = true
+      },
+    },
     lastSessionId: null,
     loadSession: false,
     initialized: Promise.resolve(),
@@ -632,4 +636,114 @@ test('cancelling the active turn does not disrupt the queue; the queued message 
   assert.equal(h.promptCalls.length, 2)
   assert.equal(h.promptCalls[1], 'second')
   assert.deepEqual(queueSnapshots(h.events).at(-1), [])
+})
+
+// ── windowed history: getEventsWindow / subscribe's fromIndex ─────────────
+//
+// Replays turns as `session/load` would (user_message_chunk + agent_message_chunk
+// notifications), the way a resumed cold-start session's history actually
+// arrives — see openLocalSession's loadSession path. `setup()`'s own subscribe
+// call (made before any of these fire) still sees every event as it happens
+// live, unbounded; these tests add a SECOND, late subscriber to exercise the
+// windowed replay path a fresh SSE connection actually takes.
+
+function pushTurn(sessionId: string, userText: string, replyText: string): void {
+  handleUpdate({
+    sessionId,
+    update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: userText } },
+  } as Parameters<typeof handleUpdate>[0])
+  handleUpdate({
+    sessionId,
+    update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: replyText } },
+  } as Parameters<typeof handleUpdate>[0])
+}
+
+test('getEventsWindow returns null for an unknown session', async () => {
+  const client = createAgentClient()
+  assert.equal(client.getEventsWindow('no-such-session', { turns: 5 }), null)
+})
+
+test('getEventsWindow tail matches what subscribe replays with the same fromIndex', async () => {
+  const h = await setup('openclaw')
+  for (let i = 0; i < 5; i++) {
+    pushTurn(h.sessionId, `q${i}`, `a${i}`)
+  }
+  const window = h.client.getEventsWindow(h.sessionId, { turns: 2 })
+  assert.ok(window)
+  const replayed: ChatEvent[] = []
+  h.client.subscribe(h.sessionId, (event) => replayed.push(event), { fromIndex: window.startIndex })
+  // subscribe() also prepends a snapshot of the session's live title (every
+  // session gets a default one), which getEventsWindow's pure history slice
+  // doesn't know about — everything else must match exactly.
+  assert.deepEqual(
+    replayed.filter((e) => e.kind !== 'session_info'),
+    window.events,
+  )
+  // Only the last 2 of 5 turns.
+  assert.deepEqual(
+    replayed.filter((e) => e.kind === 'user').map((e) => (e.kind === 'user' ? e.text : null)),
+    ['q3', 'q4'],
+  )
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a windowed subscribe still delivers the latest config/title/usage snapshot even when it predates the cut', async () => {
+  const h = await setup('openclaw')
+  for (let i = 0; i < 5; i++) {
+    pushTurn(h.sessionId, `q${i}`, `a${i}`)
+  }
+  // These all land before the last-2-turns cut below.
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'config_option_update', configOptions: MODEL_OPTIONS },
+  } as Parameters<typeof handleUpdate>[0])
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'session_info_update', title: 'Old chat' },
+  } as Parameters<typeof handleUpdate>[0])
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 100, size: 1000 },
+  } as Parameters<typeof handleUpdate>[0])
+  pushTurn(h.sessionId, 'q5', 'a5') // pushes all of the above out of a last-1-turn window
+
+  const window = h.client.getEventsWindow(h.sessionId, { turns: 1 })
+  assert.ok(window)
+  assert.equal(
+    window.events.some((e) => e.kind === 'user'),
+    true,
+  )
+  const replayed: ChatEvent[] = []
+  h.client.subscribe(h.sessionId, (event) => replayed.push(event), { fromIndex: window.startIndex })
+  assert.deepEqual(
+    replayed.find((e) => e.kind === 'config_options'),
+    { kind: 'config_options', options: MODEL_OPTIONS },
+  )
+  assert.deepEqual(
+    replayed.find((e) => e.kind === 'session_info'),
+    { kind: 'session_info', title: 'Old chat' },
+  )
+  assert.deepEqual(
+    replayed.find((e) => e.kind === 'usage'),
+    { kind: 'usage', used: 100, size: 1000 },
+  )
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('paging backward through getEventsWindow eventually reaches the start of a real session', async () => {
+  const h = await setup('openclaw')
+  for (let i = 0; i < 6; i++) {
+    pushTurn(h.sessionId, `q${i}`, `a${i}`)
+  }
+  let window = h.client.getEventsWindow(h.sessionId, { turns: 2 })
+  assert.ok(window)
+  let hops = 0
+  while (window?.hasMore) {
+    window = h.client.getEventsWindow(h.sessionId, { beforeIndex: window.startIndex, turns: 2 })
+    assert.ok(window)
+    hops += 1
+    assert.ok(hops < 10, 'paging backward must terminate')
+  }
+  assert.equal(window?.startIndex, 0)
+  await h.client.deleteSession(h.sessionId)
 })

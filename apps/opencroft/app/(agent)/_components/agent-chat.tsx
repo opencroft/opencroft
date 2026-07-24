@@ -63,6 +63,18 @@ export interface AgentSession {
   draft?: { text: string; key: number }
   // When set, the composer's send is disabled (e.g. no agent selected yet).
   disabled?: boolean
+  // Whether the server has earlier history than what's currently in `messages`
+  // — a cold-opened chat starts from a bounded tail window, not the full
+  // transcript, so a long conversation needs
+  // "load older" to see anything further back.
+  hasMoreHistory?: boolean
+  loadingMoreHistory?: boolean
+  // Fetches and prepends the next page of older history, resolving once
+  // `messages` reflects it (or immediately, as a no-op, while a fetch is
+  // already in flight or once hasMoreHistory is false) — callers await it to
+  // sequence a DOM-window/scroll-position change with the data actually
+  // landing, instead of the two racing.
+  loadMoreHistory?: () => Promise<void>
 }
 
 interface AgentChatProps {
@@ -218,7 +230,11 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   }, [session.sessionKey])
 
   const startIndex = Math.max(0, blocks.length - visibleCount)
-  const hasOlder = startIndex > 0
+  // Older content remains to reveal either locally (more of `blocks` than the
+  // window currently shows) or on the server (a bounded tail window was sent —
+  // and hasMoreHistory says there's an earlier
+  // page behind it).
+  const hasOlder = startIndex > 0 || session.hasMoreHistory === true
   const visibleBlocks = blocks.slice(startIndex)
 
   // Set by loadOlder() just before growing the window; consumed by the layout
@@ -227,22 +243,38 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   // which is how that path avoids fighting over scrollTop with this one.
   const pendingScrollRestoreRef = useRef<number | null>(null)
 
-  const loadOlder = useCallback(() => {
+  // Distance from the bottom of the viewport to its current scroll position —
+  // restoring scrollTop to (the now-taller) scrollHeight minus this same
+  // distance, once older content actually lands above it, keeps the reader's
+  // place instead of jumping them to the top of the newly loaded chunk.
+  const captureScrollAnchor = useCallback(() => {
     const el = viewport()
-    if (el) {
-      // Record how far the bottom of the viewport is from the current scroll
-      // position — after older blocks are prepended above it, restoring to the
-      // same distance from the (now taller) scrollHeight keeps the reader's
-      // place instead of jumping them to the top of the newly loaded chunk.
-      pendingScrollRestoreRef.current = el.scrollHeight - el.scrollTop
-    }
-    // No cap at blocks.length: startIndex already clamps at 0, an oversized
-    // count renders the same slice, and once everything is visible the sentinel
-    // unmounts so growth stops. Capping would put blocks.length in this
-    // callback's deps and rebuild the IntersectionObserver on every appended
-    // block for nothing.
-    setVisibleCount((prev) => prev + LOAD_MORE_STEP)
+    return el ? el.scrollHeight - el.scrollTop : null
   }, [viewport])
+
+  const loadOlder = useCallback(() => {
+    // More of the already-downloaded `blocks` to reveal locally — same tick,
+    // so the usual capture-then-grow pairing (consumed by the layout effect
+    // below) applies directly.
+    if (startIndex > 0) {
+      pendingScrollRestoreRef.current = captureScrollAnchor()
+      setVisibleCount((prev) => prev + LOAD_MORE_STEP)
+      return
+    }
+    // Nothing left locally — the rest, if any, is still on the server (a
+    // bounded tail window was sent). Fetch it,
+    // and only THEN capture the scroll anchor and grow the window — doing
+    // both eagerly here (before the fetch resolves) would let the layout
+    // effect consume+restore the anchor against a scrollHeight that hasn't
+    // grown yet, missing the actual content change entirely.
+    if (!session.hasMoreHistory || session.loadingMoreHistory) {
+      return
+    }
+    void session.loadMoreHistory?.().then(() => {
+      pendingScrollRestoreRef.current = captureScrollAnchor()
+      setVisibleCount((prev) => prev + LOAD_MORE_STEP)
+    })
+  }, [startIndex, session, captureScrollAnchor])
 
   useLayoutEffect(() => {
     const delta = pendingScrollRestoreRef.current
@@ -328,7 +360,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
         <>
           {hasOlder && (
             <div ref={sentinelRef} className='py-1 text-center text-xs text-muted-foreground'>
-              · · ·
+              {session.loadingMoreHistory ? 'loading older…' : '· · ·'}
             </div>
           )}
           {visibleBlocks.map((b, i) => {
@@ -892,25 +924,22 @@ export function AgentChatInput({
   // keystrokes before the debounce would have fired aren't dropped.
   useEffect(() => () => flushPendingDraft(), [flushPendingDraft])
 
-  const onChangeText = useCallback(
-    (value: string) => {
-      setText(value)
-      const key = sessionKeyRef.current
-      pendingDraftRef.current = { key, text: value }
-      if (draftDebounceRef.current) {
-        clearTimeout(draftDebounceRef.current)
+  const onChangeText = useCallback((value: string) => {
+    setText(value)
+    const key = sessionKeyRef.current
+    pendingDraftRef.current = { key, text: value }
+    if (draftDebounceRef.current) {
+      clearTimeout(draftDebounceRef.current)
+    }
+    draftDebounceRef.current = setTimeout(() => {
+      draftDebounceRef.current = null
+      const pending = pendingDraftRef.current
+      if (pending) {
+        pendingDraftRef.current = null
+        onDraftChangeRef.current?.(pending.key, pending.text)
       }
-      draftDebounceRef.current = setTimeout(() => {
-        draftDebounceRef.current = null
-        const pending = pendingDraftRef.current
-        if (pending) {
-          pendingDraftRef.current = null
-          onDraftChangeRef.current?.(pending.key, pending.text)
-        }
-      }, DRAFT_SAVE_DEBOUNCE_MS)
-    },
-    [],
-  )
+    }, DRAFT_SAVE_DEBOUNCE_MS)
+  }, [])
 
   // Extension-provided input controls (e.g. voice) get a stable context: insert
   // transcribed text into the composer, send a message, or read the live reply

@@ -58,10 +58,11 @@ export {
   type ToolViewSpec,
   toolViewProps,
 } from './tool-views'
+export { TurnDetails, type TurnDetailsProps } from './turn-details'
 export {
   type AgentSessionController,
   type AgentUsage,
   type UseAgentSessionOptions,
   useAgentSession,
 } from './use-agent-session'
-export { TurnDetails, type TurnDetailsProps } from './turn-details'
+export { type UsePaginatedHistoryOptions, usePaginatedHistory } from './use-paginated-history'

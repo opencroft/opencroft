@@ -1,6 +1,7 @@
 'use client'
 
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
+import { usePaginatedHistory } from 'agent-chat'
 import type { ChatEvent, PermissionOpt, QueuedPrompt } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 
@@ -11,6 +12,7 @@ import {
   cancelLocal,
   ensureLocalSession,
   forkLocal,
+  getSessionHistoryPageLocal,
   promptLocal,
   removeQueuedLocal,
   respondLocal,
@@ -275,6 +277,17 @@ export function useAcpSession(
   transformRef.current = transformOutgoing
   const onTitleRef = useRef(onTitle)
   onTitleRef.current = onTitle
+  // sessionId is read through a ref (not closed over directly) so fetchPage's
+  // identity doesn't need to change — and can't go stale — across renders.
+  const sessionIdRef = useRef<string | null>(null)
+  sessionIdRef.current = sessionId
+  const paginatedHistory = usePaginatedHistory({
+    fetchPage: useCallback(async (beforeIndex: number) => {
+      const id = sessionIdRef.current
+      const page = id ? await getSessionHistoryPageLocal({ data: { sessionId: id, beforeIndex } }) : null
+      return page ?? { events: [], startIndex: beforeIndex, hasMore: false }
+    }, []),
+  })
 
   // Resolve (or lazily create) the live ACP session for this tab.
   useEffect(() => {
@@ -313,8 +326,10 @@ export function useAcpSession(
       return
     }
     const eventSource = new EventSource(`/api/acp/stream?sessionId=${encodeURIComponent(sessionId)}`)
-    // subscribe replays the session's full history on every (re)connect — including
-    // native EventSource auto-reconnects and a fork's sessionId swap — so onopen
+    // subscribe replays a bounded tail of the session's history on every
+    // (re)connect — including native EventSource auto-reconnects and a fork's
+    // sessionId swap (see acp.stream.ts's INITIAL_HISTORY_TURNS; older history
+    // is fetched separately via loadMoreHistory, not sent here) — so onopen
     // re-enters buffering mode each time: historical events queue in the ref below
     // instead of hitting setEvents, and are only committed (replacing, not
     // appending, to cleanly swap in a fork's rewound transcript) once history_end
@@ -329,6 +344,10 @@ export function useAcpSession(
         replayingHistoryRef.current = false
         setEvents(historyBufferRef.current)
         setLoading(false)
+        // The replayed history is a bounded tail (see acp.stream.ts), not
+        // necessarily the whole session — hand the cursor to the pagination
+        // hook so a scroll-triggered loadMoreHistory() picks up from here.
+        paginatedHistory.reset(event.startIndex, event.hasMore)
         return
       }
       if (replayingHistoryRef.current) {
@@ -342,7 +361,7 @@ export function useAcpSession(
     }
     eventSource.onerror = () => setLoading(false)
     return () => eventSource.close()
-  }, [sessionId])
+  }, [sessionId, paginatedHistory.reset])
 
   const folded = useMemo(() => fold(events), [events])
 
@@ -505,6 +524,20 @@ export function useAcpSession(
     [sessionId, resolvePermission, deliver, canSteer],
   )
 
+  // Fetches the next older page and prepends its raw events ahead of whatever
+  // is already loaded — fold() re-derives `messages` from the combined log, so
+  // the newly revealed history renders through the same path as everything
+  // else. Resolves once `events` (and so `messages`) reflects the fetched
+  // page — a caller can await it before adjusting its render window / scroll
+  // position instead of racing the fetch. A no-op fetch (nothing returned)
+  // resolves without touching `events`.
+  const loadMoreHistory = useCallback(async () => {
+    const older = await paginatedHistory.loadOlder()
+    if (older.length > 0) {
+      setEvents((prev) => [...older, ...prev])
+    }
+  }, [paginatedHistory.loadOlder])
+
   const session = useMemo<AgentSession>(
     () => ({
       sessionKey: tabKey,
@@ -518,6 +551,9 @@ export function useAcpSession(
       canFork,
       editMessage,
       draft,
+      hasMoreHistory: paginatedHistory.hasMore,
+      loadingMoreHistory: paginatedHistory.loadingMore,
+      loadMoreHistory,
     }),
     [
       tabKey,
@@ -532,6 +568,9 @@ export function useAcpSession(
       canFork,
       editMessage,
       draft,
+      paginatedHistory.hasMore,
+      paginatedHistory.loadingMore,
+      loadMoreHistory,
     ],
   )
 

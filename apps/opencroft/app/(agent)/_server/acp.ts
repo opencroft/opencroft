@@ -3,6 +3,7 @@ import { join } from 'node:path'
 
 import { createServerFn } from '@tanstack/react-start'
 import { supportsMidTurnInput } from 'agent-client'
+import type { EventsWindow } from 'agent-client/pagination'
 import type { AgentSelection } from 'agent-client/types'
 
 import {
@@ -70,7 +71,10 @@ interface TabSession {
 // and self-heals after a restart, without persisting fragile ids to the client.
 const globalRef = globalThis as typeof globalThis & {
   __acpTabSessions?: Map<string, TabSession>
-  __acpEnsureInFlight?: Map<string, Promise<{ sessionId: string; canFork: boolean; canSteer: boolean; created: boolean }>>
+  __acpEnsureInFlight?: Map<
+    string,
+    Promise<{ sessionId: string; canFork: boolean; canSteer: boolean; created: boolean }>
+  >
 }
 if (!globalRef.__acpTabSessions) {
   globalRef.__acpTabSessions = new Map()
@@ -311,7 +315,11 @@ export const forkLocal = createServerFn({ method: 'POST', strict: { output: fals
       return null
     }
     // The fork keeps the same agent, so steering capability carries over.
-    tabSessions.set(data.tabKey, { id: meta.id, canFork: true, canSteer: tabSessions.get(data.tabKey)?.canSteer ?? false })
+    tabSessions.set(data.tabKey, {
+      id: meta.id,
+      canFork: true,
+      canSteer: tabSessions.get(data.tabKey)?.canSteer ?? false,
+    })
     // Re-point the durable pointer at the fork so a restart resumes the branch.
     await writePersistedSession(data.tabKey, meta.id)
     return { sessionId: meta.id }
@@ -347,6 +355,23 @@ export const stopProcessLocal = createServerFn({ method: 'POST', strict: { outpu
       tabSessions.delete(tabKey)
     }
   })
+
+// How many turns a single "load older" scroll fetches — independent of
+// acp.stream.ts's INITIAL_HISTORY_TURNS (the two don't need to match, though
+// keeping them equal makes each older page roughly one screenful).
+const HISTORY_PAGE_TURNS = 40
+
+// The "older messages" half of the tail-first + scroll-up pagination pattern
+// is a plain request/response fetch against the
+// already-replayed, already in-memory event log — no protocol round-trip, no
+// SSE. `beforeIndex` is a previous window's `startIndex` (the stream's
+// history_end payload for the first call, or an earlier page's for the next).
+export const getSessionHistoryPageLocal = createServerFn({ method: 'GET', strict: { output: false } })
+  .inputValidator((data: { sessionId: string; beforeIndex: number }) => data)
+  .handler(
+    async ({ data }): Promise<EventsWindow | null> =>
+      agentClient.getEventsWindow(data.sessionId, { beforeIndex: data.beforeIndex, turns: HISTORY_PAGE_TURNS }),
+  )
 
 export const respondLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { type: 'permission' | 'ask'; requestId: string; optionId?: string; answer?: string }) => data)

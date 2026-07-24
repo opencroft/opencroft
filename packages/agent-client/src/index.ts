@@ -7,6 +7,7 @@ export { buildBlocks, foldEvents } from './fold'
 // Tool / skill registration surface.
 export type { LocalTool, SkillHandler, SkillsInput, ToolsInput } from './mcp-server'
 export type { KeyValue, McpServerConfig, McpTransport } from './mcp-types'
+export type { EventsWindow } from './pagination'
 // Permission model (also importable via the subpath).
 export type { AgentRole, DefaultAccess, PermissionValue, ResolvedPermissions } from './permissions'
 export { accessFor, resolveSessionPermissions, skillKey, toolKey } from './permissions'

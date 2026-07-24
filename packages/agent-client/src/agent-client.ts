@@ -28,6 +28,7 @@ import { readMcpConfig, resolveMcpServers } from './mcp-config'
 import { createMcpServer, type SkillHandler, type SkillsInput, type ToolsInput } from './mcp-server'
 import type { McpServerConfig } from './mcp-types'
 import { createNativeHarness, type NativeHarnessConfig, type NativeSession } from './native-harness'
+import { type EventsWindow, pageBeforeByTurns, tailByTurns } from './pagination'
 import { type ResolvedPermissions, toolKey } from './permissions'
 import { buildSpawnConfig, containerReachableMcpUrl, findAdapter } from './resolve'
 import { fileSkillHandler, fileSkills } from './skills'
@@ -111,6 +112,10 @@ interface SessionState {
   // Prompts received while a turn was active, delivered FIFO as turns end.
   // Every change is published as a 'queue' snapshot event.
   queue: QueuedPrompt[]
+  // Last usage_update seen, mirrored here (like modes/configOptions/queue) so
+  // a windowed subscribe/getEventsWindow can synthesize it without scanning
+  // history — see the SNAPSHOT_KINDS handling below.
+  usage?: { used: number; size?: number }
 }
 
 interface ConnEntry {
@@ -271,6 +276,36 @@ function emit(sessionId: string, event: ChatEvent): void {
   }
 }
 
+// "Last value wins" state (modes/config/queue/title/usage) mirrored on the
+// session itself as it changes (see handleUpdate below). A subscriber replayed
+// only a windowed tail of `events` (see subscribe's `fromIndex`) would
+// otherwise never see one of these if it last changed before the cut — so
+// prepend the live value whenever the window doesn't already carry it. Reads
+// off the session's live fields instead of scanning history, so this stays
+// O(1) (well, O(window size) for the `has` checks) regardless of transcript
+// size — the same trick the old modes-only version of this used, generalized
+// to every snapshot-kind event.
+function withSnapshotPrefix(session: SessionState, windowed: ChatEvent[]): ChatEvent[] {
+  const has = (kind: ChatEvent['kind']) => windowed.some((event) => event.kind === kind)
+  const prefix: ChatEvent[] = []
+  if (session.modes && !has('modes')) {
+    prefix.push({ kind: 'modes', available: session.modes.available, current: session.modes.current })
+  }
+  if (session.configOptions.length > 0 && !has('config_options')) {
+    prefix.push({ kind: 'config_options', options: session.configOptions })
+  }
+  if (session.meta.title && !has('session_info')) {
+    prefix.push({ kind: 'session_info', title: session.meta.title })
+  }
+  if (session.usage && !has('usage')) {
+    prefix.push({ kind: 'usage', used: session.usage.used, size: session.usage.size })
+  }
+  if (session.queue.length > 0 && !has('queue')) {
+    prefix.push({ kind: 'queue', items: [...session.queue] })
+  }
+  return prefix.length > 0 ? [...prefix, ...windowed] : windowed
+}
+
 // Drop every per-session MCP token minted for a session so the token maps don't
 // grow unbounded as sessions are deleted or repeatedly resumed.
 function dropSessionTokens(sessionId: string): void {
@@ -347,11 +382,12 @@ export function handleUpdate(notification: SessionNotification): void {
     }
     case 'usage_update': {
       // size <= 0 means the agent couldn't determine the context window.
-      emit(sessionId, {
-        kind: 'usage',
-        used: update.used,
-        size: update.size > 0 ? update.size : undefined,
-      })
+      const size = update.size > 0 ? update.size : undefined
+      const session = store.sessions.get(sessionId)
+      if (session) {
+        session.usage = { used: update.used, size }
+      }
+      emit(sessionId, { kind: 'usage', used: update.used, size })
       break
     }
     case 'config_option_update': {
@@ -992,12 +1028,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         const option = response.configOptions.find(
           (entry) => entry.category === 'thought_level' && entry.type === 'select',
         )
-        const value =
-          option && option.type === 'select' ? matchReasoningValue(option.options, effort) : undefined
+        const value = option && option.type === 'select' ? matchReasoningValue(option.options, effort) : undefined
         if (option && value) {
-          await this
-            .setConfigOption(sessionId, option.id, value)
-            .catch((error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }))
+          await this.setConfigOption(sessionId, option.id, value).catch((error: unknown) =>
+            emit(sessionId, { kind: 'error', message: errorMessage(error) }),
+          )
         }
       }
       return meta
@@ -1332,25 +1367,41 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       await connection.cancel({ sessionId })
     },
 
-    subscribe(sessionId: string, subscriber: Subscriber): () => void {
+    // `opts.fromIndex` bounds the replayed history to `session.events` starting
+    // at that absolute index (omit, or 0, for the full log — existing
+    // behavior). Live events (pushed after this call) are never bounded; only
+    // the replay-on-connect portion is. See getEventsWindow for computing a
+    // tail or older-page fromIndex to pass here.
+    subscribe(sessionId: string, subscriber: Subscriber, opts?: { fromIndex?: number }): () => void {
       const session = store.sessions.get(sessionId)
       if (!session) {
         return () => {}
       }
-      if (session.modes && !session.events.some((event) => event.kind === 'modes')) {
-        session.events.unshift({
-          kind: 'modes',
-          available: session.modes.available,
-          current: session.modes.current,
-        })
-      }
-      for (const event of session.events) {
+      const from = opts?.fromIndex ?? 0
+      const windowed = from > 0 ? session.events.slice(from) : session.events
+      for (const event of withSnapshotPrefix(session, windowed)) {
         subscriber(event)
       }
       session.subscribers.add(subscriber)
       return () => {
         session.subscribers.delete(subscriber)
       }
+    },
+
+    // A bounded slice of a session's event log, cut at user-turn boundaries
+    // (never mid-turn — see pagination.ts). Omit `beforeIndex` for the TAIL
+    // (the most recent `turns` turns — what a cold-opened chat should show
+    // first); pass a previous window's `startIndex` back as `beforeIndex` to
+    // page further back (a scroll-up "load older"). Returns null for an
+    // unknown session.
+    getEventsWindow(sessionId: string, opts: { beforeIndex?: number; turns: number }): EventsWindow | null {
+      const session = store.sessions.get(sessionId)
+      if (!session) {
+        return null
+      }
+      return opts.beforeIndex === undefined
+        ? tailByTurns(session.events, opts.turns)
+        : pageBeforeByTurns(session.events, opts.beforeIndex, opts.turns)
     },
 
     async reset(): Promise<void> {

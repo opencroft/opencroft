@@ -11,8 +11,17 @@ export const HISTORY_END_KIND = 'history_end' as const
 
 export interface HistoryEndEvent {
   kind: typeof HISTORY_END_KIND
+  // The replayed window's cursor: pass back as `beforeIndex` to fetch the page
+  // immediately before it (see getSessionHistoryPageLocal). `hasMore` is false
+  // once startIndex is 0 — the whole session has been sent, nothing left to
+  // page in. A cold-opened long-history chat now only ever receives a bounded
+  // tail here instead of the full transcript.
+  startIndex: number
+  hasMore: boolean
 }
 
-export const HISTORY_END_EVENT: HistoryEndEvent = { kind: HISTORY_END_KIND }
+export function historyEndEvent(startIndex: number, hasMore: boolean): HistoryEndEvent {
+  return { kind: HISTORY_END_KIND, startIndex, hasMore }
+}
 
 export type AcpStreamEvent = ChatEvent | HistoryEndEvent
