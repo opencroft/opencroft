@@ -1,4 +1,10 @@
-import { getExtensionModule } from '@/app/(extension-runtime)/_server/loader'
+import {
+  activateLifecycleExtensions,
+  extensionHasClient,
+  getExtensionModule,
+  loadAllManifests,
+} from '@/app/(extension-runtime)/_server/loader'
+import type { ExtensionManifestInfo } from '@/app/(extension-runtime)/_types'
 
 // Plain (non-server-fn) implementation, callable directly from other server-side
 // code that's already running server-side (e.g. the exec-context dispatcher) without
@@ -28,4 +34,17 @@ export async function invokeExtensionActionImpl(data: {
     throw new Error(`Extension ${extensionId} has no action "${actionName}"`)
   }
   return fn(...args)
+}
+
+// Plain (non-server-fn) implementation of listExtensionManifests, for callers that
+// don't run inside a TanStack Start request lifecycle — e.g. host.ts's getTerminalContext,
+// called from an extension's Nitro HTTP route handler, which never establishes that
+// context (see this module's own doc comment above for why the plain/server-fn split
+// exists at all).
+export async function listExtensionManifestsImpl(): Promise<ExtensionManifestInfo[]> {
+  await activateLifecycleExtensions()
+  const manifests = await loadAllManifests()
+  return Promise.all(
+    manifests.map(async (manifest) => ({ ...manifest, hasClient: await extensionHasClient(manifest.id) })),
+  )
 }

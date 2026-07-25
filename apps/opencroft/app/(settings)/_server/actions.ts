@@ -1,25 +1,16 @@
 import { createServerFn } from '@tanstack/react-start'
 
 import type { Setting } from '@/app/(settings)/_server/setting'
+import { getSettingImpl, setSettingImpl } from '@/app/(settings)/_server/settings-impl'
 import * as db from '@/server/data'
 
 export const getSetting = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((id: string) => id)
-  .handler(async ({ data: id }): Promise<Setting<Record<string, unknown>> | null> => {
-    const row = await db.getSetting(id)
-    if (!row) {
-      return null
-    }
-    return { ...row, data: JSON.parse(row.data) as Record<string, unknown> }
-  })
+  .handler(async ({ data: id }): Promise<Setting<Record<string, unknown>> | null> => getSettingImpl(id))
 
 export const setSetting = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { id: string; data: Record<string, unknown> }) => data)
-  .handler(async ({ data }): Promise<Setting<Record<string, unknown>>> => {
-    const { id } = data
-    const row = await db.upsertSetting(id, JSON.stringify(data.data))
-    return { ...row, data: data.data }
-  })
+  .handler(async ({ data }): Promise<Setting<Record<string, unknown>>> => setSettingImpl(data))
 
 export const updateSetting = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { id: string; data: Partial<Record<string, unknown>> }) => data)
