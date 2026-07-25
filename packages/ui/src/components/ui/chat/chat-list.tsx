@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, type DragEvent } from 'react'
+import { useState, useRef, type DragEvent, type PointerEvent } from 'react'
 import { ChevronDown, ChevronRight, Folder, FolderOpen, FolderPlus, Pencil, Trash2 } from 'lucide-react'
 
 import { ChatListItem, type ChatListItemAction, type ChatStatus } from '@/components/ui/chat/chat-list-item'
@@ -67,6 +67,21 @@ type Over =
   | { kind: 'item-slot'; list: string; index: number; pos: 'before' | 'after' }
   | { kind: 'folder'; folderId: string }
   | { kind: 'top-level' }
+
+// Horizontal movement past this starts a touch pointer-drag.
+const MOVE_TOLERANCE_PX = 8
+
+// An in-flight touch press on a row. Held in a ref (no re-render) until it
+// either becomes a drag or is cancelled (movement stays sub-tolerance, the
+// finger lifts, or the row menu opens -- see `handleMenuOpen`).
+interface TouchPress {
+  id: string
+  list: string
+  pointerId: number
+  startX: number
+  startY: number
+  dragging: boolean
+}
 
 function initState(nodes: ChatListNode[], defaultFolderOpen: boolean): ListState {
   const items: Record<string, ChatListLeaf> = {}
@@ -165,17 +180,33 @@ function applyDrop(s: ListState, drag: Drag, over: Over): ListState {
 // via **Move to new folder** in its row menu. Folder headers have always-visible
 // rename + delete (delete returns the chats to the loose list). Self-contained;
 // calls onChange on every structural change.
+//
+// Touch gesture arbitration: the row menu opens through Radix's
+// native contextmenu (right-click on desktop, the browser's long-press on
+// touch -- ContextMenu has no controlled/imperative open). A per-row pointer
+// controller (touch only) starts a pointer-based drag on horizontal movement;
+// when a row's menu opens, `handleMenuOpen` cancels the in-flight press so the
+// long-press that opened the menu can't also start a drag. Vertical movement is
+// left to the browser (pan-y scroll). Desktop mouse drag (native HTML5 DnD) and
+// right-click are untouched.
 export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, onRename, onStopProcess, onClose, onDelete, onChange, onRenameFolder, onCreateFolder, onDeleteFolder, className }: ChatListProps) {
   const [state, setState] = useState<ListState>(() => initState(nodes, defaultFolderOpen))
   const [drag, setDrag] = useState<Drag | null>(null)
   const [over, setOver] = useState<Over | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  // Live position of the pointer-dragged row, to render the lifted ghost.
+  const [touchDrag, setTouchDrag] = useState<{ id: string; x: number; y: number } | null>(null)
   const idCounter = useRef(0)
+  const pressRef = useRef<TouchPress | null>(null)
 
   const reset = () => {
     setDrag(null)
     setOver(null)
+  }
+
+  const clearPress = () => {
+    pressRef.current = null
   }
 
   const commit = (next: ListState) => {
@@ -249,10 +280,85 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
     { label: 'Move to new folder', icon: <FolderPlus className='size-3' />, onSelect: moveToNewFolder },
   ]
 
+  // --- Touch gesture arbitration ---
+
+  // The folder header under a screen point, if any (used to hit-test drop
+  // targets during a pointer drag).
+  const folderAtPoint = (x: number, y: number): string | null => {
+    if (typeof document === 'undefined') return null
+    const el = document.elementFromPoint(x, y) as HTMLElement | null
+    const header = el?.closest('[data-folder-header]') as HTMLElement | null
+    return header?.dataset.folderId ?? null
+  }
+
+  // The row menu just opened (Radix native contextmenu). Cancel the in-flight
+  // touch press so the long-press that opened the menu can't also start a drag;
+  // if a drag had already begun, abort it.
+  const handleMenuOpen = (open: boolean) => {
+    if (!open) return
+    if (pressRef.current?.dragging) {
+      setTouchDrag(null)
+      reset()
+    }
+    clearPress()
+  }
+
+  const onTouchPointerMove = (e: PointerEvent<HTMLDivElement>) => {
+    const p = pressRef.current
+    if (!p || p.pointerId !== e.pointerId) return
+    const dx = Math.abs(e.clientX - p.startX)
+    const dy = Math.abs(e.clientY - p.startY)
+    if (!p.dragging) {
+      if (dx > MOVE_TOLERANCE_PX && dx > dy) {
+        // Horizontal move wins -> start a pointer drag.
+        p.dragging = true
+        e.currentTarget.setPointerCapture(e.pointerId)
+        setDrag({ kind: 'item', id: p.id, from: p.list })
+        setTouchDrag({ id: p.id, x: e.clientX, y: e.clientY })
+        const fid = folderAtPoint(e.clientX, e.clientY)
+        setOver(fid ? { kind: 'folder', folderId: fid } : null)
+      }
+      return
+    }
+    // Already dragging: follow the finger and highlight the folder under it.
+    setTouchDrag({ id: p.id, x: e.clientX, y: e.clientY })
+    const fid = folderAtPoint(e.clientX, e.clientY)
+    setOver(fid ? { kind: 'folder', folderId: fid } : null)
+  }
+
+  const onTouchPointerUp = (e: PointerEvent<HTMLDivElement>) => {
+    const p = pressRef.current
+    if (!p || p.pointerId !== e.pointerId) return
+    if (p.dragging) {
+      const fid = folderAtPoint(e.clientX, e.clientY)
+      let target: Over | null = null
+      if (fid) target = { kind: 'folder', folderId: fid }
+      else if (p.list !== 'items') target = { kind: 'top-level' }
+      // else: dropped in empty space while already top-level -> no-op
+      if (target) {
+        const next = applyDrop(state, { kind: 'item', id: p.id, from: p.list }, target)
+        if (next !== state) commit(next)
+      }
+      setTouchDrag(null)
+      reset()
+    }
+    clearPress()
+  }
+
+  const onTouchPointerCancel = (e: PointerEvent<HTMLDivElement>) => {
+    const p = pressRef.current
+    if (!p || p.pointerId !== e.pointerId) return
+    if (p.dragging) {
+      setTouchDrag(null)
+      reset()
+    }
+    clearPress()
+  }
+
   const renderItem = (id: string, list: string, index: number) => {
     const leaf = state.items[id]
     if (!leaf) return null
-    const isDragged = drag?.kind === 'item' && drag.id === id
+    const isDragged = (drag?.kind === 'item' && drag.id === id) || touchDrag?.id === id
     const slotOver = over?.kind === 'item-slot' && over.list === list && over.index === index ? over : null
     return (
       <div key={id} className='relative'>
@@ -261,6 +367,14 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
         ) : null}
         <div
           draggable
+          onPointerDown={(e) => {
+            // Touch-only gesture arbitration; mouse falls through to native DnD.
+            if (e.pointerType !== 'touch') return
+            pressRef.current = { id, list, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, dragging: false }
+          }}
+          onPointerMove={onTouchPointerMove}
+          onPointerUp={onTouchPointerUp}
+          onPointerCancel={onTouchPointerCancel}
           onDragStart={(e) => {
             setDrag({ kind: 'item', id, from: list })
             e.dataTransfer.effectAllowed = 'move'
@@ -292,6 +406,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
             onClose={onClose}
             onDelete={onDelete}
             actions={itemActions}
+            onMenuOpenChange={handleMenuOpen}
           />
         </div>
         {slotOver && slotOver.pos === 'after' ? (
@@ -314,7 +429,10 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
               <div className='absolute -top-0.5 left-1 right-1 z-10 h-0.5 rounded-full bg-primary' />
             ) : null}
             <div
+              data-folder-header
+              data-folder-id={fid}
               draggable={editing !== fid}
+              style={{ touchAction: 'pan-y', WebkitTouchCallout: 'none' }}
               onDragStart={(e) => {
                 setDrag({ kind: 'folder', id: fid })
                 e.dataTransfer.effectAllowed = 'move'
@@ -434,6 +552,29 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
           Move to top level
         </div>
       ) : null}
+
+      {/* Lifted ghost following the finger during a touch pointer-drag. */}
+      {touchDrag ? (() => {
+        const leaf = state.items[touchDrag.id]
+        if (!leaf) return null
+        return (
+          <div
+            className='pointer-events-none fixed z-50'
+            style={{ left: touchDrag.x, top: touchDrag.y, transform: 'translateY(-50%)' }}
+          >
+            <div className='w-64 rounded-md bg-background p-1 shadow-lg ring-1 ring-border'>
+              <ChatListItem
+                id={leaf.id}
+                title={leaf.title}
+                description={leaf.description}
+                avatarUrl={leaf.avatarUrl}
+                status={leaf.status}
+                hasDraft={leaf.hasDraft}
+              />
+            </div>
+          </div>
+        )
+      })() : null}
     </div>
   )
 }

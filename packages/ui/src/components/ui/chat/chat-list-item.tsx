@@ -38,6 +38,12 @@ interface ChatListItemProps {
   onClose?: (id: string) => void
   onDelete?: (id: string) => void
   actions?: ChatListItemAction[]
+  // Notified when the context menu opens/closes. Radix `ContextMenu` owns the
+  // open state (it has no controlled/imperative open), so this
+  // is a notification, not control: the surrounding list uses it to cancel an
+  // in-flight touch press the moment the menu opens, so a long-press that opened
+  // the menu can't also start a drag.
+  onMenuOpenChange?: (open: boolean) => void
 }
 
 // The description line carries the process state as text, and a status dot is
@@ -63,10 +69,14 @@ const STATUS_DOT: Partial<Record<ChatStatus, StatusVariant>> = {
 // title and dimmed description, an optional unsent-draft pencil indicator, and
 // an optional actions menu (Rename / Stop process / Close / Delete, plus any
 // extra `actions`) built on the shadcn context-menu primitive. The menu opens
-// via right-click or long-press -- there is no visible trigger button -- so it
-// stays out of the way on both desktop and touch. Title/description truncate;
-// long content never grows the row. Self-contained, so it works in any list.
-export function ChatListItem({ id, title, description, avatarUrl, active = false, status, hasDraft = false, onSelect, onRename, onStopProcess, onClose, onDelete, actions }: ChatListItemProps) {
+// via right-click on desktop or long-press on touch -- both through Radix's
+// native contextmenu handling -- so there is no visible trigger button and it
+// stays out of the way on both. The row suppresses the browser's native
+// long-press behavior (iOS callout + text selection) and sets `touch-action:
+// pan-y` so vertical list scrolling keeps working; the list arbitrates the
+// long-press-vs-drag via `onMenuOpenChange`. Title/description
+// truncate; long content never grows the row. Self-contained, works in any list.
+export function ChatListItem({ id, title, description, avatarUrl, active = false, status, hasDraft = false, onSelect, onRename, onStopProcess, onClose, onDelete, actions, onMenuOpenChange }: ChatListItemProps) {
   const hasMenu = Boolean(onRename || onStopProcess || onClose || onDelete || actions?.length)
 
   // Derive the dot and the description's status word from the single `status`.
@@ -81,6 +91,7 @@ export function ChatListItem({ id, title, description, avatarUrl, active = false
       role='button'
       tabIndex={0}
       data-active={active}
+      style={{ touchAction: 'pan-y', WebkitTouchCallout: 'none', userSelect: 'none' }}
       onClick={() => onSelect?.(id)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -112,7 +123,7 @@ export function ChatListItem({ id, title, description, avatarUrl, active = false
   if (!hasMenu) return row
 
   return (
-    <ContextMenu>
+    <ContextMenu onOpenChange={onMenuOpenChange}>
       <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
       <ContextMenuContent
         className='min-w-[8rem]'
