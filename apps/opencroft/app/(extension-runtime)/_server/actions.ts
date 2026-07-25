@@ -6,13 +6,11 @@
 // in extension-action-impl.ts instead.
 import { createServerFn } from '@tanstack/react-start'
 
-import { invokeExtensionActionImpl } from '@/app/(extension-runtime)/_server/extension-action-impl'
 import {
-  activateLifecycleExtensions,
-  ensureExtensionBuilt,
-  extensionHasClient,
-  loadAllManifests,
-} from '@/app/(extension-runtime)/_server/loader'
+  invokeExtensionActionImpl,
+  listExtensionManifestsImpl,
+} from '@/app/(extension-runtime)/_server/extension-action-impl'
+import { ensureExtensionBuilt } from '@/app/(extension-runtime)/_server/loader'
 import type { ExtensionManifestInfo } from '@/app/(extension-runtime)/_types'
 
 // Client-callable wrapper — used when the caller is genuinely client-side code (see
@@ -23,13 +21,7 @@ export const invokeExtensionAction = createServerFn({ method: 'POST', strict: { 
   .handler(async ({ data }): Promise<unknown> => invokeExtensionActionImpl(data))
 
 export const listExtensionManifests = createServerFn({ strict: { output: false } }).handler(
-  async (): Promise<ExtensionManifestInfo[]> => {
-    await activateLifecycleExtensions()
-    const manifests = await loadAllManifests()
-    return Promise.all(
-      manifests.map(async (manifest) => ({ ...manifest, hasClient: await extensionHasClient(manifest.id) })),
-    )
-  },
+  async (): Promise<ExtensionManifestInfo[]> => listExtensionManifestsImpl(),
 )
 
 export const rebuildExtension = createServerFn({ method: 'POST' })

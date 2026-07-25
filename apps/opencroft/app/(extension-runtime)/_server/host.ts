@@ -31,6 +31,7 @@ import {
 } from '@/app/(extension-runtime)/_server/stream'
 import { slug } from '@/app/(server)/_server/types'
 import { getSetting, setSetting } from '@/app/(settings)/_server/actions'
+import { getSettingImpl, setSettingImpl } from '@/app/(settings)/_server/settings-impl'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
 import type { GraphData } from '@/app/(space)/_server/types'
 import { toastStore } from '@/lib/toast-store'
@@ -514,8 +515,8 @@ async function getTerminalContext(nodeId: string, handleId: string): Promise<Ter
   if (!node?.type) {
     throw new Error(`Node not found: ${nodeId}`)
   }
-  const { listExtensionManifests } = await import('@/app/(extension-runtime)/_server/actions')
-  const manifests = await listExtensionManifests()
+  const { listExtensionManifestsImpl } = await import('@/app/(extension-runtime)/_server/extension-action-impl')
+  const manifests = await listExtensionManifestsImpl()
   const manifest = manifests.find((m) => m.nodes?.some((n) => n.typeId === node.type))
   if (!manifest) {
     throw new Error(`No extension provides node type: ${node.type}`)
@@ -563,33 +564,33 @@ function storageApi(extensionId: string): ExtensionStorageApi {
   const prefix = `${extensionId}::`
   return {
     async get<T>(key: string): Promise<T | null> {
-      const all = (await getSetting({ data: STORAGE_SETTING_ID }))?.data ?? {}
+      const all = (await getSettingImpl(STORAGE_SETTING_ID))?.data ?? {}
       return (all[prefix + key] as T | undefined) ?? null
     },
     async set<T>(key: string, value: T): Promise<void> {
-      const all = (await getSetting({ data: STORAGE_SETTING_ID }))?.data ?? {}
+      const all = (await getSettingImpl(STORAGE_SETTING_ID))?.data ?? {}
       all[prefix + key] = value
-      await setSetting({ data: { id: STORAGE_SETTING_ID, data: all } })
+      await setSettingImpl({ id: STORAGE_SETTING_ID, data: all })
     },
     async delete(key: string): Promise<void> {
-      const all = (await getSetting({ data: STORAGE_SETTING_ID }))?.data ?? {}
+      const all = (await getSettingImpl(STORAGE_SETTING_ID))?.data ?? {}
       delete all[prefix + key]
-      await setSetting({ data: { id: STORAGE_SETTING_ID, data: all } })
+      await setSettingImpl({ id: STORAGE_SETTING_ID, data: all })
     },
     async list(): Promise<string[]> {
-      const all = (await getSetting({ data: STORAGE_SETTING_ID }))?.data ?? {}
+      const all = (await getSettingImpl(STORAGE_SETTING_ID))?.data ?? {}
       return Object.keys(all)
         .filter((k) => k.startsWith(prefix))
         .map((k) => k.slice(prefix.length))
     },
     async clear(): Promise<void> {
-      const all = (await getSetting({ data: STORAGE_SETTING_ID }))?.data ?? {}
+      const all = (await getSettingImpl(STORAGE_SETTING_ID))?.data ?? {}
       for (const k of Object.keys(all)) {
         if (k.startsWith(prefix)) {
           delete all[k]
         }
       }
-      await setSetting({ data: { id: STORAGE_SETTING_ID, data: all } })
+      await setSettingImpl({ id: STORAGE_SETTING_ID, data: all })
     },
   }
 }
