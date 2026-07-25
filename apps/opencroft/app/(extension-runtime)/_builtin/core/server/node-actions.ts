@@ -234,6 +234,46 @@ function sendMessageListAgentsAction(ctx: ActionCtx): Promise<{ agent: string; j
   return host.sendMessage.listAgents(ctx.nodeId)
 }
 
+interface SessionSummary {
+  sessionKey: string
+  agent: string
+  job: string
+  title: string
+  createdAt: number
+  lastActivityAt: number
+  status: 'offline' | 'idle' | 'working' | 'waiting'
+}
+
+function sendMessageListSessionsAction(ctx: ActionCtx): Promise<SessionSummary[]> {
+  const agent = typeof ctx.params.agent === 'string' ? ctx.params.agent : undefined
+  const job = typeof ctx.params.job === 'string' ? ctx.params.job : undefined
+  return host.sendMessage.listSessions(ctx.nodeId, { agent, job })
+}
+
+interface TurnSummary {
+  index: number
+  prompt: string
+  promptLength: number
+  status: 'finished' | 'in-progress' | 'interrupted'
+  finalMessage?: string
+  finalMessageLength?: number
+}
+
+function sendMessageListTurnsAction(ctx: ActionCtx): Promise<{
+  turns: TurnSummary[]
+  hasMore: boolean
+  nextBeforeIndex: number | null
+  sessionStatus: 'offline' | 'idle' | 'working' | 'waiting'
+}> {
+  const sessionKey = typeof ctx.params.sessionKey === 'string' ? ctx.params.sessionKey.trim() : ''
+  if (!sessionKey) {
+    throw new Error('"sessionKey" is required and must be a non-empty string')
+  }
+  const turns = typeof ctx.params.turns === 'number' ? ctx.params.turns : undefined
+  const beforeIndex = typeof ctx.params.beforeIndex === 'number' ? ctx.params.beforeIndex : undefined
+  return host.sendMessage.listTurns(ctx.nodeId, { sessionKey, turns, beforeIndex })
+}
+
 // ── Server node actions ───────────────────────────────────────────────────
 
 function serverConfigFromData(data: Record<string, unknown>): ServerConfig {
@@ -287,6 +327,8 @@ export const nodeActions = {
   'send-message': {
     send: sendMessageSendAction,
     listAgents: sendMessageListAgentsAction,
+    listSessions: sendMessageListSessionsAction,
+    listTurns: sendMessageListTurnsAction,
   },
   server: {
     setKey: serverSetKey,

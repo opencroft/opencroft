@@ -17,7 +17,13 @@ import {
   terminalRunResult,
 } from '@opencroft/terminal/server'
 
+import type { ChatEvent } from 'agent-client/types'
+
+import { agentClient } from '@/app/(agent)/_server/agent-client-instance'
+import { readSessions } from '@/app/(agent)/_server/agent-sessions-store'
+import { deriveSessionStatus, type SessionStatus } from '@/app/(agent)/_shared/session-status'
 import { dispatchExecutionContext, type ExecDispatchSummary } from '@/app/(extension-runtime)/_server/exec-dispatch'
+import { parseSessionKey } from '@/app/(extension-runtime)/_server/send-message-helpers'
 import {
   deliverToSendMessageNode,
   type GraphEdgeLike as SendMessageEdgeLike,
@@ -225,9 +231,157 @@ async function findSendMessageNode(
   }
 }
 
+// The agent/job slug pairs a send-message node can route to — same edge-walk
+// listAgents has always used, factored out so listSessions/listTurns can
+// filter the (node-independent) persisted session registry down to only the
+// sessions THIS node could actually reach, matching listAgents' own scoping.
+function reachableAgentJobs(
+  nodes: SendMessageNodeLike[],
+  edges: SendMessageEdgeLike[],
+): { agent: string; jobs: string[] }[] {
+  const jobsByAgentId = new Map<string, string[]>()
+  for (const edge of edges) {
+    const job = nodes.find((n) => n.id === edge.source && n.type === 'agent-job')
+    const jobName = (job?.data?.['name'] as string | undefined)?.trim()
+    if (!job || !jobName) {
+      continue
+    }
+    const list = jobsByAgentId.get(edge.target) ?? []
+    list.push(slug(jobName))
+    jobsByAgentId.set(edge.target, list)
+  }
+  const out: { agent: string; jobs: string[] }[] = []
+  for (const node of nodes) {
+    if (node.type !== 'agent') {
+      continue
+    }
+    const name = (node.data?.['name'] as string | undefined)?.trim()
+    if (!name) {
+      continue
+    }
+    out.push({ agent: slug(name), jobs: jobsByAgentId.get(node.id) ?? [] })
+  }
+  return out
+}
+
+function reachablePairKey(agent: string, job: string): string {
+  return `${agent}::${job}`
+}
+
+function reachablePairs(nodes: SendMessageNodeLike[], edges: SendMessageEdgeLike[]): Set<string> {
+  return new Set(reachableAgentJobs(nodes, edges).flatMap((a) => a.jobs.map((j) => reachablePairKey(a.agent, j))))
+}
+
+export interface SessionSummary {
+  sessionKey: string
+  agent: string
+  job: string
+  title: string
+  createdAt: number
+  lastActivityAt: number
+  // Same four-state vocabulary and derivation as the chat list's row status
+  // (see deriveSessionStatus) — waiting (pending permission) > working
+  // (active turn) > idle (alive, neither) > offline (no process).
+  status: SessionStatus
+}
+
+export interface TurnSummary {
+  index: number
+  prompt: string
+  promptLength: number
+  status: 'finished' | 'in-progress' | 'interrupted'
+  finalMessage?: string
+  finalMessageLength?: number
+}
+
+export interface TurnsPage {
+  turns: TurnSummary[]
+  hasMore: boolean
+  nextBeforeIndex: number | null
+  // The session's own status (see SessionSummary.status). An empty `turns`
+  // array means two different things depending on this: a genuinely empty
+  // (never-prompted) session at idle/working/waiting, vs. an offline session
+  // whose history isn't loaded in memory at all — a caller must be able to
+  // tell them apart without having read this action's description.
+  sessionStatus: SessionStatus
+}
+
+// ~400 chars is enough to identify a turn at a glance without pulling its
+// full text into an agent's context — these actions must stay cheap to call
+// regardless of how long a session's transcript is.
+const TURN_TEXT_MAX_CHARS = 400
+const DEFAULT_TURNS = 10
+// `turns` is caller-controlled — an unbounded value would walk the whole
+// transcript and scale the response with it, defeating the point of keeping
+// each turn's text truncated.
+const MAX_TURNS = 50
+
+export function truncateText(text: string, max = TURN_TEXT_MAX_CHARS): { text: string; length: number } {
+  const length = text.length
+  return length <= max ? { text, length } : { text: `${text.slice(0, max)}… [truncated]`, length }
+}
+
+export function turnStatus(events: ChatEvent[], inProgress: boolean): TurnSummary['status'] {
+  if (inProgress) {
+    return 'in-progress'
+  }
+  const end = events.find((e) => e.kind === 'turn_end')
+  if (!end || end.kind !== 'turn_end') {
+    // No terminal event at all: the turn errored (settleTurn's failure path
+    // never emits turn_end) or the process died mid-turn — either way, cut
+    // off rather than completed.
+    return 'interrupted'
+  }
+  // 'cancelled' = force-interrupted (stopProcessLocal/force-send); 'resumed'
+  // = a synthetic marker loadSession emits for a turn a restart cut off
+  // mid-flight (see agent-client.ts) — both are incomplete, not finished.
+  return end.stopReason === 'cancelled' || end.stopReason === 'resumed' ? 'interrupted' : 'finished'
+}
+
+export function buildTurnSummary(index: number, events: ChatEvent[], inProgress: boolean): TurnSummary {
+  const userEvent = events.find((e) => e.kind === 'user')
+  const prompt = truncateText(userEvent && userEvent.kind === 'user' ? userEvent.text : '')
+  const status = turnStatus(events, inProgress)
+  const summary: TurnSummary = { index, prompt: prompt.text, promptLength: prompt.length, status }
+  if (status === 'finished') {
+    let lastMessage: string | undefined
+    for (const event of events) {
+      if (event.kind === 'agent_message') {
+        lastMessage = event.text
+      }
+    }
+    const final = truncateText(lastMessage ?? '')
+    summary.finalMessage = final.text
+    summary.finalMessageLength = final.length
+  }
+  return summary
+}
+
+// Split a window's flat event array back into per-turn groups, tagging each
+// with its absolute index (window.startIndex + offset) so it can double as
+// the next page's `beforeIndex` cursor. tailByTurns/pageBeforeByTurns cut at
+// 'user' boundaries when any exist, but a session with zero turns (created,
+// never prompted — only 'modes'/'config_options'/etc. snapshot events) has
+// none: tailByTurns then returns that whole snapshot-only log as-is, not
+// starting with 'user'. Those leading events aren't part of any turn — skip
+// them (nothing to attach them to) rather than assume the invariant holds.
+export function splitIntoTurns(events: ChatEvent[], startIndex: number): { index: number; events: ChatEvent[] }[] {
+  const groups: { index: number; events: ChatEvent[] }[] = []
+  events.forEach((event, offset) => {
+    if (event.kind === 'user') {
+      groups.push({ index: startIndex + offset, events: [event] })
+    } else if (groups.length > 0) {
+      groups[groups.length - 1].events.push(event)
+    }
+  })
+  return groups
+}
+
 export interface HostSendMessageApi {
   send(nodeId: string, payload: Record<string, unknown>): Promise<{ sessionKey: string; created: boolean; forced: boolean }>
   listAgents(nodeId: string): Promise<{ agent: string; jobs: string[] }[]>
+  listSessions(nodeId: string, params: { agent?: string; job?: string }): Promise<SessionSummary[]>
+  listTurns(nodeId: string, params: { sessionKey: string; turns?: number; beforeIndex?: number }): Promise<TurnsPage>
 }
 
 const sendMessageApi: HostSendMessageApi = {
@@ -260,29 +414,96 @@ const sendMessageApi: HostSendMessageApi = {
     if (!found) {
       throw new Error(`Node not found: ${nodeId}`)
     }
-    const jobsByAgentId = new Map<string, string[]>()
-    for (const edge of found.edges) {
-      const job = found.nodes.find((n) => n.id === edge.source && n.type === 'agent-job')
-      const jobName = (job?.data?.['name'] as string | undefined)?.trim()
-      if (!job || !jobName) {
-        continue
-      }
-      const list = jobsByAgentId.get(edge.target) ?? []
-      list.push(slug(jobName))
-      jobsByAgentId.set(edge.target, list)
+    return reachableAgentJobs(found.nodes, found.edges)
+  },
+
+  async listSessions(nodeId, params) {
+    const found = await findSendMessageNode(nodeId)
+    if (!found) {
+      throw new Error(`Node not found: ${nodeId}`)
     }
-    const out: { agent: string; jobs: string[] }[] = []
-    for (const node of found.nodes) {
-      if (node.type !== 'agent') {
-        continue
-      }
-      const name = (node.data?.['name'] as string | undefined)?.trim()
-      if (!name) {
-        continue
-      }
-      out.push({ agent: slug(name), jobs: jobsByAgentId.get(node.id) ?? [] })
+    const reachable = reachablePairs(found.nodes, found.edges)
+    const agentFilter = typeof params.agent === 'string' ? params.agent.trim() : undefined
+    const jobFilter = typeof params.job === 'string' ? params.job.trim() : undefined
+
+    const sessionKeys = {
+      pending: new Set(agentClient.pendingPermissionSessionKeys()),
+      active: new Set(agentClient.activeSessionKeys()),
+      alive: new Set(agentClient.aliveSessionKeys()),
     }
+    const metaByKey = new Map(
+      agentClient
+        .listSessions()
+        .filter((m) => m.sessionKey)
+        .map((m) => [m.sessionKey as string, m]),
+    )
+
+    const out: SessionSummary[] = []
+    for (const entry of await readSessions()) {
+      const parts = parseSessionKey(entry.key)
+      if (!parts || !reachable.has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
+        continue
+      }
+      if (agentFilter && parts.agentSlug !== agentFilter) {
+        continue
+      }
+      if (jobFilter && parts.jobSlug !== jobFilter) {
+        continue
+      }
+      out.push({
+        sessionKey: entry.key,
+        agent: parts.agentSlug,
+        job: parts.jobSlug,
+        title: entry.title ?? '',
+        createdAt: entry.createdAt,
+        // Dead sessions have no in-memory state to read a real activity time
+        // from (agent-client sessions don't survive a restart) — fall back to
+        // createdAt rather than fabricate one.
+        lastActivityAt: metaByKey.get(entry.key)?.lastActivityAt ?? entry.createdAt,
+        status: deriveSessionStatus(entry.key, sessionKeys),
+      })
+    }
+    out.sort((a, b) => b.lastActivityAt - a.lastActivityAt)
     return out
+  },
+
+  async listTurns(nodeId, params) {
+    const found = await findSendMessageNode(nodeId)
+    if (!found) {
+      throw new Error(`Node not found: ${nodeId}`)
+    }
+    const sessionKey = params.sessionKey.trim()
+    const parts = sessionKey ? parseSessionKey(sessionKey) : null
+    if (!parts || !reachablePairs(found.nodes, found.edges).has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
+      throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
+    }
+    const turns = params.turns && params.turns > 0 ? Math.min(Math.floor(params.turns), MAX_TURNS) : DEFAULT_TURNS
+    const sessionStatus = deriveSessionStatus(sessionKey, {
+      pending: new Set(agentClient.pendingPermissionSessionKeys()),
+      active: new Set(agentClient.activeSessionKeys()),
+      alive: new Set(agentClient.aliveSessionKeys()),
+    })
+
+    const meta = agentClient.listSessions().find((m) => m.sessionKey === sessionKey)
+    if (!meta) {
+      // No live process for this session (dead, or never started) — nothing
+      // in memory to page through.
+      return { turns: [], hasMore: false, nextBeforeIndex: null, sessionStatus }
+    }
+    const window = agentClient.getEventsWindow(meta.id, { turns, beforeIndex: params.beforeIndex })
+    if (!window) {
+      return { turns: [], hasMore: false, nextBeforeIndex: null, sessionStatus }
+    }
+    // Only the tail window (no beforeIndex) can end on the session's current,
+    // still-running turn — any older page is by definition already over.
+    const tailInProgress = params.beforeIndex === undefined && agentClient.hasActiveTurn(meta.id)
+    const groups = splitIntoTurns(window.events, window.startIndex)
+    return {
+      turns: groups.map((group, i) => buildTurnSummary(group.index, group.events, tailInProgress && i === groups.length - 1)),
+      hasMore: window.hasMore,
+      nextBeforeIndex: window.hasMore ? window.startIndex : null,
+      sessionStatus,
+    }
   },
 }
 

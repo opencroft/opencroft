@@ -271,6 +271,7 @@ function emit(sessionId: string, event: ChatEvent): void {
     return
   }
   session.events.push(event)
+  session.meta.lastActivityAt = Date.now()
   for (const subscriber of session.subscribers) {
     subscriber(event)
   }
@@ -980,11 +981,14 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         }
       }
       store.titleCounter += 1
+      const now = Date.now()
       const meta: SessionMeta = {
         id: sessionId,
         title: `New chat ${store.titleCounter}`,
-        createdAt: Date.now(),
+        createdAt: now,
+        lastActivityAt: now,
         canFork: native,
+        sessionKey: selection.sessionKey,
       }
       store.sessions.set(sessionId, {
         meta,
@@ -1067,11 +1071,14 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         mcpServers = tagInternal(internal, servers, token)
       }
       store.titleCounter += 1
+      const loadedAt = Date.now()
       const meta: SessionMeta = {
         id: sessionId,
         title: `New chat ${store.titleCounter}`,
-        createdAt: Date.now(),
+        createdAt: loadedAt,
+        lastActivityAt: loadedAt,
         canFork: false,
+        sessionKey: selection.sessionKey,
       }
       // Register the session record BEFORE the replay: the agent streams its
       // history as session/update notifications, and emit()/subscribe() drop
@@ -1270,12 +1277,18 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       const forkedEvents = (
         boundary === null ? session.events.filter((event) => event.kind === 'modes') : session.events.slice(0, boundary)
       ).filter((event) => event.kind !== 'queue')
+      const forkedAt = Date.now()
       const meta: SessionMeta = {
         id: response.sessionId,
         title: `${session.meta.title} (fork)`,
-        createdAt: Date.now(),
+        createdAt: forkedAt,
+        lastActivityAt: forkedAt,
         profileId: session.meta.profileId,
         canFork: true,
+        // Deliberately not inherited from the source session: a fork is reached
+        // through its own tab, never through the original sessionKey (see
+        // forkLocal in acp.ts), so carrying the key forward would make a
+        // sessionKey -> session lookup ambiguous between the two.
       }
       store.sessions.set(response.sessionId, {
         meta,
