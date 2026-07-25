@@ -3,7 +3,7 @@
 export type { AgentClientOptions, ClientInfo } from './agent-client'
 export { agentClient, createAgentClient, supportsMidTurnInput } from './agent-client'
 export type { ChatBlock, ChatMessage } from './fold'
-export { buildBlocks, foldEvents } from './fold'
+export { buildBlocks, foldEvents, isTerminalToolStatus } from './fold'
 // Tool / skill registration surface.
 export type { LocalTool, SkillHandler, SkillsInput, ToolsInput } from './mcp-server'
 export type { KeyValue, McpServerConfig, McpTransport } from './mcp-types'

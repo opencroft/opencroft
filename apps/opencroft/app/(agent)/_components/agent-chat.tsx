@@ -20,6 +20,7 @@ import {
 import {
   type ComponentType,
   type FormEvent,
+  Fragment,
   type KeyboardEvent,
   useCallback,
   useEffect,
@@ -76,6 +77,16 @@ export interface AgentSession {
   // sequence a DOM-window/scroll-position change with the data actually
   // landing, instead of the two racing.
   loadMoreHistory?: () => Promise<void>
+  // Whether the newest turn's own tool-call history was itself trimmed on
+  // load — a turn with a huge number of tool calls (a long agent run) can
+  // blow up the initial load the same way a huge transcript can, so
+  // turn-level windowing alone can't bound it. Independent of
+  // hasMoreHistory, which pages whole earlier turns.
+  hasMoreInTurn?: boolean
+  loadingMoreInTurn?: boolean
+  // Fetches and splices in the next older page of tool calls within the
+  // current turn. Same await contract as loadMoreHistory.
+  loadMoreInTurn?: () => Promise<void>
 }
 
 interface AgentChatProps {
@@ -395,15 +406,27 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
                 onEdit={edit ? () => edit(turnByBlock.get(index) ?? 0, b.text) : undefined}
               />
             ) : (
-              <Details
-                key={b.id}
-                items={b.items}
-                botName={displayName}
-                agentAvatar={agentAvatar}
-                defaultCollapsed={detailsCollapsedRef.current}
-                onCollapseChange={onDetailsCollapseChange}
-                pending={index === blocks.length - 1 && session.waiting}
-              />
+              <Fragment key={b.id}>
+                {/* Only the newest turn can have been trimmed on load — a
+                    manual button rather than the scroll-triggered sentinel
+                    above, deliberately: it never touches
+                    scrollTop/scrollHeight, so it can't interact with the
+                    load-older scroll-restore logic. */}
+                {index === blocks.length - 1 && session.hasMoreInTurn && (
+                  <LoadMoreInTurnButton
+                    loading={session.loadingMoreInTurn === true}
+                    onClick={() => void session.loadMoreInTurn?.()}
+                  />
+                )}
+                <Details
+                  items={b.items}
+                  botName={displayName}
+                  agentAvatar={agentAvatar}
+                  defaultCollapsed={detailsCollapsedRef.current}
+                  onCollapseChange={onDetailsCollapseChange}
+                  pending={index === blocks.length - 1 && session.waiting}
+                />
+              </Fragment>
             )
           })}
         </>
@@ -459,6 +482,24 @@ function ToolCallView({ item }: { item: Extract<DetailItem, { kind: 'tool' }> })
     return <ViewComponent tool={item.name} args={args} requestId={item.id} mode='history' result={item.result} />
   }
   return <GenericToolView tool={item.name} args={args} result={item.result} />
+}
+
+// A manual "load older tool calls in this turn" control — click-to-fetch
+// rather than a scroll sentinel, so it never reads or writes
+// scrollTop/scrollHeight and can't interact with loadOlder's own restore logic
+// above.
+function LoadMoreInTurnButton({ loading, onClick }: { loading: boolean; onClick: () => void }) {
+  return (
+    <Button
+      variant='ghost'
+      size='sm'
+      className='self-start text-xs text-muted-foreground'
+      disabled={loading}
+      onClick={onClick}
+    >
+      {loading ? 'Loading earlier tool calls…' : 'Load earlier tool calls'}
+    </Button>
+  )
 }
 
 type DetailEntry = { kind: 'header' } | { kind: 'item'; item: DetailItem }

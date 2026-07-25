@@ -373,6 +373,21 @@ export const getSessionHistoryPageLocal = createServerFn({ method: 'GET', strict
       agentClient.getEventsWindow(data.sessionId, { beforeIndex: data.beforeIndex, turns: HISTORY_PAGE_TURNS }),
   )
 
+// How many records a single "load older tool calls in this turn" fetch
+// returns — the in-turn counterpart of HISTORY_PAGE_TURNS.
+const TURN_RECORDS_PAGE_SIZE = 20
+
+// The "older tool calls within the current turn" fetch: same shape as
+// getSessionHistoryPageLocal, one level finer. `turnStart` and the initial
+// `beforeIndex` come from the stream's history_end `trimmedTurn` payload; a
+// later page's own `startIndex` feeds the next call.
+export const getSessionTurnRecordsPageLocal = createServerFn({ method: 'GET', strict: { output: false } })
+  .inputValidator((data: { sessionId: string; turnStart: number; beforeIndex: number }) => data)
+  .handler(
+    async ({ data }): Promise<EventsWindow | null> =>
+      agentClient.getTurnRecordsWindow(data.sessionId, data.turnStart, data.beforeIndex, TURN_RECORDS_PAGE_SIZE),
+  )
+
 export const respondLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { type: 'permission' | 'ask'; requestId: string; optionId?: string; answer?: string }) => data)
   .handler(async ({ data }): Promise<void> => {
