@@ -241,8 +241,7 @@ interface SessionSummary {
   title: string
   createdAt: number
   lastActivityAt: number
-  processAlive: boolean
-  activeTurn: boolean
+  status: 'offline' | 'idle' | 'working' | 'waiting'
 }
 
 function sendMessageListSessionsAction(ctx: ActionCtx): Promise<SessionSummary[]> {
@@ -260,9 +259,12 @@ interface TurnSummary {
   finalMessageLength?: number
 }
 
-function sendMessageListTurnsAction(
-  ctx: ActionCtx,
-): Promise<{ turns: TurnSummary[]; hasMore: boolean; nextBeforeIndex: number | null; sessionAlive: boolean }> {
+function sendMessageListTurnsAction(ctx: ActionCtx): Promise<{
+  turns: TurnSummary[]
+  hasMore: boolean
+  nextBeforeIndex: number | null
+  sessionStatus: 'offline' | 'idle' | 'working' | 'waiting'
+}> {
   const sessionKey = typeof ctx.params.sessionKey === 'string' ? ctx.params.sessionKey.trim() : ''
   if (!sessionKey) {
     throw new Error('"sessionKey" is required and must be a non-empty string')

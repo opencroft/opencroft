@@ -21,6 +21,7 @@ import type { ChatEvent } from 'agent-client/types'
 
 import { agentClient } from '@/app/(agent)/_server/agent-client-instance'
 import { readSessions } from '@/app/(agent)/_server/agent-sessions-store'
+import { deriveSessionStatus, type SessionStatus } from '@/app/(agent)/_shared/session-status'
 import { dispatchExecutionContext, type ExecDispatchSummary } from '@/app/(extension-runtime)/_server/exec-dispatch'
 import { parseSessionKey } from '@/app/(extension-runtime)/_server/send-message-helpers'
 import {
@@ -278,8 +279,10 @@ export interface SessionSummary {
   title: string
   createdAt: number
   lastActivityAt: number
-  processAlive: boolean
-  activeTurn: boolean
+  // Same four-state vocabulary and derivation as the chat list's row status
+  // (see deriveSessionStatus) — waiting (pending permission) > working
+  // (active turn) > idle (alive, neither) > offline (no process).
+  status: SessionStatus
 }
 
 export interface TurnSummary {
@@ -295,12 +298,12 @@ export interface TurnsPage {
   turns: TurnSummary[]
   hasMore: boolean
   nextBeforeIndex: number | null
-  // Whether the session has a live agent-client process right now. An empty
-  // `turns` array means two different things depending on this: a genuinely
-  // empty (never-prompted) live session, vs. a dead session whose history
-  // isn't loaded in memory at all — a caller must be able to tell them apart
-  // without having read this action's description.
-  sessionAlive: boolean
+  // The session's own status (see SessionSummary.status). An empty `turns`
+  // array means two different things depending on this: a genuinely empty
+  // (never-prompted) session at idle/working/waiting, vs. an offline session
+  // whose history isn't loaded in memory at all — a caller must be able to
+  // tell them apart without having read this action's description.
+  sessionStatus: SessionStatus
 }
 
 // ~400 chars is enough to identify a turn at a glance without pulling its
@@ -423,8 +426,11 @@ const sendMessageApi: HostSendMessageApi = {
     const agentFilter = typeof params.agent === 'string' ? params.agent.trim() : undefined
     const jobFilter = typeof params.job === 'string' ? params.job.trim() : undefined
 
-    const aliveKeys = new Set(agentClient.aliveSessionKeys())
-    const activeKeys = new Set(agentClient.activeSessionKeys())
+    const sessionKeys = {
+      pending: new Set(agentClient.pendingPermissionSessionKeys()),
+      active: new Set(agentClient.activeSessionKeys()),
+      alive: new Set(agentClient.aliveSessionKeys()),
+    }
     const metaByKey = new Map(
       agentClient
         .listSessions()
@@ -454,8 +460,7 @@ const sendMessageApi: HostSendMessageApi = {
         // from (agent-client sessions don't survive a restart) — fall back to
         // createdAt rather than fabricate one.
         lastActivityAt: metaByKey.get(entry.key)?.lastActivityAt ?? entry.createdAt,
-        processAlive: aliveKeys.has(entry.key),
-        activeTurn: activeKeys.has(entry.key),
+        status: deriveSessionStatus(entry.key, sessionKeys),
       })
     }
     out.sort((a, b) => b.lastActivityAt - a.lastActivityAt)
@@ -473,16 +478,21 @@ const sendMessageApi: HostSendMessageApi = {
       throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
     }
     const turns = params.turns && params.turns > 0 ? Math.min(Math.floor(params.turns), MAX_TURNS) : DEFAULT_TURNS
+    const sessionStatus = deriveSessionStatus(sessionKey, {
+      pending: new Set(agentClient.pendingPermissionSessionKeys()),
+      active: new Set(agentClient.activeSessionKeys()),
+      alive: new Set(agentClient.aliveSessionKeys()),
+    })
 
     const meta = agentClient.listSessions().find((m) => m.sessionKey === sessionKey)
     if (!meta) {
       // No live process for this session (dead, or never started) — nothing
       // in memory to page through.
-      return { turns: [], hasMore: false, nextBeforeIndex: null, sessionAlive: false }
+      return { turns: [], hasMore: false, nextBeforeIndex: null, sessionStatus }
     }
     const window = agentClient.getEventsWindow(meta.id, { turns, beforeIndex: params.beforeIndex })
     if (!window) {
-      return { turns: [], hasMore: false, nextBeforeIndex: null, sessionAlive: false }
+      return { turns: [], hasMore: false, nextBeforeIndex: null, sessionStatus }
     }
     // Only the tail window (no beforeIndex) can end on the session's current,
     // still-running turn — any older page is by definition already over.
@@ -492,7 +502,7 @@ const sendMessageApi: HostSendMessageApi = {
       turns: groups.map((group, i) => buildTurnSummary(group.index, group.events, tailInProgress && i === groups.length - 1)),
       hasMore: window.hasMore,
       nextBeforeIndex: window.hasMore ? window.startIndex : null,
-      sessionAlive: true,
+      sessionStatus,
     }
   },
 }
