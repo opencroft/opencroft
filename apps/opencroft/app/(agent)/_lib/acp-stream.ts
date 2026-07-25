@@ -18,10 +18,20 @@ export interface HistoryEndEvent {
   // tail here instead of the full transcript.
   startIndex: number
   hasMore: boolean
+  // Present only when the newest turn itself was too large to send in full —
+  // a turn with a huge number of tool calls can blow up the initial load the
+  // same way a huge transcript can. A second, independent cursor for "load
+  // older tool calls in this turn" (see getSessionTurnRecordsPageLocal),
+  // separate from `startIndex`/`hasMore` above, which page whole earlier turns.
+  trimmedTurn?: { turnStart: number; startIndex: number; hasMore: boolean }
 }
 
-export function historyEndEvent(startIndex: number, hasMore: boolean): HistoryEndEvent {
-  return { kind: HISTORY_END_KIND, startIndex, hasMore }
+export function historyEndEvent(
+  startIndex: number,
+  hasMore: boolean,
+  trimmedTurn?: HistoryEndEvent['trimmedTurn'],
+): HistoryEndEvent {
+  return { kind: HISTORY_END_KIND, startIndex, hasMore, ...(trimmedTurn ? { trimmedTurn } : {}) }
 }
 
 export type AcpStreamEvent = ChatEvent | HistoryEndEvent

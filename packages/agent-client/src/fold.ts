@@ -33,6 +33,17 @@ export type ChatMessage =
   | { id: string; kind: 'error'; text: string }
 
 type ToolMessage = Extract<ChatMessage, { kind: 'tool' }>
+
+// A tool call is settled once it reaches one of these statuses — every other
+// status ('pending', 'in_progress') means more updates are still expected for
+// the same toolCallId. Defined here, beside the correlation logic that owns
+// the tool-call lifecycle, so renderers and the pagination cut rule share one
+// definition instead of each hardcoding the status strings.
+const TERMINAL_TOOL_STATUSES = new Set(['completed', 'failed'])
+
+export function isTerminalToolStatus(status: string | undefined): boolean {
+  return status !== undefined && TERMINAL_TOOL_STATUSES.has(status)
+}
 type PermissionMessage = Extract<ChatMessage, { kind: 'permission' }>
 type AskMessage = Extract<ChatMessage, { kind: 'ask' }>
 
