@@ -1,0 +1,101 @@
+// Pure-function tests for the turn-summary logic behind the send-message node's
+// listTurns action — status derivation, truncation, and window-to-turns splitting.
+// No DB, no agent-client session store: run directly with
+//   node_modules/.bin/tsx --test 'app/(extension-runtime)/_server/host-turns.test.ts'
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+import type { ChatEvent } from 'agent-client/types'
+
+import { buildTurnSummary, splitIntoTurns, truncateText, turnStatus } from './host'
+
+test('truncateText leaves short text untouched', () => {
+  const result = truncateText('hello')
+  assert.equal(result.text, 'hello')
+  assert.equal(result.length, 5)
+})
+
+test('truncateText cuts long text with a marker but reports the original length', () => {
+  const long = 'x'.repeat(500)
+  const result = truncateText(long, 400)
+  assert.equal(result.text, `${'x'.repeat(400)}… [truncated]`)
+  assert.equal(result.length, 500)
+})
+
+test('turnStatus is finished on a normal end_turn', () => {
+  const events: ChatEvent[] = [{ kind: 'user', text: 'hi' }, { kind: 'turn_end', stopReason: 'end_turn' }]
+  assert.equal(turnStatus(events, false), 'finished')
+})
+
+test('turnStatus is finished on max_tokens/refusal too — the agent completed its turn', () => {
+  assert.equal(turnStatus([{ kind: 'turn_end', stopReason: 'max_tokens' }], false), 'finished')
+  assert.equal(turnStatus([{ kind: 'turn_end', stopReason: 'refusal' }], false), 'finished')
+})
+
+test('turnStatus is interrupted on a cancelled stopReason', () => {
+  assert.equal(turnStatus([{ kind: 'turn_end', stopReason: 'cancelled' }], false), 'interrupted')
+})
+
+test('turnStatus is interrupted on the synthetic "resumed" marker (restart cut the turn off)', () => {
+  assert.equal(turnStatus([{ kind: 'turn_end', stopReason: 'resumed' }], false), 'interrupted')
+})
+
+test('turnStatus is interrupted when there is no terminal event at all (errored or process died)', () => {
+  assert.equal(turnStatus([{ kind: 'user', text: 'hi' }, { kind: 'error', message: 'boom' }], false), 'interrupted')
+  assert.equal(turnStatus([{ kind: 'user', text: 'hi' }], false), 'interrupted')
+})
+
+test('turnStatus reports in-progress when told so, even without a terminal event', () => {
+  assert.equal(turnStatus([{ kind: 'user', text: 'hi' }], true), 'in-progress')
+})
+
+test('turnStatus prefers in-progress over a stray terminal event from a prior settlement', () => {
+  assert.equal(turnStatus([{ kind: 'turn_end', stopReason: 'cancelled' }], true), 'in-progress')
+})
+
+test('buildTurnSummary includes a truncated finalMessage only when finished', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'hi' },
+    { kind: 'agent_thought', text: 'thinking...' },
+    { kind: 'agent_message', text: 'first draft' },
+    { kind: 'agent_message', text: 'final answer' },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ]
+  const summary = buildTurnSummary(3, events, false)
+  assert.equal(summary.index, 3)
+  assert.equal(summary.status, 'finished')
+  assert.equal(summary.prompt, 'hi')
+  assert.equal(summary.promptLength, 2)
+  assert.equal(summary.finalMessage, 'final answer')
+  assert.equal(summary.finalMessageLength, 'final answer'.length)
+})
+
+test('buildTurnSummary omits finalMessage for interrupted/in-progress turns', () => {
+  const cancelled = buildTurnSummary(0, [{ kind: 'turn_end', stopReason: 'cancelled' }], false)
+  assert.equal(cancelled.status, 'interrupted')
+  assert.equal('finalMessage' in cancelled, false)
+
+  const running = buildTurnSummary(0, [{ kind: 'user', text: 'hi' }, { kind: 'agent_message', text: 'partial' }], true)
+  assert.equal(running.status, 'in-progress')
+  assert.equal('finalMessage' in running, false)
+})
+
+test('splitIntoTurns groups events at each user boundary and tags absolute indices', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'turn A' },
+    { kind: 'agent_message', text: 'reply A' },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+    { kind: 'user', text: 'turn B' },
+    { kind: 'agent_message', text: 'reply B' },
+  ]
+  const groups = splitIntoTurns(events, 10)
+  assert.equal(groups.length, 2)
+  assert.equal(groups[0].index, 10)
+  assert.equal(groups[0].events.length, 3)
+  assert.equal(groups[1].index, 13)
+  assert.equal(groups[1].events.length, 2)
+})
+
+test('splitIntoTurns on an empty window returns no groups', () => {
+  assert.deepEqual(splitIntoTurns([], 5), [])
+})

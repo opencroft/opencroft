@@ -242,6 +242,34 @@
           "icon": "List",
           "description": "Enumerate the agents (and their jobs) this node can route to via `send` — same space, same slug resolution, so any value returned here is guaranteed to route.",
           "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+          "id": "listSessions",
+          "label": "List Sessions",
+          "icon": "ListTree",
+          "description": "List the sessions this node can reach (same agent/job resolution as `send`) — compact navigation info only, never message content. Optionally filter by agent and/or job slug.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "agent": { "type": "string", "description": "Only sessions for this agent slug" },
+              "job": { "type": "string", "description": "Only sessions for this job slug" }
+            }
+          }
+        },
+        {
+          "id": "listTurns",
+          "label": "List Turns",
+          "icon": "History",
+          "description": "Tail-first, cursor-paged view of a session's turns (a sessionKey from listSessions) — truncated prompt/final-message text only, never the full event stream. Omit beforeIndex for the most recent turns; pass a previous page's nextBeforeIndex to page further back.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "sessionKey": { "type": "string", "description": "Session key, as returned by listSessions" },
+              "turns": { "type": "number", "description": "Number of turns to return (default 10)" },
+              "beforeIndex": { "type": "number", "description": "Cursor from a previous page's nextBeforeIndex — fetches the turns immediately before it" }
+            },
+            "required": ["sessionKey"]
+          }
         }
       ]
     },
