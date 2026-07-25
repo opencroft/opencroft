@@ -38,6 +38,7 @@ import { Textarea } from 'ui/textarea'
 
 import { buildBlocks, type DetailItem, stripOpencroftTags } from '@/app/(agent)/_lib/build-blocks'
 import type { ChatMessage } from '@/app/(agent)/_lib/messages'
+import { restoreShift } from '@/app/(agent)/_lib/scroll-restore'
 import { getAutoApprove, setAutoApprove } from '@/app/(approvals)/_server/actions'
 import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
 import { loadAllExtensions } from '@/app/(extension-runtime)/_client/loader'
@@ -90,7 +91,13 @@ interface AgentChatProps {
 
 const SCROLL_BOTTOM_THRESHOLD = 32
 
-function useStickToBottom(resetKey: string, contentKey: number) {
+// `holdPosition` reports whether a windowed-history scroll restore is in
+// flight. While one is, the two auto-follow paths below stand down: a "load
+// older" prepend grows the content, and following it to the bottom would
+// override the restore that is trying to keep the reader where they were.
+// The explicit session-switch jump (resetKey) is deliberately not gated —
+// switching chats should always land at the bottom.
+function useStickToBottom(resetKey: string, contentKey: number, holdPosition: () => boolean) {
   const rootRef = useRef<HTMLDivElement>(null)
   // Whether the view is "pinned" to the bottom and should follow new content.
   const pinned = useRef(true)
@@ -148,7 +155,7 @@ function useStickToBottom(resetKey: string, contentKey: number) {
     el.addEventListener('scroll', onScroll)
     el.addEventListener('wheel', onWheel, { passive: true })
     const observer = new ResizeObserver(() => {
-      if (pinned.current) {
+      if (pinned.current && !holdPosition()) {
         scrollToBottom()
       }
     })
@@ -158,15 +165,15 @@ function useStickToBottom(resetKey: string, contentKey: number) {
       el.removeEventListener('wheel', onWheel)
       observer.disconnect()
     }
-  }, [viewport, scrollToBottom])
+  }, [viewport, scrollToBottom, holdPosition])
 
   // Follow new content while pinned (covers updates that don't change height).
   // biome-ignore lint/correctness/useExhaustiveDependencies(contentKey): re-run when the message count changes
   useEffect(() => {
-    if (pinned.current) {
+    if (pinned.current && !holdPosition()) {
       scrollToBottom()
     }
-  }, [contentKey, scrollToBottom])
+  }, [contentKey, scrollToBottom, holdPosition])
 
   // Re-pin and jump to the bottom when switching to another session.
   // biome-ignore lint/correctness/useExhaustiveDependencies(resetKey): re-pin the scroll to the bottom when the session changes
@@ -197,6 +204,15 @@ function useStickToBottom(resetKey: string, contentKey: number) {
 // so content never shifts under the reader.
 const INITIAL_VISIBLE_BLOCKS = 30
 const LOAD_MORE_STEP = 30
+// Slack above the viewport's top edge at which the "load older" sentinel counts
+// as in view. Triggering the fetch BEFORE the reader actually reaches scrollTop
+// 0 keeps the restore out of the browser's top-edge dead zone: native scroll
+// anchoring is specified to do nothing at scrollTop 0, so any frame the manual
+// restore misses there shows up as a visible jump to the very top.
+const LOAD_OLDER_ROOT_MARGIN = '250px'
+// Stamped on each rendered block's root so the scroll restore can find a
+// specific block in the DOM again after a prepend has shifted it.
+const BLOCK_ID_ATTR = 'data-block-id'
 
 export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultExpanded }: AgentChatProps) {
   const displayName = agentName ?? session.botName
@@ -217,7 +233,20 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
     return map
   }, [blocks])
   const edit = session.canFork === true ? session.editMessage : undefined
-  const { rootRef, viewport, runProgrammatic, isPinned } = useStickToBottom(session.sessionKey, blocks.length)
+  // The scroll anchor for an in-flight "load older": a block that is rendered
+  // now and will still be rendered after the prepend, plus its offset from the
+  // TOP OF THE SCROLLABLE CONTENT (not the viewport). Measuring against the
+  // content means the reader scrolling mid-fetch doesn't corrupt it — only
+  // content actually inserted above the anchor moves it — and re-measuring the
+  // same element after the commit yields exactly the height that was added,
+  // regardless of anything below it measuring async (codemirror, markdown).
+  const pendingAnchorRef = useRef<{ id: number; top: number } | null>(null)
+  const holdPosition = useCallback(() => pendingAnchorRef.current !== null, [])
+  const { rootRef, viewport, runProgrammatic, isPinned } = useStickToBottom(
+    session.sessionKey,
+    blocks.length,
+    holdPosition,
+  )
   const detailsCollapsedRef = useRef(!defaultExpanded)
   const onDetailsCollapseChange = useCallback((collapsed: boolean) => {
     detailsCollapsedRef.current = collapsed
@@ -237,21 +266,34 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   // page behind it).
   const hasOlder = startIndex > 0 || session.hasMoreHistory === true
   const visibleBlocks = blocks.slice(startIndex)
+  const topBlockId = visibleBlocks[0]?.id ?? null
 
-  // Set by loadOlder() just before growing the window; consumed by the layout
-  // effect below once the older blocks have actually been added to the DOM.
-  // Left null for any other visibleCount change (e.g. the pinned-shrink path),
-  // which is how that path avoids fighting over scrollTop with this one.
-  const pendingScrollRestoreRef = useRef<number | null>(null)
+  // Offset of a rendered block from the top of the scrollable content, or null
+  // if it isn't in the DOM. Adding scrollTop back to the viewport-relative rect
+  // is what makes this a content coordinate rather than a viewport one.
+  const blockContentTop = useCallback(
+    (id: number) => {
+      const root = viewport()
+      const el = root?.querySelector(`[${BLOCK_ID_ATTR}="${id}"]`)
+      if (!root || !el) {
+        return null
+      }
+      return el.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop
+    },
+    [viewport],
+  )
 
-  // Distance from the bottom of the viewport to its current scroll position —
-  // restoring scrollTop to (the now-taller) scrollHeight minus this same
-  // distance, once older content actually lands above it, keeps the reader's
-  // place instead of jumping them to the top of the newly loaded chunk.
-  const captureScrollAnchor = useCallback(() => {
-    const el = viewport()
-    return el ? el.scrollHeight - el.scrollTop : null
-  }, [viewport])
+  // Topmost currently-rendered block — the anchor a prepend is measured
+  // against. Mirrored into a ref so loadOlder can read it without taking a
+  // dependency that changes on every render.
+  const topBlockIdRef = useRef<number | null>(null)
+  topBlockIdRef.current = topBlockId
+
+  const captureTopAnchor = useCallback(() => {
+    const id = topBlockIdRef.current
+    const top = id === null ? null : blockContentTop(id)
+    pendingAnchorRef.current = id !== null && top !== null ? { id, top } : null
+  }, [blockContentTop])
 
   // Read fresh inside loadOlder instead of closing over `session` directly, so
   // loadOlder's own identity doesn't change every time loadingMoreHistory
@@ -269,45 +311,73 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
 
   const loadOlder = useCallback(() => {
     // More of the already-downloaded `blocks` to reveal locally — same tick,
-    // so the usual capture-then-grow pairing (consumed by the layout effect
-    // below) applies directly.
+    // so capture and grow land in one commit.
     if (startIndex > 0) {
-      pendingScrollRestoreRef.current = captureScrollAnchor()
+      captureTopAnchor()
       setVisibleCount((prev) => prev + LOAD_MORE_STEP)
       return
     }
     // Nothing left locally — the rest, if any, is still on the server (a
-    // bounded tail window was sent). Fetch it,
-    // and only THEN capture the scroll anchor and grow the window — doing
-    // both eagerly here (before the fetch resolves) would let the layout
-    // effect consume+restore the anchor against a scrollHeight that hasn't
-    // grown yet, missing the actual content change entirely.
+    // bounded tail window was sent).
     const current = sessionRef.current
     if (!current.hasMoreHistory || current.loadingMoreHistory) {
       return
     }
+    // Capture BEFORE the fetch. The anchor is an element plus its position in
+    // the content, and the restore re-measures that same element after the
+    // commit, so it no longer matters whether React has already flushed the
+    // prepended events by the time this promise resolves. The previous version
+    // captured `scrollHeight - scrollTop` inside .then() and so depended on
+    // that ordering — when React won the race the arithmetic was done against
+    // the already-grown height, the restore computed a no-op, and the viewport
+    // stayed pinned at the top.
+    captureTopAnchor()
     void current.loadMoreHistory?.().then(() => {
-      pendingScrollRestoreRef.current = captureScrollAnchor()
       setVisibleCount((prev) => prev + LOAD_MORE_STEP)
     })
-  }, [startIndex, captureScrollAnchor])
+  }, [startIndex, captureTopAnchor])
 
+  // Re-armed after every completed prepend. An IntersectionObserver only
+  // invokes its callback when intersection CHANGES: once a prepend settles with
+  // the sentinel still in view its state is already `true`, so scrolling up
+  // produces no further callback and paging silently stops until the reader
+  // scrolls down and back up. Re-observing resets that state.
+  const [observerArm, setObserverArm] = useState(0)
+
+  // Restore the reader's position once the prepended blocks are actually in the
+  // DOM. Keyed on the topmost rendered block's id as well as visibleCount, so
+  // it fires on whichever commit introduces content above — the events prepend
+  // (use-acp-session) and the window growth (here) are separate state updates
+  // in separate components and are not guaranteed to land together.
+  // biome-ignore lint/correctness/useExhaustiveDependencies(topBlockId): re-run on whichever commit prepends content above the reader
+  // biome-ignore lint/correctness/useExhaustiveDependencies(visibleCount): re-run when the local render window grows
   useLayoutEffect(() => {
-    const delta = pendingScrollRestoreRef.current
-    if (delta === null) {
+    const anchor = pendingAnchorRef.current
+    if (!anchor) {
       return
     }
-    pendingScrollRestoreRef.current = null
+    // Null means the anchor is gone, or nothing was inserted above it in this
+    // commit — leave the capture in place and wait for the commit that
+    // actually adds the older content.
+    const shift = restoreShift(anchor, blockContentTop(anchor.id))
+    if (shift === null) {
+      return
+    }
+    pendingAnchorRef.current = null
     const el = viewport()
-    if (!el) {
-      return
+    if (el) {
+      // Shift by exactly how far the anchor moved. Programmatic, so moving
+      // scrollTop isn't read as the user scrolling away from the bottom.
+      runProgrammatic(() => {
+        el.scrollTop += shift
+      })
     }
-    // Programmatic: without this guard, moving scrollTop away from the top
-    // would read as the user scrolling and could unpin them from the bottom.
-    runProgrammatic(() => {
-      el.scrollTop = el.scrollHeight - delta
-    })
-  }, [visibleCount, viewport, runProgrammatic])
+    // Only re-arm on a real restore: a fetch that returned nothing moves
+    // nothing, gets here, and leaves the observer as-is rather than refiring
+    // into a loop. With a correct restore each refire walks back exactly one
+    // page and terminates as soon as the sentinel is pushed out of view.
+    setObserverArm((n) => n + 1)
+  }, [topBlockId, visibleCount, blockContentTop, viewport, runProgrammatic])
 
   const sentinelRef = useRef<HTMLDivElement>(null)
   // Whether the sentinel is currently in view, per the observer below. Read by
@@ -334,7 +404,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
           loadOlder()
         }
       },
-      { root },
+      { root, rootMargin: LOAD_OLDER_ROOT_MARGIN },
     )
     observer.observe(el)
     return () => {
@@ -343,7 +413,8 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
       // stale true here would block recycling indefinitely.
       sentinelVisibleRef.current = false
     }
-  }, [hasOlder, viewport, loadOlder])
+    // observerArm is a re-arm signal, not a value this effect reads.
+  }, [hasOlder, viewport, loadOlder, observerArm])
 
   // React to the conversation growing, per the window-anchoring rules above.
   // Pinned: shrink a grown window back so old blocks unmount, same as if the
@@ -390,6 +461,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
             return b.kind === 'user' ? (
               <UserMessage
                 key={b.id}
+                blockId={b.id}
                 text={b.text}
                 editDisabled={session.waiting}
                 onEdit={edit ? () => edit(turnByBlock.get(index) ?? 0, b.text) : undefined}
@@ -397,6 +469,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
             ) : (
               <Details
                 key={b.id}
+                blockId={b.id}
                 items={b.items}
                 botName={displayName}
                 agentAvatar={agentAvatar}
@@ -414,9 +487,14 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   )
 }
 
-function UserMessage({ text, editDisabled, onEdit }: { text: string; editDisabled?: boolean; onEdit?: () => void }) {
+function UserMessage({
+  blockId,
+  text,
+  editDisabled,
+  onEdit,
+}: { blockId: number; text: string; editDisabled?: boolean; onEdit?: () => void }) {
   return (
-    <Flex row align='start' className='group w-full gap-1'>
+    <Flex row align='start' className='group w-full gap-1' {...{ [BLOCK_ID_ATTR]: blockId }}>
       <Flex expanded className='gap-1.5 rounded-md bg-muted border-1 p-2'>
         <div className='prose-chat'>
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
@@ -472,6 +550,7 @@ function withHeader(items: DetailItem[]): DetailEntry[] {
 }
 
 function Details({
+  blockId,
   items,
   botName,
   agentAvatar,
@@ -479,6 +558,7 @@ function Details({
   onCollapseChange,
   pending,
 }: {
+  blockId: number
   items: DetailItem[]
   botName: string
   agentAvatar?: string
@@ -531,7 +611,7 @@ function Details({
     const marker = hasAvatar ? <AgentAvatar avatar={agentAvatar} name={botName} size='md' /> : <ChainDot />
 
     return (
-      <Flex className='min-w-0 w-full'>
+      <Flex className='min-w-0 w-full' {...{ [BLOCK_ID_ATTR]: blockId }}>
         <Chained marker={marker} lineAbove={false} lineBelow={false} align={hasAvatar ? 'start' : 'center'}>
           <Flex className='min-w-0 w-full gap-1'>
             <Flex row className='items-center justify-between w-full'>
@@ -578,7 +658,7 @@ function Details({
   }
 
   return (
-    <Flex className='min-w-0 w-full relative'>
+    <Flex className='min-w-0 w-full relative' {...{ [BLOCK_ID_ATTR]: blockId }}>
       {entries.map((entry, i) => {
         const isFirst = i === 0
         const isLast = i === entries.length - 1
