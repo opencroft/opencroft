@@ -295,12 +295,23 @@ export interface TurnsPage {
   turns: TurnSummary[]
   hasMore: boolean
   nextBeforeIndex: number | null
+  // Whether the session has a live agent-client process right now. An empty
+  // `turns` array means two different things depending on this: a genuinely
+  // empty (never-prompted) live session, vs. a dead session whose history
+  // isn't loaded in memory at all — a caller must be able to tell them apart
+  // without having read this action's description.
+  sessionAlive: boolean
 }
 
 // ~400 chars is enough to identify a turn at a glance without pulling its
 // full text into an agent's context — these actions must stay cheap to call
 // regardless of how long a session's transcript is.
 const TURN_TEXT_MAX_CHARS = 400
+const DEFAULT_TURNS = 10
+// `turns` is caller-controlled — an unbounded value would walk the whole
+// transcript and scale the response with it, defeating the point of keeping
+// each turn's text truncated.
+const MAX_TURNS = 50
 
 export function truncateText(text: string, max = TURN_TEXT_MAX_CHARS): { text: string; length: number } {
   const length = text.length
@@ -345,15 +356,18 @@ export function buildTurnSummary(index: number, events: ChatEvent[], inProgress:
 
 // Split a window's flat event array back into per-turn groups, tagging each
 // with its absolute index (window.startIndex + offset) so it can double as
-// the next page's `beforeIndex` cursor. Relies on tailByTurns/pageBeforeByTurns's
-// invariant that a non-empty window always starts exactly at a 'user' event —
-// see packages/agent-client/src/pagination.ts.
+// the next page's `beforeIndex` cursor. tailByTurns/pageBeforeByTurns cut at
+// 'user' boundaries when any exist, but a session with zero turns (created,
+// never prompted — only 'modes'/'config_options'/etc. snapshot events) has
+// none: tailByTurns then returns that whole snapshot-only log as-is, not
+// starting with 'user'. Those leading events aren't part of any turn — skip
+// them (nothing to attach them to) rather than assume the invariant holds.
 export function splitIntoTurns(events: ChatEvent[], startIndex: number): { index: number; events: ChatEvent[] }[] {
   const groups: { index: number; events: ChatEvent[] }[] = []
   events.forEach((event, offset) => {
     if (event.kind === 'user') {
       groups.push({ index: startIndex + offset, events: [event] })
-    } else {
+    } else if (groups.length > 0) {
       groups[groups.length - 1].events.push(event)
     }
   })
@@ -458,17 +472,17 @@ const sendMessageApi: HostSendMessageApi = {
     if (!parts || !reachablePairs(found.nodes, found.edges).has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
       throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
     }
-    const turns = params.turns && params.turns > 0 ? Math.floor(params.turns) : 10
+    const turns = params.turns && params.turns > 0 ? Math.min(Math.floor(params.turns), MAX_TURNS) : DEFAULT_TURNS
 
     const meta = agentClient.listSessions().find((m) => m.sessionKey === sessionKey)
     if (!meta) {
       // No live process for this session (dead, or never started) — nothing
       // in memory to page through.
-      return { turns: [], hasMore: false, nextBeforeIndex: null }
+      return { turns: [], hasMore: false, nextBeforeIndex: null, sessionAlive: false }
     }
     const window = agentClient.getEventsWindow(meta.id, { turns, beforeIndex: params.beforeIndex })
     if (!window) {
-      return { turns: [], hasMore: false, nextBeforeIndex: null }
+      return { turns: [], hasMore: false, nextBeforeIndex: null, sessionAlive: false }
     }
     // Only the tail window (no beforeIndex) can end on the session's current,
     // still-running turn — any older page is by definition already over.
@@ -478,6 +492,7 @@ const sendMessageApi: HostSendMessageApi = {
       turns: groups.map((group, i) => buildTurnSummary(group.index, group.events, tailInProgress && i === groups.length - 1)),
       hasMore: window.hasMore,
       nextBeforeIndex: window.hasMore ? window.startIndex : null,
+      sessionAlive: true,
     }
   },
 }

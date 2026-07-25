@@ -262,7 +262,7 @@ interface TurnSummary {
 
 function sendMessageListTurnsAction(
   ctx: ActionCtx,
-): Promise<{ turns: TurnSummary[]; hasMore: boolean; nextBeforeIndex: number | null }> {
+): Promise<{ turns: TurnSummary[]; hasMore: boolean; nextBeforeIndex: number | null; sessionAlive: boolean }> {
   const sessionKey = typeof ctx.params.sessionKey === 'string' ? ctx.params.sessionKey.trim() : ''
   if (!sessionKey) {
     throw new Error('"sessionKey" is required and must be a non-empty string')

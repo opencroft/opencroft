@@ -99,3 +99,26 @@ test('splitIntoTurns groups events at each user boundary and tags absolute indic
 test('splitIntoTurns on an empty window returns no groups', () => {
   assert.deepEqual(splitIntoTurns([], 5), [])
 })
+
+test('splitIntoTurns does not crash on a session with zero turns (snapshot events only, no user event)', () => {
+  // tailByTurns returns a snapshot-only log as-is when there are no user-turn
+  // boundaries to cut at (a session that was created but never prompted) — it
+  // does not start with 'user' the way a real turn window always does.
+  const events: ChatEvent[] = [
+    { kind: 'modes', available: [], current: 'default' },
+    { kind: 'config_options', options: [] },
+  ]
+  assert.deepEqual(splitIntoTurns(events, 0), [])
+})
+
+test('splitIntoTurns drops leading non-user events that precede the first real turn', () => {
+  const events: ChatEvent[] = [
+    { kind: 'modes', available: [], current: 'default' },
+    { kind: 'user', text: 'turn A' },
+    { kind: 'agent_message', text: 'reply A' },
+  ]
+  const groups = splitIntoTurns(events, 0)
+  assert.equal(groups.length, 1)
+  assert.equal(groups[0].index, 1)
+  assert.equal(groups[0].events.length, 2)
+})

@@ -260,12 +260,12 @@
           "id": "listTurns",
           "label": "List Turns",
           "icon": "History",
-          "description": "Tail-first, cursor-paged view of a session's turns (a sessionKey from listSessions) — truncated prompt/final-message text only, never the full event stream. Omit beforeIndex for the most recent turns; pass a previous page's nextBeforeIndex to page further back.",
+          "description": "Tail-first, cursor-paged view of a session's turns (a sessionKey from listSessions) — truncated prompt/final-message text only, never the full event stream. Omit beforeIndex for the most recent turns; pass a previous page's nextBeforeIndex to page further back. Response includes `sessionAlive`: false means the session has no live process (dead or never started), so an empty `turns` array there means \"nothing to load\", not \"empty session\".",
           "inputSchema": {
             "type": "object",
             "properties": {
               "sessionKey": { "type": "string", "description": "Session key, as returned by listSessions" },
-              "turns": { "type": "number", "description": "Number of turns to return (default 10)" },
+              "turns": { "type": "number", "description": "Number of turns to return (default 10, capped at 50)" },
               "beforeIndex": { "type": "number", "description": "Cursor from a previous page's nextBeforeIndex — fetches the turns immediately before it" }
             },
             "required": ["sessionKey"]
