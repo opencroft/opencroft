@@ -22,6 +22,11 @@ export function ChatArea({ fromEnd, children, className }: ChatAreaProps) {
         '[&_[data-radix-scroll-area-viewport]>div]:!flex',
         '[&_[data-radix-scroll-area-viewport]>div]:!flex-col',
         '[&_[data-radix-scroll-area-viewport]>div]:!min-h-full',
+        // Safari pushes scrollTop *beyond its valid range* while rubber-banding,
+        // and the restore reads scrollTop — so `none` rather than `contain`,
+        // which would stop chaining but leave the out-of-range reads. Also keeps
+        // the top of the list from scrolling the page behind it.
+        '[&_[data-radix-scroll-area-viewport]]:[overscroll-behavior:none]',
         className,
       )}
     >
