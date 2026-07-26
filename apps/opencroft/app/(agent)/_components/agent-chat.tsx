@@ -564,23 +564,26 @@ function UserMessage({
           className='absolute inset-0 -z-1 pointer-events-none bg-linear-to-b from-background from-50% to-transparent'
         />
       )}
-      {sticky && (
-        // Carries whatever should appear only while the message is actually
-        // stuck. Always mounted and inert; the scroll-state query fades its
-        // opacity in and out, so nothing pops and no shadow is ever repainted
-        // mid-scroll — only opacity animates, which composites.
-        //
-        // It paints nothing yet: which treatment a stuck header gets is
-        // still an open choice between a floating bar (solid backing plus the command
-        // bar's shadow) and a dissolving one (a drop-shadow that follows the
-        // fade's alpha instead of cutting a line under it). Adding that is the
-        // single rule this scaffolding is waiting on — see
-        // the stuck-header treatment described above.
-        <div aria-hidden className='chat-stuck-layer absolute inset-0 -z-1 pointer-events-none' />
-      )}
+
       <Chained marker={<AgentAvatar size='md' />} lineAbove={false} lineBelow={false} align='start'>
         <Flex row align='start' className='group w-full gap-1'>
-          <Flex expanded className='gap-1.5 rounded-md bg-muted border-1 p-2'>
+          <Flex expanded className='relative gap-1.5 rounded-md bg-muted border-1 p-2'>
+            {sticky && (
+              // The stuck message's shadow — the command bar's, on the same
+              // opaque rounded box the composer's card uses, so it floats on
+              // the gradient rather than tracing a dissolving edge.
+              //
+              // Its own layer, matching the bubble's box by being its child,
+              // because only opacity may animate: this appears and disappears
+              // repeatedly as each header pushes the previous one out during a
+              // single scroll, and a transitioned box-shadow would repaint
+              // every time. Behind the bubble's background, which hides
+              // nothing — an outer shadow is drawn outside the border box.
+              <div
+                aria-hidden
+                className='chat-stuck-layer absolute inset-0 -z-1 rounded-md pointer-events-none shadow-lg shadow-black/50'
+              />
+            )}
             <div className='prose-chat'>
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
             </div>
