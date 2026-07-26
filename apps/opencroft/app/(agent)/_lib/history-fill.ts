@@ -12,10 +12,18 @@
 export interface FillGeometry {
   scrollTop: number
   clientHeight: number
-  // Offset of the first REAL block. The loading indicator is excluded: it is
-  // itself content, so measuring from it means rendering it satisfies the
-  // condition that produced it, which paginates forever.
-  firstBlockOffsetTop: number
+  // Where the first REAL block sits in the same coordinates as `scrollTop` —
+  // distance from the top of the scrollable CONTENT (see contentTop in
+  // scroll-restore). Two things are load-bearing here:
+  //
+  //  * The loading indicator is excluded. It is itself content, so measuring
+  //    from it means rendering it satisfies the condition that produced it,
+  //    which paginates forever.
+  //  * The coordinate space must be the container's. Fed a page-relative
+  //    figure, the subtraction below compares two different origins, goes
+  //    permanently negative, and paginates to the start of history on its own —
+  //    the mirror image of the bug this replaced, and invisible on a short chat.
+  firstBlockContentTop: number
 }
 
 export interface FillState {
@@ -40,9 +48,9 @@ export function shouldFill(state: FillState): boolean {
   if (!state.geometry) {
     return true
   }
-  const { scrollTop, clientHeight, firstBlockOffsetTop } = state.geometry
+  const { scrollTop, clientHeight, firstBlockContentTop } = state.geometry
   // Also covers "the content doesn't fill the viewport" by construction: with
   // little content both sides are near zero, so the comparison holds and it
   // keeps filling until it doesn't. No separate short-history rule is needed.
-  return scrollTop - firstBlockOffsetTop < clientHeight
+  return scrollTop - firstBlockContentTop < clientHeight
 }

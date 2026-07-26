@@ -32,6 +32,22 @@
 // rounding into visible jitter.
 const EPSILON = 1
 
+// A position in CONTENT coordinates — distance from the top of the scrollable
+// content — derived from two viewport-relative rects and the current offset.
+//
+// Deliberately not `offsetTop`, which is the idiom the surveyed clients use.
+// `offsetTop` is measured against the nearest POSITIONED ancestor, so it is
+// only comparable with `scrollTop` when the scroll container is itself that
+// ancestor. Element can rely on that because it owns its scroll node; we are
+// inside Radix's viewport and own nothing about its positioning. If the offset
+// parent resolves further out, the number silently becomes page-relative and
+// every comparison against `scrollTop` is measuring across two coordinate
+// spaces. Rects are container-relative by construction, and fractional where
+// `offsetTop` is rounded to an integer.
+export function contentTop(elementRectTop: number, rootRectTop: number, scrollTop: number): number {
+  return elementRectTop - rootRectTop + scrollTop
+}
+
 export interface ScrollAnchor {
   // A block rendered both before and after the prepend. Its id names the turn
   // (or the user message), not a position, so a page landing mid-turn merges

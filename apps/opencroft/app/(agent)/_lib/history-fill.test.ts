@@ -2,13 +2,14 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { type FillState, shouldFill } from './history-fill'
+import { contentTop } from './scroll-restore'
 
 const VIEWPORT = 800
 
-const at = (scrollTop: number, firstBlockOffsetTop = 0): FillState => ({
+const at = (scrollTop: number, firstBlockContentTop = 0): FillState => ({
   hasMore: true,
   loading: false,
-  geometry: { scrollTop, clientHeight: VIEWPORT, firstBlockOffsetTop },
+  geometry: { scrollTop, clientHeight: VIEWPORT, firstBlockContentTop },
 })
 
 // ── the four guard intents carried over from the predicate this replaces ────
@@ -77,4 +78,30 @@ test('the trigger is relative to the first block, not to absolute scroll positio
   // them decides, which is what keeps this correct after a prepend.
   assert.equal(shouldFill(at(1000, 900)), true)
   assert.equal(shouldFill(at(1000, 100)), false)
+})
+
+test('the first block is measured in the container coordinates, not the page ones', () => {
+  // The failure this pins: `offsetTop` resolves against the nearest POSITIONED
+  // ancestor. Inside Radix's viewport nothing guarantees that is the scroll
+  // container, so it can silently carry the chat's whole page offset while
+  // scrollTop stays container-relative — two origins in one subtraction.
+  //
+  // Here the chat sits 1200px down the page, the reader is 1000px into an
+  // 800px viewport, and the first block is at the very start of the content.
+  const PAGE_OFFSET = 1200
+  const scrollTop = 1000
+  const viewportRectTop = 500
+  const firstBlockRectTop = viewportRectTop - scrollTop
+
+  const measured = contentTop(firstBlockRectTop, viewportRectTop, scrollTop)
+  assert.equal(measured, 0, 'rects put the first block at the start of the content')
+
+  const state = at(scrollTop, measured)
+  assert.equal(shouldFill(state), false, 'more than a viewport from the start: nothing is due')
+
+  // The same predicate fed the page-relative figure instead. It fires — and
+  // because the offset does not shrink as pages land, it keeps firing, paging
+  // to the beginning of history on its own. On a short chat that looks like it
+  // works, which is why it needs a test rather than a try.
+  assert.equal(shouldFill(at(scrollTop, PAGE_OFFSET)), true)
 })

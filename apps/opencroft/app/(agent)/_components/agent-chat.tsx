@@ -41,7 +41,7 @@ import { type Block, buildBlocks, type DetailItem, stripOpencroftTags } from '@/
 import { shouldFill } from '@/app/(agent)/_lib/history-fill'
 import type { ChatMessage } from '@/app/(agent)/_lib/messages'
 import { decideScrollAction, isAtBottom, type ScrollCause } from '@/app/(agent)/_lib/scroll-intent'
-import { HOLD_DEADLINE_MS, type HoldState, holdExpired, holdStep } from '@/app/(agent)/_lib/scroll-restore'
+import { contentTop, HOLD_DEADLINE_MS, type HoldState, holdExpired, holdStep } from '@/app/(agent)/_lib/scroll-restore'
 import { getAutoApprove, setAutoApprove } from '@/app/(approvals)/_server/actions'
 import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
 import { loadAllExtensions } from '@/app/(extension-runtime)/_client/loader'
@@ -304,7 +304,11 @@ function useChatScroll({ sessionKey, blocks, topBlockId, session }: ChatScrollPa
       hasMore: current.hasMoreHistory === true,
       loading: current.loadingMoreHistory === true,
       geometry: first
-        ? { scrollTop: root.scrollTop, clientHeight: root.clientHeight, firstBlockOffsetTop: first.offsetTop }
+        ? {
+            scrollTop: root.scrollTop,
+            clientHeight: root.clientHeight,
+            firstBlockContentTop: elementContentTop(root, first),
+          }
         : null,
     }
     if (!shouldFill(state)) {
@@ -483,14 +487,18 @@ function useChatScroll({ sessionKey, blocks, topBlockId, session }: ChatScrollPa
 // specific block in the DOM again after a prepend has shifted it.
 const BLOCK_ID_ATTR = 'data-block-id'
 
-// Offset of a rendered block from the top of the scrollable CONTENT, or null if
-// it isn't in the DOM. Adding scrollTop back to the viewport-relative rect is
-// what makes this a content coordinate rather than a viewport one — and that is
-// the whole point: the reader scrolling moves the viewport, not the content, so
-// only content actually inserted above the block moves this number.
+// Where an element sits in the scrollable content — the coordinate the reader
+// scrolling does not change, so only content actually inserted above it moves
+// this number. The one measurement both the fill check and the held position
+// are expressed in, so they cannot end up in different coordinate spaces.
+function elementContentTop(root: HTMLElement, el: Element): number {
+  return contentTop(el.getBoundingClientRect().top, root.getBoundingClientRect().top, root.scrollTop)
+}
+
+// The same, for a block found by id, or null if it isn't in the DOM.
 function blockContentTop(root: HTMLElement, id: string): number | null {
   const el = root.querySelector(`[${BLOCK_ID_ATTR}="${id}"]`)
-  return el ? el.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop : null
+  return el ? elementContentTop(root, el) : null
 }
 
 // TEMPORARY: the same block's position on SCREEN, as
