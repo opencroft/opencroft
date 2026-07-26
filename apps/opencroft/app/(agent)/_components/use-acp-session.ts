@@ -391,6 +391,14 @@ export function useAcpSession(
         return
       }
       setEvents((prev) => [...prev, event])
+      if (event.kind === 'user') {
+        // Only the newest turn is ever trimmed on load, so a new turn retires
+        // the in-turn cursor: the records it would fetch belong to a turn that
+        // is no longer the newest, and its "load earlier tool calls" control
+        // would otherwise linger against the wrong turn.
+        turnStartRef.current = null
+        paginatedTurnRecords.reset(0, false)
+      }
       if (event.kind === 'turn_end' || event.kind === 'error') {
         setLocalWaiting(false)
       }

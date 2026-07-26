@@ -59,6 +59,7 @@ export {
   toolViewProps,
 } from './tool-views'
 export { TurnDetails, type TurnDetailsProps } from './turn-details'
+export { groupIntoTurnSections, type TurnSection } from './turn-sections'
 export {
   type AgentSessionController,
   type AgentUsage,
