@@ -1,12 +1,35 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { AT_BOTTOM_THRESHOLD, decideScrollAction, isAtBottom } from './scroll-intent'
+import { AT_BOTTOM_THRESHOLD, decideScrollAction, isAtBottom, LOAD_OLDER_KEEPS_POSITION } from './scroll-intent'
 
 // ---------------------------------------------------------------------------
 // The precedence. These are the pairs that used to be separate effects, and
 // each test names the failure that pair actually produced.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Both sides of the product decision, so flipping the constant is a one-line
+// change with the behaviour on each side already written down.
+// ---------------------------------------------------------------------------
+
+test('A: the reader keeps their place, and the new batch lands above them', () => {
+  assert.equal(decideScrollAction('loading-older', false, true), 'hold-position')
+  assert.equal(decideScrollAction('loading-older', true, true), 'hold-position')
+})
+
+test('B: the position is left alone, so the view lands on the oldest new message', () => {
+  assert.equal(decideScrollAction('loading-older', false, false), 'none')
+  // Still not the bottom, even though the reader was at the bottom when they
+  // pressed it — which is possible in a conversation short enough that the
+  // button and the end are on screen together. "There is more content now" is
+  // never a reason to jump to the end when the content arrived above them.
+  assert.equal(decideScrollAction('loading-older', true, false), 'none')
+})
+
+test('the default matches the shipped constant', () => {
+  assert.equal(decideScrollAction('loading-older', false), LOAD_OLDER_KEEPS_POSITION ? 'hold-position' : 'none')
+})
 
 test('a prepend outranks following the bottom', () => {
   // The old shape: a "load older" prepend grows the content, the bottom-follow

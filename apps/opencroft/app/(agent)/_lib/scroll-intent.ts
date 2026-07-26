@@ -16,6 +16,26 @@
 // scrollTop (a double) and scrollHeight/clientHeight (integers).
 export const AT_BOTTOM_THRESHOLD = 32
 
+// Where the reader ends up after they press "load older messages".
+//
+// The button sits at the top of the transcript, so reaching it means the reader
+// is already at the top — which is the only state a click can happen in, and it
+// makes the two options concrete rather than a matter of taste:
+//
+//  * true — their place is kept. What they were reading stays put and the new
+//    batch appears above it, so reading back through history stays one
+//    continuous upward motion. The cost is that the click looks like it did
+//    nothing: the newly loaded messages are above the viewport until they
+//    scroll into them.
+//  * false — the position is left alone, so the viewport lands on the OLDEST
+//    message of the new batch. Immediate feedback, at the cost of moving the
+//    reader back through the transcript and reversing the direction they were
+//    reading in.
+//
+// Product decision, not a technical one; this is the one line that flips it,
+// and both sides are covered by tests.
+export const LOAD_OLDER_KEEPS_POSITION = true
+
 // Why the DOM is about to change. Set by whatever caused it, at the moment it
 // causes it; 'none' means an ordinary update nobody claimed.
 export type ScrollCause = 'none' | 'session-changed' | 'loading-older'
@@ -46,18 +66,23 @@ export function isAtBottom(geometry: BottomGeometry): boolean {
 // `atBottom` describes where the reader was BEFORE this commit — it is read
 // from state maintained by the scroll listener, not measured after the content
 // landed, because by then the new content has already changed the answer.
-export function decideScrollAction(cause: ScrollCause, atBottom: boolean): ScrollAction {
+export function decideScrollAction(
+  cause: ScrollCause,
+  atBottom: boolean,
+  keepsPosition: boolean = LOAD_OLDER_KEEPS_POSITION,
+): ScrollAction {
   switch (cause) {
     // Switching conversations always lands at the end, whatever else was in
     // flight — the position being held belonged to a chat that is now gone.
     case 'session-changed':
       return 'jump-bottom'
-    // A prepend outranks following the bottom. The content grew ABOVE the
-    // reader, so "there is more content now" is not a reason to move to the
-    // end; doing so is precisely the failure the old holdPosition() gate
-    // existed to prevent, expressed here as ordering instead of a guard.
+    // A prepend outranks following the bottom either way. The content grew
+    // ABOVE the reader, so "there is more content now" is never a reason to
+    // move to the end — that was the failure the old holdPosition() gate
+    // existed to prevent, expressed here as ordering instead of a guard. The
+    // flag only chooses between holding the position and leaving it alone.
     case 'loading-older':
-      return 'hold-position'
+      return keepsPosition ? 'hold-position' : 'none'
     default:
       return atBottom ? 'follow-bottom' : 'none'
   }

@@ -38,7 +38,6 @@ import { AgentAvatar } from 'ui/media/agent-avatar'
 import { Textarea } from 'ui/textarea'
 
 import { type Block, buildBlocks, type DetailItem, stripOpencroftTags } from '@/app/(agent)/_lib/build-blocks'
-import { shouldFill } from '@/app/(agent)/_lib/history-fill'
 import type { ChatMessage } from '@/app/(agent)/_lib/messages'
 import { decideScrollAction, isAtBottom, type ScrollCause } from '@/app/(agent)/_lib/scroll-intent'
 import { contentTop, HOLD_DEADLINE_MS, type HoldState, holdExpired, holdStep } from '@/app/(agent)/_lib/scroll-restore'
@@ -153,9 +152,6 @@ interface ChatScrollParams {
 
 function useChatScroll({ sessionKey, blocks, topBlockId, session }: ChatScrollParams) {
   const rootRef = useRef<HTMLDivElement>(null)
-  // The first REAL block, so the fill check measures from content rather than
-  // from the loading indicator rendered above it.
-  const firstBlockRef = useRef<HTMLDivElement>(null)
 
   const viewport = useCallback(
     () => rootRef.current?.closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null,
@@ -172,9 +168,6 @@ function useChatScroll({ sessionKey, blocks, topBlockId, session }: ChatScrollPa
   // Set while we move the position ourselves, so our own scroll events aren't
   // read as the reader moving away from the end.
   const programmaticRef = useRef(false)
-  // Re-entrancy lock for the fill check. A ref, not state, so asking the
-  // question cannot itself cause a render that re-asks it.
-  const fillingRef = useRef(false)
   const quietFrameRef = useRef<number | null>(null)
 
   const topBlockIdRef = useRef(topBlockId)
@@ -276,31 +269,20 @@ function useChatScroll({ sessionKey, blocks, topBlockId, session }: ChatScrollPa
   // Ask whether more history is needed, and fetch if so. Safe to call as often
   // as we like — that is the point of a level check — so it is driven from
   // everywhere the answer can change.
-  const maybeFill = useCallback(() => {
-    const root = viewport()
-    if (!root || fillingRef.current) {
-      return
-    }
+  // Fetch the previous page. Driven by a click and nothing else — there is no
+  // question of when to fire, which is the whole point of the change.
+  //
+  // No re-entrancy lock: the button is absent when there is nothing left and
+  // disabled while a fetch is in flight, and `loadMoreHistory` is itself a
+  // no-op while one is running. That is the same guarantee the lock provided,
+  // made structurally rather than defended.
+  const loadOlder = useCallback(() => {
     const current = sessionRef.current
-    const first = firstBlockRef.current
-    const state = {
-      hasMore: current.hasMoreHistory === true,
-      loading: current.loadingMoreHistory === true,
-      geometry: first
-        ? {
-            scrollTop: root.scrollTop,
-            clientHeight: root.clientHeight,
-            firstBlockContentTop: elementContentTop(root, first),
-          }
-        : null,
-    }
-    if (!shouldFill(state)) {
+    if (current.hasMoreHistory !== true || current.loadingMoreHistory === true) {
       return
     }
-    fillingRef.current = true
     beginHold()
     void Promise.resolve(current.loadMoreHistory?.()).finally(() => {
-      fillingRef.current = false
       // Two frames: one for React to commit the page, one to see whether that
       // commit put anything above the reader. If it didn't, the hold has
       // nothing to hold and would otherwise sit there until its deadline.
@@ -309,13 +291,10 @@ function useChatScroll({ sessionKey, blocks, topBlockId, session }: ChatScrollPa
           if (holdRef.current?.settlingSince === null) {
             endHold()
           }
-          // Coalesced re-run: the answer may still be yes, and the commit that
-          // released the lock has already happened by now.
-          maybeFill()
         })
       })
     })
-  }, [viewport, beginHold, endHold])
+  }, [beginHold, endHold])
 
   // THE apply step. One decision, one write. Called on every commit and from
   // the ResizeObserver, because content can change size without a commit.
@@ -366,7 +345,8 @@ function useChatScroll({ sessionKey, blocks, topBlockId, session }: ChatScrollPa
     if (!root) {
       return
     }
-    let queued = false
+    // The only thing scrolling still decides: whether the reader is following
+    // the end of the conversation. Loading history no longer reacts to it.
     const onScroll = () => {
       if (!programmaticRef.current) {
         atBottomRef.current = isAtBottom({
@@ -375,17 +355,6 @@ function useChatScroll({ sessionKey, blocks, topBlockId, session }: ChatScrollPa
           scrollHeight: root.scrollHeight,
         })
       }
-      // Re-ask the fill question, throttled to a frame: `scroll` fires far more
-      // often than layout changes, and our own corrections raise it too, so an
-      // unthrottled handler would re-enter on the corrections it caused.
-      if (queued) {
-        return
-      }
-      queued = true
-      requestAnimationFrame(() => {
-        queued = false
-        maybeFill()
-      })
     }
     // Only cancels a hold that has ALREADY started correcting. Before the page
     // lands there is nothing to fight over, and the anchor is measured in
@@ -446,7 +415,7 @@ function useChatScroll({ sessionKey, blocks, topBlockId, session }: ChatScrollPa
       root.removeEventListener('keydown', onKeyDown)
       scrollArea.removeEventListener('pointerdown', onPointerDown)
     }
-  }, [viewport, maybeFill, endHold])
+  }, [viewport, endHold])
 
   // Content changing size under us: an image landing, a turn expanding, a
   // prepend finishing its measure. Observing the content wrapper rather than an
@@ -466,11 +435,10 @@ function useChatScroll({ sessionKey, blocks, topBlockId, session }: ChatScrollPa
       if (active !== null && active.settlingSince !== null) {
         armQuiescence()
       }
-      maybeFill()
     })
     observer.observe(content)
     return () => observer.disconnect()
-  }, [applyDecision, armQuiescence, maybeFill])
+  }, [applyDecision, armQuiescence])
 
   // Declared before the effect that acts on causes, so the flag is already set
   // when that effect runs on this same commit.
@@ -486,10 +454,9 @@ function useChatScroll({ sessionKey, blocks, topBlockId, session }: ChatScrollPa
   // biome-ignore lint/correctness/useExhaustiveDependencies(blocks): re-run on the commit that changed the content, not because the body reads it
   useLayoutEffect(() => {
     applyDecision()
-    maybeFill()
-  }, [blocks, applyDecision, maybeFill])
+  }, [blocks, applyDecision])
 
-  return { rootRef, firstBlockRef }
+  return { rootRef, loadOlder }
 }
 
 // Everything the session holds is mounted: the server window is the only one.
@@ -502,18 +469,13 @@ function useChatScroll({ sessionKey, blocks, topBlockId, session }: ChatScrollPa
 // specific block in the DOM again after a prepend has shifted it.
 const BLOCK_ID_ATTR = 'data-block-id'
 
-// Where an element sits in the scrollable content — the coordinate the reader
-// scrolling does not change, so only content actually inserted above it moves
-// this number. The one measurement both the fill check and the held position
-// are expressed in, so they cannot end up in different coordinate spaces.
-function elementContentTop(root: HTMLElement, el: Element): number {
-  return contentTop(el.getBoundingClientRect().top, root.getBoundingClientRect().top, root.scrollTop)
-}
-
-// The same, for a block found by id, or null if it isn't in the DOM.
+// Where a block sits in the scrollable content, or null if it isn't in the DOM.
+// This is the coordinate the reader scrolling does not change, so only content
+// actually inserted above the block moves the number — which is what makes a
+// prepend measurable independently of everything else on screen.
 function blockContentTop(root: HTMLElement, id: string): number | null {
   const el = root.querySelector(`[${BLOCK_ID_ATTR}="${id}"]`)
-  return el ? elementContentTop(root, el) : null
+  return el ? contentTop(el.getBoundingClientRect().top, root.getBoundingClientRect().top, root.scrollTop) : null
 }
 
 export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultExpanded }: AgentChatProps) {
@@ -538,7 +500,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
     return map
   }, [blocks])
   const edit = session.canFork === true ? session.editMessage : undefined
-  const { rootRef, firstBlockRef } = useChatScroll({
+  const { rootRef, loadOlder } = useChatScroll({
     sessionKey: session.sessionKey,
     blocks,
     topBlockId: blocks[0]?.id ?? null,
@@ -562,32 +524,30 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   )
 
   return (
-    <Flex ref={rootRef} justify='end' className='min-h-full min-w-0 gap-3 px-4 py-4'>
-      {session.loading ? (
-        <div className='text-sm text-muted-foreground'>loading…</div>
-      ) : session.messages.length === 0 ? (
-        <div className='text-sm text-muted-foreground'>{emptyText ?? 'no messages yet'}</div>
-      ) : (
-        <>
-          {hasOlder && (
-            <div className='py-1 text-center text-xs text-muted-foreground'>
-              {session.loadingMoreHistory ? 'loading older…' : '· · ·'}
-            </div>
-          )}
-          {sections.map((section, sectionIndex) => (
+    <Flex ref={rootRef} className='min-h-full min-w-0 px-4 py-4'>
+      {hasOlder && !session.loading && (
+        <LoadOlderButton loading={session.loadingMoreHistory === true} onLoadOlder={loadOlder} />
+      )}
+      {/* Only the transcript is bottom-justified, so a conversation shorter
+          than the viewport hugs the composer rather than floating mid-screen.
+          The button sits outside this box on purpose: inside it, it would
+          drift down the screen with short content, and a control that moves
+          with the length of the conversation reads as a bug. Out here it stays
+          at the top of the scroll area, which is also where it belongs in
+          reading order — the thing above the oldest message. */}
+      <Flex justify='end' className='w-full min-w-0 flex-1 gap-3'>
+        {session.loading ? (
+          <div className='text-sm text-muted-foreground'>loading…</div>
+        ) : session.messages.length === 0 ? (
+          <div className='text-sm text-muted-foreground'>{emptyText ?? 'no messages yet'}</div>
+        ) : (
+          sections.map((section, sectionIndex) => (
             // One section per turn: the user message sticks to the top of the
             // viewport while its own replies scroll under it, and the next
             // turn's section pushes it out on the way past. Bounding each
             // header to its section is what produces that hand-off, so no
             // scroll position is read anywhere.
-            <Flex
-              key={section.id}
-              // The fill check measures from the first real block, so the
-              // loading indicator above it cannot satisfy the condition that
-              // produced it.
-              ref={sectionIndex === 0 ? firstBlockRef : undefined}
-              className='w-full min-w-0 gap-3'
-            >
+            <Flex key={section.id} className='w-full min-w-0 gap-3'>
               {section.user ? (
                 <UserMessage
                   sticky
@@ -624,11 +584,28 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
                 ),
               )}
             </Flex>
-          ))}
-        </>
-      )}
-      {session.waiting && <ThinkingIndicator />}
-      <AgentChatStatusIndicators />
+          ))
+        )}
+        {session.waiting && <ThinkingIndicator />}
+        <AgentChatStatusIndicators />
+      </Flex>
+    </Flex>
+  )
+}
+
+// The one way older history is loaded. A click cannot fire at the wrong moment
+// or fail to fire at all, which is what four rebuilds of an automatic trigger
+// could not be made to guarantee.
+//
+// It is also where the guards that trigger needed now live, as states rather
+// than as code: absent once the server says there is nothing left, disabled
+// while a fetch is in flight. Same guarantees, nothing to remember to check.
+function LoadOlderButton({ loading, onLoadOlder }: { loading: boolean; onLoadOlder: () => void }) {
+  return (
+    <Flex row justify='center' className='w-full py-1'>
+      <Button variant='ghost' size='sm' disabled={loading} onClick={onLoadOlder}>
+        {loading ? 'loading…' : 'load older messages'}
+      </Button>
     </Flex>
   )
 }
