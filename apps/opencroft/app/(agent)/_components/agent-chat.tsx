@@ -535,7 +535,10 @@ function UserMessage({
     // once stuck, so the `pt-2 -mt-2` pair this used to carry is gone rather
     // than added to: keeping both would have doubled the gap. Unstuck, that
     // padding is the same rhythm every reply already has.
-    <div className={cn(sticky && 'sticky top-0 z-1')} {...{ [BLOCK_ID_ATTR]: blockId }}>
+    <div
+      className={cn(sticky && 'sticky top-0 z-1', sticky && 'chat-stuck-container')}
+      {...{ [BLOCK_ID_ATTR]: blockId }}
+    >
       {sticky && (
         // The header's backing: opaque down to mid-height, then falling away to
         // nothing at its bottom edge, so replies dissolve as they pass under it
@@ -560,6 +563,20 @@ function UserMessage({
           aria-hidden
           className='absolute inset-0 -z-1 pointer-events-none bg-linear-to-b from-background from-50% to-transparent'
         />
+      )}
+      {sticky && (
+        // Carries whatever should appear only while the message is actually
+        // stuck. Always mounted and inert; the scroll-state query fades its
+        // opacity in and out, so nothing pops and no shadow is ever repainted
+        // mid-scroll — only opacity animates, which composites.
+        //
+        // It paints nothing yet: which treatment a stuck header gets is
+        // still an open choice between a floating bar (solid backing plus the command
+        // bar's shadow) and a dissolving one (a drop-shadow that follows the
+        // fade's alpha instead of cutting a line under it). Adding that is the
+        // single rule this scaffolding is waiting on — see
+        // the stuck-header treatment described above.
+        <div aria-hidden className='chat-stuck-layer absolute inset-0 -z-1 pointer-events-none' />
       )}
       <Chained marker={<AgentAvatar size='md' />} lineAbove={false} lineBelow={false} align='start'>
         <Flex row align='start' className='group w-full gap-1'>
