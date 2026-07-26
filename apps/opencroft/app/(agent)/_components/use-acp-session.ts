@@ -13,7 +13,6 @@ import {
   ensureLocalSession,
   forkLocal,
   getSessionHistoryPageLocal,
-  getSessionTurnRecordsPageLocal,
   promptLocal,
   removeQueuedLocal,
   respondLocal,
@@ -300,24 +299,16 @@ export function useAcpSession(
       return page ?? { events: [], startIndex: beforeIndex, hasMore: false }
     }, []),
   })
-  // The absolute index of the newest turn's leading 'user' event, when that
-  // turn was itself trimmed (see acp.stream.ts's INITIAL_TURN_RECORDS) — set
-  // from the stream's history_end `trimmedTurn`, read by loadMoreInTurn to
-  // know which turn it's paging within. Read through a ref for the same
-  // reason as sessionIdRef: fetchPage's identity must not change every
-  // reconnect.
-  const turnStartRef = useRef<number | null>(null)
-  const paginatedTurnRecords = usePaginatedHistory({
-    fetchPage: useCallback(async (beforeIndex: number) => {
-      const id = sessionIdRef.current
-      const turnStart = turnStartRef.current
-      const page =
-        id && turnStart !== null
-          ? await getSessionTurnRecordsPageLocal({ data: { sessionId: id, turnStart, beforeIndex } })
-          : null
-      return page ?? { events: [], startIndex: beforeIndex, hasMore: false }
-    }, []),
-  })
+  // The question of the turn the loaded window starts inside, when that turn
+  // is only partly loaded — its `user` event sits above what we hold.
+  //
+  // Kept beside `events` rather than prepended into it: `events` is a
+  // contiguous slice and `fold` derives each message's stable id from its
+  // offset within it, so splicing in an event from far above would shift every
+  // id below it and change them again on the next prepend — which is exactly
+  // the churn that broke the scroll restore before stable ids landed. It is a
+  // rendering concern anyway: it supplies the sticky header's text.
+  const [historyHeader, setHistoryHeader] = useState<string | null>(null)
 
   // Resolve (or lazily create) the live ACP session for this tab.
   useEffect(() => {
@@ -379,11 +370,9 @@ export function useAcpSession(
         // necessarily the whole session — hand the cursor to the pagination
         // hook so a scroll-triggered loadMoreHistory() picks up from here.
         paginatedHistory.reset(event.startIndex, event.hasMore)
-        // A fresh connect re-sends a fresh (possibly untrimmed) tail turn —
-        // reset unconditionally so a stale trimmedTurn from a previous
-        // connection never lingers.
-        turnStartRef.current = event.trimmedTurn?.turnStart ?? null
-        paginatedTurnRecords.reset(event.trimmedTurn?.startIndex ?? 0, event.trimmedTurn?.hasMore ?? false)
+        // Set unconditionally: a fresh connect re-sends a fresh tail, so a
+        // header from a previous connection must not linger.
+        setHistoryHeader(event.header?.event.kind === 'user' ? event.header.event.text : null)
         return
       }
       if (replayingHistoryRef.current) {
@@ -391,21 +380,13 @@ export function useAcpSession(
         return
       }
       setEvents((prev) => [...prev, event])
-      if (event.kind === 'user') {
-        // Only the newest turn is ever trimmed on load, so a new turn retires
-        // the in-turn cursor: the records it would fetch belong to a turn that
-        // is no longer the newest, and its "load earlier tool calls" control
-        // would otherwise linger against the wrong turn.
-        turnStartRef.current = null
-        paginatedTurnRecords.reset(0, false)
-      }
       if (event.kind === 'turn_end' || event.kind === 'error') {
         setLocalWaiting(false)
       }
     }
     eventSource.onerror = () => setLoading(false)
     return () => eventSource.close()
-  }, [sessionId, paginatedHistory.reset, paginatedTurnRecords.reset])
+  }, [sessionId, paginatedHistory.reset])
 
   const folded = useMemo(() => fold(events, baseIndexRef.current), [events])
 
@@ -576,38 +557,19 @@ export function useAcpSession(
   // position instead of racing the fetch. A no-op fetch (nothing returned)
   // resolves without touching `events`.
   const loadMoreHistory = useCallback(async () => {
-    const older = await paginatedHistory.loadOlder()
-    if (older.length > 0) {
-      baseIndexRef.current -= older.length
-      setEvents((prev) => [...older, ...prev])
+    const page = await paginatedHistory.loadOlder()
+    if (!page || page.events.length === 0) {
+      return
     }
+    // The page abuts what we already hold, so the array stays contiguous and
+    // `baseIndexRef` moves by exactly the number of events prepended.
+    baseIndexRef.current -= page.events.length
+    setEvents((prev) => [...page.events, ...prev])
+    // The topmost partly-loaded turn has changed: either it's an older turn
+    // now, or this page reached far enough up that the question is inside the
+    // slice and no separate header is needed.
+    setHistoryHeader(page.header?.event.kind === 'user' ? page.header.event.text : null)
   }, [paginatedHistory.loadOlder])
-
-  // Fetches the next older page of tool calls within the current (newest)
-  // turn and splices it back in right after that turn's own 'user' event —
-  // unlike loadMoreHistory, this inserts mid-array rather than at the front,
-  // since everything after the insertion point (the turn's already-loaded
-  // tail) stays exactly where it is. `baseIndexRef` (events[0]'s absolute
-  // index) is unaffected — nothing before it moved.
-  //
-  // No scroll correction accompanies this, deliberately: the control that
-  // triggers it renders immediately above the insertion point and does not
-  // stick, so it must be visible for the call to happen at all, which puts the
-  // insert at or below the viewport's top edge. Growth below that edge leaves
-  // scrollTop meaningful and the reader's view unmoved. The turn-level
-  // "load older" path can't make that argument — its trigger sits at the very
-  // top and inserts above the viewport — which is why only that one needs an
-  // anchor restore.
-  const loadMoreInTurn = useCallback(async () => {
-    const turnStart = turnStartRef.current
-    const older = await paginatedTurnRecords.loadOlder()
-    if (older.length > 0 && turnStart !== null) {
-      setEvents((prev) => {
-        const insertAt = turnStart - baseIndexRef.current + 1
-        return [...prev.slice(0, insertAt), ...older, ...prev.slice(insertAt)]
-      })
-    }
-  }, [paginatedTurnRecords.loadOlder])
 
   const session = useMemo<AgentSession>(
     () => ({
@@ -625,9 +587,7 @@ export function useAcpSession(
       hasMoreHistory: paginatedHistory.hasMore,
       loadingMoreHistory: paginatedHistory.loadingMore,
       loadMoreHistory,
-      hasMoreInTurn: paginatedTurnRecords.hasMore,
-      loadingMoreInTurn: paginatedTurnRecords.loadingMore,
-      loadMoreInTurn,
+      historyHeader,
     }),
     [
       tabKey,
@@ -645,9 +605,7 @@ export function useAcpSession(
       paginatedHistory.hasMore,
       paginatedHistory.loadingMore,
       loadMoreHistory,
-      paginatedTurnRecords.hasMore,
-      paginatedTurnRecords.loadingMore,
-      loadMoreInTurn,
+      historyHeader,
     ],
   )
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { pageBeforeByTurns, pageBeforeRecordsInTurn, tailByTurns, tailRecordsInTurn } from './pagination'
+import { pageBeforeByRecords, pageBeforeByTurns, tailByRecords, tailByTurns } from './pagination'
 import type { ChatEvent } from './types'
 
 // Builds `turns` synthetic exchanges, each a 'user' event followed by
@@ -86,100 +86,120 @@ test('paging backward from the tail repeatedly covers the whole log with no gaps
   assert.deepEqual(pages.flat(), events)
 })
 
-// Builds a closed tool-call group: a tool_call followed by an in_progress
-// update (still open) and a terminal completed update.
-function closedToolGroup(id: string): ChatEvent[] {
+// ── record-paged windows (the chat transcript's cursor) ───────────────────
+
+function closedTool(id: string): ChatEvent[] {
   return [
     { kind: 'tool_call', toolCallId: id, title: id, status: 'pending' },
-    { kind: 'tool_update', toolCallId: id, status: 'in_progress' },
     { kind: 'tool_update', toolCallId: id, status: 'completed' },
   ]
 }
 
-function openToolGroup(id: string): ChatEvent[] {
-  return [
-    { kind: 'tool_call', toolCallId: id, title: id, status: 'pending' },
-    { kind: 'tool_update', toolCallId: id, status: 'in_progress' },
-  ]
-}
-
-// One turn: a user event, then `groups` closed tool-call groups.
-function turnWithToolGroups(groups: number): ChatEvent[] {
-  const events: ChatEvent[] = [{ kind: 'user', text: 'go' }]
-  for (let i = 0; i < groups; i++) {
-    events.push(...closedToolGroup(`tool-${i}`))
+// One turn: a user question, `tools` closed tool calls, then a final reply —
+// so its agent-record count is `tools + 1`.
+function turn(question: string, tools: number): ChatEvent[] {
+  const events: ChatEvent[] = [{ kind: 'user', text: question }]
+  for (let i = 0; i < tools; i++) {
+    events.push(...closedTool(`${question}-tool-${i}`))
   }
+  events.push({ kind: 'agent_message', text: `${question} final` })
   return events
 }
 
-test('tailRecordsInTurn cuts exactly at closed-record boundaries, never mid-tool-call', () => {
-  const events = turnWithToolGroups(5)
-  const window = tailRecordsInTurn(events, 0, events.length, 2)
-  assert.equal(window.events[0].kind, 'tool_call')
-  assert.deepEqual(window.events.map((e) => (e.kind === 'tool_call' ? e.toolCallId : null)).filter(Boolean), [
-    'tool-3',
-    'tool-4',
-  ])
+const agentRecords = (window: { events: ChatEvent[] }) =>
+  window.events.filter((e) => e.kind === 'tool_call' || e.kind === 'agent_message').length
+
+test('the tail counts agent records and leaves user messages free', () => {
+  // The acceptance case: turn A has 50 agent records, turn B has 7. A budget of
+  // 10 takes all of B and only the last 3 of A.
+  const events = [...turn('A', 49), ...turn('B', 6)]
+  const window = tailByRecords(events, 10)
+  assert.equal(agentRecords(window), 10)
+  // B's own question is inside the range; A's is above it and comes back as the
+  // header, so the partially-loaded turn still renders with its question.
+  assert.deepEqual(
+    window.events.filter((e) => e.kind === 'user').map((e) => (e.kind === 'user' ? e.text : null)),
+    ['B'],
+  )
+  assert.equal(window.header?.event.kind === 'user' ? window.header.event.text : null, 'A')
   assert.equal(window.hasMore, true)
-  // Never includes the turn's own leading user event.
-  assert.ok(window.events.every((e) => e.kind !== 'user'))
 })
 
-test('tailRecordsInTurn always ships an unresolved trailing group in full', () => {
-  const events = [...turnWithToolGroups(2), ...openToolGroup('tool-open')]
-  // Ask for 1 record: the closed 'tool-1' group would be the naive last
-  // record, but 'tool-open' never resolves, so it must be included in full
-  // rather than truncated or dropped.
-  const window = tailRecordsInTurn(events, 0, events.length, 1)
-  const toolIds = window.events.map((e) => (e.kind === 'tool_call' ? e.toolCallId : null)).filter(Boolean)
-  assert.deepEqual(toolIds, ['tool-open'])
+test('the header is never inside the slice, so a consumer can place it itself', () => {
+  const events = [...turn('A', 49), ...turn('B', 6)]
+  const window = tailByRecords(events, 10)
+  assert.ok(window.header)
+  assert.ok(window.header.index < window.startIndex)
+  assert.ok(!window.events.includes(window.header.event))
+})
+
+test('paging back inside one turn terminates instead of re-serving its tail', () => {
+  // The cursor sits on the first counted agent record, not the header — with it
+  // on the header every page would start above the same question again.
+  const events = turn('A', 20)
+  let window = tailByRecords(events, 5)
+  const seen: number[] = [window.startIndex]
+  let hops = 0
+  while (window.hasMore) {
+    window = pageBeforeByRecords(events, window.startIndex, 5)
+    assert.ok(window.startIndex < seen[seen.length - 1], 'each page must move strictly backwards')
+    seen.push(window.startIndex)
+    hops += 1
+    assert.ok(hops < 20, 'paging must terminate')
+  }
+  assert.equal(window.startIndex, 0)
+})
+
+test('every page reports the same header while paging within one turn', () => {
+  // Which is exactly why it is a field rather than spliced into the slice:
+  // concatenating pages would otherwise repeat the question.
+  const events = turn('A', 20)
+  const tail = tailByRecords(events, 5)
+  const older = pageBeforeByRecords(events, tail.startIndex, 5)
+  assert.equal(tail.header?.index, 0)
+  assert.equal(older.header?.index, 0)
+})
+
+test('paging backward covers the whole log with no gaps or overlaps', () => {
+  const events = [...turn('A', 3), ...turn('B', 2), ...turn('C', 4)]
+  const pages: ChatEvent[][] = []
+  let window = tailByRecords(events, 3)
+  pages.unshift(window.events)
+  while (window.hasMore) {
+    window = pageBeforeByRecords(events, window.startIndex, 3)
+    pages.unshift(window.events)
+  }
+  assert.deepEqual(pages.flat(), events)
+})
+
+test('a history shorter than the budget is served whole, with no header and no more', () => {
+  const events = turn('A', 2)
+  const window = tailByRecords(events, 10)
+  assert.deepEqual(window.events, events)
+  assert.equal(window.startIndex, 0)
+  assert.equal(window.hasMore, false)
+  assert.equal(window.header, undefined)
+})
+
+test('a still-running tool call ships whole rather than being cut', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'go' },
+    ...closedTool('done'),
+    { kind: 'tool_call', toolCallId: 'live', title: 'live', status: 'pending' },
+    { kind: 'tool_update', toolCallId: 'live', status: 'in_progress' },
+  ]
+  const window = tailByRecords(events, 1)
+  const ids = window.events
+    .filter((e) => e.kind === 'tool_call')
+    .map((e) => (e.kind === 'tool_call' ? e.toolCallId : ''))
+  assert.deepEqual(ids, ['live'])
+  // the update belongs to the call that is present, never orphaned
   assert.equal(window.events.at(-1)?.kind, 'tool_update')
 })
 
-test('tailRecordsInTurn with records <= 0 returns an empty window positioned at turnEnd', () => {
-  const events = turnWithToolGroups(3)
-  const window = tailRecordsInTurn(events, 0, events.length, 0)
-  assert.deepEqual(window.events, [])
-  assert.equal(window.startIndex, events.length)
-  assert.equal(window.hasMore, true)
-})
-
-test('a permission request/resolved pair is never split across a cut', () => {
-  const events: ChatEvent[] = [
-    { kind: 'user', text: 'go' },
-    ...closedToolGroup('tool-0'),
-    { kind: 'permission_request', requestId: 'p1', title: 'allow?', options: [] },
-    { kind: 'permission_resolved', requestId: 'p1', optionId: 'yes' },
-  ]
-  const window = tailRecordsInTurn(events, 0, events.length, 1)
-  assert.deepEqual(
-    window.events.map((e) => e.kind),
-    ['permission_request', 'permission_resolved'],
-  )
-})
-
-test('consecutive agent_message chunks fold into a single record boundary', () => {
-  const events: ChatEvent[] = [
-    { kind: 'user', text: 'go' },
-    ...closedToolGroup('tool-0'),
-    { kind: 'agent_message', text: 'hello ' },
-    { kind: 'agent_message', text: 'world' },
-  ]
-  const window = tailRecordsInTurn(events, 0, events.length, 1)
-  assert.deepEqual(
-    window.events.map((e) => e.kind),
-    ['agent_message', 'agent_message'],
-  )
-})
-
-test('pageBeforeRecordsInTurn paging backward covers a turn body with no gaps or overlaps', () => {
-  const events = turnWithToolGroups(9)
-  const pages: ChatEvent[][] = []
-  let window = tailRecordsInTurn(events, 0, events.length, 3)
-  pages.unshift(window.events)
-  while (window.hasMore) {
-    window = pageBeforeRecordsInTurn(events, 0, window.startIndex, 3)
-    pages.unshift(window.events)
-  }
-  assert.deepEqual(pages.flat(), events.slice(1)) // excludes the leading user event
+test('records <= 0 and an exhausted cursor both yield empty windows', () => {
+  const events = turn('A', 3)
+  assert.deepEqual(tailByRecords(events, 0).events, [])
+  assert.deepEqual(pageBeforeByRecords(events, 0, 5).events, [])
+  assert.equal(pageBeforeByRecords(events, 0, 5).hasMore, false)
 })

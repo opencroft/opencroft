@@ -78,16 +78,10 @@ export interface AgentSession {
   // sequence a DOM-window/scroll-position change with the data actually
   // landing, instead of the two racing.
   loadMoreHistory?: () => Promise<void>
-  // Whether the newest turn's own tool-call history was itself trimmed on
-  // load — a turn with a huge number of tool calls (a long agent run) can
-  // blow up the initial load the same way a huge transcript can, so
-  // turn-level windowing alone can't bound it. Independent of
-  // hasMoreHistory, which pages whole earlier turns.
-  hasMoreInTurn?: boolean
-  loadingMoreInTurn?: boolean
-  // Fetches and splices in the next older page of tool calls within the
-  // current turn. Same await contract as loadMoreHistory.
-  loadMoreInTurn?: () => Promise<void>
+  // The question of the turn the loaded history starts inside, when only part
+  // of that turn is loaded — its own `user` event sits above the window, so
+  // the section's sticky header has no text without it.
+  historyHeader?: string | null
 }
 
 interface AgentChatProps {
@@ -197,24 +191,15 @@ function useStickToBottom(resetKey: string, contentKey: number, holdPosition: ()
     rootRef,
     viewport,
     runProgrammatic,
-    // Read, not subscribed to — callers poll this at the moment they need it
-    // (e.g. deciding whether to shrink the render window) rather than
-    // re-rendering on every pin/unpin.
-    isPinned: useCallback(() => pinned.current, []),
   }
 }
 
-// Render window over `blocks`: only the last `visibleCount` are mounted, so a
-// long history doesn't pay for thousands of ReactMarkdown/tool-view renders
-// (and the ResizeObserver-driven scroll-to-bottom in useStickToBottom doesn't
-// visually scroll through all of them) just to open at the end. Scrolling the
-// sentinel above the window into view grows it. The window's anchoring depends
-// on pin state: pinned at the bottom it slides with the conversation and
-// shrinks back to the initial size as new blocks arrive (recycling old DOM);
-// un-pinned (reading history) its start is frozen — appends grow it below —
-// so content never shifts under the reader.
-const INITIAL_VISIBLE_BLOCKS = 30
-const LOAD_MORE_STEP = 30
+// Everything the session holds is mounted: the server window is the only one.
+// A second window in blocks used to sit on top of it, and because its unit
+// (folded blocks) didn't match the server's (events), the two could disagree
+// about whether anything was left — which is how a scroll-up could load
+// nothing at all. At 5 records a page the DOM grows only as fast as someone
+// scrolls, so bounding it bought nothing that the mismatch didn't cost more.
 // Slack above the viewport's top edge at which the "load older" sentinel counts
 // as in view. Triggering the fetch BEFORE the reader actually reaches scrollTop
 // 0 keeps the restore out of the browser's top-edge dead zone: native scroll
@@ -253,31 +238,15 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   // regardless of anything below it measuring async (codemirror, markdown).
   const pendingAnchorRef = useRef<{ id: number; top: number } | null>(null)
   const holdPosition = useCallback(() => pendingAnchorRef.current !== null, [])
-  const { rootRef, viewport, runProgrammatic, isPinned } = useStickToBottom(
-    session.sessionKey,
-    blocks.length,
-    holdPosition,
-  )
+  const { rootRef, viewport, runProgrammatic } = useStickToBottom(session.sessionKey, blocks.length, holdPosition)
   const detailsCollapsedRef = useRef(!defaultExpanded)
   const onDetailsCollapseChange = useCallback((collapsed: boolean) => {
     detailsCollapsedRef.current = collapsed
   }, [])
 
-  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_BLOCKS)
-  // A new session's window starts fresh — otherwise a previous chat's grown
-  // (or shrunk) count would carry over and render the wrong slice for a beat.
-  useEffect(() => {
-    setVisibleCount(INITIAL_VISIBLE_BLOCKS)
-  }, [session.sessionKey])
-
-  const startIndex = Math.max(0, blocks.length - visibleCount)
-  // Older content remains to reveal either locally (more of `blocks` than the
-  // window currently shows) or on the server (a bounded tail window was sent —
-  // and hasMoreHistory says there's an earlier
-  // page behind it).
-  const hasOlder = startIndex > 0 || session.hasMoreHistory === true
-  const visibleBlocks = blocks.slice(startIndex)
-  const topBlockId = visibleBlocks[0]?.id ?? null
+  // Older content lives only on the server now, so this is the one condition.
+  const hasOlder = session.hasMoreHistory === true
+  const topBlockId = blocks[0]?.id ?? null
 
   // Offset of a rendered block from the top of the scrollable content, or null
   // if it isn't in the DOM. Adding scrollTop back to the viewport-relative rect
@@ -321,15 +290,6 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   sessionRef.current = session
 
   const loadOlder = useCallback(() => {
-    // More of the already-downloaded `blocks` to reveal locally — same tick,
-    // so capture and grow land in one commit.
-    if (startIndex > 0) {
-      captureTopAnchor()
-      setVisibleCount((prev) => prev + LOAD_MORE_STEP)
-      return
-    }
-    // Nothing left locally — the rest, if any, is still on the server (a
-    // bounded tail window was sent).
     const current = sessionRef.current
     if (!current.hasMoreHistory || current.loadingMoreHistory) {
       return
@@ -343,10 +303,8 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
     // the already-grown height, the restore computed a no-op, and the viewport
     // stayed pinned at the top.
     captureTopAnchor()
-    void current.loadMoreHistory?.().then(() => {
-      setVisibleCount((prev) => prev + LOAD_MORE_STEP)
-    })
-  }, [startIndex, captureTopAnchor])
+    void current.loadMoreHistory?.()
+  }, [captureTopAnchor])
 
   // Re-armed after every completed prepend. An IntersectionObserver only
   // invokes its callback when intersection CHANGES: once a prepend settles with
@@ -356,12 +314,10 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   const [observerArm, setObserverArm] = useState(0)
 
   // Restore the reader's position once the prepended blocks are actually in the
-  // DOM. Keyed on the topmost rendered block's id as well as visibleCount, so
-  // it fires on whichever commit introduces content above — the events prepend
-  // (use-acp-session) and the window growth (here) are separate state updates
-  // in separate components and are not guaranteed to land together.
+  // DOM. Keyed on the topmost rendered block's id, so it fires on whichever
+  // commit introduces content above rather than on a count that may change in
+  // a different commit.
   // biome-ignore lint/correctness/useExhaustiveDependencies(topBlockId): re-run on whichever commit prepends content above the reader
-  // biome-ignore lint/correctness/useExhaustiveDependencies(visibleCount): re-run when the local render window grows
   useLayoutEffect(() => {
     const anchor = pendingAnchorRef.current
     if (!anchor) {
@@ -388,7 +344,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
     // into a loop. With a correct restore each refire walks back exactly one
     // page and terminates as soon as the sentinel is pushed out of view.
     setObserverArm((n) => n + 1)
-  }, [topBlockId, visibleCount, blockContentTop, viewport, runProgrammatic])
+  }, [topBlockId, blockContentTop, viewport, runProgrammatic])
 
   const sentinelRef = useRef<HTMLDivElement>(null)
   // Whether the sentinel is currently in view, per the observer below. Read by
@@ -427,35 +383,14 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
     // observerArm is a re-arm signal, not a value this effect reads.
   }, [hasOlder, viewport, loadOlder, observerArm])
 
-  // React to the conversation growing, per the window-anchoring rules above.
-  // Pinned: shrink a grown window back so old blocks unmount, same as if the
-  // chat had just been opened (guarded on the sentinel being out of view, see
-  // sentinelVisibleRef). Un-pinned: freeze startIndex by widening the window by
-  // exactly the number of appended blocks — otherwise the end-anchored slice
-  // would drop the top visible block on every append and yank the content the
-  // reader is on. The frozen window is recycled later, once the user re-pins
-  // and the next block arrives.
-  // Carry each visible block's position in the FULL list into the grouping —
-  // turnByBlock and the "is this the active turn" check are both keyed by it,
-  // and grouping otherwise loses it. The React key stays the block id, which
-  // (unlike position) survives a "load older" prepend unchanged.
+  // Carry each block's position into the grouping — turnByBlock and the "is
+  // this the active turn" check are both keyed by it, and grouping otherwise
+  // loses it. The React key stays the block id, which (unlike position)
+  // survives a "load older" prepend unchanged.
   const sections = useMemo(
-    () => groupIntoTurnSections(visibleBlocks.map((block, i) => ({ ...block, absoluteIndex: startIndex + i }))),
-    [visibleBlocks, startIndex],
+    () => groupIntoTurnSections(blocks.map((block, i) => ({ ...block, absoluteIndex: i }))),
+    [blocks],
   )
-
-  const prevBlockCountRef = useRef(blocks.length)
-  useEffect(() => {
-    const appended = blocks.length - prevBlockCountRef.current
-    prevBlockCountRef.current = blocks.length
-    if (isPinned()) {
-      if (!sentinelVisibleRef.current) {
-        setVisibleCount((prev) => Math.min(prev, INITIAL_VISIBLE_BLOCKS))
-      }
-    } else if (appended > 0) {
-      setVisibleCount((prev) => prev + appended)
-    }
-  }, [blocks.length, isPinned])
 
   return (
     <Flex ref={rootRef} justify='end' className='min-h-full min-w-0 gap-3 px-4 py-4'>
@@ -477,7 +412,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
             // header to its section is what produces that hand-off, so no
             // scroll position is read anywhere.
             <Flex key={section.id} className='w-full min-w-0 gap-3'>
-              {section.user && (
+              {section.user ? (
                 <UserMessage
                   sticky
                   blockId={section.user.id}
@@ -489,27 +424,14 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
                       : undefined
                   }
                 />
-              )}
-              {/* Belongs to the turn whose records it loads, so it sits inside
-                  that turn's section rather than floating above whichever
-                  reply block happens to be last. Only the newest turn is ever
-                  trimmed, and the cursor is dropped when a new turn starts, so
-                  the last section is that turn.
-
-                  Its position here is load-bearing, not cosmetic. Older records
-                  are spliced in at the START of the turn's body — directly
-                  below this control — and the control is not sticky, so it has
-                  to be on screen to be clicked. Everything above the viewport
-                  top is therefore unchanged by the insert, which leaves
-                  scrollTop still correct and the reader's view unmoved without
-                  any scroll correction. Moving this control (or making it
-                  stick) breaks that and reintroduces the content-shift problem
-                  the turn-level path has to solve with an anchor restore. */}
-              {sectionIndex === sections.length - 1 && session.hasMoreInTurn && (
-                <LoadMoreInTurnButton
-                  loading={session.loadingMoreInTurn === true}
-                  onClick={() => void session.loadMoreInTurn?.()}
-                />
+              ) : (
+                // Only the first section can lack a question: the window starts
+                // inside a turn whose own `user` event is above it. The server
+                // hands that text over separately so this turn still reads as a
+                // question with replies rather than as replies to nothing.
+                // Not editable — the message it refers to isn't loaded.
+                sectionIndex === 0 &&
+                session.historyHeader && <UserMessage sticky blockId={-1} text={session.historyHeader} />
               )}
               {section.items.map((b) =>
                 b.kind === 'user' ? null : (
@@ -625,24 +547,6 @@ function ToolCallView({ item }: { item: Extract<DetailItem, { kind: 'tool' }> })
     return <ViewComponent tool={item.name} args={args} requestId={item.id} mode='history' result={item.result} />
   }
   return <GenericToolView tool={item.name} args={args} result={item.result} />
-}
-
-// A manual "load older tool calls in this turn" control — click-to-fetch
-// rather than a scroll sentinel, so it never reads or writes
-// scrollTop/scrollHeight and can't interact with loadOlder's own restore logic
-// above.
-function LoadMoreInTurnButton({ loading, onClick }: { loading: boolean; onClick: () => void }) {
-  return (
-    <Button
-      variant='ghost'
-      size='sm'
-      className='self-start text-xs text-muted-foreground'
-      disabled={loading}
-      onClick={onClick}
-    >
-      {loading ? 'Loading earlier tool calls…' : 'Load earlier tool calls'}
-    </Button>
-  )
 }
 
 type DetailEntry = { kind: 'header' } | { kind: 'item'; item: DetailItem }
