@@ -12,14 +12,11 @@ import {
   SelectValue,
 } from '@ext/ui'
 
+import { type KeyValue, KeyValueEditor } from './key-value-editor'
+
 const { useCallback, useEffect, useState } = React
 
 type McpTransport = 'http' | 'sse' | 'stdio'
-
-interface KeyValue {
-  name: string
-  value: string
-}
 
 interface McpServerConfig {
   name: string
@@ -249,58 +246,5 @@ function CheckBadge({ check }: { check: CheckState | undefined }) {
     <span className='text-[10px] text-destructive truncate' title={check.error}>
       {check.error ?? 'failed'}
     </span>
-  )
-}
-
-function KeyValueEditor({
-  label,
-  entries,
-  onChange,
-}: {
-  label: string
-  entries: KeyValue[]
-  onChange: (entries: KeyValue[]) => void
-}) {
-  const set = (index: number, patch: Partial<KeyValue>) => {
-    onChange(entries.map((entry, i) => (i === index ? { ...entry, ...patch } : entry)))
-  }
-
-  return (
-    <div className='flex flex-col gap-1.5'>
-      <Label className='text-[10px] text-muted-foreground'>{label}</Label>
-      {entries.map((entry, index) => (
-        <div key={index} className='flex items-center gap-1.5'>
-          <Input
-            value={entry.name}
-            placeholder='name'
-            className='h-7 w-1/3 text-xs font-mono'
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => set(index, { name: e.target.value })}
-          />
-          <Input
-            value={entry.value}
-            placeholder='value'
-            className='h-7 text-xs font-mono'
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => set(index, { value: e.target.value })}
-          />
-          <Button
-            variant='ghost'
-            size='sm'
-            className='size-7 p-0'
-            onClick={() => onChange(entries.filter((_, i) => i !== index))}
-          >
-            <icons.X className='size-3' />
-          </Button>
-        </div>
-      ))}
-      <Button
-        variant='outline'
-        size='sm'
-        className='h-6 self-start text-[10px]'
-        onClick={() => onChange([...entries, { name: '', value: '' }])}
-      >
-        <icons.Plus className='size-3 mr-1' />
-        Add
-      </Button>
-    </div>
   )
 }

@@ -13,6 +13,7 @@ import {
   Textarea,
 } from '@ext/ui'
 
+import type { KeyValue } from './key-value-editor'
 import { useSecretKeys } from './secrets'
 
 const { useCallback, useRef, useState, useEffect } = React
@@ -41,6 +42,11 @@ export interface AgentData {
    * output-format knobs, read from the node's data by speech consumers. */
   ttsApiBase?: string
   ttsApiKey?: string
+  /** Extra request headers for every TTS call, merged over the defaults — so a
+   * custom `Authorization` replaces the `ttsApiKey` Bearer shorthand rather
+   * than colliding with it. A value of `secret:NAME` is resolved from the
+   * Secrets Store server-side at request time; anything else is sent as typed. */
+  ttsHeaders?: KeyValue[]
   ttsModel?: string
   voice?: string
   ttsSpeed?: number
@@ -57,6 +63,9 @@ export interface AgentData {
    * consumers. */
   asrApiBase?: string
   asrApiKey?: string
+  /** Extra request headers for every ASR call — same merge and `secret:NAME`
+   * handling as `ttsHeaders`. */
+  asrHeaders?: KeyValue[]
   asrModel?: string
   asrLanguage?: string
 }
