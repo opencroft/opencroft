@@ -97,12 +97,9 @@ interface AgentChatProps {
   defaultExpanded?: boolean
 }
 
-// Input that means the reader is moving the view themselves. A hold is
-// cancelled from these rather than from `scroll`, because our own corrections
-// raise `scroll` — and so does the browser's scroll anchoring where it still
-// applies — so a hold cancelled by `scroll` would cancel itself on the first
-// correction it made. No gesture accompanies either of those.
-const USER_SCROLL_GESTURES = ['wheel', 'touchmove', 'pointerdown', 'keydown'] as const
+// Keys that move a scroll container rather than a caret. Space is included
+// because it pages a scroller when focus isn't in a text field.
+const SCROLL_KEYS = new Set(['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' '])
 
 // A position being held across a prepend while the content above settles.
 interface ActiveHold {
@@ -112,9 +109,6 @@ interface ActiveHold {
   // the capture, so a slow request doesn't spend the budget that exists to
   // bound how long the content takes to settle.
   settlingSince: number | null
-  // TEMPORARY: the anchor's position on SCREEN at
-  // capture, for the double-correction probe below.
-  viewportTop: number | null
 }
 
 // A hold that ends on its deadline rather than on the content settling means
@@ -240,7 +234,6 @@ function useChatScroll({ sessionKey, blocks, topBlockId, session }: ChatScrollPa
         bottomDistance: root.scrollHeight - root.scrollTop - root.clientHeight,
       },
       settlingSince: null,
-      viewportTop: id === null ? null : blockViewportTop(root, id),
     }
     causeRef.current = 'loading-older'
   }, [viewport, endHold])
@@ -265,16 +258,6 @@ function useChatScroll({ sessionKey, blocks, topBlockId, session }: ChatScrollPa
       return
     }
     if (active.settlingSince === null) {
-      // TEMPORARY: on the FIRST correction of a
-      // prepend, report whether the browser already corrected it by itself. The
-      // anchor moves through the content by the height inserted above it; it
-      // moves on screen by that same amount MINUS whatever the browser already
-      // absorbed. The gap between the two is the browser's own adjustment.
-      reportBrowserScrollAdjustment(
-        shift,
-        active.viewportTop,
-        anchorId === undefined ? null : blockViewportTop(root, anchorId),
-      )
       active.settlingSince = performance.now()
     } else if (holdExpired(active.settlingSince, performance.now())) {
       reportHoldDeadline()
@@ -404,32 +387,64 @@ function useChatScroll({ sessionKey, blocks, topBlockId, session }: ChatScrollPa
         maybeFill()
       })
     }
-    const onUserGesture = (event: Event) => {
-      if (event.type === 'wheel' && (event as WheelEvent).deltaY < 0) {
-        // Reading upward stops the bottom-follow immediately, so streaming
-        // content can't yank the view back down.
-        atBottomRef.current = false
-      }
-      // Only cancels a hold that has already started correcting. Before the
-      // page lands there is nothing to fight over, and the anchor is measured
-      // in content coordinates — so the reader's own scrolling is preserved by
-      // construction rather than needing the hold dropped. Cancelling there
-      // instead would abandon the correction for the most ordinary interaction
-      // there is: scrolling up continuously through history.
+    // Only cancels a hold that has ALREADY started correcting. Before the page
+    // lands there is nothing to fight over, and the anchor is measured in
+    // content coordinates — so the reader's own scrolling is preserved by
+    // construction rather than needing the hold dropped. Cancelling there
+    // instead would abandon the correction for the most ordinary interaction
+    // there is: scrolling up continuously through history.
+    const cancelSettlingHold = () => {
       const active = holdRef.current
       if (active !== null && active.settlingSince !== null) {
         endHold()
       }
     }
-    root.addEventListener('scroll', onScroll, { passive: true })
-    for (const type of USER_SCROLL_GESTURES) {
-      root.addEventListener(type, onUserGesture, { passive: true })
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0) {
+        // Reading upward stops the bottom-follow immediately, so streaming
+        // content can't yank the view back down.
+        atBottomRef.current = false
+      }
+      cancelSettlingHold()
     }
+    const onTouchMove = () => cancelSettlingHold()
+    // Filtered rather than "any keydown": these keys move the view, while a
+    // keystroke inside a message (an inline edit) moves a caret. Keyboard
+    // scrolling reaches this listener because it requires focus to be inside
+    // the viewport in the first place — either on a child, or on the scroller
+    // itself where the engine makes it focusable.
+    // `globalThis.` because React's KeyboardEvent is imported into this file for
+    // JSX handlers and shadows the DOM one; this is a real listener, not a JSX
+    // prop, so it needs the DOM type.
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (SCROLL_KEYS.has(event.key)) {
+        cancelSettlingHold()
+      }
+    }
+    // Radix renders its scrollbar as a SIBLING of the viewport, so dragging the
+    // thumb produces no event inside it at all — the one genuine user scroll
+    // that neither wheel, touch nor key covers. Delegated from the scroll-area
+    // root so it survives Radix mounting the scrollbar on demand, and narrowed
+    // to the scrollbar (or the scroller itself, where a native bar would be
+    // pressed) so that clicking a button in a message is not a scroll.
+    const onPointerDown = (event: Event) => {
+      const target = event.target as Element | null
+      if (event.target === root || target?.closest('[data-slot="scroll-area-scrollbar"]')) {
+        cancelSettlingHold()
+      }
+    }
+    const scrollArea = root.closest('[data-slot="scroll-area"]') ?? root
+    root.addEventListener('scroll', onScroll, { passive: true })
+    root.addEventListener('wheel', onWheel, { passive: true })
+    root.addEventListener('touchmove', onTouchMove, { passive: true })
+    root.addEventListener('keydown', onKeyDown, { passive: true })
+    scrollArea.addEventListener('pointerdown', onPointerDown, { passive: true })
     return () => {
       root.removeEventListener('scroll', onScroll)
-      for (const type of USER_SCROLL_GESTURES) {
-        root.removeEventListener(type, onUserGesture)
-      }
+      root.removeEventListener('wheel', onWheel)
+      root.removeEventListener('touchmove', onTouchMove)
+      root.removeEventListener('keydown', onKeyDown)
+      scrollArea.removeEventListener('pointerdown', onPointerDown)
     }
   }, [viewport, maybeFill, endHold])
 
@@ -499,42 +514,6 @@ function elementContentTop(root: HTMLElement, el: Element): number {
 function blockContentTop(root: HTMLElement, id: string): number | null {
   const el = root.querySelector(`[${BLOCK_ID_ATTR}="${id}"]`)
   return el ? elementContentTop(root, el) : null
-}
-
-// TEMPORARY: the same block's position on SCREEN, as
-// opposed to its position in the content. The difference between how far it
-// moves in each is precisely the scroll adjustment the browser applied by
-// itself, which is the thing we need to observe before turning it off.
-function blockViewportTop(root: HTMLElement, id: string): number | null {
-  const el = root.querySelector(`[${BLOCK_ID_ATTR}="${id}"]`)
-  return el ? el.getBoundingClientRect().top - root.getBoundingClientRect().top : null
-}
-
-// TEMPORARY — remove together with this measurement.
-//
-// Answers one question in one line: did the browser's own scroll anchoring
-// already compensate for a prepend, so that our correction lands on top of it?
-// Reports a verdict rather than numbers so it can be read at a glance.
-let scrollProbesLeft = 3
-function reportBrowserScrollAdjustment(
-  contentShift: number,
-  viewportTopBefore: number | null,
-  viewportTopAfter: number | null,
-): void {
-  if (scrollProbesLeft <= 0 || viewportTopBefore === null || viewportTopAfter === null) {
-    return
-  }
-  scrollProbesLeft -= 1
-  const onScreenShift = viewportTopAfter - viewportTopBefore
-  const browserApplied = contentShift - onScreenShift
-  const verdict =
-    Math.abs(browserApplied) < 1
-      ? 'NO — the browser left it to us (our correction is the only one)'
-      : 'YES — the browser already moved it, so our correction is a SECOND one'
-  console.log(
-    `[scroll-probe] browser already corrected this prepend? ${verdict}` +
-      ` | browser moved ${browserApplied.toFixed(1)}px, content grew ${contentShift.toFixed(1)}px above the reader`,
-  )
 }
 
 export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultExpanded }: AgentChatProps) {
