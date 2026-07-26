@@ -94,15 +94,23 @@ const SECRET_PREFIX = 'secret:'
 
 // `secret:NAME` resolves from the Secrets Store; anything else is sent as
 // typed. Resolution happens here, at request time, so a basic-auth password
-// never has to sit in the node's data as plain text. An unknown name resolves
-// to empty rather than throwing — the request then fails at the endpoint,
-// which is a clearer signal than a probe that errors before it is sent.
+// never has to sit in the node's data as plain text.
+//
+// An unresolvable name throws rather than yielding an empty value, matching the
+// same convention elsewhere. Empty would send `Authorization: ` and earn a 401,
+// leaving the tab with no voices and no knobs — indistinguishable from a broken
+// endpoint, which is the confusion this feature exists to remove. The error
+// names the secret instead.
 async function resolveHeaderValue(value: string): Promise<string> {
   if (!value.startsWith(SECRET_PREFIX)) {
     return value
   }
   const name = value.slice(SECRET_PREFIX.length).trim()
-  return name ? ((await host.secrets.resolve(name)) ?? '') : ''
+  const resolved = name ? await host.secrets.resolve(name) : null
+  if (resolved === null) {
+    throw new Error(`Secret "${name}" not found in any Secrets Store`)
+  }
+  return resolved
 }
 
 // Default headers for a speech endpoint, with the node's custom pairs merged
