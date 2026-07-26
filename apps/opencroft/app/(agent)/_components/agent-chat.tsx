@@ -536,7 +536,11 @@ function UserMessage({
     // than added to: keeping both would have doubled the gap. Unstuck, that
     // padding is the same rhythm every reply already has.
     <div
-      className={cn(sticky && 'sticky top-0 z-1', sticky && 'chat-stuck-container')}
+      // `container-type: scroll-state` makes this queryable as a stuck element.
+      // It applies no containment — unlike the size container types, which add
+      // style and size containment plus an independent formatting context — so
+      // it cannot disturb the header's box (CSS Conditional 5).
+      className={cn(sticky && 'sticky top-0 z-1 [container-type:scroll-state]')}
       {...{ [BLOCK_ID_ATTR]: blockId }}
     >
       {sticky && (
@@ -579,9 +583,15 @@ function UserMessage({
               // single scroll, and a transitioned box-shadow would repaint
               // every time. Behind the bubble's background, which hides
               // nothing — an outer shadow is drawn outside the border box.
+              //
+              // No support guard is needed. Where scroll-state queries are
+              // unavailable the declaration on the container is dropped and the
+              // query never matches, so this simply stays at opacity 0 and the
+              // header renders as it did before. Currently that means the
+              // shadow appears in Chromium only.
               <div
                 aria-hidden
-                className='chat-stuck-layer absolute inset-0 -z-1 rounded-md pointer-events-none shadow-lg shadow-black/50'
+                className='absolute inset-0 -z-1 rounded-md pointer-events-none shadow-lg shadow-black/50 opacity-0 transition-opacity duration-150 motion-reduce:transition-none [@container_scroll-state(stuck:top)]:opacity-100'
               />
             )}
             <div className='prose-chat'>
