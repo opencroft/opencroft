@@ -500,24 +500,30 @@ function UserMessage({
     // once stuck, so the `pt-2 -mt-2` pair this used to carry is gone rather
     // than added to: keeping both would have doubled the gap. Unstuck, that
     // padding is the same rhythm every reply already has.
-    <div className={cn(sticky && 'sticky top-0 z-1 bg-background')} {...{ [BLOCK_ID_ATTR]: blockId }}>
+    <div className={cn(sticky && 'sticky top-0 z-1')} {...{ [BLOCK_ID_ATTR]: blockId }}>
       {sticky && (
-        // Softens the header's bottom edge so replies pass beneath it instead
-        // of being clipped at a line. Same construction and tokens as
-        // StickySection's own fade — absolutely positioned, inert, behind its
-        // own content — but placed BELOW the box rather than across it: that
-        // component's fade spans its element, which here would put a gradient
-        // behind the question and cost the legibility the opaque backing is
-        // there to provide.
+        // The header's backing: opaque down to mid-height, then falling away to
+        // nothing at its bottom edge, so replies dissolve as they pass under it
+        // instead of being clipped at a line.
         //
-        // Its height matches the section's gap, so in normal flow it covers
-        // only that gap and never tints the reply beneath — an unstuck message
-        // looks exactly as it did. That also caps how long the falloff can be:
-        // a longer one would need to switch on only while actually stuck, and
-        // CSS has no way to say that.
+        // Spanning the element is what lets the falloff be this long. A layer
+        // hanging BELOW the box — the previous approach — could never exceed the
+        // gap to the next reply without tinting it in normal flow, which capped
+        // it at 12px. This one is entirely inside the box, so it cannot reach
+        // the reply at all and the cap doesn't apply.
+        //
+        // It costs no legibility even though it fades: the question sits in its
+        // own `bg-muted` bubble and the avatar in a `bg-muted` circle, both
+        // opaque in either theme, so nothing passes behind the text. This layer
+        // only backs the gutter around them — the rail and the strip beside the
+        // edit control — which is exactly what should dissolve.
+        //
+        // Opaque through the top half so the stuck message's own breathing room
+        // (Chained's `py-2`) stays solid: the falloff begins below the text, not
+        // above it.
         <div
           aria-hidden
-          className='absolute inset-x-0 top-full h-3 -z-1 pointer-events-none bg-linear-to-b from-background to-transparent'
+          className='absolute inset-0 -z-1 pointer-events-none bg-linear-to-b from-background from-50% to-transparent'
         />
       )}
       <Chained marker={<AgentAvatar size='md' />} lineAbove={false} lineBelow={false} align='start'>
