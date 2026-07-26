@@ -474,10 +474,22 @@ function UserMessage({
   // Hold the top of the viewport while this turn's replies scroll underneath.
   // Needs an opaque background — the row is wider than its tinted bubble, so
   // without it replies would show through the gap beside the edit control.
+  // That background covers the padded box, so the stuck-only breathing room
+  // below is opaque too rather than a gap replies scroll through.
+  //
+  // `pt-2 -mt-2` is what makes that breathing room stuck-only: the pair
+  // cancels in normal flow (top edge up by the same amount content moves
+  // down, so nothing below shifts), while a stuck box has its top edge pinned
+  // to the viewport and the padding becomes visible space. CSS offers no
+  // `:stuck` selector to express this directly.
   sticky?: boolean
 }) {
   return (
-    <Flex row align='start' className={cn('group w-full gap-1', sticky && 'sticky top-0 z-10 bg-background')}>
+    <Flex
+      row
+      align='start'
+      className={cn('group w-full gap-1', sticky && 'sticky top-0 z-10 bg-background pt-2 -mt-2')}
+    >
       <Flex expanded className='gap-1.5 rounded-md bg-muted border-1 p-2'>
         <div className='prose-chat'>
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
