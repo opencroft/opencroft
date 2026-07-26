@@ -420,8 +420,17 @@ function UserBubble({
       ref={wrapperRef}
       // The bubble's own tint is translucent, so when stuck it gets an opaque
       // layer beneath it — otherwise the replies passing underneath show
-      // through the header.
-      className={cn('self-end max-w-[85%]', sticky && 'sticky top-0 z-10 rounded-lg bg-background')}
+      // through the header. The background sits on the padded box, so the
+      // breathing room below is covered too rather than being a gap replies
+      // scroll through.
+      //
+      // `pt-2 -mt-2` buys that breathing room only while stuck. The two cancel
+      // in normal flow — the box's top edge moves up by the same amount its
+      // content moves down, so the element's vertical footprint, and every
+      // position below it, is unchanged. Stuck, the top edge is pinned to the
+      // viewport instead, so the padding becomes visible space above the
+      // message. There is no `:stuck` selector to do this more directly.
+      className={cn('self-end max-w-[85%]', sticky && 'sticky top-0 z-10 rounded-lg bg-background pt-2 -mt-2')}
     >
       <ContextMenu>
         <ContextMenuTrigger asChild onClick={isMobile ? handleTap : undefined}>
