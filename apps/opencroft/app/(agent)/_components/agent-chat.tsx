@@ -420,12 +420,19 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
               )}
               {/* Belongs to the turn whose records it loads, so it sits inside
                   that turn's section rather than floating above whichever
-                  chain block happens to be last. Only the newest turn is ever
+                  reply block happens to be last. Only the newest turn is ever
                   trimmed, and the cursor is dropped when a new turn starts, so
-                  the last section is that turn. A manual button rather than a
-                  scroll sentinel, deliberately: it never touches
-                  scrollTop/scrollHeight, so it can't interact with the
-                  load-older scroll-restore logic. */}
+                  the last section is that turn.
+
+                  Its position here is load-bearing, not cosmetic. Older records
+                  are spliced in at the START of the turn's body — directly
+                  below this control — and the control is not sticky, so it has
+                  to be on screen to be clicked. Everything above the viewport
+                  top is therefore unchanged by the insert, which leaves
+                  scrollTop still correct and the reader's view unmoved without
+                  any scroll correction. Moving this control (or making it
+                  stick) breaks that and reintroduces the content-shift problem
+                  the turn-level path has to solve with an anchor restore. */}
               {sectionIndex === sections.length - 1 && session.hasMoreInTurn && (
                 <LoadMoreInTurnButton
                   loading={session.loadingMoreInTurn === true}

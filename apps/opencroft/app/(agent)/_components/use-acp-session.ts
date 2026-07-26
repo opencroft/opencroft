@@ -589,6 +589,15 @@ export function useAcpSession(
   // since everything after the insertion point (the turn's already-loaded
   // tail) stays exactly where it is. `baseIndexRef` (events[0]'s absolute
   // index) is unaffected — nothing before it moved.
+  //
+  // No scroll correction accompanies this, deliberately: the control that
+  // triggers it renders immediately above the insertion point and does not
+  // stick, so it must be visible for the call to happen at all, which puts the
+  // insert at or below the viewport's top edge. Growth below that edge leaves
+  // scrollTop meaningful and the reader's view unmoved. The turn-level
+  // "load older" path can't make that argument — its trigger sits at the very
+  // top and inserts above the viewport — which is why only that one needs an
+  // anchor restore.
   const loadMoreInTurn = useCallback(async () => {
     const turnStart = turnStartRef.current
     const older = await paginatedTurnRecords.loadOlder()
