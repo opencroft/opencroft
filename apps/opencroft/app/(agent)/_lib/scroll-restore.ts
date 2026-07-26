@@ -18,8 +18,19 @@
 // coordinates, is immune to both: the only thing that moves it is content
 // inserted above it.
 
-// Sub-pixel layout noise that should not count as "the content moved".
-const EPSILON = 0.5
+// Below this, "the content moved" cannot be distinguished from measurement
+// noise, so the correction is skipped rather than applied.
+//
+// One pixel, not a smaller guess: `scrollHeight` and `clientHeight` are integers
+// in the CSSOM View IDL while `scrollTop` is a double, so a position derived
+// from them carries up to ±1px of rounding — and the spec pins no rounding mode,
+// so engines may differ at the half-pixel. It is also why an exact comparison
+// against those values never holds.
+//
+// Skipping small corrections is a fix in its own right, not just an
+// optimisation: writing a position that is already correct is what turns
+// rounding into visible jitter.
+const EPSILON = 1
 
 export interface ScrollAnchor {
   // A block rendered both before and after the prepend. Its id names the turn

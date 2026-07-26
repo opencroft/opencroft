@@ -212,6 +212,33 @@ const LOAD_OLDER_ROOT_MARGIN = '250px'
 // specific block in the DOM again after a prepend has shifted it.
 const BLOCK_ID_ATTR = 'data-block-id'
 
+// TEMPORARY — remove together with this measurement.
+//
+// Answers one question in one line: did the browser's own scroll anchoring
+// already compensate for a prepend, so that our correction lands on top of it?
+// Reports a verdict rather than numbers so it can be read at a glance.
+let scrollProbesLeft = 3
+function reportBrowserScrollAdjustment(
+  contentShift: number,
+  viewportTopBefore: number | null,
+  viewportTopAfter: number | null,
+): void {
+  if (scrollProbesLeft <= 0 || viewportTopBefore === null || viewportTopAfter === null) {
+    return
+  }
+  scrollProbesLeft -= 1
+  const onScreenShift = viewportTopAfter - viewportTopBefore
+  const browserApplied = contentShift - onScreenShift
+  const verdict =
+    Math.abs(browserApplied) < 1
+      ? 'NO — the browser left it to us (our correction is the only one)'
+      : 'YES — the browser already moved it, so our correction is a SECOND one'
+  console.log(
+    `[scroll-probe] browser already corrected this prepend? ${verdict}` +
+      ` | browser moved ${browserApplied.toFixed(1)}px, content grew ${contentShift.toFixed(1)}px above the reader`,
+  )
+}
+
 export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultExpanded }: AgentChatProps) {
   const displayName = agentName ?? session.botName
   // Computed over the FULL message list, not the visible window: turn indices
@@ -241,7 +268,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   // content actually inserted above the anchor moves it — and re-measuring the
   // same element after the commit yields exactly the height that was added,
   // regardless of anything below it measuring async (codemirror, markdown).
-  const pendingAnchorRef = useRef<{ id: string; top: number } | null>(null)
+  const pendingAnchorRef = useRef<{ id: string; top: number; viewportTop: number | null } | null>(null)
   const holdPosition = useCallback(() => pendingAnchorRef.current !== null, [])
   const { rootRef, viewport, runProgrammatic } = useStickToBottom(session.sessionKey, blocks.length, holdPosition)
   const detailsCollapsedRef = useRef(!defaultExpanded)
@@ -274,11 +301,24 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   const topBlockIdRef = useRef<string | null>(null)
   topBlockIdRef.current = topBlockId
 
+  // TEMPORARY: the anchor's position on SCREEN, as
+  // opposed to its position in the content. The difference between how far it
+  // moves in each is precisely the scroll adjustment the browser applied by
+  // itself, which is the thing we need to observe before turning it off.
+  const blockViewportTop = useCallback(
+    (id: string) => {
+      const root = viewport()
+      const el = root?.querySelector(`[${BLOCK_ID_ATTR}="${id}"]`)
+      return root && el ? el.getBoundingClientRect().top - root.getBoundingClientRect().top : null
+    },
+    [viewport],
+  )
+
   const captureTopAnchor = useCallback(() => {
     const id = topBlockIdRef.current
     const top = id === null ? null : blockContentTop(id)
-    pendingAnchorRef.current = id !== null && top !== null ? { id, top } : null
-  }, [blockContentTop])
+    pendingAnchorRef.current = id !== null && top !== null ? { id, top, viewportTop: blockViewportTop(id) } : null
+  }, [blockContentTop, blockViewportTop])
 
   // Read fresh inside loadOlder instead of closing over `session` directly, so
   // loadOlder's own identity doesn't change every time loadingMoreHistory
@@ -335,13 +375,26 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
     if (shift === null) {
       return
     }
+    // TEMPORARY: report whether the browser already
+    // corrected this prepend by itself, before we add our correction on top.
+    // The anchor moves through the content by the height inserted above it; it
+    // moves on screen by that same amount MINUS whatever the browser already
+    // absorbed. So the gap between the two is the browser's own adjustment.
+    reportBrowserScrollAdjustment(shift, anchor.viewportTop, blockViewportTop(anchor.id))
+
     pendingAnchorRef.current = null
     const el = viewport()
     if (el) {
       // Shift by exactly how far the anchor moved. Programmatic, so moving
-      // scrollTop isn't read as the user scrolling away from the bottom.
+      // the position isn't read as the user scrolling away from the bottom.
+      //
+      // Relative, never `scrollTop = x`. Chromium snaps written scroll offsets
+      // to physical pixels, so at a non-integral devicePixelRatio or under zoom
+      // the value read back differs from the one written, and repeated absolute
+      // assignments accumulate that error. Reading scrollTop to compute the new
+      // value can also return a stale figure mid-scroll.
       runProgrammatic(() => {
-        el.scrollTop += shift
+        el.scrollBy(0, shift)
       })
     }
     // Only re-arm on a real restore: a fetch that returned nothing moves
@@ -349,7 +402,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
     // into a loop. With a correct restore each refire walks back exactly one
     // page and terminates as soon as the sentinel is pushed out of view.
     setObserverArm((n) => n + 1)
-  }, [topBlockId, blockContentTop, viewport, runProgrammatic])
+  }, [topBlockId, blockContentTop, blockViewportTop, viewport, runProgrammatic])
 
   const sentinelRef = useRef<HTMLDivElement>(null)
   // Whether the sentinel is currently in view, per the observer below. Read by
