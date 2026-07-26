@@ -1,75 +1,80 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { type FillState, shouldLoadMore } from './history-fill'
+import { type FillState, shouldFill } from './history-fill'
 
 const VIEWPORT = 800
 
-// Drives the real decision against a model of the loading it triggers, so the
-// termination claim is exercised rather than asserted. `pageHeight` is what one
-// page adds; `pages` is how many the server still has.
-function fill(options: { pages: number; pageHeight: number; startHeight?: number }): {
-  fetches: number
-  state: FillState
-} {
-  let state: FillState = {
-    hasMore: options.pages > 0,
-    loading: false,
-    scrollHeight: options.startHeight ?? 0,
-    clientHeight: VIEWPORT,
-  }
-  let remaining = options.pages
+const at = (scrollTop: number, firstBlockOffsetTop = 0): FillState => ({
+  hasMore: true,
+  loading: false,
+  geometry: { scrollTop, clientHeight: VIEWPORT, firstBlockOffsetTop },
+})
+
+// ── the four guard intents carried over from the predicate this replaces ────
+// They are the regression net for the controller rewrite: each is a case a
+// shipping implementation had to learn, and none is expressed by the geometry.
+
+test('a short history ends exhausted rather than looping', () => {
+  // Content never fills the viewport, so the geometry says "fill" forever. Only
+  // the server saying there is nothing left stops it.
+  let state = at(0)
   let fetches = 0
-  while (shouldLoadMore(state)) {
+  while (shouldFill(state)) {
     fetches += 1
-    assert.ok(fetches < 100, 'the fill loop must terminate')
-    remaining -= 1
-    state = { ...state, scrollHeight: state.scrollHeight + options.pageHeight, hasMore: remaining > 0 }
+    assert.ok(fetches < 50, 'must terminate')
+    // Each page adds nothing measurable, as collapsed rows can.
+    state = { ...state, hasMore: fetches < 3 }
   }
-  return { fetches, state }
-}
-
-test('keeps fetching until the transcript is taller than the viewport', () => {
-  const { fetches, state } = fill({ pages: 50, pageHeight: 200 })
-  assert.equal(fetches, 5) // 5 x 200 > 800
-  assert.ok(state.scrollHeight > state.clientHeight)
-})
-
-test('a history shorter than one viewport ends exhausted rather than looping', () => {
-  // The case with no scrollbar at the end: it must stop because the server ran
-  // out, not because anything measured a scroll position.
-  const { state } = fill({ pages: 3, pageHeight: 50 })
   assert.equal(state.hasMore, false)
-  assert.ok(state.scrollHeight <= state.clientHeight, 'still unscrollable — and that is fine')
-  assert.equal(shouldLoadMore(state), false)
+  assert.equal(fetches, 3)
 })
 
-test('a page that adds no height still terminates, on exhaustion', () => {
-  // Collapsed tool rows can add almost nothing; the loop must not depend on
-  // each page making the content taller.
-  const { fetches, state } = fill({ pages: 4, pageHeight: 0 })
-  assert.equal(fetches, 4)
-  assert.equal(state.hasMore, false)
+test('a page that adds no height still terminates', () => {
+  const stuck: FillState = { ...at(0), hasMore: false }
+  assert.equal(shouldFill(stuck), false)
 })
 
-test('never asks while a page is already in flight', () => {
-  const inFlight: FillState = { hasMore: true, loading: true, scrollHeight: 0, clientHeight: VIEWPORT }
-  assert.equal(shouldLoadMore(inFlight), false)
+test('never asks while a fetch is in flight', () => {
+  assert.equal(shouldFill({ ...at(0), loading: true }), false)
 })
 
-test('never asks once history is exhausted, however short the view', () => {
-  const done: FillState = { hasMore: false, loading: false, scrollHeight: 10, clientHeight: VIEWPORT }
-  assert.equal(shouldLoadMore(done), false)
+test('never asks once history is exhausted, however much room there is', () => {
+  assert.equal(shouldFill({ ...at(0), hasMore: false }), false)
 })
 
-test('stops as soon as the view can scroll, leaving the rest to the reader', () => {
-  const scrollable: FillState = { hasMore: true, loading: false, scrollHeight: 801, clientHeight: VIEWPORT }
-  assert.equal(shouldLoadMore(scrollable), false)
+// ── the level check itself ──────────────────────────────────────────────────
+
+test('fills while the reader is within one viewport of the top', () => {
+  assert.equal(shouldFill(at(VIEWPORT - 1)), true)
 })
 
-test('content exactly filling the viewport still counts as unscrollable', () => {
-  // Equal heights produce no overflow, so no scroll gesture is possible — the
-  // boundary has to fetch rather than rest.
-  const exact: FillState = { hasMore: true, loading: false, scrollHeight: VIEWPORT, clientHeight: VIEWPORT }
-  assert.equal(shouldLoadMore(exact), true)
+test('rests once the reader is more than a viewport from the top', () => {
+  assert.equal(shouldFill(at(VIEWPORT + 1)), false)
+})
+
+test('an empty list fills — there is room and nothing to measure against', () => {
+  assert.equal(shouldFill({ hasMore: true, loading: false, geometry: null }), true)
+})
+
+test('content shorter than the viewport fills, with no special case for it', () => {
+  // The reason the separate short-history predicate is gone: at the top of a
+  // short list both terms are near zero, so the level check already holds.
+  assert.equal(shouldFill(at(0)), true)
+})
+
+test('measures from the first real block, so the loading indicator cannot feed itself', () => {
+  // Rendering the indicator pushes the first block down. Measured from the
+  // indicator the condition would stay true because it is showing, which is
+  // the documented way this becomes infinite pagination.
+  const indicatorHeight = 40
+  const farFromTop = VIEWPORT * 2
+  assert.equal(shouldFill(at(farFromTop, indicatorHeight)), false)
+})
+
+test('the trigger is relative to the first block, not to absolute scroll position', () => {
+  // Same scroll offset, different content above: only the distance between
+  // them decides, which is what keeps this correct after a prepend.
+  assert.equal(shouldFill(at(1000, 900)), true)
+  assert.equal(shouldFill(at(1000, 100)), false)
 })

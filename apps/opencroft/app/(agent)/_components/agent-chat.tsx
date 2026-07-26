@@ -38,7 +38,7 @@ import { AgentAvatar } from 'ui/media/agent-avatar'
 import { Textarea } from 'ui/textarea'
 
 import { buildBlocks, type DetailItem, stripOpencroftTags } from '@/app/(agent)/_lib/build-blocks'
-import { shouldLoadMore } from '@/app/(agent)/_lib/history-fill'
+import { shouldFill } from '@/app/(agent)/_lib/history-fill'
 import type { ChatMessage } from '@/app/(agent)/_lib/messages'
 import { restoreShift } from '@/app/(agent)/_lib/scroll-restore'
 import { getAutoApprove, setAutoApprove } from '@/app/(approvals)/_server/actions'
@@ -202,15 +202,36 @@ function useStickToBottom(resetKey: string, contentKey: number, holdPosition: ()
 // about whether anything was left — which is how a scroll-up could load
 // nothing at all. At 5 records a page the DOM grows only as fast as someone
 // scrolls, so bounding it bought nothing that the mismatch didn't cost more.
-// Slack above the viewport's top edge at which the "load older" sentinel counts
-// as in view. Triggering the fetch BEFORE the reader actually reaches scrollTop
-// 0 keeps the restore out of the browser's top-edge dead zone: native scroll
-// anchoring is specified to do nothing at scrollTop 0, so any frame the manual
-// restore misses there shows up as a visible jump to the very top.
-const LOAD_OLDER_ROOT_MARGIN = '250px'
 // Stamped on each rendered block's root so the scroll restore can find a
 // specific block in the DOM again after a prepend has shifted it.
 const BLOCK_ID_ATTR = 'data-block-id'
+
+// TEMPORARY — remove together with this measurement.
+//
+// Answers one question in one line: did the browser's own scroll anchoring
+// already compensate for a prepend, so that our correction lands on top of it?
+// Reports a verdict rather than numbers so it can be read at a glance.
+let scrollProbesLeft = 3
+function reportBrowserScrollAdjustment(
+  contentShift: number,
+  viewportTopBefore: number | null,
+  viewportTopAfter: number | null,
+): void {
+  if (scrollProbesLeft <= 0 || viewportTopBefore === null || viewportTopAfter === null) {
+    return
+  }
+  scrollProbesLeft -= 1
+  const onScreenShift = viewportTopAfter - viewportTopBefore
+  const browserApplied = contentShift - onScreenShift
+  const verdict =
+    Math.abs(browserApplied) < 1
+      ? 'NO — the browser left it to us (our correction is the only one)'
+      : 'YES — the browser already moved it, so our correction is a SECOND one'
+  console.log(
+    `[scroll-probe] browser already corrected this prepend? ${verdict}` +
+      ` | browser moved ${browserApplied.toFixed(1)}px, content grew ${contentShift.toFixed(1)}px above the reader`,
+  )
+}
 
 export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultExpanded }: AgentChatProps) {
   const displayName = agentName ?? session.botName
@@ -241,7 +262,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   // content actually inserted above the anchor moves it — and re-measuring the
   // same element after the commit yields exactly the height that was added,
   // regardless of anything below it measuring async (codemirror, markdown).
-  const pendingAnchorRef = useRef<{ id: string; top: number } | null>(null)
+  const pendingAnchorRef = useRef<{ id: string; top: number; viewportTop: number | null } | null>(null)
   const holdPosition = useCallback(() => pendingAnchorRef.current !== null, [])
   const { rootRef, viewport, runProgrammatic } = useStickToBottom(session.sessionKey, blocks.length, holdPosition)
   const detailsCollapsedRef = useRef(!defaultExpanded)
@@ -269,54 +290,35 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   )
 
   // Topmost currently-rendered block — the anchor a prepend is measured
-  // against. Mirrored into a ref so loadOlder can read it without taking a
+  // against. Mirrored into a ref so the fill check can read it without taking a
   // dependency that changes on every render.
   const topBlockIdRef = useRef<string | null>(null)
   topBlockIdRef.current = topBlockId
 
+  // TEMPORARY: the anchor's position on SCREEN, as
+  // opposed to its position in the content. The difference between how far it
+  // moves in each is precisely the scroll adjustment the browser applied by
+  // itself, which is the thing we need to observe before turning it off.
+  const blockViewportTop = useCallback(
+    (id: string) => {
+      const root = viewport()
+      const el = root?.querySelector(`[${BLOCK_ID_ATTR}="${id}"]`)
+      return root && el ? el.getBoundingClientRect().top - root.getBoundingClientRect().top : null
+    },
+    [viewport],
+  )
+
   const captureTopAnchor = useCallback(() => {
     const id = topBlockIdRef.current
     const top = id === null ? null : blockContentTop(id)
-    pendingAnchorRef.current = id !== null && top !== null ? { id, top } : null
-  }, [blockContentTop])
+    pendingAnchorRef.current = id !== null && top !== null ? { id, top, viewportTop: blockViewportTop(id) } : null
+  }, [blockContentTop, blockViewportTop])
 
-  // Read fresh inside loadOlder instead of closing over `session` directly, so
-  // loadOlder's own identity doesn't change every time loadingMoreHistory
-  // flips mid-fetch. It used to depend on the whole `session` object, which
-  // the IntersectionObserver effect below depends on in turn — so every
-  // fetch start/end was tearing down and recreating the observer. A freshly
-  // created IntersectionObserver reports its CURRENT intersection state
-  // immediately, and — combined with the scroll-restore bug this same PR
-  // fixes — the sentinel was still visually at the top when that fired,
-  // re-triggering loadOlder before the user did anything: a runaway load
-  // cascade that didn't stop until history was exhausted (reported
-  // soon after the pagination this bug was in first shipped).
+  // Read fresh rather than closing over `session`, so the fill check's identity
+  // doesn't change every time a fetch flips the loading flag — which would tear
+  // down and rebuild the listeners that call it.
   const sessionRef = useRef(session)
   sessionRef.current = session
-
-  const loadOlder = useCallback(() => {
-    const current = sessionRef.current
-    if (!current.hasMoreHistory || current.loadingMoreHistory) {
-      return
-    }
-    // Capture BEFORE the fetch. The anchor is an element plus its position in
-    // the content, and the restore re-measures that same element after the
-    // commit, so it no longer matters whether React has already flushed the
-    // prepended events by the time this promise resolves. The previous version
-    // captured `scrollHeight - scrollTop` inside .then() and so depended on
-    // that ordering — when React won the race the arithmetic was done against
-    // the already-grown height, the restore computed a no-op, and the viewport
-    // stayed pinned at the top.
-    captureTopAnchor()
-    void current.loadMoreHistory?.()
-  }, [captureTopAnchor])
-
-  // Re-armed after every completed prepend. An IntersectionObserver only
-  // invokes its callback when intersection CHANGES: once a prepend settles with
-  // the sentinel still in view its state is already `true`, so scrolling up
-  // produces no further callback and paging silently stops until the reader
-  // scrolls down and back up. Re-observing resets that state.
-  const [observerArm, setObserverArm] = useState(0)
 
   // Restore the reader's position once the prepended blocks are actually in the
   // DOM. Keyed on the topmost rendered block's id, so it fires on whichever
@@ -335,6 +337,13 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
     if (shift === null) {
       return
     }
+    // TEMPORARY: report whether the browser already
+    // corrected this prepend by itself, before we add our correction on top.
+    // The anchor moves through the content by the height inserted above it; it
+    // moves on screen by that same amount MINUS whatever the browser already
+    // absorbed. So the gap between the two is the browser's own adjustment.
+    reportBrowserScrollAdjustment(shift, anchor.viewportTop, blockViewportTop(anchor.id))
+
     pendingAnchorRef.current = null
     const el = viewport()
     if (el) {
@@ -350,79 +359,89 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
         el.scrollBy(0, shift)
       })
     }
-    // Only re-arm on a real restore: a fetch that returned nothing moves
-    // nothing, gets here, and leaves the observer as-is rather than refiring
-    // into a loop. With a correct restore each refire walks back exactly one
-    // page and terminates as soon as the sentinel is pushed out of view.
-    setObserverArm((n) => n + 1)
-  }, [topBlockId, blockContentTop, viewport, runProgrammatic])
+  }, [topBlockId, blockContentTop, blockViewportTop, viewport, runProgrammatic])
 
-  const sentinelRef = useRef<HTMLDivElement>(null)
-  // Whether the sentinel is currently in view, per the observer below. Read by
-  // the recycle effect: while the sentinel is visible, shrinking would put it
-  // right back in view and re-trigger loadOlder — an infinite grow/shrink loop
-  // whenever the whole window fits inside the viewport (short collapsed blocks,
-  // tall panel: nothing scrollable, so pinned AND sentinel-visible hold at
-  // once). Blocking the shrink instead lets an under-filled window grow until
-  // it fills the viewport and then rest there.
-  const sentinelVisibleRef = useRef(false)
-  useEffect(() => {
-    if (!hasOlder) {
-      return
-    }
-    const el = sentinelRef.current
+  // Marks the first REAL block, so the fill check can measure from it rather
+  // than from the loading indicator above it.
+  const firstBlockRef = useRef<HTMLDivElement>(null)
+
+  // One re-entrancy lock for the whole controller. A ref, not state, so asking
+  // the question cannot itself cause a render and re-ask it.
+  const fillingRef = useRef(false)
+
+  // Ask whether more history is needed, and fetch if so. Safe to call as often
+  // as we like — that is the point of a level check — so it is driven from
+  // everywhere the answer can change: the reader scrolling, content committing,
+  // and content resizing under us.
+  const maybeFill = useCallback(() => {
     const root = viewport()
-    if (!el || !root) {
+    if (!root || fillingRef.current) {
       return
     }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        sentinelVisibleRef.current = entries[0]?.isIntersecting ?? false
-        if (sentinelVisibleRef.current) {
-          loadOlder()
-        }
-      },
-      { root, rootMargin: LOAD_OLDER_ROOT_MARGIN },
-    )
-    observer.observe(el)
-    return () => {
-      observer.disconnect()
-      // An unmounted (or about-to-be-reobserved) sentinel is not in view; a
-      // stale true here would block recycling indefinitely.
-      sentinelVisibleRef.current = false
+    const current = sessionRef.current
+    const first = firstBlockRef.current
+    const state = {
+      hasMore: current.hasMoreHistory === true,
+      loading: current.loadingMoreHistory === true,
+      geometry: first
+        ? { scrollTop: root.scrollTop, clientHeight: root.clientHeight, firstBlockOffsetTop: first.offsetTop }
+        : null,
     }
-    // observerArm is a re-arm signal, not a value this effect reads.
-  }, [hasOlder, viewport, loadOlder, observerArm])
+    if (!shouldFill(state)) {
+      return
+    }
+    fillingRef.current = true
+    captureTopAnchor()
+    void Promise.resolve(current.loadMoreHistory?.()).finally(() => {
+      fillingRef.current = false
+      // Coalesced re-run: the answer may still be yes, and the commit that
+      // released the lock has already happened by the time this runs.
+      requestAnimationFrame(() => maybeFill())
+    })
+  }, [viewport, captureTopAnchor])
 
-  // Keep loading until the transcript is tall enough to scroll, or history runs
-  // out. Scrolling is the only trigger, so a view that doesn't overflow can't
-  // produce one: without this a short first page leaves a chat that is both
-  // unfilled and unable to ask for more.
-  //
-  // Runs off `loadingMoreHistory` falling rather than off any content count. A
-  // page landing mid-turn merges into an existing block and adds no block and
-  // no message, so counting either would miss exactly the pages this has to
-  // react to.
-  //
-  // Terminates: every pass either makes the content scrollable or moves the
-  // cursor strictly back, and the server reports `hasMore: false` once it
-  // reaches the start — a page can't come back empty while more remains.
-  // biome-ignore lint/correctness/useExhaustiveDependencies(blocks): re-measure after content lands, not because the body reads it
+  // Re-ask on scroll, throttled to a frame. `scroll` fires far more often than
+  // layout changes, and browser scroll anchoring adjustments raise it too, so
+  // an unthrottled handler would re-enter this on its own corrections.
   useEffect(() => {
     const root = viewport()
     if (!root) {
       return
     }
-    const fill = {
-      hasMore: session.hasMoreHistory === true,
-      loading: session.loadingMoreHistory === true,
-      scrollHeight: root.scrollHeight,
-      clientHeight: root.clientHeight,
+    let queued = false
+    const onScroll = () => {
+      if (queued) {
+        return
+      }
+      queued = true
+      requestAnimationFrame(() => {
+        queued = false
+        maybeFill()
+      })
     }
-    if (shouldLoadMore(fill)) {
-      loadOlder()
+    root.addEventListener('scroll', onScroll, { passive: true })
+    return () => root.removeEventListener('scroll', onScroll)
+  }, [viewport, maybeFill])
+
+  // Re-ask after every commit, and whenever the content's own size changes —
+  // a collapsed turn expanding, an image landing. Observing the content
+  // wrapper rather than an ancestor is deliberate: the ResizeObserver loop
+  // only delivers targets deeper than the previous pass, so a shallower node
+  // defers its notification by a frame, and a frame here is a visibly wrong
+  // scroll position.
+  // biome-ignore lint/correctness/useExhaustiveDependencies(blocks): re-measure once content has landed, not because the body reads it
+  useEffect(() => {
+    maybeFill()
+    const content = rootRef.current
+    if (!content) {
+      return
     }
-  }, [session.loadingMoreHistory, session.hasMoreHistory, blocks, viewport, loadOlder])
+    // Only reads and corrects scroll here — never resizes anything, which is
+    // what would defer the next notification.
+    const observer = new ResizeObserver(() => maybeFill())
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [blocks, maybeFill, rootRef])
 
   // Carry each block's position into the grouping — turnByBlock and the "is
   // this the active turn" check are both keyed by it, and grouping otherwise
@@ -442,7 +461,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
       ) : (
         <>
           {hasOlder && (
-            <div ref={sentinelRef} className='py-1 text-center text-xs text-muted-foreground'>
+            <div className='py-1 text-center text-xs text-muted-foreground'>
               {session.loadingMoreHistory ? 'loading older…' : '· · ·'}
             </div>
           )}
@@ -452,7 +471,14 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
             // turn's section pushes it out on the way past. Bounding each
             // header to its section is what produces that hand-off, so no
             // scroll position is read anywhere.
-            <Flex key={section.id} className='w-full min-w-0 gap-3'>
+            <Flex
+              key={section.id}
+              // The fill check measures from the first real block, so the
+              // loading indicator above it cannot satisfy the condition that
+              // produced it.
+              ref={sectionIndex === 0 ? firstBlockRef : undefined}
+              className='w-full min-w-0 gap-3'
+            >
               {section.user ? (
                 <UserMessage
                   sticky
