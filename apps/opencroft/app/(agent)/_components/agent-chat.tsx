@@ -38,6 +38,7 @@ import { AgentAvatar } from 'ui/media/agent-avatar'
 import { Textarea } from 'ui/textarea'
 
 import { buildBlocks, type DetailItem, stripOpencroftTags } from '@/app/(agent)/_lib/build-blocks'
+import { shouldLoadMore } from '@/app/(agent)/_lib/history-fill'
 import type { ChatMessage } from '@/app/(agent)/_lib/messages'
 import { restoreShift } from '@/app/(agent)/_lib/scroll-restore'
 import { getAutoApprove, setAutoApprove } from '@/app/(approvals)/_server/actions'
@@ -387,6 +388,36 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
     // observerArm is a re-arm signal, not a value this effect reads.
   }, [hasOlder, viewport, loadOlder, observerArm])
 
+  // Keep loading until the transcript is tall enough to scroll, or history runs
+  // out. Scrolling is the only trigger, so a view that doesn't overflow can't
+  // produce one: without this a short first page leaves a chat that is both
+  // unfilled and unable to ask for more.
+  //
+  // Runs off `loadingMoreHistory` falling rather than off any content count. A
+  // page landing mid-turn merges into an existing block and adds no block and
+  // no message, so counting either would miss exactly the pages this has to
+  // react to.
+  //
+  // Terminates: every pass either makes the content scrollable or moves the
+  // cursor strictly back, and the server reports `hasMore: false` once it
+  // reaches the start — a page can't come back empty while more remains.
+  // biome-ignore lint/correctness/useExhaustiveDependencies(blocks): re-measure after content lands, not because the body reads it
+  useEffect(() => {
+    const root = viewport()
+    if (!root) {
+      return
+    }
+    const fill = {
+      hasMore: session.hasMoreHistory === true,
+      loading: session.loadingMoreHistory === true,
+      scrollHeight: root.scrollHeight,
+      clientHeight: root.clientHeight,
+    }
+    if (shouldLoadMore(fill)) {
+      loadOlder()
+    }
+  }, [session.loadingMoreHistory, session.hasMoreHistory, blocks, viewport, loadOlder])
+
   // Carry each block's position into the grouping — turnByBlock and the "is
   // this the active turn" check are both keyed by it, and grouping otherwise
   // loses it. The React key stays the block id, which (unlike position)
@@ -435,9 +466,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
                 // question with replies rather than as replies to nothing.
                 // Not editable — the message it refers to isn't loaded.
                 sectionIndex === 0 &&
-                session.historyHeader && (
-                  <UserMessage sticky blockId='u:header' text={session.historyHeader.text} />
-                )
+                session.historyHeader && <UserMessage sticky blockId='u:header' text={session.historyHeader.text} />
               )}
               {section.items.map((b) =>
                 b.kind === 'user' ? null : (

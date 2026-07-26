@@ -376,9 +376,7 @@ export function useAcpSession(
         // Set unconditionally: a fresh connect re-sends a fresh tail, so a
         // header from a previous connection must not linger.
         setHistoryHeader(
-          event.header?.event.kind === 'user'
-            ? { index: event.header.index, text: event.header.event.text }
-            : null,
+          event.header?.event.kind === 'user' ? { index: event.header.index, text: event.header.event.text } : null,
         )
         return
       }

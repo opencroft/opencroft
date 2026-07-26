@@ -64,7 +64,10 @@ test('without an enclosing turn the leading run falls back to its first reply', 
 })
 
 test('the enclosing turn names only the leading run, not later ones', () => {
-  const blocks = buildBlocks([assistantMessage(11, 'tail of turn 9'), userMessage(12, 'q'), assistantMessage(13, 'a')], 9)
+  const blocks = buildBlocks(
+    [assistantMessage(11, 'tail of turn 9'), userMessage(12, 'q'), assistantMessage(13, 'a')],
+    9,
+  )
   assert.deepEqual(
     blocks.map((b) => b.id),
     ['t:9', 'u:12', 't:12'],
