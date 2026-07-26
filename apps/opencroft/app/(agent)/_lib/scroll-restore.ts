@@ -22,8 +22,10 @@
 const EPSILON = 0.5
 
 export interface ScrollAnchor {
-  // A block rendered both before and after the prepend.
-  id: number
+  // A block rendered both before and after the prepend. Its id names the turn
+  // (or the user message), not a position, so a page landing mid-turn merges
+  // into the block without renaming it and this still finds the element.
+  id: string
   // Its offset from the top of the scrollable CONTENT (not the viewport) at
   // capture time. Content coordinates are what make this robust to the reader
   // scrolling between capture and commit — scrolling moves the viewport, not

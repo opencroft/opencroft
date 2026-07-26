@@ -78,10 +78,11 @@ export interface AgentSession {
   // sequence a DOM-window/scroll-position change with the data actually
   // landing, instead of the two racing.
   loadMoreHistory?: () => Promise<void>
-  // The question of the turn the loaded history starts inside, when only part
-  // of that turn is loaded — its own `user` event sits above the window, so
-  // the section's sticky header has no text without it.
-  historyHeader?: string | null
+  // The turn the loaded history starts inside, when only part of that turn is
+  // loaded — its own `user` event sits above the window. Supplies the leading
+  // section's sticky header text, and its `index` names the leading details
+  // block so a mid-turn page merging into that block doesn't rename it.
+  historyHeader?: { index: number; text: string } | null
 }
 
 interface AgentChatProps {
@@ -215,7 +216,10 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   // Computed over the FULL message list, not the visible window: turn indices
   // (for edit/fork) must stay correct regardless of how much is rendered, and
   // folding/building is cheap next to the cost of actually rendering blocks.
-  const blocks = useMemo(() => buildBlocks(session.messages), [session.messages])
+  const blocks = useMemo(
+    () => buildBlocks(session.messages, session.historyHeader?.index),
+    [session.messages, session.historyHeader?.index],
+  )
   // 0-based user-turn index per user block, so "fork from here" rewinds to it.
   const turnByBlock = useMemo(() => {
     const map = new Map<number, number>()
@@ -236,7 +240,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   // content actually inserted above the anchor moves it — and re-measuring the
   // same element after the commit yields exactly the height that was added,
   // regardless of anything below it measuring async (codemirror, markdown).
-  const pendingAnchorRef = useRef<{ id: number; top: number } | null>(null)
+  const pendingAnchorRef = useRef<{ id: string; top: number } | null>(null)
   const holdPosition = useCallback(() => pendingAnchorRef.current !== null, [])
   const { rootRef, viewport, runProgrammatic } = useStickToBottom(session.sessionKey, blocks.length, holdPosition)
   const detailsCollapsedRef = useRef(!defaultExpanded)
@@ -252,7 +256,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   // if it isn't in the DOM. Adding scrollTop back to the viewport-relative rect
   // is what makes this a content coordinate rather than a viewport one.
   const blockContentTop = useCallback(
-    (id: number) => {
+    (id: string) => {
       const root = viewport()
       const el = root?.querySelector(`[${BLOCK_ID_ATTR}="${id}"]`)
       if (!root || !el) {
@@ -266,7 +270,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   // Topmost currently-rendered block — the anchor a prepend is measured
   // against. Mirrored into a ref so loadOlder can read it without taking a
   // dependency that changes on every render.
-  const topBlockIdRef = useRef<number | null>(null)
+  const topBlockIdRef = useRef<string | null>(null)
   topBlockIdRef.current = topBlockId
 
   const captureTopAnchor = useCallback(() => {
@@ -431,7 +435,9 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
                 // question with replies rather than as replies to nothing.
                 // Not editable — the message it refers to isn't loaded.
                 sectionIndex === 0 &&
-                session.historyHeader && <UserMessage sticky blockId={-1} text={session.historyHeader} />
+                session.historyHeader && (
+                  <UserMessage sticky blockId='u:header' text={session.historyHeader.text} />
+                )
               )}
               {section.items.map((b) =>
                 b.kind === 'user' ? null : (
@@ -467,7 +473,7 @@ function UserMessage({
   // Marks this block in the DOM so the load-older restore can find it again
   // and measure how far it moved. Sits on the outermost box, which is the
   // block's own element in the flow.
-  blockId: number
+  blockId: string
   text: string
   editDisabled?: boolean
   onEdit?: () => void
@@ -593,7 +599,7 @@ function Details({
   onCollapseChange,
   pending,
 }: {
-  blockId: number
+  blockId: string
   items: DetailItem[]
   botName: string
   agentAvatar?: string

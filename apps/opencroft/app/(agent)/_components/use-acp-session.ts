@@ -308,7 +308,10 @@ export function useAcpSession(
   // id below it and change them again on the next prepend — which is exactly
   // the churn that broke the scroll restore before stable ids landed. It is a
   // rendering concern anyway: it supplies the sticky header's text.
-  const [historyHeader, setHistoryHeader] = useState<string | null>(null)
+  // Its `index` is not decoration: it is the identity of the leading details
+  // block (see buildBlocks' `enclosingTurnId`). Without it that block is renamed
+  // by every mid-turn page and the scroll restore loses its anchor.
+  const [historyHeader, setHistoryHeader] = useState<{ index: number; text: string } | null>(null)
 
   // Resolve (or lazily create) the live ACP session for this tab.
   useEffect(() => {
@@ -372,7 +375,11 @@ export function useAcpSession(
         paginatedHistory.reset(event.startIndex, event.hasMore)
         // Set unconditionally: a fresh connect re-sends a fresh tail, so a
         // header from a previous connection must not linger.
-        setHistoryHeader(event.header?.event.kind === 'user' ? event.header.event.text : null)
+        setHistoryHeader(
+          event.header?.event.kind === 'user'
+            ? { index: event.header.index, text: event.header.event.text }
+            : null,
+        )
         return
       }
       if (replayingHistoryRef.current) {
@@ -568,7 +575,9 @@ export function useAcpSession(
     // The topmost partly-loaded turn has changed: either it's an older turn
     // now, or this page reached far enough up that the question is inside the
     // slice and no separate header is needed.
-    setHistoryHeader(page.header?.event.kind === 'user' ? page.header.event.text : null)
+    setHistoryHeader(
+      page.header?.event.kind === 'user' ? { index: page.header.index, text: page.header.event.text } : null,
+    )
   }, [paginatedHistory.loadOlder])
 
   const session = useMemo<AgentSession>(
