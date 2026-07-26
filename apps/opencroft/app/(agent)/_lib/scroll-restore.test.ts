@@ -69,7 +69,7 @@ test('legacy formula also absorbs unrelated height changes below the reader', ()
 // ---------------------------------------------------------------------------
 
 test('anchor restore is correct regardless of when it is captured', () => {
-  const anchor = { id: 42, top: 1000 }
+  const anchor = { id: 't:42', top: 1000 }
   // Ordering A and ordering B both reduce to the same question — where is the
   // anchor now versus where it was — so the race no longer has a wrong side.
   assert.equal(restoreShift(anchor, 1000 + ADDED), ADDED)
@@ -78,7 +78,7 @@ test('anchor restore is correct regardless of when it is captured', () => {
 test('anchor restore ignores height changes below the anchor', () => {
   // Content growing below the anchor does not move the anchor, so it
   // contributes nothing to the shift.
-  const anchor = { id: 42, top: 1000 }
+  const anchor = { id: 't:42', top: 1000 }
   assert.equal(restoreShift(anchor, 1000 + ADDED), ADDED)
 })
 
@@ -87,12 +87,12 @@ test('anchor restore is unaffected by the reader scrolling mid-fetch', () => {
   // and commit leaves `top` untouched and the shift is still just the
   // prepended height — the reader's own scrolling is preserved rather than
   // double-counted.
-  const anchor = { id: 42, top: 1000 }
+  const anchor = { id: 't:42', top: 1000 }
   assert.equal(restoreShift(anchor, 1000 + ADDED), ADDED)
 })
 
 test('waits for a later commit when the prepend has not landed yet', () => {
-  const anchor = { id: 42, top: 1000 }
+  const anchor = { id: 't:42', top: 1000 }
   // Anchor not in the DOM for this commit.
   assert.equal(restoreShift(anchor, null), null)
   // Anchor present but unmoved — this commit is not the one that added content.
