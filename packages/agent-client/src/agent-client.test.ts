@@ -748,7 +748,7 @@ test('paging backward through getEventsWindow eventually reaches the start of a 
   await h.client.deleteSession(h.sessionId)
 })
 
-// ── in-turn record pagination: getEventsWindow's turnRecords / getTurnRecordsWindow ──
+// ── record-paged windows: getRecordsWindow ────────────────────────────────
 
 function pushToolCall(sessionId: string, id: string): void {
   handleUpdate({
@@ -761,86 +761,64 @@ function pushToolCall(sessionId: string, id: string): void {
   } as Parameters<typeof handleUpdate>[0])
 }
 
-test('getEventsWindow without turnRecords returns a huge newest turn in full (unchanged behavior)', async () => {
-  const h = await setup('openclaw')
-  pushTurn(h.sessionId, 'q0', 'a0')
-  handleUpdate({
-    sessionId: h.sessionId,
-    update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'q1' } },
-  } as Parameters<typeof handleUpdate>[0])
-  for (let i = 0; i < 20; i++) {
-    pushToolCall(h.sessionId, `tool-${i}`)
-  }
-  const window = h.client.getEventsWindow(h.sessionId, { turns: 2 })
-  assert.ok(window)
-  assert.equal(window.trimmedTurn, undefined)
-  assert.equal(window.events.filter((e) => e.kind === 'tool_call').length, 20)
-  await h.client.deleteSession(h.sessionId)
+test('getRecordsWindow returns null for an unknown session', async () => {
+  const client = createAgentClient()
+  assert.equal(client.getRecordsWindow('no-such-session', { records: 10 }), null)
 })
 
-test('getEventsWindow with turnRecords trims a huge newest turn and reports a trimmedTurn cursor', async () => {
+test('the tail spends its budget on agent records and hands back the enclosing question', async () => {
   const h = await setup('openclaw')
-  pushTurn(h.sessionId, 'q0', 'a0') // an earlier, small turn — must survive untouched
+  // Turn A: 4 tool calls. Turn B: 2 tool calls plus a reply.
   handleUpdate({
     sessionId: h.sessionId,
-    update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'q1' } },
+    update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'A' } },
   } as Parameters<typeof handleUpdate>[0])
-  for (let i = 0; i < 20; i++) {
-    pushToolCall(h.sessionId, `tool-${i}`)
+  for (let i = 0; i < 4; i++) {
+    pushToolCall(h.sessionId, `a-${i}`)
   }
-  const window = h.client.getEventsWindow(h.sessionId, { turns: 2, turnRecords: 3 })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'B' } },
+  } as Parameters<typeof handleUpdate>[0])
+  for (let i = 0; i < 2; i++) {
+    pushToolCall(h.sessionId, `b-${i}`)
+  }
+
+  // 3 agent records: both of B's tool calls and the last of A's.
+  const window = h.client.getRecordsWindow(h.sessionId, { records: 3 })
   assert.ok(window)
-  // Turn 0 stays whole.
+  assert.deepEqual(
+    window.events.filter((e) => e.kind === 'tool_call').map((e) => (e.kind === 'tool_call' ? e.toolCallId : '')),
+    ['a-3', 'b-0', 'b-1'],
+  )
+  // B's question is inside the slice; A's is above it and comes back separately.
   assert.deepEqual(
     window.events.filter((e) => e.kind === 'user').map((e) => (e.kind === 'user' ? e.text : null)),
-    ['q0', 'q1'],
+    ['B'],
   )
-  // Only the last 3 tool-call groups of the huge newest turn.
-  assert.deepEqual(
-    window.events.filter((e) => e.kind === 'tool_call').map((e) => (e.kind === 'tool_call' ? e.toolCallId : null)),
-    ['tool-17', 'tool-18', 'tool-19'],
-  )
-  // The trimmed turn's cursor must point at 'q1's own absolute index — derived
-  // from the window itself, not assumed, since a live subscriber's replay can
-  // carry synthetic snapshot events (see withSnapshotPrefix) the raw session
-  // log never stores.
-  const relTurnStart = window.events.findIndex((e) => e.kind === 'user' && e.text === 'q1')
-  assert.ok(relTurnStart >= 0)
-  const turnStart = window.startIndex + relTurnStart
-  assert.deepEqual(window.trimmedTurn, { turnStart, startIndex: window.trimmedTurn?.startIndex, hasMore: true })
-  assert.ok(window.trimmedTurn && window.trimmedTurn.startIndex > turnStart)
+  assert.equal(window.header?.event.kind === 'user' ? window.header.event.text : null, 'A')
+  assert.equal(window.hasMore, true)
   await h.client.deleteSession(h.sessionId)
 })
 
-test('getTurnRecordsWindow pages backward through a trimmed turn and reaches its own start', async () => {
+test('paging back through getRecordsWindow reaches the start of a real session', async () => {
   const h = await setup('openclaw')
   handleUpdate({
     sessionId: h.sessionId,
-    update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'q0' } },
+    update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'q' } },
   } as Parameters<typeof handleUpdate>[0])
-  const turnStart = 0
-  for (let i = 0; i < 10; i++) {
-    pushToolCall(h.sessionId, `tool-${i}`)
+  for (let i = 0; i < 12; i++) {
+    pushToolCall(h.sessionId, `t-${i}`)
   }
-  const tail = h.client.getEventsWindow(h.sessionId, { turns: 1, turnRecords: 3 })
-  assert.ok(tail?.trimmedTurn)
-  let cursor = tail.trimmedTurn.startIndex
-  let hasMore = tail.trimmedTurn.hasMore
-  const seenIds: string[] = []
+  let window = h.client.getRecordsWindow(h.sessionId, { records: 5 })
+  assert.ok(window)
   let hops = 0
-  while (hasMore) {
-    const page = h.client.getTurnRecordsWindow(h.sessionId, turnStart, cursor, 3)
-    assert.ok(page)
-    seenIds.unshift(
-      ...page.events.filter((e) => e.kind === 'tool_call').map((e) => (e.kind === 'tool_call' ? e.toolCallId : '')),
-    )
-    cursor = page.startIndex
-    hasMore = page.hasMore
+  while (window?.hasMore) {
+    window = h.client.getRecordsWindow(h.sessionId, { beforeIndex: window.startIndex, records: 5 })
+    assert.ok(window)
     hops += 1
-    assert.ok(hops < 10, 'paging backward through a turn must terminate')
+    assert.ok(hops < 15, 'paging backward must terminate')
   }
-  assert.equal(cursor, turnStart + 1) // reaches the turn's body start, right after its 'user' event
-  // Everything before the tail's own 3 groups (tool-7..9), oldest-first.
-  assert.deepEqual(seenIds, ['tool-0', 'tool-1', 'tool-2', 'tool-3', 'tool-4', 'tool-5', 'tool-6'])
+  assert.equal(window?.startIndex, 0)
   await h.client.deleteSession(h.sessionId)
 })

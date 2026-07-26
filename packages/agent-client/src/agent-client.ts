@@ -30,11 +30,11 @@ import type { McpServerConfig } from './mcp-types'
 import { createNativeHarness, type NativeHarnessConfig, type NativeSession } from './native-harness'
 import {
   type EventsWindow,
-  lastUserIndex,
+  pageBeforeByRecords,
   pageBeforeByTurns,
-  pageBeforeRecordsInTurn,
+  type RecordsWindow,
+  tailByRecords,
   tailByTurns,
-  tailRecordsInTurn,
 } from './pagination'
 import { type ResolvedPermissions, toolKey } from './permissions'
 import { buildSpawnConfig, containerReachableMcpUrl, findAdapter } from './resolve'
@@ -45,15 +45,6 @@ import type { AgentSelection, ChatEvent, QueuedPrompt, SessionMeta, SessionMode,
 export interface ClientInfo {
   name: string
   version: string
-}
-
-// getEventsWindow's tail-request result. Identical to EventsWindow except for
-// `trimmedTurn`, present only when the newest turn in the window was itself
-// too large to include in full (see pagination.ts's tailRecordsInTurn) — a
-// second, in-turn cursor for "load older tool calls in this turn" via
-// getTurnRecordsWindow, independent of the outer turn-level cursor.
-export interface TailWindow extends EventsWindow {
-  trimmedTurn?: { turnStart: number; startIndex: number; hasMore: boolean }
 }
 
 // What the host decides to do with an ACP permission request:
@@ -1424,63 +1415,36 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // page further back (a scroll-up "load older"). Returns null for an
     // unknown session.
     //
-    // `turnRecords` (tail requests only) further trims the newest turn at
-    // record granularity when it's itself too large — see pagination.ts's
-    // tailRecordsInTurn: a single turn with a huge number of tool calls can
-    // blow up the initial load the same way a huge transcript can. When that
-    // trim actually drops anything, the result carries `trimmedTurn` — a
-    // second, independent cursor for "load older tool calls in this turn",
-    // alongside the normal turn-level cursor.
-    getEventsWindow(
-      sessionId: string,
-      opts: { beforeIndex?: number; turns: number; turnRecords?: number },
-    ): TailWindow | null {
+    // Turn granularity is for callers that are actually listing turns — the
+    // send-message node's listTurns action. The chat transcript pages by
+    // records instead; see getRecordsWindow.
+    getEventsWindow(sessionId: string, opts: { beforeIndex?: number; turns: number }): EventsWindow | null {
       const session = store.sessions.get(sessionId)
       if (!session) {
         return null
       }
-      if (opts.beforeIndex !== undefined) {
-        return pageBeforeByTurns(session.events, opts.beforeIndex, opts.turns)
-      }
-      const window = tailByTurns(session.events, opts.turns)
-      if (!opts.turnRecords || window.events.length === 0) {
-        return window
-      }
-      const relTurnStart = lastUserIndex(window.events)
-      if (relTurnStart === null) {
-        return window
-      }
-      const turnStart = window.startIndex + relTurnStart
-      const inner = tailRecordsInTurn(session.events, turnStart, session.events.length, opts.turnRecords)
-      if (!inner.hasMore) {
-        return window
-      }
-      return {
-        events: [...session.events.slice(window.startIndex, turnStart + 1), ...inner.events],
-        startIndex: window.startIndex,
-        hasMore: window.hasMore,
-        trimmedTurn: { turnStart, startIndex: inner.startIndex, hasMore: inner.hasMore },
-      }
+      return opts.beforeIndex === undefined
+        ? tailByTurns(session.events, opts.turns)
+        : pageBeforeByTurns(session.events, opts.beforeIndex, opts.turns)
     },
 
-    // A bounded slice of one turn's body, cut at closed-record boundaries
-    // (see pagination.ts's recordBoundaries) — the in-turn counterpart of
-    // getEventsWindow's whole-turn paging, for a turn too large to load in
-    // full (see getEventsWindow's `trimmedTurn`). `turnStart` is that turn's
-    // leading 'user' event's absolute index; pass a previous window's
-    // `startIndex` (or `trimmedTurn.startIndex`) back as `beforeIndex` to
-    // page further back. Returns null for an unknown session.
-    getTurnRecordsWindow(
-      sessionId: string,
-      turnStart: number,
-      beforeIndex: number,
-      records: number,
-    ): EventsWindow | null {
+    // The chat transcript's only cursor: a window of `records` AGENT records,
+    // cut at record boundaries so a tool call is never separated from its
+    // updates. Omit `beforeIndex` for the tail a cold open shows; pass a
+    // previous window's `startIndex` back to page further up.
+    //
+    // A turn's `user` event is free — it never spends budget, and when the
+    // window starts mid-turn the enclosing one comes back as `header` rather
+    // than inside `events`. See pagination.ts's RecordsWindow for why it is
+    // separate. Returns null for an unknown session.
+    getRecordsWindow(sessionId: string, opts: { beforeIndex?: number; records: number }): RecordsWindow | null {
       const session = store.sessions.get(sessionId)
       if (!session) {
         return null
       }
-      return pageBeforeRecordsInTurn(session.events, turnStart, beforeIndex, records)
+      return opts.beforeIndex === undefined
+        ? tailByRecords(session.events, opts.records)
+        : pageBeforeByRecords(session.events, opts.beforeIndex, opts.records)
     },
 
     async reset(): Promise<void> {

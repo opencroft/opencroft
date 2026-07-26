@@ -167,49 +167,97 @@ function recordBoundaries(events: ChatEvent[], start: number, end: number): numb
   return boundaries
 }
 
-// The last `records` closed records of a turn's body — everything after its
-// leading 'user' event at `turnStart`, up to `turnEnd` (exclusive; pass
-// `events.length` for the newest, possibly still-streaming turn). This is the
-// further tail-trim a turn with a huge number of tool calls needs on top of
-// tailByTurns's whole-turn cut: a single long agent run can hold enough
-// records to blow up a load on its own, and whole-turn windowing can't bound
-// it since the oversized turn is still one page. The turn's own leading
-// 'user' event is never included here — callers splice it in separately so it
-// always ships regardless of how the rest of the turn is trimmed.
-export function tailRecordsInTurn(
-  events: ChatEvent[],
-  turnStart: number,
-  turnEnd: number,
-  records: number,
-): EventsWindow {
-  const bodyStart = turnStart + 1
-  if (records <= 0) {
-    return { events: [], startIndex: turnEnd, hasMore: turnEnd > bodyStart }
-  }
-  const boundaries = recordBoundaries(events, bodyStart, turnEnd)
-  if (boundaries.length <= records) {
-    return { events: events.slice(bodyStart, turnEnd), startIndex: bodyStart, hasMore: false }
-  }
-  const startIndex = boundaries[boundaries.length - records]
-  return { events: events.slice(startIndex, turnEnd), startIndex, hasMore: startIndex > bodyStart }
+// A window paged by RECORDS over the whole log — the chat transcript's only
+// cursor. Distinct from EventsWindow in one way that matters: `events` is a
+// contiguous slice, and the enclosing turn's `user` event is returned
+// SEPARATELY as `header` rather than spliced into it.
+//
+// Splicing it in would make the slice non-contiguous, and that only looks
+// harmless for the newest page: paging further back inside the same turn
+// yields the same header again, so a consumer that concatenates pages either
+// renders the question twice or, if it drops the duplicate, ends up with the
+// question below records that precede it. Handing it over as its own field
+// leaves the consumer an unambiguous rule — if it already has that index,
+// insert the page's records after the header it already shows.
+export interface RecordsWindow {
+  // Contiguous slice of the log; never includes `header`.
+  events: ChatEvent[]
+  // Absolute index of the first counted AGENT record — the cursor to pass back
+  // as `beforeIndex`. Deliberately not the header's index: anchoring it there
+  // would re-serve the same turn's tail on every page instead of terminating.
+  startIndex: number
+  hasMore: boolean
+  // The `user` event of the turn this window starts inside, when that event
+  // sits above `startIndex`. Absent when the window already begins at or
+  // before its turn's own header, or when no turn precedes it.
+  header?: { index: number; event: ChatEvent }
 }
 
-// The `records` records immediately before `beforeIndex` within the same
-// turn's body — the "load older tool calls in this turn" counterpart to
-// pageBeforeByTurns. `beforeIndex` is normally a `startIndex` a previous
-// in-turn window (tail or page) returned.
-export function pageBeforeRecordsInTurn(
-  events: ChatEvent[],
-  turnStart: number,
-  beforeIndex: number,
-  records: number,
-): EventsWindow {
-  const bodyStart = turnStart + 1
-  const clampedBefore = Math.max(bodyStart, Math.min(beforeIndex, events.length))
-  const boundaries = recordBoundaries(events, bodyStart, clampedBefore)
-  if (boundaries.length === 0) {
-    return { events: events.slice(bodyStart, clampedBefore), startIndex: bodyStart, hasMore: false }
+// Whether a record counts against the budget. Only agent-side records do: a
+// turn's question is free, so every turn the window touches keeps its header
+// whether or not the budget reached it.
+//
+// Counting headers would let the budget expire ON one — loading a question
+// whose replies didn't fit, which renders as though the agent never answered.
+// A short view is fine; a wrong one isn't.
+function isAgentRecord(events: ChatEvent[], boundary: number): boolean {
+  return events[boundary]?.kind !== 'user'
+}
+
+// The `user` event of the turn containing `index`, when it sits strictly above
+// it — what makes a partially-loaded turn still render with its question.
+function headerAbove(events: ChatEvent[], index: number): RecordsWindow['header'] {
+  for (let i = index - 1; i >= 0; i--) {
+    if (events[i].kind === 'user') {
+      return { index: i, event: events[i] }
+    }
   }
-  const startIndex = boundaries.length <= records ? bodyStart : boundaries[boundaries.length - records]
-  return { events: events.slice(startIndex, clampedBefore), startIndex, hasMore: startIndex > bodyStart }
+  return undefined
+}
+
+// Walks back from `end` until `records` agent records have been counted,
+// returning the boundary to start at. Falls back to 0 when the log runs out
+// first — a short history is served whole rather than clipped.
+function startOfLastRecords(events: ChatEvent[], end: number, records: number): number {
+  const boundaries = recordBoundaries(events, 0, end)
+  let counted = 0
+  for (let i = boundaries.length - 1; i >= 0; i--) {
+    if (isAgentRecord(events, boundaries[i])) {
+      counted += 1
+      if (counted === records) {
+        return boundaries[i]
+      }
+    }
+  }
+  return 0
+}
+
+// The newest `records` agent records — what a cold-opened chat shows first.
+export function tailByRecords(events: ChatEvent[], records: number): RecordsWindow {
+  if (records <= 0) {
+    return { events: [], startIndex: events.length, hasMore: events.length > 0 }
+  }
+  const startIndex = startOfLastRecords(events, events.length, records)
+  return {
+    events: events.slice(startIndex),
+    startIndex,
+    hasMore: startIndex > 0,
+    header: headerAbove(events, startIndex),
+  }
+}
+
+// The `records` agent records immediately before `beforeIndex` — one scroll-up.
+// `beforeIndex` is a `startIndex` a previous window returned.
+export function pageBeforeByRecords(events: ChatEvent[], beforeIndex: number, records: number): RecordsWindow {
+  const end = Math.max(0, Math.min(beforeIndex, events.length))
+  if (records <= 0 || end === 0) {
+    return { events: [], startIndex: 0, hasMore: false }
+  }
+  const startIndex = startOfLastRecords(events, end, records)
+  return {
+    events: events.slice(startIndex, end),
+    startIndex,
+    hasMore: startIndex > 0,
+    header: headerAbove(events, startIndex),
+  }
 }

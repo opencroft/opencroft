@@ -1,5 +1,4 @@
-import type { EventsWindow } from 'agent-client/pagination'
-import type { ChatEvent } from 'agent-client/types'
+import type { RecordsWindow } from 'agent-client/pagination'
 import { useCallback, useRef, useState } from 'react'
 
 export interface UsePaginatedHistoryOptions {
@@ -7,7 +6,7 @@ export interface UsePaginatedHistoryOptions {
   // previous window's `startIndex` (the tail window's own `startIndex` for the
   // first call). Wired by the host to its own history source, e.g. a server fn
   // backed by agent-client's `getEventsWindow`.
-  fetchPage: (beforeIndex: number) => Promise<EventsWindow>
+  fetchPage: (beforeIndex: number) => Promise<RecordsWindow>
 }
 
 // The "load older on scroll-up" half of a paginated chat transcript: a host
@@ -33,16 +32,19 @@ export function usePaginatedHistory({ fetchPage }: UsePaginatedHistoryOptions) {
     setHasMore(more)
   }, [])
 
-  const loadOlder = useCallback(async (): Promise<ChatEvent[]> => {
+  // Returns the whole window, not just its events: the caller needs `header`
+  // to know which question the topmost partial turn belongs to, and that
+  // changes as paging crosses a turn boundary.
+  const loadOlder = useCallback(async (): Promise<RecordsWindow | null> => {
     if (loadingMore || !hasMore || cursorRef.current === null) {
-      return []
+      return null
     }
     setLoadingMore(true)
     try {
       const page = await fetchPage(cursorRef.current)
       cursorRef.current = page.startIndex
       setHasMore(page.hasMore)
-      return page.events
+      return page
     } finally {
       setLoadingMore(false)
     }

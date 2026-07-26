@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { createServerFn } from '@tanstack/react-start'
 import { supportsMidTurnInput } from 'agent-client'
-import type { EventsWindow } from 'agent-client/pagination'
+import type { RecordsWindow } from 'agent-client/pagination'
 import type { AgentSelection } from 'agent-client/types'
 
 import {
@@ -356,10 +356,10 @@ export const stopProcessLocal = createServerFn({ method: 'POST', strict: { outpu
     }
   })
 
-// How many turns a single "load older" scroll fetches — independent of
-// acp.stream.ts's INITIAL_HISTORY_TURNS (the two don't need to match, though
-// keeping them equal makes each older page roughly one screenful).
-const HISTORY_PAGE_TURNS = 5
+// How many agent records a single "load older" scroll fetches. Smaller than
+// the opening window (acp.stream.ts's INITIAL_HISTORY_RECORDS) on purpose: a
+// cold open wants enough to read, a scroll-up wants to arrive without a jolt.
+const HISTORY_PAGE_RECORDS = 5
 
 // The "older messages" half of the tail-first + scroll-up pagination pattern
 // is a plain request/response fetch against the
@@ -369,23 +369,8 @@ const HISTORY_PAGE_TURNS = 5
 export const getSessionHistoryPageLocal = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((data: { sessionId: string; beforeIndex: number }) => data)
   .handler(
-    async ({ data }): Promise<EventsWindow | null> =>
-      agentClient.getEventsWindow(data.sessionId, { beforeIndex: data.beforeIndex, turns: HISTORY_PAGE_TURNS }),
-  )
-
-// How many records a single "load older tool calls in this turn" fetch
-// returns — the in-turn counterpart of HISTORY_PAGE_TURNS.
-const TURN_RECORDS_PAGE_SIZE = 20
-
-// The "older tool calls within the current turn" fetch: same shape as
-// getSessionHistoryPageLocal, one level finer. `turnStart` and the initial
-// `beforeIndex` come from the stream's history_end `trimmedTurn` payload; a
-// later page's own `startIndex` feeds the next call.
-export const getSessionTurnRecordsPageLocal = createServerFn({ method: 'GET', strict: { output: false } })
-  .inputValidator((data: { sessionId: string; turnStart: number; beforeIndex: number }) => data)
-  .handler(
-    async ({ data }): Promise<EventsWindow | null> =>
-      agentClient.getTurnRecordsWindow(data.sessionId, data.turnStart, data.beforeIndex, TURN_RECORDS_PAGE_SIZE),
+    async ({ data }): Promise<RecordsWindow | null> =>
+      agentClient.getRecordsWindow(data.sessionId, { beforeIndex: data.beforeIndex, records: HISTORY_PAGE_RECORDS }),
   )
 
 export const respondLocal = createServerFn({ method: 'POST', strict: { output: false } })
