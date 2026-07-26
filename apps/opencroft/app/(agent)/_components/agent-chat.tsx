@@ -472,8 +472,11 @@ function UserMessage({
   editDisabled?: boolean
   onEdit?: () => void
   // Hold the top of the viewport while this turn's replies scroll underneath.
-  // Needs an opaque background — the row is wider than its tinted bubble, so
-  // without it replies would show through the gap beside the edit control.
+  // Needs an opaque background, since replies pass behind it.
+  //
+  // These classes belong on the OUTERMOST element, outside the rail: otherwise
+  // the avatar scrolls away while the message stays, and the background stops
+  // short of the rail so replies show through beside it.
   //
   // `z-1` is exact, not a round number, and both bounds are load-bearing:
   //  - It must exceed the replies. Each one wraps its entries in a `relative`
@@ -485,37 +488,42 @@ function UserMessage({
   //    keeps painting over the header, which is what a raised value broke.
   // No integer sits between those, which is why matching the composer rather
   // than clearing it is the fix.
-  // That background covers the padded box, so the stuck-only breathing room
-  // below is opaque too rather than a gap replies scroll through.
-  //
-  // `pt-2 -mt-2` is what makes that breathing room stuck-only: the pair
-  // cancels in normal flow (top edge up by the same amount content moves
-  // down, so nothing below shifts), while a stuck box has its top edge pinned
-  // to the viewport and the padding becomes visible space. CSS offers no
-  // `:stuck` selector to express this directly.
   sticky?: boolean
 }) {
   return (
-    <Flex row align='start' className={cn('group w-full gap-1', sticky && 'sticky top-0 z-1 bg-background pt-2 -mt-2')}>
-      <Flex expanded className='gap-1.5 rounded-md bg-muted border-1 p-2'>
-        <div className='prose-chat'>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
-        </div>
-      </Flex>
-      {onEdit && (
-        <Button
-          type='button'
-          size='icon'
-          variant='ghost'
-          className='h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100'
-          title='Edit message'
-          disabled={editDisabled}
-          onClick={onEdit}
-        >
-          <Pencil className='size-3.5' />
-        </Button>
-      )}
-    </Flex>
+    // The same rail the replies below are rendered in, so both columns start at
+    // the same left edge by construction rather than by a matched indent — if
+    // the rail's width changes, the two move together. The avatar has no source
+    // yet and falls back to a person icon, which is the intended placeholder.
+    //
+    // The rail's own `py-2` is what spaces the message from the viewport edge
+    // once stuck, so the `pt-2 -mt-2` pair this used to carry is gone rather
+    // than added to: keeping both would have doubled the gap. Unstuck, that
+    // padding is the same rhythm every reply already has.
+    <div className={cn(sticky && 'sticky top-0 z-1 bg-background')}>
+      <Chained marker={<AgentAvatar size='md' />} lineAbove={false} lineBelow={false} align='start'>
+        <Flex row align='start' className='group w-full gap-1'>
+          <Flex expanded className='gap-1.5 rounded-md bg-muted border-1 p-2'>
+            <div className='prose-chat'>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+            </div>
+          </Flex>
+          {onEdit && (
+            <Button
+              type='button'
+              size='icon'
+              variant='ghost'
+              className='h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100'
+              title='Edit message'
+              disabled={editDisabled}
+              onClick={onEdit}
+            >
+              <Pencil className='size-3.5' />
+            </Button>
+          )}
+        </Flex>
+      </Chained>
+    </div>
   )
 }
 
