@@ -1,7 +1,8 @@
-import { type React } from '@ext/host'
+import type { React } from '@ext/host'
 import { Input, Label, ScrollArea } from '@ext/ui'
 
 import type { AgentData } from './agent'
+import { KeyValueEditor } from './key-value-editor'
 
 // Speech-recognition (speech-to-text) profile of an agent: an OpenAI-compatible
 // transcription endpoint (`<base>/audio/transcriptions`). Consumers (e.g. audio
@@ -35,6 +36,12 @@ export function AgentSpeechRecognitionTab({
             placeholder='not-needed'
           />
         </div>
+        <KeyValueEditor
+          label='Request headers (optional)'
+          entries={data.asrHeaders ?? []}
+          onChange={(asrHeaders) => updateData({ asrHeaders })}
+          valuePlaceholder='value or secret:NAME'
+        />
         <div className='flex flex-col gap-1'>
           <Label>Model</Label>
           <Input

@@ -17,7 +17,13 @@ import {
   terminalRunResult,
 } from '@opencroft/terminal/server'
 
+import type { ChatEvent } from 'agent-client/types'
+
+import { agentClient } from '@/app/(agent)/_server/agent-client-instance'
+import { readSessions } from '@/app/(agent)/_server/agent-sessions-store'
+import { deriveSessionStatus, type SessionStatus } from '@/app/(agent)/_shared/session-status'
 import { dispatchExecutionContext, type ExecDispatchSummary } from '@/app/(extension-runtime)/_server/exec-dispatch'
+import { parseSessionKey } from '@/app/(extension-runtime)/_server/send-message-helpers'
 import {
   deliverToSendMessageNode,
   type GraphEdgeLike as SendMessageEdgeLike,
@@ -25,6 +31,7 @@ import {
 } from '@/app/(extension-runtime)/_server/stream'
 import { slug } from '@/app/(server)/_server/types'
 import { getSetting, setSetting } from '@/app/(settings)/_server/actions'
+import { getSettingImpl, setSettingImpl } from '@/app/(settings)/_server/settings-impl'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
 import type { GraphData } from '@/app/(space)/_server/types'
 import { toastStore } from '@/lib/toast-store'
@@ -123,11 +130,40 @@ async function writeNodePatch(nodeId: string, mutate: (graph: GraphData) => bool
   }
 }
 
+export interface HandleInfo {
+  nodeId: string
+  // listNodes flattens spaces; handle discovery doesn't, because a picker has
+  // to be able to say which space a source came from.
+  spaceSlug: string
+  typeId: string
+  // node.data.name, falling back to the type id — for pickers.
+  nodeName: string
+  // The live id, resolvable by terminal.getContext. For a dynamic handle this
+  // is the expanded runtime id, not the declared prefix.
+  handleId: string
+  // The manifest id — the prefix form for a dynamic handle.
+  declaredId: string
+  contextType: string
+  role: 'source' | 'target'
+  label?: string
+  dynamic: boolean
+}
+
+export interface ListHandlesFilter {
+  role?: 'source' | 'target'
+  contextType?: string
+}
+
 export interface HostGraphApi {
   listNodes(): Promise<GraphNodeRecord[]>
   getNode(nodeId: string): Promise<GraphNodeRecord | null>
   listNodesByType(typeId: string): Promise<GraphNodeRecord[]>
   listEdges(): Promise<GraphEdgeRecord[]>
+  // Every handle declared by a node type, across all spaces, with dynamic
+  // source handles expanded to their live ids. Read-on-demand and uncached:
+  // expansion asks each application node's docker context what is running, so
+  // the result is only true at the moment it is produced.
+  listHandles(filter?: ListHandlesFilter): Promise<HandleInfo[]>
   updateNode(nodeId: string, patch: Partial<GraphNodeRecord>): Promise<GraphNodeRecord | null>
   createNode(
     typeId: string,
@@ -151,6 +187,73 @@ const graphApi: HostGraphApi = {
   },
   async listEdges() {
     return (await readGraph()).edges
+  },
+  async listHandles(filter) {
+    // Lazy imports for the same reason getTerminalContext uses them: loader.ts
+    // imports this module, so a static edge back to it would close a cycle.
+    // Same manifest source as getTerminalContext, so a handle this returns is
+    // one that resolver can actually resolve.
+    const { listExtensionManifestsImpl } = await import('@/app/(extension-runtime)/_server/extension-action-impl')
+    const { buildNodeTypeHandles, expandDynamicHandles, findDockerExtensionId } = await import(
+      '@/app/(extension-runtime)/_server/node-handles'
+    )
+    const [spaces, manifests] = await Promise.all([loadAllSpaces(), listExtensionManifestsImpl()])
+    const byType = buildNodeTypeHandles(manifests)
+    const dockerExtensionId = findDockerExtensionId(manifests)
+    const wanted = (handle: { role: string; contextType: string }) =>
+      (filter?.role === undefined || handle.role === filter.role) &&
+      (filter?.contextType === undefined || handle.contextType === filter.contextType)
+
+    const results: HandleInfo[] = []
+    for (const space of spaces) {
+      for (const raw of space.graph.nodes as unknown as GraphNodeRecord[]) {
+        const typeId = raw.type
+        if (!typeId) {
+          continue
+        }
+        const declared = byType.get(typeId)?.handles ?? []
+        const nodeName = (raw.data?.name as string) || typeId
+        const base = { nodeId: raw.id, spaceSlug: space.slug, typeId, nodeName }
+
+        const matching = declared.filter(wanted)
+        // Expansion costs a docker.ps per node, so do it once and only when a
+        // dynamic handle actually survived the filter — a caller asking for
+        // targets, or for some other contextType, pays nothing.
+        const liveIds = matching.some((handle) => handle.dynamic)
+          ? await expandDynamicHandles(raw, declared, dockerExtensionId)
+          : []
+
+        for (const handle of matching) {
+          if (!handle.dynamic) {
+            results.push({
+              ...base,
+              handleId: handle.id,
+              declaredId: handle.id,
+              contextType: handle.contextType,
+              role: handle.role,
+              label: handle.label,
+              dynamic: false,
+            })
+            continue
+          }
+          // A dynamic handle's declared id is only a prefix — emit one entry
+          // per live id instead, so every handleId returned is one that
+          // terminal.getContext can actually resolve.
+          for (const liveId of liveIds.filter((id) => id.startsWith(handle.id))) {
+            results.push({
+              ...base,
+              handleId: liveId,
+              declaredId: handle.id,
+              contextType: handle.contextType,
+              role: handle.role,
+              label: handle.label,
+              dynamic: true,
+            })
+          }
+        }
+      }
+    }
+    return results
   },
   async updateNode(nodeId, patch) {
     let updated: GraphNodeRecord | null = null
@@ -225,9 +328,157 @@ async function findSendMessageNode(
   }
 }
 
+// The agent/job slug pairs a send-message node can route to — same edge-walk
+// listAgents has always used, factored out so listSessions/listTurns can
+// filter the (node-independent) persisted session registry down to only the
+// sessions THIS node could actually reach, matching listAgents' own scoping.
+function reachableAgentJobs(
+  nodes: SendMessageNodeLike[],
+  edges: SendMessageEdgeLike[],
+): { agent: string; jobs: string[] }[] {
+  const jobsByAgentId = new Map<string, string[]>()
+  for (const edge of edges) {
+    const job = nodes.find((n) => n.id === edge.source && n.type === 'agent-job')
+    const jobName = (job?.data?.['name'] as string | undefined)?.trim()
+    if (!job || !jobName) {
+      continue
+    }
+    const list = jobsByAgentId.get(edge.target) ?? []
+    list.push(slug(jobName))
+    jobsByAgentId.set(edge.target, list)
+  }
+  const out: { agent: string; jobs: string[] }[] = []
+  for (const node of nodes) {
+    if (node.type !== 'agent') {
+      continue
+    }
+    const name = (node.data?.['name'] as string | undefined)?.trim()
+    if (!name) {
+      continue
+    }
+    out.push({ agent: slug(name), jobs: jobsByAgentId.get(node.id) ?? [] })
+  }
+  return out
+}
+
+function reachablePairKey(agent: string, job: string): string {
+  return `${agent}::${job}`
+}
+
+function reachablePairs(nodes: SendMessageNodeLike[], edges: SendMessageEdgeLike[]): Set<string> {
+  return new Set(reachableAgentJobs(nodes, edges).flatMap((a) => a.jobs.map((j) => reachablePairKey(a.agent, j))))
+}
+
+export interface SessionSummary {
+  sessionKey: string
+  agent: string
+  job: string
+  title: string
+  createdAt: number
+  lastActivityAt: number
+  // Same four-state vocabulary and derivation as the chat list's row status
+  // (see deriveSessionStatus) — waiting (pending permission) > working
+  // (active turn) > idle (alive, neither) > offline (no process).
+  status: SessionStatus
+}
+
+export interface TurnSummary {
+  index: number
+  prompt: string
+  promptLength: number
+  status: 'finished' | 'in-progress' | 'interrupted'
+  finalMessage?: string
+  finalMessageLength?: number
+}
+
+export interface TurnsPage {
+  turns: TurnSummary[]
+  hasMore: boolean
+  nextBeforeIndex: number | null
+  // The session's own status (see SessionSummary.status). An empty `turns`
+  // array means two different things depending on this: a genuinely empty
+  // (never-prompted) session at idle/working/waiting, vs. an offline session
+  // whose history isn't loaded in memory at all — a caller must be able to
+  // tell them apart without having read this action's description.
+  sessionStatus: SessionStatus
+}
+
+// ~400 chars is enough to identify a turn at a glance without pulling its
+// full text into an agent's context — these actions must stay cheap to call
+// regardless of how long a session's transcript is.
+const TURN_TEXT_MAX_CHARS = 400
+const DEFAULT_TURNS = 10
+// `turns` is caller-controlled — an unbounded value would walk the whole
+// transcript and scale the response with it, defeating the point of keeping
+// each turn's text truncated.
+const MAX_TURNS = 50
+
+export function truncateText(text: string, max = TURN_TEXT_MAX_CHARS): { text: string; length: number } {
+  const length = text.length
+  return length <= max ? { text, length } : { text: `${text.slice(0, max)}… [truncated]`, length }
+}
+
+export function turnStatus(events: ChatEvent[], inProgress: boolean): TurnSummary['status'] {
+  if (inProgress) {
+    return 'in-progress'
+  }
+  const end = events.find((e) => e.kind === 'turn_end')
+  if (!end || end.kind !== 'turn_end') {
+    // No terminal event at all: the turn errored (settleTurn's failure path
+    // never emits turn_end) or the process died mid-turn — either way, cut
+    // off rather than completed.
+    return 'interrupted'
+  }
+  // 'cancelled' = force-interrupted (stopProcessLocal/force-send); 'resumed'
+  // = a synthetic marker loadSession emits for a turn a restart cut off
+  // mid-flight (see agent-client.ts) — both are incomplete, not finished.
+  return end.stopReason === 'cancelled' || end.stopReason === 'resumed' ? 'interrupted' : 'finished'
+}
+
+export function buildTurnSummary(index: number, events: ChatEvent[], inProgress: boolean): TurnSummary {
+  const userEvent = events.find((e) => e.kind === 'user')
+  const prompt = truncateText(userEvent && userEvent.kind === 'user' ? userEvent.text : '')
+  const status = turnStatus(events, inProgress)
+  const summary: TurnSummary = { index, prompt: prompt.text, promptLength: prompt.length, status }
+  if (status === 'finished') {
+    let lastMessage: string | undefined
+    for (const event of events) {
+      if (event.kind === 'agent_message') {
+        lastMessage = event.text
+      }
+    }
+    const final = truncateText(lastMessage ?? '')
+    summary.finalMessage = final.text
+    summary.finalMessageLength = final.length
+  }
+  return summary
+}
+
+// Split a window's flat event array back into per-turn groups, tagging each
+// with its absolute index (window.startIndex + offset) so it can double as
+// the next page's `beforeIndex` cursor. tailByTurns/pageBeforeByTurns cut at
+// 'user' boundaries when any exist, but a session with zero turns (created,
+// never prompted — only 'modes'/'config_options'/etc. snapshot events) has
+// none: tailByTurns then returns that whole snapshot-only log as-is, not
+// starting with 'user'. Those leading events aren't part of any turn — skip
+// them (nothing to attach them to) rather than assume the invariant holds.
+export function splitIntoTurns(events: ChatEvent[], startIndex: number): { index: number; events: ChatEvent[] }[] {
+  const groups: { index: number; events: ChatEvent[] }[] = []
+  events.forEach((event, offset) => {
+    if (event.kind === 'user') {
+      groups.push({ index: startIndex + offset, events: [event] })
+    } else if (groups.length > 0) {
+      groups[groups.length - 1].events.push(event)
+    }
+  })
+  return groups
+}
+
 export interface HostSendMessageApi {
   send(nodeId: string, payload: Record<string, unknown>): Promise<{ sessionKey: string; created: boolean; forced: boolean }>
   listAgents(nodeId: string): Promise<{ agent: string; jobs: string[] }[]>
+  listSessions(nodeId: string, params: { agent?: string; job?: string }): Promise<SessionSummary[]>
+  listTurns(nodeId: string, params: { sessionKey: string; turns?: number; beforeIndex?: number }): Promise<TurnsPage>
 }
 
 const sendMessageApi: HostSendMessageApi = {
@@ -260,29 +511,96 @@ const sendMessageApi: HostSendMessageApi = {
     if (!found) {
       throw new Error(`Node not found: ${nodeId}`)
     }
-    const jobsByAgentId = new Map<string, string[]>()
-    for (const edge of found.edges) {
-      const job = found.nodes.find((n) => n.id === edge.source && n.type === 'agent-job')
-      const jobName = (job?.data?.['name'] as string | undefined)?.trim()
-      if (!job || !jobName) {
-        continue
-      }
-      const list = jobsByAgentId.get(edge.target) ?? []
-      list.push(slug(jobName))
-      jobsByAgentId.set(edge.target, list)
+    return reachableAgentJobs(found.nodes, found.edges)
+  },
+
+  async listSessions(nodeId, params) {
+    const found = await findSendMessageNode(nodeId)
+    if (!found) {
+      throw new Error(`Node not found: ${nodeId}`)
     }
-    const out: { agent: string; jobs: string[] }[] = []
-    for (const node of found.nodes) {
-      if (node.type !== 'agent') {
-        continue
-      }
-      const name = (node.data?.['name'] as string | undefined)?.trim()
-      if (!name) {
-        continue
-      }
-      out.push({ agent: slug(name), jobs: jobsByAgentId.get(node.id) ?? [] })
+    const reachable = reachablePairs(found.nodes, found.edges)
+    const agentFilter = typeof params.agent === 'string' ? params.agent.trim() : undefined
+    const jobFilter = typeof params.job === 'string' ? params.job.trim() : undefined
+
+    const sessionKeys = {
+      pending: new Set(agentClient.pendingPermissionSessionKeys()),
+      active: new Set(agentClient.activeSessionKeys()),
+      alive: new Set(agentClient.aliveSessionKeys()),
     }
+    const metaByKey = new Map(
+      agentClient
+        .listSessions()
+        .filter((m) => m.sessionKey)
+        .map((m) => [m.sessionKey as string, m]),
+    )
+
+    const out: SessionSummary[] = []
+    for (const entry of await readSessions()) {
+      const parts = parseSessionKey(entry.key)
+      if (!parts || !reachable.has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
+        continue
+      }
+      if (agentFilter && parts.agentSlug !== agentFilter) {
+        continue
+      }
+      if (jobFilter && parts.jobSlug !== jobFilter) {
+        continue
+      }
+      out.push({
+        sessionKey: entry.key,
+        agent: parts.agentSlug,
+        job: parts.jobSlug,
+        title: entry.title ?? '',
+        createdAt: entry.createdAt,
+        // Dead sessions have no in-memory state to read a real activity time
+        // from (agent-client sessions don't survive a restart) — fall back to
+        // createdAt rather than fabricate one.
+        lastActivityAt: metaByKey.get(entry.key)?.lastActivityAt ?? entry.createdAt,
+        status: deriveSessionStatus(entry.key, sessionKeys),
+      })
+    }
+    out.sort((a, b) => b.lastActivityAt - a.lastActivityAt)
     return out
+  },
+
+  async listTurns(nodeId, params) {
+    const found = await findSendMessageNode(nodeId)
+    if (!found) {
+      throw new Error(`Node not found: ${nodeId}`)
+    }
+    const sessionKey = params.sessionKey.trim()
+    const parts = sessionKey ? parseSessionKey(sessionKey) : null
+    if (!parts || !reachablePairs(found.nodes, found.edges).has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
+      throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
+    }
+    const turns = params.turns && params.turns > 0 ? Math.min(Math.floor(params.turns), MAX_TURNS) : DEFAULT_TURNS
+    const sessionStatus = deriveSessionStatus(sessionKey, {
+      pending: new Set(agentClient.pendingPermissionSessionKeys()),
+      active: new Set(agentClient.activeSessionKeys()),
+      alive: new Set(agentClient.aliveSessionKeys()),
+    })
+
+    const meta = agentClient.listSessions().find((m) => m.sessionKey === sessionKey)
+    if (!meta) {
+      // No live process for this session (dead, or never started) — nothing
+      // in memory to page through.
+      return { turns: [], hasMore: false, nextBeforeIndex: null, sessionStatus }
+    }
+    const window = agentClient.getEventsWindow(meta.id, { turns, beforeIndex: params.beforeIndex })
+    if (!window) {
+      return { turns: [], hasMore: false, nextBeforeIndex: null, sessionStatus }
+    }
+    // Only the tail window (no beforeIndex) can end on the session's current,
+    // still-running turn — any older page is by definition already over.
+    const tailInProgress = params.beforeIndex === undefined && agentClient.hasActiveTurn(meta.id)
+    const groups = splitIntoTurns(window.events, window.startIndex)
+    return {
+      turns: groups.map((group, i) => buildTurnSummary(group.index, group.events, tailInProgress && i === groups.length - 1)),
+      hasMore: window.hasMore,
+      nextBeforeIndex: window.hasMore ? window.startIndex : null,
+      sessionStatus,
+    }
   },
 }
 
@@ -293,8 +611,8 @@ async function getTerminalContext(nodeId: string, handleId: string): Promise<Ter
   if (!node?.type) {
     throw new Error(`Node not found: ${nodeId}`)
   }
-  const { listExtensionManifests } = await import('@/app/(extension-runtime)/_server/actions')
-  const manifests = await listExtensionManifests()
+  const { listExtensionManifestsImpl } = await import('@/app/(extension-runtime)/_server/extension-action-impl')
+  const manifests = await listExtensionManifestsImpl()
   const manifest = manifests.find((m) => m.nodes?.some((n) => n.typeId === node.type))
   if (!manifest) {
     throw new Error(`No extension provides node type: ${node.type}`)
@@ -342,33 +660,33 @@ function storageApi(extensionId: string): ExtensionStorageApi {
   const prefix = `${extensionId}::`
   return {
     async get<T>(key: string): Promise<T | null> {
-      const all = (await getSetting({ data: STORAGE_SETTING_ID }))?.data ?? {}
+      const all = (await getSettingImpl(STORAGE_SETTING_ID))?.data ?? {}
       return (all[prefix + key] as T | undefined) ?? null
     },
     async set<T>(key: string, value: T): Promise<void> {
-      const all = (await getSetting({ data: STORAGE_SETTING_ID }))?.data ?? {}
+      const all = (await getSettingImpl(STORAGE_SETTING_ID))?.data ?? {}
       all[prefix + key] = value
-      await setSetting({ data: { id: STORAGE_SETTING_ID, data: all } })
+      await setSettingImpl({ id: STORAGE_SETTING_ID, data: all })
     },
     async delete(key: string): Promise<void> {
-      const all = (await getSetting({ data: STORAGE_SETTING_ID }))?.data ?? {}
+      const all = (await getSettingImpl(STORAGE_SETTING_ID))?.data ?? {}
       delete all[prefix + key]
-      await setSetting({ data: { id: STORAGE_SETTING_ID, data: all } })
+      await setSettingImpl({ id: STORAGE_SETTING_ID, data: all })
     },
     async list(): Promise<string[]> {
-      const all = (await getSetting({ data: STORAGE_SETTING_ID }))?.data ?? {}
+      const all = (await getSettingImpl(STORAGE_SETTING_ID))?.data ?? {}
       return Object.keys(all)
         .filter((k) => k.startsWith(prefix))
         .map((k) => k.slice(prefix.length))
     },
     async clear(): Promise<void> {
-      const all = (await getSetting({ data: STORAGE_SETTING_ID }))?.data ?? {}
+      const all = (await getSettingImpl(STORAGE_SETTING_ID))?.data ?? {}
       for (const k of Object.keys(all)) {
         if (k.startsWith(prefix)) {
           delete all[k]
         }
       }
-      await setSetting({ data: { id: STORAGE_SETTING_ID, data: all } })
+      await setSettingImpl({ id: STORAGE_SETTING_ID, data: all })
     },
   }
 }

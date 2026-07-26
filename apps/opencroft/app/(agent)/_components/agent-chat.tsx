@@ -4,6 +4,7 @@ import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { ChainDot, type ChainDotVariant, Chained } from 'agent-chat/chain'
 import { ConfigOptionsBar } from 'agent-chat/config-options-bar'
 import { ThinkingBlock } from 'agent-chat/thinking-block'
+import { groupIntoTurnSections } from 'agent-chat/turn-sections'
 import type { QueuedPrompt } from 'agent-client/types'
 import {
   Maximize2,
@@ -77,6 +78,16 @@ export interface AgentSession {
   // sequence a DOM-window/scroll-position change with the data actually
   // landing, instead of the two racing.
   loadMoreHistory?: () => Promise<void>
+  // Whether the newest turn's own tool-call history was itself trimmed on
+  // load — a turn with a huge number of tool calls (a long agent run) can
+  // blow up the initial load the same way a huge transcript can, so
+  // turn-level windowing alone can't bound it. Independent of
+  // hasMoreHistory, which pages whole earlier turns.
+  hasMoreInTurn?: boolean
+  loadingMoreInTurn?: boolean
+  // Fetches and splices in the next older page of tool calls within the
+  // current turn. Same await contract as loadMoreHistory.
+  loadMoreInTurn?: () => Promise<void>
 }
 
 interface AgentChatProps {
@@ -424,6 +435,15 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   // would drop the top visible block on every append and yank the content the
   // reader is on. The frozen window is recycled later, once the user re-pins
   // and the next block arrives.
+  // Carry each visible block's position in the FULL list into the grouping —
+  // turnByBlock and the "is this the active turn" check are both keyed by it,
+  // and grouping otherwise loses it. The React key stays the block id, which
+  // (unlike position) survives a "load older" prepend unchanged.
+  const sections = useMemo(
+    () => groupIntoTurnSections(visibleBlocks.map((block, i) => ({ ...block, absoluteIndex: startIndex + i }))),
+    [visibleBlocks, startIndex],
+  )
+
   const prevBlockCountRef = useRef(blocks.length)
   useEffect(() => {
     const appended = blocks.length - prevBlockCountRef.current
@@ -450,35 +470,63 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
               {session.loadingMoreHistory ? 'loading older…' : '· · ·'}
             </div>
           )}
-          {visibleBlocks.map((b, i) => {
-            // Position within the full `blocks` array — turnByBlock is keyed
-            // by this (rebuilt fresh every render, so shifting under a prepend
-            // is fine), but the React `key` below uses b.id instead: it must
-            // stay the SAME value for the SAME content across a "load older"
-            // prepend, which this position does not (see buildBlocks and
-            // ChatMessage.id).
-            const index = startIndex + i
-            return b.kind === 'user' ? (
-              <UserMessage
-                key={b.id}
-                blockId={b.id}
-                text={b.text}
-                editDisabled={session.waiting}
-                onEdit={edit ? () => edit(turnByBlock.get(index) ?? 0, b.text) : undefined}
-              />
-            ) : (
-              <Details
-                key={b.id}
-                blockId={b.id}
-                items={b.items}
-                botName={displayName}
-                agentAvatar={agentAvatar}
-                defaultCollapsed={detailsCollapsedRef.current}
-                onCollapseChange={onDetailsCollapseChange}
-                pending={index === blocks.length - 1 && session.waiting}
-              />
-            )
-          })}
+          {sections.map((section, sectionIndex) => (
+            // One section per turn: the user message sticks to the top of the
+            // viewport while its own replies scroll under it, and the next
+            // turn's section pushes it out on the way past. Bounding each
+            // header to its section is what produces that hand-off, so no
+            // scroll position is read anywhere.
+            <Flex key={section.id} className='w-full min-w-0 gap-3'>
+              {section.user && (
+                <UserMessage
+                  sticky
+                  blockId={section.user.id}
+                  text={section.user.text}
+                  editDisabled={session.waiting}
+                  onEdit={
+                    edit && section.user
+                      ? () => edit(turnByBlock.get(section.user?.absoluteIndex ?? 0) ?? 0, section.user?.text ?? '')
+                      : undefined
+                  }
+                />
+              )}
+              {/* Belongs to the turn whose records it loads, so it sits inside
+                  that turn's section rather than floating above whichever
+                  reply block happens to be last. Only the newest turn is ever
+                  trimmed, and the cursor is dropped when a new turn starts, so
+                  the last section is that turn.
+
+                  Its position here is load-bearing, not cosmetic. Older records
+                  are spliced in at the START of the turn's body — directly
+                  below this control — and the control is not sticky, so it has
+                  to be on screen to be clicked. Everything above the viewport
+                  top is therefore unchanged by the insert, which leaves
+                  scrollTop still correct and the reader's view unmoved without
+                  any scroll correction. Moving this control (or making it
+                  stick) breaks that and reintroduces the content-shift problem
+                  the turn-level path has to solve with an anchor restore. */}
+              {sectionIndex === sections.length - 1 && session.hasMoreInTurn && (
+                <LoadMoreInTurnButton
+                  loading={session.loadingMoreInTurn === true}
+                  onClick={() => void session.loadMoreInTurn?.()}
+                />
+              )}
+              {section.items.map((b) =>
+                b.kind === 'user' ? null : (
+                  <Details
+                    key={b.id}
+                    blockId={b.id}
+                    items={b.items}
+                    botName={displayName}
+                    agentAvatar={agentAvatar}
+                    defaultCollapsed={detailsCollapsedRef.current}
+                    onCollapseChange={onDetailsCollapseChange}
+                    pending={b.absoluteIndex === blocks.length - 1 && session.waiting}
+                  />
+                ),
+              )}
+            </Flex>
+          ))}
         </>
       )}
       {session.waiting && <ThinkingIndicator />}
@@ -492,28 +540,68 @@ function UserMessage({
   text,
   editDisabled,
   onEdit,
-}: { blockId: number; text: string; editDisabled?: boolean; onEdit?: () => void }) {
+  sticky,
+}: {
+  // Marks this block in the DOM so the load-older restore can find it again
+  // and measure how far it moved. Sits on the outermost box, which is the
+  // block's own element in the flow.
+  blockId: number
+  text: string
+  editDisabled?: boolean
+  onEdit?: () => void
+  // Hold the top of the viewport while this turn's replies scroll underneath.
+  // Needs an opaque background, since replies pass behind it.
+  //
+  // These classes belong on the OUTERMOST element, outside the rail: otherwise
+  // the avatar scrolls away while the message stays, and the background stops
+  // short of the rail so replies show through beside it.
+  //
+  // `z-1` is exact, not a round number, and both bounds are load-bearing:
+  //  - It must exceed the replies. Each one wraps its entries in a `relative`
+  //    box, and a positioned box with an automatic z-index sits at 0 and comes
+  //    later in the document — so anything lower loses to it on tree order and
+  //    the replies paint over the header.
+  //  - It must not exceed the composer, which is also `z-1` and later in the
+  //    document still. Equal values are broken by tree order, so the composer
+  //    keeps painting over the header, which is what a raised value broke.
+  // No integer sits between those, which is why matching the composer rather
+  // than clearing it is the fix.
+  sticky?: boolean
+}) {
   return (
-    <Flex row align='start' className='group w-full gap-1' {...{ [BLOCK_ID_ATTR]: blockId }}>
-      <Flex expanded className='gap-1.5 rounded-md bg-muted border-1 p-2'>
-        <div className='prose-chat'>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
-        </div>
-      </Flex>
-      {onEdit && (
-        <Button
-          type='button'
-          size='icon'
-          variant='ghost'
-          className='h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100'
-          title='Edit message'
-          disabled={editDisabled}
-          onClick={onEdit}
-        >
-          <Pencil className='size-3.5' />
-        </Button>
-      )}
-    </Flex>
+    // The same rail the replies below are rendered in, so both columns start at
+    // the same left edge by construction rather than by a matched indent — if
+    // the rail's width changes, the two move together. The avatar has no source
+    // yet and falls back to a person icon, which is the intended placeholder.
+    //
+    // The rail's own `py-2` is what spaces the message from the viewport edge
+    // once stuck, so the `pt-2 -mt-2` pair this used to carry is gone rather
+    // than added to: keeping both would have doubled the gap. Unstuck, that
+    // padding is the same rhythm every reply already has.
+    <div className={cn(sticky && 'sticky top-0 z-1 bg-background')} {...{ [BLOCK_ID_ATTR]: blockId }}>
+      <Chained marker={<AgentAvatar size='md' />} lineAbove={false} lineBelow={false} align='start'>
+        <Flex row align='start' className='group w-full gap-1'>
+          <Flex expanded className='gap-1.5 rounded-md bg-muted border-1 p-2'>
+            <div className='prose-chat'>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+            </div>
+          </Flex>
+          {onEdit && (
+            <Button
+              type='button'
+              size='icon'
+              variant='ghost'
+              className='h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100'
+              title='Edit message'
+              disabled={editDisabled}
+              onClick={onEdit}
+            >
+              <Pencil className='size-3.5' />
+            </Button>
+          )}
+        </Flex>
+      </Chained>
+    </div>
   )
 }
 
@@ -537,6 +625,24 @@ function ToolCallView({ item }: { item: Extract<DetailItem, { kind: 'tool' }> })
     return <ViewComponent tool={item.name} args={args} requestId={item.id} mode='history' result={item.result} />
   }
   return <GenericToolView tool={item.name} args={args} result={item.result} />
+}
+
+// A manual "load older tool calls in this turn" control — click-to-fetch
+// rather than a scroll sentinel, so it never reads or writes
+// scrollTop/scrollHeight and can't interact with loadOlder's own restore logic
+// above.
+function LoadMoreInTurnButton({ loading, onClick }: { loading: boolean; onClick: () => void }) {
+  return (
+    <Button
+      variant='ghost'
+      size='sm'
+      className='self-start text-xs text-muted-foreground'
+      disabled={loading}
+      onClick={onClick}
+    >
+      {loading ? 'Loading earlier tool calls…' : 'Load earlier tool calls'}
+    </Button>
+  )
 }
 
 type DetailEntry = { kind: 'header' } | { kind: 'item'; item: DetailItem }

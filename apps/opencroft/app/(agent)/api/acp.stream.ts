@@ -11,6 +11,14 @@ import { agentClient } from '@/app/(agent)/_server/agent-client-instance'
 // actual cause of a server OOM, independent of a separate wire-decode bug.
 export const INITIAL_HISTORY_TURNS = 5
 
+// How many of the newest turn's own tool-call groups a cold (re)connect sends
+// in full before switching to "load older tool calls in this turn" — a turn
+// with a huge number of tool calls (a long agent run) can blow up the initial
+// load the same way a huge transcript can, and turn-level windowing alone
+// can't bound it since the whole oversized turn is still one page. See
+// pagination.ts's tailRecordsInTurn.
+export const INITIAL_TURN_RECORDS = 20
+
 export const Route = createFileRoute('/(agent)/api/acp/stream')({
   server: {
     handlers: {
@@ -23,7 +31,10 @@ export const Route = createFileRoute('/(agent)/api/acp/stream')({
         let unsubscribe = () => {}
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
-            const window = agentClient.getEventsWindow(sessionId, { turns: INITIAL_HISTORY_TURNS })
+            const window = agentClient.getEventsWindow(sessionId, {
+              turns: INITIAL_HISTORY_TURNS,
+              turnRecords: INITIAL_TURN_RECORDS,
+            })
             unsubscribe = agentClient.subscribe(
               sessionId,
               (event) => {
@@ -42,7 +53,9 @@ export const Route = createFileRoute('/(agent)/api/acp/stream')({
             try {
               controller.enqueue(
                 encoder.encode(
-                  `data: ${JSON.stringify(historyEndEvent(window?.startIndex ?? 0, window?.hasMore ?? false))}\n\n`,
+                  `data: ${JSON.stringify(
+                    historyEndEvent(window?.startIndex ?? 0, window?.hasMore ?? false, window?.trimmedTurn),
+                  )}\n\n`,
                 ),
               )
             } catch {}

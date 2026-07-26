@@ -41,9 +41,17 @@ export interface SessionMeta {
   id: string
   title: string
   createdAt: number
+  // Last time any event was emitted on this session (turn activity, config
+  // changes, etc.) — mirrors createdAt until the first emit. Lets a host show
+  // session recency without scanning the event log.
+  lastActivityAt: number
   profileId?: string
   // Whether this session's agent can fork its history (native harness only).
   canFork?: boolean
+  // The external session key this session was created with (selection.sessionKey),
+  // mirrored here so a host can look up a session by key without also tracking
+  // its own id — see agent-client.ts's emit/createSession.
+  sessionKey?: string
 }
 
 export interface PlanItem {

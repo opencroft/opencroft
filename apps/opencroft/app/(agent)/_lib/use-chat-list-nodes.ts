@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import type { SessionEntry } from '@/app/(agent)/_server/agent-sessions-store'
 import type { ChatListLayout, ChatListLayoutEntry } from '@/app/(agent)/_server/chat-list-layout-store'
+import { deriveSessionStatus } from '@/app/(agent)/_shared/session-status'
 import { listAgentNodes } from '@/app/(space)/_server/agents'
 
 const LAYOUT_ENDPOINT = '/api/acp/chat-list-layout'
@@ -41,19 +42,7 @@ export function toLeaf(
     title: session.title ?? session.jobName,
     description: session.agentName,
     avatarUrl: avatarByAgentId.get(session.agentNodeId),
-    // The row's process state: waiting (pending) beats working (active)
-    // beats idle (alive) beats offline (no process) — pending and active are
-    // never both true in practice (a turn blocked on a permission request
-    // has already paused), but both are subsets of alive, so the order
-    // matters for those two. Always set (never undefined) — offline is a
-    // real, always-shown state, not "no status".
-    status: pendingKeys.has(session.key)
-      ? ('waiting' as const)
-      : activeKeys.has(session.key)
-        ? ('working' as const)
-        : aliveKeys.has(session.key)
-          ? ('idle' as const)
-          : ('offline' as const),
+    status: deriveSessionStatus(session.key, { pending: pendingKeys, active: activeKeys, alive: aliveKeys }),
     hasDraft: Boolean(session.draft?.trim()),
   }
 }

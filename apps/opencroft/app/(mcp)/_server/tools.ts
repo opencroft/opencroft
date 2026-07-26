@@ -36,10 +36,14 @@ import {
   getLocalExtension,
   listLocalExtensions,
 } from '@/app/(extension-editor)/_actions/local-extensions-actions'
-import { invokeExtensionAction } from '@/app/(extension-runtime)/_server/actions'
 import { dispatchExecutionContext, NoExecTargetError } from '@/app/(extension-runtime)/_server/exec-dispatch'
 import { getExtensionModule, loadAllManifests } from '@/app/(extension-runtime)/_server/loader'
 import { dispatchNodeAction, listNodeActions } from '@/app/(extension-runtime)/_server/node-actions'
+import {
+  buildNodeTypeHandles,
+  expandDynamicHandles,
+  findDockerExtensionId,
+} from '@/app/(extension-runtime)/_server/node-handles'
 import { localExtRoot } from '@/app/(extension-runtime)/_server/paths'
 import { resolveExtensionRepo, searchRegistries } from '@/app/(extension-runtime)/_server/registry'
 import type { ExtensionHandle } from '@/app/(extension-runtime)/_types'
@@ -1299,15 +1303,19 @@ async function buildTypeNameMap(): Promise<Map<string, string>> {
   return map
 }
 
-async function buildTypeHandlesMap(): Promise<Map<string, ExtensionHandle[]>> {
+interface TypeHandlesContext {
+  typeHandles: Map<string, ExtensionHandle[]>
+  // Resolved once here rather than per node inside the expansion.
+  dockerExtensionId: string | null
+}
+
+async function buildTypeHandlesMap(): Promise<TypeHandlesContext> {
   const manifests = await loadAllManifests()
-  const map = new Map<string, ExtensionHandle[]>()
-  for (const manifest of manifests) {
-    for (const node of manifest.nodes ?? []) {
-      map.set(node.typeId, node.handles ?? [])
-    }
+  const byType = buildNodeTypeHandles(manifests)
+  return {
+    typeHandles: new Map(Array.from(byType, ([typeId, entry]) => [typeId, entry.handles])),
+    dockerExtensionId: findDockerExtensionId(manifests),
   }
-  return map
 }
 
 interface NodeHandlesView {
@@ -1315,44 +1323,10 @@ interface NodeHandlesView {
   output: Record<string, string[]>
 }
 
-async function expandDynamicHandles(node: GraphNode, declared: ExtensionHandle[]): Promise<string[]> {
-  if (node.type !== 'application') {
-    return []
-  }
-  const dynamic = declared.find((h) => h.dynamic && h.role === 'source')
-  if (!dynamic) {
-    return []
-  }
-  const resolved = node.data?.__resolvedContexts as Record<string, { sourceNodeId?: string }> | undefined
-  const dockerNodeId = resolved?.['docker-in']?.sourceNodeId
-  if (!dockerNodeId) {
-    return []
-  }
-  const service = (node.data?.name as string) || node.id
-  try {
-    const manifests = await loadAllManifests()
-    const owning = manifests.find((m) => m.nodes?.some((n) => n.typeId === 'docker'))
-    if (!owning) {
-      return []
-    }
-    const containers = (await invokeExtensionAction({
-      data: { extensionId: owning.id, actionName: 'docker.ps', args: [{ dockerNodeId, service }] },
-    })) as Array<{
-      id: string
-      name: string
-      running: boolean
-    }>
-    return containers.filter((c) => c.running).map((c) => `${dynamic.id}${c.name || c.id}`)
-  } catch (err) {
-    console.error(`[mcp.expandDynamicHandles] failed for ${node.id}:`, err)
-    return []
-  }
-}
-
 async function nodeHandles(
   node: GraphNode,
   edges: StoredEdge[],
-  typeHandles: Map<string, ExtensionHandle[]>,
+  { typeHandles, dockerExtensionId }: TypeHandlesContext,
 ): Promise<NodeHandlesView> {
   const input: Record<string, string | null> = {}
   const output: Record<string, string[]> = {}
@@ -1367,7 +1341,7 @@ async function nodeHandles(
     }
     output[h.id] = []
   }
-  for (const id of await expandDynamicHandles(node, declared)) {
+  for (const id of await expandDynamicHandles(node, declared, dockerExtensionId)) {
     output[id] = []
   }
   for (const edge of edges) {

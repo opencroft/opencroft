@@ -84,6 +84,62 @@ interface TtsCapabilities {
   schemaKnown: boolean
 }
 
+// A header entry as stored in the agent node's data (`ttsHeaders`/`asrHeaders`).
+interface HeaderPair {
+  name: string
+  value: string
+}
+
+const SECRET_PREFIX = 'secret:'
+
+// `secret:NAME` resolves from the Secrets Store; anything else is sent as
+// typed. Resolution happens here, at request time, so a basic-auth password
+// never has to sit in the node's data as plain text.
+//
+// An unresolvable name throws rather than yielding an empty value, matching the
+// same convention elsewhere. Empty would send `Authorization: ` and earn a 401,
+// leaving the tab with no voices and no knobs — indistinguishable from a broken
+// endpoint, which is the confusion this feature exists to remove. The error
+// names the secret instead.
+async function resolveHeaderValue(value: string): Promise<string> {
+  if (!value.startsWith(SECRET_PREFIX)) {
+    return value
+  }
+  const name = value.slice(SECRET_PREFIX.length).trim()
+  const resolved = name ? await host.secrets.resolve(name) : null
+  if (resolved === null) {
+    throw new Error(`Secret "${name}" not found in any Secrets Store`)
+  }
+  return resolved
+}
+
+// Default headers for a speech endpoint, with the node's custom pairs merged
+// over them. Shared by every probe here; the audio-pipelines extension applies
+// the same rules to the request paths it owns.
+async function speechHeaders(apiKey?: string, custom?: HeaderPair[]): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {}
+  if (apiKey?.trim()) {
+    headers.Authorization = `Bearer ${apiKey}`
+  }
+  for (const entry of custom ?? []) {
+    const name = entry?.name?.trim()
+    if (!name) {
+      continue
+    }
+    // Header names are case-insensitive on the wire but object keys are not,
+    // so drop any key differing only in case first. Without this a custom
+    // `authorization` would sit alongside the Bearer shorthand instead of
+    // replacing it, and the endpoint would receive two conflicting values.
+    for (const existing of Object.keys(headers)) {
+      if (existing.toLowerCase() === name.toLowerCase()) {
+        delete headers[existing]
+      }
+    }
+    headers[name] = await resolveHeaderValue(entry.value ?? '')
+  }
+  return headers
+}
+
 interface OpenApiSpec {
   paths?: Record<string, { post?: { requestBody?: { content?: Record<string, { schema?: { $ref?: string } }> } } }>
   components?: { schemas?: Record<string, { properties?: Record<string, unknown> }> }
@@ -103,7 +159,11 @@ function speechRequestProps(spec: OpenApiSpec): Record<string, unknown> | null {
   return (name ? spec.components?.schemas?.[name]?.properties : null) ?? null
 }
 
-async function ttsCapabilities(params: { baseUrl?: string; apiKey?: string }): Promise<TtsCapabilities> {
+async function ttsCapabilities(params: {
+  baseUrl?: string
+  apiKey?: string
+  headers?: HeaderPair[]
+}): Promise<TtsCapabilities> {
   const base = (params.baseUrl ?? '').replace(/\/+$/, '')
   const caps: TtsCapabilities = {
     voices: [],
@@ -115,10 +175,10 @@ async function ttsCapabilities(params: { baseUrl?: string; apiKey?: string }): P
   if (!base) {
     return caps
   }
-  const headers: Record<string, string> = {}
-  if (params.apiKey?.trim()) {
-    headers.Authorization = `Bearer ${params.apiKey}`
-  }
+  // Both probes below use these. Without them an authenticated endpoint answers
+  // 401 to each, and the tab shows no voices and no knobs — reading as "this
+  // endpoint is broken" rather than "these requests were unauthorised".
+  const headers = await speechHeaders(params.apiKey, params.headers)
 
   try {
     const res = await fetch(`${base}/audio/voices`, { headers })
@@ -379,8 +439,11 @@ export const actions = {
   'secretsStore.setSecret': (storeId: string, key: string, value: string) => secretsStoreSetSecret(storeId, key, value),
   'secretsStore.deleteSecret': (storeId: string, key: string) => secretsStoreDeleteSecret(storeId, key),
   'secretsStore.rotateSecret': (storeId: string, key: string) => secretsStoreRotateSecret(storeId, key),
-  'secretsStore.generate': (storeId: string, name: string, options?: GenerateSecretOptions): Promise<GenerateSecretResult> =>
-    secretsStoreGenerate(storeId, name, options),
+  'secretsStore.generate': (
+    storeId: string,
+    name: string,
+    options?: GenerateSecretOptions,
+  ): Promise<GenerateSecretResult> => secretsStoreGenerate(storeId, name, options),
   'secretsStore.listOrphans': (storeId: string) => secretsStoreListOrphans(storeId),
   'secretsStore.deleteOrphan': (id: string) => secretsStoreDeleteOrphan(id),
   'server.getStats': (config: ServerConfig) => serverGetStats(config),
@@ -401,7 +464,8 @@ export const actions = {
   // covers models discovered from an OpenAI-compatible endpoint or typed in by
   // hand, not just the static AGENT_PROVIDERS catalog.
   'agent.reasoningEfforts': (model: string) => reasoningEfforts(String(model ?? '')),
-  'tts.capabilities': (params: { baseUrl?: string; apiKey?: string }) => ttsCapabilities(params),
+  'tts.capabilities': (params: { baseUrl?: string; apiKey?: string; headers?: HeaderPair[] }) =>
+    ttsCapabilities(params),
 }
 
 // ═══════════════════════════════════════════════════════════════════
