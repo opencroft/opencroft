@@ -535,7 +535,10 @@ function UserMessage({
     // once stuck, so the `pt-2 -mt-2` pair this used to carry is gone rather
     // than added to: keeping both would have doubled the gap. Unstuck, that
     // padding is the same rhythm every reply already has.
-    <div className={cn(sticky && 'sticky top-0 z-1')} {...{ [BLOCK_ID_ATTR]: blockId }}>
+    <div
+      className={cn(sticky && 'sticky top-0 z-1', sticky && 'chat-stuck-container')}
+      {...{ [BLOCK_ID_ATTR]: blockId }}
+    >
       {sticky && (
         // The header's backing: opaque down to mid-height, then falling away to
         // nothing at its bottom edge, so replies dissolve as they pass under it
@@ -561,9 +564,26 @@ function UserMessage({
           className='absolute inset-0 -z-1 pointer-events-none bg-linear-to-b from-background from-50% to-transparent'
         />
       )}
+
       <Chained marker={<AgentAvatar size='md' />} lineAbove={false} lineBelow={false} align='start'>
         <Flex row align='start' className='group w-full gap-1'>
-          <Flex expanded className='gap-1.5 rounded-md bg-muted border-1 p-2'>
+          <Flex expanded className='relative gap-1.5 rounded-md bg-muted border-1 p-2'>
+            {sticky && (
+              // The stuck message's shadow — the command bar's, on the same
+              // opaque rounded box the composer's card uses, so it floats on
+              // the gradient rather than tracing a dissolving edge.
+              //
+              // Its own layer, matching the bubble's box by being its child,
+              // because only opacity may animate: this appears and disappears
+              // repeatedly as each header pushes the previous one out during a
+              // single scroll, and a transitioned box-shadow would repaint
+              // every time. Behind the bubble's background, which hides
+              // nothing — an outer shadow is drawn outside the border box.
+              <div
+                aria-hidden
+                className='chat-stuck-layer absolute inset-0 -z-1 rounded-md pointer-events-none shadow-lg shadow-black/50'
+              />
+            )}
             <div className='prose-chat'>
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
             </div>
