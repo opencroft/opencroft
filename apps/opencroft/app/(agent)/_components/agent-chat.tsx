@@ -501,6 +501,25 @@ function UserMessage({
     // than added to: keeping both would have doubled the gap. Unstuck, that
     // padding is the same rhythm every reply already has.
     <div className={cn(sticky && 'sticky top-0 z-1 bg-background')} {...{ [BLOCK_ID_ATTR]: blockId }}>
+      {sticky && (
+        // Softens the header's bottom edge so replies pass beneath it instead
+        // of being clipped at a line. Same construction and tokens as
+        // StickySection's own fade — absolutely positioned, inert, behind its
+        // own content — but placed BELOW the box rather than across it: that
+        // component's fade spans its element, which here would put a gradient
+        // behind the question and cost the legibility the opaque backing is
+        // there to provide.
+        //
+        // Its height matches the section's gap, so in normal flow it covers
+        // only that gap and never tints the reply beneath — an unstuck message
+        // looks exactly as it did. That also caps how long the falloff can be:
+        // a longer one would need to switch on only while actually stuck, and
+        // CSS has no way to say that.
+        <div
+          aria-hidden
+          className='absolute inset-x-0 top-full h-3 -z-1 pointer-events-none bg-linear-to-b from-background to-transparent'
+        />
+      )}
       <Chained marker={<AgentAvatar size='md' />} lineAbove={false} lineBelow={false} align='start'>
         <Flex row align='start' className='group w-full gap-1'>
           <Flex expanded className='gap-1.5 rounded-md bg-muted border-1 p-2'>
