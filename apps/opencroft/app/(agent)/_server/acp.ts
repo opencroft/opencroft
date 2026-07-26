@@ -356,10 +356,15 @@ export const stopProcessLocal = createServerFn({ method: 'POST', strict: { outpu
     }
   })
 
-// How many agent records a single "load older" scroll fetches. Smaller than
-// the opening window (acp.stream.ts's INITIAL_HISTORY_RECORDS) on purpose: a
-// cold open wants enough to read, a scroll-up wants to arrive without a jolt.
-const HISTORY_PAGE_RECORDS = 5
+// How many agent records one press of "load older messages" fetches. Smaller
+// than the opening window (acp.stream.ts's INITIAL_HISTORY_RECORDS) because a
+// cold open wants enough to read while a deliberate request wants to arrive
+// quickly — the reader can simply press again.
+//
+// It used to be smaller for a different reason: paging was driven by scrolling
+// and a large page arrived as a jolt. There is no jolt to avoid now, and the
+// figures are a product choice rather than a derivation.
+const HISTORY_PAGE_RECORDS = 10
 
 // The "older messages" half of the tail-first + scroll-up pagination pattern
 // is a plain request/response fetch against the

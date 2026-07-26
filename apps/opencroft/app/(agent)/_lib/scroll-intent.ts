@@ -16,6 +16,27 @@
 // scrollTop (a double) and scrollHeight/clientHeight (integers).
 export const AT_BOTTOM_THRESHOLD = 32
 
+// How close to the start of the content still counts as "hasn't moved since
+// pressing the button". The same tolerance as the bottom edge and for the same
+// reason: it absorbs the ±1px of rounding plus a nudge, while staying too
+// narrow to call a reader who has genuinely scrolled away "still at the top".
+export const AT_TOP_THRESHOLD = 32
+
+// Where the reader ends up after they press "load older messages". A design
+// call, and this is the one line that flips it:
+//
+//  * false (shipped) — the position is left alone, so the newly loaded
+//    messages appear where the reader is looking and the click visibly did
+//    something.
+//  * true — their place is kept instead: what they were reading stays put and
+//    the new batch lands above it, so reading back through history is one
+//    continuous upward motion. The cost is that the click looks inert until
+//    they scroll up into what arrived.
+//
+// Product decision, not a technical one. Both sides are covered by tests so the
+// flip stays a one-line change.
+export const LOAD_OLDER_KEEPS_POSITION = false
+
 // Why the DOM is about to change. Set by whatever caused it, at the moment it
 // causes it; 'none' means an ordinary update nobody claimed.
 export type ScrollCause = 'none' | 'session-changed' | 'loading-older'
@@ -43,22 +64,46 @@ export function isAtBottom(geometry: BottomGeometry): boolean {
   return geometry.scrollHeight - geometry.scrollTop - geometry.clientHeight <= AT_BOTTOM_THRESHOLD
 }
 
-// `atBottom` describes where the reader was BEFORE this commit — it is read
-// from state maintained by the scroll listener, not measured after the content
-// landed, because by then the new content has already changed the answer.
-export function decideScrollAction(cause: ScrollCause, atBottom: boolean): ScrollAction {
-  switch (cause) {
+export interface ScrollSituation {
+  cause: ScrollCause
+  // Where the reader was BEFORE this commit — read from state the scroll
+  // listener maintains, not measured after the content landed, because by then
+  // the new content has already changed the answer.
+  atBottom: boolean
+  // Whether they are still at the start of the content, i.e. still looking at
+  // the place the button was when they pressed it.
+  atTop: boolean
+}
+
+// Named fields rather than positional arguments: three of the four inputs are
+// booleans, and getting two of them the wrong way round is the kind of mistake
+// that type-checks and then misbehaves only in one branch.
+export function decideScrollAction(
+  situation: ScrollSituation,
+  keepsPosition: boolean = LOAD_OLDER_KEEPS_POSITION,
+): ScrollAction {
+  switch (situation.cause) {
     // Switching conversations always lands at the end, whatever else was in
     // flight — the position being held belonged to a chat that is now gone.
     case 'session-changed':
       return 'jump-bottom'
-    // A prepend outranks following the bottom. The content grew ABOVE the
-    // reader, so "there is more content now" is not a reason to move to the
-    // end; doing so is precisely the failure the old holdPosition() gate
+    // A prepend outranks following the bottom either way. The content grew
+    // ABOVE the reader, so "there is more content now" is never a reason to
+    // move to the end — that was the failure the old holdPosition() gate
     // existed to prevent, expressed here as ordering instead of a guard.
     case 'loading-older':
-      return 'hold-position'
+      // Under B, doing nothing IS the behaviour — but only while the reader is
+      // still where the button was. Leaving the position alone is what puts the
+      // new messages in front of them; correcting would push those messages
+      // straight back out of sight, which is the whole thing B rejects.
+      //
+      // If they have scrolled away since pressing — a slow fetch, a keyboard
+      // press followed by a scroll — doing nothing is no longer a reveal, it is
+      // the content lurching under them by the height of everything that
+      // arrived. So the correction is not vestigial under B; it is what covers
+      // the case where B's reasoning stops applying.
+      return keepsPosition || !situation.atTop ? 'hold-position' : 'none'
     default:
-      return atBottom ? 'follow-bottom' : 'none'
+      return situation.atBottom ? 'follow-bottom' : 'none'
   }
 }
