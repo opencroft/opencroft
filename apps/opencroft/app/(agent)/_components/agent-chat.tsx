@@ -39,7 +39,7 @@ import { Textarea } from 'ui/textarea'
 
 import { type Block, buildBlocks, type DetailItem, stripOpencroftTags } from '@/app/(agent)/_lib/build-blocks'
 import type { ChatMessage } from '@/app/(agent)/_lib/messages'
-import { decideScrollAction, isAtBottom, type ScrollCause } from '@/app/(agent)/_lib/scroll-intent'
+import { AT_TOP_THRESHOLD, decideScrollAction, isAtBottom, type ScrollCause } from '@/app/(agent)/_lib/scroll-intent'
 import { contentTop, HOLD_DEADLINE_MS, type HoldState, holdExpired, holdStep } from '@/app/(agent)/_lib/scroll-restore'
 import { getAutoApprove, setAutoApprove } from '@/app/(approvals)/_server/actions'
 import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
@@ -303,7 +303,15 @@ function useChatScroll({ sessionKey, blocks, topBlockId, session }: ChatScrollPa
     if (!root) {
       return
     }
-    switch (decideScrollAction(causeRef.current, atBottomRef.current)) {
+    // `atTop` is measured here rather than captured at the click on purpose: it
+    // asks "is the reader still where the button was", and the answer can
+    // change between pressing and the page landing.
+    const situation = {
+      cause: causeRef.current,
+      atBottom: atBottomRef.current,
+      atTop: root.scrollTop <= AT_TOP_THRESHOLD,
+    }
+    switch (decideScrollAction(situation)) {
       case 'jump-bottom':
         // A held position belonged to the conversation being left.
         endHold()
@@ -524,24 +532,15 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   )
 
   return (
-    <Flex ref={rootRef} className='min-h-full min-w-0 px-4 py-4'>
-      {hasOlder && !session.loading && (
-        <LoadOlderButton loading={session.loadingMoreHistory === true} onLoadOlder={loadOlder} />
-      )}
-      {/* Only the transcript is bottom-justified, so a conversation shorter
-          than the viewport hugs the composer rather than floating mid-screen.
-          The button sits outside this box on purpose: inside it, it would
-          drift down the screen with short content, and a control that moves
-          with the length of the conversation reads as a bug. Out here it stays
-          at the top of the scroll area, which is also where it belongs in
-          reading order — the thing above the oldest message. */}
-      <Flex justify='end' className='w-full min-w-0 flex-1 gap-3'>
-        {session.loading ? (
-          <div className='text-sm text-muted-foreground'>loading…</div>
-        ) : session.messages.length === 0 ? (
-          <div className='text-sm text-muted-foreground'>{emptyText ?? 'no messages yet'}</div>
-        ) : (
-          sections.map((section, sectionIndex) => (
+    <Flex ref={rootRef} justify='end' className='min-h-full min-w-0 gap-3 px-4 py-4'>
+      {session.loading ? (
+        <div className='text-sm text-muted-foreground'>loading…</div>
+      ) : session.messages.length === 0 ? (
+        <div className='text-sm text-muted-foreground'>{emptyText ?? 'no messages yet'}</div>
+      ) : (
+        <>
+          {hasOlder && <LoadOlderButton loading={session.loadingMoreHistory === true} onLoadOlder={loadOlder} />}
+          {sections.map((section, sectionIndex) => (
             // One section per turn: the user message sticks to the top of the
             // viewport while its own replies scroll under it, and the next
             // turn's section pushes it out on the way past. Bounding each
@@ -584,11 +583,11 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
                 ),
               )}
             </Flex>
-          ))
-        )}
-        {session.waiting && <ThinkingIndicator />}
-        <AgentChatStatusIndicators />
-      </Flex>
+          ))}
+        </>
+      )}
+      {session.waiting && <ThinkingIndicator />}
+      <AgentChatStatusIndicators />
     </Flex>
   )
 }
@@ -600,6 +599,10 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
 // It is also where the guards that trigger needed now live, as states rather
 // than as code: absent once the server says there is nothing left, disabled
 // while a fetch is in flight. Same guarantees, nothing to remember to check.
+//
+// Rendered in the transcript's own flow, in the slot the '· · ·' indicator
+// used to occupy — so on a conversation too short to scroll it sits with the
+// content rather than pinned to the top of an empty scroll area.
 function LoadOlderButton({ loading, onLoadOlder }: { loading: boolean; onLoadOlder: () => void }) {
   return (
     <Flex row justify='center' className='w-full py-1'>
