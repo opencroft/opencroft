@@ -13,6 +13,7 @@ import {
 } from '@ext/ui'
 
 import type { AgentData } from './agent'
+import { KeyValueEditor } from './key-value-editor'
 
 const { useCallback, useEffect, useState } = React
 
@@ -51,14 +52,23 @@ export function AgentSpeechTab({
       return
     }
     try {
-      setCaps(await invoke<TtsCapabilities>('tts.capabilities', { baseUrl: data.ttsApiBase, apiKey: data.ttsApiKey }))
+      setCaps(
+        await invoke<TtsCapabilities>('tts.capabilities', {
+          baseUrl: data.ttsApiBase,
+          apiKey: data.ttsApiKey,
+          headers: data.ttsHeaders,
+        }),
+      )
     } catch {
       setCaps(null)
     }
-  }, [data.ttsApiBase, data.ttsApiKey])
+    // Serialised: the probe has to re-run when a header is edited, and the
+    // array identity changes on every keystroke.
+  }, [data.ttsApiBase, data.ttsApiKey, JSON.stringify(data.ttsHeaders ?? [])])
 
-  // Refresh whenever the endpoint or key changes — voices and supported knobs
-  // are endpoint-specific.
+  // Refresh whenever the endpoint, key or headers change — voices and
+  // supported knobs are endpoint-specific, and an authenticated endpoint
+  // reports neither until the headers are right.
   useEffect(() => {
     loadCaps()
   }, [loadCaps])
@@ -87,6 +97,12 @@ export function AgentSpeechTab({
             placeholder='not-needed'
           />
         </div>
+        <KeyValueEditor
+          label='Request headers (optional)'
+          entries={data.ttsHeaders ?? []}
+          onChange={(ttsHeaders) => updateData({ ttsHeaders })}
+          valuePlaceholder='value or secret:NAME'
+        />
         <div className='flex flex-col gap-1'>
           <Label>Model</Label>
           <Input
@@ -142,7 +158,9 @@ export function AgentSpeechTab({
           <Textarea
             value={data.ttsInstructions ?? ''}
             onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateData({ ttsInstructions: e.target.value })}
-            placeholder={instructionsBlocked ? 'Not supported by this endpoint' : 'Speak cheerfully, like a friendly radio host.'}
+            placeholder={
+              instructionsBlocked ? 'Not supported by this endpoint' : 'Speak cheerfully, like a friendly radio host.'
+            }
             className='text-xs min-h-[60px]'
             disabled={instructionsBlocked}
           />
