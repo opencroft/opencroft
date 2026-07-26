@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { restoreShift } from './scroll-restore'
+import { HOLD_DEADLINE_MS, type HoldState, holdExpired, holdStep, restoreShift } from './scroll-restore'
 
 // A minimal model of the scroll container during a "load older" prepend.
 // Heights are the only thing that matters, so no DOM is involved.
@@ -102,70 +102,114 @@ test('waits for a later commit when the prepend has not landed yet', () => {
 })
 
 // ---------------------------------------------------------------------------
-// IntersectionObserver semantics: the callback runs on a CHANGE of intersection
-// state (plus once on observe()). Modelled here to pin why a failed restore
-// stops paging entirely rather than merely looking wrong.
+// Holding the position CONTINUOUSLY, rather than correcting once.
+//
+// The scenario throughout: a page of older turns lands 400px tall, then an
+// image and a code block above the reader finish measuring and add another
+// 150px. A controller that corrects once and forgets is 150px wrong — and it
+// is wrong at exactly the moment the reader starts reading.
 // ---------------------------------------------------------------------------
-function makeObserver(onFire: (intersecting: boolean) => void) {
-  let last: boolean | null = null
-  return {
-    // Report the sentinel's current visibility; only a change reaches the
-    // callback, exactly like the real API.
-    report(intersecting: boolean) {
-      if (last === intersecting) {
-        return
-      }
-      last = intersecting
-      onFire(intersecting)
-    },
-    // disconnect() + observe() — drops the remembered state, so the next
-    // report fires even if the value is unchanged.
-    rearm() {
-      last = null
-    },
-  }
+
+// Geometry for the anchor path; the container figures are unused there and are
+// only present because the fallback shares the shape.
+function atAnchor(anchorTop: number) {
+  return { anchorTop, scrollTop: 0, scrollHeight: 5000, clientHeight: 800 }
 }
 
-test('a failed restore wedges the observer: no further loads without re-arming', () => {
-  const loads: string[] = []
-  const observer = makeObserver((intersecting) => {
-    if (intersecting) {
-      loads.push('load')
-    }
-  })
-
-  observer.report(true) // reader reaches the top -> first page loads
-  assert.equal(loads.length, 1)
-
-  // Restore no-opped (ordering B above), so the sentinel is still on screen.
-  observer.report(true)
-  assert.equal(loads.length, 1, 'unchanged state produces no callback — paging is stuck')
-
-  // Only a manual down-then-up scroll cycle resets it.
-  observer.report(false)
-  observer.report(true)
-  assert.equal(loads.length, 2)
+test('one correction is not enough: content above keeps landing after it', () => {
+  const hold: HoldState = { anchor: { id: 't:42', top: 1000 }, bottomDistance: 3200 }
+  // The commit that carries the page.
+  const first = holdStep(hold, atAnchor(1400))
+  assert.equal(first.shift, 400)
+  // Everything above has finished measuring — 550px was added in total.
+  const settled = holdStep(hold, atAnchor(1550))
+  assert.equal(settled.shift, 550, 'a one-shot correction is short by whatever lands after it')
 })
 
-test('re-arming after a completed prepend resumes paging with the sentinel still visible', () => {
-  const loads: string[] = []
-  const observer = makeObserver((intersecting) => {
-    if (intersecting) {
-      loads.push('load')
+test('holding corrects each increment exactly once', () => {
+  let hold: HoldState = { anchor: { id: 't:42', top: 1000 }, bottomDistance: 3200 }
+  const applied: number[] = []
+  for (const anchorTop of [1400, 1550, 1550]) {
+    const step = holdStep(hold, atAnchor(anchorTop))
+    hold = step.hold
+    if (step.shift !== null) {
+      applied.push(step.shift)
     }
-  })
+  }
+  assert.deepEqual(applied, [400, 150])
+  assert.equal(
+    applied.reduce((a, b) => a + b, 0),
+    550,
+    'the corrections sum to the height actually inserted above the reader',
+  )
+})
 
-  observer.report(true)
-  assert.equal(loads.length, 1)
+test('the anchor is re-baselined, so a second step does not re-apply the first', () => {
+  // This is the failure mode of holding a content-coordinate anchor: scrolling
+  // moves the viewport, not the content, so after the correction the anchor
+  // still reads as displaced. Without re-baselining, every subsequent step
+  // would apply the same shift again and run the reader off the end.
+  const hold: HoldState = { anchor: { id: 't:42', top: 1000 }, bottomDistance: 3200 }
+  const first = holdStep(hold, atAnchor(1400))
+  assert.equal(first.shift, 400)
+  assert.equal(holdStep(first.hold, atAnchor(1400)).shift, null)
+})
 
-  // What the fix does once a restore actually moved the content.
-  observer.rearm()
-  observer.report(true)
-  assert.equal(loads.length, 2, 'still-visible sentinel pages again, one page per prepend')
+test('sub-pixel noise is not a content change', () => {
+  const hold: HoldState = { anchor: { id: 't:42', top: 1000 }, bottomDistance: 3200 }
+  assert.equal(holdStep(hold, atAnchor(1000.4)).shift, null)
+})
 
-  // And it terminates: once the restore pushes the sentinel out of view, the
-  // re-armed observer reports false and nothing further loads.
-  observer.rearm()
-  observer.report(false)
-  assert.equal(loads.length, 2)
+// ---------------------------------------------------------------------------
+// The fallback: no anchor element to measure against.
+// ---------------------------------------------------------------------------
+
+test('falls back to distance-from-bottom when the anchor block is gone', () => {
+  const hold: HoldState = { anchor: null, bottomDistance: 3200 }
+  // 600px landed above: total height grew, scrollTop did not, so the reader is
+  // now 600px further from the end than they were.
+  const step = holdStep(hold, { anchorTop: null, scrollTop: 1000, scrollHeight: 5600, clientHeight: 800 })
+  assert.equal(step.shift, 600)
+})
+
+test('the fallback baseline is NOT re-baselined — it is the invariant itself', () => {
+  // Mirror image of the anchor rule, and getting the two the same way round is
+  // what makes a held position converge. Applying the shift restores the
+  // captured distance, so the captured value stays the target.
+  const hold: HoldState = { anchor: null, bottomDistance: 3200 }
+  const first = holdStep(hold, { anchorTop: null, scrollTop: 1000, scrollHeight: 5600, clientHeight: 800 })
+  assert.equal(first.shift, 600)
+  // scrollTop moved by the shift; the distance from the end is back to 200.
+  const next = holdStep(first.hold, { anchorTop: null, scrollTop: 1600, scrollHeight: 5600, clientHeight: 800 })
+  assert.equal(next.shift, null)
+})
+
+test('the fallback charges height changes BELOW the reader to the correction', () => {
+  // Recorded rather than fixed: this is exactly why the anchor is primary and
+  // this is second choice. A streaming reply growing under the reader looks
+  // identical to content landing above them when all you measure is the total.
+  const hold: HoldState = { anchor: null, bottomDistance: 3200 }
+  const step = holdStep(hold, { anchorTop: null, scrollTop: 1000, scrollHeight: 5250, clientHeight: 800 })
+  assert.equal(step.shift, 250, 'over-corrects by growth that was never above the reader')
+})
+
+test('the anchor is preferred whenever it is measurable', () => {
+  // Both paths are available here and they disagree: the anchor says nothing
+  // moved above, the totals say 250px did (a reply growing below). The anchor
+  // wins, so nothing is corrected — which is the right answer.
+  const hold: HoldState = { anchor: { id: 't:42', top: 1000 }, bottomDistance: 3200 }
+  const step = holdStep(hold, { anchorTop: 1000, scrollTop: 1000, scrollHeight: 5250, clientHeight: 800 })
+  assert.equal(step.shift, null)
+})
+
+// ---------------------------------------------------------------------------
+// The deadline. A valve, not the expected exit — quiescence is that, and it
+// lives in the controller because it is a question about frames rather than
+// about geometry.
+// ---------------------------------------------------------------------------
+
+test('a hold runs until the deadline, then gives up', () => {
+  assert.equal(holdExpired(1000, 1000), false)
+  assert.equal(holdExpired(1000, 1000 + HOLD_DEADLINE_MS - 1), false)
+  assert.equal(holdExpired(1000, 1000 + HOLD_DEADLINE_MS), true)
 })

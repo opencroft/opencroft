@@ -37,10 +37,11 @@ import { Flex } from 'ui/layout/flex'
 import { AgentAvatar } from 'ui/media/agent-avatar'
 import { Textarea } from 'ui/textarea'
 
-import { buildBlocks, type DetailItem, stripOpencroftTags } from '@/app/(agent)/_lib/build-blocks'
-import { shouldLoadMore } from '@/app/(agent)/_lib/history-fill'
+import { type Block, buildBlocks, type DetailItem, stripOpencroftTags } from '@/app/(agent)/_lib/build-blocks'
+import { shouldFill } from '@/app/(agent)/_lib/history-fill'
 import type { ChatMessage } from '@/app/(agent)/_lib/messages'
-import { restoreShift } from '@/app/(agent)/_lib/scroll-restore'
+import { decideScrollAction, isAtBottom, type ScrollCause } from '@/app/(agent)/_lib/scroll-intent'
+import { contentTop, HOLD_DEADLINE_MS, type HoldState, holdExpired, holdStep } from '@/app/(agent)/_lib/scroll-restore'
 import { getAutoApprove, setAutoApprove } from '@/app/(approvals)/_server/actions'
 import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
 import { loadAllExtensions } from '@/app/(extension-runtime)/_client/loader'
@@ -96,104 +97,399 @@ interface AgentChatProps {
   defaultExpanded?: boolean
 }
 
-const SCROLL_BOTTOM_THRESHOLD = 32
+// Keys that move a scroll container rather than a caret. Space is included
+// because it pages a scroller when focus isn't in a text field.
+const SCROLL_KEYS = new Set(['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' '])
 
-// `holdPosition` reports whether a windowed-history scroll restore is in
-// flight. While one is, the two auto-follow paths below stand down: a "load
-// older" prepend grows the content, and following it to the bottom would
-// override the restore that is trying to keep the reader where they were.
-// The explicit session-switch jump (resetKey) is deliberately not gated —
-// switching chats should always land at the bottom.
-function useStickToBottom(resetKey: string, contentKey: number, holdPosition: () => boolean) {
+// A position being held across a prepend while the content above settles.
+interface ActiveHold {
+  state: HoldState
+  // When corrections started, or null while the fetched page has yet to land.
+  // The deadline and the quiescence check both run from this rather than from
+  // the capture, so a slow request doesn't spend the budget that exists to
+  // bound how long the content takes to settle.
+  settlingSince: number | null
+}
+
+// A hold that ends on its deadline rather than on the content settling means
+// something above the reader never stopped resizing. Said out loud rather than
+// absorbed: silently giving up is how this class of bug stayed invisible for
+// three rebuilds.
+let holdDeadlineReportsLeft = 3
+function reportHoldDeadline(): void {
+  if (holdDeadlineReportsLeft <= 0) {
+    return
+  }
+  holdDeadlineReportsLeft -= 1
+  console.warn(
+    `[chat-scroll] gave up holding the reader's position after ${HOLD_DEADLINE_MS}ms —` +
+      ' content above the reader never stopped changing size',
+  )
+}
+
+// Everything that can move the chat's scroll position, in one place.
+//
+// It used to be five: this hook's pinned state, its ResizeObserver, its
+// content-key effect, the session-reset effect, and a separate restore effect
+// in AgentChat — each measuring the DOM and each writing scrollTop, held apart
+// by a `holdPosition()` gate that every new path had to remember to consult.
+// Every failure it had was two of them acting on one commit and disagreeing.
+//
+// Now there is one decision (scroll-intent.ts), taken from the reason the
+// update happened, and one place that writes the position.
+interface ChatScrollParams {
+  // Identity of the conversation. A change means "land at the end".
+  sessionKey: string
+  // The rendered content; only its identity is used, to re-ask on the commit
+  // that changed it.
+  blocks: readonly Block[]
+  // Topmost rendered block — the anchor a prepend is measured against.
+  topBlockId: string | null
+  // Read fresh on every check rather than closed over, so a fetch flipping the
+  // loading flag doesn't change the identity of these callbacks and tear down
+  // the listeners that call them.
+  session: AgentSession
+}
+
+function useChatScroll({ sessionKey, blocks, topBlockId, session }: ChatScrollParams) {
   const rootRef = useRef<HTMLDivElement>(null)
-  // Whether the view is "pinned" to the bottom and should follow new content.
-  const pinned = useRef(true)
-  // Set while we scroll ourselves, so our own scroll events aren't mistaken for
-  // the user moving away from the bottom (which would unpin and stop following).
-  const programmatic = useRef(false)
+  // The first REAL block, so the fill check measures from content rather than
+  // from the loading indicator rendered above it.
+  const firstBlockRef = useRef<HTMLDivElement>(null)
 
   const viewport = useCallback(
     () => rootRef.current?.closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null,
     [],
   )
 
-  // Marks a scrollTop mutation as "ours" for two animation frames so the scroll
-  // listener below doesn't read it as the user scrolling — shared by the
-  // bottom-follow logic here and by the windowed-history scroll-position
-  // restore in AgentChat (which also mutates scrollTop programmatically).
+  // Where the reader was BEFORE the commit being decided. Maintained by the
+  // scroll listener, never measured after new content has landed — by then the
+  // content itself has changed the answer.
+  const atBottomRef = useRef(true)
+  // Why the next commit is happening, set by whatever causes it.
+  const causeRef = useRef<ScrollCause>('none')
+  const holdRef = useRef<ActiveHold | null>(null)
+  // Set while we move the position ourselves, so our own scroll events aren't
+  // read as the reader moving away from the end.
+  const programmaticRef = useRef(false)
+  // Re-entrancy lock for the fill check. A ref, not state, so asking the
+  // question cannot itself cause a render that re-asks it.
+  const fillingRef = useRef(false)
+  const quietFrameRef = useRef<number | null>(null)
+
+  const topBlockIdRef = useRef(topBlockId)
+  topBlockIdRef.current = topBlockId
+  const sessionRef = useRef(session)
+  sessionRef.current = session
+
   const runProgrammatic = useCallback((mutate: () => void) => {
-    programmatic.current = true
+    programmaticRef.current = true
     mutate()
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        programmatic.current = false
+        programmaticRef.current = false
       })
     })
   }, [])
 
-  const scrollToBottom = useCallback(() => {
-    const el = viewport()
-    if (!el) {
+  const endHold = useCallback(() => {
+    holdRef.current = null
+    if (causeRef.current === 'loading-older') {
+      causeRef.current = 'none'
+    }
+    if (quietFrameRef.current !== null) {
+      cancelAnimationFrame(quietFrameRef.current)
+      quietFrameRef.current = null
+    }
+  }, [])
+
+  // A frame passing with no resize is what "settled" means, and it is the
+  // expected way a hold ends. Armed only from the ResizeObserver and only once
+  // corrections have started: before the page lands nothing is settling, and an
+  // idle frame during the fetch would end the hold before it ever did anything.
+  const armQuiescence = useCallback(() => {
+    if (quietFrameRef.current !== null) {
+      cancelAnimationFrame(quietFrameRef.current)
+    }
+    quietFrameRef.current = requestAnimationFrame(() => {
+      quietFrameRef.current = null
+      endHold()
+    })
+  }, [endHold])
+
+  const beginHold = useCallback(() => {
+    const root = viewport()
+    if (!root) {
       return
     }
-    runProgrammatic(() => {
-      el.scrollTop = el.scrollHeight
+    const id = topBlockIdRef.current
+    const anchorTop = id === null ? null : blockContentTop(root, id)
+    // A new hold REPLACES one still settling; it never merges. Two live holds
+    // would correct toward two different positions on the same commit, which is
+    // the class of bug this controller exists to remove.
+    endHold()
+    holdRef.current = {
+      state: {
+        anchor: id !== null && anchorTop !== null ? { id, top: anchorTop } : null,
+        bottomDistance: root.scrollHeight - root.scrollTop - root.clientHeight,
+      },
+      settlingSince: null,
+    }
+    causeRef.current = 'loading-older'
+  }, [viewport, endHold])
+
+  // One step of the continuous correction: re-assert the held invariant against
+  // the layout as it is now.
+  const stepHold = useCallback(() => {
+    const active = holdRef.current
+    const root = viewport()
+    if (!active || !root) {
+      return
+    }
+    const anchorId = active.state.anchor?.id
+    const { shift, hold } = holdStep(active.state, {
+      anchorTop: anchorId === undefined ? null : blockContentTop(root, anchorId),
+      scrollTop: root.scrollTop,
+      scrollHeight: root.scrollHeight,
+      clientHeight: root.clientHeight,
     })
-  }, [viewport, runProgrammatic])
+    active.state = hold
+    if (shift === null) {
+      return
+    }
+    if (active.settlingSince === null) {
+      active.settlingSince = performance.now()
+    } else if (holdExpired(active.settlingSince, performance.now())) {
+      reportHoldDeadline()
+      endHold()
+      return
+    }
+    // Relative, never `scrollTop = x`. Chromium snaps written scroll offsets to
+    // physical pixels, so at a non-integral devicePixelRatio or under zoom the
+    // value read back differs from the one written, and a held position writes
+    // repeatedly — which is exactly where that error would accumulate.
+    runProgrammatic(() => {
+      root.scrollBy(0, shift)
+    })
+  }, [viewport, runProgrammatic, endHold])
+
+  // Ask whether more history is needed, and fetch if so. Safe to call as often
+  // as we like — that is the point of a level check — so it is driven from
+  // everywhere the answer can change.
+  const maybeFill = useCallback(() => {
+    const root = viewport()
+    if (!root || fillingRef.current) {
+      return
+    }
+    const current = sessionRef.current
+    const first = firstBlockRef.current
+    const state = {
+      hasMore: current.hasMoreHistory === true,
+      loading: current.loadingMoreHistory === true,
+      geometry: first
+        ? {
+            scrollTop: root.scrollTop,
+            clientHeight: root.clientHeight,
+            firstBlockContentTop: elementContentTop(root, first),
+          }
+        : null,
+    }
+    if (!shouldFill(state)) {
+      return
+    }
+    fillingRef.current = true
+    beginHold()
+    void Promise.resolve(current.loadMoreHistory?.()).finally(() => {
+      fillingRef.current = false
+      // Two frames: one for React to commit the page, one to see whether that
+      // commit put anything above the reader. If it didn't, the hold has
+      // nothing to hold and would otherwise sit there until its deadline.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (holdRef.current?.settlingSince === null) {
+            endHold()
+          }
+          // Coalesced re-run: the answer may still be yes, and the commit that
+          // released the lock has already happened by now.
+          maybeFill()
+        })
+      })
+    })
+  }, [viewport, beginHold, endHold])
+
+  // THE apply step. One decision, one write. Called on every commit and from
+  // the ResizeObserver, because content can change size without a commit.
+  const applyDecision = useCallback(() => {
+    const root = viewport()
+    if (!root) {
+      return
+    }
+    switch (decideScrollAction(causeRef.current, atBottomRef.current)) {
+      case 'jump-bottom':
+        // A held position belonged to the conversation being left.
+        endHold()
+        causeRef.current = 'none'
+        atBottomRef.current = true
+        runProgrammatic(() => {
+          root.scrollTop = root.scrollHeight
+        })
+        break
+      case 'follow-bottom': {
+        // Skip a write that changes nothing. This runs on every commit, and a
+        // streaming reply commits on every chunk — so writing unconditionally
+        // would mark two frames as "ours" almost continuously, and the scroll
+        // listener ignores those frames. The reader scrolling up mid-reply
+        // would go unnoticed.
+        //
+        // Compared with a 1px tolerance, never for equality: scrollTop is a
+        // double while scrollHeight and clientHeight are integers in the CSSOM
+        // View IDL, so the target is only ever approached, not reached.
+        if (root.scrollHeight - root.clientHeight - root.scrollTop > 1) {
+          // Absolute is right here: there is no delta to preserve, the target
+          // is the end of the content itself and the browser clamps it.
+          runProgrammatic(() => {
+            root.scrollTop = root.scrollHeight
+          })
+        }
+        break
+      }
+      case 'hold-position':
+        stepHold()
+        break
+      case 'none':
+        break
+    }
+  }, [viewport, runProgrammatic, endHold, stepHold])
 
   useEffect(() => {
-    const el = viewport()
-    if (!rootRef.current || !el) {
+    const root = viewport()
+    if (!root) {
       return
     }
+    let queued = false
     const onScroll = () => {
-      if (programmatic.current) {
+      if (!programmaticRef.current) {
+        atBottomRef.current = isAtBottom({
+          scrollTop: root.scrollTop,
+          clientHeight: root.clientHeight,
+          scrollHeight: root.scrollHeight,
+        })
+      }
+      // Re-ask the fill question, throttled to a frame: `scroll` fires far more
+      // often than layout changes, and our own corrections raise it too, so an
+      // unthrottled handler would re-enter on the corrections it caused.
+      if (queued) {
         return
       }
-      pinned.current = el.scrollTop + el.clientHeight >= el.scrollHeight - SCROLL_BOTTOM_THRESHOLD
+      queued = true
+      requestAnimationFrame(() => {
+        queued = false
+        maybeFill()
+      })
     }
-    // A wheel gesture toward the top unpins immediately, so streaming content
-    // can't yank the view back down while the user is reading up.
+    // Only cancels a hold that has ALREADY started correcting. Before the page
+    // lands there is nothing to fight over, and the anchor is measured in
+    // content coordinates — so the reader's own scrolling is preserved by
+    // construction rather than needing the hold dropped. Cancelling there
+    // instead would abandon the correction for the most ordinary interaction
+    // there is: scrolling up continuously through history.
+    const cancelSettlingHold = () => {
+      const active = holdRef.current
+      if (active !== null && active.settlingSince !== null) {
+        endHold()
+      }
+    }
     const onWheel = (event: WheelEvent) => {
       if (event.deltaY < 0) {
-        pinned.current = false
+        // Reading upward stops the bottom-follow immediately, so streaming
+        // content can't yank the view back down.
+        atBottomRef.current = false
+      }
+      cancelSettlingHold()
+    }
+    const onTouchMove = () => cancelSettlingHold()
+    // Filtered rather than "any keydown": these keys move the view, while a
+    // keystroke inside a message (an inline edit) moves a caret. Keyboard
+    // scrolling reaches this listener because it requires focus to be inside
+    // the viewport in the first place — either on a child, or on the scroller
+    // itself where the engine makes it focusable.
+    // `globalThis.` because React's KeyboardEvent is imported into this file for
+    // JSX handlers and shadows the DOM one; this is a real listener, not a JSX
+    // prop, so it needs the DOM type.
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (SCROLL_KEYS.has(event.key)) {
+        cancelSettlingHold()
       }
     }
-    el.addEventListener('scroll', onScroll)
-    el.addEventListener('wheel', onWheel, { passive: true })
-    const observer = new ResizeObserver(() => {
-      if (pinned.current && !holdPosition()) {
-        scrollToBottom()
+    // Radix renders its scrollbar as a SIBLING of the viewport, so dragging the
+    // thumb produces no event inside it at all — the one genuine user scroll
+    // that neither wheel, touch nor key covers. Delegated from the scroll-area
+    // root so it survives Radix mounting the scrollbar on demand, and narrowed
+    // to the scrollbar (or the scroller itself, where a native bar would be
+    // pressed) so that clicking a button in a message is not a scroll.
+    const onPointerDown = (event: Event) => {
+      const target = event.target as Element | null
+      if (event.target === root || target?.closest('[data-slot="scroll-area-scrollbar"]')) {
+        cancelSettlingHold()
       }
-    })
-    observer.observe(rootRef.current)
+    }
+    const scrollArea = root.closest('[data-slot="scroll-area"]') ?? root
+    root.addEventListener('scroll', onScroll, { passive: true })
+    root.addEventListener('wheel', onWheel, { passive: true })
+    root.addEventListener('touchmove', onTouchMove, { passive: true })
+    root.addEventListener('keydown', onKeyDown, { passive: true })
+    scrollArea.addEventListener('pointerdown', onPointerDown, { passive: true })
     return () => {
-      el.removeEventListener('scroll', onScroll)
-      el.removeEventListener('wheel', onWheel)
-      observer.disconnect()
+      root.removeEventListener('scroll', onScroll)
+      root.removeEventListener('wheel', onWheel)
+      root.removeEventListener('touchmove', onTouchMove)
+      root.removeEventListener('keydown', onKeyDown)
+      scrollArea.removeEventListener('pointerdown', onPointerDown)
     }
-  }, [viewport, scrollToBottom, holdPosition])
+  }, [viewport, maybeFill, endHold])
 
-  // Follow new content while pinned (covers updates that don't change height).
-  // biome-ignore lint/correctness/useExhaustiveDependencies(contentKey): re-run when the message count changes
+  // Content changing size under us: an image landing, a turn expanding, a
+  // prepend finishing its measure. Observing the content wrapper rather than an
+  // ancestor is deliberate — the ResizeObserver loop only delivers targets
+  // deeper than the previous pass, so a shallower node defers its notification
+  // by a frame, and a frame here is a visibly wrong scroll position.
   useEffect(() => {
-    if (pinned.current && !holdPosition()) {
-      scrollToBottom()
+    const content = rootRef.current
+    if (!content) {
+      return
     }
-  }, [contentKey, scrollToBottom, holdPosition])
+    // Reads and corrects scroll only, never resizes anything — resizing from
+    // inside the callback is what would defer the next delivery.
+    const observer = new ResizeObserver(() => {
+      applyDecision()
+      const active = holdRef.current
+      if (active !== null && active.settlingSince !== null) {
+        armQuiescence()
+      }
+      maybeFill()
+    })
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [applyDecision, armQuiescence, maybeFill])
 
-  // Re-pin and jump to the bottom when switching to another session.
-  // biome-ignore lint/correctness/useExhaustiveDependencies(resetKey): re-pin the scroll to the bottom when the session changes
+  // Declared before the effect that acts on causes, so the flag is already set
+  // when that effect runs on this same commit.
+  // biome-ignore lint/correctness/useExhaustiveDependencies(sessionKey): the session changing IS the cause being recorded
   useLayoutEffect(() => {
-    pinned.current = true
-    scrollToBottom()
-  }, [resetKey, scrollToBottom])
+    causeRef.current = 'session-changed'
+  }, [sessionKey])
 
-  return {
-    rootRef,
-    viewport,
-    runProgrammatic,
-  }
+  // Every commit that changed the content — keyed on the blocks ARRAY, not on
+  // a count of it. A page landing mid-turn merges into an existing block and
+  // adds neither a block nor a message, so a count would skip the very commit
+  // carrying it; the rebuilt array is what actually marks that commit.
+  // biome-ignore lint/correctness/useExhaustiveDependencies(blocks): re-run on the commit that changed the content, not because the body reads it
+  useLayoutEffect(() => {
+    applyDecision()
+    maybeFill()
+  }, [blocks, applyDecision, maybeFill])
+
+  return { rootRef, firstBlockRef }
 }
 
 // Everything the session holds is mounted: the server window is the only one.
@@ -202,15 +498,23 @@ function useStickToBottom(resetKey: string, contentKey: number, holdPosition: ()
 // about whether anything was left — which is how a scroll-up could load
 // nothing at all. At 5 records a page the DOM grows only as fast as someone
 // scrolls, so bounding it bought nothing that the mismatch didn't cost more.
-// Slack above the viewport's top edge at which the "load older" sentinel counts
-// as in view. Triggering the fetch BEFORE the reader actually reaches scrollTop
-// 0 keeps the restore out of the browser's top-edge dead zone: native scroll
-// anchoring is specified to do nothing at scrollTop 0, so any frame the manual
-// restore misses there shows up as a visible jump to the very top.
-const LOAD_OLDER_ROOT_MARGIN = '250px'
 // Stamped on each rendered block's root so the scroll restore can find a
 // specific block in the DOM again after a prepend has shifted it.
 const BLOCK_ID_ATTR = 'data-block-id'
+
+// Where an element sits in the scrollable content — the coordinate the reader
+// scrolling does not change, so only content actually inserted above it moves
+// this number. The one measurement both the fill check and the held position
+// are expressed in, so they cannot end up in different coordinate spaces.
+function elementContentTop(root: HTMLElement, el: Element): number {
+  return contentTop(el.getBoundingClientRect().top, root.getBoundingClientRect().top, root.scrollTop)
+}
+
+// The same, for a block found by id, or null if it isn't in the DOM.
+function blockContentTop(root: HTMLElement, id: string): number | null {
+  const el = root.querySelector(`[${BLOCK_ID_ATTR}="${id}"]`)
+  return el ? elementContentTop(root, el) : null
+}
 
 export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultExpanded }: AgentChatProps) {
   const displayName = agentName ?? session.botName
@@ -234,16 +538,12 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
     return map
   }, [blocks])
   const edit = session.canFork === true ? session.editMessage : undefined
-  // The scroll anchor for an in-flight "load older": a block that is rendered
-  // now and will still be rendered after the prepend, plus its offset from the
-  // TOP OF THE SCROLLABLE CONTENT (not the viewport). Measuring against the
-  // content means the reader scrolling mid-fetch doesn't corrupt it — only
-  // content actually inserted above the anchor moves it — and re-measuring the
-  // same element after the commit yields exactly the height that was added,
-  // regardless of anything below it measuring async (codemirror, markdown).
-  const pendingAnchorRef = useRef<{ id: string; top: number } | null>(null)
-  const holdPosition = useCallback(() => pendingAnchorRef.current !== null, [])
-  const { rootRef, viewport, runProgrammatic } = useStickToBottom(session.sessionKey, blocks.length, holdPosition)
+  const { rootRef, firstBlockRef } = useChatScroll({
+    sessionKey: session.sessionKey,
+    blocks,
+    topBlockId: blocks[0]?.id ?? null,
+    session,
+  })
   const detailsCollapsedRef = useRef(!defaultExpanded)
   const onDetailsCollapseChange = useCallback((collapsed: boolean) => {
     detailsCollapsedRef.current = collapsed
@@ -251,178 +551,6 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
 
   // Older content lives only on the server now, so this is the one condition.
   const hasOlder = session.hasMoreHistory === true
-  const topBlockId = blocks[0]?.id ?? null
-
-  // Offset of a rendered block from the top of the scrollable content, or null
-  // if it isn't in the DOM. Adding scrollTop back to the viewport-relative rect
-  // is what makes this a content coordinate rather than a viewport one.
-  const blockContentTop = useCallback(
-    (id: string) => {
-      const root = viewport()
-      const el = root?.querySelector(`[${BLOCK_ID_ATTR}="${id}"]`)
-      if (!root || !el) {
-        return null
-      }
-      return el.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop
-    },
-    [viewport],
-  )
-
-  // Topmost currently-rendered block — the anchor a prepend is measured
-  // against. Mirrored into a ref so loadOlder can read it without taking a
-  // dependency that changes on every render.
-  const topBlockIdRef = useRef<string | null>(null)
-  topBlockIdRef.current = topBlockId
-
-  const captureTopAnchor = useCallback(() => {
-    const id = topBlockIdRef.current
-    const top = id === null ? null : blockContentTop(id)
-    pendingAnchorRef.current = id !== null && top !== null ? { id, top } : null
-  }, [blockContentTop])
-
-  // Read fresh inside loadOlder instead of closing over `session` directly, so
-  // loadOlder's own identity doesn't change every time loadingMoreHistory
-  // flips mid-fetch. It used to depend on the whole `session` object, which
-  // the IntersectionObserver effect below depends on in turn — so every
-  // fetch start/end was tearing down and recreating the observer. A freshly
-  // created IntersectionObserver reports its CURRENT intersection state
-  // immediately, and — combined with the scroll-restore bug this same PR
-  // fixes — the sentinel was still visually at the top when that fired,
-  // re-triggering loadOlder before the user did anything: a runaway load
-  // cascade that didn't stop until history was exhausted (reported
-  // soon after the pagination this bug was in first shipped).
-  const sessionRef = useRef(session)
-  sessionRef.current = session
-
-  const loadOlder = useCallback(() => {
-    const current = sessionRef.current
-    if (!current.hasMoreHistory || current.loadingMoreHistory) {
-      return
-    }
-    // Capture BEFORE the fetch. The anchor is an element plus its position in
-    // the content, and the restore re-measures that same element after the
-    // commit, so it no longer matters whether React has already flushed the
-    // prepended events by the time this promise resolves. The previous version
-    // captured `scrollHeight - scrollTop` inside .then() and so depended on
-    // that ordering — when React won the race the arithmetic was done against
-    // the already-grown height, the restore computed a no-op, and the viewport
-    // stayed pinned at the top.
-    captureTopAnchor()
-    void current.loadMoreHistory?.()
-  }, [captureTopAnchor])
-
-  // Re-armed after every completed prepend. An IntersectionObserver only
-  // invokes its callback when intersection CHANGES: once a prepend settles with
-  // the sentinel still in view its state is already `true`, so scrolling up
-  // produces no further callback and paging silently stops until the reader
-  // scrolls down and back up. Re-observing resets that state.
-  const [observerArm, setObserverArm] = useState(0)
-
-  // Restore the reader's position once the prepended blocks are actually in the
-  // DOM. Keyed on the topmost rendered block's id, so it fires on whichever
-  // commit introduces content above rather than on a count that may change in
-  // a different commit.
-  // biome-ignore lint/correctness/useExhaustiveDependencies(topBlockId): re-run on whichever commit prepends content above the reader
-  useLayoutEffect(() => {
-    const anchor = pendingAnchorRef.current
-    if (!anchor) {
-      return
-    }
-    // Null means the anchor is gone, or nothing was inserted above it in this
-    // commit — leave the capture in place and wait for the commit that
-    // actually adds the older content.
-    const shift = restoreShift(anchor, blockContentTop(anchor.id))
-    if (shift === null) {
-      return
-    }
-    pendingAnchorRef.current = null
-    const el = viewport()
-    if (el) {
-      // Shift by exactly how far the anchor moved. Programmatic, so moving
-      // the position isn't read as the user scrolling away from the bottom.
-      //
-      // Relative, never `scrollTop = x`. Chromium snaps written scroll offsets
-      // to physical pixels, so at a non-integral devicePixelRatio or under zoom
-      // the value read back differs from the one written, and repeated absolute
-      // assignments accumulate that error. Reading scrollTop to compute the new
-      // value can also return a stale figure mid-scroll.
-      runProgrammatic(() => {
-        el.scrollBy(0, shift)
-      })
-    }
-    // Only re-arm on a real restore: a fetch that returned nothing moves
-    // nothing, gets here, and leaves the observer as-is rather than refiring
-    // into a loop. With a correct restore each refire walks back exactly one
-    // page and terminates as soon as the sentinel is pushed out of view.
-    setObserverArm((n) => n + 1)
-  }, [topBlockId, blockContentTop, viewport, runProgrammatic])
-
-  const sentinelRef = useRef<HTMLDivElement>(null)
-  // Whether the sentinel is currently in view, per the observer below. Read by
-  // the recycle effect: while the sentinel is visible, shrinking would put it
-  // right back in view and re-trigger loadOlder — an infinite grow/shrink loop
-  // whenever the whole window fits inside the viewport (short collapsed blocks,
-  // tall panel: nothing scrollable, so pinned AND sentinel-visible hold at
-  // once). Blocking the shrink instead lets an under-filled window grow until
-  // it fills the viewport and then rest there.
-  const sentinelVisibleRef = useRef(false)
-  useEffect(() => {
-    if (!hasOlder) {
-      return
-    }
-    const el = sentinelRef.current
-    const root = viewport()
-    if (!el || !root) {
-      return
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        sentinelVisibleRef.current = entries[0]?.isIntersecting ?? false
-        if (sentinelVisibleRef.current) {
-          loadOlder()
-        }
-      },
-      { root, rootMargin: LOAD_OLDER_ROOT_MARGIN },
-    )
-    observer.observe(el)
-    return () => {
-      observer.disconnect()
-      // An unmounted (or about-to-be-reobserved) sentinel is not in view; a
-      // stale true here would block recycling indefinitely.
-      sentinelVisibleRef.current = false
-    }
-    // observerArm is a re-arm signal, not a value this effect reads.
-  }, [hasOlder, viewport, loadOlder, observerArm])
-
-  // Keep loading until the transcript is tall enough to scroll, or history runs
-  // out. Scrolling is the only trigger, so a view that doesn't overflow can't
-  // produce one: without this a short first page leaves a chat that is both
-  // unfilled and unable to ask for more.
-  //
-  // Runs off `loadingMoreHistory` falling rather than off any content count. A
-  // page landing mid-turn merges into an existing block and adds no block and
-  // no message, so counting either would miss exactly the pages this has to
-  // react to.
-  //
-  // Terminates: every pass either makes the content scrollable or moves the
-  // cursor strictly back, and the server reports `hasMore: false` once it
-  // reaches the start — a page can't come back empty while more remains.
-  // biome-ignore lint/correctness/useExhaustiveDependencies(blocks): re-measure after content lands, not because the body reads it
-  useEffect(() => {
-    const root = viewport()
-    if (!root) {
-      return
-    }
-    const fill = {
-      hasMore: session.hasMoreHistory === true,
-      loading: session.loadingMoreHistory === true,
-      scrollHeight: root.scrollHeight,
-      clientHeight: root.clientHeight,
-    }
-    if (shouldLoadMore(fill)) {
-      loadOlder()
-    }
-  }, [session.loadingMoreHistory, session.hasMoreHistory, blocks, viewport, loadOlder])
 
   // Carry each block's position into the grouping — turnByBlock and the "is
   // this the active turn" check are both keyed by it, and grouping otherwise
@@ -442,7 +570,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
       ) : (
         <>
           {hasOlder && (
-            <div ref={sentinelRef} className='py-1 text-center text-xs text-muted-foreground'>
+            <div className='py-1 text-center text-xs text-muted-foreground'>
               {session.loadingMoreHistory ? 'loading older…' : '· · ·'}
             </div>
           )}
@@ -452,7 +580,14 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
             // turn's section pushes it out on the way past. Bounding each
             // header to its section is what produces that hand-off, so no
             // scroll position is read anywhere.
-            <Flex key={section.id} className='w-full min-w-0 gap-3'>
+            <Flex
+              key={section.id}
+              // The fill check measures from the first real block, so the
+              // loading indicator above it cannot satisfy the condition that
+              // produced it.
+              ref={sectionIndex === 0 ? firstBlockRef : undefined}
+              className='w-full min-w-0 gap-3'
+            >
               {section.user ? (
                 <UserMessage
                   sticky
