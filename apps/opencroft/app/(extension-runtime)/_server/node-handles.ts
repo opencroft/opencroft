@@ -1,5 +1,4 @@
-import { invokeExtensionAction } from '@/app/(extension-runtime)/_server/actions'
-import { loadAllManifests } from '@/app/(extension-runtime)/_server/loader'
+import { invokeExtensionActionImpl } from '@/app/(extension-runtime)/_server/extension-action-impl'
 import type { ExtensionHandle } from '@/app/(extension-runtime)/_types'
 
 // The manifest fields this module reads. Structural rather than a concrete
@@ -34,6 +33,12 @@ interface DynamicHandleNode {
   data?: Record<string, unknown>
 }
 
+// The extension owning the 'docker' node type, or null. Resolved once by the
+// caller and passed to expandDynamicHandles, rather than re-derived per node.
+export function findDockerExtensionId(manifests: ManifestLike[]): string | null {
+  return manifests.find((m) => m.nodes?.some((n) => n.typeId === 'docker'))?.id ?? null
+}
+
 // Live ids for a node's dynamic source handles — a declared dynamic handle is
 // an id PREFIX, and the concrete ids only exist at runtime (one per running
 // container). Returns [] for anything with no dynamic source handle, and on
@@ -42,28 +47,45 @@ interface DynamicHandleNode {
 // Application-node/docker specific today, which is why it lives in one place:
 // when another node type grows dynamic handles, this is the function that
 // learns about it rather than each caller.
-export async function expandDynamicHandles(node: DynamicHandleNode, declared: ExtensionHandle[]): Promise<string[]> {
+//
+// Reaches the docker action through the plain impl, NOT the createServerFn in
+// _server/actions.ts. The server fn needs TanStack Start's request-scoped
+// AsyncLocalStorage, which an extension's Nitro route never establishes — and
+// this is reachable from one, via host.graph.listHandles. Using the server fn
+// here would throw "No Start context found" for exactly those nodes that have
+// a container to expand, i.e. it would read as "some sources are missing"
+// rather than as an error. See the route-context test beside this file.
+export async function expandDynamicHandles(
+  node: DynamicHandleNode,
+  declared: ExtensionHandle[],
+  dockerExtensionId: string | null,
+): Promise<string[]> {
   if (node.type !== 'application') {
     return []
   }
   const dynamic = declared.find((h) => h.dynamic && h.role === 'source')
   if (!dynamic) {
+    // A dynamic handle that isn't a source has no expansion path — say so
+    // rather than returning [] as though the node simply had none, which
+    // would look like "this source disappeared".
+    if (declared.some((h) => h.dynamic)) {
+      console.error(
+        `[node-handles] node type "${node.type}" declares a dynamic handle that is not role:'source'; expansion only supports dynamic sources`,
+      )
+    }
     return []
   }
   const resolved = node.data?.__resolvedContexts as Record<string, { sourceNodeId?: string }> | undefined
   const dockerNodeId = resolved?.['docker-in']?.sourceNodeId
-  if (!dockerNodeId) {
+  if (!dockerNodeId || !dockerExtensionId) {
     return []
   }
   const service = (node.data?.name as string) || node.id
   try {
-    const manifests = await loadAllManifests()
-    const owning = manifests.find((m) => m.nodes?.some((n) => n.typeId === 'docker'))
-    if (!owning) {
-      return []
-    }
-    const containers = (await invokeExtensionAction({
-      data: { extensionId: owning.id, actionName: 'docker.ps', args: [{ dockerNodeId, service }] },
+    const containers = (await invokeExtensionActionImpl({
+      extensionId: dockerExtensionId,
+      actionName: 'docker.ps',
+      args: [{ dockerNodeId, service }],
     })) as Array<{
       id: string
       name: string

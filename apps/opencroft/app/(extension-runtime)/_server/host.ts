@@ -194,11 +194,12 @@ const graphApi: HostGraphApi = {
     // Same manifest source as getTerminalContext, so a handle this returns is
     // one that resolver can actually resolve.
     const { listExtensionManifestsImpl } = await import('@/app/(extension-runtime)/_server/extension-action-impl')
-    const { buildNodeTypeHandles, expandDynamicHandles } = await import(
+    const { buildNodeTypeHandles, expandDynamicHandles, findDockerExtensionId } = await import(
       '@/app/(extension-runtime)/_server/node-handles'
     )
     const [spaces, manifests] = await Promise.all([loadAllSpaces(), listExtensionManifestsImpl()])
     const byType = buildNodeTypeHandles(manifests)
+    const dockerExtensionId = findDockerExtensionId(manifests)
     const wanted = (handle: { role: string; contextType: string }) =>
       (filter?.role === undefined || handle.role === filter.role) &&
       (filter?.contextType === undefined || handle.contextType === filter.contextType)
@@ -218,7 +219,9 @@ const graphApi: HostGraphApi = {
         // Expansion costs a docker.ps per node, so do it once and only when a
         // dynamic handle actually survived the filter — a caller asking for
         // targets, or for some other contextType, pays nothing.
-        const liveIds = matching.some((handle) => handle.dynamic) ? await expandDynamicHandles(raw, declared) : []
+        const liveIds = matching.some((handle) => handle.dynamic)
+          ? await expandDynamicHandles(raw, declared, dockerExtensionId)
+          : []
 
         for (const handle of matching) {
           if (!handle.dynamic) {

@@ -39,7 +39,11 @@ import {
 import { dispatchExecutionContext, NoExecTargetError } from '@/app/(extension-runtime)/_server/exec-dispatch'
 import { getExtensionModule, loadAllManifests } from '@/app/(extension-runtime)/_server/loader'
 import { dispatchNodeAction, listNodeActions } from '@/app/(extension-runtime)/_server/node-actions'
-import { buildNodeTypeHandles, expandDynamicHandles } from '@/app/(extension-runtime)/_server/node-handles'
+import {
+  buildNodeTypeHandles,
+  expandDynamicHandles,
+  findDockerExtensionId,
+} from '@/app/(extension-runtime)/_server/node-handles'
 import { localExtRoot } from '@/app/(extension-runtime)/_server/paths'
 import { resolveExtensionRepo, searchRegistries } from '@/app/(extension-runtime)/_server/registry'
 import type { ExtensionHandle } from '@/app/(extension-runtime)/_types'
@@ -1299,9 +1303,19 @@ async function buildTypeNameMap(): Promise<Map<string, string>> {
   return map
 }
 
-async function buildTypeHandlesMap(): Promise<Map<string, ExtensionHandle[]>> {
-  const byType = buildNodeTypeHandles(await loadAllManifests())
-  return new Map(Array.from(byType, ([typeId, entry]) => [typeId, entry.handles]))
+interface TypeHandlesContext {
+  typeHandles: Map<string, ExtensionHandle[]>
+  // Resolved once here rather than per node inside the expansion.
+  dockerExtensionId: string | null
+}
+
+async function buildTypeHandlesMap(): Promise<TypeHandlesContext> {
+  const manifests = await loadAllManifests()
+  const byType = buildNodeTypeHandles(manifests)
+  return {
+    typeHandles: new Map(Array.from(byType, ([typeId, entry]) => [typeId, entry.handles])),
+    dockerExtensionId: findDockerExtensionId(manifests),
+  }
 }
 
 interface NodeHandlesView {
@@ -1312,7 +1326,7 @@ interface NodeHandlesView {
 async function nodeHandles(
   node: GraphNode,
   edges: StoredEdge[],
-  typeHandles: Map<string, ExtensionHandle[]>,
+  { typeHandles, dockerExtensionId }: TypeHandlesContext,
 ): Promise<NodeHandlesView> {
   const input: Record<string, string | null> = {}
   const output: Record<string, string[]> = {}
@@ -1327,7 +1341,7 @@ async function nodeHandles(
     }
     output[h.id] = []
   }
-  for (const id of await expandDynamicHandles(node, declared)) {
+  for (const id of await expandDynamicHandles(node, declared, dockerExtensionId)) {
     output[id] = []
   }
   for (const edge of edges) {
