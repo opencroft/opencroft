@@ -13,10 +13,12 @@ import { Flex } from 'ui/components/ui/layout/flex'
 import { ScrollArea } from 'ui/components/ui/layout/scroll-area'
 import { ScrollToBottomButton } from 'ui/components/ui/utils/scroll-to-bottom-button'
 import { useIsMobile } from 'ui/hooks/use-mobile'
+import { cn } from 'ui/lib/utils'
 
 import { ThinkingIndicator } from './thinking-indicator'
 import { hasToolView, type ToolViewRegistry } from './tool-views'
 import { TurnDetails } from './turn-details'
+import { groupIntoTurnSections } from './turn-sections'
 
 // Select-and-execCommand fallback for insecure contexts (plain http, e.g. served
 // over a LAN IP) where the async Clipboard API is unavailable. Uses a Selection
@@ -288,6 +290,8 @@ export function ChatView({
   // applies `pending` to its own last item (e.g. a streaming thought's spinner).
   const lastBlock = filteredBlocks[filteredBlocks.length - 1]
 
+  const sections = useMemo(() => groupIntoTurnSections(visibleBlocks), [visibleBlocks])
+
   return (
     <Flex expanded className={className ?? 'min-h-0 justify-end'}>
       <ScrollArea ref={scrollRef} className='w-full' innerClassName='items-center' onScroll={handleScroll}>
@@ -307,32 +311,44 @@ export function ChatView({
                 · · ·
               </div>
             )}
-            {visibleBlocks.map((block) =>
-              block.kind === 'user' ? (
-                <UserBubble
-                  key={block.id}
-                  text={block.text}
-                  canFork={canFork}
-                  forkDisabled={turnActive}
-                  onFork={onFork ? () => onFork(turnIndexById.get(block.id) ?? 0, block.text) : undefined}
-                />
-              ) : (
-                <TurnDetails
-                  key={block.id}
-                  items={block.items}
-                  toolViews={toolViews}
-                  hideToolCalls={hideToolCalls}
-                  botName={botName}
-                  agentAvatar={agentAvatar}
-                  defaultCollapsed={collapsedDefaultRef.current}
-                  onCollapseChange={onDetailsCollapseChange}
-                  pending={block === lastBlock && turnActive}
-                  onRespondPermission={onRespondPermission}
-                  onRespondAsk={onRespondAsk}
-                  onRespondText={onRespondText}
-                />
-              ),
-            )}
+            {sections.map((section) => (
+              // One section per turn: the user message sticks to the top of the
+              // viewport while its own replies scroll under it, and the next
+              // turn's section pushes it out on the way past. Bounding each
+              // header to its section is what produces that hand-off, so no
+              // scroll position is read anywhere.
+              <Flex withGaps key={section.id} className='w-full gap-4'>
+                {section.user && (
+                  <UserBubble
+                    sticky
+                    text={section.user.text}
+                    canFork={canFork}
+                    forkDisabled={turnActive}
+                    onFork={
+                      onFork ? () => onFork(turnIndexById.get(section.id) ?? 0, section.user?.text ?? '') : undefined
+                    }
+                  />
+                )}
+                {section.items.map((block) =>
+                  block.kind === 'chain' ? (
+                    <TurnDetails
+                      key={block.id}
+                      items={block.items}
+                      toolViews={toolViews}
+                      hideToolCalls={hideToolCalls}
+                      botName={botName}
+                      agentAvatar={agentAvatar}
+                      defaultCollapsed={collapsedDefaultRef.current}
+                      onCollapseChange={onDetailsCollapseChange}
+                      pending={block === lastBlock && turnActive}
+                      onRespondPermission={onRespondPermission}
+                      onRespondAsk={onRespondAsk}
+                      onRespondText={onRespondText}
+                    />
+                  ) : null,
+                )}
+              </Flex>
+            ))}
             {turnActive && <ThinkingIndicator />}
             {transcriptFooter}
           </Flex>
@@ -356,11 +372,16 @@ function UserBubble({
   canFork,
   forkDisabled,
   onFork,
+  sticky,
 }: {
   text: string
   canFork?: boolean
   forkDisabled?: boolean
   onFork?: () => void
+  // Hold the top of the viewport while this turn's replies scroll underneath.
+  // Needs an opaque background, since content passes behind it, and a z-index
+  // above the replies it covers.
+  sticky?: boolean
 }) {
   const isMobile = useIsMobile()
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -395,7 +416,13 @@ function UserBubble({
   }
 
   return (
-    <div ref={wrapperRef} className='self-end max-w-[85%]'>
+    <div
+      ref={wrapperRef}
+      // The bubble's own tint is translucent, so when stuck it gets an opaque
+      // layer beneath it — otherwise the replies passing underneath show
+      // through the header.
+      className={cn('self-end max-w-[85%]', sticky && 'sticky top-0 z-10 rounded-lg bg-background')}
+    >
       <ContextMenu>
         <ContextMenuTrigger asChild onClick={isMobile ? handleTap : undefined}>
           <div className='rounded-lg bg-primary/10 px-3 py-2 prose-chat'>

@@ -4,6 +4,7 @@ import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { ChainDot, type ChainDotVariant, Chained } from 'agent-chat/chain'
 import { ConfigOptionsBar } from 'agent-chat/config-options-bar'
 import { ThinkingBlock } from 'agent-chat/thinking-block'
+import { groupIntoTurnSections } from 'agent-chat/turn-sections'
 import type { QueuedPrompt } from 'agent-client/types'
 import {
   Maximize2,
@@ -20,7 +21,6 @@ import {
 import {
   type ComponentType,
   type FormEvent,
-  Fragment,
   type KeyboardEvent,
   useCallback,
   useEffect,
@@ -364,6 +364,15 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   // would drop the top visible block on every append and yank the content the
   // reader is on. The frozen window is recycled later, once the user re-pins
   // and the next block arrives.
+  // Carry each visible block's position in the FULL list into the grouping —
+  // turnByBlock and the "is this the active turn" check are both keyed by it,
+  // and grouping otherwise loses it. The React key stays the block id, which
+  // (unlike position) survives a "load older" prepend unchanged.
+  const sections = useMemo(
+    () => groupIntoTurnSections(visibleBlocks.map((block, i) => ({ ...block, absoluteIndex: startIndex + i }))),
+    [visibleBlocks, startIndex],
+  )
+
   const prevBlockCountRef = useRef(blocks.length)
   useEffect(() => {
     const appended = blocks.length - prevBlockCountRef.current
@@ -390,45 +399,61 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
               {session.loadingMoreHistory ? 'loading older…' : '· · ·'}
             </div>
           )}
-          {visibleBlocks.map((b, i) => {
-            // Position within the full `blocks` array — turnByBlock is keyed
-            // by this (rebuilt fresh every render, so shifting under a prepend
-            // is fine), but the React `key` below uses b.id instead: it must
-            // stay the SAME value for the SAME content across a "load older"
-            // prepend, which this position does not (see buildBlocks and
-            // ChatMessage.id).
-            const index = startIndex + i
-            return b.kind === 'user' ? (
-              <UserMessage
-                key={b.id}
-                text={b.text}
-                editDisabled={session.waiting}
-                onEdit={edit ? () => edit(turnByBlock.get(index) ?? 0, b.text) : undefined}
-              />
-            ) : (
-              <Fragment key={b.id}>
-                {/* Only the newest turn can have been trimmed on load — a
-                    manual button rather than the scroll-triggered sentinel
-                    above, deliberately: it never touches
-                    scrollTop/scrollHeight, so it can't interact with the
-                    load-older scroll-restore logic. */}
-                {index === blocks.length - 1 && session.hasMoreInTurn && (
-                  <LoadMoreInTurnButton
-                    loading={session.loadingMoreInTurn === true}
-                    onClick={() => void session.loadMoreInTurn?.()}
-                  />
-                )}
-                <Details
-                  items={b.items}
-                  botName={displayName}
-                  agentAvatar={agentAvatar}
-                  defaultCollapsed={detailsCollapsedRef.current}
-                  onCollapseChange={onDetailsCollapseChange}
-                  pending={index === blocks.length - 1 && session.waiting}
+          {sections.map((section, sectionIndex) => (
+            // One section per turn: the user message sticks to the top of the
+            // viewport while its own replies scroll under it, and the next
+            // turn's section pushes it out on the way past. Bounding each
+            // header to its section is what produces that hand-off, so no
+            // scroll position is read anywhere.
+            <Flex key={section.id} className='w-full min-w-0 gap-3'>
+              {section.user && (
+                <UserMessage
+                  sticky
+                  text={section.user.text}
+                  editDisabled={session.waiting}
+                  onEdit={
+                    edit && section.user
+                      ? () => edit(turnByBlock.get(section.user?.absoluteIndex ?? 0) ?? 0, section.user?.text ?? '')
+                      : undefined
+                  }
                 />
-              </Fragment>
-            )
-          })}
+              )}
+              {/* Belongs to the turn whose records it loads, so it sits inside
+                  that turn's section rather than floating above whichever
+                  reply block happens to be last. Only the newest turn is ever
+                  trimmed, and the cursor is dropped when a new turn starts, so
+                  the last section is that turn.
+
+                  Its position here is load-bearing, not cosmetic. Older records
+                  are spliced in at the START of the turn's body — directly
+                  below this control — and the control is not sticky, so it has
+                  to be on screen to be clicked. Everything above the viewport
+                  top is therefore unchanged by the insert, which leaves
+                  scrollTop still correct and the reader's view unmoved without
+                  any scroll correction. Moving this control (or making it
+                  stick) breaks that and reintroduces the content-shift problem
+                  the turn-level path has to solve with an anchor restore. */}
+              {sectionIndex === sections.length - 1 && session.hasMoreInTurn && (
+                <LoadMoreInTurnButton
+                  loading={session.loadingMoreInTurn === true}
+                  onClick={() => void session.loadMoreInTurn?.()}
+                />
+              )}
+              {section.items.map((b) =>
+                b.kind === 'user' ? null : (
+                  <Details
+                    key={b.id}
+                    items={b.items}
+                    botName={displayName}
+                    agentAvatar={agentAvatar}
+                    defaultCollapsed={detailsCollapsedRef.current}
+                    onCollapseChange={onDetailsCollapseChange}
+                    pending={b.absoluteIndex === blocks.length - 1 && session.waiting}
+                  />
+                ),
+              )}
+            </Flex>
+          ))}
         </>
       )}
       {session.waiting && <ThinkingIndicator />}
@@ -437,9 +462,22 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   )
 }
 
-function UserMessage({ text, editDisabled, onEdit }: { text: string; editDisabled?: boolean; onEdit?: () => void }) {
+function UserMessage({
+  text,
+  editDisabled,
+  onEdit,
+  sticky,
+}: {
+  text: string
+  editDisabled?: boolean
+  onEdit?: () => void
+  // Hold the top of the viewport while this turn's replies scroll underneath.
+  // Needs an opaque background — the row is wider than its tinted bubble, so
+  // without it replies would show through the gap beside the edit control.
+  sticky?: boolean
+}) {
   return (
-    <Flex row align='start' className='group w-full gap-1'>
+    <Flex row align='start' className={cn('group w-full gap-1', sticky && 'sticky top-0 z-10 bg-background')}>
       <Flex expanded className='gap-1.5 rounded-md bg-muted border-1 p-2'>
         <div className='prose-chat'>
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
