@@ -130,11 +130,40 @@ async function writeNodePatch(nodeId: string, mutate: (graph: GraphData) => bool
   }
 }
 
+export interface HandleInfo {
+  nodeId: string
+  // listNodes flattens spaces; handle discovery doesn't, because a picker has
+  // to be able to say which space a source came from.
+  spaceSlug: string
+  typeId: string
+  // node.data.name, falling back to the type id — for pickers.
+  nodeName: string
+  // The live id, resolvable by terminal.getContext. For a dynamic handle this
+  // is the expanded runtime id, not the declared prefix.
+  handleId: string
+  // The manifest id — the prefix form for a dynamic handle.
+  declaredId: string
+  contextType: string
+  role: 'source' | 'target'
+  label?: string
+  dynamic: boolean
+}
+
+export interface ListHandlesFilter {
+  role?: 'source' | 'target'
+  contextType?: string
+}
+
 export interface HostGraphApi {
   listNodes(): Promise<GraphNodeRecord[]>
   getNode(nodeId: string): Promise<GraphNodeRecord | null>
   listNodesByType(typeId: string): Promise<GraphNodeRecord[]>
   listEdges(): Promise<GraphEdgeRecord[]>
+  // Every handle declared by a node type, across all spaces, with dynamic
+  // source handles expanded to their live ids. Read-on-demand and uncached:
+  // expansion asks each application node's docker context what is running, so
+  // the result is only true at the moment it is produced.
+  listHandles(filter?: ListHandlesFilter): Promise<HandleInfo[]>
   updateNode(nodeId: string, patch: Partial<GraphNodeRecord>): Promise<GraphNodeRecord | null>
   createNode(
     typeId: string,
@@ -158,6 +187,70 @@ const graphApi: HostGraphApi = {
   },
   async listEdges() {
     return (await readGraph()).edges
+  },
+  async listHandles(filter) {
+    // Lazy imports for the same reason getTerminalContext uses them: loader.ts
+    // imports this module, so a static edge back to it would close a cycle.
+    // Same manifest source as getTerminalContext, so a handle this returns is
+    // one that resolver can actually resolve.
+    const { listExtensionManifestsImpl } = await import('@/app/(extension-runtime)/_server/extension-action-impl')
+    const { buildNodeTypeHandles, expandDynamicHandles } = await import(
+      '@/app/(extension-runtime)/_server/node-handles'
+    )
+    const [spaces, manifests] = await Promise.all([loadAllSpaces(), listExtensionManifestsImpl()])
+    const byType = buildNodeTypeHandles(manifests)
+    const wanted = (handle: { role: string; contextType: string }) =>
+      (filter?.role === undefined || handle.role === filter.role) &&
+      (filter?.contextType === undefined || handle.contextType === filter.contextType)
+
+    const results: HandleInfo[] = []
+    for (const space of spaces) {
+      for (const raw of space.graph.nodes as unknown as GraphNodeRecord[]) {
+        const typeId = raw.type
+        if (!typeId) {
+          continue
+        }
+        const declared = byType.get(typeId)?.handles ?? []
+        const nodeName = (raw.data?.name as string) || typeId
+        const base = { nodeId: raw.id, spaceSlug: space.slug, typeId, nodeName }
+
+        const matching = declared.filter(wanted)
+        // Expansion costs a docker.ps per node, so do it once and only when a
+        // dynamic handle actually survived the filter — a caller asking for
+        // targets, or for some other contextType, pays nothing.
+        const liveIds = matching.some((handle) => handle.dynamic) ? await expandDynamicHandles(raw, declared) : []
+
+        for (const handle of matching) {
+          if (!handle.dynamic) {
+            results.push({
+              ...base,
+              handleId: handle.id,
+              declaredId: handle.id,
+              contextType: handle.contextType,
+              role: handle.role,
+              label: handle.label,
+              dynamic: false,
+            })
+            continue
+          }
+          // A dynamic handle's declared id is only a prefix — emit one entry
+          // per live id instead, so every handleId returned is one that
+          // terminal.getContext can actually resolve.
+          for (const liveId of liveIds.filter((id) => id.startsWith(handle.id))) {
+            results.push({
+              ...base,
+              handleId: liveId,
+              declaredId: handle.id,
+              contextType: handle.contextType,
+              role: handle.role,
+              label: handle.label,
+              dynamic: true,
+            })
+          }
+        }
+      }
+    }
+    return results
   },
   async updateNode(nodeId, patch) {
     let updated: GraphNodeRecord | null = null

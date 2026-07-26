@@ -1,7 +1,8 @@
 import { listExtensionManifests } from '@/app/(extension-runtime)/_server/actions'
 import type { GraphNodeRecord, GraphSnapshot } from '@/app/(extension-runtime)/_server/host'
 import { getExtensionModule } from '@/app/(extension-runtime)/_server/loader'
-import { type ExtensionHandle, findExtensionHandle } from '@/app/(extension-runtime)/_types'
+import { buildNodeTypeHandles } from '@/app/(extension-runtime)/_server/node-handles'
+import { findExtensionHandle } from '@/app/(extension-runtime)/_types'
 
 interface ResolvedContextEntry {
   sourceNodeId: string
@@ -18,16 +19,7 @@ const CONTEXT_KEY = '__resolvedContexts'
  * and writes resolved context into target nodes' data.
  */
 export async function resolveGraphContexts(graph: GraphSnapshot): Promise<GraphSnapshot> {
-  const manifests = await listExtensionManifests()
-  const nodeTypeToExtension = new Map<string, { extensionId: string; handles: ExtensionHandle[] }>()
-  for (const m of manifests) {
-    if (!m.nodes) {
-      continue
-    }
-    for (const node of m.nodes) {
-      nodeTypeToExtension.set(node.typeId, { extensionId: m.id, handles: node.handles ?? [] })
-    }
-  }
+  const nodeTypeToExtension = buildNodeTypeHandles(await listExtensionManifests())
 
   // Reset all __resolvedContexts
   const updatedNodes = graph.nodes.map((n) => {
