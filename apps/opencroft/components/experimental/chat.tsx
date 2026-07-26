@@ -27,6 +27,27 @@ export function ChatArea({ fromEnd, children, className }: ChatAreaProps) {
         // which would stop chaining but leave the out-of-range reads. Also keeps
         // the top of the list from scrolling the page behind it.
         '[&_[data-radix-scroll-area-viewport]]:[overscroll-behavior:none]',
+        // Own the scroll correction outright. Chrome and Firefox implement CSS
+        // scroll anchoring and shift scrollTop themselves when content is
+        // inserted above the anchor node — on top of the shift we apply, which
+        // is why loading older messages jumps the view down.
+        //
+        // Not "sometimes". Measured directly: three
+        // prepends in one session compensated FULLY (1578 of 1578px), NOT AT
+        // ALL (0 of 1630px), and PARTIALLY (10 of 21px). The spec suppresses
+        // the adjustment at scroll offset zero and on property changes to the
+        // anchor's ancestors, so the same code behaves differently by position.
+        //
+        // The partial reading is why this is `none` rather than detect-and-
+        // skip: there is no "did the browser act" bit to branch on, and
+        // subtracting a measured fraction means racing a heuristic every frame.
+        // Every surveyed client (Element, Signal, Telegram, Zulip, Mattermost,
+        // Rocket.Chat) disables it and corrects manually, for this reason.
+        //
+        // Also forward cover: Safari has announced anchoring for 27, which
+        // would otherwise change this component's behaviour without us touching
+        // it.
+        '[&_[data-radix-scroll-area-viewport]]:[overflow-anchor:none]',
         className,
       )}
     >
