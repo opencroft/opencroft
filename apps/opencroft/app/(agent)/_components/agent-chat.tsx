@@ -474,6 +474,17 @@ function UserMessage({
   // Hold the top of the viewport while this turn's replies scroll underneath.
   // Needs an opaque background — the row is wider than its tinted bubble, so
   // without it replies would show through the gap beside the edit control.
+  //
+  // `z-1` is exact, not a round number, and both bounds are load-bearing:
+  //  - It must exceed the replies. Each one wraps its entries in a `relative`
+  //    box, and a positioned box with an automatic z-index sits at 0 and comes
+  //    later in the document — so anything lower loses to it on tree order and
+  //    the replies paint over the header.
+  //  - It must not exceed the composer, which is also `z-1` and later in the
+  //    document still. Equal values are broken by tree order, so the composer
+  //    keeps painting over the header, which is what a raised value broke.
+  // No integer sits between those, which is why matching the composer rather
+  // than clearing it is the fix.
   // That background covers the padded box, so the stuck-only breathing room
   // below is opaque too rather than a gap replies scroll through.
   //
@@ -485,11 +496,7 @@ function UserMessage({
   sticky?: boolean
 }) {
   return (
-    <Flex
-      row
-      align='start'
-      className={cn('group w-full gap-1', sticky && 'sticky top-0 z-10 bg-background pt-2 -mt-2')}
-    >
+    <Flex row align='start' className={cn('group w-full gap-1', sticky && 'sticky top-0 z-1 bg-background pt-2 -mt-2')}>
       <Flex expanded className='gap-1.5 rounded-md bg-muted border-1 p-2'>
         <div className='prose-chat'>
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>

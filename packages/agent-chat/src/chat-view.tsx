@@ -424,13 +424,20 @@ function UserBubble({
       // breathing room below is covered too rather than being a gap replies
       // scroll through.
       //
+      // `z-1` is exact, not a round number, and both bounds are load-bearing:
+      // it must exceed the replies, which each wrap their entries in a
+      // `relative` box that sits at 0 and comes later in the document; and it
+      // must not exceed the composer, which is also `z-1` and later still, so
+      // tree order keeps the composer on top. No integer sits between those,
+      // which is why the header matches the composer rather than clearing it.
+      //
       // `pt-2 -mt-2` buys that breathing room only while stuck. The two cancel
       // in normal flow — the box's top edge moves up by the same amount its
       // content moves down, so the element's vertical footprint, and every
       // position below it, is unchanged. Stuck, the top edge is pinned to the
       // viewport instead, so the padding becomes visible space above the
       // message. There is no `:stuck` selector to do this more directly.
-      className={cn('self-end max-w-[85%]', sticky && 'sticky top-0 z-10 rounded-lg bg-background pt-2 -mt-2')}
+      className={cn('self-end max-w-[85%]', sticky && 'sticky top-0 z-1 rounded-lg bg-background pt-2 -mt-2')}
     >
       <ContextMenu>
         <ContextMenuTrigger asChild onClick={isMobile ? handleTap : undefined}>
