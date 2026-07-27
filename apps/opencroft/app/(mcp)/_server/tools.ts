@@ -818,7 +818,7 @@ export const toolDefinitions = [
   {
     name: 'list_actions',
     description:
-      'List the actions available on a node (e.g. start/stop/restart on Application, run on Script). Use this to discover what actions a node exposes before calling them.',
+      'List the actions available on a node (e.g. lifecycle actions like deploy/start/stop on a container-backed node, run on a script node). Use this to discover what actions a node exposes before calling them.',
     inputSchema: {
       type: 'object' as const,
       properties: {
