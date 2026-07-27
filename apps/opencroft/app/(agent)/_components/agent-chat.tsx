@@ -37,7 +37,7 @@ import { Flex } from 'ui/layout/flex'
 import { AgentAvatar } from 'ui/media/agent-avatar'
 import { Textarea } from 'ui/textarea'
 
-import { type Block, buildBlocks, type DetailItem, stripOpencroftTags } from '@/app/(agent)/_lib/build-blocks'
+import { type Block, buildBlocks, type DetailItem, type UserText, userText } from '@/app/(agent)/_lib/build-blocks'
 import type { ChatMessage } from '@/app/(agent)/_lib/messages'
 import { AT_TOP_THRESHOLD, decideScrollAction, isAtBottom, type ScrollCause } from '@/app/(agent)/_lib/scroll-intent'
 import { contentTop, HOLD_DEADLINE_MS, type HoldState, holdExpired, holdStep } from '@/app/(agent)/_lib/scroll-restore'
@@ -83,7 +83,11 @@ export interface AgentSession {
   // loaded — its own `user` event sits above the window. Supplies the leading
   // section's sticky header text, and its `index` names the leading details
   // block so a mid-turn page merging into that block doesn't rename it.
-  historyHeader?: { index: number; text: string } | null
+  //
+  // The two are separately optional on purpose: a question made entirely of
+  // system tags has no words to show as a header, but the turn it names is
+  // still the one the leading block belongs to, so the index outlives the text.
+  historyHeader?: { index: number; text: UserText | null } | null
 }
 
 interface AgentChatProps {
@@ -566,7 +570,9 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
                 // question with replies rather than as replies to nothing.
                 // Not editable — the message it refers to isn't loaded.
                 sectionIndex === 0 &&
-                session.historyHeader && <UserMessage sticky blockId='u:header' text={session.historyHeader.text} />
+                session.historyHeader?.text != null && (
+                  <UserMessage sticky blockId='u:header' text={session.historyHeader.text} />
+                )
               )}
               {section.items.map((b) =>
                 b.kind === 'user' ? null : (
@@ -624,7 +630,11 @@ function UserMessage({
   // and measure how far it moved. Sits on the outermost box, which is the
   // block's own element in the flow.
   blockId: string
-  text: string
+  // Not `string`. This is the only component that renders a user's own words,
+  // so requiring the branded type here is what closes the route a raw stream
+  // event took into the sticky header: there is no longer a way to hand
+  // this component text that hasn't been through `userText`.
+  text: UserText
   editDisabled?: boolean
   onEdit?: () => void
   // Hold the top of the viewport while this turn's replies scroll underneath.
@@ -1045,7 +1055,7 @@ function QueuedMessages({ items, onRemove }: { items: QueuedPrompt[]; onRemove: 
           {/* Queued text is already transformed for the agent (system/context
               tags applied at send time); show only the user's own words, same
               as delivered user bubbles. */}
-          <span className='min-w-0 flex-1 truncate'>{stripOpencroftTags(m.text)}</span>
+          <span className='min-w-0 flex-1 truncate'>{userText(m.text)}</span>
           <button
             type='button'
             onClick={() => onRemove(m.id)}

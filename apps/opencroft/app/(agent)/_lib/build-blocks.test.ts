@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { buildBlocks } from './build-blocks'
+import { buildBlocks, headerFromWindow, userText } from './build-blocks'
 import type { ChatMessage } from './messages'
 
 function userMessage(id: number, text: string): ChatMessage {
@@ -96,4 +96,54 @@ test('block ids for already-rendered content are unaffected by a prepend, unlike
   // And the new content lands with ids that are NOT already in use.
   const afterHeadIds = after.slice(0, after.length - beforeIds.length).map((b) => b.id)
   assert.equal(new Set([...beforeIds, ...afterHeadIds]).size, beforeIds.length + afterHeadIds.length)
+})
+
+// ---------------------------------------------------------------------------
+// One transformation, and the two paths that must agree on it.
+//
+// The bug: the sticky header for a partly-loaded turn read its text
+// straight off the stream event, so that one turn — the first one a reader
+// looks at — showed system tags no other message shows.
+// ---------------------------------------------------------------------------
+
+const REMINDER = '<opencroft-reminder>internal</opencroft-reminder>'
+
+test('a user message shows its own words, not what the app added on the way out', () => {
+  assert.equal(userText(`${REMINDER}what is this?`), 'what is this?')
+})
+
+test('a message that is nothing but tags has no words at all', () => {
+  // Null rather than an empty string, so a caller has to decide what "nothing
+  // to show" means instead of rendering an empty box by accident.
+  assert.equal(userText(REMINDER), null)
+  assert.equal(userText('   '), null)
+})
+
+test('the header and the bubble strip identically — that is the whole bug', () => {
+  const raw = `${REMINDER}what is this?`
+  const header = headerFromWindow({ index: 3, event: { kind: 'user', text: raw } })
+  const bubble = buildBlocks([userMessage(3, raw)])[0]
+  assert.equal(header?.text, bubble?.kind === 'user' ? bubble.text : undefined)
+})
+
+test('a header keeps its index even when its text strips to nothing', () => {
+  // The trap in this fix. The header carries two things and only one of them is
+  // presentational: `index` names the enclosing turn, which is what stops the
+  // leading details block being renamed by every mid-turn page. Dropping
+  // the whole header because its words vanished would reintroduce that
+  // regression by way of a cosmetic rule.
+  const header = headerFromWindow({ index: 42, event: { kind: 'user', text: REMINDER } })
+  assert.equal(header?.index, 42)
+  assert.equal(header?.text, null, 'no words to show as a header')
+})
+
+test('a window that starts at a turn boundary has no header at all', () => {
+  assert.equal(headerFromWindow(undefined), null)
+  assert.equal(headerFromWindow(null), null)
+})
+
+test('a non-user event is never a header', () => {
+  // The header names the QUESTION a partly-loaded turn hangs from; anything
+  // else arriving in that slot would render an agent reply as a user bubble.
+  assert.equal(headerFromWindow({ index: 1, event: { kind: 'agent_message', text: 'a reply' } }), null)
 })
