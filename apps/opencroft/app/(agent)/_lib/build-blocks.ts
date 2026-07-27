@@ -1,3 +1,5 @@
+import type { ChatEvent } from 'agent-client/types'
+
 import type { ChatMessage } from '@/app/(agent)/_lib/messages'
 
 export type DetailItem =
@@ -19,10 +21,54 @@ export type DetailItem =
 //
 // The two namespaces are prefixed because a turn's identity is its own user
 // message's id, so the bare numbers would collide between the two kinds.
-export type Block = { id: string; kind: 'user'; text: string } | { id: string; kind: 'details'; items: DetailItem[] }
+export type Block = { id: string; kind: 'user'; text: UserText } | { id: string; kind: 'details'; items: DetailItem[] }
 
-export function stripOpencroftTags(text: string): string {
+declare const userTextBrand: unique symbol
+
+// A user message's own words, with everything the app added on the way to the
+// agent removed. Branded so it cannot be produced by writing a string: anything
+// that renders a user message asks for this type, so the only way to get one is
+// through `userText` below.
+//
+// The brand is the point. Stripping used to be a call every renderer had to
+// remember, and the sticky header for a partly-loaded turn forgot — it
+// read text straight off the stream event, so that one turn showed the system
+// tags no other message shows. A convention that is remembered three times out
+// of four isn't a convention. This makes forgetting a type error.
+export type UserText = string & { readonly [userTextBrand]: true }
+
+function stripOpencroftTags(text: string): string {
   return text.replace(/<opencroft-[a-z0-9-]+>[\s\S]*?<\/opencroft-[a-z0-9-]+>\s*/gi, '')
+}
+
+// The one transformation from a raw prompt to the words a reader sees.
+//
+// Null means "renders nothing": a message that is entirely system tags has no
+// words of its own, and shows no bubble. Callers get that as a value they have
+// to handle rather than as an empty string that quietly renders an empty box.
+export function userText(raw: string): UserText | null {
+  const stripped = stripOpencroftTags(raw)
+  return stripped.trim() ? (stripped as UserText) : null
+}
+
+// The sticky header for a turn the loaded window starts inside — its own user
+// message sits above the window, so it arrives beside the events rather than in
+// them and is the one user text `buildBlocks` never sees.
+//
+// `index` survives even when the text doesn't, and that separation is
+// load-bearing rather than tidiness: the index names the enclosing turn, which
+// is what keeps the leading details block from being renamed by every mid-turn
+// page — a regression fixed earlier. A header whose text is all tags must still
+// report its index, so "no words" and "no header" are deliberately different
+// things here.
+export function headerFromWindow(header?: { index: number; event: ChatEvent } | null): {
+  index: number
+  text: UserText | null
+} | null {
+  if (header?.event.kind !== 'user') {
+    return null
+  }
+  return { index: header.index, text: userText(header.event.text) }
 }
 
 // `enclosingTurnId` names the turn the FIRST run of replies belongs to, for a
@@ -63,8 +109,8 @@ export function buildBlocks(messages: ChatMessage[], enclosingTurnId?: number): 
         if (p.type !== 'text') {
           continue
         }
-        const v = stripOpencroftTags(p.text || '')
-        if (!v.trim()) {
+        const v = userText(p.text || '')
+        if (v === null) {
           continue
         }
         blocks.push({ id: `u:${m.id}`, kind: 'user', text: v })

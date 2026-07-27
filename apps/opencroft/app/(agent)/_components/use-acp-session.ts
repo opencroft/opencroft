@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 
 import type { AgentSession } from '@/app/(agent)/_components/agent-chat'
 import { type AcpStreamEvent, HISTORY_END_KIND } from '@/app/(agent)/_lib/acp-stream'
+import { headerFromWindow, type UserText } from '@/app/(agent)/_lib/build-blocks'
 import type { ChatMessage, ChatPart } from '@/app/(agent)/_lib/messages'
 import {
   cancelLocal,
@@ -311,7 +312,7 @@ export function useAcpSession(
   // Its `index` is not decoration: it is the identity of the leading details
   // block (see buildBlocks' `enclosingTurnId`). Without it that block is renamed
   // by every mid-turn page and the scroll restore loses its anchor.
-  const [historyHeader, setHistoryHeader] = useState<{ index: number; text: string } | null>(null)
+  const [historyHeader, setHistoryHeader] = useState<{ index: number; text: UserText | null } | null>(null)
 
   // Resolve (or lazily create) the live ACP session for this tab.
   useEffect(() => {
@@ -375,9 +376,7 @@ export function useAcpSession(
         paginatedHistory.reset(event.startIndex, event.hasMore)
         // Set unconditionally: a fresh connect re-sends a fresh tail, so a
         // header from a previous connection must not linger.
-        setHistoryHeader(
-          event.header?.event.kind === 'user' ? { index: event.header.index, text: event.header.event.text } : null,
-        )
+        setHistoryHeader(headerFromWindow(event.header))
         return
       }
       if (replayingHistoryRef.current) {
@@ -573,9 +572,7 @@ export function useAcpSession(
     // The topmost partly-loaded turn has changed: either it's an older turn
     // now, or this page reached far enough up that the question is inside the
     // slice and no separate header is needed.
-    setHistoryHeader(
-      page.header?.event.kind === 'user' ? { index: page.header.index, text: page.header.event.text } : null,
-    )
+    setHistoryHeader(headerFromWindow(page.header))
   }, [paginatedHistory.loadOlder])
 
   const session = useMemo<AgentSession>(
