@@ -675,28 +675,31 @@ function UserMessage({
       {...{ [BLOCK_ID_ATTR]: blockId }}
     >
       {sticky && (
-        // The header's backing: opaque down to mid-height, then falling away to
-        // nothing at its bottom edge, so replies dissolve as they pass under it
+        // The header's backing: fully opaque at its top edge, falling away to
+        // nothing at its bottom, so replies dissolve as they pass under it
         // instead of being clipped at a line.
         //
         // Spanning the element is what lets the falloff be this long. A layer
-        // hanging BELOW the box — the previous approach — could never exceed the
+        // hanging BELOW the box — the first approach — could never exceed the
         // gap to the next reply without tinting it in normal flow, which capped
         // it at 12px. This one is entirely inside the box, so it cannot reach
         // the reply at all and the cap doesn't apply.
         //
-        // It costs no legibility even though it fades: the question sits in its
-        // own `bg-muted` bubble and the avatar in a `bg-muted` circle, both
-        // opaque in either theme, so nothing passes behind the text. This layer
-        // only backs the gutter around them — the rail and the strip beside the
-        // edit control — which is exactly what should dissolve.
+        // The fade runs the whole height rather than starting halfway down, so
+        // the gradient spans its own element the way StickySection's does at the
+        // bottom of the chat. One construction, both ends.
         //
-        // Opaque through the top half so the stuck message's own breathing room
-        // (Chained's `py-2`) stays solid: the falloff begins below the text, not
-        // above it.
+        // It costs no legibility even though it fades behind the message: the
+        // question sits in its own `bg-muted` bubble and the avatar in a
+        // `bg-muted` circle, both opaque in either theme, so nothing passes
+        // behind the text. What this layer backs is the gutter around them — the
+        // rail, and the strip beside the edit control — and a reply showing
+        // through there as it passes is the accepted trade, not a defect. If it
+        // ever reads badly the answer is a different stop position, never a
+        // second opaque layer.
         <div
           aria-hidden
-          className='absolute inset-0 -z-1 pointer-events-none bg-linear-to-b from-background from-50% to-transparent'
+          className='absolute inset-0 -z-1 pointer-events-none bg-linear-to-b from-background to-transparent'
         />
       )}
 
