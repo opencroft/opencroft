@@ -211,6 +211,9 @@ test('a snapshot between two chunks does not split the message into two turns', 
   const events: ChatEvent[] = [
     { kind: 'user', text: 'what ' },
     { kind: 'config_options', options: [] },
+    // `mode_changed` is session state too — it carries `current` and nothing
+    // about the conversation, so it must not break the run either.
+    { kind: 'mode_changed', current: 'plan' },
     { kind: 'user', text: 'changed?' },
     { kind: 'agent_message', text: 'the schema moved' },
     { kind: 'turn_end', stopReason: 'replayed' },

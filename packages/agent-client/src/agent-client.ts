@@ -24,7 +24,7 @@ import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from '@agentclie
 
 import type { AgentConnection } from './connection'
 import { errorMessage } from './errors'
-import { lastConversationEvent } from './fold'
+import { isTerminalToolStatus, lastConversationEvent } from './fold'
 import { readMcpConfig, resolveMcpServers } from './mcp-config'
 import { createMcpServer, type SkillHandler, type SkillsInput, type ToolsInput } from './mcp-server'
 import type { McpServerConfig } from './mcp-types'
@@ -281,6 +281,29 @@ function toolOutputText(content: ToolCallContent[] | null | undefined, rawOutput
   }
   const text = blockText(rawOutput)
   return text !== null ? stripCodeFence(text) : JSON.stringify(rawOutput, null, 2)
+}
+
+// Whether a replayed transcript's last conversation event shows work that had
+// FINISHED rather than work still in flight — the evidence loadSession uses to
+// guess how the last replayed turn ended, since the replay never says.
+//
+// The agent's own message is the clearest form: it spoke, then the session went
+// quiet. A tool call in a terminal status is the same shape without closing
+// text, which some turns genuinely end on — reading those as unfinished would
+// report a completed turn as cut off, which is the wrong direction to be wrong
+// in. Anything else — a tool still running, a question left unanswered, a step
+// that stops halfway — is what an interrupted turn leaves behind.
+function endsOnSettledWork(tail: ChatEvent | undefined): boolean {
+  if (!tail) {
+    return false
+  }
+  if (tail.kind === 'agent_message') {
+    return true
+  }
+  if (tail.kind === 'tool_call' || tail.kind === 'tool_update') {
+    return isTerminalToolStatus(tail.status)
+  }
+  return false
 }
 
 function emit(sessionId: string, event: ChatEvent): void {
@@ -1210,20 +1233,19 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // boundaries its marker is inferred rather than known. The replay records
       // no more about how this turn ended than about any other, so nothing can
       // identify a severed turn with certainty — but the tail of the transcript
-      // is evidence. A replay whose last conversation event is the agent's own
-      // message shows a turn that produced its reply and a session that then
-      // went quiet: `replayed`, reported as unknown like its neighbours.
-      // Anything else — a pending tool call, a question left unanswered, work
-      // that stops mid-step — is the shape of a turn cut off: `resumed`,
-      // reported as interrupted.
+      // is evidence. A replay that ends on settled work (see endsOnSettledWork)
+      // shows a turn that finished and a session that then went quiet:
+      // `replayed`, reported as unknown like its neighbours. One that ends
+      // mid-step is the shape of a turn cut off: `resumed`, reported as
+      // interrupted.
       //
       // It is a heuristic. It can call a severed turn `unknown` when the agent
-      // had already written text before it died, which is the honest direction
-      // to be wrong in: today's unconditional `resumed` reports every idle
+      // had already finished a step before it died, which is the honest
+      // direction to be wrong in: an unconditional `resumed` reports every idle
       // restart's newest turn as cut off, which is a confident claim and false
       // more often than not.
       const tail = loaded ? lastConversationEvent(loaded.events) : undefined
-      emit(sessionId, { kind: 'turn_end', stopReason: tail?.kind === 'agent_message' ? 'replayed' : 'resumed' })
+      emit(sessionId, { kind: 'turn_end', stopReason: endsOnSettledWork(tail) ? 'replayed' : 'resumed' })
       return meta
     },
 

@@ -365,6 +365,51 @@ test('a replay that stops on unfinished work closes with resumed, not replayed',
   await client.deleteSession(sessionId)
 })
 
+// A turn can end on a finished tool call and no closing text. Reading that as
+// unfinished would report a completed turn as cut off — the wrong direction.
+test('a replay ending on a settled tool call closes with replayed, not resumed', async () => {
+  counter += 1
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: '',
+    cwd: `/tmp/agent-client-test-${counter}`,
+  }
+  const sessionId = `quiet-tail-session-${counter}`
+  const push = (update: Record<string, unknown>) =>
+    handleUpdate({ sessionId, update } as Parameters<typeof handleUpdate>[0])
+  const connection = {
+    loadSession: async () => {
+      push({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'tidy up' } })
+      push({ sessionUpdate: 'tool_call', toolCallId: 't1', title: 'rm tmp', status: 'in_progress' })
+      // The tool finished and the turn ended without the agent saying anything.
+      push({ sessionUpdate: 'tool_call_update', toolCallId: 't1', status: 'completed' })
+      return {}
+    },
+  } as unknown as AgentConnection
+  const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
+  assert.ok(store, 'agent-client global store must exist after import')
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: true,
+    initialized: Promise.resolve(),
+  })
+  const client = createAgentClient()
+  assert.ok(await client.loadSession(sessionId, selection))
+  const events: ChatEvent[] = []
+  client.subscribe(sessionId, (event) => events.push(event))
+
+  assert.deepEqual(
+    events
+      .filter((event): event is Extract<ChatEvent, { kind: 'turn_end' }> => event.kind === 'turn_end')
+      .map((event) => event.stopReason),
+    ['replayed'],
+  )
+  await client.deleteSession(sessionId)
+})
+
 // The guard reads the previous CONVERSATION event, not the previous event —
 // `emit` stores every kind, so a snapshot landing mid-run would otherwise be
 // read as "not a user chunk" and split the message on an event that is not
@@ -385,6 +430,8 @@ test('a snapshot arriving between two chunks does not open a boundary', async ()
     loadSession: async () => {
       push({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'what ' } })
       push({ sessionUpdate: 'session_info_update', title: 'a chat' })
+      // A mode change is session state too, and reaches the same interleaving.
+      push({ sessionUpdate: 'current_mode_update', currentModeId: 'plan' })
       push({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'changed?' } })
       push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'the schema moved' } })
       return {}
