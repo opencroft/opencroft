@@ -656,30 +656,6 @@ function UserMessage({
   // than clearing it is the fix.
   sticky?: boolean
 }) {
-  const textRef = useRef<HTMLDivElement>(null)
-  const [expanded, setExpanded] = useState(false)
-  // Whether the text actually overflows its three lines. Measured rather than
-  // assumed: a question short enough to fit must not grow a control that would
-  // do nothing, and only the rendered box knows how many lines it wrapped to.
-  const [clamped, setClamped] = useState(false)
-
-  // Measured only while collapsed. An expanded box always fits its own content,
-  // so measuring one would report "not clamped" and remove the control that
-  // collapses it again. The observer covers a re-wrap at a new width.
-  //
-  // biome-ignore lint/correctness/useExhaustiveDependencies(text): the effect measures the rendered box rather than reading this value, so the rule cannot see the dependency — but new text is what changes whether there is any overflow, and text that swaps one over-three-lines message for another keeps the clamped height identical and so fires no resize.
-  useLayoutEffect(() => {
-    const el = textRef.current
-    if (!el || expanded) {
-      return
-    }
-    const measure = () => setClamped(el.scrollHeight > el.clientHeight)
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [text, expanded])
-
   return (
     // The same rail the replies below are rendered in, so both columns start at
     // the same left edge by construction rather than by a matched indent — if
@@ -752,60 +728,30 @@ function UserMessage({
                 className='absolute inset-0 -z-1 rounded-md pointer-events-none shadow-lg shadow-black/50 opacity-0 transition-opacity duration-150 motion-reduce:transition-none [@container_scroll-state(stuck:top)]:opacity-100'
               />
             )}
-            {/* Three lines, then cut. A question otherwise renders at its full
-                height, and because this header holds the top of the viewport
+            {/* Three lines, but only while this header is stuck to the top.
+                That is the whole of the problem: a question renders at its full
+                height, and because the header holds the top of the viewport
                 while its own replies scroll underneath, a tall one covers the
-                answer it belongs to — the longer the question, the less of the
-                reply is left visible.
+                answer it belongs to. Read in its own place in the flow it costs
+                nothing, so it is left alone there.
 
-                The clamp sits on the text, not on the wrapper, because it
-                bounds the message itself rather than only its stuck state. It
-                shortens the boxes around it and disturbs them no further: the
-                backing still spans the wrapper's own box, the shadow still
-                matches the bubble by being its child, and the rail still aligns
-                the columns. Nothing here animates, so the scroller is untouched.
+                Clamping only where it matters is what removes the need for any
+                expand control: the message is already whole wherever the reader
+                is actually looking at it, and short again the moment it becomes
+                a header. Nothing to press, nothing to measure, no state.
 
-                Only the painted lines are cut — the text stays in the DOM, so it
-                is still selectable and still read in full by assistive tech.
+                A container query on the wrapper's own scroll-state, so it costs
+                no scroll listener and animates nothing — the backing still spans
+                the wrapper's box, the shadow still matches the bubble by being
+                its child, and the rail still aligns the columns.
 
-                Expanded, the clamp is lifted — except while this header is
-                stuck to the top, where it is reapplied. A message held at the
-                top of the viewport is exactly the case the clamp exists for, so
-                letting an expanded one stay expanded there would restore the
-                problem it solves. The reapplication is a container query on the
-                wrapper's own scroll-state, so it costs no scroll listener and
-                animates nothing; where scroll-state queries are unsupported the
-                query never matches and an expanded message stays expanded while
-                stuck — the same browsers that already render no stuck shadow. */}
-            <div
-              ref={textRef}
-              className={cn(
-                'prose-chat',
-                expanded ? '[@container_scroll-state(stuck:top)]:line-clamp-3' : 'line-clamp-3',
-              )}
-            >
+                Where scroll-state queries are unsupported the query never
+                matches and a stuck header is not clamped at all. Those are the
+                same browsers that already render no stuck shadow. */}
+            <div className='prose-chat [@container_scroll-state(stuck:top)]:line-clamp-3'>
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
             </div>
           </Flex>
-          {clamped && (
-            // Always visible, unlike the edit control beside it: this is the
-            // only route to the rest of the message, and a hover-only affordance
-            // is unreachable on touch. Not gated on `onEdit` or `editDisabled`
-            // either — it must work on the carried-over history header, which
-            // has no edit control, and while the agent is running, when the
-            // edit control is disabled. Nothing here is destructive.
-            <Button
-              type='button'
-              size='icon'
-              variant='ghost'
-              className='h-6 w-6 shrink-0'
-              title={expanded ? 'Show less' : 'Show full message'}
-              aria-expanded={expanded}
-              onClick={() => setExpanded((value) => !value)}
-            >
-              {expanded ? <Minimize2 className='size-3.5' /> : <Maximize2 className='size-3.5' />}
-            </Button>
-          )}
           {onEdit && (
             <Button
               type='button'
