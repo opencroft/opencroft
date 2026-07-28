@@ -105,6 +105,11 @@ function ChatModeToggle() {
   )
 }
 
+// Stable identity for the folder-action callbacks below, which exist to enable
+// the menu entries rather than to do anything — an inline arrow would give the
+// list a new prop every render.
+const noop = () => {}
+
 function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarProps) {
   const pathname = useLocation({ select: (l) => l.pathname })
   const inSpace = pathname.startsWith('/space/')
@@ -228,6 +233,15 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
                           setRenaming({ key, title: session?.title ?? session?.jobName ?? '' })
                         }}
                         onChange={onChange}
+                        // A folder's rename and delete are already persisted by
+                        // `onChange` — the layout write carries folder names and
+                        // membership — so these two carry no work of their own.
+                        // They are passed because the component gates each menu
+                        // entry on its callback: without them a folder header
+                        // renders as a plain toggle and the actions are
+                        // unreachable, with nothing to indicate they are missing.
+                        onRenameFolder={noop}
+                        onDeleteFolder={noop}
                         // Structural classes must stay in sync with `SidebarMenuSub` (packages/ui sidebar.tsx).
                         className={cn(
                           'mx-3.5 min-w-0 translate-x-px border-l border-sidebar-border px-1.5 py-0.5',
