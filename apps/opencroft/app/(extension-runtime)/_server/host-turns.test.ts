@@ -53,12 +53,16 @@ test('turnStatus prefers in-progress over a stray terminal event from a prior se
   assert.equal(turnStatus([{ kind: 'turn_end', stopReason: 'cancelled' }], true), 'in-progress')
 })
 
+// Every fixture below emits the agent's reply the way the client actually
+// does — one `agent_message` per content delta, not one per message. A fixture
+// that puts a whole message in each event cannot catch a summary path that
+// keeps the last event instead of joining the run.
 test('buildTurnSummary includes a truncated finalMessage only when finished', () => {
   const events: ChatEvent[] = [
     { kind: 'user', text: 'hi' },
     { kind: 'agent_thought', text: 'thinking...' },
-    { kind: 'agent_message', text: 'first draft' },
-    { kind: 'agent_message', text: 'final answer' },
+    { kind: 'agent_message', text: 'final ' },
+    { kind: 'agent_message', text: 'answer' },
     { kind: 'turn_end', stopReason: 'end_turn' },
   ]
   const summary = buildTurnSummary(3, events, false)
@@ -68,6 +72,48 @@ test('buildTurnSummary includes a truncated finalMessage only when finished', ()
   assert.equal(summary.promptLength, 2)
   assert.equal(summary.finalMessage, 'final answer')
   assert.equal(summary.finalMessageLength, 'final answer'.length)
+})
+
+test('buildTurnSummary joins the whole run of chunks a final message arrives in', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'q' },
+    { kind: 'agent_message', text: 'chunk one ' },
+    { kind: 'agent_message', text: 'chunk two ' },
+    { kind: 'agent_message', text: 'chunk three' },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ]
+  const summary = buildTurnSummary(0, events, false)
+  assert.equal(summary.finalMessage, 'chunk one chunk two chunk three')
+  assert.equal(summary.finalMessageLength, 'chunk one chunk two chunk three'.length)
+})
+
+test('buildTurnSummary reports the last message only, when a tool call splits the reply', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'q' },
+    { kind: 'agent_message', text: 'let me ' },
+    { kind: 'agent_message', text: 'check' },
+    { kind: 'tool_call', toolCallId: 't1', title: 'read', status: 'completed' },
+    { kind: 'agent_message', text: 'the answer ' },
+    { kind: 'agent_message', text: 'is 42' },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ]
+  const summary = buildTurnSummary(0, events, false)
+  assert.equal(summary.finalMessage, 'the answer is 42')
+})
+
+test('buildTurnSummary truncates a long final message but reports its real length', () => {
+  // The length is what tells a reader text was cut. Measuring the trailing
+  // chunk instead of the joined message made a truncated answer look complete.
+  const half = 'x'.repeat(300)
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'q' },
+    { kind: 'agent_message', text: half },
+    { kind: 'agent_message', text: half },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ]
+  const summary = buildTurnSummary(0, events, false)
+  assert.equal(summary.finalMessageLength, 600)
+  assert.equal(summary.finalMessage?.endsWith('… [truncated]'), true)
 })
 
 test('buildTurnSummary omits finalMessage for interrupted/in-progress turns', () => {
