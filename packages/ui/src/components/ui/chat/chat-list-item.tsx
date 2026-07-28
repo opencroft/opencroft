@@ -1,7 +1,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { GripVertical, Pencil, Square, Trash2, X } from 'lucide-react'
+import { Pencil, Square, Trash2, X } from 'lucide-react'
 
 import { AgentAvatar } from '@/components/ui/media/agent-avatar'
 import type { StatusVariant } from '@/components/ui/utils/status-indicator'
@@ -64,20 +64,18 @@ const STATUS_DOT: Partial<Record<ChatStatus, StatusVariant>> = {
   waiting: 'primary',
 }
 
-// A single row in a chat list: a **grip handle** shown only on touch
-// (coarse-pointer) devices as the touch drag source, beside an avatar (with an
-// optional status dot), a title and dimmed description, an optional unsent-draft
-// pencil indicator, and an optional actions menu (Rename / Stop process / Close /
-// Delete, plus any extra `actions`) built on the shadcn context-menu primitive.
+// A single row in a chat list: an avatar (with an optional status dot), a title
+// and dimmed description, an optional unsent-draft pencil indicator, and an
+// optional actions menu (Rename / Stop process / Close / Delete, plus any extra
+// `actions`) built on the shadcn context-menu primitive.
 //
-// Touch gestures: the three list gestures each own a separate
-// input and never compete. The **grip handle** (data-drag-handle,
-// touch-action: none) is the only place a touch drag starts -- press it and move
-// (any direction; moving a chat between folders is a vertical drag). The row
-// body keeps `touch-action: pan-y` (vertical scroll) and opens the menu via
-// Radix's native long-press; `-webkit-touch-callout`/`user-select` suppress the
-// browser's native long-press text behaviour. The grip is a sibling OUTSIDE the
-// ContextMenuTrigger so grabbing it never opens the menu. Desktop is untouched:
+// Touch gestures: the row carries NO grip -- one press serves
+// scroll, drag and menu, and movement is what tells them apart. The surrounding
+// `chat-list` runs the long-press pickup (a ~250ms still hold arms a drag; a
+// move before that is a scroll; a still hold long enough hands the press to this
+// row menu). The row body keeps `touch-action: pan-y` (so vertical scroll works
+// until the pickup commits) and `-webkit-touch-callout`/`user-select` suppress
+// the browser's native long-press text behaviour. Desktop is untouched:
 // right-click opens the menu, native HTML5 DnD drags the whole row.
 //
 // Title/description truncate; long content never grows the row. Self-contained,
@@ -121,25 +119,6 @@ export function ChatListItem({ id, title, description, avatarUrl, active = false
           <span className='sr-only'>Unsent draft</span>
         </span>
       ) : null}
-    </div>
-  )
-
-  // The grip is the touch drag source. It is `hidden` by default and shown only
-  // on coarse-pointer (touch) devices -- the `@media (pointer: coarse)` rule that
-  // flips it on is emitted once in `chat-list` (the container), not per row, so
-  // the densest surface is not handed one style element per chat. `touch-action:
-  // none` so the browser never scrolls when the grip is grabbed, and a sibling
-  // OUTSIDE the ContextMenu so a long-press on it cannot open the row menu. Drag
-  // is a pointer gesture (not keyboard reachable), so the handle is hidden from
-  // AT on purpose -- the action menu stays the keyboard path (see the docs).
-  const grip = (
-    <div
-      data-drag-handle
-      aria-hidden='true'
-      style={{ touchAction: 'none' }}
-      className='chat-list-item-grip hidden shrink-0 cursor-grab items-center justify-center self-stretch px-0.5 text-muted-foreground'
-    >
-      <GripVertical className='size-3.5' />
     </div>
   )
 
@@ -192,10 +171,5 @@ export function ChatListItem({ id, title, description, avatarUrl, active = false
     row
   )
 
-  return (
-    <div className='flex items-stretch'>
-      {grip}
-      <div className='min-w-0 flex-1'>{inner}</div>
-    </div>
-  )
+  return inner
 }
