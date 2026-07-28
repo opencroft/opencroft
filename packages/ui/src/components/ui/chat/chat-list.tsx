@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, type DragEvent, type PointerEvent } from 'react'
+import { useState, useRef, useEffect, type DragEvent, type TouchEvent as ReactTouchEvent } from 'react'
 import { ChevronDown, ChevronRight, Folder, FolderOpen, FolderPlus, Pencil, Trash2 } from 'lucide-react'
 
 import { ChatListItem, type ChatListItemAction, type ChatStatus } from '@/components/ui/chat/chat-list-item'
@@ -74,20 +74,29 @@ type Over =
   | { kind: 'folder'; folderId: string }
   | { kind: 'top-level' }
 
-// Movement past this (any direction) starts a touch pointer-drag from the row's
-// grip handle.
-const MOVE_TOLERANCE_PX = 8
+// Long-press pickup activation constraint (the dnd-kit pattern):
+// a press held still this long arms a drag; moving past the tolerance before it
+// fires is a scroll. The tolerance sits below the browser's touch-slop so a
+// still hold never accidentally scrolls, and the delay sits well under the row
+// menu's ~700ms long-press so a drag commits first.
+const PICKUP_DELAY_MS = 250
+const PICKUP_TOLERANCE_PX = 5
 
-// An in-flight touch press on a row. Held in a ref (no re-render) until it
-// either becomes a drag or is cancelled (movement stays sub-tolerance, the
-// finger lifts, or the row menu opens -- see `handleMenuOpen`).
-interface TouchPress {
+// An in-flight touch press on a row. Held in a ref (no re-render) until it drags,
+// scrolls, is released as a press (-> row menu), or is dropped when the row menu
+// opens (see `handleMenuOpen`). `move`/`end` are the non-passive window listeners
+// bound for this one press.
+interface Press {
   id: string
   list: string
-  pointerId: number
   startX: number
   startY: number
-  dragging: boolean
+  committed: boolean
+  aborted: boolean
+  moved: boolean
+  timer: ReturnType<typeof setTimeout> | null
+  move?: (e: TouchEvent) => void
+  end?: (e: TouchEvent) => void
 }
 
 function initState(nodes: ChatListNode[], defaultFolderOpen: boolean): ListState {
@@ -190,17 +199,21 @@ function applyDrop(s: ListState, drag: Drag, over: Over): ListState {
 // host passed its callback. Self-contained;
 // calls onChange on every structural change.
 //
-// Touch gesture arbitration: three gestures share the list, so
-// each owns a separate input and they never compete. Each row exposes a
-// **grip handle** (data-drag-handle, touch-action: none) -- hidden on desktop,
-// shown on touch via the `@media (pointer: coarse)` rule in the render below --
-// as the only touch drag source -- press the grip and move in ANY direction (vertical
-// included: moving a chat between folders is a vertical drag). The row menu
-// opens through Radix's native contextmenu on the row body (right-click on
-// desktop, long-press on touch -- ContextMenu has no controlled/imperative
-// open), and `handleMenuOpen` cancels an in-flight press if a menu ever opens
-// mid-press. Vertical panning on the row body scrolls the list (pan-y). Desktop
-// mouse drag (native HTML5 DnD on the whole row) and right-click are untouched.
+// Touch gesture arbitration (long-press pickup, no grip): the row
+// carries NO grip -- one press serves scroll, drag and menu, and movement tells
+// them apart (the dnd-kit `activationConstraint { delay, tolerance }` pattern).
+// Finger down starts a ~250ms timer; move past ~5px before it fires is a scroll
+// (handed to the browser); still within tolerance when it fires arms the row (a
+// brief lift), and any later movement drags it in ANY direction (vertical
+// included: filing a chat into a folder is a vertical drag). Once armed, dragging
+// has to take the gesture off the browser, and with no touch-action:none element
+// to start from that means a NON-PASSIVE touchmove listener (bound on the press)
+// calling preventDefault -- pointer events can't be cancelled, which is why the
+// earlier handle-less attempt failed. Released without moving, the press is left
+// to the row menu, which opens via Radix's own ~700ms long-press (movement
+// cancels it); our 250ms pickup sits comfortably below it, and `handleMenuOpen`
+// drops an armed pickup the moment the menu opens. Desktop mouse drag (native
+// HTML5 DnD on the whole row) and right-click are untouched.
 export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, onRename, onStopProcess, onClose, onDelete, onChange, onRenameFolder, onCreateFolder, onDeleteFolder, className }: ChatListProps) {
   const [state, setState] = useState<ListState>(() => initState(nodes, defaultFolderOpen))
   const [drag, setDrag] = useState<Drag | null>(null)
@@ -209,16 +222,34 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
   const [draft, setDraft] = useState('')
   // Live position of the pointer-dragged row, to render the lifted ghost.
   const [touchDrag, setTouchDrag] = useState<{ id: string; x: number; y: number } | null>(null)
+  // The row armed by a still long-press (picked up, not yet dragged): rendered
+  // with a lift style; cleared on drag, drop, release or menu-open.
+  const [liftedId, setLiftedId] = useState<string | null>(null)
   const idCounter = useRef(0)
-  const pressRef = useRef<TouchPress | null>(null)
+  const pressRef = useRef<Press | null>(null)
+  // Mirror of `state` for the async touch handlers (they fire off-render).
+  const stateRef = useRef(state)
+  stateRef.current = state
 
   const reset = () => {
     setDrag(null)
     setOver(null)
   }
 
-  const clearPress = () => {
+  // Tear down an in-flight touch press (timer + non-passive window listeners)
+  // and clear its visual state. Used when the row menu opens mid-press and on
+  // unmount.
+  const cancelPress = () => {
+    const p = pressRef.current
+    if (!p) return
+    if (p.timer) { clearTimeout(p.timer); p.timer = null }
+    if (p.move) window.removeEventListener('touchmove', p.move)
+    if (p.end) {
+      window.removeEventListener('touchend', p.end)
+      window.removeEventListener('touchcancel', p.end)
+    }
     pressRef.current = null
+    setLiftedId(null)
   }
 
   const commit = (next: ListState) => {
@@ -292,10 +323,10 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
     { label: 'Move to new folder', icon: <FolderPlus className='size-3' />, onSelect: moveToNewFolder },
   ]
 
-  // --- Touch gesture arbitration ---
+  // --- Touch gesture arbitration (long-press pickup, no grip) ---
 
   // The folder header under a screen point, if any (used to hit-test drop
-  // targets during a pointer drag).
+  // targets while a row is dragged).
   const folderAtPoint = (x: number, y: number): string | null => {
     if (typeof document === 'undefined') return null
     const el = document.elementFromPoint(x, y) as HTMLElement | null
@@ -303,71 +334,101 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
     return header?.dataset.folderId ?? null
   }
 
-  // The row menu just opened (Radix native contextmenu). Cancel the in-flight
-  // touch press so the long-press that opened the menu can't also start a drag;
-  // if a drag had already begun, abort it.
+  // The row menu opened (Radix native long-press, ~700ms -- comfortably above our
+  // 250ms pickup). A still press that reached the menu is a menu invocation, not
+  // a drag: drop the armed pickup so the lift snaps back. (Movement already
+  // canceled the menu before it could open, so a real drag never reaches here.)
   const handleMenuOpen = (open: boolean) => {
     if (!open) return
-    if (pressRef.current?.dragging) {
-      setTouchDrag(null)
-      reset()
-    }
-    clearPress()
+    cancelPress()
   }
 
-  const onTouchPointerMove = (e: PointerEvent<HTMLDivElement>) => {
-    const p = pressRef.current
-    if (!p || p.pointerId !== e.pointerId) return
-    const dx = Math.abs(e.clientX - p.startX)
-    const dy = Math.abs(e.clientY - p.startY)
-    if (!p.dragging) {
-      if (dx > MOVE_TOLERANCE_PX || dy > MOVE_TOLERANCE_PX) {
-        // The press began on the grip (touch-action: none), so the browser is
-        // not scrolling this touch -- any move past tolerance is a drag, vertical
-        // included (a between-folders move is a vertical drag, which an earlier version got wrong).
-        p.dragging = true
-        e.currentTarget.setPointerCapture(e.pointerId)
+  // One press serves scroll, drag and menu; movement tells them apart. On finger
+  // down we start a PICKUP_DELAY_MS timer and watch for movement. Move past the
+  // tolerance before it fires -> scroll (never preventDefault'd, the browser
+  // keeps it). Still within tolerance when it fires -> arm the row (lift). Any
+  // move after that drags it -- and dragging has to take the gesture off the
+  // browser, which (with no touch-action:none grip) means a NON-PASSIVE touchmove
+  // calling preventDefault; pointer events can't be cancelled, which is why the
+  // earlier handle-less attempt failed. Release without moving leaves the press
+  // to the row menu.
+  const startPress = (id: string, list: string, e: ReactTouchEvent<HTMLDivElement>) => {
+    if (pressRef.current) return
+    const t0 = e.touches[0]
+    const p: Press = { id, list, startX: t0.clientX, startY: t0.clientY, committed: false, aborted: false, moved: false, timer: null }
+    pressRef.current = p
+
+    const move = (ev: TouchEvent) => {
+      if (pressRef.current !== p) return
+      const t = ev.touches[0]
+      const dx = t.clientX - p.startX
+      const dy = t.clientY - p.startY
+      if (p.aborted) return
+      if (!p.committed) {
+        if (Math.abs(dx) > PICKUP_TOLERANCE_PX || Math.abs(dy) > PICKUP_TOLERANCE_PX) {
+          // Moved before the pickup delay -> a scroll. Hand the gesture back; we
+          // never preventDefault'd, so the browser scrolls.
+          p.aborted = true
+          if (p.timer) { clearTimeout(p.timer); p.timer = null }
+          setLiftedId(null)
+        }
+        return
+      }
+      // Armed: this movement drags the row. Cancel the browser's scroll.
+      ev.preventDefault()
+      if (!p.moved) {
+        p.moved = true
+        setLiftedId(null)
         setDrag({ kind: 'item', id: p.id, from: p.list })
-        setTouchDrag({ id: p.id, x: e.clientX, y: e.clientY })
-        const fid = folderAtPoint(e.clientX, e.clientY)
-        setOver(fid ? { kind: 'folder', folderId: fid } : null)
       }
-      return
+      setTouchDrag({ id: p.id, x: t.clientX, y: t.clientY })
+      const fid = folderAtPoint(t.clientX, t.clientY)
+      setOver(fid ? { kind: 'folder', folderId: fid } : null)
     }
-    // Already dragging: follow the finger and highlight the folder under it.
-    setTouchDrag({ id: p.id, x: e.clientX, y: e.clientY })
-    const fid = folderAtPoint(e.clientX, e.clientY)
-    setOver(fid ? { kind: 'folder', folderId: fid } : null)
+
+    const end = (ev: TouchEvent) => {
+      if (pressRef.current !== p) return
+      if (p.timer) { clearTimeout(p.timer); p.timer = null }
+      if (p.committed && p.moved) {
+        const t = ev.changedTouches[0]
+        const fid = folderAtPoint(t.clientX, t.clientY)
+        let target: Over | null = null
+        if (fid) target = { kind: 'folder', folderId: fid }
+        else if (p.list !== 'items') target = { kind: 'top-level' }
+        // else: dropped in empty space while already top-level -> no-op
+        if (target) {
+          const next = applyDrop(stateRef.current, { kind: 'item', id: p.id, from: p.list }, target)
+          if (next !== stateRef.current) commit(next)
+        }
+      }
+      // committed && !moved -> a press; leave it to the row menu. aborted -> scroll.
+      setTouchDrag(null)
+      setLiftedId(null)
+      setDrag(null)
+      setOver(null)
+      pressRef.current = null
+      window.removeEventListener('touchmove', move)
+      window.removeEventListener('touchend', end)
+      window.removeEventListener('touchcancel', end)
+    }
+
+    p.move = move
+    p.end = end
+
+    p.timer = setTimeout(() => {
+      if (pressRef.current !== p || p.aborted) return
+      // Held still within tolerance for the delay -> pick the row up.
+      p.committed = true
+      setLiftedId(p.id)
+    }, PICKUP_DELAY_MS)
+
+    window.addEventListener('touchmove', move, { passive: false })
+    window.addEventListener('touchend', end)
+    window.addEventListener('touchcancel', end)
   }
 
-  const onTouchPointerUp = (e: PointerEvent<HTMLDivElement>) => {
-    const p = pressRef.current
-    if (!p || p.pointerId !== e.pointerId) return
-    if (p.dragging) {
-      const fid = folderAtPoint(e.clientX, e.clientY)
-      let target: Over | null = null
-      if (fid) target = { kind: 'folder', folderId: fid }
-      else if (p.list !== 'items') target = { kind: 'top-level' }
-      // else: dropped in empty space while already top-level -> no-op
-      if (target) {
-        const next = applyDrop(state, { kind: 'item', id: p.id, from: p.list }, target)
-        if (next !== state) commit(next)
-      }
-      setTouchDrag(null)
-      reset()
-    }
-    clearPress()
-  }
-
-  const onTouchPointerCancel = (e: PointerEvent<HTMLDivElement>) => {
-    const p = pressRef.current
-    if (!p || p.pointerId !== e.pointerId) return
-    if (p.dragging) {
-      setTouchDrag(null)
-      reset()
-    }
-    clearPress()
-  }
+  // Drop any in-flight press if the list unmounts mid-gesture (no listener leak).
+  useEffect(() => () => { cancelPress() }, [])
 
   const renderItem = (id: string, list: string, index: number) => {
     const leaf = state.items[id]
@@ -380,19 +441,10 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
           <div className='absolute -top-0.5 left-1 right-1 z-10 h-0.5 rounded-full bg-primary' />
         ) : null}
         <div
+          data-row-id={id}
+          data-row-list={list}
           draggable
-          onPointerDown={(e) => {
-            // Touch-only: a drag begins only from the row's grip handle
-            // (data-drag-handle). Mouse falls through to native HTML5 DnD, and a
-            // touch on the row body is left to scroll (pan-y) or open the menu
-            // (long-press) -- so drag, scroll and menu each own a separate input.
-            if (e.pointerType !== 'touch') return
-            if (!(e.target as HTMLElement).closest('[data-drag-handle]')) return
-            pressRef.current = { id, list, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, dragging: false }
-          }}
-          onPointerMove={onTouchPointerMove}
-          onPointerUp={onTouchPointerUp}
-          onPointerCancel={onTouchPointerCancel}
+          onTouchStart={(e) => startPress(id, list, e)}
           onDragStart={(e) => {
             setDrag({ kind: 'item', id, from: list })
             e.dataTransfer.effectAllowed = 'move'
@@ -408,7 +460,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
             setOver({ kind: 'item-slot', list, index, pos: e.clientY < r.top + r.height / 2 ? 'before' : 'after' })
           }}
           onDrop={performDrop}
-          className={cn(isDragged && 'opacity-40')}
+          className={cn(isDragged && 'opacity-40', liftedId === id && 'rounded-md bg-muted ring-2 ring-primary')}
         >
           <ChatListItem
             id={leaf.id}
@@ -436,10 +488,6 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
 
   return (
     <div className={cn('relative flex w-full min-w-0 flex-col gap-0.5', className)} onDragEnd={reset}>
-      {/* Each row's touch-drag grip is `hidden` by default (chat-list-item); show
-          it only on coarse-pointer (touch) devices. Emitted once here, not per
-          row, so the densest surface gets one style element, not one per chat. */}
-      <style>{'@media (pointer: coarse) { .chat-list-item-grip { display: inline-flex; } }'}</style>
       {state.folderOrder.map((fid, i) => {
         const f = state.folders[fid]
         const isDraggedFolder = drag?.kind === 'folder' && drag.id === fid
@@ -580,7 +628,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
         </div>
       ) : null}
 
-      {/* Lifted ghost following the finger during a touch pointer-drag. */}
+      {/* Lifted ghost following the finger during a touch drag. */}
       {touchDrag ? (() => {
         const leaf = state.items[touchDrag.id]
         if (!leaf) return null
