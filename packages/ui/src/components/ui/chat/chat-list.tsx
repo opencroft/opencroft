@@ -4,6 +4,12 @@ import { useState, useRef, type DragEvent, type PointerEvent } from 'react'
 import { ChevronDown, ChevronRight, Folder, FolderOpen, FolderPlus, Pencil, Trash2 } from 'lucide-react'
 
 import { ChatListItem, type ChatListItemAction, type ChatStatus } from '@/components/ui/chat/chat-list-item'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 import { cn } from '@/lib/utils'
 
 export interface ChatListLeaf {
@@ -68,7 +74,8 @@ type Over =
   | { kind: 'folder'; folderId: string }
   | { kind: 'top-level' }
 
-// Horizontal movement past this starts a touch pointer-drag.
+// Movement past this (any direction) starts a touch pointer-drag from the row's
+// grip handle.
 const MOVE_TOLERANCE_PX = 8
 
 // An in-flight touch press on a row. Held in a ref (no re-render) until it
@@ -177,18 +184,23 @@ function applyDrop(s: ListState, drag: Drag, over: Over): ListState {
 // Items drag freely: between folders, into a folder (drop on its header), out to
 // the top level (drop on the 'Move to top level' zone), or before/after another
 // item. Folders reorder among themselves. File an item into a brand-new folder
-// via **Move to new folder** in its row menu. Folder headers have always-visible
-// rename + delete (delete returns the chats to the loose list). Self-contained;
+// via **Move to new folder** in its row menu. Folder headers carry no
+// always-visible buttons: rename + delete are reached through the same context
+// menu the chat rows use (right-click / long-press), each entry only when the
+// host passed its callback. Self-contained;
 // calls onChange on every structural change.
 //
-// Touch gesture arbitration: the row menu opens through Radix's
-// native contextmenu (right-click on desktop, the browser's long-press on
-// touch -- ContextMenu has no controlled/imperative open). A per-row pointer
-// controller (touch only) starts a pointer-based drag on horizontal movement;
-// when a row's menu opens, `handleMenuOpen` cancels the in-flight press so the
-// long-press that opened the menu can't also start a drag. Vertical movement is
-// left to the browser (pan-y scroll). Desktop mouse drag (native HTML5 DnD) and
-// right-click are untouched.
+// Touch gesture arbitration: three gestures share the list, so
+// each owns a separate input and they never compete. Each row exposes a
+// **grip handle** (data-drag-handle, touch-action: none) -- hidden on desktop,
+// shown on touch via the `@media (pointer: coarse)` rule in the render below --
+// as the only touch drag source -- press the grip and move in ANY direction (vertical
+// included: moving a chat between folders is a vertical drag). The row menu
+// opens through Radix's native contextmenu on the row body (right-click on
+// desktop, long-press on touch -- ContextMenu has no controlled/imperative
+// open), and `handleMenuOpen` cancels an in-flight press if a menu ever opens
+// mid-press. Vertical panning on the row body scrolls the list (pan-y). Desktop
+// mouse drag (native HTML5 DnD on the whole row) and right-click are untouched.
 export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, onRename, onStopProcess, onClose, onDelete, onChange, onRenameFolder, onCreateFolder, onDeleteFolder, className }: ChatListProps) {
   const [state, setState] = useState<ListState>(() => initState(nodes, defaultFolderOpen))
   const [drag, setDrag] = useState<Drag | null>(null)
@@ -309,8 +321,10 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
     const dx = Math.abs(e.clientX - p.startX)
     const dy = Math.abs(e.clientY - p.startY)
     if (!p.dragging) {
-      if (dx > MOVE_TOLERANCE_PX && dx > dy) {
-        // Horizontal move wins -> start a pointer drag.
+      if (dx > MOVE_TOLERANCE_PX || dy > MOVE_TOLERANCE_PX) {
+        // The press began on the grip (touch-action: none), so the browser is
+        // not scrolling this touch -- any move past tolerance is a drag, vertical
+        // included (a between-folders move is a vertical drag, the case that broke before).
         p.dragging = true
         e.currentTarget.setPointerCapture(e.pointerId)
         setDrag({ kind: 'item', id: p.id, from: p.list })
@@ -368,8 +382,12 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
         <div
           draggable
           onPointerDown={(e) => {
-            // Touch-only gesture arbitration; mouse falls through to native DnD.
+            // Touch-only: a drag begins only from the row's grip handle
+            // (data-drag-handle). Mouse falls through to native HTML5 DnD, and a
+            // touch on the row body is left to scroll (pan-y) or open the menu
+            // (long-press) -- so drag, scroll and menu each own a separate input.
             if (e.pointerType !== 'touch') return
+            if (!(e.target as HTMLElement).closest('[data-drag-handle]')) return
             pressRef.current = { id, list, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, dragging: false }
           }}
           onPointerMove={onTouchPointerMove}
@@ -418,11 +436,76 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
 
   return (
     <div className={cn('relative flex w-full min-w-0 flex-col gap-0.5', className)} onDragEnd={reset}>
+      {/* Each row's touch-drag grip is `hidden` by default (chat-list-item); show
+          it only on coarse-pointer (touch) devices. Emitted once here, not per
+          row, so the densest surface gets one style element, not one per chat. */}
+      <style>{'@media (pointer: coarse) { .chat-list-item-grip { display: inline-flex; } }'}</style>
       {state.folderOrder.map((fid, i) => {
         const f = state.folders[fid]
         const isDraggedFolder = drag?.kind === 'folder' && drag.id === fid
         const folderSlotOver = over?.kind === 'item-slot' && over.list === 'folders' && over.index === i ? over : null
         const intoThis = over?.kind === 'folder' && over.folderId === fid
+        // The folder header label is the context-menu trigger (right-click on
+        // desktop, long-press on touch -- the same mechanism the chat rows use)
+        // when the host passed any folder action. No always-visible buttons on
+        // the header; each entry shows only for the callback it needs. Rename
+        // keeps its inline editing; delete returns the chats to the loose list.
+        // The draggable header div around it stays the native HTML5 DnD source
+        // and drop target for folder reorder / file-item-into-folder, so the
+        // menu and drag never compete (right-click can't start a drag, and
+        // folders don't drag on touch -- a menu opening starts nothing).
+        const toggle = (
+          <button
+            type='button'
+            onClick={() => setState((s) => ({ ...s, folders: { ...s.folders, [fid]: { ...s.folders[fid], open: !s.folders[fid].open } } }))}
+            className='inline-flex min-w-0 flex-1 items-center gap-1 rounded-md px-1 py-1 outline-none'
+          >
+            {f.open ? <ChevronDown className='size-3.5 shrink-0' /> : <ChevronRight className='size-3.5 shrink-0' />}
+            {f.open ? <FolderOpen className='size-3.5 shrink-0' /> : <Folder className='size-3.5 shrink-0' />}
+            <span className='truncate'>{f.name}</span>
+          </button>
+        )
+        const headerLabel = editing === fid ? (
+          <input
+            autoFocus
+            onFocus={(e) => e.currentTarget.select()}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                commitRename(fid)
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                setEditing(null)
+              }
+            }}
+            onBlur={() => commitRename(fid)}
+            className='min-w-0 flex-1 rounded-sm bg-background px-1 py-0.5 text-foreground outline-none ring-1 ring-ring'
+          />
+        ) : onRenameFolder || onDeleteFolder ? (
+          <ContextMenu>
+            <ContextMenuTrigger asChild>{toggle}</ContextMenuTrigger>
+            <ContextMenuContent className='min-w-[8rem]' onClick={(e) => e.stopPropagation()}>
+              {onRenameFolder ? (
+                <ContextMenuItem onClick={() => startRename(fid, f.name)}>
+                  <Pencil className='size-3' />
+                  Rename
+                </ContextMenuItem>
+              ) : null}
+              {onDeleteFolder ? (
+                <ContextMenuItem className='text-destructive focus:text-destructive' onClick={() => deleteFolder(fid)}>
+                  <Trash2 className='size-3' />
+                  Delete
+                </ContextMenuItem>
+              ) : null}
+            </ContextMenuContent>
+          </ContextMenu>
+        ) : (
+          toggle
+        )
         return (
           <div key={fid} className='relative'>
             {folderSlotOver && folderSlotOver.pos === 'before' ? (
@@ -457,68 +540,12 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
               }}
               onDrop={performDrop}
               className={cn(
-                'flex cursor-grab items-center gap-1 rounded-md px-1 py-1 text-xs font-medium text-muted-foreground hover:bg-muted',
+                'flex cursor-grab items-center gap-1 rounded-md text-xs font-medium text-muted-foreground hover:bg-muted',
                 isDraggedFolder && 'opacity-40',
                 intoThis && 'ring-2 ring-primary bg-primary/10',
               )}
             >
-              {editing === fid ? (
-                <input
-                  autoFocus
-                  onFocus={(e) => e.currentTarget.select()}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      commitRename(fid)
-                    } else if (e.key === 'Escape') {
-                      e.preventDefault()
-                      setEditing(null)
-                    }
-                  }}
-                  onBlur={() => commitRename(fid)}
-                  className='min-w-0 flex-1 rounded-sm bg-background px-1 py-0.5 text-foreground outline-none ring-1 ring-ring'
-                />
-              ) : (
-                <button
-                  type='button'
-                  onClick={() => setState((s) => ({ ...s, folders: { ...s.folders, [fid]: { ...s.folders[fid], open: !s.folders[fid].open } } }))}
-                  className='inline-flex min-w-0 flex-1 items-center gap-1 outline-none'
-                >
-                  {f.open ? <ChevronDown className='size-3.5 shrink-0' /> : <ChevronRight className='size-3.5 shrink-0' />}
-                  {f.open ? <FolderOpen className='size-3.5 shrink-0' /> : <Folder className='size-3.5 shrink-0' />}
-                  <span className='truncate'>{f.name}</span>
-                </button>
-              )}
-              {editing !== fid ? (
-                <>
-                  <button
-                    type='button'
-                    aria-label='Rename folder'
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      startRename(fid, f.name)
-                    }}
-                    className='inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-background hover:text-foreground'
-                  >
-                    <Pencil className='size-3' />
-                  </button>
-                  <button
-                    type='button'
-                    aria-label='Delete folder'
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      deleteFolder(fid)
-                    }}
-                    className='inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-background hover:text-destructive'
-                  >
-                    <Trash2 className='size-3' />
-                  </button>
-                </>
-              ) : null}
+              {headerLabel}
             </div>
             {f.open ? (
               <div className='flex flex-col gap-0.5 py-0.5 pl-3'>
