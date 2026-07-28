@@ -728,7 +728,22 @@ function UserMessage({
                 className='absolute inset-0 -z-1 rounded-md pointer-events-none shadow-lg shadow-black/50 opacity-0 transition-opacity duration-150 motion-reduce:transition-none [@container_scroll-state(stuck:top)]:opacity-100'
               />
             )}
-            <div className='prose-chat'>
+            {/* Three lines, then cut. A question otherwise renders at its full
+                height, and because this header holds the top of the viewport
+                while its own replies scroll underneath, a tall one covers the
+                answer it belongs to — the longer the question, the less of the
+                reply is left visible.
+
+                The clamp sits on the text, not on the wrapper, because it
+                bounds the message itself rather than only its stuck state. It
+                shortens the boxes around it and disturbs them no further: the
+                backing still spans the wrapper's own box, the shadow still
+                matches the bubble by being its child, and the rail still aligns
+                the columns. Nothing here animates, so the scroller is untouched.
+
+                Only the painted lines are cut — the text stays in the DOM, so it
+                is still selectable and still read in full by assistive tech. */}
+            <div className='prose-chat line-clamp-3'>
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
             </div>
           </Flex>
