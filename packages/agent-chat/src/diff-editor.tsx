@@ -26,7 +26,13 @@ export interface DiffEditorProps {
 // MutationObserver, rather than depending on a theming library — this stays
 // usable by any host regardless of how it wires up theme switching.
 function useIsDarkMode(): boolean {
-  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'))
+  // Guarded because this initializer runs during render, which on a
+  // server-rendered host means it runs where there is no `document` — and the
+  // failure is the whole route dying, not a diff without its colours. Starting
+  // light and correcting in the effect below costs one client-side update.
+  const [dark, setDark] = useState(
+    () => typeof document !== 'undefined' && document.documentElement.classList.contains('dark'),
+  )
   useEffect(() => {
     const root = document.documentElement
     const observer = new MutationObserver(() => setDark(root.classList.contains('dark')))
