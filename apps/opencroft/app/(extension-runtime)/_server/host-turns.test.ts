@@ -204,6 +204,39 @@ test('a chunked prompt is reported as one turn carrying the joined question', ()
   assert.equal(summary.status, 'unknown')
 })
 
+// Snapshot events carry session state and can land anywhere, including between
+// two chunks of one message. They must not decide where a turn begins, or an
+// unrelated config update splits a message in half.
+test('a snapshot between two chunks does not split the message into two turns', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'what ' },
+    { kind: 'config_options', options: [] },
+    // `mode_changed` is session state too — it carries `current` and nothing
+    // about the conversation, so it must not break the run either.
+    { kind: 'mode_changed', current: 'plan' },
+    { kind: 'user', text: 'changed?' },
+    { kind: 'agent_message', text: 'the schema moved' },
+    { kind: 'turn_end', stopReason: 'replayed' },
+  ]
+  const groups = splitIntoTurns(events, 0)
+  assert.equal(groups.length, 1)
+  const summary = buildTurnSummary(groups[0].index, groups[0].events, false)
+  // The snapshot neither ends the run nor contributes text to it.
+  assert.equal(summary.prompt, 'what changed?')
+  assert.equal(summary.status, 'unknown')
+})
+
+test('a snapshot before the first message does not open a turn of its own', () => {
+  const events: ChatEvent[] = [
+    { kind: 'session_info', title: 'a chat' },
+    { kind: 'user', text: 'q' },
+    { kind: 'agent_message', text: 'a' },
+  ]
+  const groups = splitIntoTurns(events, 0)
+  assert.equal(groups.length, 1)
+  assert.equal(groups[0].index, 1)
+})
+
 test('a run of user chunks that opens the window still starts a turn', () => {
   // A window can cut mid-run, and a cut cannot tell a continuation from a
   // beginning — so the first event opens a turn rather than being dropped.

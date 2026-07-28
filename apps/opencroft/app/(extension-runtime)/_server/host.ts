@@ -17,7 +17,7 @@ import {
   terminalRunResult,
 } from '@opencroft/terminal/server'
 
-import { foldEvents } from 'agent-client/fold'
+import { foldEvents, isSnapshotEvent } from 'agent-client/fold'
 import type { ChatEvent } from 'agent-client/types'
 
 import { agentClient } from '@/app/(agent)/_server/agent-client-instance'
@@ -454,6 +454,11 @@ export function turnStatus(events: ChatEvent[], inProgress: boolean): TurnSummar
 function openingPrompt(events: ChatEvent[]): string {
   let text = ''
   for (const event of events) {
+    // Snapshots are not part of the message and can interleave with its chunks,
+    // so they neither contribute text nor end the run.
+    if (isSnapshotEvent(event)) {
+      continue
+    }
     if (event.kind !== 'user') {
       break
     }
@@ -495,7 +500,19 @@ export function buildTurnSummary(index: number, events: ChatEvent[], inProgress:
 // them (nothing to attach them to) rather than assume the invariant holds.
 export function splitIntoTurns(events: ChatEvent[], startIndex: number): { index: number; events: ChatEvent[] }[] {
   const groups: { index: number; events: ChatEvent[] }[] = []
+  // The kind of the last event that was part of the conversation. Snapshots
+  // carry session state and can land anywhere, including between two chunks of
+  // one message, so they belong to whichever turn is open but must not decide
+  // where a turn begins — tracked separately rather than read off the previous
+  // index for exactly that reason.
+  let previousKind: ChatEvent['kind'] | undefined
   events.forEach((event, offset) => {
+    if (isSnapshotEvent(event)) {
+      if (groups.length > 0) {
+        groups[groups.length - 1].events.push(event)
+      }
+      return
+    }
     if (event.kind === 'user') {
       // A prompt arrives as a RUN of 'user' events — one per content delta, the
       // same way a reply does — so only the FIRST of a run opens a turn. Opening
@@ -503,16 +520,15 @@ export function splitIntoTurns(events: ChatEvent[], startIndex: number): { index
       // ones holding a fragment and no terminal event, which then read as cut
       // off. A run that starts the window has no predecessor to check and opens
       // a turn: a window cut cannot tell a continuation from a beginning.
-      if (events[offset - 1]?.kind === 'user' && groups.length > 0) {
+      if (previousKind === 'user' && groups.length > 0) {
         groups[groups.length - 1].events.push(event)
-        return
+      } else {
+        groups.push({ index: startIndex + offset, events: [event] })
       }
-      groups.push({ index: startIndex + offset, events: [event] })
-      return
-    }
-    if (groups.length > 0) {
+    } else if (groups.length > 0) {
       groups[groups.length - 1].events.push(event)
     }
+    previousKind = event.kind
   })
   return groups
 }

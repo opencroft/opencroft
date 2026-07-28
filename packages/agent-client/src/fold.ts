@@ -44,6 +44,46 @@ const TERMINAL_TOOL_STATUSES = new Set(['completed', 'failed'])
 export function isTerminalToolStatus(status: string | undefined): boolean {
   return status !== undefined && TERMINAL_TOOL_STATUSES.has(status)
 }
+
+// Events carrying "last value wins" session state rather than a step in the
+// conversation. They can arrive at any moment — including between two chunks of
+// one message — so anything that reads "the previous event" to decide where a
+// message begins or ends has to skip them, or an unrelated update splits a
+// message in half. Defined here, beside the other shared classification of
+// event kinds, so the emit and read sides cannot drift on what is conversation.
+//
+// The test for a new kind is: **is this a step in the conversation, or state
+// that merely happens to arrive during one?** State goes in the set.
+//
+// It is NOT the same question as withSnapshotPrefix's, and the two lists are
+// deliberately different. That one asks which snapshots must be REBUILT for a
+// subscriber who joined mid-transcript, so it omits `mode_changed` — `modes`
+// already carries `current`, leaving nothing to synthesise. `mode_changed` is
+// still session state and still interleaves, so it belongs here. Deriving this
+// set from that one is what once left it out.
+const SNAPSHOT_KINDS = new Set<ChatEvent['kind']>([
+  'modes',
+  'mode_changed',
+  'config_options',
+  'session_info',
+  'usage',
+  'queue',
+])
+
+export function isSnapshotEvent(event: ChatEvent): boolean {
+  return SNAPSHOT_KINDS.has(event.kind)
+}
+
+// The most recent event that is part of the conversation, snapshots ignored.
+export function lastConversationEvent(events: ChatEvent[]): ChatEvent | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]
+    if (!isSnapshotEvent(event)) {
+      return event
+    }
+  }
+  return undefined
+}
 type PermissionMessage = Extract<ChatMessage, { kind: 'permission' }>
 type AskMessage = Extract<ChatMessage, { kind: 'ask' }>
 
