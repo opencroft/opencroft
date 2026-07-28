@@ -17,6 +17,7 @@ import {
   terminalRunResult,
 } from '@opencroft/terminal/server'
 
+import { foldEvents } from 'agent-client/fold'
 import type { ChatEvent } from 'agent-client/types'
 
 import { agentClient } from '@/app/(agent)/_server/agent-client-instance'
@@ -441,13 +442,13 @@ export function buildTurnSummary(index: number, events: ChatEvent[], inProgress:
   const status = turnStatus(events, inProgress)
   const summary: TurnSummary = { index, prompt: prompt.text, promptLength: prompt.length, status }
   if (status === 'finished') {
-    let lastMessage: string | undefined
-    for (const event of events) {
-      if (event.kind === 'agent_message') {
-        lastMessage = event.text
-      }
-    }
-    const final = truncateText(lastMessage ?? '')
+    // `agent_message` is a streaming chunk, not a whole message: one is emitted
+    // per content delta, so a reply arrives as a run of them. Fold the events
+    // back into messages — the same concatenation the chat view renders from —
+    // and take the last assistant message. Reading the last event on its own
+    // would report only that message's trailing fragment.
+    const assistantMessages = foldEvents(events).filter((message) => message.kind === 'assistant')
+    const final = truncateText(assistantMessages.at(-1)?.text ?? '')
     summary.finalMessage = final.text
     summary.finalMessageLength = final.length
   }
