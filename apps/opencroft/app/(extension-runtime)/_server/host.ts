@@ -447,9 +447,23 @@ export function turnStatus(events: ChatEvent[], inProgress: boolean): TurnSummar
   return end.stopReason === 'cancelled' || end.stopReason === 'resumed' ? 'interrupted' : 'finished'
 }
 
+// The prompt that opened a turn, joined back together. A message is a run of
+// 'user' events (one per content delta), and splitIntoTurns puts that whole run
+// at the head of the group — so the prompt is the leading run, not its first
+// event. Reading one event would report a fragment as the whole question.
+function openingPrompt(events: ChatEvent[]): string {
+  let text = ''
+  for (const event of events) {
+    if (event.kind !== 'user') {
+      break
+    }
+    text += event.text
+  }
+  return text
+}
+
 export function buildTurnSummary(index: number, events: ChatEvent[], inProgress: boolean): TurnSummary {
-  const userEvent = events.find((e) => e.kind === 'user')
-  const prompt = truncateText(userEvent && userEvent.kind === 'user' ? userEvent.text : '')
+  const prompt = truncateText(openingPrompt(events))
   const status = turnStatus(events, inProgress)
   const summary: TurnSummary = { index, prompt: prompt.text, promptLength: prompt.length, status }
   // 'unknown' carries its final message too: a replayed turn's reply was
@@ -483,8 +497,20 @@ export function splitIntoTurns(events: ChatEvent[], startIndex: number): { index
   const groups: { index: number; events: ChatEvent[] }[] = []
   events.forEach((event, offset) => {
     if (event.kind === 'user') {
+      // A prompt arrives as a RUN of 'user' events — one per content delta, the
+      // same way a reply does — so only the FIRST of a run opens a turn. Opening
+      // one per event splits a chunked message into several turns, the leading
+      // ones holding a fragment and no terminal event, which then read as cut
+      // off. A run that starts the window has no predecessor to check and opens
+      // a turn: a window cut cannot tell a continuation from a beginning.
+      if (events[offset - 1]?.kind === 'user' && groups.length > 0) {
+        groups[groups.length - 1].events.push(event)
+        return
+      }
       groups.push({ index: startIndex + offset, events: [event] })
-    } else if (groups.length > 0) {
+      return
+    }
+    if (groups.length > 0) {
       groups[groups.length - 1].events.push(event)
     }
   })

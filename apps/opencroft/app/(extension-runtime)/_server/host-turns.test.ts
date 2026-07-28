@@ -169,6 +169,49 @@ test('splitIntoTurns groups events at each user boundary and tags absolute indic
   assert.equal(groups[1].events.length, 2)
 })
 
+// A prompt arrives as a run of 'user' events, one per content delta. Opening a
+// turn per event split a chunked message into several, the leading ones holding
+// a fragment and no terminal event — so they reported as interrupted.
+test('splitIntoTurns keeps a message split across chunks as one turn', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'first ' },
+    { kind: 'user', text: 'question' },
+    { kind: 'agent_message', text: 'reply A' },
+    { kind: 'turn_end', stopReason: 'replayed' },
+    { kind: 'user', text: 'second question' },
+    { kind: 'agent_message', text: 'reply B' },
+    { kind: 'turn_end', stopReason: 'resumed' },
+  ]
+  const groups = splitIntoTurns(events, 0)
+  assert.equal(groups.length, 2)
+  // The turn is indexed at the chunk that opened it, not at the last one.
+  assert.equal(groups[0].index, 0)
+  assert.equal(groups[0].events.length, 4)
+  assert.equal(groups[1].index, 4)
+})
+
+test('a chunked prompt is reported as one turn carrying the joined question', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'what ' },
+    { kind: 'user', text: 'changed?' },
+    { kind: 'agent_message', text: 'the schema moved' },
+    { kind: 'turn_end', stopReason: 'replayed' },
+  ]
+  const [group] = splitIntoTurns(events, 0)
+  const summary = buildTurnSummary(group.index, group.events, false)
+  assert.equal(summary.prompt, 'what changed?')
+  assert.equal(summary.promptLength, 'what changed?'.length)
+  assert.equal(summary.status, 'unknown')
+})
+
+test('a run of user chunks that opens the window still starts a turn', () => {
+  // A window can cut mid-run, and a cut cannot tell a continuation from a
+  // beginning — so the first event opens a turn rather than being dropped.
+  const groups = splitIntoTurns([{ kind: 'user', text: 'tail of a question' }], 7)
+  assert.equal(groups.length, 1)
+  assert.equal(groups[0].index, 7)
+})
+
 test('splitIntoTurns on an empty window returns no groups', () => {
   assert.deepEqual(splitIntoTurns([], 5), [])
 })

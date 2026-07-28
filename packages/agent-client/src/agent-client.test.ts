@@ -257,7 +257,9 @@ test('loadSession seeds configOptions from the response when nothing was replaye
 // every replayed turn but the last used to contain no terminal event and read
 // as cut off. loadSession now reconstructs a boundary at the start of each
 // replayed message after the first.
-test('a replay reconstructs a turn boundary between replayed turns, and one message split across chunks stays one turn', async () => {
+// Boundaries only — whether those boundaries become the right TURNS is decided
+// by splitIntoTurns on the read side, and is asserted in host-turns.test.ts.
+test('a replay emits one reconstructed boundary per replayed message, not per chunk', async () => {
   counter += 1
   const selection: AgentSelection = {
     providerId: 'test-provider',
@@ -294,8 +296,8 @@ test('a replay reconstructs a turn boundary between replayed turns, and one mess
   const events: ChatEvent[] = []
   client.subscribe(sessionId, (event) => events.push(event))
 
-  // Two turns, not three: the first message's two chunks are one message, so no
-  // boundary is opened between them.
+  // Three user events for two messages — the first arrived as two chunks — and
+  // no boundary was opened between those two.
   assert.equal(events.filter((event) => event.kind === 'user').length, 3)
   assert.deepEqual(
     events
