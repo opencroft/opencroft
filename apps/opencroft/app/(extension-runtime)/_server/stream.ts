@@ -381,9 +381,12 @@ export async function deliverToSendMessageNode(
 
   // Not `front`: activeTurns is still >0 the instant this call is made (the
   // cancel above hasn't resolved yet), so this lands at the END of whatever's
-  // already queued — queued messages first, then this one — and the existing
-  // drain (unchanged) delivers all of it once the cancelled turn settles.
-  await promptLocal({ data: { sessionId, text: message } })
+  // already queued — queued messages first, then this one, which is the order a
+  // force wants. `flush` is what then delivers them together as one turn once
+  // the cancelled turn settles, instead of one per turn: a force is a push, and
+  // draining one at a time would have the agent act on each stale message
+  // before it ever reached this one.
+  await promptLocal({ data: { sessionId, text: message, flush: route.force } })
   return { sessionKey: route.sessionKey, created, forced }
 }
 

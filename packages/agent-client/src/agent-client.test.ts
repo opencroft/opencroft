@@ -638,6 +638,68 @@ test('cancelling the active turn does not disrupt the queue; the queued message 
   assert.deepEqual(queueSnapshots(h.events).at(-1), [])
 })
 
+// A force is a push: everything still held reaches the agent together, so it
+// can read the whole picture before acting. Draining one per turn would have it
+// act on each stale message first and only then reach the newest one.
+test('a flushing prompt delivers the whole queue and itself as ONE turn, in order, itself last', async () => {
+  const h = await setup()
+  await h.client.prompt(h.sessionId, 'first')
+  await h.client.prompt(h.sessionId, 'second')
+  await h.client.prompt(h.sessionId, 'third')
+  await h.client.prompt(h.sessionId, 'forced', { flush: true })
+  // Still held: the interrupted turn has not settled yet.
+  assert.deepEqual(h.promptCalls, ['first'])
+  assert.deepEqual(queueSnapshots(h.events).at(-1), ['second', 'third', 'forced'])
+
+  h.endTurn()
+  await settle()
+
+  // One delivery carrying all three, in the order sent, the forced one last —
+  // and each still individually readable.
+  assert.equal(h.promptCalls.length, 2)
+  assert.equal(h.promptCalls[1], '[message 1 of 3]\nsecond\n\n[message 2 of 3]\nthird\n\n[message 3 of 3]\nforced')
+  // Nothing left displayed as Queued.
+  assert.deepEqual(queueSnapshots(h.events).at(-1), [])
+  // One turn, not three: a single user event for the flushed delivery.
+  assert.deepEqual(
+    kinds(h.events).filter((kind) => kind === 'user'),
+    ['user', 'user'],
+  )
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a flushing prompt with nothing held reads exactly like an ordinary send', async () => {
+  const h = await setup()
+  await h.client.prompt(h.sessionId, 'first')
+  await h.client.prompt(h.sessionId, 'forced', { flush: true })
+  h.endTurn()
+  await settle()
+  // No framing to explain when there is only one message.
+  assert.deepEqual(h.promptCalls, ['first', 'forced'])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a flush does not change how later ordinary sends drain', async () => {
+  const h = await setup()
+  await h.client.prompt(h.sessionId, 'first')
+  await h.client.prompt(h.sessionId, 'second')
+  await h.client.prompt(h.sessionId, 'forced', { flush: true })
+  h.endTurn()
+  await settle()
+  assert.equal(h.promptCalls.length, 2)
+
+  // The flag is spent, so the queue goes back to one message per turn.
+  await h.client.prompt(h.sessionId, 'later-a')
+  await h.client.prompt(h.sessionId, 'later-b')
+  h.endTurn()
+  await settle()
+  assert.equal(h.promptCalls.at(-1), 'later-a')
+  h.endTurn()
+  await settle()
+  assert.equal(h.promptCalls.at(-1), 'later-b')
+  await h.client.deleteSession(h.sessionId)
+})
+
 // ── windowed history: getEventsWindow / subscribe's fromIndex ─────────────
 //
 // Replays turns as `session/load` would (user_message_chunk + agent_message_chunk

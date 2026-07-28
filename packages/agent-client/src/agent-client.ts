@@ -119,6 +119,12 @@ interface SessionState {
   // Prompts received while a turn was active, delivered FIFO as turns end.
   // Every change is published as a 'queue' snapshot event.
   queue: QueuedPrompt[]
+  // Set by a flushing prompt (see prompt's `flush`) while a turn is still
+  // running. The next drain then hands the WHOLE queue over as one delivery
+  // instead of one entry, and clears this. Held as state rather than passed to
+  // the drain because the two are separated in time: the flush is requested
+  // while the turn it interrupts is still settling.
+  flushQueue?: boolean
   // Last usage_update seen, mirrored here (like modes/configOptions/queue) so
   // a windowed subscribe/getEventsWindow can synthesize it without scanning
   // history — see the SNAPSHOT_KINDS handling below.
@@ -811,6 +817,21 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     emit(sessionId, { kind: 'queue', items: [...queue] })
   }
 
+  // Frame several held messages into the single prompt a flush delivers. They
+  // have to stay individually readable: a flush exists so the agent can see
+  // everything still pending BEFORE it acts, which fails if the messages run
+  // together into one instruction. Numbering makes their order explicit, so a
+  // later message can correct an earlier one and be understood as doing that.
+  //
+  // One message is returned untouched — a flush against an empty queue must
+  // read exactly like an ordinary send, with no framing to explain.
+  function joinPrompts(texts: string[]): string {
+    if (texts.length < 2) {
+      return texts[0] ?? ''
+    }
+    return texts.map((text, i) => `[message ${i + 1} of ${texts.length}]\n${text}`).join('\n\n')
+  }
+
   // Hand one prompt to the agent. The in-flight counter is incremented
   // synchronously (before any await), so a concurrent prompt() arriving in the
   // same tick sees the active turn and queues (or steers) instead of racing
@@ -872,6 +893,26 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     }
     if (outcome.stopReason !== undefined) {
       emit(sessionId, { kind: 'turn_end', stopReason: outcome.stopReason })
+    }
+    // A flush requested mid-turn (see prompt's `flush`) drains EVERYTHING as
+    // one delivery rather than one entry per turn. This is the point where it
+    // can happen without racing the turn it interrupted: that turn has just
+    // settled, so nothing is in flight. Draining one-per-turn here would defeat
+    // the flush — the agent would act on each stale message before reaching the
+    // newest one, which is the whole reason a flush was asked for.
+    if (session.flushQueue) {
+      session.flushQueue = false
+      const pending = session.queue ?? []
+      if (pending.length === 0) {
+        return
+      }
+      const text = joinPrompts(pending.map((item) => item.text))
+      session.queue = []
+      emitQueue(sessionId, session.queue)
+      void deliverPrompt(sessionId, text).catch((error: unknown) =>
+        emit(sessionId, { kind: 'error', message: errorMessage(error) }),
+      )
+      return
     }
     const next = session.queue?.shift()
     if (!next) {
@@ -1314,7 +1355,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return meta
     },
 
-    async prompt(sessionId: string, text: string, opts?: { front?: boolean }): Promise<void> {
+    // `flush` turns this into a push: everything already held for the session
+    // is delivered together with this message, in the order it was sent and
+    // with this one last, as ONE turn. Callers use it after interrupting an
+    // in-flight turn, so the agent reads the full picture before acting rather
+    // than working through each stale message first. Ordinary sends are
+    // untouched: still one message per turn, drained as turns end.
+    async prompt(sessionId: string, text: string, opts?: { front?: boolean; flush?: boolean }): Promise<void> {
       const session = store.sessions.get(sessionId)
       if (!session) {
         return
@@ -1338,7 +1385,23 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         } else {
           session.queue.push(item)
         }
+        // Held, not delivered: the interrupted turn has not settled yet. The
+        // flag makes the drain that follows take the whole queue at once.
+        if (opts?.flush) {
+          session.flushQueue = true
+        }
         emitQueue(sessionId, session.queue)
+        return
+      }
+      // Idle, so this delivers now. A flush still has to carry anything left
+      // holding — a queue can outlive its turn when that turn failed before
+      // settling — otherwise those messages would wait for a turn that is
+      // never coming.
+      if (opts?.flush && session.queue.length > 0) {
+        const texts = [...session.queue.map((item) => item.text), text]
+        session.queue = []
+        emitQueue(sessionId, session.queue)
+        await deliverPrompt(sessionId, joinPrompts(texts))
         return
       }
       await deliverPrompt(sessionId, text)

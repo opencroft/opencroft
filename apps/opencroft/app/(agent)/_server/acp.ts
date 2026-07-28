@@ -195,10 +195,12 @@ async function openLocalSession(data: {
 
 // `front` queues the message ahead of anything already held for the session
 // when a turn is running (e.g. corrective guidance after a rejected permission).
+// `flush` instead delivers everything held together with this message as one
+// turn — used after interrupting a turn, so the agent sees the whole picture.
 export const promptLocal = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { sessionId: string; text: string; front?: boolean }) => data)
+  .inputValidator((data: { sessionId: string; text: string; front?: boolean; flush?: boolean }) => data)
   .handler(async ({ data }): Promise<void> => {
-    await agentClient.prompt(data.sessionId, data.text, { front: data.front })
+    await agentClient.prompt(data.sessionId, data.text, { front: data.front, flush: data.flush })
     // Persist the tab→session pointer now that the session has real history, so a
     // later restart can resume it via session/load. We never persist — and so
     // never try to load — an empty, never-prompted session.
