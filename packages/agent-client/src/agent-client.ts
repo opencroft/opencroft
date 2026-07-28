@@ -24,6 +24,7 @@ import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from '@agentclie
 
 import type { AgentConnection } from './connection'
 import { errorMessage } from './errors'
+import { lastConversationEvent } from './fold'
 import { readMcpConfig, resolveMcpServers } from './mcp-config'
 import { createMcpServer, type SkillHandler, type SkillsInput, type ToolsInput } from './mcp-server'
 import type { McpServerConfig } from './mcp-types'
@@ -353,10 +354,14 @@ export function handleUpdate(notification: SessionNotification): void {
       // turn contains no terminal event and reads as cut off.
       //
       // A message arrives as a RUN of chunks, so the boundary opens only when
-      // the previous event was not itself a user chunk — otherwise a message
-      // split across two chunks would be reported as two turns.
+      // the previous CONVERSATION event was not itself a user chunk — otherwise
+      // a message split across two chunks would be reported as two turns. It
+      // has to skip snapshots: `emit` stores every kind, so a config or title
+      // update landing mid-run would otherwise read as "not a user chunk" and
+      // split the message on an event that is not part of it at all.
       const session = store.sessions.get(sessionId)
-      if (session?.replaying && session.events.at(-1) && session.events.at(-1)?.kind !== 'user') {
+      const previous = session?.replaying ? lastConversationEvent(session.events) : undefined
+      if (previous && previous.kind !== 'user') {
         emit(sessionId, { kind: 'turn_end', stopReason: 'replayed' })
       }
       emit(sessionId, { kind: 'user', text: textOf(update.content) })
@@ -1201,12 +1206,24 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // The replay streams history but no turn boundary, so the client would stay
       // stuck "waiting". A terminal turn_end marks the resumed session idle.
       //
-      // This one closes the LAST replayed turn, and keeps `resumed` rather than
-      // the `replayed` marker the earlier boundaries carry: it is the only turn
-      // the restart could have cut off mid-flight, since every other replayed
-      // turn is followed by a prompt that proves it ended. Reporting it as
-      // interrupted keeps a genuinely severed turn distinguishable.
-      emit(sessionId, { kind: 'turn_end', stopReason: 'resumed' })
+      // This one closes the LAST replayed turn, and unlike the earlier
+      // boundaries its marker is inferred rather than known. The replay records
+      // no more about how this turn ended than about any other, so nothing can
+      // identify a severed turn with certainty — but the tail of the transcript
+      // is evidence. A replay whose last conversation event is the agent's own
+      // message shows a turn that produced its reply and a session that then
+      // went quiet: `replayed`, reported as unknown like its neighbours.
+      // Anything else — a pending tool call, a question left unanswered, work
+      // that stops mid-step — is the shape of a turn cut off: `resumed`,
+      // reported as interrupted.
+      //
+      // It is a heuristic. It can call a severed turn `unknown` when the agent
+      // had already written text before it died, which is the honest direction
+      // to be wrong in: today's unconditional `resumed` reports every idle
+      // restart's newest turn as cut off, which is a confident claim and false
+      // more often than not.
+      const tail = loaded ? lastConversationEvent(loaded.events) : undefined
+      emit(sessionId, { kind: 'turn_end', stopReason: tail?.kind === 'agent_message' ? 'replayed' : 'resumed' })
       return meta
     },
 

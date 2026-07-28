@@ -44,6 +44,31 @@ const TERMINAL_TOOL_STATUSES = new Set(['completed', 'failed'])
 export function isTerminalToolStatus(status: string | undefined): boolean {
   return status !== undefined && TERMINAL_TOOL_STATUSES.has(status)
 }
+
+// Events carrying "last value wins" session state rather than a step in the
+// conversation (see withSnapshotPrefix in agent-client, which prepends exactly
+// these to a windowed replay). They can arrive at any moment — including
+// between two chunks of one message — so anything that reads "the previous
+// event" to decide where a message begins or ends has to skip them, or an
+// unrelated config update splits a message in half. Defined here, beside the
+// other shared classification of event kinds, so the emit and read sides cannot
+// drift apart on what counts as conversation.
+const SNAPSHOT_KINDS = new Set<ChatEvent['kind']>(['modes', 'config_options', 'session_info', 'usage', 'queue'])
+
+export function isSnapshotEvent(event: ChatEvent): boolean {
+  return SNAPSHOT_KINDS.has(event.kind)
+}
+
+// The most recent event that is part of the conversation, snapshots ignored.
+export function lastConversationEvent(events: ChatEvent[]): ChatEvent | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]
+    if (!isSnapshotEvent(event)) {
+      return event
+    }
+  }
+  return undefined
+}
 type PermissionMessage = Extract<ChatMessage, { kind: 'permission' }>
 type AskMessage = Extract<ChatMessage, { kind: 'ask' }>
 

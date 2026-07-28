@@ -299,11 +299,14 @@ test('a replay emits one reconstructed boundary per replayed message, not per ch
   // Three user events for two messages — the first arrived as two chunks — and
   // no boundary was opened between those two.
   assert.equal(events.filter((event) => event.kind === 'user').length, 3)
+  // Both boundaries are 'replayed': this transcript ends with the agent's own
+  // message, so the last turn produced its reply and the session went quiet —
+  // the shape of a restart while idle, not of a severed turn.
   assert.deepEqual(
     events
       .filter((event): event is Extract<ChatEvent, { kind: 'turn_end' }> => event.kind === 'turn_end')
       .map((event) => event.stopReason),
-    ['replayed', 'resumed'],
+    ['replayed', 'replayed'],
   )
   // The reconstructed boundary closes the first turn: it sits after that turn's
   // reply and before the next question. Filtered to the conversation kinds —
@@ -312,6 +315,102 @@ test('a replay emits one reconstructed boundary per replayed message, not per ch
     .map((event) => event.kind)
     .filter((kind) => kind === 'user' || kind === 'agent_message' || kind === 'turn_end')
   assert.deepEqual(kindOrder, ['user', 'user', 'agent_message', 'turn_end', 'user', 'agent_message', 'turn_end'])
+  await client.deleteSession(sessionId)
+})
+
+// The final boundary's marker is inferred from the tail of the transcript,
+// because the replay records no more about the last turn's ending than about
+// any other. A transcript that stops on unfinished work is the shape of a turn
+// the restart severed; one that ends on the agent's reply is not.
+test('a replay that stops on unfinished work closes with resumed, not replayed', async () => {
+  counter += 1
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: '',
+    cwd: `/tmp/agent-client-test-${counter}`,
+  }
+  const sessionId = `severed-session-${counter}`
+  const push = (update: Record<string, unknown>) =>
+    handleUpdate({ sessionId, update } as Parameters<typeof handleUpdate>[0])
+  const connection = {
+    loadSession: async () => {
+      push({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'run the long thing' } })
+      push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'starting' } })
+      // The process went down here, mid tool call — nothing closes this.
+      push({ sessionUpdate: 'tool_call', toolCallId: 't1', title: 'sleep 180', status: 'in_progress' })
+      return {}
+    },
+  } as unknown as AgentConnection
+  const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
+  assert.ok(store, 'agent-client global store must exist after import')
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: true,
+    initialized: Promise.resolve(),
+  })
+  const client = createAgentClient()
+  assert.ok(await client.loadSession(sessionId, selection))
+  const events: ChatEvent[] = []
+  client.subscribe(sessionId, (event) => events.push(event))
+
+  assert.deepEqual(
+    events
+      .filter((event): event is Extract<ChatEvent, { kind: 'turn_end' }> => event.kind === 'turn_end')
+      .map((event) => event.stopReason),
+    ['resumed'],
+  )
+  await client.deleteSession(sessionId)
+})
+
+// The guard reads the previous CONVERSATION event, not the previous event —
+// `emit` stores every kind, so a snapshot landing mid-run would otherwise be
+// read as "not a user chunk" and split the message on an event that is not
+// part of it.
+test('a snapshot arriving between two chunks does not open a boundary', async () => {
+  counter += 1
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: '',
+    cwd: `/tmp/agent-client-test-${counter}`,
+  }
+  const sessionId = `interleaved-session-${counter}`
+  const push = (update: Record<string, unknown>) =>
+    handleUpdate({ sessionId, update } as Parameters<typeof handleUpdate>[0])
+  const connection = {
+    loadSession: async () => {
+      push({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'what ' } })
+      push({ sessionUpdate: 'session_info_update', title: 'a chat' })
+      push({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'changed?' } })
+      push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'the schema moved' } })
+      return {}
+    },
+  } as unknown as AgentConnection
+  const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
+  assert.ok(store, 'agent-client global store must exist after import')
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: true,
+    initialized: Promise.resolve(),
+  })
+  const client = createAgentClient()
+  assert.ok(await client.loadSession(sessionId, selection))
+  const events: ChatEvent[] = []
+  client.subscribe(sessionId, (event) => events.push(event))
+
+  // One boundary — the closing one. The title update between the chunks opened
+  // nothing.
+  assert.deepEqual(
+    events
+      .filter((event): event is Extract<ChatEvent, { kind: 'turn_end' }> => event.kind === 'turn_end')
+      .map((event) => event.stopReason),
+    ['replayed'],
+  )
   await client.deleteSession(sessionId)
 })
 
