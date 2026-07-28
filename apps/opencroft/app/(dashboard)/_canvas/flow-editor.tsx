@@ -19,7 +19,7 @@ import {
 } from '@xyflow/react'
 import { SelectionMode } from '@xyflow/system'
 import '@xyflow/react/dist/style.css'
-import { Box, GripVertical, Lock, LockOpen, PanelLeft } from 'lucide-react'
+import { Box, GripVertical, Move, PanelLeft } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -140,7 +140,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const overlay = useOverlay()
   const isMobile = useIsMobile()
   const [mobileInspectorVisible, setMobileInspectorVisible] = useState(false)
-  const [nodesLocked, setNodesLocked] = useState(false)
+  const [nodesMovable, setNodesMovable] = useState(false)
   const [nodeMenu, setNodeMenu] = useState<{ screen: { x: number; y: number }; nodeId: string } | null>(null)
   const [overlayActive, setOverlayActive] = useState(false)
   const { toggleSidebar } = useSidebar()
@@ -862,7 +862,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
               deleteKeyCode={['Backspace', 'Delete']}
               multiSelectionKeyCode='Shift'
               selectionKeyCode='Shift'
-              nodesDraggable={isMobile ? !nodesLocked : undefined}
+              nodesDraggable={isMobile ? nodesMovable : undefined}
               selectionOnDrag={!isMobile}
               panOnDrag={isMobile ? true : [1]}
               selectionMode={isMobile ? undefined : SelectionMode.Partial}
@@ -912,11 +912,12 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
                 </button>
                 <button
                   type='button'
-                  className={`size-10 flex items-center justify-center rounded-lg border shadow-sm active:bg-accent ${nodesLocked ? 'bg-primary/20 border-primary' : 'bg-background/80 backdrop-blur'}`}
-                  onClick={() => setNodesLocked((v) => !v)}
-                  title={nodesLocked ? 'Unlock nodes' : 'Lock nodes'}
+                  className={`size-10 flex items-center justify-center rounded-lg border shadow-sm active:bg-accent ${nodesMovable ? 'bg-primary/20 border-primary' : 'bg-background/80 backdrop-blur'}`}
+                  onClick={() => setNodesMovable((v) => !v)}
+                  title={nodesMovable ? 'Pan canvas' : 'Move nodes'}
+                  aria-pressed={nodesMovable}
                 >
-                  {nodesLocked ? <Lock className='size-5' /> : <LockOpen className='size-5' />}
+                  <Move className='size-5' />
                 </button>
               </div>
             )}
