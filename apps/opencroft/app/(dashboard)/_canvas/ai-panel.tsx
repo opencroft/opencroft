@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ChatList, type ChatListNode } from 'ui/chat/chat-list'
 import {
   type AgentSessionGroup,
   AgentSessionList,
@@ -11,6 +12,7 @@ import {
 import { DashboardHost, LocalAgentHost } from '@/app/(agent)/_components/chat-hosts'
 import { useChatTabsMaybe } from '@/app/(agent)/_lib/chat-tabs-context'
 import { useAgentSessions } from '@/app/(agent)/_lib/use-agent-sessions'
+import { toLeaf } from '@/app/(agent)/_lib/use-chat-list-nodes'
 import type { SessionEntry } from '@/app/(agent)/_server/agent-sessions-store'
 import { composeEnvelope } from '@/app/(agent)/_shared/message-envelope'
 import { slug } from '@/app/(server)/_server/types'
@@ -30,6 +32,10 @@ interface AiPanelProps {
 // Sentinel key for the "no session selected" state; namespaces the chat-tabs
 // fallback so a dashboard view never collides with a real session.
 const DASHBOARD_KEY = 'agent:dashboard'
+// Shared empty set for the activity inputs `toLeaf` takes — this surface shows
+// no status dot (see the chat leaves below), and a fresh Set per render would
+// churn the memo that builds them.
+const NO_KEYS = new Set<string>()
 // Injected on the first message of a session: asks the agent to lead its reply
 // with a self-titled chat name, which use-acp-session parses out to rename the
 // tab. No literal nested opencroft tag here — a nested close would truncate the
@@ -181,35 +187,54 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
     setInspectorListOpen(true)
   }, [listRequest])
 
-  const sessionGroups = useMemo<AgentSessionGroup[]>(
-    () =>
-      agents.map((agent) => ({
-        agent,
-        sessions: agentExistingSessions(agent, sessions).map((s) => ({
-          key: s.key,
-          title: s.title,
-        })),
-      })),
-    [agents, sessions],
+  // The agent surface: the agents themselves, with no conversations under
+  // them. `AgentSessionList` renders its per-agent session list only when that
+  // list is non-empty, so an empty one leaves exactly the agent rows and their
+  // "start a chat" affordance — the same component, not a second one that
+  // looks like it and drifts.
+  const agentGroups = useMemo<AgentSessionGroup[]>(() => agents.map((agent) => ({ agent, sessions: [] })), [agents])
+
+  const avatarByAgentId = useMemo(
+    () => new Map(agents.filter((a) => a.avatar).map((a) => [a.nodeId, a.avatar as string])),
+    [agents],
   )
 
+  // The chat surface: every session that exists, flat. Deliberately NOT the
+  // sidebar's tree — that one applies the persisted layout and hides sessions
+  // closed from it, which is the set of chats currently kept open. This is the
+  // other set: all of them, whether or not they are open, in no grouping.
+  //
+  // Leaves are built with the sidebar's own `toLeaf` so a row reads the same in
+  // both places. The activity sets are empty here: the status dot is driven by
+  // a poll the shell owns, and starting a second one for this surface would
+  // cost more than the dot is worth.
+  const chatLeaves = useMemo(
+    () => sessions.map((s) => toLeaf(s, NO_KEYS, NO_KEYS, NO_KEYS, avatarByAgentId)),
+    [sessions, avatarByAgentId],
+  )
+  const chatNodes = useMemo<ChatListNode[]>(() => chatLeaves.map((item) => ({ type: 'item', item })), [chatLeaves])
+  // ChatList seeds its working tree from `nodes` on mount and never resyncs, so
+  // a new or renamed session only appears when the component is remounted. The
+  // leaves ARE the external input here, so keying on them is exact.
+  const chatsKey = useMemo(() => JSON.stringify(chatLeaves), [chatLeaves])
+
   // Keep every open chat tab labelled with its session title, so the sidebar
-  // shows readable names instead of the raw session-key suffix.
+  // shows readable names instead of the raw session-key suffix. Driven straight
+  // off the sessions now that no agent-grouped shape is built for the list.
   useEffect(() => {
     if (!chatTabs) {
       return
     }
-    for (const group of sessionGroups) {
-      for (const session of group.sessions) {
-        chatTabs.updateTabMeta(session.key, {
-          label: `${group.agent.name}: ${session.title}`,
-          agentName: group.agent.name,
-          title: session.title,
-          agentAvatar: group.agent.avatar,
-        })
-      }
+    for (const session of sessions) {
+      const title = session.title ?? session.jobName
+      chatTabs.updateTabMeta(session.key, {
+        label: `${session.agentName}: ${title}`,
+        agentName: session.agentName,
+        title,
+        agentAvatar: avatarByAgentId.get(session.agentNodeId),
+      })
     }
-  }, [chatTabs, sessionGroups])
+  }, [chatTabs, sessions, avatarByAgentId])
 
   // Opening or creating a session leaves page-1 and lands on the conversation.
   const openSession = useCallback(
@@ -229,16 +254,33 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
   const actionsRef = useRef({ openSession, createSession, deleteSession })
   actionsRef.current = { openSession, createSession, deleteSession }
 
+  // Both views follow the same rule as the single list they replace: identity
+  // tracks only the data, with handlers reached through the ref.
   const listView = useMemo(
     () => (
+      // No folder callbacks: this surface is flat by construction, so there is
+      // nothing here for a folder edit to be persisted into.
+      <ChatList
+        key={chatsKey}
+        nodes={chatNodes}
+        activeId={activeSessionKey}
+        onSelect={(key) => actionsRef.current.openSession(key)}
+        onDelete={(key) => actionsRef.current.deleteSession(key)}
+      />
+    ),
+    [chatNodes, chatsKey, activeSessionKey],
+  )
+
+  const menuView = useMemo(
+    () => (
       <AgentSessionList
-        groups={sessionGroups}
+        groups={agentGroups}
         onOpenSession={(key) => actionsRef.current.openSession(key)}
         onDeleteSession={(_agent, key) => actionsRef.current.deleteSession(key)}
         onCreateSession={(agent, job) => actionsRef.current.createSession(agent, job)}
       />
     ),
-    [sessionGroups],
+    [agentGroups],
   )
 
   // Back from the conversation → page 1 (the list) in the inspector, without
@@ -259,6 +301,7 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
         focused={focused}
         onFocusChange={onFocusChange}
         listView={listView}
+        menuView={menuView}
         inspectorPage={inspectorPage}
         onBack={goToList}
         sessionTitle={activeEntry.title ?? activeEntry.jobName}
@@ -279,21 +322,11 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
       focused={focused}
       onFocusChange={onFocusChange}
       listView={listView}
+      menuView={menuView}
       inspectorPage={inspectorPage}
       onBack={goToList}
       forceListMenu={sessionPickerOpen}
       onOpenSessions={openSessionsMenu}
     />
   )
-}
-
-interface ExistingSession {
-  key: string
-  title: string
-}
-
-function agentExistingSessions(agent: AgentNodeRef, localSessions: SessionEntry[]): ExistingSession[] {
-  return localSessions
-    .filter((s) => s.agentNodeId === agent.nodeId)
-    .map((s) => ({ key: s.key, title: s.title ?? s.jobName }))
 }

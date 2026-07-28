@@ -35,10 +35,14 @@ interface HostProps {
   // Two-page chat inspector. The inspector shows one of three things:
   //   'list' — page 1, the agent/session list (reached via back)
   //   'chat' — page 2, the conversation
-  //   'none' — nothing docked; the list is offered as a command-bar menu hint
-  //            on focus instead (so the list is never shown in both places).
-  // `listView` is the shared list, reused by page 1 and the focus hint.
+  //   'none' — nothing docked; the command bar offers its own menu on focus
+  //            instead, so the inspector page is never shown in both places.
+  // The two surfaces answer different questions and are therefore two views:
+  // `listView` is the inspector's page 1 — the conversations that exist.
+  // `menuView` is the command bar's — the agents a new chat can be started
+  // with. Neither is a filtered version of the other.
   listView?: ReactNode
+  menuView?: ReactNode
   inspectorPage?: 'list' | 'chat' | 'none'
   onBack?: () => void
   // Page-2 header: current session title + a rename control.
@@ -76,6 +80,7 @@ function ChatHost({
   onSetConfigOption,
   usage,
   listView,
+  menuView,
   inspectorPage = 'chat',
   onBack,
   sessionTitle,
@@ -99,6 +104,7 @@ function ChatHost({
   onSetConfigOption?: (configId: string, value: string | boolean) => void
   usage?: { used: number; size?: number }
   listView?: ReactNode
+  menuView?: ReactNode
   inspectorPage?: 'list' | 'chat' | 'none'
   onBack?: () => void
   sessionTitle?: string
@@ -141,11 +147,11 @@ function ChatHost({
 
   useOverlay({ content: contentNode, header: headerNode })
 
-  // When no inspector page is open, focusing the input surfaces the same list as
-  // a command-bar menu hint. Gated on `focused` (which stays set while the user
-  // interacts with the menu), so picking a session isn't lost to a blur. The
-  // start icon (`forceListMenu`) opens the same list while a chat is docked.
-  const focusMenu = forceListMenu || (focused && inspectorPage === 'none') ? listView : undefined
+  // When no inspector page is open, focusing the input surfaces the command
+  // bar's own menu. Gated on `focused` (which stays set while the user
+  // interacts with the menu), so picking from it isn't lost to a blur. The
+  // start icon (`forceListMenu`) opens the same menu while a chat is docked.
+  const focusMenu = forceListMenu || (focused && inspectorPage === 'none') ? menuView : undefined
 
   // ChatHost renders no visible DOM of its own: it mounts inside the canvas
   // container underneath the absolutely-positioned canvas/overlay layers, so
@@ -268,6 +274,7 @@ export function DashboardHost({
   focused,
   onFocusChange,
   listView,
+  menuView,
   inspectorPage,
   onBack,
   forceListMenu,
@@ -279,6 +286,7 @@ export function DashboardHost({
   focused: boolean
   onFocusChange: (focused: boolean) => void
   listView?: ReactNode
+  menuView?: ReactNode
   inspectorPage?: 'list' | 'chat' | 'none'
   onBack?: () => void
   forceListMenu?: boolean
@@ -305,6 +313,7 @@ export function DashboardHost({
       focused={focused}
       onFocusChange={onFocusChange}
       listView={listView}
+      menuView={menuView}
       inspectorPage={inspectorPage}
       onBack={onBack}
       forceListMenu={forceListMenu}
@@ -321,6 +330,7 @@ export function LocalAgentHost({
   focused,
   onFocusChange,
   listView,
+  menuView,
   inspectorPage,
   onBack,
   sessionTitle,
@@ -351,6 +361,7 @@ export function LocalAgentHost({
       onSetConfigOption={acp.setConfigOption}
       usage={acp.usage}
       listView={listView}
+      menuView={menuView}
       inspectorPage={inspectorPage}
       onBack={onBack}
       sessionTitle={sessionTitle}
