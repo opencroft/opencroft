@@ -53,6 +53,33 @@ test('turnStatus prefers in-progress over a stray terminal event from a prior se
   assert.equal(turnStatus([{ kind: 'turn_end', stopReason: 'cancelled' }], true), 'in-progress')
 })
 
+// A session/load replay carries no stopReasons. The boundary loadSession
+// reconstructs between two replayed turns says the turn ended and nothing more,
+// so it must report neither success nor failure.
+test('turnStatus is unknown for a replayed turn boundary', () => {
+  assert.equal(turnStatus([{ kind: 'turn_end', stopReason: 'replayed' }], false), 'unknown')
+})
+
+test('turnStatus still reports the last replayed turn as interrupted', () => {
+  // 'resumed' closes only the final replayed turn — the one a restart could
+  // have severed. It must stay distinguishable from the reconstructed ones.
+  assert.equal(turnStatus([{ kind: 'turn_end', stopReason: 'resumed' }], false), 'interrupted')
+})
+
+test('buildTurnSummary reports a replayed turn as unknown but still carries its final message', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'what changed?' },
+    { kind: 'agent_message', text: 'the schema ' },
+    { kind: 'agent_message', text: 'moved' },
+    { kind: 'turn_end', stopReason: 'replayed' },
+  ]
+  const summary = buildTurnSummary(0, events, false)
+  assert.equal(summary.status, 'unknown')
+  // The reply was recorded in full; only its ending went unobserved.
+  assert.equal(summary.finalMessage, 'the schema moved')
+  assert.equal(summary.finalMessageLength, 'the schema moved'.length)
+})
+
 // Every fixture below emits the agent's reply the way the client actually
 // does — one `agent_message` per content delta, not one per message. A fixture
 // that puts a whole message in each event cannot catch a summary path that
@@ -140,6 +167,49 @@ test('splitIntoTurns groups events at each user boundary and tags absolute indic
   assert.equal(groups[0].events.length, 3)
   assert.equal(groups[1].index, 13)
   assert.equal(groups[1].events.length, 2)
+})
+
+// A prompt arrives as a run of 'user' events, one per content delta. Opening a
+// turn per event split a chunked message into several, the leading ones holding
+// a fragment and no terminal event — so they reported as interrupted.
+test('splitIntoTurns keeps a message split across chunks as one turn', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'first ' },
+    { kind: 'user', text: 'question' },
+    { kind: 'agent_message', text: 'reply A' },
+    { kind: 'turn_end', stopReason: 'replayed' },
+    { kind: 'user', text: 'second question' },
+    { kind: 'agent_message', text: 'reply B' },
+    { kind: 'turn_end', stopReason: 'resumed' },
+  ]
+  const groups = splitIntoTurns(events, 0)
+  assert.equal(groups.length, 2)
+  // The turn is indexed at the chunk that opened it, not at the last one.
+  assert.equal(groups[0].index, 0)
+  assert.equal(groups[0].events.length, 4)
+  assert.equal(groups[1].index, 4)
+})
+
+test('a chunked prompt is reported as one turn carrying the joined question', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'what ' },
+    { kind: 'user', text: 'changed?' },
+    { kind: 'agent_message', text: 'the schema moved' },
+    { kind: 'turn_end', stopReason: 'replayed' },
+  ]
+  const [group] = splitIntoTurns(events, 0)
+  const summary = buildTurnSummary(group.index, group.events, false)
+  assert.equal(summary.prompt, 'what changed?')
+  assert.equal(summary.promptLength, 'what changed?'.length)
+  assert.equal(summary.status, 'unknown')
+})
+
+test('a run of user chunks that opens the window still starts a turn', () => {
+  // A window can cut mid-run, and a cut cannot tell a continuation from a
+  // beginning — so the first event opens a turn rather than being dropped.
+  const groups = splitIntoTurns([{ kind: 'user', text: 'tail of a question' }], 7)
+  assert.equal(groups.length, 1)
+  assert.equal(groups[0].index, 7)
 })
 
 test('splitIntoTurns on an empty window returns no groups', () => {

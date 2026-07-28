@@ -387,7 +387,9 @@ export interface TurnSummary {
   index: number
   prompt: string
   promptLength: number
-  status: 'finished' | 'in-progress' | 'interrupted'
+  // 'unknown' is a replayed turn: it ended — a later prompt proves it — but a
+  // session/load replay does not say how, so neither does this.
+  status: 'finished' | 'in-progress' | 'interrupted' | 'unknown'
   finalMessage?: string
   finalMessageLength?: number
 }
@@ -430,18 +432,46 @@ export function turnStatus(events: ChatEvent[], inProgress: boolean): TurnSummar
     // off rather than completed.
     return 'interrupted'
   }
+  // 'replayed' = a synthetic boundary loadSession reconstructs between two
+  // replayed turns. It says the turn ended — the prompt that follows proves
+  // that — and nothing about how, because the replay carries no stopReason.
+  // Reporting these as finished would claim an outcome never observed; as
+  // interrupted, it would claim a failure that never happened.
+  if (end.stopReason === 'replayed') {
+    return 'unknown'
+  }
   // 'cancelled' = force-interrupted (stopProcessLocal/force-send); 'resumed'
-  // = a synthetic marker loadSession emits for a turn a restart cut off
-  // mid-flight (see agent-client.ts) — both are incomplete, not finished.
+  // = a synthetic marker loadSession emits for the LAST replayed turn, the one
+  // a restart could have cut off mid-flight (see agent-client.ts) — both are
+  // incomplete, not finished.
   return end.stopReason === 'cancelled' || end.stopReason === 'resumed' ? 'interrupted' : 'finished'
 }
 
+// The prompt that opened a turn, joined back together. A message is a run of
+// 'user' events (one per content delta), and splitIntoTurns puts that whole run
+// at the head of the group — so the prompt is the leading run, not its first
+// event. Reading one event would report a fragment as the whole question.
+function openingPrompt(events: ChatEvent[]): string {
+  let text = ''
+  for (const event of events) {
+    if (event.kind !== 'user') {
+      break
+    }
+    text += event.text
+  }
+  return text
+}
+
 export function buildTurnSummary(index: number, events: ChatEvent[], inProgress: boolean): TurnSummary {
-  const userEvent = events.find((e) => e.kind === 'user')
-  const prompt = truncateText(userEvent && userEvent.kind === 'user' ? userEvent.text : '')
+  const prompt = truncateText(openingPrompt(events))
   const status = turnStatus(events, inProgress)
   const summary: TurnSummary = { index, prompt: prompt.text, promptLength: prompt.length, status }
-  if (status === 'finished') {
+  // 'unknown' carries its final message too: a replayed turn's reply was
+  // recorded in full and only its ENDING went unobserved. Withholding text that
+  // is right there would make listTurns least useful on exactly the sessions
+  // this status exists for. 'in-progress' and 'interrupted' still omit it —
+  // there the text really is partial.
+  if (status === 'finished' || status === 'unknown') {
     // `agent_message` is a streaming chunk, not a whole message: one is emitted
     // per content delta, so a reply arrives as a run of them. Fold the events
     // back into messages — the same concatenation the chat view renders from —
@@ -467,8 +497,20 @@ export function splitIntoTurns(events: ChatEvent[], startIndex: number): { index
   const groups: { index: number; events: ChatEvent[] }[] = []
   events.forEach((event, offset) => {
     if (event.kind === 'user') {
+      // A prompt arrives as a RUN of 'user' events — one per content delta, the
+      // same way a reply does — so only the FIRST of a run opens a turn. Opening
+      // one per event splits a chunked message into several turns, the leading
+      // ones holding a fragment and no terminal event, which then read as cut
+      // off. A run that starts the window has no predecessor to check and opens
+      // a turn: a window cut cannot tell a continuation from a beginning.
+      if (events[offset - 1]?.kind === 'user' && groups.length > 0) {
+        groups[groups.length - 1].events.push(event)
+        return
+      }
       groups.push({ index: startIndex + offset, events: [event] })
-    } else if (groups.length > 0) {
+      return
+    }
+    if (groups.length > 0) {
       groups[groups.length - 1].events.push(event)
     }
   })
