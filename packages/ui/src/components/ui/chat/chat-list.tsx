@@ -324,7 +324,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
       if (dx > MOVE_TOLERANCE_PX || dy > MOVE_TOLERANCE_PX) {
         // The press began on the grip (touch-action: none), so the browser is
         // not scrolling this touch -- any move past tolerance is a drag, vertical
-        // included (a between-folders move is a vertical drag, the case that broke before).
+        // included (a between-folders move is a vertical drag, which an earlier version got wrong).
         p.dragging = true
         e.currentTarget.setPointerCapture(e.pointerId)
         setDrag({ kind: 'item', id: p.id, from: p.list })
