@@ -1,6 +1,7 @@
 'use client'
 
 import { useReactFlow } from '@xyflow/react'
+import { DiffEditor } from 'agent-chat/diff-editor'
 import { GitCompare, Loader2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
@@ -10,7 +11,6 @@ import { readRemoteFile } from '@/app/(approvals)/_server/actions'
 import { NodeCard } from '@/app/(dashboard)/_canvas/node-card'
 import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
 import { cn } from '@/lib/utils'
-import { NodeDiffEditor } from './node-diff-editor'
 import { exceedsClamp, OpBlock, OpRow } from './op-block'
 import { registerToolView, type ToolViewProps } from './registry'
 
@@ -112,7 +112,7 @@ function ToolDiffPanel({
         <NodeCard className='w-full'>
           <div className='px-3 py-2 space-y-2'>
             {label && <div className='font-mono text-xs'>{label}</div>}
-            <NodeDiffEditor current={current} next={next} />
+            <DiffEditor current={current} next={next} />
           </div>
         </NodeCard>
       </div>
@@ -264,7 +264,7 @@ function RemoteEditView({ args, requestId, mode, result }: ToolViewProps) {
       pending={!result}
       overflowing={current !== null}
     >
-      {current !== null && <NodeDiffEditor current={current} next={next} />}
+      {current !== null && <DiffEditor current={current} next={next} />}
     </OpBlock>
   )
 }
@@ -626,7 +626,7 @@ function NodeDiff({ mode, update }: { mode: ToolViewProps['mode']; update: NodeU
   return (
     <div className='px-3 py-2 space-y-2'>
       <div className='font-mono text-xs'>{label}</div>
-      <NodeDiffEditor current={JSON.stringify(current, null, 2)} next={JSON.stringify(next, null, 2)} />
+      <DiffEditor current={JSON.stringify(current, null, 2)} next={JSON.stringify(next, null, 2)} />
     </div>
   )
 }
