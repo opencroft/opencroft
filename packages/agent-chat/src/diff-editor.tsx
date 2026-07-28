@@ -26,7 +26,13 @@ export interface DiffEditorProps {
 // MutationObserver, rather than depending on a theming library — this stays
 // usable by any host regardless of how it wires up theme switching.
 function useIsDarkMode(): boolean {
-  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'))
+  // Guarded because this initializer runs during render, which on a
+  // server-rendered host means it runs where there is no `document` — and the
+  // failure is the whole route dying, not a diff without its colours. Starting
+  // light and correcting in the effect below costs one client-side update.
+  const [dark, setDark] = useState(
+    () => typeof document !== 'undefined' && document.documentElement.classList.contains('dark'),
+  )
   useEffect(() => {
     const root = document.documentElement
     const observer = new MutationObserver(() => setDark(root.classList.contains('dark')))
@@ -119,10 +125,22 @@ function ModeToggle({ mode, onChange }: { mode: DiffMode; onChange: (mode: DiffM
 // any tool whose args/result are worth diffing — e.g. before/after a node or
 // file edit.
 export function DiffEditor({ current, next }: DiffEditorProps) {
-  const [mode, setMode] = useState<DiffMode>('split')
+  // Unified by default. Side by side splits an already narrow column in two and
+  // is unreadable on a phone even when it fits; the toggle keeps it one press
+  // away. Deliberately unconditional rather than chosen from the viewport — a
+  // default that flips under a resize is state to reason about, and nothing
+  // here needs it.
+  const [mode, setMode] = useState<DiffMode>('unified')
 
   return (
-    <div className='relative'>
+    // The component clamps itself rather than trusting every ancestor to do it.
+    // `min-w-0` is the one that matters: a flex item's automatic minimum size is
+    // its content's min-content width, so without it a host that renders this in
+    // a row flex container gets pushed wider by the diff instead of the diff
+    // scrolling. `max-w-full` bounds it against the containing block for the
+    // same reason. Overflow then has only one place to go — the scroller below,
+    // and the editors' own, which already work.
+    <div className='relative min-w-0 max-w-full'>
       <style>{`
         .cm-merge-a .cm-changedText,
         .cm-deletedChunk .cm-deletedText {
@@ -138,7 +156,7 @@ export function DiffEditor({ current, next }: DiffEditorProps) {
       <div className='absolute right-2 top-2 z-10'>
         <ModeToggle mode={mode} onChange={setMode} />
       </div>
-      <div className='rounded-md border overflow-auto text-xs'>
+      <div className='w-full min-w-0 rounded-md border overflow-auto text-xs'>
         {mode === 'unified' ? (
           <UnifiedDiff current={current} next={next} />
         ) : (
