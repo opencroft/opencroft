@@ -53,6 +53,33 @@ test('turnStatus prefers in-progress over a stray terminal event from a prior se
   assert.equal(turnStatus([{ kind: 'turn_end', stopReason: 'cancelled' }], true), 'in-progress')
 })
 
+// A session/load replay carries no stopReasons. The boundary loadSession
+// reconstructs between two replayed turns says the turn ended and nothing more,
+// so it must report neither success nor failure.
+test('turnStatus is unknown for a replayed turn boundary', () => {
+  assert.equal(turnStatus([{ kind: 'turn_end', stopReason: 'replayed' }], false), 'unknown')
+})
+
+test('turnStatus still reports the last replayed turn as interrupted', () => {
+  // 'resumed' closes only the final replayed turn — the one a restart could
+  // have severed. It must stay distinguishable from the reconstructed ones.
+  assert.equal(turnStatus([{ kind: 'turn_end', stopReason: 'resumed' }], false), 'interrupted')
+})
+
+test('buildTurnSummary reports a replayed turn as unknown but still carries its final message', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'what changed?' },
+    { kind: 'agent_message', text: 'the schema ' },
+    { kind: 'agent_message', text: 'moved' },
+    { kind: 'turn_end', stopReason: 'replayed' },
+  ]
+  const summary = buildTurnSummary(0, events, false)
+  assert.equal(summary.status, 'unknown')
+  // The reply was recorded in full; only its ending went unobserved.
+  assert.equal(summary.finalMessage, 'the schema moved')
+  assert.equal(summary.finalMessageLength, 'the schema moved'.length)
+})
+
 // Every fixture below emits the agent's reply the way the client actually
 // does — one `agent_message` per content delta, not one per message. A fixture
 // that puts a whole message in each event cannot catch a summary path that

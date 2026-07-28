@@ -119,6 +119,10 @@ interface SessionState {
   // Prompts received while a turn was active, delivered FIFO as turns end.
   // Every change is published as a 'queue' snapshot event.
   queue: QueuedPrompt[]
+  // True only while session/load is replaying this session's history. The
+  // replay carries no turn boundaries of its own, so handleUpdate reconstructs
+  // them while this is set — see the `user_message_chunk` case.
+  replaying?: boolean
   // Set by a flushing prompt (see prompt's `flush`) while a turn is still
   // running. The next drain then hands the WHOLE queue over as one delivery
   // instead of one entry, and clears this. Held as state rather than passed to
@@ -342,6 +346,19 @@ export function handleUpdate(notification: SessionNotification): void {
       // Only arrives during session/load replay — live user turns are emitted
       // locally by prompt(). Surfacing it lets a resumed conversation show the
       // user's side of the history, not just the agent's replies.
+      //
+      // The replay carries no turn boundaries, so reconstruct one at the start
+      // of every replayed message after the first: a turn that another prompt
+      // follows must have ended, whatever ended it. Without this each replayed
+      // turn contains no terminal event and reads as cut off.
+      //
+      // A message arrives as a RUN of chunks, so the boundary opens only when
+      // the previous event was not itself a user chunk — otherwise a message
+      // split across two chunks would be reported as two turns.
+      const session = store.sessions.get(sessionId)
+      if (session?.replaying && session.events.at(-1) && session.events.at(-1)?.kind !== 'user') {
+        emit(sessionId, { kind: 'turn_end', stopReason: 'replayed' })
+      }
       emit(sessionId, { kind: 'user', text: textOf(update.content) })
       break
     }
@@ -1141,6 +1158,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         permissions,
         activeTurns: 0,
         queue: [],
+        // Replay notifications land via handleUpdate while the call below is
+        // pending; this is what tells it to reconstruct the turn boundaries the
+        // replay omits.
+        replaying: true,
       })
       try {
         const response = await connection.loadSession({
@@ -1173,8 +1194,18 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         }
         throw error
       }
+      const loaded = store.sessions.get(sessionId)
+      if (loaded) {
+        loaded.replaying = false
+      }
       // The replay streams history but no turn boundary, so the client would stay
       // stuck "waiting". A terminal turn_end marks the resumed session idle.
+      //
+      // This one closes the LAST replayed turn, and keeps `resumed` rather than
+      // the `replayed` marker the earlier boundaries carry: it is the only turn
+      // the restart could have cut off mid-flight, since every other replayed
+      // turn is followed by a prompt that proves it ended. Reporting it as
+      // interrupted keeps a genuinely severed turn distinguishable.
       emit(sessionId, { kind: 'turn_end', stopReason: 'resumed' })
       return meta
     },

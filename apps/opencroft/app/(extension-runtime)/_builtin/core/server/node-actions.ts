@@ -250,11 +250,15 @@ function sendMessageListSessionsAction(ctx: ActionCtx): Promise<SessionSummary[]
   return host.sendMessage.listSessions(ctx.nodeId, { agent, job })
 }
 
+// Mirrors the host's TurnSummary across the extension boundary, which is why it
+// is redeclared rather than imported — and why the two must move together.
+// 'unknown' is a turn restored by a session/load replay: it ended, but the
+// replay does not say how.
 interface TurnSummary {
   index: number
   prompt: string
   promptLength: number
-  status: 'finished' | 'in-progress' | 'interrupted'
+  status: 'finished' | 'in-progress' | 'interrupted' | 'unknown'
   finalMessage?: string
   finalMessageLength?: number
 }

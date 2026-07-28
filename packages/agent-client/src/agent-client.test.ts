@@ -253,6 +253,66 @@ test('loadSession seeds configOptions from the response when nothing was replaye
   await client.deleteSession(sessionId)
 })
 
+// A session/load replay streams history with no turn boundaries of its own, so
+// every replayed turn but the last used to contain no terminal event and read
+// as cut off. loadSession now reconstructs a boundary at the start of each
+// replayed message after the first.
+test('a replay reconstructs a turn boundary between replayed turns, and one message split across chunks stays one turn', async () => {
+  counter += 1
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: '',
+    cwd: `/tmp/agent-client-test-${counter}`,
+  }
+  const sessionId = `replayed-session-${counter}`
+  const push = (update: Record<string, unknown>) =>
+    handleUpdate({ sessionId, update } as Parameters<typeof handleUpdate>[0])
+  const connection = {
+    // Replay notifications arrive while this call is pending, exactly as they
+    // do against a real agent.
+    loadSession: async () => {
+      push({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'first ' } })
+      push({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'question' } })
+      push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'first reply' } })
+      push({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'second question' } })
+      push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'second reply' } })
+      return {}
+    },
+  } as unknown as AgentConnection
+  const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
+  assert.ok(store, 'agent-client global store must exist after import')
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: true,
+    initialized: Promise.resolve(),
+  })
+  const client = createAgentClient()
+  assert.ok(await client.loadSession(sessionId, selection))
+  const events: ChatEvent[] = []
+  client.subscribe(sessionId, (event) => events.push(event))
+
+  // Two turns, not three: the first message's two chunks are one message, so no
+  // boundary is opened between them.
+  assert.equal(events.filter((event) => event.kind === 'user').length, 3)
+  assert.deepEqual(
+    events
+      .filter((event): event is Extract<ChatEvent, { kind: 'turn_end' }> => event.kind === 'turn_end')
+      .map((event) => event.stopReason),
+    ['replayed', 'resumed'],
+  )
+  // The reconstructed boundary closes the first turn: it sits after that turn's
+  // reply and before the next question. Filtered to the conversation kinds —
+  // snapshot events (session_info, modes, …) are not part of what is asserted.
+  const kindOrder = events
+    .map((event) => event.kind)
+    .filter((kind) => kind === 'user' || kind === 'agent_message' || kind === 'turn_end')
+  assert.deepEqual(kindOrder, ['user', 'user', 'agent_message', 'turn_end', 'user', 'agent_message', 'turn_end'])
+  await client.deleteSession(sessionId)
+})
+
 test('a session_info_update notification updates the session title and emits it', async () => {
   const h = await setup('openclaw')
   handleUpdate({

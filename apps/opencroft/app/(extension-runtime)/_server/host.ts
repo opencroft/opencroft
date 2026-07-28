@@ -387,7 +387,9 @@ export interface TurnSummary {
   index: number
   prompt: string
   promptLength: number
-  status: 'finished' | 'in-progress' | 'interrupted'
+  // 'unknown' is a replayed turn: it ended — a later prompt proves it — but a
+  // session/load replay does not say how, so neither does this.
+  status: 'finished' | 'in-progress' | 'interrupted' | 'unknown'
   finalMessage?: string
   finalMessageLength?: number
 }
@@ -430,9 +432,18 @@ export function turnStatus(events: ChatEvent[], inProgress: boolean): TurnSummar
     // off rather than completed.
     return 'interrupted'
   }
+  // 'replayed' = a synthetic boundary loadSession reconstructs between two
+  // replayed turns. It says the turn ended — the prompt that follows proves
+  // that — and nothing about how, because the replay carries no stopReason.
+  // Reporting these as finished would claim an outcome never observed; as
+  // interrupted, it would claim a failure that never happened.
+  if (end.stopReason === 'replayed') {
+    return 'unknown'
+  }
   // 'cancelled' = force-interrupted (stopProcessLocal/force-send); 'resumed'
-  // = a synthetic marker loadSession emits for a turn a restart cut off
-  // mid-flight (see agent-client.ts) — both are incomplete, not finished.
+  // = a synthetic marker loadSession emits for the LAST replayed turn, the one
+  // a restart could have cut off mid-flight (see agent-client.ts) — both are
+  // incomplete, not finished.
   return end.stopReason === 'cancelled' || end.stopReason === 'resumed' ? 'interrupted' : 'finished'
 }
 
@@ -441,7 +452,12 @@ export function buildTurnSummary(index: number, events: ChatEvent[], inProgress:
   const prompt = truncateText(userEvent && userEvent.kind === 'user' ? userEvent.text : '')
   const status = turnStatus(events, inProgress)
   const summary: TurnSummary = { index, prompt: prompt.text, promptLength: prompt.length, status }
-  if (status === 'finished') {
+  // 'unknown' carries its final message too: a replayed turn's reply was
+  // recorded in full and only its ENDING went unobserved. Withholding text that
+  // is right there would make listTurns least useful on exactly the sessions
+  // this status exists for. 'in-progress' and 'interrupted' still omit it —
+  // there the text really is partial.
+  if (status === 'finished' || status === 'unknown') {
     // `agent_message` is a streaming chunk, not a whole message: one is emitted
     // per content delta, so a reply arrives as a run of them. Fold the events
     // back into messages — the same concatenation the chat view renders from —
