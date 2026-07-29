@@ -11,6 +11,7 @@ import { Input } from 'ui/components/ui/input'
 import { Flex } from 'ui/components/ui/layout/flex'
 import { cn } from 'ui/lib/utils'
 
+import { markdownLinkComponents } from './markdown-link'
 import { ThinkingBlock } from './thinking-block'
 import { ToolCallBlock } from './tool-block'
 import { lookupToolView, toolViewProps, type ToolMessage, type ToolViewRegistry } from './tool-views'
@@ -75,7 +76,9 @@ export function MessageView({
     case 'assistant':
       return (
         <div className='prose-chat'>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownLinkComponents}>
+            {message.text}
+          </ReactMarkdown>
         </div>
       )
 

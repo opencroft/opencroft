@@ -13,6 +13,7 @@ export {
 export { AgentChatInput, type AgentChatInputProps } from './chat-input'
 export { ChatView, type ChatViewProps } from './chat-view'
 export { ConfigOptionsBar, type ConfigOptionsBarProps } from './config-options-bar'
+export { markdownLinkComponents } from './markdown-link'
 export {
   McpServerDialog,
   type McpServerDialogProps,

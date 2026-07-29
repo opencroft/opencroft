@@ -15,6 +15,7 @@ import { ScrollToBottomButton } from 'ui/components/ui/utils/scroll-to-bottom-bu
 import { useIsMobile } from 'ui/hooks/use-mobile'
 import { cn } from 'ui/lib/utils'
 
+import { markdownLinkComponents } from './markdown-link'
 import { ThinkingIndicator } from './thinking-indicator'
 import { hasToolView, type ToolViewRegistry } from './tool-views'
 import { TurnDetails } from './turn-details'
@@ -442,7 +443,9 @@ function UserBubble({
       <ContextMenu>
         <ContextMenuTrigger asChild onClick={isMobile ? handleTap : undefined}>
           <div className='rounded-lg bg-primary/10 px-3 py-2 prose-chat'>
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownLinkComponents}>
+              {text}
+            </ReactMarkdown>
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent>

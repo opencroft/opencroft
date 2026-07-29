@@ -3,6 +3,7 @@
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { ChainDot, type ChainDotVariant, Chained } from 'agent-chat/chain'
 import { ConfigOptionsBar } from 'agent-chat/config-options-bar'
+import { markdownLinkComponents } from 'agent-chat/markdown-link'
 import { ThinkingBlock } from 'agent-chat/thinking-block'
 import { groupIntoTurnSections } from 'agent-chat/turn-sections'
 import type { QueuedPrompt } from 'agent-client/types'
@@ -749,7 +750,9 @@ function UserMessage({
                 matches and a stuck header is not clamped at all. Those are the
                 same browsers that already render no stuck shadow. */}
             <div className='prose-chat [@container_scroll-state(stuck:top)]:line-clamp-3'>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownLinkComponents}>
+                {text}
+              </ReactMarkdown>
             </div>
           </Flex>
           {onEdit && (
@@ -878,7 +881,9 @@ function Details({
               lastTextEntry.item.kind === 'assistant-text' &&
               lastTextEntry.item.text.trim() && (
                 <div className='prose-chat'>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{lastTextEntry.item.text}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownLinkComponents}>
+                    {lastTextEntry.item.text}
+                  </ReactMarkdown>
                 </div>
               )}
             {/* Tool call — animate on changes */}
@@ -898,7 +903,9 @@ function Details({
                   if (last.item.kind === 'assistant-text') {
                     return last.item.text.trim() ? (
                       <div className='prose-chat'>
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{last.item.text}</ReactMarkdown>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownLinkComponents}>
+                          {last.item.text}
+                        </ReactMarkdown>
                       </div>
                     ) : null
                   }
@@ -980,7 +987,9 @@ function AssistantText({ text, botName, toggle }: { text: string; botName?: stri
       </Flex>
       {text ? (
         <div className='prose-chat'>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownLinkComponents}>
+            {text}
+          </ReactMarkdown>
         </div>
       ) : null}
     </Flex>
