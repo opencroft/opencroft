@@ -32,7 +32,8 @@ import { RenameDialog } from '@/app/(agent)/_components/chat-hosts'
 import { ChatTabsProvider, useChatTabs } from '@/app/(agent)/_lib/chat-tabs-context'
 import { useAgentSessions } from '@/app/(agent)/_lib/use-agent-sessions'
 import { useChatListNodes } from '@/app/(agent)/_lib/use-chat-list-nodes'
-import { listSessionActivity, stopProcessLocal } from '@/app/(agent)/_server/acp'
+import { useSessionActivityKeys } from '@/app/(agent)/_lib/use-session-activity'
+import { stopProcessLocal } from '@/app/(agent)/_server/acp'
 import type { SpaceSummary } from '@/app/(space)/_server/types'
 import { cn } from '@/lib/utils'
 
@@ -47,46 +48,6 @@ interface SidebarProps {
   pinnedSpaces: SpaceSummary[]
   dashboards: DashboardMeta[]
   pinnedDashboardSlugs: string[]
-}
-
-// Poll for each chat's process-visibility state:
-// blocked on a permission request (pending, warning), a turn actively running
-// (active, primary), and a live agent process at all (alive, success — a
-// superset of the other two, since both imply a process exists). One shared
-// poll for all three — gated off when there are no sessions at all.
-function useSessionActivityKeys(enabled: boolean): {
-  pendingKeys: Set<string>
-  activeKeys: Set<string>
-  aliveKeys: Set<string>
-} {
-  const [pendingKeys, setPendingKeys] = useState<Set<string>>(() => new Set())
-  const [activeKeys, setActiveKeys] = useState<Set<string>>(() => new Set())
-  const [aliveKeys, setAliveKeys] = useState<Set<string>>(() => new Set())
-  useEffect(() => {
-    if (!enabled) {
-      setPendingKeys(new Set())
-      setActiveKeys(new Set())
-      setAliveKeys(new Set())
-      return
-    }
-    let cancelled = false
-    const poll = () => {
-      listSessionActivity().then((result) => {
-        if (!cancelled) {
-          setPendingKeys(new Set(result.pending))
-          setActiveKeys(new Set(result.active))
-          setAliveKeys(new Set(result.alive))
-        }
-      })
-    }
-    poll()
-    const id = window.setInterval(poll, 2500)
-    return () => {
-      cancelled = true
-      window.clearInterval(id)
-    }
-  }, [enabled])
-  return { pendingKeys, activeKeys, aliveKeys }
 }
 
 function ChatModeToggle() {

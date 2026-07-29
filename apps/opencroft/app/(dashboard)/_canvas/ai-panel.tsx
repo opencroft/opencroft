@@ -13,6 +13,7 @@ import { DashboardHost, LocalAgentHost } from '@/app/(agent)/_components/chat-ho
 import { useChatTabsMaybe } from '@/app/(agent)/_lib/chat-tabs-context'
 import { useAgentSessions } from '@/app/(agent)/_lib/use-agent-sessions'
 import { toLeaf } from '@/app/(agent)/_lib/use-chat-list-nodes'
+import { useSessionActivityKeys } from '@/app/(agent)/_lib/use-session-activity'
 import type { SessionEntry } from '@/app/(agent)/_server/agent-sessions-store'
 import { composeEnvelope } from '@/app/(agent)/_shared/message-envelope'
 import { slug } from '@/app/(server)/_server/types'
@@ -32,10 +33,6 @@ interface AiPanelProps {
 // Sentinel key for the "no session selected" state; namespaces the chat-tabs
 // fallback so a dashboard view never collides with a real session.
 const DASHBOARD_KEY = 'agent:dashboard'
-// Shared empty set for the activity inputs `toLeaf` takes — this surface shows
-// no status dot (see the chat leaves below), and a fresh Set per render would
-// churn the memo that builds them.
-const NO_KEYS = new Set<string>()
 // Injected on the first message of a session: asks the agent to lead its reply
 // with a self-titled chat name, which use-acp-session parses out to rename the
 // tab. No literal nested opencroft tag here — a nested close would truncate the
@@ -205,12 +202,12 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
   // other set: all of them, whether or not they are open, in no grouping.
   //
   // Leaves are built with the sidebar's own `toLeaf` so a row reads the same in
-  // both places. The activity sets are empty here: the status dot is driven by
-  // a poll the shell owns, and starting a second one for this surface would
-  // cost more than the dot is worth.
+  // both places, off the same shared activity poll the sidebar retains — see
+  // use-session-activity.ts.
+  const { pendingKeys, activeKeys, aliveKeys } = useSessionActivityKeys(sessions.length > 0)
   const chatLeaves = useMemo(
-    () => sessions.map((s) => toLeaf(s, NO_KEYS, NO_KEYS, NO_KEYS, avatarByAgentId)),
-    [sessions, avatarByAgentId],
+    () => sessions.map((s) => toLeaf(s, pendingKeys, activeKeys, aliveKeys, avatarByAgentId)),
+    [sessions, pendingKeys, activeKeys, aliveKeys, avatarByAgentId],
   )
   const chatNodes = useMemo<ChatListNode[]>(() => chatLeaves.map((item) => ({ type: 'item', item })), [chatLeaves])
   // ChatList seeds its working tree from `nodes` on mount and never resyncs, so

@@ -330,9 +330,10 @@ export const forkLocal = createServerFn({ method: 'POST', strict: { output: fals
 // Tab keys of chat sessions currently blocked on an unresolved permission
 // request, tab keys with a turn actively running, and tab keys with a live
 // agent process at all (alive is a superset of the other two — see
-// aliveSessionKeys) — the sidebar polls this once to set each chat's
-// process-visibility indicator: warning (pending),
-// primary (active), success (alive but neither), or none (not in `alive`).
+// aliveSessionKeys) — polled once, from a shared module every chat list
+// surface reads (use-session-activity.ts), to set each chat's
+// process-visibility indicator: warning (pending), primary (active),
+// success (alive but neither), or none (not in `alive`).
 export const listSessionActivity = createServerFn({ method: 'GET', strict: { output: false } }).handler(
   async (): Promise<{ pending: string[]; active: string[]; alive: string[] }> => ({
     pending: agentClient.pendingPermissionSessionKeys(),
