@@ -297,6 +297,9 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
   // landed, so the trigger is listening by the time the event arrives.
   const [menuArmed, setMenuArmed] = useState<{ id: string; x: number; y: number } | null>(null)
   const idCounter = useRef(0)
+  // The list's own box, used to place the drag ghost. See the ghost's comment:
+  // it is positioned against this element rather than the viewport.
+  const listRef = useRef<HTMLDivElement | null>(null)
   const pressRef = useRef<Press | null>(null)
   // Mirror of `state` for the async touch handlers (they fire off-render).
   const stateRef = useRef(state)
@@ -526,9 +529,12 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
         setLifted(null)
         setDrag(dragPayload(p))
       }
-      // Real drag: cancel the browser's scroll and follow the finger.
+      // Real drag: cancel the browser's scroll and follow the finger. The point
+      // is stored relative to the list, since that is what the ghost is placed
+      // against; hit-testing below keeps using the raw viewport coordinates.
       ev.preventDefault()
-      setTouchDrag({ kind: p.kind, id: p.id, x: t.clientX, y: t.clientY })
+      const box = listRef.current?.getBoundingClientRect()
+      setTouchDrag({ kind: p.kind, id: p.id, x: t.clientX - (box?.left ?? 0), y: t.clientY - (box?.top ?? 0) })
       setOver(overAtPoint(t.clientX, t.clientY, p.kind))
     }
 
@@ -659,7 +665,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
   }
 
   return (
-    <div className={cn('relative flex w-full min-w-0 flex-col gap-0.5', className)} onDragEnd={reset}>
+    <div ref={listRef} className={cn('relative flex w-full min-w-0 flex-col gap-0.5', className)} onDragEnd={reset}>
       {state.folderOrder.map((fid, i) => {
         const f = state.folders[fid]
         const isDraggedFolder = (drag?.kind === 'folder' && drag.id === fid) || (touchDrag?.kind === 'folder' && touchDrag.id === fid)
@@ -819,7 +825,15 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
           Touch has no drag image at all, so this is a real element we render
           -- fully opaque unless told otherwise -- and an opaque plate riding
           under the finger hides the very insert-line it is being aimed at,
-          which is the whole feedback the drag depends on. */}
+          which is the whole feedback the drag depends on.
+
+          Placed against the list's own box, not the viewport. `fixed` would be
+          the obvious choice and is the wrong one: a transform, filter or
+          containment anywhere above this component makes that ancestor the
+          containing block instead of the viewport, and the ghost then lands
+          offset by however far down the page that ancestor sits. A host is free
+          to do any of those, so the ghost cannot depend on none of them being
+          there. */}
       {touchDrag ? (() => {
         const folder = touchDrag.kind === 'folder' ? state.folders[touchDrag.id] : undefined
         const leaf = touchDrag.kind === 'item' ? state.items[touchDrag.id] : undefined
@@ -841,7 +855,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
         if (!content) return null
         return (
           <div
-            className='pointer-events-none fixed z-50 opacity-60'
+            className='pointer-events-none absolute z-50 opacity-60'
             style={{ left: touchDrag.x, top: touchDrag.y, transform: 'translateY(-50%)' }}
           >
             <div className='w-64 rounded-md bg-background p-1 shadow-lg ring-1 ring-border'>{content}</div>
