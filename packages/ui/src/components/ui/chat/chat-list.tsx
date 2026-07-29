@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, type DragEvent, type TouchEvent as ReactTouchEvent } from 'react'
+import { useState, useRef, useEffect, type DragEvent, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react'
 import { ChevronDown, ChevronRight, Folder, FolderOpen, FolderPlus, Pencil, Trash2 } from 'lucide-react'
 
 import { ChatListItem, type ChatListItemAction, type ChatStatus } from '@/components/ui/chat/chat-list-item'
@@ -77,24 +77,50 @@ type Over =
 // Long-press pickup activation constraint (the dnd-kit pattern):
 // a press held still this long arms a drag; moving past the tolerance before it
 // fires is a scroll. The tolerance sits below the browser's touch-slop so a
-// still hold never accidentally scrolls, and the delay sits well under the row
-// menu's ~700ms long-press so a drag commits first.
-const PICKUP_DELAY_MS = 250
+// still hold never accidentally scrolls, and the delay sits well under a natural
+// long press so a drag commits before the user expects a menu.
+const PICKUP_DELAY_MS = 500
 const PICKUP_TOLERANCE_PX = 5
+// A release before this many ms since the press started reads as an ordinary
+// slow tap -- 200-350ms between touch-down and release is normal -- so the
+// menu needs its own, longer bar rather than sharing the pickup delay. Below
+// it we leave the gesture alone and the row's own tap selects the chat.
+const MENU_DELAY_MS = 1000
+
+// A single short pulse, fired identically at each stage the gesture reaches --
+// armed, then menu-open -- so the two read as one escalation rather than two
+// different effects. Feature-detected only: iOS Safari has no Vibration API at
+// all and silently gets nothing from this, independent of whatever native
+// haptic a platform's own long-press/context-menu handling may already give.
+const HAPTIC_PULSE_MS = 15
+function vibrate() {
+  if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate(HAPTIC_PULSE_MS)
+}
 
 // An in-flight touch press on a row. Held in a ref (no re-render) until it drags,
-// scrolls, is released as a press (-> row menu), or is dropped when the row menu
-// opens (see `handleMenuOpen`). `move`/`end` are the non-passive window listeners
-// bound for this one press.
+// scrolls, its own menu timer opens the row menu mid-hold, or it's dropped when
+// a menu opens some other way (see `handleMenuOpen`). `move`/`end` are the
+// non-passive window listeners bound for this one press.
 interface Press {
+  // Rows and folder headers run the SAME gesture -- this is what the press is
+  // carrying, so the drag payload, the hit-test and the menu all resolve
+  // against the right kind of target.
+  kind: 'item' | 'folder'
   id: string
+  // The dragged item's own list. Unused for a folder press (folders only ever
+  // reorder within the single folder list).
   list: string
   startX: number
   startY: number
+  startTime: number
   committed: boolean
   aborted: boolean
   moved: boolean
-  timer: ReturnType<typeof setTimeout> | null
+  // Set the moment the menu timer opens it mid-hold -- release afterward is
+  // just the finger lifting off an already-open menu, not a new decision.
+  menuOpened: boolean
+  pickupTimer: ReturnType<typeof setTimeout> | null
+  menuTimer: ReturnType<typeof setTimeout> | null
   move?: (e: TouchEvent) => void
   end?: (e: TouchEvent) => void
 }
@@ -189,6 +215,12 @@ function applyDrop(s: ListState, drag: Drag, over: Over): ListState {
   return next
 }
 
+// The drag payload a touch press stands for. A folder press carries no source
+// list -- folders only ever reorder within the folder list.
+function dragPayload(p: Press): Drag {
+  return p.kind === 'folder' ? { kind: 'folder', id: p.id } : { kind: 'item', id: p.id, from: p.list }
+}
+
 // A container for chat-list-items. **Folders always sit above loose items.**
 // Items drag freely: between folders, into a folder (drop on its header), out to
 // the top level (drop on the 'Move to top level' zone), or before/after another
@@ -202,18 +234,44 @@ function applyDrop(s: ListState, drag: Drag, over: Over): ListState {
 // Touch gesture arbitration (long-press pickup, no grip): the row
 // carries NO grip -- one press serves scroll, drag and menu, and movement tells
 // them apart (the dnd-kit `activationConstraint { delay, tolerance }` pattern).
-// Finger down starts a ~250ms timer; move past ~5px before it fires is a scroll
+// Finger down starts a ~500ms timer; move past ~5px before it fires is a scroll
 // (handed to the browser); still within tolerance when it fires arms the row (a
-// brief lift), and any later movement drags it in ANY direction (vertical
-// included: filing a chat into a folder is a vertical drag). Once armed, dragging
-// has to take the gesture off the browser, and with no touch-action:none element
-// to start from that means a NON-PASSIVE touchmove listener (bound on the press)
-// calling preventDefault -- pointer events can't be cancelled, which is why the
-// earlier handle-less attempt failed. Released without moving, the press is left
-// to the row menu, which opens via Radix's own ~700ms long-press (movement
-// cancels it); our 250ms pickup sits comfortably below it, and `handleMenuOpen`
-// drops an armed pickup the moment the menu opens. Desktop mouse drag (native
-// HTML5 DnD on the whole row) and right-click are untouched.
+// brief lift). From there movement past the threshold drags it in ANY direction
+// (vertical included: filing a chat into a folder is a vertical drag). A real
+// drag has to take the gesture off the browser, and with no touch-action:none
+// element to start from that means a NON-PASSIVE touchmove listener (bound on the
+// press) calling preventDefault -- but ONLY once movement passes the drag
+// threshold; sub-threshold drift while holding stays uncancelled, or the browser
+// has no gesture left (pointer events can't be cancelled, which is why the
+// earlier handle-less attempt failed). We own the whole press, so we own the
+// menu too: a second, independent timer -- MENU_DELAY_MS (kept separate from
+// the 500ms pickup delay -- an ordinary slow tap can easily run 200-350ms) --
+// opens the row menu mid-hold, the moment it fires, by dispatching a real
+// contextmenu event at the press's start point; it does not wait for release.
+// The context-menu trigger stays enabled on every pointer type, because the
+// primitive captures the point it anchors the menu to while handling that
+// event -- disabling it (tried once) took the anchor away with the timing and
+// the menu opened at the viewport origin. What it does NOT get to keep is its
+// own touch long-press, which runs on a fixed ~700ms of its own, ahead of
+// ours: while the row is being driven by touch its trigger is `disabled`,
+// which both stops that long-press and clears any timer already armed, in an
+// effect the primitive keys on that prop. At our delay the trigger is enabled
+// again and the `contextmenu` is dispatched from an effect, once that render
+// has been committed and it is listening. (Left alone it is unreliable rather than harmful -- the
+// primitive clears it on ANY pointermove, with no tolerance, so a finger's
+// jitter usually destroys it. Usually is not a guarantee.) Cancelling
+// `pointerdown` also suppresses the click the browser would synthesise from a
+// tap, so the press owns selection: a release that never dragged and never
+// reached the menu timer selects the chat, or toggles the folder, from `end`.
+// Both timers are cleared if the press aborts as a scroll, and the menu timer
+// is also cleared the moment a real drag starts, so it can't pop the menu open
+// mid-drag. `handleMenuOpen` is a notification -- the primitive owns the open
+// state, there is no controlled `open` -- and drops an in-flight press when a
+// menu appears. `draggable` is mouse-only -- off as soon as a touch drives the
+// row -- so the browser never starts its own drag from a long press; desktop
+// keeps native HTML5 DnD + right-click untouched. Two identical short
+// vibration pulses mark the same two moments -- armed, then menu-open -- where
+// the Vibration API exists.
 export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, onRename, onStopProcess, onClose, onDelete, onChange, onRenameFolder, onCreateFolder, onDeleteFolder, className }: ChatListProps) {
   const [state, setState] = useState<ListState>(() => initState(nodes, defaultFolderOpen))
   const [drag, setDrag] = useState<Drag | null>(null)
@@ -221,10 +279,23 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
   const [editing, setEditing] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   // Live position of the pointer-dragged row, to render the lifted ghost.
-  const [touchDrag, setTouchDrag] = useState<{ id: string; x: number; y: number } | null>(null)
-  // The row armed by a still long-press (picked up, not yet dragged): rendered
-  // with a lift style; cleared on drag, drop, release or menu-open.
-  const [liftedId, setLiftedId] = useState<string | null>(null)
+  const [touchDrag, setTouchDrag] = useState<{ kind: 'item' | 'folder'; id: string; x: number; y: number } | null>(null)
+  // The row or folder header armed by a still long-press (picked up, not yet
+  // dragged): rendered with a lift style; cleared on drag, drop, release or
+  // menu-open. Carries its kind because a folder id and a chat id both come
+  // from the host and can collide.
+  const [lifted, setLifted] = useState<{ kind: 'item' | 'folder'; id: string } | null>(null)
+  // Set only for the duration of our own dispatch, so a menu opening can be
+  // told apart from one the primitive raised by itself. See `handleMenuOpen`.
+  const ownMenuDispatchRef = useRef(false)
+  // True once the row is being driven by touch or pen. While it is, the menu
+  // trigger is disabled, which both stops its own long-press and clears any
+  // timer it had already armed.
+  const [touchInput, setTouchInput] = useState(false)
+  // The row whose menu should open, and where. Setting it re-enables that row's
+  // trigger; the effect below dispatches the `contextmenu` once that render has
+  // landed, so the trigger is listening by the time the event arrives.
+  const [menuArmed, setMenuArmed] = useState<{ id: string; x: number; y: number } | null>(null)
   const idCounter = useRef(0)
   const pressRef = useRef<Press | null>(null)
   // Mirror of `state` for the async touch handlers (they fire off-render).
@@ -242,14 +313,15 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
   const cancelPress = () => {
     const p = pressRef.current
     if (!p) return
-    if (p.timer) { clearTimeout(p.timer); p.timer = null }
+    if (p.pickupTimer) { clearTimeout(p.pickupTimer); p.pickupTimer = null }
+    if (p.menuTimer) { clearTimeout(p.menuTimer); p.menuTimer = null }
     if (p.move) window.removeEventListener('touchmove', p.move)
     if (p.end) {
       window.removeEventListener('touchend', p.end)
       window.removeEventListener('touchcancel', p.end)
     }
     pressRef.current = null
-    setLiftedId(null)
+    setLifted(null)
   }
 
   const commit = (next: ListState) => {
@@ -282,6 +354,29 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
     if (!f || f.name === name) return
     commit({ ...state, folders: { ...state.folders, [id]: { ...f, name } } })
     onRenameFolder?.(id, name)
+  }
+
+  // Stops the context-menu trigger arming its own touch long-press, so the menu
+  // stays on our schedule instead of the primitive's fixed one.
+  //
+  // This has to be handed to the element the trigger is attached to -- the row
+  // itself, and the folder header's toggle -- not to an ancestor. The trigger
+  // composes its own handler behind a `defaultPrevented` check and runs the
+  // element's handler first, so cancelling here lands before that check on the
+  // same event; anything further up is a separate listener and does not.
+  //
+  // Which input the row is being used with right now, taken from the event
+  // rather than from a `(pointer: coarse)` media query -- that query describes
+  // the primary input device, so it reads false on a machine driven by a mouse
+  // that also has a touchscreen, while touch still works there and the menu
+  // trigger still arms its long-press. The trigger tests exactly this instead,
+  // so we do too.
+  const noteInputType = (e: ReactPointerEvent<Element>) => {
+    setTouchInput(e.pointerType !== 'mouse')
+  }
+
+  const toggleFolder = (fid: string) => {
+    setState((s) => ({ ...s, folders: { ...s.folders, [fid]: { ...s.folders[fid], open: !s.folders[fid].open } } }))
   }
 
   const newFolderId = () => {
@@ -325,85 +420,135 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
 
   // --- Touch gesture arbitration (long-press pickup, no grip) ---
 
-  // The folder header under a screen point, if any (used to hit-test drop
-  // targets while a row is dragged).
-  const folderAtPoint = (x: number, y: number): string | null => {
+  // What a screen point is hovering during a touch drag -- mirrors the
+  // combined effect of the mouse path's per-element `onDragOver` handlers,
+  // since touch has no native dragover to hit-test with and has to do it by
+  // hand via `elementFromPoint`. What counts as a target depends on WHAT is
+  // being dragged, exactly as it does for the mouse: a dragged folder only
+  // reorders among folders, so only a folder header matches; a dragged item
+  // files into a folder (its header), moves out to the top level (the zone
+  // that only exists mid-drag-from-a-folder), or inserts before/after any
+  // row. Indices come from the DOM (`data-*-index`) so they always reflect
+  // the current render rather than a value captured at press-start.
+  const overAtPoint = (x: number, y: number, dragKind: 'item' | 'folder'): Over | null => {
     if (typeof document === 'undefined') return null
     const el = document.elementFromPoint(x, y) as HTMLElement | null
-    const header = el?.closest('[data-folder-header]') as HTMLElement | null
-    return header?.dataset.folderId ?? null
+    if (!el) return null
+    const folderHeader = el.closest('[data-folder-header]') as HTMLElement | null
+    if (dragKind === 'folder') {
+      if (!folderHeader) return null
+      const r = folderHeader.getBoundingClientRect()
+      return { kind: 'item-slot', list: 'folders', index: Number(folderHeader.dataset.folderIndex), pos: y < r.top + r.height / 2 ? 'before' : 'after' }
+    }
+    if (folderHeader) return { kind: 'folder', folderId: folderHeader.dataset.folderId! }
+    if (el.closest('[data-top-level-zone]')) return { kind: 'top-level' }
+    const row = el.closest('[data-row-id]') as HTMLElement | null
+    if (row) {
+      const r = row.getBoundingClientRect()
+      return { kind: 'item-slot', list: row.dataset.rowList!, index: Number(row.dataset.rowIndex), pos: y < r.top + r.height / 2 ? 'before' : 'after' }
+    }
+    return null
   }
 
-  // The row menu opened (Radix native long-press, ~700ms -- comfortably above our
-  // 250ms pickup). A still press that reached the menu is a menu invocation, not
-  // a drag: drop the armed pickup so the lift snaps back. (Movement already
-  // canceled the menu before it could open, so a real drag never reaches here.)
+  // Open a row's context menu at a point by dispatching a real contextmenu
+  // event there. The trigger has to actually handle an event to capture the
+  // point it anchors the menu to -- disabling the trigger (tried once) removed
+  // that capture along with the timing, and the menu opened at the viewport
+  // origin instead of the row. Dispatching keeps the capture and leaves us the
+  // timing, since the trigger's own long-press is suppressed at `pointerdown`.
+  const openRowMenuAt = (x: number, y: number) => {
+    if (typeof document === 'undefined') return
+    const el = document.elementFromPoint(x, y) as HTMLElement | null
+    if (!el) return
+    el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y }))
+  }
+
+  // The menu opened or closed. The primitive owns that state -- there is no
+  // controlled `open` to drive -- so this is a notification.
+  //
+  // Only OUR menu ends the press. If the primitive's own long-press fires on a
+  // gesture we are already running, the finger may still be about to drag, and
+  // tearing the press down here would leave the row undraggable for the rest of
+  // that gesture -- the menu appears and nothing can be moved afterwards. We
+  // cannot stop that menu from opening (its root takes no controlled `open`),
+  // but we can decline to let it cancel a drag the user is in the middle of.
   const handleMenuOpen = (open: boolean) => {
-    if (!open) return
-    cancelPress()
+    if (open) {
+      if (ownMenuDispatchRef.current) cancelPress()
+      return
+    }
+    // Closed: disarm, which disables the trigger again for the next touch press.
+    setMenuArmed(null)
   }
 
   // One press serves scroll, drag and menu; movement tells them apart. On finger
   // down we start a PICKUP_DELAY_MS timer and watch for movement. Move past the
   // tolerance before it fires -> scroll (never preventDefault'd, the browser
-  // keeps it). Still within tolerance when it fires -> arm the row (lift). Any
-  // move after that drags it -- and dragging has to take the gesture off the
-  // browser, which (with no touch-action:none grip) means a NON-PASSIVE touchmove
-  // calling preventDefault; pointer events can't be cancelled, which is why the
-  // earlier handle-less attempt failed. Release without moving leaves the press
-  // to the row menu.
-  const startPress = (id: string, list: string, e: ReactTouchEvent<HTMLDivElement>) => {
+  // keeps it). Still within tolerance when it fires -> arm the row (lift). After
+  // that, movement past the threshold drags it (preventDefault only then -- drift
+  // while holding stays uncancelled, or the browser has no gesture left). A
+  // second, independent timer opens the row's menu mid-hold, at MENU_DELAY_MS,
+  // without waiting for release -- release afterward only has to swallow the
+  // browser's synthesised click.
+  const startPress = (kind: 'item' | 'folder', id: string, list: string, e: ReactTouchEvent<HTMLDivElement>) => {
     if (pressRef.current) return
     const t0 = e.touches[0]
-    const p: Press = { id, list, startX: t0.clientX, startY: t0.clientY, committed: false, aborted: false, moved: false, timer: null }
+    const p: Press = { kind, id, list, startX: t0.clientX, startY: t0.clientY, startTime: Date.now(), committed: false, aborted: false, moved: false, menuOpened: false, pickupTimer: null, menuTimer: null }
     pressRef.current = p
 
     const move = (ev: TouchEvent) => {
-      if (pressRef.current !== p) return
+      if (pressRef.current !== p || p.menuOpened) return
       const t = ev.touches[0]
       const dx = t.clientX - p.startX
       const dy = t.clientY - p.startY
+      const dist = Math.max(Math.abs(dx), Math.abs(dy))
       if (p.aborted) return
       if (!p.committed) {
-        if (Math.abs(dx) > PICKUP_TOLERANCE_PX || Math.abs(dy) > PICKUP_TOLERANCE_PX) {
+        if (dist > PICKUP_TOLERANCE_PX) {
           // Moved before the pickup delay -> a scroll. Hand the gesture back; we
           // never preventDefault'd, so the browser scrolls.
           p.aborted = true
-          if (p.timer) { clearTimeout(p.timer); p.timer = null }
-          setLiftedId(null)
+          if (p.pickupTimer) { clearTimeout(p.pickupTimer); p.pickupTimer = null }
+          if (p.menuTimer) { clearTimeout(p.menuTimer); p.menuTimer = null }
+          setLifted(null)
         }
         return
       }
-      // Armed: this movement drags the row. Cancel the browser's scroll.
-      ev.preventDefault()
+      // Armed. A held finger drifts a pixel or two; that sub-threshold drift
+      // must NOT be cancelled -- the browser needs an uncancelled press, and we
+      // only take the gesture once this is a real drag. So preventDefault (and
+      // the drag itself) start only past the threshold; drift below it leaves
+      // the press live so the menu timer can still open the menu.
       if (!p.moved) {
+        if (dist <= PICKUP_TOLERANCE_PX) return
         p.moved = true
-        setLiftedId(null)
-        setDrag({ kind: 'item', id: p.id, from: p.list })
+        if (p.menuTimer) { clearTimeout(p.menuTimer); p.menuTimer = null }
+        setLifted(null)
+        setDrag(dragPayload(p))
       }
-      setTouchDrag({ id: p.id, x: t.clientX, y: t.clientY })
-      const fid = folderAtPoint(t.clientX, t.clientY)
-      setOver(fid ? { kind: 'folder', folderId: fid } : null)
+      // Real drag: cancel the browser's scroll and follow the finger.
+      ev.preventDefault()
+      setTouchDrag({ kind: p.kind, id: p.id, x: t.clientX, y: t.clientY })
+      setOver(overAtPoint(t.clientX, t.clientY, p.kind))
     }
 
     const end = (ev: TouchEvent) => {
       if (pressRef.current !== p) return
-      if (p.timer) { clearTimeout(p.timer); p.timer = null }
+      if (p.pickupTimer) { clearTimeout(p.pickupTimer); p.pickupTimer = null }
+      if (p.menuTimer) { clearTimeout(p.menuTimer); p.menuTimer = null }
+      const t = ev.changedTouches[0]
       if (p.committed && p.moved) {
-        const t = ev.changedTouches[0]
-        const fid = folderAtPoint(t.clientX, t.clientY)
-        let target: Over | null = null
-        if (fid) target = { kind: 'folder', folderId: fid }
-        else if (p.list !== 'items') target = { kind: 'top-level' }
-        // else: dropped in empty space while already top-level -> no-op
+        const target = overAtPoint(t.clientX, t.clientY, p.kind)
         if (target) {
-          const next = applyDrop(stateRef.current, { kind: 'item', id: p.id, from: p.list }, target)
+          const next = applyDrop(stateRef.current, dragPayload(p), target)
           if (next !== stateRef.current) commit(next)
         }
       }
-      // committed && !moved -> a press; leave it to the row menu. aborted -> scroll.
+      // Anything else is a tap or a scroll, and needs nothing from us: we never
+      // cancel the press, so the browser still raises the click that selects the
+      // chat or toggles the folder.
       setTouchDrag(null)
-      setLiftedId(null)
+      setLifted(null)
       setDrag(null)
       setOver(null)
       pressRef.current = null
@@ -415,17 +560,41 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
     p.move = move
     p.end = end
 
-    p.timer = setTimeout(() => {
+    p.pickupTimer = setTimeout(() => {
       if (pressRef.current !== p || p.aborted) return
       // Held still within tolerance for the delay -> pick the row up.
       p.committed = true
-      setLiftedId(p.id)
+      setLifted({ kind: p.kind, id: p.id })
+      vibrate()
     }, PICKUP_DELAY_MS)
+
+    p.menuTimer = setTimeout(() => {
+      if (pressRef.current !== p || p.aborted || p.moved) return
+      // Still held, still armed, never dragged -> open the menu right now,
+      // without waiting for release. Dispatch a real contextmenu at the
+      // (still-current, since we haven't moved) start point so the primitive
+      // captures a correct anchor; the ref flag marks this open as ours.
+      p.menuOpened = true
+      setLifted(null)
+      vibrate()
+      setMenuArmed({ id: p.id, x: p.startX, y: p.startY })
+    }, MENU_DELAY_MS)
 
     window.addEventListener('touchmove', move, { passive: false })
     window.addEventListener('touchend', end)
     window.addEventListener('touchcancel', end)
   }
+
+  // The armed row's trigger has just been re-enabled by the render, so it is
+  // listening again -- dispatch the event it opens on. Doing this from an
+  // effect rather than from the timer is the whole point: by the time it runs,
+  // the change of `disabled` has been committed.
+  useEffect(() => {
+    if (!menuArmed) return
+    ownMenuDispatchRef.current = true
+    openRowMenuAt(menuArmed.x, menuArmed.y)
+    ownMenuDispatchRef.current = false
+  }, [menuArmed])
 
   // Drop any in-flight press if the list unmounts mid-gesture (no listener leak).
   useEffect(() => () => { cancelPress() }, [])
@@ -433,7 +602,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
   const renderItem = (id: string, list: string, index: number) => {
     const leaf = state.items[id]
     if (!leaf) return null
-    const isDragged = (drag?.kind === 'item' && drag.id === id) || touchDrag?.id === id
+    const isDragged = (drag?.kind === 'item' && drag.id === id) || (touchDrag?.kind === 'item' && touchDrag.id === id)
     const slotOver = over?.kind === 'item-slot' && over.list === list && over.index === index ? over : null
     return (
       <div key={id} className='relative'>
@@ -443,8 +612,9 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
         <div
           data-row-id={id}
           data-row-list={list}
-          draggable
-          onTouchStart={(e) => startPress(id, list, e)}
+          data-row-index={index}
+          draggable={!touchInput}
+          onTouchStart={(e) => startPress('item', id, list, e)}
           onDragStart={(e) => {
             setDrag({ kind: 'item', id, from: list })
             e.dataTransfer.effectAllowed = 'move'
@@ -460,7 +630,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
             setOver({ kind: 'item-slot', list, index, pos: e.clientY < r.top + r.height / 2 ? 'before' : 'after' })
           }}
           onDrop={performDrop}
-          className={cn(isDragged && 'opacity-40', liftedId === id && 'rounded-md bg-muted ring-2 ring-primary')}
+          className={cn(isDragged && 'opacity-40', lifted?.kind === 'item' && lifted.id === id && 'rounded-md bg-muted ring-2 ring-primary')}
         >
           <ChatListItem
             id={leaf.id}
@@ -476,6 +646,8 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
             onClose={onClose}
             onDelete={onDelete}
             actions={itemActions}
+            onPointerDown={noteInputType}
+            menuDisabled={touchInput && menuArmed?.id !== id}
             onMenuOpenChange={handleMenuOpen}
           />
         </div>
@@ -490,7 +662,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
     <div className={cn('relative flex w-full min-w-0 flex-col gap-0.5', className)} onDragEnd={reset}>
       {state.folderOrder.map((fid, i) => {
         const f = state.folders[fid]
-        const isDraggedFolder = drag?.kind === 'folder' && drag.id === fid
+        const isDraggedFolder = (drag?.kind === 'folder' && drag.id === fid) || (touchDrag?.kind === 'folder' && touchDrag.id === fid)
         const folderSlotOver = over?.kind === 'item-slot' && over.list === 'folders' && over.index === i ? over : null
         const intoThis = over?.kind === 'folder' && over.folderId === fid
         // The folder header label is the context-menu trigger (right-click on
@@ -499,13 +671,16 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
         // the header; each entry shows only for the callback it needs. Rename
         // keeps its inline editing; delete returns the chats to the loose list.
         // The draggable header div around it stays the native HTML5 DnD source
-        // and drop target for folder reorder / file-item-into-folder, so the
-        // menu and drag never compete (right-click can't start a drag, and
-        // folders don't drag on touch -- a menu opening starts nothing).
+        // and drop target for folder reorder / file-item-into-folder on mouse;
+        // on touch it runs the same long-press gesture a row does, so a folder
+        // reorders by hold-and-drag there too. Menu and drag never compete on
+        // either pointer: right-click can't start a drag, and on touch the
+        // pickup commits first while the menu needs a longer still hold.
         const toggle = (
           <button
             type='button'
-            onClick={() => setState((s) => ({ ...s, folders: { ...s.folders, [fid]: { ...s.folders[fid], open: !s.folders[fid].open } } }))}
+            onPointerDown={noteInputType}
+            onClick={() => toggleFolder(fid)}
             className='inline-flex min-w-0 flex-1 items-center gap-1 rounded-md px-1 py-1 outline-none'
           >
             {f.open ? <ChevronDown className='size-3.5 shrink-0' /> : <ChevronRight className='size-3.5 shrink-0' />}
@@ -534,8 +709,8 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
             className='min-w-0 flex-1 rounded-sm bg-background px-1 py-0.5 text-foreground outline-none ring-1 ring-ring'
           />
         ) : onRenameFolder || onDeleteFolder ? (
-          <ContextMenu>
-            <ContextMenuTrigger asChild>{toggle}</ContextMenuTrigger>
+          <ContextMenu onOpenChange={handleMenuOpen}>
+            <ContextMenuTrigger asChild disabled={touchInput && menuArmed?.id !== fid}>{toggle}</ContextMenuTrigger>
             <ContextMenuContent className='min-w-[8rem]' onClick={(e) => e.stopPropagation()}>
               {onRenameFolder ? (
                 <ContextMenuItem onClick={() => startRename(fid, f.name)}>
@@ -562,8 +737,14 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
             <div
               data-folder-header
               data-folder-id={fid}
-              draggable={editing !== fid}
+              data-folder-index={i}
+              draggable={!touchInput && editing !== fid}
               style={{ touchAction: 'pan-y', WebkitTouchCallout: 'none' }}
+              // Same press as a row: hold to lift and reorder among folders,
+              // hold longer for the rename/delete menu, tap to toggle open.
+              // Suppressed while the inline rename input is up, so a touch there
+              // reaches the field.
+              onTouchStart={(e) => { if (editing !== fid) startPress('folder', fid, 'folders', e) }}
               onDragStart={(e) => {
                 setDrag({ kind: 'folder', id: fid })
                 e.dataTransfer.effectAllowed = 'move'
@@ -590,6 +771,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
               className={cn(
                 'flex cursor-grab items-center gap-1 rounded-md text-xs font-medium text-muted-foreground hover:bg-muted',
                 isDraggedFolder && 'opacity-40',
+                lifted?.kind === 'folder' && lifted.id === fid && 'bg-muted ring-2 ring-primary',
                 intoThis && 'ring-2 ring-primary bg-primary/10',
               )}
             >
@@ -612,6 +794,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
       {/* While dragging an item, surface a clear 'out of any folder' target. */}
       {drag?.kind === 'item' && drag.from !== 'items' ? (
         <div
+          data-top-level-zone
           onDragOver={(e) => {
             e.preventDefault()
             e.stopPropagation()
@@ -628,25 +811,40 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
         </div>
       ) : null}
 
-      {/* Lifted ghost following the finger during a touch drag. */}
+      {/* Lifted ghost following the finger during a touch drag.
+
+          Deliberately translucent. The mouse path never needs this: the
+          browser builds its own drag image from the dragged element and
+          applies its own transparency, and none of that is ours to control.
+          Touch has no drag image at all, so this is a real element we render
+          -- fully opaque unless told otherwise -- and an opaque plate riding
+          under the finger hides the very insert-line it is being aimed at,
+          which is the whole feedback the drag depends on. */}
       {touchDrag ? (() => {
-        const leaf = state.items[touchDrag.id]
-        if (!leaf) return null
+        const folder = touchDrag.kind === 'folder' ? state.folders[touchDrag.id] : undefined
+        const leaf = touchDrag.kind === 'item' ? state.items[touchDrag.id] : undefined
+        const content = folder ? (
+          <span className='flex items-center gap-1 px-1 py-1 text-xs font-medium text-muted-foreground'>
+            {folder.open ? <FolderOpen className='size-3.5 shrink-0' /> : <Folder className='size-3.5 shrink-0' />}
+            <span className='truncate'>{folder.name}</span>
+          </span>
+        ) : leaf ? (
+          <ChatListItem
+            id={leaf.id}
+            title={leaf.title}
+            description={leaf.description}
+            avatarUrl={leaf.avatarUrl}
+            status={leaf.status}
+            hasDraft={leaf.hasDraft}
+          />
+        ) : null
+        if (!content) return null
         return (
           <div
-            className='pointer-events-none fixed z-50'
+            className='pointer-events-none fixed z-50 opacity-60'
             style={{ left: touchDrag.x, top: touchDrag.y, transform: 'translateY(-50%)' }}
           >
-            <div className='w-64 rounded-md bg-background p-1 shadow-lg ring-1 ring-border'>
-              <ChatListItem
-                id={leaf.id}
-                title={leaf.title}
-                description={leaf.description}
-                avatarUrl={leaf.avatarUrl}
-                status={leaf.status}
-                hasDraft={leaf.hasDraft}
-              />
-            </div>
+            <div className='w-64 rounded-md bg-background p-1 shadow-lg ring-1 ring-border'>{content}</div>
           </div>
         )
       })() : null}

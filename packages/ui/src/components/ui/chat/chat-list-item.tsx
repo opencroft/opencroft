@@ -1,6 +1,6 @@
 'use client'
 
-import type { ReactNode } from 'react'
+import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { Pencil, Square, Trash2, X } from 'lucide-react'
 
 import { AgentAvatar } from '@/components/ui/media/agent-avatar'
@@ -38,10 +38,33 @@ interface ChatListItemProps {
   onClose?: (id: string) => void
   onDelete?: (id: string) => void
   actions?: ChatListItemAction[]
-  // Notified when the context menu opens/closes. Radix `ContextMenu` owns the
-  // open state (it has no controlled/imperative open), so this
-  // is a notification, not control. The surrounding list uses it to cancel an
-  // in-flight touch press if a menu ever opens mid-press.
+  // Lands on the row element itself, which is also the element the context-menu
+  // trigger attaches to. That placement is the point: the trigger arms its own
+  // touch long-press behind a `defaultPrevented` check and runs this handler
+  // first, so a host that cancels the event here suppresses that long-press and
+  // keeps the menu on its own schedule. Nothing else reaches the trigger in
+  // time -- an ancestor does not.
+  //
+  // Cancelling `pointerdown` also suppresses the click the browser would
+  // synthesise from a tap, so a host that uses this owes the row its tap: it
+  // has to act on selection itself. That is why this is passed in rather than
+  // done here -- the component that takes the click away answers for it.
+  onPointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void
+  // Disables the context-menu trigger, which does two things at once: the menu
+  // stops opening by itself on a touch long-press, and -- the part that matters
+  // -- the primitive clears any timer it had already armed, in an effect keyed
+  // on this prop. A host running its own press uses that to take the menu's
+  // timing over: hold this true for the gesture, then release it at the moment
+  // the menu should appear and dispatch a `contextmenu` once the render has
+  // landed. Being a render rather than an event, it does not depend on which
+  // listener the browser reaches first.
+  menuDisabled?: boolean
+  // Reports the menu opening or closing. The context-menu primitive owns that
+  // state -- its root takes no controlled `open`, by design: it opens from a
+  // `contextmenu` event and nothing else. So this is a notification, not a
+  // handle. A host that needs the menu at a moment of its own choosing
+  // dispatches that event; the surrounding list also uses this to drop an
+  // in-flight touch press when a menu appears mid-gesture.
   onMenuOpenChange?: (open: boolean) => void
 }
 
@@ -71,16 +94,25 @@ const STATUS_DOT: Partial<Record<ChatStatus, StatusVariant>> = {
 //
 // Touch gestures: the row carries NO grip -- one press serves
 // scroll, drag and menu, and movement is what tells them apart. The surrounding
-// `chat-list` runs the long-press pickup (a ~250ms still hold arms a drag; a
+// `chat-list` runs the long-press pickup (a ~500ms still hold arms a drag; a
 // move before that is a scroll; a still hold long enough hands the press to this
-// row menu). The row body keeps `touch-action: pan-y` (so vertical scroll works
-// until the pickup commits) and `-webkit-touch-callout`/`user-select` suppress
-// the browser's native long-press text behaviour. Desktop is untouched:
-// right-click opens the menu, native HTML5 DnD drags the whole row.
+// row menu -- see below). The row body keeps
+// `touch-action: pan-y` (so vertical scroll works until the pickup commits) and
+// `-webkit-touch-callout`/`user-select` suppress the browser's native
+// long-press text behaviour. Desktop is untouched: right-click opens the menu,
+// native HTML5 DnD drags the whole row.
+//
+// The menu's own trigger stays enabled on every pointer type, including touch:
+// the primitive anchors the menu to the point it captures while handling the
+// event, so disabling it leaves nothing to anchor to and the menu lands at the
+// viewport origin instead of the row. Its built-in touch long-press rides along
+// with that and cannot be switched off separately -- a host that wants the menu
+// on a schedule of its own suppresses the long-press by cancelling the
+// `pointerdown` before the trigger sees it, which is what `chat-list` does.
 //
 // Title/description truncate; long content never grows the row. Self-contained,
 // works in any list.
-export function ChatListItem({ id, title, description, avatarUrl, active = false, status, hasDraft = false, onSelect, onRename, onStopProcess, onClose, onDelete, actions, onMenuOpenChange }: ChatListItemProps) {
+export function ChatListItem({ id, title, description, avatarUrl, active = false, status, hasDraft = false, onSelect, onRename, onStopProcess, onClose, onDelete, actions, onPointerDown, menuDisabled = false, onMenuOpenChange }: ChatListItemProps) {
   const hasMenu = Boolean(onRename || onStopProcess || onClose || onDelete || actions?.length)
 
   // Derive the dot and the description's status word from the single `status`.
@@ -96,6 +128,7 @@ export function ChatListItem({ id, title, description, avatarUrl, active = false
       tabIndex={0}
       data-active={active}
       style={{ touchAction: 'pan-y', WebkitTouchCallout: 'none', userSelect: 'none' }}
+      onPointerDown={onPointerDown}
       onClick={() => onSelect?.(id)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -124,7 +157,7 @@ export function ChatListItem({ id, title, description, avatarUrl, active = false
 
   const inner = hasMenu ? (
     <ContextMenu onOpenChange={onMenuOpenChange}>
-      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+      <ContextMenuTrigger asChild disabled={menuDisabled}>{row}</ContextMenuTrigger>
       <ContextMenuContent
         className='min-w-[8rem]'
         onClick={(e) => e.stopPropagation()}
