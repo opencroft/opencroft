@@ -133,13 +133,9 @@ export function DiffEditor({ current, next }: DiffEditorProps) {
   const [mode, setMode] = useState<DiffMode>('unified')
 
   return (
-    // The component clamps itself rather than trusting every ancestor to do it.
-    // `min-w-0` is the one that matters: a flex item's automatic minimum size is
-    // its content's min-content width, so without it a host that renders this in
-    // a row flex container gets pushed wider by the diff instead of the diff
-    // scrolling. `max-w-full` bounds it against the containing block for the
-    // same reason. Overflow then has only one place to go — the scroller below,
-    // and the editors' own, which already work.
+    // `min-w-0` and `max-w-full` guard the cases where this box is a flex item
+    // or has a definite containing block. They are not what stops the diff
+    // widening the page — see the scroll box below for that.
     <div className='relative min-w-0 max-w-full'>
       <style>{`
         .cm-merge-a .cm-changedText,
@@ -156,7 +152,34 @@ export function DiffEditor({ current, next }: DiffEditorProps) {
       <div className='absolute right-2 top-2 z-10'>
         <ModeToggle mode={mode} onChange={setMode} />
       </div>
-      <div className='w-full min-w-0 rounded-md border overflow-auto text-xs'>
+      {/* `contain: inline-size` is what actually bounds the diff, and it is here
+          rather than on an ancestor because this is the last box before
+          CodeMirror.
+
+          CodeMirror writes the widest line it has seen onto its content tile as
+          an inline pixel `flex-basis`. That gives `.cm-scroller` — a flex
+          container — a min-content width of the longest line, and that width
+          then propagates outward through every ancestor whose own width is
+          content-derived, all the way to the document. Measured on a phone: the
+          scroller rendered 1060px inside a 360px column, with every ancestor
+          above it wider in lockstep and nothing clamping.
+
+          Percentage widths cannot break that: `w-full` resolves against a
+          containing block that is itself already inflated. `min-w-0` does not
+          either — it removes a flex item's automatic minimum size, and these
+          boxes are not flex items. Both were tried and neither was reached.
+
+          Size containment in the inline axis is what does: it makes this box's
+          width computable without looking at its contents, so the tile stops
+          contributing to anything outside, ancestors resolve against the
+          viewport again, and the overflow lands on this box's own scroller —
+          where horizontal scrolling already worked.
+
+          Under inline-size containment this box contributes nothing to
+          intrinsic sizing, so it requires a containing block with a definite
+          width. Every call site here gives it one — a host that doesn't will
+          collapse it to zero. */}
+      <div className='w-full min-w-0 [contain:inline-size] rounded-md border overflow-auto text-xs'>
         {mode === 'unified' ? (
           <UnifiedDiff current={current} next={next} />
         ) : (
