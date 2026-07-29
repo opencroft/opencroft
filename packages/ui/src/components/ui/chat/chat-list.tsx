@@ -298,8 +298,10 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
   const [menuArmed, setMenuArmed] = useState<{ id: string; x: number; y: number } | null>(null)
   const idCounter = useRef(0)
   // The list's own box, used to place the drag ghost. See the ghost's comment:
-  // it is positioned against this element rather than the viewport.
-  const listRef = useRef<HTMLDivElement | null>(null)
+  // it is positioned against this element rather than the viewport. Named for
+  // the element rather than the list, so it cannot shadow `listRef` above --
+  // which it did, silently breaking every call to that helper from in here.
+  const rootElRef = useRef<HTMLDivElement | null>(null)
   const pressRef = useRef<Press | null>(null)
   // Mirror of `state` for the async touch handlers (they fire off-render).
   const stateRef = useRef(state)
@@ -533,7 +535,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
       // is stored relative to the list, since that is what the ghost is placed
       // against; hit-testing below keeps using the raw viewport coordinates.
       ev.preventDefault()
-      const box = listRef.current?.getBoundingClientRect()
+      const box = rootElRef.current?.getBoundingClientRect()
       setTouchDrag({ kind: p.kind, id: p.id, x: t.clientX - (box?.left ?? 0), y: t.clientY - (box?.top ?? 0) })
       setOver(overAtPoint(t.clientX, t.clientY, p.kind))
     }
@@ -665,7 +667,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
   }
 
   return (
-    <div ref={listRef} className={cn('relative flex w-full min-w-0 flex-col gap-0.5', className)} onDragEnd={reset}>
+    <div ref={rootElRef} className={cn('relative flex w-full min-w-0 flex-col gap-0.5', className)} onDragEnd={reset}>
       {state.folderOrder.map((fid, i) => {
         const f = state.folders[fid]
         const isDraggedFolder = (drag?.kind === 'folder' && drag.id === fid) || (touchDrag?.kind === 'folder' && touchDrag.id === fid)
@@ -745,7 +747,10 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
               data-folder-id={fid}
               data-folder-index={i}
               draggable={!touchInput && editing !== fid}
-              style={{ touchAction: 'pan-y', WebkitTouchCallout: 'none' }}
+              // `user-select: none` matters as much as the callout here: without
+              // it a long press on the folder's name selects the text instead of
+              // reaching the menu, which is what the row already guards against.
+              style={{ touchAction: 'pan-y', WebkitTouchCallout: 'none', userSelect: 'none' }}
               // Same press as a row: hold to lift and reorder among folders,
               // hold longer for the rename/delete menu, tap to toggle open.
               // Suppressed while the inline rename input is up, so a touch there
