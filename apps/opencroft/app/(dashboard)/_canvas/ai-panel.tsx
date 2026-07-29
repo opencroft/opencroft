@@ -14,6 +14,7 @@ import { useChatTabsMaybe } from '@/app/(agent)/_lib/chat-tabs-context'
 import { useAgentSessions } from '@/app/(agent)/_lib/use-agent-sessions'
 import { toLeaf } from '@/app/(agent)/_lib/use-chat-list-nodes'
 import { useSessionActivityKeys } from '@/app/(agent)/_lib/use-session-activity'
+import { stopProcessLocal } from '@/app/(agent)/_server/acp'
 import type { SessionEntry } from '@/app/(agent)/_server/agent-sessions-store'
 import { composeEnvelope } from '@/app/(agent)/_shared/message-envelope'
 import { slug } from '@/app/(server)/_server/types'
@@ -243,25 +244,38 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
     [chatTabs],
   )
 
+  // Stop the agent process only — the chat, its history, and the row all
+  // stay; the indicator falls back to offline until the next message
+  // respawns the process. Same handler the sidebar uses for its own row menu.
+  const stopProcess = useCallback((key: string) => {
+    stopProcessLocal({ data: key }).catch((err) => {
+      console.error('Failed to stop process', key, err)
+    })
+  }, [])
+
   // The list element is published into the command-bar menu slot, which re-sets
   // the slot whenever the node identity changes. Keep the handlers in a ref so
   // the element's identity tracks ONLY the data (sessionGroups) — depending on
   // the callbacks (whose identity can churn) re-set the slot every render and
   // drove an infinite setState loop.
-  const actionsRef = useRef({ openSession, createSession, deleteSession })
-  actionsRef.current = { openSession, createSession, deleteSession }
+  const actionsRef = useRef({ openSession, createSession, deleteSession, stopProcess })
+  actionsRef.current = { openSession, createSession, deleteSession, stopProcess }
 
   // Both views follow the same rule as the single list they replace: identity
   // tracks only the data, with handlers reached through the ref.
   const listView = useMemo(
     () => (
       // No folder callbacks: this surface is flat by construction, so there is
-      // nothing here for a folder edit to be persisted into.
+      // nothing here for a folder edit to be persisted into. Rename and Close
+      // are deliberately not wired here — Close, in particular, does not
+      // belong: this surface exists to show every session including the ones
+      // closed from the sidebar.
       <ChatList
         key={chatsKey}
         nodes={chatNodes}
         activeId={activeSessionKey}
         onSelect={(key) => actionsRef.current.openSession(key)}
+        onStopProcess={(key) => actionsRef.current.stopProcess(key)}
         onDelete={(key) => actionsRef.current.deleteSession(key)}
       />
     ),
