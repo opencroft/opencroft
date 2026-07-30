@@ -238,8 +238,11 @@ export function AgentCommandBarHost({
   // that is left here is delivering it and settling the stored draft: cancel
   // the pending save so a stray timer can't resave the now-stale text over the
   // clear.
-  // Sends through `sendRef` rather than depending on `session.send`, which some
-  // callers rebuild per render.
+  // Sends through `sendRef` so this keeps one identity for the component's
+  // lifetime. `session.send` is a `useCallback` today and would be a safe
+  // dependency, but every producer of a session would have to keep it that way
+  // for this memo to stay stable — and the cost of one of them not doing so is
+  // a render loop, not a wasted render.
   const onSend = useCallback((value: string) => {
     sendRef.current(value)
     if (draftDebounceRef.current) {
