@@ -651,6 +651,22 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     [openNodeMenu],
   )
 
+  // Details, chosen from a node's context menu, must show that specific node
+  // — even when the menu was opened on a node that was already part of a
+  // multi-selection. `openNodeMenu` deliberately leaves a multi-selection
+  // intact (so Copy/Delete still act on the whole selection), which means
+  // `selected` can resolve to a different member of it than the one the menu
+  // was opened on. Selecting exactly this node makes the inspector's own
+  // input (`selected`) the single source of truth for what Details shows,
+  // rather than tracking the menu's target as a second, separate one.
+  const openNodeDetails = useCallback(
+    (nodeId: string) => {
+      setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === nodeId })))
+      setMobileInspectorVisible(true)
+    },
+    [setNodes],
+  )
+
   // Deletes the current node selection through the same path the built-in
   // Backspace/Delete key already uses, so there's one source of truth for
   // node deletion (including connected-edge cleanup and the debounced save).
@@ -891,7 +907,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
                     onDetails={
                       isMobile
                         ? () => {
-                            setMobileInspectorVisible(true)
+                            openNodeDetails(nodeMenu.nodeId)
                           }
                         : undefined
                     }
