@@ -172,6 +172,19 @@ export function AgentCommandBarHost({
   // tracking entirely.
   const onEscape = useCallback(() => setText(''), [])
 
+  // Focus callbacks come from the caller as inline arrows, so they are a new
+  // function on every one of its renders. Everything handed to the memoized bar
+  // below has to be stable or the bar is rebuilt each render, republished into
+  // the overlay slot, and that state update renders the caller again — an
+  // unbroken loop. Held in refs and called through, so the bar sees one identity
+  // for the component's lifetime while the calls still reach the current prop.
+  const onFocusRef = useRef(onFocus)
+  onFocusRef.current = onFocus
+  const onBlurRef = useRef(onBlur)
+  onBlurRef.current = onBlur
+  const handleFocus = useCallback(() => onFocusRef.current?.(), [])
+  const handleBlur = useCallback(() => onBlurRef.current?.(), [])
+
   // Extension-provided input controls (e.g. voice) get a stable context: insert
   // transcribed text into the composer, send a message, or read the live reply
   // stream — all via stable refs so the memoized bar below doesn't churn.
@@ -209,10 +222,15 @@ export function AgentCommandBarHost({
     [agentNodeId, insertText, sendMessage, getMessages, session.waiting],
   )
 
+  // Reads the current value through a ref rather than closing over it, so the
+  // callback keeps one identity and does not rebuild the memoized bar every
+  // time the approval state flips.
+  const autoApproveRef = useRef(autoApprove)
+  autoApproveRef.current = autoApprove
   const toggleAutoApprove = useCallback(async () => {
-    const next = await setAutoApprove({ data: !autoApprove })
+    const next = await setAutoApprove({ data: !autoApproveRef.current })
     setAutoApproveState(next)
-  }, [autoApprove])
+  }, [])
 
   const inputPlaceholder = placeholder ?? `Message ${shortKey(session.sessionKey)}…`
 
@@ -220,18 +238,17 @@ export function AgentCommandBarHost({
   // that is left here is delivering it and settling the stored draft: cancel
   // the pending save so a stray timer can't resave the now-stale text over the
   // clear.
-  const onSend = useCallback(
-    (value: string) => {
-      session.send(value)
-      if (draftDebounceRef.current) {
-        clearTimeout(draftDebounceRef.current)
-        draftDebounceRef.current = null
-      }
-      pendingDraftRef.current = null
-      onDraftChangeRef.current?.(sessionKeyRef.current, '')
-    },
-    [session.send],
-  )
+  // Sends through `sendRef` rather than depending on `session.send`, which some
+  // callers rebuild per render.
+  const onSend = useCallback((value: string) => {
+    sendRef.current(value)
+    if (draftDebounceRef.current) {
+      clearTimeout(draftDebounceRef.current)
+      draftDebounceRef.current = null
+    }
+    pendingDraftRef.current = null
+    onDraftChangeRef.current?.(sessionKeyRef.current, '')
+  }, [])
 
   // Queued text arrives transformed for the agent (system/context tags applied
   // at send time); the panel shows the user's own words, same as delivered user
@@ -265,6 +282,14 @@ export function AgentCommandBarHost({
   // messages queueing and draining. The kit component keeps its own structure
   // stable for the same reason; this is the other half of that guarantee, and
   // it has to stay.
+  //
+  // Every entry below must be real state or a stable identity. A raw callback
+  // prop does not qualify: callers pass inline arrows, so the memo would miss
+  // on every render, republish the bar into the overlay slot, and that state
+  // update would render the caller again — "Maximum update depth exceeded".
+  // Wrap such a prop in a ref (see `handleFocus`) instead of adding it here.
+  // This list being deliberately narrower than what the body reads is the
+  // point; do not "complete" it.
   const barNode = useMemo(
     () => (
       <AgentCommandBar
@@ -274,8 +299,8 @@ export function AgentCommandBarHost({
         onEscape={onEscape}
         placeholder={inputPlaceholder}
         autoFocus={autoFocus}
-        onFocus={onFocus}
-        onBlur={onBlur}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
         busy={session.waiting}
         onStop={session.stop}
         sending={session.sending}
@@ -300,8 +325,8 @@ export function AgentCommandBarHost({
       onEscape,
       inputPlaceholder,
       autoFocus,
-      onFocus,
-      onBlur,
+      handleFocus,
+      handleBlur,
       session.waiting,
       session.stop,
       session.sending,
