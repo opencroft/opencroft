@@ -8,7 +8,8 @@ import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Input } from 'ui/input'
 
-import { AgentChat, AgentChatInput, type AgentSession } from '@/app/(agent)/_components/agent-chat'
+import { AgentChat, type AgentSession } from '@/app/(agent)/_components/agent-chat'
+import { AgentCommandBarHost } from '@/app/(agent)/_components/command-bar-host'
 import {
   type AcpSession,
   type LocalSource,
@@ -157,9 +158,9 @@ function ChatHost({
   // container underneath the absolutely-positioned canvas/overlay layers, so
   // anything emitted here is painted over. All real UI — the conversation, the
   // composer, and the queued-messages list — is published into overlay slots
-  // (content/header above, bar via AgentChatInput).
+  // (content/header above, bar via AgentCommandBarHost).
   return (
-    <AgentChatInput
+    <AgentCommandBarHost
       session={session}
       agentNodeId={agentNodeId}
       placeholder='Ask AI...'

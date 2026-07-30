@@ -1,28 +1,12 @@
 'use client'
 
-import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { ChainDot, type ChainDotVariant, Chained } from 'agent-chat/chain'
-import { ConfigOptionsBar } from 'agent-chat/config-options-bar'
 import { markdownLinkComponents } from 'agent-chat/markdown-link'
 import { ThinkingBlock } from 'agent-chat/thinking-block'
 import { groupIntoTurnSections } from 'agent-chat/turn-sections'
-import type { QueuedPrompt } from 'agent-client/types'
-import {
-  Maximize2,
-  Minimize2,
-  Pencil,
-  SendIcon,
-  ShieldAlert,
-  ShieldCheck,
-  ShieldCog,
-  Sparkles,
-  Square,
-  X,
-} from 'lucide-react'
+import { Maximize2, Minimize2, Pencil } from 'lucide-react'
 import {
   type ComponentType,
-  type FormEvent,
-  type KeyboardEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -36,14 +20,11 @@ import { Button } from 'ui/button'
 import { TypingDots } from 'ui/chat/typing-dots'
 import { Flex } from 'ui/layout/flex'
 import { AgentAvatar } from 'ui/media/agent-avatar'
-import { Textarea } from 'ui/textarea'
 
-import { type Block, buildBlocks, type DetailItem, type UserText, userText } from '@/app/(agent)/_lib/build-blocks'
+import { type Block, buildBlocks, type DetailItem, type UserText } from '@/app/(agent)/_lib/build-blocks'
 import type { ChatMessage } from '@/app/(agent)/_lib/messages'
 import { AT_TOP_THRESHOLD, decideScrollAction, isAtBottom, type ScrollCause } from '@/app/(agent)/_lib/scroll-intent'
 import { contentTop, HOLD_DEADLINE_MS, type HoldState, holdExpired, holdStep } from '@/app/(agent)/_lib/scroll-restore'
-import { getAutoApprove, setAutoApprove } from '@/app/(approvals)/_server/actions'
-import { useOverlay } from '@/app/(dashboard)/_canvas/overlay-context'
 import { loadAllExtensions } from '@/app/(extension-runtime)/_client/loader'
 import { useProvided } from '@/app/(extension-runtime)/_client/provides'
 import { GenericToolView } from '@/components/tool-views/builtin-views'
@@ -1078,380 +1059,6 @@ export function ThinkingIndicator() {
 // Messages held in the session's server-side queue (typed while a turn was
 // running, delivered in order as turns end). Rendered inside the command bar so
 // the feedback sits directly above the composer that produced the messages.
-function QueuedMessages({ items, onRemove }: { items: QueuedPrompt[]; onRemove: (id: string) => void }) {
-  return (
-    <div className='flex min-w-0 flex-col gap-1'>
-      {items.map((m) => (
-        <div key={m.id} className='flex min-w-0 items-center gap-2 rounded-md border bg-muted/40 px-2 py-1 text-xs'>
-          <span className='shrink-0 text-muted-foreground'>Queued</span>
-          {/* Queued text is already transformed for the agent (system/context
-              tags applied at send time); show only the user's own words, same
-              as delivered user bubbles. */}
-          <span className='min-w-0 flex-1 truncate'>{userText(m.text)}</span>
-          <button
-            type='button'
-            onClick={() => onRemove(m.id)}
-            className='shrink-0 text-muted-foreground transition-colors hover:text-foreground'
-            title='Remove from queue'
-          >
-            <X className='size-3.5' />
-          </button>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-interface AgentChatInputProps {
-  session: AgentSession
-  /** Active agent's node id. When set, extension-provided input controls (e.g.
-   *  voice) declared for the `agent-chat-input-controls` point are rendered. */
-  agentNodeId?: string
-  placeholder?: string
-  autoFocus?: boolean
-  onFocus?: () => void
-  onBlur?: () => void
-  /** Extra content rendered at the start of the command bar (left of sparkles icon). */
-  leadingBarContent?: React.ReactNode
-  /** Rendered in the command-bar menu (e.g. a session picker shown on focus). The
-   * caller decides when it's non-null. */
-  focusMenu?: React.ReactNode
-  /** When set, the Sparkles start icon becomes a button that runs this (e.g. open
-   * the session picker). Must be stable — it feeds the memoized command bar. */
-  onStartIconClick?: () => void
-  /** Messages held in the session's server-side queue while a turn runs. They
-   * render inside the published bar, above the input row, so the "your message
-   * is held" feedback appears wherever the composer itself is shown. */
-  queued?: QueuedPrompt[]
-  /** Drop a still-queued message before delivery. Must be stable — it feeds the
-   * memoized command bar. */
-  onRemoveQueued?: (id: string) => void
-  /** The session's agent-advertised config options (model/effort/mode/…) —
-   * rendered as selectors below the input row. Empty for adapters that don't
-   * advertise any. */
-  configOptions?: SessionConfigOption[]
-  /** Change one of the session's config options. Must be stable — it feeds the
-   * memoized command bar. */
-  onSetConfigOption?: (configId: string, value: string | boolean) => void
-  /** Context usage meter (tokens used / window), shown alongside the selectors. */
-  usage?: { used: number; size?: number }
-  /** This session's persisted composer draft, loaded once when the session
-   * (identified by `session.sessionKey`) opens. Distinct from `session.draft`
-   * (edit-message staging). */
-  savedDraft?: string
-  /** Save (or clear, with '') the given session's draft. Debounced internally;
-   * called with the session key so a flush during a session switch always
-   * targets the session the text actually belongs to. */
-  onDraftChange?: (key: string, text: string) => void
-}
-
-// Debounce composer draft saves so normal typing doesn't POST every keystroke.
-// Flushed immediately (bypassing this delay) on send and on session switch.
-const DRAFT_SAVE_DEBOUNCE_MS = 600
-
-export function AgentChatInput({
-  session,
-  agentNodeId,
-  placeholder,
-  autoFocus,
-  onFocus,
-  onBlur,
-  leadingBarContent,
-  focusMenu,
-  onStartIconClick,
-  queued,
-  onRemoveQueued,
-  configOptions,
-  onSetConfigOption,
-  usage,
-  savedDraft,
-  onDraftChange,
-}: AgentChatInputProps) {
-  // Lazy init so a session opened with an existing draft paints with it
-  // already in place — no separate fetch-then-fill flicker, since the parent
-  // already has `savedDraft` (from the same sessions payload/SSE stream that
-  // gated rendering this composer at all) before this component ever mounts.
-  const [text, setText] = useState(() => savedDraft ?? '')
-  const [autoApprove, setAutoApproveState] = useState(false)
-  const [yoloMode, setYoloMode] = useState(false)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-
-  useEffect(() => {
-    getAutoApprove().then(setAutoApproveState)
-    fetch('/api/yolo')
-      .then((r) => r.json())
-      .then(({ enabled }) => setYoloMode(enabled))
-      .catch(() => {})
-  }, [])
-
-  // Editing a user message stages its text as a draft — load it into the
-  // composer and focus so it's ready to revise and re-send.
-  useEffect(() => {
-    if (session.draft) {
-      setText(session.draft.text)
-      textareaRef.current?.focus()
-    }
-  }, [session.draft])
-
-  // This component isn't remounted when the user switches sessions (only
-  // `session` prop changes), so the composer's own text has to be swapped
-  // manually on a sessionKey change: flush whatever was pending for the
-  // OUTGOING session first (so its last few keystrokes aren't lost or,
-  // worse, saved under the wrong session), then load the incoming session's
-  // saved draft. A layout effect (not a plain effect) so the swap happens
-  // before paint — otherwise the outgoing session's stale text would flash
-  // in the composer for a frame under the new session's header.
-  const onDraftChangeRef = useRef(onDraftChange)
-  onDraftChangeRef.current = onDraftChange
-  const draftDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pendingDraftRef = useRef<{ key: string; text: string } | null>(null)
-  const sessionKeyRef = useRef(session.sessionKey)
-
-  const flushPendingDraft = useCallback(() => {
-    if (draftDebounceRef.current) {
-      clearTimeout(draftDebounceRef.current)
-      draftDebounceRef.current = null
-    }
-    const pending = pendingDraftRef.current
-    if (pending) {
-      pendingDraftRef.current = null
-      onDraftChangeRef.current?.(pending.key, pending.text)
-    }
-  }, [])
-
-  useLayoutEffect(() => {
-    if (sessionKeyRef.current === session.sessionKey) {
-      return
-    }
-    flushPendingDraft()
-    sessionKeyRef.current = session.sessionKey
-    setText(savedDraft ?? '')
-    // biome-ignore lint/correctness/useExhaustiveDependencies(savedDraft): only read at the moment sessionKey changes, not on every savedDraft echo (e.g. from this same composer's own debounced save)
-  }, [session.sessionKey, flushPendingDraft])
-
-  // Flush on unmount (e.g. navigating away entirely) so the very last
-  // keystrokes before the debounce would have fired aren't dropped.
-  useEffect(() => () => flushPendingDraft(), [flushPendingDraft])
-
-  const onChangeText = useCallback((value: string) => {
-    setText(value)
-    const key = sessionKeyRef.current
-    pendingDraftRef.current = { key, text: value }
-    if (draftDebounceRef.current) {
-      clearTimeout(draftDebounceRef.current)
-    }
-    draftDebounceRef.current = setTimeout(() => {
-      draftDebounceRef.current = null
-      const pending = pendingDraftRef.current
-      if (pending) {
-        pendingDraftRef.current = null
-        onDraftChangeRef.current?.(pending.key, pending.text)
-      }
-    }, DRAFT_SAVE_DEBOUNCE_MS)
-  }, [])
-
-  // Extension-provided input controls (e.g. voice) get a stable context: insert
-  // transcribed text into the composer, send a message, or read the live reply
-  // stream — all via stable refs so the memoized command bar below doesn't churn.
-  // Routed through onChangeText (not a raw setText) so voice-inserted text is
-  // draft-tracked the same as typed text; reads `text` via a ref (not a dep) so
-  // this callback's own identity stays stable.
-  const textRef = useRef(text)
-  textRef.current = text
-  const insertText = useCallback(
-    (piece: string) => {
-      const value = piece.trim()
-      if (value) {
-        const prev = textRef.current
-        onChangeText(prev ? `${prev} ${value}` : value)
-      }
-    },
-    [onChangeText],
-  )
-  const sendRef = useRef(session.send)
-  sendRef.current = session.send
-  const messagesRef = useRef(session.messages)
-  messagesRef.current = session.messages
-  const sendMessage = useCallback((value: string) => sendRef.current(value), [])
-  const getMessages = useCallback(() => messagesRef.current, [])
-  const voiceControls = useMemo(
-    () =>
-      agentNodeId ? (
-        <AgentChatInputControls
-          agentNodeId={agentNodeId}
-          insertText={insertText}
-          send={sendMessage}
-          getMessages={getMessages}
-          streaming={session.waiting}
-        />
-      ) : null,
-    [agentNodeId, insertText, sendMessage, getMessages, session.waiting],
-  )
-
-  const toggleAutoApprove = async () => {
-    const next = await setAutoApprove({ data: !autoApprove })
-    setAutoApproveState(next)
-  }
-
-  const inputPlaceholder = placeholder ?? `Message ${shortKey(session.sessionKey)}…`
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault()
-    const value = text.trim()
-    if (!value || session.sending || session.disabled) {
-      return
-    }
-    setText('')
-    session.send(value)
-    // Clear immediately — bypass the debounce, don't wait for a stray timer to
-    // resave the now-stale pending text over this.
-    if (draftDebounceRef.current) {
-      clearTimeout(draftDebounceRef.current)
-      draftDebounceRef.current = null
-    }
-    pendingDraftRef.current = null
-    onDraftChangeRef.current?.(sessionKeyRef.current, '')
-  }
-
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault()
-      submit(event)
-      return
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      setText('')
-    }
-  }
-
-  // The wrapper column is rendered even with an empty queue so the bar's
-  // element structure (and thus the Textarea's identity) never changes when
-  // messages queue up or drain — a shape change would remount the composer and
-  // drop its focus mid-typing.
-  const barNode = useMemo(
-    () => (
-      <div className='flex min-w-0 flex-1 flex-col gap-1'>
-        {queued && queued.length > 0 && onRemoveQueued && <QueuedMessages items={queued} onRemove={onRemoveQueued} />}
-        <div className='flex min-w-0 items-start gap-2'>
-          {leadingBarContent}
-          {onStartIconClick ? (
-            <Button
-              type='button'
-              size='icon'
-              variant='ghost'
-              className='h-7 w-7 shrink-0 mt-0.5'
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={onStartIconClick}
-              title='Sessions'
-            >
-              <Sparkles className='h-4 w-4 text-primary' />
-            </Button>
-          ) : (
-            <Sparkles className='h-4 w-4 ml-1 mt-1.5 shrink-0 text-primary' />
-          )}
-          <Textarea
-            ref={textareaRef}
-            value={text}
-            onChange={(e) => onChangeText(e.target.value)}
-            onKeyDown={onKeyDown}
-            onFocus={onFocus}
-            onBlur={onBlur}
-            placeholder={inputPlaceholder}
-            rows={1}
-            autoFocus={autoFocus}
-            className='min-h-8 max-h-60 border-0 shadow-none focus-visible:ring-0 focus-visible:border-0 bg-transparent resize-none py-1.5'
-          />
-          {voiceControls}
-          <Button
-            type='button'
-            size='icon'
-            variant='ghost'
-            className='h-7 w-7 shrink-0 mt-0.5'
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={yoloMode ? undefined : toggleAutoApprove}
-            disabled={yoloMode}
-            title={
-              yoloMode
-                ? 'YOLO Mode — all MCP tool approvals skipped (set via OPENCROFT_YOLO_MODE env or /settings?section=audit)'
-                : autoApprove
-                  ? 'Auto-approve ON — all MCP tool calls approved automatically (click to require approval)'
-                  : 'Auto-approve OFF — MCP tool calls require approval (click to auto-approve)'
-            }
-          >
-            {yoloMode ? (
-              <ShieldAlert className='h-4 w-4 text-red-500 animate-pulse' />
-            ) : autoApprove ? (
-              <ShieldCog className='h-4 w-4 text-amber-500' />
-            ) : (
-              <ShieldCheck className='h-4 w-4 text-primary' />
-            )}
-          </Button>
-          {session.waiting && session.stop ? (
-            <Button
-              type='button'
-              size='icon'
-              variant='ghost'
-              className='h-7 w-7 shrink-0 mt-0.5'
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={session.stop}
-              title='Stop'
-            >
-              <Square className='h-4 w-4' />
-            </Button>
-          ) : (
-            <Button
-              type='button'
-              size='icon'
-              variant='ghost'
-              className='h-7 w-7 shrink-0 mt-0.5'
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={submit}
-              disabled={!text.trim() || session.sending || session.disabled}
-            >
-              <SendIcon className='h-4 w-4' />
-            </Button>
-          )}
-        </div>
-        {configOptions && onSetConfigOption && (
-          // ConfigOptionsBar itself renders nothing when there's no config
-          // option and no usage to show — this only decides whether the props
-          // to check for that are even wired up.
-          <ConfigOptionsBar
-            options={configOptions}
-            onSetOption={onSetConfigOption}
-            usage={usage}
-            className='flex-wrap gap-2 px-1 pb-0.5 text-xs text-muted-foreground'
-          />
-        )}
-      </div>
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    ),
-    [
-      leadingBarContent,
-      onStartIconClick,
-      text,
-      session.sending,
-      session.waiting,
-      session.stop,
-      session.disabled,
-      inputPlaceholder,
-      autoFocus,
-      autoApprove,
-      voiceControls,
-      queued,
-      onRemoveQueued,
-      configOptions,
-      onSetConfigOption,
-      usage,
-    ],
-  )
-
-  useOverlay({ menu: focusMenu ?? null, bar: barNode })
-
-  return null
-}
-
 // ── Extension-provided chat-input controls (e.g. voice) ──────────────────────
 // Core owns only the injection point and this contract. The actual controls
 // (mic capture, TTS playback) live in an extension that declares
@@ -1476,7 +1083,7 @@ export interface AgentChatInputControl {
   component: ComponentType<AgentVoiceControlProps>
 }
 
-function AgentChatInputControls(props: AgentVoiceControlProps) {
+export function AgentChatInputControls(props: AgentVoiceControlProps) {
   const { items } = useProvided<AgentChatInputControl>('agent-chat-input-controls', loadAllExtensions)
   return (
     <>
@@ -1507,9 +1114,4 @@ function AgentChatStatusIndicators() {
       ))}
     </>
   )
-}
-
-function shortKey(key: string): string {
-  const parts = key.split(':')
-  return parts.slice(-1)[0] ?? key
 }
