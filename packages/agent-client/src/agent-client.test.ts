@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { tmpdir } from 'node:os'
 import test from 'node:test'
 
 import { createAgentClient, handleUpdate } from './agent-client'
@@ -1091,4 +1092,69 @@ test('paging back through getRecordsWindow reaches the start of a real session',
   }
   assert.equal(window?.startIndex, 0)
   await h.client.deleteSession(h.sessionId)
+})
+
+// ── harness spawn failure ──────────────────────────────────────────────────
+//
+// These exercise a REAL spawn (no mock connection seeded in store.connections
+// beforehand), so the adapter table entry is temporarily pointed at a command
+// this test controls — same technique as enableMidTurnInput above, restored
+// in a finally so later tests see the real adapter again.
+
+function withAdapterCommand(adapterId: string, command: string, args: string[]): () => void {
+  const adapter = findAdapter(adapterId)
+  assert.ok(adapter, `adapter ${adapterId} must exist`)
+  const previous = { command: adapter.command, args: adapter.args }
+  adapter.command = command
+  adapter.args = args
+  return () => {
+    adapter.command = previous.command
+    adapter.args = previous.args
+  }
+}
+
+test('a harness that fails to start reports its stderr, not the bare protocol error', async () => {
+  const restore = withAdapterCommand('openclaw', 'node', [
+    '-e',
+    "process.stderr.write('container is not running\\n'); process.exit(1)",
+  ])
+  try {
+    const client = createAgentClient()
+    // Real dir: agent-client only spawns, it does not create cwd (the caller
+    // does — see acp.ts's openLocalSession) and a missing one is itself an
+    // ENOENT, which would defeat the point of this test.
+    const selection: AgentSelection = {
+      providerId: 'test-provider',
+      adapterId: 'openclaw',
+      model: 'test-model',
+      apiKey: '',
+      cwd: tmpdir(),
+    }
+    await assert.rejects(client.createSession(selection), (error: Error) => {
+      assert.match(error.message, /container is not running/)
+      return true
+    })
+  } finally {
+    restore()
+  }
+})
+
+test('a harness that exits with no stderr falls back to the protocol error, not a fabricated cause', async () => {
+  const restore = withAdapterCommand('openclaw', 'node', ['-e', 'process.exit(1)'])
+  try {
+    const client = createAgentClient()
+    const selection: AgentSelection = {
+      providerId: 'test-provider',
+      adapterId: 'openclaw',
+      model: 'test-model',
+      apiKey: '',
+      cwd: tmpdir(),
+    }
+    await assert.rejects(client.createSession(selection), (error: Error) => {
+      assert.match(error.message, /ACP connection closed/)
+      return true
+    })
+  } finally {
+    restore()
+  }
 })
