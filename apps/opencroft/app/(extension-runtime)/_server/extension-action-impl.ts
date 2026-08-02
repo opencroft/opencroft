@@ -1,5 +1,6 @@
 import {
   activateLifecycleExtensions,
+  clientBundleVersion,
   extensionHasClient,
   getExtensionModule,
   loadAllManifests,
@@ -45,6 +46,10 @@ export async function listExtensionManifestsImpl(): Promise<ExtensionManifestInf
   await activateLifecycleExtensions()
   const manifests = await loadAllManifests()
   return Promise.all(
-    manifests.map(async (manifest) => ({ ...manifest, hasClient: await extensionHasClient(manifest.id) })),
+    manifests.map(async (manifest) => ({
+      ...manifest,
+      hasClient: await extensionHasClient(manifest.id),
+      clientVersion: await clientBundleVersion(manifest.id),
+    })),
   )
 }

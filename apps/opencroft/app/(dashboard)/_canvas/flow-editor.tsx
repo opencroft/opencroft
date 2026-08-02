@@ -227,8 +227,14 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
 
   useEffect(() => {
     async function boot() {
-      await loadLocalExtensions()
-      const { graph, updatedAt } = await fetchSpaceGraph(slug)
+      // The graph and the extensions are independent, so they are fetched
+      // together: awaiting extensions first put the graph request — the one
+      // thing the space is waiting on — behind every extension bundle, last
+      // in the queue. Time to first paint is now the slower of the two rather
+      // than their sum.
+      const extensions = loadLocalExtensions()
+      const graphResult = fetchSpaceGraph(slug)
+      const [{ graph, updatedAt }] = await Promise.all([graphResult, extensions])
       setNodes(graph.nodes as Node[])
       setEdges(graph.edges as Edge[])
       graphVersionRef.current = updatedAt

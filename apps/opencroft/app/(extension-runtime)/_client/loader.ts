@@ -10,9 +10,18 @@ interface LoadedModule {
   extension?: ExtensionDeclaration
 }
 
-function bundleUrl(extensionId: string, cacheKey: number): string {
+// Versioned by the built artifact's identity, which the server serves
+// immutably — an unchanged extension is then taken from the browser cache
+// instead of re-downloaded, and a rebuilt one arrives under a new URL. A
+// caller with no version (the extension editor, reloading its own rebuild)
+// gets a unique one, so it always refetches.
+function bundleVersion(clientVersion?: number): number {
+  return clientVersion && clientVersion > 0 ? clientVersion : Date.now()
+}
+
+function bundleUrl(extensionId: string, file: string, version: number): string {
   const [scope, slug] = extensionId.split('/')
-  return `/api/ext/${scope}/${slug}/client.js?v=${cacheKey}`
+  return `/api/ext/${scope}/${slug}/${file}?v=${version}`
 }
 
 async function importBundle(url: string): Promise<LoadedModule> {
@@ -24,9 +33,9 @@ async function importBundle(url: string): Promise<LoadedModule> {
 // the host styles: when both sheets define the same utility, the host's
 // canonical Tailwind ordering must win the cascade — an extension sheet loaded
 // after the host would e.g. let its `.hidden` override the host's `md:block`.
-function injectStyles(extensionId: string, cacheKey: number): void {
+function injectStyles(extensionId: string, version: number): void {
   const [scope, slug] = extensionId.split('/')
-  const href = `/api/ext/${scope}/${slug}/client.css?v=${cacheKey}`
+  const href = bundleUrl(extensionId, 'client.css', version)
   const id = `ext-css-${scope}-${slug}`
   const existing = document.getElementById(id)
   if (existing instanceof HTMLLinkElement) {
@@ -41,39 +50,60 @@ function injectStyles(extensionId: string, cacheKey: number): void {
   document.head.insertBefore(link, hostStyles)
 }
 
-export async function loadExtension(manifest: ExtensionManifest): Promise<ExtensionDeclaration | null> {
+// Fetches and validates a bundle WITHOUT registering it, so several can be in
+// flight at once while registration order stays under the caller's control.
+async function importExtension(
+  manifest: ExtensionManifest,
+  clientVersion?: number,
+): Promise<ExtensionDeclaration | null> {
   installClientHost()
-  const cacheKey = Date.now()
-  const url = bundleUrl(manifest.id, cacheKey)
-  injectStyles(manifest.id, cacheKey)
+  const version = bundleVersion(clientVersion)
+  injectStyles(manifest.id, version)
   try {
-    const mod = await importBundle(url)
+    const mod = await importBundle(bundleUrl(manifest.id, 'client.js', version))
     const decl = mod.default ?? mod.extension
     if (!decl?.manifest) {
       console.error(`[ext] ${manifest.id}: bundle default export is not a valid ExtensionDeclaration`)
       return null
     }
-    const aligned: ExtensionDeclaration = {
+    return {
       ...decl,
       manifest: { ...decl.manifest, id: manifest.id },
     }
-    extensionRegistry.register(aligned)
-    return aligned
   } catch (err) {
     console.error(`[ext] ${manifest.id}: load failed`, err)
     return null
   }
 }
 
+export async function loadExtension(
+  manifest: ExtensionManifest,
+  clientVersion?: number,
+): Promise<ExtensionDeclaration | null> {
+  const decl = await importExtension(manifest, clientVersion)
+  if (decl) {
+    extensionRegistry.register(decl)
+  }
+  return decl
+}
+
 export async function loadAllExtensions(): Promise<ExtensionDeclaration[]> {
   const manifests: ExtensionManifestInfo[] = await listExtensionManifests()
+  const withClient = manifests.filter((manifest) => manifest.hasClient)
+  // Imported concurrently: the previous serial loop paid one round trip per
+  // extension, back to back. `injectStyles` still runs in manifest order —
+  // each call happens synchronously before its first await — so the cascade
+  // order of the extension stylesheets is unaffected.
+  const declarations = await Promise.all(
+    withClient.map((manifest) => importExtension(manifest, manifest.clientVersion)),
+  )
+  // Registered afterwards, in manifest order rather than arrival order, so
+  // which extension wins a duplicate typeId cannot depend on which bundle
+  // happened to download first.
   const loaded: ExtensionDeclaration[] = []
-  for (const manifest of manifests) {
-    if (!manifest.hasClient) {
-      continue
-    }
-    const decl = await loadExtension(manifest)
+  for (const decl of declarations) {
     if (decl) {
+      extensionRegistry.register(decl)
       loaded.push(decl)
     }
   }

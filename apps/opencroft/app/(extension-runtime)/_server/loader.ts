@@ -362,6 +362,35 @@ export async function ensureExtensionBuilt(extensionId: string): Promise<void> {
   await ensureBuilt(extensionId, manifest)
 }
 
+// Identity of the built client artifacts, used to version their URLs so they
+// can be cached immutably instead of re-downloaded on every load.
+//
+// Deliberately the BUILT files' mtime, not the source's: it is the artifact
+// being cached, and `ensureBuilt` keeps serving an existing bundle whenever it
+// is newer than the source, so this is exactly what a request would return —
+// a cache entry can never disagree with what the server would hand back.
+// Both files are produced by one build and versioned together.
+//
+// 0 when nothing is built yet; the caller substitutes a unique value so that
+// first request misses the cache and triggers the build.
+//
+// ASSUMES artifacts are built at runtime on the instance, so these are real
+// filesystem times and two builds cannot share one. Shipping prebuilt `dist/`
+// with normalized timestamps (a container layer, a tar with fixed mtimes)
+// would break that: two different builds could collide on one version, and an
+// immutably-cached bundle would then be pinned for a year. Switch this to a
+// content hash of the artifacts if that day comes.
+//
+// A version identifies the artifact as of the request, not its content: a
+// rebuild landing between the listing and the fetch caches the new bundle
+// under the old version. Harmless — the next listing carries the new version
+// and refetches — but it is not a content address, so don't treat it as one.
+export async function clientBundleVersion(extensionId: string): Promise<number> {
+  const js = await statMaybe(extDistFile(extensionId, 'client.js'))
+  const css = await statMaybe(extDistFile(extensionId, 'client.css'))
+  return Math.max(js, css)
+}
+
 function runUnload(extensionId: string): void {
   const mod = moduleCache().get(extensionId)
   if (!mod?.unload) {

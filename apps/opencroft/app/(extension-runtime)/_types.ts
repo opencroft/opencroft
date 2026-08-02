@@ -104,6 +104,10 @@ export interface ExtensionManifest {
 export interface ExtensionManifestInfo extends ExtensionManifest {
   /** Whether the extension ships a client bundle the browser should import. */
   hasClient: boolean
+  /** Version of the built client artifacts, used to key their URLs so an
+   *  unchanged extension is cached rather than re-downloaded. 0 when the
+   *  extension has not been built yet. */
+  clientVersion: number
 }
 
 export interface ExtensionRecord {
