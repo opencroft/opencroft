@@ -364,6 +364,10 @@ async function pickEntry(dir: string, candidates: string[]): Promise<string | nu
 
 const SOURCE_MAP_MARKER = '//# sourceMappingURL='
 
+// Distinguishes concurrent rewrites within one process; the pid distinguishes
+// them across processes. See versionSourceMapLink for why both are needed.
+let rewriteCount = 0
+
 // esbuild links the map as a bare `client.js.map`, which a browser resolves
 // against the bundle's own request URL — dropping the `?v=` that makes these
 // artifacts safe to serve immutably. The map would then be cached for a year
@@ -388,7 +392,28 @@ export async function versionSourceMapLink(outfile: string): Promise<void> {
     return
   }
   const linked = `${code.slice(0, at)}${SOURCE_MAP_MARKER}${path.basename(mapFile)}?v=${version}\n`
-  await fs.writeFile(outfile, linked)
+  // Write-then-rename rather than writing over the bundle in place. The route
+  // that serves these can be reading the file while this runs — an extension is
+  // rebuilt on the first request after a restart, which is exactly when several
+  // requests arrive at once — and a partial read of a multi-megabyte bundle
+  // reaches the browser as `SyntaxError: Unexpected end of input`, killing the
+  // extension until the next reload. Rename is atomic within a filesystem, so a
+  // concurrent reader sees either the old bundle or the new one, never half of
+  // one. The temp file sits beside the target to keep it on the same device.
+  // Unique per REWRITE, not per process. Nothing deduplicates builds
+  // (ensureBuilt has no in-flight guard), so two
+  // requests for the same extension can be rewriting this bundle at once. A
+  // per-process name would have them share one temp file: writer A renames it
+  // into place while writer B is still filling it, promoting a half-written
+  // bundle atomically. Atomic and truncated is worse than neither.
+  const temp = `${outfile}.${process.pid}.${(rewriteCount += 1)}.tmp`
+  try {
+    await fs.writeFile(temp, linked)
+    await fs.rename(temp, outfile)
+  } catch (err) {
+    await fs.rm(temp, { force: true }).catch(() => {})
+    throw err
+  }
 }
 
 async function compileSide(

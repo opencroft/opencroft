@@ -90,3 +90,64 @@ test('only the final link is rewritten', async () => {
   assert.ok(out.includes('//# sourceMappingURL=vendor.js.map\n'), 'an inner comment must survive untouched')
   assert.ok(out.endsWith('//# sourceMappingURL=client.js.map?v=1700000000000\n'))
 })
+
+test('a concurrent reader never sees a partial bundle', async () => {
+  // The failure this guards: the route serving client.js can read while a
+  // rebuild rewrites it, and a partial read of a multi-megabyte bundle reaches
+  // the browser as "SyntaxError: Unexpected end of input". Big enough that an
+  // in-place write would not complete between reads.
+  const body = `${'x'.repeat(4_000_000)};\n`
+  const js = await bundle(`${body}//# sourceMappingURL=client.js.map\n`, '{}', 1_700_000_000_000)
+
+  // Poll the file throughout the rewrite. Every observation must be a WHOLE
+  // bundle — the pre-stamp one or the stamped one — never a prefix of either.
+  let reads = 0
+  let shortest = Number.POSITIVE_INFINITY
+  const reader = (async () => {
+    for (let i = 0; i < 500; i += 1) {
+      const seen = await fs.readFile(js, 'utf-8').catch(() => null)
+      if (seen !== null) {
+        reads += 1
+        shortest = Math.min(shortest, seen.length)
+      }
+    }
+  })()
+
+  await versionSourceMapLink(js)
+  await reader
+
+  assert.ok(reads > 0, 'the reader must actually have observed the file')
+  // Both valid states end with a sourceMappingURL line and contain the whole
+  // body; a truncated read is shorter than the body alone.
+  assert.ok(shortest > body.length, `saw a truncated bundle of ${shortest} bytes (body alone is ${body.length})`)
+  assert.match(await fs.readFile(js, 'utf-8'), /client\.js\.map\?v=1700000000000\n$/)
+})
+
+test('a successful rewrite leaves no temp file behind', async () => {
+  // Named for what it actually exercises. The cleanup on the throwing path is
+  // covered by inspection, not by this — forcing rename to fail needs an fs
+  // stub, and a test that enters a different path than its name claims is
+  // worse than an honest gap.
+  const js = await bundle('code;\n//# sourceMappingURL=client.js.map\n', '{}', 1_700_000_000_000)
+  await versionSourceMapLink(js)
+  const strays = (await fs.readdir(path.dirname(js))).filter((f) => f.endsWith('.tmp'))
+  assert.deepEqual(strays, [], 'temp files must not accumulate in dist')
+})
+
+test('two rewrites of one bundle at once cannot promote a half-written file', async () => {
+  // Nothing deduplicates builds, so two requests for the same extension can
+  // rewrite this bundle concurrently. With a temp name shared between them,
+  // one rename publishes the other's partially-written file — atomically, which
+  // makes it worse than the bug this fix replaces: a truncated bundle that
+  // arrives looking whole. Large enough that the writes genuinely overlap.
+  const body = `${'y'.repeat(4_000_000)};\n`
+  const js = await bundle(`${body}//# sourceMappingURL=client.js.map\n`, '{}', 1_700_000_000_000)
+
+  await Promise.all([versionSourceMapLink(js), versionSourceMapLink(js), versionSourceMapLink(js)])
+
+  const final = await fs.readFile(js, 'utf-8')
+  assert.ok(final.startsWith(body), 'the published bundle must contain the whole body')
+  assert.match(final, /client\.js\.map\?v=1700000000000\n$/)
+  const strays = (await fs.readdir(path.dirname(js))).filter((f) => f.endsWith('.tmp'))
+  assert.deepEqual(strays, [], 'every rewrite must clean up its own temp file')
+})
