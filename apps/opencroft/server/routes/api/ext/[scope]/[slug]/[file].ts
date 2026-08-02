@@ -9,6 +9,11 @@ const CONTENT_TYPES: Record<string, string> = {
   'client.js': 'application/javascript; charset=utf-8',
   'server.js': 'application/javascript; charset=utf-8',
   'client.css': 'text/css; charset=utf-8',
+  // The client bundle's sourcemap, linked from it rather than inlined so that
+  // only a browser with devtools open pays for it. Served from here so it gets
+  // the same immutable caching as the bundle — a debugging session should not
+  // re-download it on every reload.
+  'client.js.map': 'application/json; charset=utf-8',
 }
 
 // Freshness is carried by the `?v=` the caller puts on the URL, which

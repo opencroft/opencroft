@@ -362,6 +362,35 @@ async function pickEntry(dir: string, candidates: string[]): Promise<string | nu
   return null
 }
 
+const SOURCE_MAP_MARKER = '//# sourceMappingURL='
+
+// esbuild links the map as a bare `client.js.map`, which a browser resolves
+// against the bundle's own request URL — dropping the `?v=` that makes these
+// artifacts safe to serve immutably. The map would then be cached for a year
+// under a URL that never changes, and a rebuilt extension would be debugged
+// against the previous build's sources.
+//
+// So stamp the link with a version of its own. It is the MAP's mtime, not the
+// bundle's: rewriting the bundle here changes the bundle's mtime, and keying
+// off that would invalidate the value in the act of writing it.
+export async function versionSourceMapLink(outfile: string): Promise<void> {
+  const mapFile = `${outfile}.map`
+  let version: number
+  try {
+    version = Math.floor((await fs.stat(mapFile)).mtimeMs)
+  } catch {
+    // No map on disk (a failed build writes nothing) — leave the bundle alone.
+    return
+  }
+  const code = await fs.readFile(outfile, 'utf-8')
+  const at = code.lastIndexOf(SOURCE_MAP_MARKER)
+  if (at < 0) {
+    return
+  }
+  const linked = `${code.slice(0, at)}${SOURCE_MAP_MARKER}${path.basename(mapFile)}?v=${version}\n`
+  await fs.writeFile(outfile, linked)
+}
+
 async function compileSide(
   extensionId: string,
   manifest: ExtensionManifest,
@@ -405,7 +434,15 @@ async function compileSide(
       platform,
       target: 'es2022',
       outfile,
-      sourcemap: 'inline',
+      // Client bundles are downloaded by every browser that opens a space, and
+      // an inline map is three quarters of what they weigh. Written alongside
+      // instead, so the browser fetches it only when devtools ask for it.
+      //
+      // Server bundles stay inline: they are never sent over a network — the
+      // loader reads server.js off disk and evaluates it with `new Function`,
+      // which gives a linked map no base URL to resolve against, so an external
+      // one would just lose stack traces for no saving.
+      sourcemap: side === 'client' ? true : 'inline',
       jsx: 'automatic',
       plugins: [hostVirtualPlugin(side, extensionId)],
       external: serverExternals,
@@ -414,6 +451,9 @@ async function compileSide(
       absWorkingDir: src,
       nodePaths: [path.join(src, 'node_modules'), ...PROJECT_NODE_MODULES],
     })
+    if (side === 'client') {
+      await versionSourceMapLink(outfile)
+    }
     return {
       errors: toCompileErrors(result.errors),
       warnings: toCompileErrors(result.warnings),
