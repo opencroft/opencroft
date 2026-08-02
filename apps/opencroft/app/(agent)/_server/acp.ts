@@ -90,21 +90,34 @@ const ensureInFlight = globalRef.__acpEnsureInFlight
 
 // Build the agent's selection in memory from its node data + Secrets Store key
 // (no on-disk profile store), and open (or reuse) the ACP session for this tab.
+//
+// Plain implementation, called directly by anything already running inside
+// another server function's handler (send-message delivery, reached through
+// dispatchNodeAction) — calling a createServerFn from inside another
+// createServerFn's handler is fragile (see dispatchNodeActionImpl's own
+// comment on the same issue), so the browser-facing export below is a thin
+// wrapper over this rather than the thing itself.
+export async function ensureLocalSessionImpl(data: {
+  agentNodeId: string
+  jobNodeId: string
+  tabKey: string
+}): Promise<{ sessionId: string; canFork: boolean; canSteer: boolean; created: boolean }> {
+  const pending = ensureInFlight.get(data.tabKey)
+  if (pending) {
+    return pending
+  }
+  const run = openLocalSession(data)
+  ensureInFlight.set(data.tabKey, run)
+  try {
+    return await run
+  } finally {
+    ensureInFlight.delete(data.tabKey)
+  }
+}
+
 export const ensureLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { agentNodeId: string; jobNodeId: string; tabKey: string }) => data)
-  .handler(async ({ data }): Promise<{ sessionId: string; canFork: boolean; canSteer: boolean; created: boolean }> => {
-    const pending = ensureInFlight.get(data.tabKey)
-    if (pending) {
-      return pending
-    }
-    const run = openLocalSession(data)
-    ensureInFlight.set(data.tabKey, run)
-    try {
-      return await run
-    } finally {
-      ensureInFlight.delete(data.tabKey)
-    }
-  })
+  .handler(async ({ data }) => ensureLocalSessionImpl(data))
 
 // `created` is the one authoritative signal for whether a brand-new ACP
 // session was just spun up (agentClient.createSession) vs. an existing one
@@ -197,20 +210,30 @@ async function openLocalSession(data: {
 // when a turn is running (e.g. corrective guidance after a rejected permission).
 // `flush` instead delivers everything held together with this message as one
 // turn — used after interrupting a turn, so the agent sees the whole picture.
+// Plain implementation — see ensureLocalSessionImpl's comment on why
+// send-message delivery calls this directly instead of the createServerFn
+// below.
+export async function promptLocalImpl(data: {
+  sessionId: string
+  text: string
+  front?: boolean
+  flush?: boolean
+}): Promise<void> {
+  await agentClient.prompt(data.sessionId, data.text, { front: data.front, flush: data.flush })
+  // Persist the tab→session pointer now that the session has real history, so a
+  // later restart can resume it via session/load. We never persist — and so
+  // never try to load — an empty, never-prompted session.
+  for (const [tabKey, entry] of tabSessions) {
+    if (entry.id === data.sessionId) {
+      await writePersistedSession(tabKey, data.sessionId)
+      break
+    }
+  }
+}
+
 export const promptLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { sessionId: string; text: string; front?: boolean; flush?: boolean }) => data)
-  .handler(async ({ data }): Promise<void> => {
-    await agentClient.prompt(data.sessionId, data.text, { front: data.front, flush: data.flush })
-    // Persist the tab→session pointer now that the session has real history, so a
-    // later restart can resume it via session/load. We never persist — and so
-    // never try to load — an empty, never-prompted session.
-    for (const [tabKey, entry] of tabSessions) {
-      if (entry.id === data.sessionId) {
-        await writePersistedSession(tabKey, data.sessionId)
-        break
-      }
-    }
-  })
+  .handler(async ({ data }): Promise<void> => promptLocalImpl(data))
 
 // Resolve the live ACP session a Send Message node should target for a base
 // session key (`agent:<agent-slug>:<job-slug>`). The chat UI opens sessions with
@@ -222,32 +245,37 @@ export const promptLocal = createServerFn({ method: 'POST', strict: { output: fa
 //      agent+job (a suffixed variant), so the message lands in a chat they can see.
 //   3. Return null when nothing live exists yet — the caller then creates a fresh
 //      session (and remembers it via promptLocal's persisted pointer).
+// Plain implementation — see ensureLocalSessionImpl's comment on why
+// send-message delivery calls this directly instead of the createServerFn
+// below.
+export function findTargetSessionImpl(data: { baseKey: string }): { sessionId: string } | null {
+  const createdById = new Map(agentClient.listSessions().map((s) => [s.id, s.createdAt]))
+  // 1. The node's own remembered session, if still live.
+  const exact = tabSessions.get(data.baseKey)
+  if (exact && createdById.has(exact.id)) {
+    return { sessionId: exact.id }
+  }
+  // 2. The most recently created live chat tab for this agent+job.
+  const prefix = `${data.baseKey}:`
+  let best: { id: string; createdAt: number } | null = null
+  for (const [tabKey, entry] of tabSessions) {
+    if (!tabKey.startsWith(prefix)) {
+      continue
+    }
+    const createdAt = createdById.get(entry.id)
+    if (createdAt === undefined) {
+      continue // stale pointer to a session that's no longer live
+    }
+    if (!best || createdAt > best.createdAt) {
+      best = { id: entry.id, createdAt }
+    }
+  }
+  return best ? { sessionId: best.id } : null
+}
+
 export const findTargetSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { baseKey: string }) => data)
-  .handler(async ({ data }): Promise<{ sessionId: string } | null> => {
-    const createdById = new Map(agentClient.listSessions().map((s) => [s.id, s.createdAt]))
-    // 1. The node's own remembered session, if still live.
-    const exact = tabSessions.get(data.baseKey)
-    if (exact && createdById.has(exact.id)) {
-      return { sessionId: exact.id }
-    }
-    // 2. The most recently created live chat tab for this agent+job.
-    const prefix = `${data.baseKey}:`
-    let best: { id: string; createdAt: number } | null = null
-    for (const [tabKey, entry] of tabSessions) {
-      if (!tabKey.startsWith(prefix)) {
-        continue
-      }
-      const createdAt = createdById.get(entry.id)
-      if (createdAt === undefined) {
-        continue // stale pointer to a session that's no longer live
-      }
-      if (!best || createdAt > best.createdAt) {
-        best = { id: entry.id, createdAt }
-      }
-    }
-    return best ? { sessionId: best.id } : null
-  })
+  .handler(async ({ data }): Promise<{ sessionId: string } | null> => findTargetSessionImpl(data))
 
 // Drop a message from the session's server-side queue before it's delivered.
 // Clients observe the result via the 'queue' snapshot event on the stream.
@@ -283,15 +311,24 @@ export const setLocalConfigOption = createServerFn({ method: 'POST', strict: { o
     }
   })
 
+// Plain implementations — see ensureLocalSessionImpl's comment on why
+// send-message delivery calls these directly instead of the createServerFns
+// below.
+export async function cancelLocalImpl(sessionId: string): Promise<void> {
+  await agentClient.cancel(sessionId)
+}
+
+export function hasActiveTurnImpl(sessionId: string): boolean {
+  return agentClient.hasActiveTurn(sessionId)
+}
+
 export const cancelLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((sessionId: string) => sessionId)
-  .handler(async ({ data: sessionId }): Promise<void> => {
-    await agentClient.cancel(sessionId)
-  })
+  .handler(async ({ data: sessionId }): Promise<void> => cancelLocalImpl(sessionId))
 
 export const hasActiveTurn = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((sessionId: string) => sessionId)
-  .handler(async ({ data: sessionId }): Promise<boolean> => agentClient.hasActiveTurn(sessionId))
+  .handler(async ({ data: sessionId }): Promise<boolean> => hasActiveTurnImpl(sessionId))
 
 export const forgetLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((tabKey: string) => tabKey)

@@ -25,6 +25,7 @@ import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from '@agentclie
 import type { AgentConnection } from './connection'
 import { errorMessage } from './errors'
 import { isTerminalToolStatus, lastConversationEvent } from './fold'
+import { type HarnessFailure, harnessStartError } from './harness-failure'
 import { readMcpConfig, resolveMcpServers } from './mcp-config'
 import { createMcpServer, type SkillHandler, type SkillsInput, type ToolsInput } from './mcp-server'
 import type { McpServerConfig } from './mcp-types'
@@ -670,6 +671,16 @@ function sessionMeta(selection: AgentSelection): { sessionKey: string } | undefi
 // than surfacing `undefined`, which the gate reserves for "unknown token".
 const UNRESTRICTED_PERMISSIONS: ResolvedPermissions = { mode: 'all', allow: {}, defaultAccess: 'Allow' }
 
+// Stderr lines kept per spawned harness, for harnessStartError to draw a
+// failure message from — bounded so a chatty process can't grow this
+// unboundedly across the connection's lifetime.
+const STDERR_TAIL = 20
+
+// How long to let a process's 'exit'/final stderr chunk arrive after its
+// stdout closes before giving up and reporting with whatever evidence is in
+// hand — these land in either order, milliseconds apart.
+const EXIT_GRACE_MS = 200
+
 export function createAgentClient(options: AgentClientOptions = {}) {
   const mcpServerName = options.mcpServerName ?? 'local'
   const clientInfo = options.clientInfo ?? { name: 'agent-client', version: '0.1.0' }
@@ -778,17 +789,27 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // Args here come from the fixed harness-adapter table, not user input.
       shell: process.platform === 'win32',
     })
+    // Kept, not just logged: if the handshake below fails, this is what tells
+    // the caller why the process is gone (see harnessStartError).
+    const failure: HarnessFailure = { stderr: [] }
     child.stderr.on('data', (chunk: Buffer) => {
-      console.error('[acp-agent]', chunk.toString())
+      const text = chunk.toString()
+      console.error('[acp-agent]', text)
+      failure.stderr.push(text)
+      if (failure.stderr.length > STDERR_TAIL) {
+        failure.stderr.shift()
+      }
     })
     // Without an 'error' listener a failed spawn throws at the process level and
     // takes the host server down; handle it so the failure surfaces as a rejected
     // initialize()/prompt() instead.
     child.on('error', (error) => {
       console.error('[acp-agent] spawn failed:', error)
+      failure.spawnError = error
       store.connections.delete(key)
     })
-    child.on('exit', () => {
+    child.on('exit', (code, signal) => {
+      failure.exit = { code, signal }
       store.connections.delete(key)
     })
     const stream = ndJsonStream(
@@ -806,17 +827,27 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     entry = { process: child, connection, lastSessionId: null, loadSession: false, initialized: Promise.resolve() }
     store.connections.set(key, entry)
     entry.initialized = (async () => {
-      const initResult = await connection.initialize({
-        protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: {
-          fs: { readTextFile: true, writeTextFile: true },
-          elicitation: {},
-        },
-        clientInfo,
-      })
-      entry.loadSession = Boolean(
-        (initResult as { agentCapabilities?: { loadSession?: boolean } }).agentCapabilities?.loadSession,
-      )
+      try {
+        const initResult = await connection.initialize({
+          protocolVersion: PROTOCOL_VERSION,
+          clientCapabilities: {
+            fs: { readTextFile: true, writeTextFile: true },
+            elicitation: {},
+          },
+          clientInfo,
+        })
+        entry.loadSession = Boolean(
+          (initResult as { agentCapabilities?: { loadSession?: boolean } }).agentCapabilities?.loadSession,
+        )
+      } catch (error) {
+        // The handshake fails the moment the process's stdout closes, which can
+        // land marginally before its last stderr chunk and its 'exit' — so give
+        // those a tick to arrive rather than reporting a failure with the
+        // evidence missing. Only on the failure path, so it costs nothing
+        // otherwise.
+        await new Promise((resolve) => setTimeout(resolve, EXIT_GRACE_MS))
+        throw harnessStartError(failure, error)
+      }
     })()
     await entry.initialized
     return connection
