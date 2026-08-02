@@ -1,5 +1,7 @@
 import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
 
+import { authSchema } from './auth-schema'
+
 // Timestamps are real Postgres `timestamptz` columns surfacing JS `Date`
 // objects, matching what the app expects (it calls `.toISOString()` /
 // `.getTime()` on these fields). Defaults are computed app-side (as before the
@@ -71,9 +73,15 @@ export const mcpAuditLog = pgTable(
   ],
 )
 
-export const schema = { setting, secret, space, mcpAuditLog }
+export const schema = { setting, secret, space, mcpAuditLog, ...authSchema }
 
 export type Setting = typeof setting.$inferSelect
 export type Secret = typeof secret.$inferSelect
 export type Space = typeof space.$inferSelect
 export type McpAuditLog = typeof mcpAuditLog.$inferSelect
+
+// Better Auth's tables, declared separately because their shape is the
+// library's contract rather than ours — re-exported here so drizzle-kit picks
+// them up from this one schema entry point and they share the single
+// migrations folder.
+export * from './auth-schema'
