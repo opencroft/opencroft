@@ -414,18 +414,18 @@ export async function deliverToSendMessageNode(
 //
 //   - `agentClient.prompt()` resolves once the prompt has been DISPATCHED, not
 //     once the turn ends. deliverPrompt fires `connection.prompt()` with `void`
-//     and lets settleTurn release the turn when it later resolves. And a prompt
-//     sent while the session is busy is queued, so it has not even started.
+//     and lets settleTurn release the turn when it later resolves.
 //   - Usage arrives as a separate ACP session update, and the protocol does not
 //     order that against the prompt response.
 //
 // So the turn is waited out here instead, by polling the same in-flight counter
-// the rest of the host reads. Bounded, because a session can stay busy for a
-// long time and an action must not hang on it: a timeout reports usage as
-// unknown, which makes the verdict unknown, which restores the instructions —
-// the safe direction. The same is true of the narrow race where the queue
-// drains between two polls: reading early yields an unchanged figure, which is
-// unknown rather than a false failure (see compactionVerdict).
+// the rest of the host reads. The caller refuses a session that already had a
+// turn running, so this normally waits out the compaction alone; and in the
+// rare case one starts first, the counter never returns to zero between the two
+// (see the caller), so the wait still covers the compaction rather than ending
+// early. Bounded, because a turn can run for a long time and an action must not
+// hang on it: a timeout reports usage as unknown, which makes the verdict
+// unknown, which restores the instructions — the safe direction.
 const TURN_SETTLE_POLL_MS = 250
 const TURN_SETTLE_TIMEOUT_MS = 5 * 60_000
 
@@ -490,6 +490,42 @@ export async function compactSessionOnGraph(
   const existing = findTargetSessionImpl({ baseKey: sessionKey })
   if (!existing) {
     throw new Error(`Session has no live process, so there is no context to compact: ${sessionKey}`)
+  }
+  // A prompt sent into a busy session is QUEUED rather than delivered, which
+  // makes compaction unsafe there in two ways that no amount of waiting fixes.
+  //
+  //  1. The result stops describing what happened. A `waiting` session may sit
+  //     on an unresolved permission request indefinitely, so the wait below hits
+  //     its bound and this returns `compacted: null` with figures that mean
+  //     nothing — while the queued `/compact`, and the restore that would follow
+  //     it, are still waiting to execute later with nobody watching. An action
+  //     that returns before its own effects have happened has no trustworthy
+  //     result to give.
+  //  2. A concurrent flush corrupts the command. A `force` send interrupting the
+  //     in-flight turn drains the whole queue as one prompt (see agent-client's
+  //     settleTurn), and joinPrompts prefixes each entry with `[message N of M]`.
+  //     A queued `/compact` no longer begins with a slash, so the harness reads
+  //     it as conversational text instead of a command: the compaction silently
+  //     does not happen, and the agent answers a message about it instead.
+  //
+  // So refuse, matching the offline refusal above — a session this cannot
+  // compact correctly is an error rather than a quiet half-measure, and
+  // "compacts now or errors" is a contract a caller can act on. Callers already
+  // hold `status` from listSessions, which distinguishes idle from working and
+  // waiting.
+  //
+  // This check narrows the window rather than closing it: a turn can still start
+  // between the check and the prompt landing. The measurement survives that —
+  // a `/compact` that does get queued keeps the in-flight counter continuously
+  // non-zero (settleTurn's drain calls deliverPrompt, which increments before
+  // its first await), so the wait below covers both turns and the read still
+  // lands after real compaction. What stays exposed in that rare window is only
+  // the two cases above. Closing it properly needs `prompt()` to report
+  // queued-versus-delivered, which is an agent-client change and its own work.
+  if (hasActiveTurnImpl(existing.sessionId)) {
+    throw new Error(
+      `Session has a turn in flight, so /compact would be queued behind it rather than run now: ${sessionKey}. Compact it once it is idle.`,
+    )
   }
   const readUsage = (): ContextUsage | null =>
     toContextUsage(agentClient.listSessions().find((m) => m.sessionKey === sessionKey)?.usage)
