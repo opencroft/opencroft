@@ -86,6 +86,42 @@ export function ensureAuth(): ReturnType<typeof buildAuth> {
   return instance
 }
 
+// Better Auth mounts registration under this prefix. Matched as a path segment
+// so any future variant it adds under /sign-up is covered too, rather than only
+// the one endpoint that exists today.
+const SIGN_UP_PATH = /\/sign-up(\/|$)/
+
+/** Whether a request is asking to register a new account over HTTP. */
+export function isSignUpRequest(request: Request): boolean {
+  return SIGN_UP_PATH.test(new URL(request.url).pathname)
+}
+
+/**
+ * The app's auth endpoint.
+ *
+ * Registration over HTTP is refused, always. This app has no public sign-up:
+ * the first account is created by the setup screen, which calls
+ * `createFirstAdmin` in-process rather than over HTTP, and every later account
+ * is an administrator's doing.
+ *
+ * The refusal is ours rather than Better Auth's `disableSignUp` for two
+ * reasons. That option also blocks the in-process call, so first-run setup
+ * would stop working. And a refusal we own cannot be undone by a library
+ * default changing under a version bump, which is how this would otherwise
+ * quietly reopen.
+ *
+ * It also does not depend on origin checking, which is what made the hole hard
+ * to see: a request with no Origin header behaves differently from a browser's,
+ * and differently again between development and production. This refuses the
+ * path regardless of headers, environment or library configuration.
+ */
+export function handleAuthRequest(request: Request): Promise<Response> | Response {
+  if (isSignUpRequest(request)) {
+    return Response.json({ message: 'Registration is closed. Ask an administrator for an account.' }, { status: 403 })
+  }
+  return ensureAuth().handler(request)
+}
+
 /** How many accounts exist. Zero is what puts the app in first-run setup. */
 export async function countUsers(): Promise<number> {
   const [row] = await db.select({ value: count() }).from(user)

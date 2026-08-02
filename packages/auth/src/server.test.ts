@@ -89,6 +89,51 @@ test('the failure names the variable and only bites on use, not on import', asyn
   }
 })
 
+// Registration over HTTP must be refused by us, not left to a library default
+// or to origin checking. Better Auth's 403 for a missing Origin looks like this
+// is already handled — it is not, and it does not even behave the same
+// everywhere: on the deployed development build a request with no Origin
+// reaches password validation instead of being refused.
+test('registration over HTTP is refused, whatever Origin it carries', async () => {
+  const { handleAuthRequest } = await import('./server')
+
+  const originVariants: Record<string, string>[] = [
+    {},
+    { origin: 'http://localhost' },
+    { origin: 'https://elsewhere.example' },
+  ]
+  for (const headers of originVariants) {
+    const response = await handleAuthRequest(
+      new Request('http://localhost/api/auth/sign-up/email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ name: 'Walk In', email: 'walkin@example.test', password: 'a long enough passphrase' }),
+      }),
+    )
+    assert.equal(response.status, 403, `sign-up must be refused with headers ${JSON.stringify(headers)}`)
+  }
+
+  const { db } = await import('@opencroft/db')
+  const { user } = await import('@opencroft/db/schema')
+  const rows = await db.select().from(user)
+  assert.ok(
+    rows.every((row) => row.email !== 'walkin@example.test'),
+    'a refused registration must not leave an account behind',
+  )
+})
+
+test('the refusal covers any endpoint under /sign-up, not just the one that exists today', async () => {
+  const { isSignUpRequest } = await import('./server')
+  assert.equal(isSignUpRequest(new Request('http://x/api/auth/sign-up/email')), true)
+  assert.equal(isSignUpRequest(new Request('http://x/api/auth/sign-up')), true)
+  assert.equal(isSignUpRequest(new Request('http://x/api/auth/sign-up/phone-number')), true)
+  // Everything else must still reach Better Auth — refusing sign-in would be a
+  // very quiet way to lock the app.
+  assert.equal(isSignUpRequest(new Request('http://x/api/auth/sign-in/email')), false)
+  assert.equal(isSignUpRequest(new Request('http://x/api/auth/get-session')), false)
+  assert.equal(isSignUpRequest(new Request('http://x/api/auth/sign-out')), false)
+})
+
 test('a request with no cookies has no user', async () => {
   const anonymous = await getSessionUser(new Request('http://localhost/'))
   assert.equal(anonymous, null)
