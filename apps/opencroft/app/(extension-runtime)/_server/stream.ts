@@ -13,13 +13,7 @@
 // text — letting extensions consume a text-stream server-side without core
 // knowing the node type.
 
-import {
-  cancelLocalImpl,
-  ensureLocalSessionImpl,
-  findTargetSessionImpl,
-  hasActiveTurnImpl,
-  promptLocalImpl,
-} from '@/app/(agent)/_server/acp'
+import { cancelLocal, ensureLocalSession, findTargetSession, hasActiveTurn, promptLocal } from '@/app/(agent)/_server/acp'
 import { upsertSession } from '@/app/(agent)/_server/agent-sessions-store'
 import { hideSessionByDefault } from '@/app/(agent)/_server/chat-list-layout-store'
 import { composeEnvelope } from '@/app/(agent)/_shared/message-envelope'
@@ -311,11 +305,6 @@ async function persistToDownstreamSendMessages(
 // too — so every caller gets identical session and envelope
 // semantics, not a re-implementation of them. `force` is part of the
 // same shared payload schema, so either entry point can carry it.
-//
-// Calls the acp.ts session helpers' plain `*Impl` functions, not their
-// createServerFn exports: the node-action entry point (`host.sendMessage.send`
-// via dispatchNodeActionImpl) is itself already running inside a createServerFn
-// handler, and nesting another one there is unreliable.
 export async function deliverToSendMessageNode(
   target: GraphNodeLike,
   nodes: GraphNodeLike[],
@@ -331,17 +320,15 @@ export async function deliverToSendMessageNode(
   // remembered session, or a chat tab the user has open) so messages land in
   // one stable conversation. Only create a fresh session when none exists;
   // promptLocal then persists the pointer so it's remembered and reused next time.
-  const existing = findTargetSessionImpl({ baseKey: route.sessionKey })
+  const existing = await findTargetSession({ data: { baseKey: route.sessionKey } })
   let sessionId: string
   let created: boolean
   if (existing?.sessionId) {
     sessionId = existing.sessionId
     created = false
   } else {
-    const opened = await ensureLocalSessionImpl({
-      agentNodeId: route.ctx.agentNodeId,
-      jobNodeId: route.ctx.jobNodeId,
-      tabKey: route.sessionKey,
+    const opened = await ensureLocalSession({
+      data: { agentNodeId: route.ctx.agentNodeId, jobNodeId: route.ctx.jobNodeId, tabKey: route.sessionKey },
     })
     sessionId = opened.sessionId
     created = opened.created
@@ -378,9 +365,9 @@ export async function deliverToSendMessageNode(
   // claims to have interrupted anything.
   let forced = false
   if (route.force) {
-    forced = hasActiveTurnImpl(sessionId)
+    forced = await hasActiveTurn({ data: sessionId })
     if (forced) {
-      await cancelLocalImpl(sessionId)
+      await cancelLocal({ data: sessionId })
     }
   }
 
@@ -399,7 +386,7 @@ export async function deliverToSendMessageNode(
   // the cancelled turn settles, instead of one per turn: a force is a push, and
   // draining one at a time would have the agent act on each stale message
   // before it ever reached this one.
-  await promptLocalImpl({ sessionId, text: message, flush: route.force })
+  await promptLocal({ data: { sessionId, text: message, flush: route.force } })
   return { sessionKey: route.sessionKey, created, forced }
 }
 
