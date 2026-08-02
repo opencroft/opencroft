@@ -85,10 +85,18 @@ export const Route = createFileRoute('/(mcp)/api/mcp')({
         }
 
         try {
-          const internal = request.headers.get('x-opencroft-internal') === '1'
+          // HTTP callers are never internal.
+          //
+          // `internal` suppresses the tool-approval gate. It used to be carried
+          // by an `x-opencroft-internal` header, back when the app's own agents
+          // reached their tools by calling this route over HTTP. They do not any
+          // more — tools-bridge.ts wires the same registry in-process and passes
+          // `internal: true` directly — so nothing legitimate sends that header,
+          // and honouring it only let an unauthenticated caller skip approvals
+          // by setting a request header.
           const result = await handleMethod(body.method, body.params as Record<string, unknown> | undefined, {
             signal: request.signal,
-            internal,
+            internal: false,
           })
 
           // Notifications have no id and no response body
