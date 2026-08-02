@@ -25,6 +25,7 @@ import {
   hasActiveTurnImpl,
   promptLocalImpl,
 } from '@/app/(agent)/_server/acp-impl'
+import { agentClient } from '@/app/(agent)/_server/agent-client-instance'
 import { upsertSession } from '@/app/(agent)/_server/agent-sessions-store'
 import { hideSessionByDefault } from '@/app/(agent)/_server/chat-list-layout-store'
 import { composeEnvelope } from '@/app/(agent)/_shared/message-envelope'
@@ -38,6 +39,11 @@ import {
   type NodeLike as SmNodeLike,
   tryParseJsonMessage,
 } from '@/app/(extension-runtime)/_server/send-message-helpers'
+import {
+  type ContextUsage,
+  compactionVerdict,
+  toContextUsage,
+} from '@/app/(extension-runtime)/_server/session-context-usage'
 import { findExtensionHandle, type NodeMetadata } from '@/app/(extension-runtime)/_types'
 import { getSpacesRegistry } from '@/app/(space)/_server/store'
 import type { StreamChunkPayload } from '@/lib/sse-events'
@@ -401,6 +407,119 @@ export async function deliverToSendMessageNode(
   // before it ever reached this one.
   await promptLocalImpl({ sessionId, text: message, flush: route.force })
   return { sessionKey: route.sessionKey, created, forced }
+}
+
+// Nothing guarantees the compaction is observable when the prompt call returns,
+// on either of two counts:
+//
+//   - `agentClient.prompt()` resolves once the prompt has been DISPATCHED, not
+//     once the turn ends. deliverPrompt fires `connection.prompt()` with `void`
+//     and lets settleTurn release the turn when it later resolves. And a prompt
+//     sent while the session is busy is queued, so it has not even started.
+//   - Usage arrives as a separate ACP session update, and the protocol does not
+//     order that against the prompt response.
+//
+// So the turn is waited out here instead, by polling the same in-flight counter
+// the rest of the host reads. Bounded, because a session can stay busy for a
+// long time and an action must not hang on it: a timeout reports usage as
+// unknown, which makes the verdict unknown, which restores the instructions —
+// the safe direction. The same is true of the narrow race where the queue
+// drains between two polls: reading early yields an unchanged figure, which is
+// unknown rather than a false failure (see compactionVerdict).
+const TURN_SETTLE_POLL_MS = 250
+const TURN_SETTLE_TIMEOUT_MS = 5 * 60_000
+
+async function awaitSessionIdle(sessionId: string): Promise<boolean> {
+  const deadline = Date.now() + TURN_SETTLE_TIMEOUT_MS
+  while (hasActiveTurnImpl(sessionId)) {
+    if (Date.now() >= deadline) {
+      return false
+    }
+    await new Promise((resolve) => setTimeout(resolve, TURN_SETTLE_POLL_MS))
+  }
+  return true
+}
+
+// Appended after the re-delivered session-init block (see compactSessionOnGraph).
+// Written to read as a trailing line under the instructions themselves, because
+// composeEnvelope puts the session-init parts ahead of the message.
+const REINSTRUCT_NOTE =
+  'The task context and instructions above are the ones this session was started with. Compaction has just summarised this conversation and dropped the original messages, including the ones that carried them — so they are repeated here. Re-read them and follow them for the rest of this session, including re-loading anything they tell you to load.'
+
+// Compact a live session's context, then give it back the instructions the
+// compaction dropped.
+//
+// Compaction replaces the conversation with a summary. The session-init
+// envelope — the agent's task context and standing instructions — is delivered
+// exactly once, on the first message of a session (see composeEnvelope's
+// `isNewSession`), so it is in those dropped messages and nothing re-sends it.
+// The instructions are therefore re-delivered here rather than merely referred
+// to: after compaction there is nothing left in context for a bare "re-read
+// your instructions" to point at.
+//
+// Re-sending lives inside this function on purpose. Compaction without it
+// leaves an agent that has quietly lost its instructions, which is the failure
+// this whole action exists to prevent — so it must not be something a caller
+// can forget to do, or do differently.
+//
+// The whole sequence — read, compact, read, judge, then restore — is here for
+// the same reason. Both reads have to bracket the compaction ALONE: measuring
+// after the restore would score the re-sent envelope's tokens against the
+// compaction and report failure precisely when compaction had worked. And the
+// restore has to consult the verdict, because the harness that has no
+// `/compact` answers it as an ordinary message: appending a full instruction
+// envelope on top of that would leave an action whose job is to shrink a
+// context having grown it on its own failure path.
+export async function compactSessionOnGraph(
+  nodes: GraphNodeLike[],
+  edges: GraphEdgeLike[],
+  sessionKey: string,
+): Promise<{
+  contextUsageBefore: ContextUsage | null
+  contextUsageAfter: ContextUsage | null
+  compacted: boolean | null
+  instructionsRestored: boolean
+}> {
+  const ctx = resolveSessionOnGraph(sessionKey, nodes as unknown as SmNodeLike[], edges as unknown as SmEdgeLike[])
+  if (!ctx) {
+    throw new Error(`No agent/job resolved for session: ${sessionKey}`)
+  }
+  // Only a session with a live process holds context to compact. An offline one
+  // has nothing in memory — say so rather than silently starting a new session
+  // and "compacting" that.
+  const existing = findTargetSessionImpl({ baseKey: sessionKey })
+  if (!existing) {
+    throw new Error(`Session has no live process, so there is no context to compact: ${sessionKey}`)
+  }
+  const readUsage = (): ContextUsage | null =>
+    toContextUsage(agentClient.listSessions().find((m) => m.sessionKey === sessionKey)?.usage)
+
+  const contextUsageBefore = readUsage()
+  // Sent raw: a leading slash marks a command, and composeEnvelope passes those
+  // through unwrapped anyway.
+  await promptLocalImpl({ sessionId: existing.sessionId, text: '/compact' })
+  // Read only once the turn has actually finished — see awaitSessionIdle for
+  // why the prompt call returning is not that moment. A turn that never
+  // settles leaves usage unknown rather than reporting a stale figure as if it
+  // were the post-compaction one.
+  const settled = await awaitSessionIdle(existing.sessionId)
+  const contextUsageAfter = settled ? readUsage() : null
+  const compacted = compactionVerdict(contextUsageBefore, contextUsageAfter)
+
+  // Restore on true (it worked, and the instructions went with the dropped
+  // messages) and on null (cannot tell — re-sending is the safe direction: a
+  // redundant envelope costs tokens, a missing one costs the agent its
+  // instructions). Skip on false, which is the observed-failure case above.
+  const hasInstructions = Boolean(ctx.jobContext?.trim()) || (ctx.instructions ?? []).some((i) => i.trim())
+  if (compacted === false || !hasInstructions) {
+    return { contextUsageBefore, contextUsageAfter, compacted, instructionsRestored: false }
+  }
+  const restore = composeEnvelope(REINSTRUCT_NOTE, {
+    sessionInit: { jobContext: ctx.jobContext, instructions: ctx.instructions },
+    isNewSession: true,
+  })
+  await promptLocalImpl({ sessionId: existing.sessionId, text: restore })
+  return { contextUsageBefore, contextUsageAfter, compacted, instructionsRestored: true }
 }
 
 interface SendMessageNodeData {

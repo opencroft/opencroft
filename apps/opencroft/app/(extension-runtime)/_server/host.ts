@@ -25,7 +25,9 @@ import { readSessions } from '@/app/(agent)/_server/agent-sessions-store'
 import { deriveSessionStatus, type SessionStatus } from '@/app/(agent)/_shared/session-status'
 import { dispatchExecutionContext, type ExecDispatchSummary } from '@/app/(extension-runtime)/_server/exec-dispatch'
 import { parseSessionKey } from '@/app/(extension-runtime)/_server/send-message-helpers'
+import { type ContextUsage, toContextUsage } from '@/app/(extension-runtime)/_server/session-context-usage'
 import {
+  compactSessionOnGraph,
   deliverToSendMessageNode,
   type GraphEdgeLike as SendMessageEdgeLike,
   type GraphNodeLike as SendMessageNodeLike,
@@ -381,6 +383,18 @@ export interface SessionSummary {
   // (see deriveSessionStatus) — waiting (pending permission) > working
   // (active turn) > idle (alive, neither) > offline (no process).
   status: SessionStatus
+  // How much context the session is holding, as last reported by its own
+  // harness — never estimated here.
+  //
+  // `null` means UNKNOWN, and a caller must not read it as "nothing held".
+  // Three different things produce it: an `offline` session (no live process
+  // to have reported anything), a session that has not completed a turn since
+  // it was loaded, and a harness that does not report usage at all.
+  //
+  // `contextLimit` is null on its own when the harness reports usage but
+  // cannot say what the model's window is; a caller wanting a ratio needs both
+  // and should treat a null limit as "cannot compute one".
+  contextUsage: ContextUsage | null
 }
 
 export interface TurnSummary {
@@ -533,11 +547,31 @@ export function splitIntoTurns(events: ChatEvent[], startIndex: number): { index
   return groups
 }
 
+export interface CompactResult {
+  sessionKey: string
+  // Usage bracketing the compaction alone — both read before the instruction
+  // restore, so the restore's own tokens are never scored against it. Same
+  // null-means-unknown rule as SessionSummary.contextUsage.
+  contextUsageBefore: ContextUsage | null
+  contextUsageAfter: ContextUsage | null
+  // Whether the held context actually shrank; null when it cannot be told.
+  // Never inferred from the command having been delivered without an error —
+  // see compactionVerdict.
+  compacted: boolean | null
+  // Whether the session's initial instructions were re-sent afterwards. False
+  // when there were none to re-send, and when `compacted` is false — a harness
+  // that answered `/compact` as an ordinary message did not drop them, so
+  // appending them again would only grow the context this action exists to
+  // shrink.
+  instructionsRestored: boolean
+}
+
 export interface HostSendMessageApi {
   send(nodeId: string, payload: Record<string, unknown>): Promise<{ sessionKey: string; created: boolean; forced: boolean }>
   listAgents(nodeId: string): Promise<{ agent: string; jobs: string[] }[]>
   listSessions(nodeId: string, params: { agent?: string; job?: string }): Promise<SessionSummary[]>
   listTurns(nodeId: string, params: { sessionKey: string; turns?: number; beforeIndex?: number }): Promise<TurnsPage>
+  compact(nodeId: string, params: { sessionKey: string }): Promise<CompactResult>
 }
 
 const sendMessageApi: HostSendMessageApi = {
@@ -617,6 +651,7 @@ const sendMessageApi: HostSendMessageApi = {
         // createdAt rather than fabricate one.
         lastActivityAt: metaByKey.get(entry.key)?.lastActivityAt ?? entry.createdAt,
         status: deriveSessionStatus(entry.key, sessionKeys),
+        contextUsage: toContextUsage(metaByKey.get(entry.key)?.usage),
       })
     }
     out.sort((a, b) => b.lastActivityAt - a.lastActivityAt)
@@ -660,6 +695,26 @@ const sendMessageApi: HostSendMessageApi = {
       nextBeforeIndex: window.hasMore ? window.startIndex : null,
       sessionStatus,
     }
+  },
+
+  async compact(nodeId, params) {
+    const found = await findSendMessageNode(nodeId)
+    if (!found) {
+      throw new Error(`Node not found: ${nodeId}`)
+    }
+    const sessionKey = params.sessionKey.trim()
+    const parts = sessionKey ? parseSessionKey(sessionKey) : null
+    // Same reachability scoping as listSessions/listTurns: a node may only act
+    // on the sessions it could have sent to.
+    if (!parts || !reachablePairs(found.nodes, found.edges).has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
+      throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
+    }
+
+    // Everything about the compaction itself — both usage reads, the verdict,
+    // and whether the restore runs — lives in compactSessionOnGraph, because
+    // their ORDER is what makes them correct (see it for why). This end owns
+    // only the node lookup and the reachability check.
+    return { sessionKey, ...(await compactSessionOnGraph(found.nodes, found.edges, sessionKey)) }
   },
 }
 

@@ -52,6 +52,15 @@ export interface SessionMeta {
   // mirrored here so a host can look up a session by key without also tracking
   // its own id — see agent-client.ts's emit/createSession.
   sessionKey?: string
+  // Context the session is holding, as last reported by its harness via ACP
+  // `usage_update`: `used` tokens, and `size` (the model's context window) when
+  // the harness knows it. Composed at read time from live session state, so it
+  // is a snapshot, not a stored field.
+  //
+  // Absent means UNKNOWN, never "nothing held": a harness that reports no usage,
+  // or a session that has not completed a turn since it was loaded, both look
+  // like this. A caller deciding whether to compact must not read it as zero.
+  usage?: { used: number; size?: number }
 }
 
 export interface PlanItem {

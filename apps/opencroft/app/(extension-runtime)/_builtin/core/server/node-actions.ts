@@ -234,6 +234,15 @@ function sendMessageListAgentsAction(ctx: ActionCtx): Promise<{ agent: string; j
   return host.sendMessage.listAgents(ctx.nodeId)
 }
 
+// Mirrors the host's shape across the extension boundary — redeclared rather
+// than imported, so the two must move together. `null` context usage means
+// unknown (offline session, no turn completed since it was loaded, or a
+// harness that does not report usage); it never means "nothing held".
+interface ContextUsage {
+  usedTokens: number
+  contextLimit: number | null
+}
+
 interface SessionSummary {
   sessionKey: string
   agent: string
@@ -242,6 +251,7 @@ interface SessionSummary {
   createdAt: number
   lastActivityAt: number
   status: 'offline' | 'idle' | 'working' | 'waiting'
+  contextUsage: ContextUsage | null
 }
 
 function sendMessageListSessionsAction(ctx: ActionCtx): Promise<SessionSummary[]> {
@@ -276,6 +286,20 @@ function sendMessageListTurnsAction(ctx: ActionCtx): Promise<{
   const turns = typeof ctx.params.turns === 'number' ? ctx.params.turns : undefined
   const beforeIndex = typeof ctx.params.beforeIndex === 'number' ? ctx.params.beforeIndex : undefined
   return host.sendMessage.listTurns(ctx.nodeId, { sessionKey, turns, beforeIndex })
+}
+
+function sendMessageCompactAction(ctx: ActionCtx): Promise<{
+  sessionKey: string
+  contextUsageBefore: ContextUsage | null
+  contextUsageAfter: ContextUsage | null
+  compacted: boolean | null
+  instructionsRestored: boolean
+}> {
+  const sessionKey = typeof ctx.params.sessionKey === 'string' ? ctx.params.sessionKey.trim() : ''
+  if (!sessionKey) {
+    throw new Error('"sessionKey" is required and must be a non-empty string')
+  }
+  return host.sendMessage.compact(ctx.nodeId, { sessionKey })
 }
 
 // ── Server node actions ───────────────────────────────────────────────────
@@ -333,6 +357,7 @@ export const nodeActions = {
     listAgents: sendMessageListAgentsAction,
     listSessions: sendMessageListSessionsAction,
     listTurns: sendMessageListTurnsAction,
+    compact: sendMessageCompactAction,
   },
   server: {
     setKey: serverSetKey,

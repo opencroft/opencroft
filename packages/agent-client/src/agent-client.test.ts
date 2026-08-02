@@ -802,6 +802,59 @@ test('a session created without a sessionKey never changes aliveSessionKeys', as
   assert.deepEqual(after, before)
 })
 
+// ── listSessions usage ───────────────────────────────────────────────────
+//
+// Context usage lets a host see a session filling up before it degrades. It is
+// only ever what the harness reported — absent until one arrives, so a host can
+// tell "holds nothing" from "cannot say".
+
+test('a session that has never reported usage has none, rather than zero', async () => {
+  const h = await setup('openclaw')
+  const meta = h.client.listSessions().find((s) => s.id === h.sessionId)
+  assert.equal(meta?.usage, undefined)
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('listSessions surfaces the last reported usage', async () => {
+  const h = await setup('openclaw')
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 12_000, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  const meta = h.client.listSessions().find((s) => s.id === h.sessionId)
+  assert.deepEqual(meta?.usage, { used: 12_000, size: 200_000 })
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a later usage report replaces the earlier one', async () => {
+  // What a host reads after a compaction: the newest figure, not the peak.
+  const h = await setup('openclaw')
+  for (const used of [500_000, 20_000]) {
+    handleUpdate({
+      sessionId: h.sessionId,
+      update: { sessionUpdate: 'usage_update', used, size: 200_000 },
+    } as Parameters<typeof handleUpdate>[0])
+  }
+  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
+    used: 20_000,
+    size: 200_000,
+  })
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a harness that cannot name the context window reports usage with no size', async () => {
+  // size <= 0 means "window unknown" on the wire; it must not surface as 0,
+  // which would read as a zero-capacity context.
+  const h = await setup('openclaw')
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 900, size: 0 },
+  } as Parameters<typeof handleUpdate>[0])
+  const meta = h.client.listSessions().find((s) => s.id === h.sessionId)
+  assert.deepEqual(meta?.usage, { used: 900, size: undefined })
+  await h.client.deleteSession(h.sessionId)
+})
+
 // ── hasActiveTurn ────────────────────────────────────────────────────────
 //
 // Same underlying read as activeSessionKeys, by raw session id — the check a

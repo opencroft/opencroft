@@ -1001,8 +1001,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   }
 
   return {
+    // `usage` is composed in here rather than stored on `meta`, so the live
+    // session state stays the single source of truth for it.
     listSessions(): SessionMeta[] {
-      return [...store.sessions.values()].map((session) => session.meta).sort((a, b) => a.createdAt - b.createdAt)
+      return [...store.sessions.values()]
+        .map((session) => ({ ...session.meta, usage: session.usage }))
+        .sort((a, b) => a.createdAt - b.createdAt)
     },
 
     // Session keys (selection.sessionKey) of every session currently blocked on
