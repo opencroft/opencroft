@@ -377,7 +377,10 @@ let rewriteCount = 0
 // So stamp the link with a version of its own. It is the MAP's mtime, not the
 // bundle's: rewriting the bundle here changes the bundle's mtime, and keying
 // off that would invalidate the value in the act of writing it.
-export async function versionSourceMapLink(outfile: string): Promise<void> {
+export async function versionSourceMapLink(
+  outfile: string,
+  publicMapName = path.basename(`${outfile}.map`),
+): Promise<void> {
   const mapFile = `${outfile}.map`
   let version: number
   try {
@@ -391,7 +394,11 @@ export async function versionSourceMapLink(outfile: string): Promise<void> {
   if (at < 0) {
     return
   }
-  const linked = `${code.slice(0, at)}${SOURCE_MAP_MARKER}${path.basename(mapFile)}?v=${version}\n`
+  // publicMapName defaults to this file's own basename, but a caller building
+  // under a temporary name (see compileSide) must pass the name the map will
+  // actually be published under — the browser never sees the temp name, so a
+  // link to it would 404 forever.
+  const linked = `${code.slice(0, at)}${SOURCE_MAP_MARKER}${publicMapName}?v=${version}\n`
   // Write-then-rename rather than writing over the bundle in place. The route
   // that serves these can be reading the file while this runs — an extension is
   // rebuilt on the first request after a restart, which is exactly when several
@@ -400,13 +407,16 @@ export async function versionSourceMapLink(outfile: string): Promise<void> {
   // extension until the next reload. Rename is atomic within a filesystem, so a
   // concurrent reader sees either the old bundle or the new one, never half of
   // one. The temp file sits beside the target to keep it on the same device.
-  // Unique per REWRITE, not per process. Nothing deduplicates builds
-  // (ensureBuilt has no in-flight guard), so two
-  // requests for the same extension can be rewriting this bundle at once. A
-  // per-process name would have them share one temp file: writer A renames it
-  // into place while writer B is still filling it, promoting a half-written
-  // bundle atomically. Atomic and truncated is worse than neither.
-  const temp = `${outfile}.${process.pid}.${(rewriteCount += 1)}.tmp`
+  // Unique per REWRITE, not per process. buildExtension dedupes concurrent
+  // builds of the same extension, but this function takes a bare file path and
+  // has no idea whether its caller did — it has to stay safe called directly,
+  // so two requests for the same extension can still be rewriting this bundle
+  // at once as far as this function is concerned. A per-process name would
+  // have them share one temp file: writer A renames it into place while
+  // writer B is still filling it, promoting a half-written bundle atomically.
+  // Atomic and truncated is worse than neither.
+  rewriteCount += 1
+  const temp = `${outfile}.${process.pid}.${rewriteCount}.tmp`
   try {
     await fs.writeFile(temp, linked)
     await fs.rename(temp, outfile)
@@ -415,6 +425,8 @@ export async function versionSourceMapLink(outfile: string): Promise<void> {
     throw err
   }
 }
+
+let buildAttemptCounter = 0
 
 async function compileSide(
   extensionId: string,
@@ -434,7 +446,18 @@ async function compileSide(
     return { errors: [], warnings: [] }
   }
 
-  const outfile = path.join(outDir, side === 'client' ? 'client.js' : 'server.js')
+  const finalOutfile = path.join(outDir, side === 'client' ? 'client.js' : 'server.js')
+  // buildExtension's in-flight guard stops two builds of the same extension
+  // from running at once, but a route serving the finished bundle reads
+  // straight off disk with no idea a build is running at all — and esbuild's
+  // own write to `outfile` is not atomic. Build under a name nothing serves,
+  // then publish with a rename once the whole side is ready; rename is
+  // atomic within a filesystem, so a concurrent reader always sees either the
+  // old bundle or the new one, never a partial one. The temp file sits beside
+  // the target to keep it on the same device. Unique per attempt so a
+  // leftover from a previous crashed build can never collide with this one.
+  buildAttemptCounter += 1
+  const outfile = `${finalOutfile}.building-${process.pid}-${buildAttemptCounter}`
   const format = side === 'client' ? 'esm' : 'cjs'
   const platform = side === 'client' ? 'browser' : 'node'
 
@@ -481,13 +504,27 @@ async function compileSide(
       nodePaths: [path.join(src, 'node_modules'), ...PROJECT_NODE_MODULES],
     })
     if (side === 'client') {
-      await versionSourceMapLink(outfile)
+      // The link has to name what the map will be published as, not what it's
+      // called right now — nobody ever requests the temp name.
+      await versionSourceMapLink(outfile, `${path.basename(finalOutfile)}.map`)
     }
+    // Publish. Map before code: the code's last line is a versioned link to
+    // the map, so a devtools fetch racing the new code's arrival must never
+    // find the code in place without it. `.catch(() => {})` on both covers a
+    // build that produced errors and wrote nothing (`outfile` never existed) —
+    // the previous bundle is left serving, same as before this file had a
+    // publish step at all.
+    if (side === 'client') {
+      await fs.rename(`${outfile}.map`, `${finalOutfile}.map`).catch(() => {})
+    }
+    await fs.rename(outfile, finalOutfile).catch(() => {})
     return {
       errors: toCompileErrors(result.errors),
       warnings: toCompileErrors(result.warnings),
     }
   } catch (err) {
+    await fs.rm(outfile, { force: true }).catch(() => {})
+    await fs.rm(`${outfile}.map`, { force: true }).catch(() => {})
     const buildErr = err as esbuild.BuildFailure
     return {
       errors: buildErr.errors ? toCompileErrors(buildErr.errors) : [{ file: entry, message: String(err) }],
@@ -599,7 +636,78 @@ async function ensureDependencies(extensionId: string): Promise<CompileError[]> 
   return []
 }
 
-export async function buildExtension(extensionId: string, manifest: ExtensionManifest): Promise<BuildResult> {
+// Callers: ensureBuilt's mtime-triggered path (loader.ts), the dev-mode file
+// watcher, and two explicit "rebuild" actions in the extension editor — none
+// of them coordinate with each other. Without this, two of them landing on
+// the same extension around the same time each run their own esbuild pass
+// over the same output files. Deduplicating here, at the one function every
+// caller funnels through, protects all of them at once — a guard placed
+// only in ensureBuilt would miss the other three. Keyed by extension so
+// unrelated extensions still build in parallel.
+interface BuildSlot {
+  running: Promise<BuildResult>
+  // Set once, by whichever caller is first to arrive while `running` is still
+  // in flight. Every later arrival gets handed this SAME promise rather than
+  // each queuing its own — otherwise a build that finishes just before a
+  // burst of late callers would let each of them kick off a redundant build
+  // of their own instead of sharing the one already coalesced for them.
+  next: Promise<BuildResult> | null
+}
+
+const inFlightBuilds = new Map<string, BuildSlot>()
+
+export function buildExtension(extensionId: string, manifest: ExtensionManifest): Promise<BuildResult> {
+  const slot = inFlightBuilds.get(extensionId)
+  if (!slot) {
+    return startBuild(extensionId, manifest)
+  }
+  // A build for this extension is already running. Its result was read from
+  // whatever the source looked like when IT started, which may already be
+  // stale by the time this caller asked — handing this caller that build's
+  // own result would silently drop an edit that landed in between, and the
+  // atomic publish that just shipped makes that loss permanent: the
+  // published bundle's mtime becomes newer than the edit, so the mtime check
+  // that would otherwise have caught it never fires again. Queue exactly one
+  // more build to run right after the current one settles (success or
+  // failure — a late arrival wants a current answer regardless of how the
+  // one already running turns out), and answer this caller from that.
+  if (!slot.next) {
+    slot.next = slot.running.then(
+      () => startBuild(extensionId, manifest),
+      () => startBuild(extensionId, manifest),
+    )
+  }
+  return slot.next
+}
+
+function startBuild(extensionId: string, manifest: ExtensionManifest): Promise<BuildResult> {
+  const running = buildExtensionNow(extensionId, manifest)
+  inFlightBuilds.set(extensionId, { running, next: null })
+  // `running` itself is returned below and handled by the caller. `.finally`
+  // derives a NEW promise that adopts running's rejection, and nothing here
+  // awaits or handles that derived one — left alone, a rejected build would
+  // be an unhandled rejection on a promise nobody but this cleanup ever
+  // touches, which Node turns into a crash. The `.catch` exists only to give
+  // that derived promise a handler; the real error still reaches the caller
+  // through `running`.
+  void running
+    .finally(() => {
+      const slot = inFlightBuilds.get(extensionId)
+      // Only clear if nothing queued a follow-up while this build ran. If one
+      // was queued, its own `.then` (above) is about to call startBuild and
+      // overwrite this slot with the follow-up's own — clearing here first
+      // would open a gap where a caller arriving in between finds no slot at
+      // all and starts a redundant third build instead of joining the one
+      // already coalesced for it.
+      if (slot?.running === running && !slot.next) {
+        inFlightBuilds.delete(extensionId)
+      }
+    })
+    .catch(() => {})
+  return running
+}
+
+async function buildExtensionNow(extensionId: string, manifest: ExtensionManifest): Promise<BuildResult> {
   const installErrors = await ensureDependencies(extensionId)
   if (installErrors.length > 0) {
     return {
