@@ -1933,7 +1933,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       const edges = graph.edges as StoredEdge[]
       const index = new Map<string, GraphNode>()
       for (const n of graph.nodes) {
-        index.set((n as GraphNode).id, n as GraphNode)
+        index.set((n as unknown as GraphNode).id, n as unknown as GraphNode)
       }
       const found: unknown[] = []
       const missing: string[] = []
@@ -1978,7 +1978,7 @@ function buildHandlers(): Record<string, ToolHandler> {
             position,
             data,
           }
-          graph.nodes.push(node)
+          graph.nodes.push(node as unknown as Record<string, unknown>)
           createdNodes.push(node)
         }
         return createdNodes
