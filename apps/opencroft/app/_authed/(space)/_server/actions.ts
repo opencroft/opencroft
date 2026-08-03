@@ -1,174 +1,127 @@
+import { getSessionUser } from '@opencroft/auth/server'
 import { createServerFn } from '@tanstack/react-start'
+import { getRequest } from '@tanstack/react-start/server'
 
-import { resolveGraphContexts } from '@/app/_authed/(extension-runtime)/_server/graph-context-resolver'
-import type { GraphSnapshot } from '@/app/_authed/(extension-runtime)/_server/host'
-import { slugify, uniqueSlug } from '@/app/_authed/(space)/_server/slug'
-import { getSpacesRegistry, type SpaceRuntime } from '@/app/_authed/(space)/_server/store'
-import { DEFAULT_SPACE_SLUG, type GraphData, type SpaceExport, type SpaceSummary } from '@/app/_authed/(space)/_server/types'
-import { toastStore } from '@/lib/toast-store'
+import {
+  createSpaceImpl,
+  deleteSpaceImpl,
+  exportSpaceImpl,
+  findSpaceByNodeImpl,
+  getActiveSpaceSlugImpl,
+  importSpaceImpl,
+  listSpacesImpl,
+  loadSpaceGraphImpl,
+  renameSpaceImpl,
+  saveSpaceGraphImpl,
+  setActiveSpaceSlugImpl,
+  setSpacePinnedImpl,
+} from '@/app/_authed/(space)/_server/actions-impl'
+import type { GraphData, SpaceExport, SpaceSummary } from '@/app/_authed/(space)/_server/types'
 
-async function registry() {
-  const r = getSpacesRegistry()
-  await r.ensureLoaded()
-  return r
-}
-
-function toSummary(runtime: SpaceRuntime): SpaceSummary {
-  return {
-    id: runtime.id,
-    slug: runtime.slug,
-    name: runtime.name,
-    pinned: runtime.pinned,
-    createdAt: runtime.createdAt.toISOString(),
-    updatedAt: runtime.updatedAt.toISOString(),
-  }
-}
-
-async function resolveGraph(graph: GraphData): Promise<GraphData> {
-  const snapshot: GraphSnapshot = {
-    nodes: graph.nodes as unknown as GraphSnapshot['nodes'],
-    edges: graph.edges as unknown as GraphSnapshot['edges'],
-  }
-  const resolved = await resolveGraphContexts(snapshot)
-  return {
-    nodes: resolved.nodes as unknown as GraphData['nodes'],
-    edges: resolved.edges as unknown as GraphData['edges'],
+// The HTTP boundary for every space operation: check the session, then hand
+// off to the plain implementation in actions-impl.ts.
+//
+// WHY THE CHECK IS HERE AND NOT IN THE IMPLEMENTATIONS. The
+// _authed layout's beforeLoad guards NAVIGATION; it never runs for a
+// createServerFn, which is an individually callable RPC endpoint reachable
+// without ever rendering the page that links to it. So the check has to exist
+// at this layer. But it must exist ONLY at this layer: (mcp)/_server/tools.ts
+// and graph-conflict-retry.ts call the implementations in-process to serve
+// MCP tool calls, and /api/mcp is a bearer-token surface carrying no session
+// cookie by design. Putting the check in the shared implementation instead
+// threw "Not signed in" for every agent tool — including, through
+// withGraphConflictRetry's default load/save, all seven graph-write tools.
+//
+// Every export below is gated, not just the read paths: an unauthenticated
+// caller could not list spaces but could still delete one by slug, and slugs
+// are guessable, which is worse than the gap this replaced.
+//
+// Do not re-export anything from actions-impl.ts here as a plain function —
+// this module is in the client graph, and an unstubbed plain export ships its
+// server-only imports to the browser.
+async function requireSession(): Promise<void> {
+  const user = await getSessionUser(getRequest())
+  if (!user) {
+    throw new Error('Not signed in')
   }
 }
 
 export const listSpaces = createServerFn({ strict: { output: false } }).handler(async (): Promise<SpaceSummary[]> => {
-  const r = await registry()
-  return r.list()
+  await requireSession()
+  return listSpacesImpl()
 })
 
 export const loadSpaceGraph = createServerFn({ strict: { output: false } })
   .inputValidator((slug: string) => slug)
   .handler(async ({ data: slug }): Promise<{ graph: GraphData; updatedAt: string } | null> => {
-    const r = await registry()
-    const space = r.getBySlug(slug)
-    if (!space) {
-      return null
-    }
-    return { graph: space.graph, updatedAt: space.updatedAt.toISOString() }
+    await requireSession()
+    return loadSpaceGraphImpl(slug)
   })
 
 export const saveSpaceGraph = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { slug: string; graph: GraphData; expectedUpdatedAt?: string }) => data)
   .handler(async ({ data }): Promise<{ updatedAt: string }> => {
-    const r = await registry()
-    const resolved = await resolveGraph(data.graph)
-    const runtime = await r.saveGraph(data.slug, resolved, data.expectedUpdatedAt)
-    if (!runtime) {
-      throw new Error(`Space not found: ${data.slug}`)
-    }
-    // Single broadcast point for every graph mutation (canvas autosave and
-    // MCP node/edge tools alike) so any other open tab resyncs instead of
-    // later overwriting this write with a stale snapshot.
-    toastStore.broadcast({ type: 'graph_updated', spaceId: data.slug })
-    return { updatedAt: runtime.updatedAt.toISOString() }
+    await requireSession()
+    return saveSpaceGraphImpl(data)
   })
 
 export const createSpace = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((name: string) => name)
   .handler(async ({ data: name }): Promise<SpaceSummary> => {
-    const r = await registry()
-    const trimmed = name.trim() || 'Space'
-    const existing = new Set(r.list().map((s) => s.slug))
-    const slug = uniqueSlug(slugify(trimmed), existing)
-    const runtime = await r.create(trimmed, slug, { nodes: [], edges: [] })
-    return toSummary(runtime)
+    await requireSession()
+    return createSpaceImpl(name)
   })
 
 export const renameSpace = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { slug: string; name: string }) => data)
   .handler(async ({ data }): Promise<SpaceSummary | null> => {
-    const r = await registry()
-    const runtime = await r.rename(data.slug, data.name.trim() || 'Space')
-    if (!runtime) {
-      return null
-    }
-    return toSummary(runtime)
+    await requireSession()
+    return renameSpaceImpl(data)
   })
 
 export const deleteSpace = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((slug: string) => slug)
   .handler(async ({ data: slug }): Promise<boolean> => {
-    const r = await registry()
-    if (slug === DEFAULT_SPACE_SLUG && r.list().length <= 1) {
-      return false
-    }
-    return r.remove(slug)
+    await requireSession()
+    return deleteSpaceImpl(slug)
   })
 
 export const setSpacePinned = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { slug: string; pinned: boolean }) => data)
   .handler(async ({ data }): Promise<SpaceSummary | null> => {
-    const r = await registry()
-    const runtime = await r.setPinned(data.slug, data.pinned)
-    if (!runtime) {
-      return null
-    }
-    return toSummary(runtime)
+    await requireSession()
+    return setSpacePinnedImpl(data)
   })
 
 export const exportSpace = createServerFn({ strict: { output: false } })
   .inputValidator((slug: string) => slug)
   .handler(async ({ data: slug }): Promise<SpaceExport | null> => {
-    const r = await registry()
-    const space = r.getBySlug(slug)
-    if (!space) {
-      return null
-    }
-    return {
-      name: space.name,
-      slug: space.slug,
-      graph: space.graph,
-      exportedAt: new Date().toISOString(),
-    }
+    await requireSession()
+    return exportSpaceImpl(slug)
   })
 
 export const importSpace = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((payload: SpaceExport) => payload)
   .handler(async ({ data: payload }): Promise<SpaceSummary> => {
-    const r = await registry()
-    const existing = new Set(r.list().map((s) => s.slug))
-    const desired = slugify(payload.slug || payload.name || 'space')
-    const slug = uniqueSlug(desired, existing)
-    const graph: GraphData = {
-      nodes: Array.isArray(payload.graph?.nodes) ? payload.graph.nodes : [],
-      edges: Array.isArray(payload.graph?.edges) ? payload.graph.edges : [],
-    }
-    const runtime = await r.create(payload.name || 'Imported', slug, graph)
-    return toSummary(runtime)
+    await requireSession()
+    return importSpaceImpl(payload)
   })
 
 export const getActiveSpaceSlug = createServerFn({ strict: { output: false } }).handler(async (): Promise<string> => {
-  const r = await registry()
-  const active = await r.getActiveSlug()
-  if (active) {
-    return active
-  }
-  const list = r.list()
-  return list[0]?.slug ?? DEFAULT_SPACE_SLUG
+  await requireSession()
+  return getActiveSpaceSlugImpl()
 })
 
 export const setActiveSpaceSlug = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((slug: string) => slug)
   .handler(async ({ data: slug }): Promise<void> => {
-    const r = await registry()
-    if (!r.hasSlug(slug)) {
-      return
-    }
-    await r.setActiveSlug(slug)
+    await requireSession()
+    return setActiveSpaceSlugImpl(slug)
   })
 
 export const findSpaceByNode = createServerFn({ strict: { output: false } })
   .inputValidator((nodeId: string) => nodeId)
   .handler(async ({ data: nodeId }): Promise<SpaceSummary | null> => {
-    const r = await registry()
-    const space = r.findByNode(nodeId)
-    if (!space) {
-      return null
-    }
-    return toSummary(space)
+    await requireSession()
+    return findSpaceByNodeImpl(nodeId)
   })

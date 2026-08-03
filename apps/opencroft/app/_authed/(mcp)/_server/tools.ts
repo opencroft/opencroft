@@ -51,15 +51,23 @@ import { recordAudit } from '@/app/_authed/(mcp)/_server/audit'
 import { executeExtensionTool, getExtensionToolDefinitions } from '@/app/_authed/(mcp)/_server/extension-tools'
 import { skillToolDefinitions, skillToolHandlers } from '@/app/_authed/(mcp)/_server/skill-tools'
 import { isYoloMode } from '@/app/_authed/(mcp)/_server/yolo'
+// MCP tool calls carry no session cookie by design (bearer-token surface,
+// not cookies), so every space operation reached from here must be the
+// plain `*Impl`, never the createServerFn wrapper in actions.ts. The wrappers
+// check the session; calling one in-process from a tool throws "Not signed
+// in" for a caller that was never supposed to have a session. That is exactly
+// what happened when the session gate first landed in the shared
+// implementations — it broke the read tools directly, and every graph-write
+// tool indirectly through withGraphConflictRetry's default load/save.
 import {
-  createSpace,
-  deleteSpace,
-  findSpaceByNode,
-  getActiveSpaceSlug,
-  listSpaces,
-  loadSpaceGraph,
-  renameSpace,
-} from '@/app/_authed/(space)/_server/actions'
+  createSpaceImpl,
+  deleteSpaceImpl,
+  findSpaceByNodeImpl,
+  getActiveSpaceSlugImpl,
+  listSpacesImpl,
+  loadSpaceGraphImpl,
+  renameSpaceImpl,
+} from '@/app/_authed/(space)/_server/actions-impl'
 import { withGraphConflictRetry } from '@/app/_authed/(space)/_server/graph-conflict-retry'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
@@ -1237,9 +1245,9 @@ function redactMcpServer(server: McpServerConfig): McpServerConfig {
 async function resolveSpace(args: Record<string, unknown>): Promise<string> {
   const input = args.space as string | undefined
   if (!input) {
-    return getActiveSpaceSlug()
+    return getActiveSpaceSlugImpl()
   }
-  const spaces = await listSpaces()
+  const spaces = await listSpacesImpl()
   const bySlug = spaces.find((s) => s.slug === input)
   if (bySlug) {
     return bySlug.slug
@@ -1248,7 +1256,7 @@ async function resolveSpace(args: Record<string, unknown>): Promise<string> {
 }
 
 async function loadOrFail(slug: string): Promise<{ graph: GraphData; updatedAt: string }> {
-  const result = await loadSpaceGraph({ data: slug })
+  const result = await loadSpaceGraphImpl(slug)
   if (!result) {
     fail(-32602, `Space not found: ${slug}`)
   }
@@ -1448,9 +1456,9 @@ function requireArray<T = unknown>(value: unknown, name: string): T[] {
 const CORE_EXTENSION_ID = 'builtin/core'
 
 async function findNodeAcrossSpaces(nodeId: string): Promise<{ node: GraphNode; slug: string }> {
-  const spaces = await listSpaces()
+  const spaces = await listSpacesImpl()
   for (const space of spaces) {
-    const result = await loadSpaceGraph({ data: space.slug })
+    const result = await loadSpaceGraphImpl(space.slug)
     const node = result?.graph.nodes.find((n) => (n as { id?: string }).id === nodeId) as GraphNode | undefined
     if (node) {
       return { node, slug: space.slug }
@@ -1813,7 +1821,7 @@ function buildHandlers(): Record<string, ToolHandler> {
 
     // ── list_spaces ─────────────────────────────────────────────────
     list_spaces: async () => {
-      const spaces = await listSpaces()
+      const spaces = await listSpacesImpl()
       return textResult(JSON.stringify(spaces, null, 2))
     },
 
@@ -1823,7 +1831,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!name) {
         fail(-32602, 'Missing required param: name')
       }
-      const space = await createSpace({ data: name })
+      const space = await createSpaceImpl(name)
       return textResult(JSON.stringify(space, null, 2))
     }),
 
@@ -1834,7 +1842,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         fail(-32602, 'Missing required params: space, name')
       }
       const slug = await resolveSpace(args)
-      const space = await renameSpace({ data: { slug, name } })
+      const space = await renameSpaceImpl({ slug, name })
       if (!space) {
         fail(-32602, `Space not found: ${slug}`)
       }
@@ -1847,7 +1855,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         fail(-32602, 'Missing required param: space')
       }
       const slug = await resolveSpace(args)
-      const ok = await deleteSpace({ data: slug })
+      const ok = await deleteSpaceImpl(slug)
       if (!ok) {
         fail(-32602, 'Cannot delete (not found or last remaining space)')
       }
@@ -2197,7 +2205,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!nodeId) {
         fail(-32602, 'Missing required param: nodeId')
       }
-      const space = await findSpaceByNode({ data: nodeId })
+      const space = await findSpaceByNodeImpl(nodeId)
       if (!space) {
         fail(-32602, `Node not found in any space: ${nodeId}`)
       }

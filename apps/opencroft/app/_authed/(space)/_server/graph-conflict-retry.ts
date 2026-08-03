@@ -5,15 +5,23 @@
 // against the fresh state, so it's a reapply, not a blind replay.
 //
 // Two load/save pairs are available:
-//  - loadViaAction/saveViaAction (the default): go through the TanStack Start
-//    server functions in actions.ts — for callers already running inside a
-//    real request (MCP tool calls).
-//  - loadGraphPlain/saveGraphPlain: bypass those server functions entirely —
-//    for callers with NO request context at all, e.g. a background scheduler
-//    tick (see exec-dispatch.ts's invokeExtensionActionImpl/dispatchNodeActionImpl
-//    for the same pattern and why it's needed).
+//  - loadResolved/saveResolved (the default): the full space-action behaviour,
+//    including graph-context resolution on save — for callers mutating a graph
+//    the way the canvas or an MCP tool does.
+//  - loadGraphPlain/saveGraphPlain: the bare registry read/write, with no
+//    context resolution — for callers with NO request context at all, e.g. a
+//    background scheduler tick (see exec-dispatch.ts's
+//    invokeExtensionActionImpl/dispatchNodeActionImpl for the same pattern).
+//
+// The default pair calls the *Impl functions directly, NOT the createServerFn
+// wrappers in actions.ts. Those wrappers check the session, and the dominant
+// caller here is (mcp)/_server/tools.ts serving MCP tool calls, which carry no
+// session cookie by design (bearer-token surface). Routing
+// through the wrappers made every graph-write tool fail with "Not signed in"
+// — create_nodes, update_nodes, connect_nodes and the rest, all seven of them,
+// because they all reach the graph through this helper. See actions-impl.ts.
 
-import { loadSpaceGraph, saveSpaceGraph } from '@/app/_authed/(space)/_server/actions'
+import { loadSpaceGraphImpl, saveSpaceGraphImpl } from '@/app/_authed/(space)/_server/actions-impl'
 import { GraphConflictError, getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
 import { toastStore } from '@/lib/toast-store'
@@ -22,16 +30,16 @@ export { GraphConflictError }
 
 export const MAX_GRAPH_CONFLICT_RETRIES = 3
 
-async function loadViaAction(slug: string): Promise<{ graph: GraphData; updatedAt: string }> {
-  const result = await loadSpaceGraph({ data: slug })
+async function loadResolved(slug: string): Promise<{ graph: GraphData; updatedAt: string }> {
+  const result = await loadSpaceGraphImpl(slug)
   if (!result) {
     throw new Error(`Space not found: ${slug}`)
   }
   return result
 }
 
-async function saveViaAction(slug: string, graph: GraphData, expectedUpdatedAt: string): Promise<unknown> {
-  return saveSpaceGraph({ data: { slug, graph, expectedUpdatedAt } })
+async function saveResolved(slug: string, graph: GraphData, expectedUpdatedAt: string): Promise<unknown> {
+  return saveSpaceGraphImpl({ slug, graph, expectedUpdatedAt })
 }
 
 export async function loadGraphPlain(slug: string): Promise<{ graph: GraphData; updatedAt: string }> {
@@ -56,8 +64,8 @@ export async function withGraphConflictRetry<T>(
   slug: string,
   mutate: (graph: GraphData, updatedAt: string) => Promise<T> | T,
   {
-    load = loadViaAction,
-    save = saveViaAction,
+    load = loadResolved,
+    save = saveResolved,
   }: {
     load?: (slug: string) => Promise<{ graph: GraphData; updatedAt: string }>
     save?: (slug: string, graph: GraphData, expectedUpdatedAt: string) => Promise<unknown>
@@ -66,9 +74,10 @@ export async function withGraphConflictRetry<T>(
   for (let attempt = 1; ; attempt++) {
     const { graph: loaded, updatedAt } = await load(slug)
     // Both load implementations return the space registry's live, shared graph
-    // object by reference (not a copy) — loadGraphPlain directly, loadViaAction
-    // because calling a createServerFn in-process returns its raw handler
-    // result with no serialization boundary. Mutating that object before
+    // object by reference (not a copy) — loadGraphPlain reads it off the
+    // registry directly, and loadResolved calls loadSpaceGraphImpl in-process,
+    // which hands back that same object with no serialization boundary in
+    // between. Mutating that object before
     // `save` is known to succeed means a failed attempt's mutation is never
     // rolled back: it stays on the live object, and the *next* attempt's
     // `load` returns that same already-dirty object, so a retry compounds
