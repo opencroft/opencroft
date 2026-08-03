@@ -191,7 +191,118 @@ export const mcpCaller = pgTable(
   ],
 )
 
-export const schema = { setting, secret, space, mcpAuditLog, apiToken, mcpCaller, ...authSchema }
+// A topic-scoped container of threads. Holds no messages of
+// its own — a thread is where a conversation actually happens, bound to an
+// ACP session exactly the way a 1:1 agent chat is. This table is the
+// container and its membership; a group chat's own row carries only the
+// topic, not any conversation content.
+//
+// createdByUserId is provenance, not ownership: it is nullable with
+// onDelete 'set null' rather than 'cascade' on purpose. A group chat's
+// lifetime belongs to its membership (GroupChatMember.userId keeps
+// 'cascade' — that column genuinely means "this person is no longer a
+// member"), not to whoever happened to create it. Deleting the creator
+// must not delete a chat every other member still uses.
+export const groupChat = pgTable('GroupChat', {
+  id: text().primaryKey().notNull().$defaultFn(uuid),
+  topic: text().notNull(),
+  createdByUserId: text().references(() => user.id, { onDelete: 'set null' }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+})
+
+// One row per member, agent or user. ONE TABLE, TWO KINDS OF PRINCIPAL,
+// DISCRIMINATED BY `principalType` — the same shape `ApiToken` already uses
+// for exactly the same reason: two membership-check code paths is how one of
+// them gets a bug the other's tests do not catch.
+//
+//   'user'  userId is set (references user.id, cascades on delete),
+//           agentNodeId is null.
+//   'agent' agentNodeId is set (a graph node id, validated against
+//           listAgentNodes() at write time — see the model module), userId is
+//           null. Not a foreign key: agent nodes live in the space graph's own
+//           JSON, not a relational table this schema can reference.
+//
+// Consistency between principalType and which id column is set is enforced
+// application-side, not by a CHECK constraint — the same choice already made
+// for ApiToken's subjectType/userId/agentName triple, so this does not
+// introduce a stricter pattern than the one beside it.
+//
+// The two unique indexes below rely on Postgres treating NULL as distinct
+// from every other NULL: the (groupChatId, userId) index only ever collides
+// for two rows that are BOTH real users with the same id, because every
+// agent row's userId is NULL and NULLs never equal each other. The
+// (groupChatId, agentNodeId) index works the same way in the other
+// direction. Each index constrains exactly the principal kind it names and
+// is silently inert for the other kind — which is what makes two indexes
+// sufficient without a partial-index syntax.
+export const groupChatMember = pgTable(
+  'GroupChatMember',
+  {
+    id: text().primaryKey().notNull().$defaultFn(uuid),
+    groupChatId: text()
+      .notNull()
+      .references(() => groupChat.id, { onDelete: 'cascade' }),
+    principalType: text().notNull(),
+    userId: text().references(() => user.id, { onDelete: 'cascade' }),
+    agentNodeId: text(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('GroupChatMember_groupChatId_userId_key').on(t.groupChatId, t.userId),
+    uniqueIndex('GroupChatMember_groupChatId_agentNodeId_key').on(t.groupChatId, t.agentNodeId),
+    index('GroupChatMember_groupChatId_idx').on(t.groupChatId),
+    index('GroupChatMember_userId_idx').on(t.userId),
+    index('GroupChatMember_agentNodeId_idx').on(t.agentNodeId),
+  ],
+)
+
+// A thread: one agent, fixed at creation, bound to the same kind of ACP
+// session a 1:1 agent chat uses. `sessionKey` is that session's tabKey —
+// globally unique the same way the existing chat registry's session keys
+// are, and namespaced (`group-chat:<groupChatId>:<agentNodeId>:<id>`, minted
+// in the model module) so it can never collide with a 1:1 chat's key.
+//
+// No message content lives here either — the ACP session (agentClient's own
+// history, resumable via session/load) is still the one place a
+// conversation's turns are stored, exactly as for today's agent chat. This
+// row is the durable binding a membership check can be run against before
+// that session is ever touched.
+export const groupChatThread = pgTable(
+  'GroupChatThread',
+  {
+    id: text().primaryKey().notNull().$defaultFn(uuid),
+    groupChatId: text()
+      .notNull()
+      .references(() => groupChat.id, { onDelete: 'cascade' }),
+    agentNodeId: text().notNull(),
+    sessionKey: text().notNull(),
+    title: text(),
+    // Provenance, not ownership — same reasoning as GroupChat.createdByUserId
+    // above. Deleting the user who started a thread must not delete the
+    // binding row while the ACP session it points at keeps existing.
+    createdByUserId: text().references(() => user.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('GroupChatThread_sessionKey_key').on(t.sessionKey),
+    index('GroupChatThread_groupChatId_idx').on(t.groupChatId),
+    index('GroupChatThread_agentNodeId_idx').on(t.agentNodeId),
+  ],
+)
+
+export const schema = {
+  setting,
+  secret,
+  space,
+  mcpAuditLog,
+  apiToken,
+  mcpCaller,
+  groupChat,
+  groupChatMember,
+  groupChatThread,
+  ...authSchema,
+}
 
 export type Setting = typeof setting.$inferSelect
 export type Secret = typeof secret.$inferSelect
@@ -199,6 +310,9 @@ export type Space = typeof space.$inferSelect
 export type McpAuditLog = typeof mcpAuditLog.$inferSelect
 export type ApiToken = typeof apiToken.$inferSelect
 export type McpCaller = typeof mcpCaller.$inferSelect
+export type GroupChat = typeof groupChat.$inferSelect
+export type GroupChatMember = typeof groupChatMember.$inferSelect
+export type GroupChatThread = typeof groupChatThread.$inferSelect
 
 // Better Auth's tables, declared separately because their shape is the
 // library's contract rather than ours — re-exported here so drizzle-kit picks

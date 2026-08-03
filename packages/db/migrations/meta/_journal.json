@@ -43,6 +43,13 @@
       "when": 1785738619956,
       "tag": "0005_natural_darkhawk",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785762792021,
+      "tag": "0006_cool_starfox",
+      "breakpoints": true
     }
   ]
 }
