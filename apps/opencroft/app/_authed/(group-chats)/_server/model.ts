@@ -406,7 +406,12 @@ export async function startThread(
  * thread's own group chat, same as `getThread` — no context re-attached,
  * since `isNewSession` only ever applies to the first prompt of a session.
  */
-export async function sendMessageInThread(request: Request, threadId: string, text: string): Promise<void> {
+export async function sendMessageInThread(
+  request: Request,
+  threadId: string,
+  text: string,
+  opts?: { front?: boolean },
+): Promise<void> {
   const sessionUser = await requireSignedInUser(request)
   const [row] = await db
     .select({
@@ -428,5 +433,11 @@ export async function sendMessageInThread(request: Request, threadId: string, te
     jobNodeId: '',
     tabKey: row.sessionKey,
   })
-  await promptLocalImpl({ sessionId: opened.sessionId, text })
+  // `front` is forwarded rather than dropped. It is set by the permission
+  // "tell it what to do differently" flow, which cancels the run and needs its
+  // guidance queued ahead of anything already held. A group-chat thread is an
+  // ordinary agent session and reaches that flow too, so a send path that
+  // silently ignored it would behave differently from a 1:1 chat in exactly
+  // the situation the user is trying to correct the agent.
+  await promptLocalImpl({ sessionId: opened.sessionId, text, front: opts?.front })
 }

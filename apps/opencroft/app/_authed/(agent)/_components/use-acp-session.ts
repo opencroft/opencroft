@@ -26,6 +26,26 @@ export interface LocalSource {
   tabKey: string
 }
 
+/**
+ * How a message actually reaches the server.
+ *
+ * Exists so a host can keep every bit of this hook's send bookkeeping —
+ * ordering, the message held while the session is still being created, the
+ * first-message transform, the waiting state — while routing the request
+ * through an endpoint of its own. Group chats need that: `promptLocal` is
+ * addressed by session id and performs no membership check, so a group-chat
+ * thread sends through its own server function instead, which re-checks
+ * membership before delegating to the same underlying prompt.
+ *
+ * OMITTING IT MUST CHANGE NOTHING. Every existing caller passes no transport
+ * and therefore runs the `promptLocal` path below, unchanged.
+ */
+export type SendTransport = (args: { sessionId: string; text: string; front?: boolean }) => Promise<void>
+
+// The default transport: exactly the call this hook has always made.
+const promptLocalTransport: SendTransport = ({ sessionId, text, front }) =>
+  promptLocal({ data: { sessionId, text, front } })
+
 export interface PendingPermission {
   requestId: string
   title: string
@@ -230,6 +250,8 @@ export function useAcpSession(
   transformOutgoing?: (text: string, isFirstMessage: boolean) => string,
   botName = 'assistant',
   onTitle?: (title: string) => void,
+  // Optional on purpose — see SendTransport. No argument, no behaviour change.
+  sendTransport?: SendTransport,
 ): AcpSession {
   const { agentNodeId, jobNodeId, tabKey } = source
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -287,6 +309,13 @@ export function useAcpSession(
   const titleRequestedRef = useRef(false)
   const transformRef = useRef(transformOutgoing)
   transformRef.current = transformOutgoing
+  // Held in a ref for the same reason as transformRef above: `deliver` is
+  // memoised on [sessionId], and reading the transport straight from the
+  // parameter would put it in that dependency list. A host passing an inline
+  // arrow would then give `deliver` a new identity every render, and every
+  // callback built on it downstream with it.
+  const transportRef = useRef(sendTransport)
+  transportRef.current = sendTransport
   const onTitleRef = useRef(onTitle)
   onTitleRef.current = onTitle
   // sessionId is read through a ref (not closed over directly) so fetchPage's
@@ -441,7 +470,7 @@ export function useAcpSession(
       setLocalWaiting(true)
       const chained = sendChainRef.current.then(async () => {
         try {
-          await promptLocal({ data: { sessionId, text, front: opts?.front } })
+          await (transportRef.current ?? promptLocalTransport)({ sessionId, text, front: opts?.front })
         } catch (error) {
           console.error('promptLocal failed', error)
           setLocalWaiting(false)

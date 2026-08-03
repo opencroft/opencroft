@@ -3,12 +3,16 @@ import { useMemo } from 'react'
 import { GroupChatThreadFraming } from 'ui/group-chat/group-chat-thread-framing'
 
 import { AgentChat } from '@/app/_authed/(agent)/_components/agent-chat'
-import type { LocalSource } from '@/app/_authed/(agent)/_components/use-acp-session'
+import type { LocalSource, SendTransport } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
 import type { GroupChatDetailView, GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
-import { getGroupChatThreadView, getMyGroupChatView } from '@/app/_authed/(group-chats)/_server/actions'
+import {
+  getGroupChatThreadView,
+  getMyGroupChatView,
+  sendGroupChatThreadMessage,
+} from '@/app/_authed/(group-chats)/_server/actions'
 
 // Reading one thread inside a group chat.
 //
@@ -71,7 +75,26 @@ function ThreadConversation({
     () => ({ agentNodeId: thread.agent.nodeId, jobNodeId: '', tabKey: thread.sessionKey }),
     [thread.agent.nodeId, thread.sessionKey],
   )
-  const acp = useAcpSession(source, undefined, thread.agent.name)
+
+  // EVERY SEND GOES THROUGH THE MEMBERSHIP CHECK.
+  //
+  // The default path a 1:1 chat uses is `promptLocal({ sessionId, ... })`,
+  // which is addressed by session id and checks nothing — reusing it here
+  // would drop the one server-side rule this feature is built around, for
+  // anyone who has a session id. Routing through `sendGroupChatThreadMessage`
+  // re-checks membership on the thread before delegating to the same prompt,
+  // and going through the hook's transport seam rather than replacing the
+  // composer means the send keeps all of its bookkeeping: ordering, the
+  // message held while the session is still opening, the waiting state, and
+  // `front` for the permission-correction flow.
+  const sendTransport = useMemo<SendTransport>(
+    () =>
+      async ({ text, front }) => {
+        await sendGroupChatThreadMessage({ data: { threadId: thread.id, text, front } })
+      },
+    [thread.id],
+  )
+  const acp = useAcpSession(source, undefined, thread.agent.name, undefined, sendTransport)
 
   return (
     <GroupChatThreadFraming
