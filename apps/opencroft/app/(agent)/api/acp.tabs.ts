@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import { requireSession } from '@/app/_server/require-session'
 import { type ChatTabsState, readChatTabs, writeChatTabs } from '@/app/(agent)/_server/chat-tabs-store'
 
 // Open AI-panel chat tabs + chat mode, persisted in the settings DB (not browser
@@ -8,8 +9,14 @@ import { type ChatTabsState, readChatTabs, writeChatTabs } from '@/app/(agent)/_
 export const Route = createFileRoute('/(agent)/api/acp/tabs')({
   server: {
     handlers: {
-      GET: async () => Response.json(await readChatTabs()),
+      GET: async ({ request }) => {
+        const denied = await requireSession(request)
+        if (denied) return denied
+        return Response.json(await readChatTabs())
+      },
       POST: async ({ request }) => {
+        const denied = await requireSession(request)
+        if (denied) return denied
         const state = (await request.json()) as ChatTabsState
         await writeChatTabs(state)
         return Response.json({ ok: true })

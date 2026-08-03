@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import { requireSession } from '@/app/_server/require-session'
 import { readSessions, subscribeSessions } from '@/app/(agent)/_server/agent-sessions-store'
 
 // Live session registry over SSE: pushes the full list on connect and again on
@@ -9,7 +10,9 @@ import { readSessions, subscribeSessions } from '@/app/(agent)/_server/agent-ses
 export const Route = createFileRoute('/(agent)/api/acp/sessions-stream')({
   server: {
     handlers: {
-      GET: ({ request }) => {
+      GET: async ({ request }) => {
+        const denied = await requireSession(request)
+        if (denied) return denied
         const encoder = new TextEncoder()
         let unsubscribe = () => {}
         const stream = new ReadableStream<Uint8Array>({

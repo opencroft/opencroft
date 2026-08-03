@@ -1,12 +1,15 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import { requireSession } from '@/app/_server/require-session'
 import { toastStore } from '@/lib/toast-store'
 import { getAllDockerSnapshots } from '@/server/scheduler/docker-ps-poller'
 
 export const Route = createFileRoute('/(sse)/api/sse')({
   server: {
     handlers: {
-      GET: ({ request }) => {
+      GET: async ({ request }) => {
+        const denied = await requireSession(request)
+        if (denied) return denied
         const url = new URL(request.url)
         const spaceId = url.searchParams.get('spaceId') ?? undefined
 

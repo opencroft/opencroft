@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import { requireSession } from '@/app/_server/require-session'
 import {
   deleteSession,
   readSessions,
@@ -13,8 +14,14 @@ import {
 export const Route = createFileRoute('/(agent)/api/acp/sessions')({
   server: {
     handlers: {
-      GET: async () => Response.json(await readSessions()),
+      GET: async ({ request }) => {
+        const denied = await requireSession(request)
+        if (denied) return denied
+        return Response.json(await readSessions())
+      },
       POST: async ({ request }) => {
+        const denied = await requireSession(request)
+        if (denied) return denied
         const body = (await request.json()) as
           | { op: 'upsert'; entry: Partial<SessionEntry> & { key: string } }
           | { op: 'delete'; key: string }

@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import type { McpServerConfig } from 'agent-client/mcp-types'
 
+import { requireSession } from '@/app/_server/require-session'
 import { agentClient } from '@/app/(agent)/_server/agent-client-instance'
 import { readMcpServers, writeMcpServers } from '@/app/(agent)/_server/mcp-store'
 
@@ -9,8 +10,14 @@ import { readMcpServers, writeMcpServers } from '@/app/(agent)/_server/mcp-store
 export const Route = createFileRoute('/(agent)/api/acp/mcp')({
   server: {
     handlers: {
-      GET: async () => Response.json(await readMcpServers()),
+      GET: async ({ request }) => {
+        const denied = await requireSession(request)
+        if (denied) return denied
+        return Response.json(await readMcpServers())
+      },
       POST: async ({ request }) => {
+        const denied = await requireSession(request)
+        if (denied) return denied
         const servers = (await request.json()) as McpServerConfig[]
         await writeMcpServers(servers)
         await agentClient.refreshMcpServers()

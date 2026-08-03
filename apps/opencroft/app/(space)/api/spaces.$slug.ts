@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import { requireSession } from '@/app/_server/require-session'
 import { deleteSpace, loadSpaceGraph, renameSpace, saveSpaceGraph } from '@/app/(space)/_server/actions'
 import { GraphConflictError } from '@/app/(space)/_server/store'
 import type { GraphData } from '@/app/(space)/_server/types'
@@ -7,7 +8,9 @@ import type { GraphData } from '@/app/(space)/_server/types'
 export const Route = createFileRoute('/(space)/api/spaces/$slug')({
   server: {
     handlers: {
-      GET: async ({ params }) => {
+      GET: async ({ request, params }) => {
+        const denied = await requireSession(request)
+        if (denied) return denied
         const { slug } = params
         const result = await loadSpaceGraph({ data: slug })
         if (!result) {
@@ -16,6 +19,8 @@ export const Route = createFileRoute('/(space)/api/spaces/$slug')({
         return Response.json(result)
       },
       PUT: async ({ request, params }) => {
+        const denied = await requireSession(request)
+        if (denied) return denied
         const { slug } = params
         const body = (await request.json()) as { graph?: GraphData; expectedUpdatedAt?: string }
         if (!body.graph) {
@@ -34,6 +39,8 @@ export const Route = createFileRoute('/(space)/api/spaces/$slug')({
         }
       },
       PATCH: async ({ request, params }) => {
+        const denied = await requireSession(request)
+        if (denied) return denied
         const { slug } = params
         const body = (await request.json()) as { name?: string }
         if (!body.name) {
@@ -45,7 +52,9 @@ export const Route = createFileRoute('/(space)/api/spaces/$slug')({
         }
         return Response.json({ space })
       },
-      DELETE: async ({ params }) => {
+      DELETE: async ({ request, params }) => {
+        const denied = await requireSession(request)
+        if (denied) return denied
         const { slug } = params
         const ok = await deleteSpace({ data: slug })
         if (!ok) {

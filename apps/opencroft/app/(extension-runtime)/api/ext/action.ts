@@ -1,11 +1,19 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import { requireSession } from '@/app/_server/require-session'
 import { invokeExtensionAction } from '@/app/(extension-runtime)/_server/actions'
 
+// No caller found anywhere in this app or in any built-in extension's source
+// — checked before gating rather than assumed. Session-gated regardless: an
+// unauthenticated arbitrary-action invoker costs nothing to close even though
+// nothing currently reaches it, and a route that answers is a route someone
+// can find later.
 export const Route = createFileRoute('/(extension-runtime)/api/ext/action')({
   server: {
     handlers: {
       POST: async ({ request }) => {
+        const denied = await requireSession(request)
+        if (denied) return denied
         let body: unknown
         try {
           body = await request.json()

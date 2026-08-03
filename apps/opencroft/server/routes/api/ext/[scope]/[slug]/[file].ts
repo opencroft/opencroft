@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs'
 
 import { defineEventHandler } from 'nitro/h3'
 
+import { requireSession } from '@/app/_server/require-session'
 import { ensureExtensionBuilt } from '@/app/(extension-runtime)/_server/loader'
 import { extDistFile } from '@/app/(extension-runtime)/_server/paths'
 
@@ -28,6 +29,8 @@ const CACHE_CONTROL = 'public, max-age=31536000, immutable'
 // file extension, which Vite's dev server otherwise intercepts as a static asset
 // before it can reach a TanStack server route.
 export default defineEventHandler(async (event) => {
+  const denied = await requireSession(event.req)
+  if (denied) return denied
   const { scope, slug, file } = event.context.params
   const contentType = CONTENT_TYPES[file]
   if (!contentType) {

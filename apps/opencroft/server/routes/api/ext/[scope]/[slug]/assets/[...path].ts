@@ -3,6 +3,7 @@ import path from 'node:path'
 
 import { defineEventHandler } from 'nitro/h3'
 
+import { requireSession } from '@/app/_server/require-session'
 import { extDir } from '@/app/(extension-runtime)/_server/paths'
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -19,6 +20,8 @@ const CONTENT_TYPES: Record<string, string> = {
 // Nitro serverDir (not a TanStack route) so extension-laden paths (.wasm, .onnx,
 // .png, …) reach the handler instead of Vite's dev static layer.
 export default defineEventHandler(async (event) => {
+  const denied = await requireSession(event.req)
+  if (denied) return denied
   const { scope, slug, path: splat } = event.context.params
   const segments = (splat ?? '').split('/').filter(Boolean)
   const extensionId = `${scope}/${slug}`

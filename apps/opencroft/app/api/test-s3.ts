@@ -1,13 +1,16 @@
 import { DeleteObjectCommand, ListObjectsCommand, S3Client } from '@aws-sdk/client-s3'
 import { createFileRoute } from '@tanstack/react-router'
 
+import { requireSession } from '@/app/_server/require-session'
 import type { S3Config } from '@/app/(filemanager)/_lib/types'
 import { getConnections } from '@/app/(filemanager)/_server/connection-actions'
 
 export const Route = createFileRoute('/api/test-s3')({
   server: {
     handlers: {
-      GET: async () => {
+      GET: async ({ request }) => {
+        const denied = await requireSession(request)
+        if (denied) return denied
         const config = (await getConnections()).find((c) => c.type === 's3')?.config as S3Config
         if (!config) {
           return Response.json({ error: 'No S3' })

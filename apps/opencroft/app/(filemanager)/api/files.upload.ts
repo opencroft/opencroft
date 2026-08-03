@@ -2,6 +2,7 @@ import { Readable } from 'node:stream'
 
 import { createFileRoute } from '@tanstack/react-router'
 
+import { requireSession } from '@/app/_server/require-session'
 import type { DockerConfig, S3Config, SshConfig, StorageConnection, WslConfig } from '@/app/(filemanager)/_lib/types'
 import * as dockerStorage from '@/app/(filemanager)/_server/storage-docker'
 import * as s3Storage from '@/app/(filemanager)/_server/storage-s3'
@@ -12,6 +13,8 @@ export const Route = createFileRoute('/(filemanager)/api/files/upload')({
   server: {
     handlers: {
       POST: async ({ request }) => {
+        const denied = await requireSession(request)
+        if (denied) return denied
         const connectionJson = request.headers.get('x-connection')
         const path = request.headers.get('x-path')
         const filename = request.headers.get('x-filename')

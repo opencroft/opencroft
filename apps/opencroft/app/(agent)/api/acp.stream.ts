@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import { requireSession } from '@/app/_server/require-session'
 import { historyEndEvent } from '@/app/(agent)/_lib/acp-stream'
 import { agentClient } from '@/app/(agent)/_server/agent-client-instance'
 
@@ -14,7 +15,9 @@ export const INITIAL_HISTORY_RECORDS = 20
 export const Route = createFileRoute('/(agent)/api/acp/stream')({
   server: {
     handlers: {
-      GET: ({ request }) => {
+      GET: async ({ request }) => {
+        const denied = await requireSession(request)
+        if (denied) return denied
         const sessionId = new URL(request.url).searchParams.get('sessionId')
         if (!sessionId) {
           return new Response('missing sessionId', { status: 400 })
