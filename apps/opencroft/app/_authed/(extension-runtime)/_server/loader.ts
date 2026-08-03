@@ -1,0 +1,416 @@
+import { promises as fs } from 'node:fs'
+import { createRequire } from 'node:module'
+import path from 'node:path'
+
+import type * as opencroft from '@opencroft/server'
+
+import { buildExtension } from '@/app/_authed/(extension-runtime)/_server/compiler'
+import { createHost } from '@/app/_authed/(extension-runtime)/_server/host'
+import { listAllExtensionIds, readManifest } from '@/app/_authed/(extension-runtime)/_server/manifest'
+import { extDir, extDistFile, projectRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
+import type { ExtensionManifest, ExtensionRouteHandler } from '@/app/_authed/(extension-runtime)/_types'
+import { toastStore } from '@/lib/toast-store'
+
+export type NodeActionHandler = (ctx: unknown) => Promise<unknown>
+
+type ExtensionLifecycle = (context: opencroft.ExtensionContext) => void | Promise<void>
+
+export type ExtensionToolHandlers = Record<string, (args: Record<string, unknown>) => Promise<unknown>>
+
+interface CachedModule {
+  updatedAt: number
+  manifest: ExtensionManifest
+  actions: Record<string, (...args: unknown[]) => Promise<unknown>>
+  exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
+  nodeActions?: Record<string, Record<string, NodeActionHandler>>
+  routes?: Record<string, ExtensionRouteHandler>
+  tools?: ExtensionToolHandlers
+  load?: ExtensionLifecycle
+  unload?: ExtensionLifecycle
+  context: opencroft.ExtensionContext
+  registeredTypes: opencroft.Type[]
+  registeredNodes: opencroft.Node[]
+}
+
+interface ExtensionRegistrations {
+  context: opencroft.ExtensionContext
+  types: opencroft.Type[]
+  nodes: opencroft.Node[]
+}
+
+function createRegistrations(extensionId: string): ExtensionRegistrations {
+  const types: opencroft.Type[] = []
+  const nodes: opencroft.Node[] = []
+  const context: opencroft.ExtensionContext = {
+    extensionId,
+    registerType: (type) => {
+      types.push(type)
+    },
+    registerNode: (node) => {
+      nodes.push(node)
+    },
+  }
+  return { context, types, nodes }
+}
+
+declare global {
+  var __EXT_MODULE_CACHE__: Map<string, CachedModule> | undefined
+
+  var __EXT_MANIFEST_CACHE__: Map<string, ExtensionManifest> | undefined
+}
+
+function moduleCache(): Map<string, CachedModule> {
+  if (!globalThis.__EXT_MODULE_CACHE__) {
+    globalThis.__EXT_MODULE_CACHE__ = new Map()
+  }
+  return globalThis.__EXT_MODULE_CACHE__
+}
+
+function manifestCache(): Map<string, ExtensionManifest> {
+  if (!globalThis.__EXT_MANIFEST_CACHE__) {
+    globalThis.__EXT_MANIFEST_CACHE__ = new Map()
+  }
+  return globalThis.__EXT_MANIFEST_CACHE__
+}
+
+async function statMaybe(file: string): Promise<number> {
+  try {
+    const stat = await fs.stat(file)
+    return stat.mtimeMs
+  } catch {
+    return 0
+  }
+}
+
+// Extensions can import any workspace package (agent-client, agent-chat, …)
+// via the monorepo's shared node_modules symlinks — esbuild resolves and
+// bundles their TS source directly into the extension (see
+// ALWAYS_BUNDLED_PACKAGES in compiler.ts; that list isn't exhaustive — any
+// workspace package actually imported gets bundled the same way). A merge
+// touching only packages/* never changes anything under an extension's own
+// directory, so sourceMtime alone can't see it — walk every workspace
+// package's source too. Conservative on purpose: any package change
+// invalidates every extension's cache, even ones that don't import it,
+// rather than risk missing one that does — the walk itself is cheap (a
+// handful of top-level dirs, same cost class as walking one extension's src).
+async function workspacePackagesMtime(): Promise<number> {
+  const dir = path.join(projectRoot(), '..', '..', 'packages')
+  let entries: string[]
+  try {
+    entries = await fs.readdir(dir)
+  } catch {
+    return 0
+  }
+  let max = 0
+  for (const entry of entries) {
+    max = Math.max(max, await walkMtime(path.join(dir, entry, 'src')))
+    max = Math.max(max, await statMaybe(path.join(dir, entry, 'package.json')))
+  }
+  return max
+}
+
+async function sourceMtime(extensionId: string): Promise<number> {
+  const dir = extDir(extensionId)
+  const candidates = [
+    path.join(dir, 'extension.json'),
+    path.join(dir, 'package.json'),
+    path.join(dir, 'src'),
+    path.join(dir, 'server'),
+    path.join(dir, 'extension.ts'),
+    path.join(dir, 'extension.tsx'),
+  ]
+  let max = await workspacePackagesMtime()
+  for (const p of candidates) {
+    max = Math.max(max, await walkMtime(p))
+  }
+  return max
+}
+
+async function walkMtime(start: string): Promise<number> {
+  try {
+    const stat = await fs.stat(start)
+    if (stat.isFile()) {
+      return stat.mtimeMs
+    }
+    if (stat.isDirectory()) {
+      const entries = await fs.readdir(start)
+      let max = stat.mtimeMs
+      for (const entry of entries) {
+        if (entry === 'node_modules' || entry === 'dist') {
+          continue
+        }
+        max = Math.max(max, await walkMtime(path.join(start, entry)))
+      }
+      return max
+    }
+    return 0
+  } catch {
+    return 0
+  }
+}
+
+async function ensureBuilt(extensionId: string, manifest: ExtensionManifest): Promise<void> {
+  const serverBundle = extDistFile(extensionId, 'server.js')
+  const clientBundle = extDistFile(extensionId, 'client.js')
+  const srcMtime = await sourceMtime(extensionId)
+  const serverMtime = await statMaybe(serverBundle)
+  const clientMtime = await statMaybe(clientBundle)
+  const bundleMtime = Math.min(serverMtime, clientMtime)
+  if (bundleMtime > 0 && bundleMtime >= srcMtime) {
+    return
+  }
+  const result = await buildExtension(extensionId, manifest)
+  if (!result.success) {
+    const summary = result.errors.map((e) => `${e.file}:${e.line ?? '?'}  ${e.message}`).join('\n')
+    toastStore.broadcast({
+      type: 'toast',
+      toastType: 'error',
+      message: `${extensionId} build failed:\n${summary}`,
+    })
+    const hasExistingBundle = serverMtime > 0 && clientMtime > 0
+    if (hasExistingBundle) {
+      console.error(`[ext] ${extensionId} rebuild failed, keeping previous bundle:\n${summary}`)
+      return
+    }
+    throw new Error(`Extension ${extensionId} failed to build:\n${summary}`)
+  }
+}
+
+interface ExtensionServerModule {
+  actions?: Record<string, (...args: unknown[]) => Promise<unknown>>
+  exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
+  nodeActions?: Record<string, Record<string, NodeActionHandler>>
+  routes?: Record<string, ExtensionRouteHandler>
+  tools?: ExtensionToolHandlers
+  load?: ExtensionLifecycle
+  unload?: ExtensionLifecycle
+  default?: {
+    actions?: Record<string, (...args: unknown[]) => Promise<unknown>>
+    exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
+    nodeActions?: Record<string, Record<string, NodeActionHandler>>
+    routes?: Record<string, ExtensionRouteHandler>
+    tools?: ExtensionToolHandlers
+    load?: ExtensionLifecycle
+    unload?: ExtensionLifecycle
+  }
+}
+
+async function evalServerBundle(extensionId: string, manifest: ExtensionManifest): Promise<CachedModule> {
+  const bundleFile = extDistFile(extensionId, 'server.js')
+  let code: string
+  const reg = createRegistrations(extensionId)
+  try {
+    code = await fs.readFile(bundleFile, 'utf-8')
+  } catch {
+    return {
+      updatedAt: Date.now(),
+      manifest,
+      actions: {},
+      context: reg.context,
+      registeredTypes: reg.types,
+      registeredNodes: reg.nodes,
+    }
+  }
+
+  const host = createHost(extensionId)
+  const prevGlobal = (globalThis as { __extensionServerApi?: unknown }).__extensionServerApi
+  ;(globalThis as { __extensionServerApi?: unknown }).__extensionServerApi = { host }
+  try {
+    const mod: { exports: ExtensionServerModule } = { exports: {} }
+    // Resolve the extension's own dependencies (sharp, ffmpeg-static, …) from
+    // its own node_modules; fall back to the app for host-provided externals
+    // (ssh2, node built-ins).
+    const extRequire = createRequire(bundleFile)
+    const appRequire: NodeRequire = createRequire(import.meta.url)
+    const runtimeRequire = ((id: string) => {
+      try {
+        return extRequire(id)
+      } catch {
+        return appRequire(id)
+      }
+    }) as NodeRequire
+    runtimeRequire.resolve = ((id: string) => {
+      try {
+        return extRequire.resolve(id)
+      } catch {
+        return appRequire.resolve(id)
+      }
+    }) as NodeRequire['resolve']
+    const fn = new Function('module', 'exports', 'require', '__dirname', '__filename', code)
+    fn(mod, mod.exports, runtimeRequire, extDir(extensionId), bundleFile)
+
+    const exported = mod.exports
+    const actions = exported.actions ?? exported.default?.actions ?? {}
+    const exposeOutput = exported.exposeOutput ?? exported.default?.exposeOutput
+    const nodeActions = exported.nodeActions ?? exported.default?.nodeActions
+    const routes = exported.routes ?? exported.default?.routes
+    const tools = exported.tools ?? exported.default?.tools
+    const load = exported.load ?? exported.default?.load
+    const unload = exported.unload ?? exported.default?.unload
+    return {
+      updatedAt: Date.now(),
+      manifest,
+      actions,
+      exposeOutput,
+      nodeActions,
+      routes,
+      tools,
+      load,
+      unload,
+      context: reg.context,
+      registeredTypes: reg.types,
+      registeredNodes: reg.nodes,
+    }
+  } finally {
+    ;(globalThis as { __extensionServerApi?: unknown }).__extensionServerApi = prevGlobal
+  }
+}
+
+async function activate(extensionId: string): Promise<CachedModule> {
+  const manifest = await readManifest(extensionId)
+  manifestCache().set(extensionId, manifest)
+
+  for (const dep of manifest.extensionDependencies ?? []) {
+    await activate(dep)
+  }
+
+  await ensureBuilt(extensionId, manifest)
+  const mod = await evalServerBundle(extensionId, manifest)
+  moduleCache().set(extensionId, mod)
+  await mod.load?.(mod.context)
+  return mod
+}
+
+export async function getExtensionModule(extensionId: string): Promise<CachedModule> {
+  const cached = moduleCache().get(extensionId)
+  if (cached) {
+    const srcMtime = await sourceMtime(extensionId)
+    if (srcMtime <= cached.updatedAt) {
+      return cached
+    }
+    runUnload(extensionId)
+  }
+  return activate(extensionId)
+}
+
+async function manifestMtime(extensionId: string): Promise<number> {
+  return statMaybe(path.join(extDir(extensionId), 'extension.json'))
+}
+
+const manifestMtimeCache = new Map<string, number>()
+
+export async function getManifest(extensionId: string): Promise<ExtensionManifest> {
+  const mtime = await manifestMtime(extensionId)
+  const cached = manifestCache().get(extensionId)
+  if (cached && manifestMtimeCache.get(extensionId) === mtime) {
+    return cached
+  }
+  const manifest = await readManifest(extensionId)
+  manifestCache().set(extensionId, manifest)
+  manifestMtimeCache.set(extensionId, mtime)
+  return manifest
+}
+
+export async function loadAllManifests(): Promise<ExtensionManifest[]> {
+  const ids = await listAllExtensionIds()
+  const manifests: ExtensionManifest[] = []
+  for (const id of ids) {
+    try {
+      manifests.push(await getManifest(id))
+    } catch (err) {
+      console.error(`[ext] failed to read manifest for ${id}`, err)
+    }
+  }
+  return manifests
+}
+
+const CLIENT_ENTRIES = ['src/client.tsx', 'src/client.ts', 'src/index.tsx', 'src/index.ts']
+const LIFECYCLE_ENTRIES = ['extension.ts', 'extension.tsx']
+
+async function hasEntry(extensionId: string, names: string[]): Promise<boolean> {
+  const dir = extDir(extensionId)
+  for (const name of names) {
+    if ((await statMaybe(path.join(dir, name))) > 0) {
+      return true
+    }
+  }
+  return false
+}
+
+/** Whether the extension ships a client bundle the browser should import. */
+export async function extensionHasClient(extensionId: string): Promise<boolean> {
+  return hasEntry(extensionId, CLIENT_ENTRIES)
+}
+
+/** Activate every extension that exposes a lifecycle entry, so its `load` runs. */
+export async function activateLifecycleExtensions(): Promise<void> {
+  const ids = await listAllExtensionIds()
+  for (const id of ids) {
+    if (!(await hasEntry(id, LIFECYCLE_ENTRIES))) {
+      continue
+    }
+    try {
+      await getExtensionModule(id)
+    } catch (err) {
+      console.error(`[ext] ${id} activation failed`, err)
+    }
+  }
+}
+
+export async function ensureExtensionBuilt(extensionId: string): Promise<void> {
+  const manifest = await readManifest(extensionId)
+  await ensureBuilt(extensionId, manifest)
+}
+
+// Identity of the built client artifacts, used to version their URLs so they
+// can be cached immutably instead of re-downloaded on every load.
+//
+// Deliberately the BUILT files' mtime, not the source's: it is the artifact
+// being cached, and `ensureBuilt` keeps serving an existing bundle whenever it
+// is newer than the source, so this is exactly what a request would return —
+// a cache entry can never disagree with what the server would hand back.
+// Both files are produced by one build and versioned together.
+//
+// 0 when nothing is built yet; the caller substitutes a unique value so that
+// first request misses the cache and triggers the build.
+//
+// ASSUMES artifacts are built at runtime on the instance, so these are real
+// filesystem times and two builds cannot share one. Shipping prebuilt `dist/`
+// with normalized timestamps (a container layer, a tar with fixed mtimes)
+// would break that: two different builds could collide on one version, and an
+// immutably-cached bundle would then be pinned for a year. Switch this to a
+// content hash of the artifacts if that day comes.
+//
+// A version identifies the artifact as of the request, not its content: a
+// rebuild landing between the listing and the fetch caches the new bundle
+// under the old version. Harmless — the next listing carries the new version
+// and refetches — but it is not a content address, so don't treat it as one.
+export async function clientBundleVersion(extensionId: string): Promise<number> {
+  const js = await statMaybe(extDistFile(extensionId, 'client.js'))
+  const css = await statMaybe(extDistFile(extensionId, 'client.css'))
+  return Math.max(js, css)
+}
+
+function runUnload(extensionId: string): void {
+  const mod = moduleCache().get(extensionId)
+  if (!mod?.unload) {
+    return
+  }
+  void mod.unload(mod.context)
+}
+
+export function flushCache(extensionId?: string): void {
+  if (extensionId) {
+    runUnload(extensionId)
+    moduleCache().delete(extensionId)
+    manifestCache().delete(extensionId)
+    manifestMtimeCache.delete(extensionId)
+    return
+  }
+  for (const id of moduleCache().keys()) {
+    runUnload(id)
+  }
+  moduleCache().clear()
+  manifestCache().clear()
+  manifestMtimeCache.clear()
+}

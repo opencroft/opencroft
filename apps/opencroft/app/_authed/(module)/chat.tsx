@@ -1,0 +1,10 @@
+import { createFileRoute } from '@tanstack/react-router'
+import IFrame from 'ui/utils/iframe'
+
+export const Route = createFileRoute('/_authed/(module)/chat')({
+  component: ChatPage,
+})
+
+function ChatPage() {
+  return <IFrame title='Open WebUI' port={8080} />
+}

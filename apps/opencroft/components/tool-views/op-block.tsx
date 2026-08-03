@@ -6,7 +6,7 @@ import { type ReactNode, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Flex } from 'ui/layout/flex'
 
-import { sseEventsStore } from '@/app/(sse)/_lib/sse-events-store'
+import { sseEventsStore } from '@/app/_authed/(sse)/_lib/sse-events-store'
 import { cn } from '@/lib/utils'
 
 // Lines a preview is capped to before showing a "there's more" cue — same

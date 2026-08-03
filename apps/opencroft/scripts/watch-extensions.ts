@@ -1,8 +1,8 @@
 import { watch } from 'node:fs'
 
-import { buildExtension } from '@/app/(extension-runtime)/_server/compiler'
-import { listAllExtensionIds, readManifest } from '@/app/(extension-runtime)/_server/manifest'
-import { extDir } from '@/app/(extension-runtime)/_server/paths'
+import { buildExtension } from '@/app/_authed/(extension-runtime)/_server/compiler'
+import { listAllExtensionIds, readManifest } from '@/app/_authed/(extension-runtime)/_server/manifest'
+import { extDir } from '@/app/_authed/(extension-runtime)/_server/paths'
 
 const DEBOUNCE_MS = 300
 const timers = new Map<string, ReturnType<typeof setTimeout>>()

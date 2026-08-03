@@ -1,6 +1,6 @@
 'use client'
 
-import { FileManagerProvider } from '@/app/(filemanager)/_components/filemanager-provider'
+import { FileManagerProvider } from '@/app/_authed/(filemanager)/_components/filemanager-provider'
 import { DockerComposeProvider } from '@/components/providers/docker-compose-provider'
 import { DockerProvider } from '@/components/providers/docker-provider'
 

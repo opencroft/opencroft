@@ -1,31 +1,8 @@
-import { listPinnedDashboards } from '@opencroft/dashboards/server'
-import { createRootRoute, HeadContent, Outlet, redirect, Scripts } from '@tanstack/react-router'
+import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
 import { Toaster } from 'ui/sonner'
 import { ThemeProvider } from 'ui/theme-provider'
 
-import { AppShell } from '@/app/_shell/app-shell'
-import { getAuthState } from '@/app/(auth)/_server/session'
-import { listDashboards } from '@/app/(dashboards)/_server/actions'
-import { listSpaces } from '@/app/(space)/_server/actions'
-import { SSEProvider } from '@/app/(sse)/_components/sse-provider'
 import appCss from '@/app/globals.css?url'
-
-// The auth screens themselves, which have to stay reachable without a session
-// — /login is how you get one and /setup is how the first account exists at
-// all. Each guards itself (see those routes); the guard below only needs to
-// not send them in a circle.
-const UNGUARDED_PATHS = new Set(['/login', '/setup'])
-
-// Path prefixes reachable only by an administrator. Checked here rather than
-// per-route so a route added under one of these prefixes later is guarded by
-// default, the same reasoning `UNGUARDED_PATHS` and the gate below already
-// follow. This is the UX redirect, not the security
-// boundary: a `createServerFn` is a callable endpoint of its own regardless
-// of which page links to it, so every admin-only server function checks
-// `requireAdminUser` (packages/auth/server.ts) independently. Losing this
-// list would show the wrong page; losing that check would let the action
-// through.
-const ADMIN_ONLY_PREFIXES = ['/settings/users', '/settings/tokens']
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE ROUTES BELOW HAVE NO AUTHENTICATION OF THEIR OWN. What stands in front of
@@ -41,11 +18,14 @@ const ADMIN_ONLY_PREFIXES = ['/settings/users', '/settings/tokens']
 // there" without qualifying it. That reads as reassurance on the instance where
 // it is false, which is the internet-facing one.
 //
-// The gate below covers page navigation only. API routes are server handlers
+// The page-navigation gate lives in app/_authed.tsx, not here — this route is
+// the document shell only (an earlier bug: /login rendered inside AppShell
+// because this file used to own both the gate and the chrome, and /login was
+// its child). It covers page navigation only. API routes are server handlers
 // matched outside the router's route tree, so it never sees them — which is
 // why each of the surfaces below needs its OWN check rather than one shared
-// gate here, and why the list below is now split into what actually checks a
-// session and what deliberately does not.
+// gate, and why the list below is split into what actually checks a session
+// and what deliberately does not.
 //
 // SESSION-GATED (see @/app/_server/require-session.ts,
 // applied per-handler in each of these files):
@@ -133,31 +113,6 @@ const ADMIN_ONLY_PREFIXES = ['/settings/users', '/settings/tokens']
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const Route = createRootRoute({
-  // The boundary — see the block above for what it does NOT cover and what is
-  // protecting that instead.
-  //
-  // Deliberately the only gate. Putting it here rather than on each route
-  // means a route added later is guarded by default instead of by whoever
-  // remembers to.
-  beforeLoad: async ({ location }) => {
-    if (UNGUARDED_PATHS.has(location.pathname)) {
-      return
-    }
-    const { needsSetup, signedIn, isAdmin } = await getAuthState()
-    if (needsSetup) {
-      // Nobody has set this instance up: there is no account to sign in with,
-      // so the login form would be a dead end.
-      throw redirect({ to: '/setup' })
-    }
-    if (!signedIn) {
-      // Carry where they were headed so signing in resumes it rather than
-      // dumping everyone on the root.
-      throw redirect({ to: '/login', search: { redirect: location.href } })
-    }
-    if (!isAdmin && ADMIN_ONLY_PREFIXES.some((prefix) => location.pathname.startsWith(prefix))) {
-      throw redirect({ to: '/settings' })
-    }
-  },
   head: () => ({
     meta: [
       { charSet: 'utf-8' },
@@ -170,19 +125,10 @@ export const Route = createRootRoute({
       { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' },
     ],
   }),
-  loader: async () => {
-    const [spaces, dashboards, pinnedDashboardSlugs] = await Promise.all([
-      listSpaces(),
-      listDashboards(),
-      listPinnedDashboards(),
-    ])
-    return { pinnedSpaces: spaces.filter((s) => s.pinned), dashboards, pinnedDashboardSlugs }
-  },
-  component: RootLayout,
+  component: RootDocument,
 })
 
-function RootLayout() {
-  const { pinnedSpaces, dashboards, pinnedDashboardSlugs } = Route.useLoaderData()
+function RootDocument() {
   return (
     <html lang='en' suppressHydrationWarning>
       <head>
@@ -190,11 +136,7 @@ function RootLayout() {
       </head>
       <body className='antialiased'>
         <ThemeProvider attribute='class' defaultTheme='system' enableSystem>
-          <SSEProvider>
-            <AppShell pinnedSpaces={pinnedSpaces} dashboards={dashboards} pinnedDashboardSlugs={pinnedDashboardSlugs}>
-              <Outlet />
-            </AppShell>
-          </SSEProvider>
+          <Outlet />
           <Toaster position='top-center' richColors />
         </ThemeProvider>
         <Scripts />

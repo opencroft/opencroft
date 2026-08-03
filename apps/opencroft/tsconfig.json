@@ -6,5 +6,5 @@
     }
   },
   "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["node_modules", "app/(extension-runtime)/_builtin/**", "data/extensions/**", "backup/**"]
+  "exclude": ["node_modules", "app/_authed/(extension-runtime)/_builtin/**", "data/extensions/**", "backup/**"]
 }

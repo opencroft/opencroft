@@ -13,9 +13,9 @@
 
 import { CronExpressionParser } from 'cron-parser'
 
-import { dispatchExecutionContext } from '@/app/(extension-runtime)/_server/exec-dispatch'
-import { loadGraphPlain, saveGraphPlain, withGraphConflictRetry } from '@/app/(space)/_server/graph-conflict-retry'
-import { getSpacesRegistry } from '@/app/(space)/_server/store'
+import { dispatchExecutionContext } from '@/app/_authed/(extension-runtime)/_server/exec-dispatch'
+import { loadGraphPlain, saveGraphPlain, withGraphConflictRetry } from '@/app/_authed/(space)/_server/graph-conflict-retry'
+import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 
 export type ScheduleMode = 'simple' | 'cron'
 export type ScheduleUnit = 'minutes' | 'hours' | 'days'

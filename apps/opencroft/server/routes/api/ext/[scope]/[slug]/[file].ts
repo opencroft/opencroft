@@ -3,8 +3,8 @@ import { promises as fs } from 'node:fs'
 import { defineEventHandler } from 'nitro/h3'
 
 import { requireSession } from '@/app/_server/require-session'
-import { ensureExtensionBuilt } from '@/app/(extension-runtime)/_server/loader'
-import { extDistFile } from '@/app/(extension-runtime)/_server/paths'
+import { ensureExtensionBuilt } from '@/app/_authed/(extension-runtime)/_server/loader'
+import { extDistFile } from '@/app/_authed/(extension-runtime)/_server/paths'
 
 const CONTENT_TYPES: Record<string, string> = {
   'client.js': 'application/javascript; charset=utf-8',

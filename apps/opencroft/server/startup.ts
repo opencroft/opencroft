@@ -24,13 +24,13 @@ export function ensureServerStarted(): void {
 
 async function preload(): Promise<void> {
   try {
-    const { getSpacesRegistry } = await import('@/app/(space)/_server/store')
+    const { getSpacesRegistry } = await import('@/app/_authed/(space)/_server/store')
     await getSpacesRegistry().ensureLoaded()
   } catch (err) {
     console.error('[startup] spaces preload failed', err)
   }
   try {
-    const { autoInstallExtensions } = await import('@/app/(extension-runtime)/_server/registry')
+    const { autoInstallExtensions } = await import('@/app/_authed/(extension-runtime)/_server/registry')
     await autoInstallExtensions()
   } catch (err) {
     console.error('[startup] extension auto-install failed', err)

@@ -4,7 +4,7 @@ import path from 'node:path'
 import { defineEventHandler } from 'nitro/h3'
 
 import { requireSession } from '@/app/_server/require-session'
-import { extDir } from '@/app/(extension-runtime)/_server/paths'
+import { extDir } from '@/app/_authed/(extension-runtime)/_server/paths'
 
 const CONTENT_TYPES: Record<string, string> = {
   '.wasm': 'application/wasm',

@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { getSpacesRegistry } from '@/app/(space)/_server/store'
+import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 
 import { MAX_HISTORY, processDueEvents, type RunHistoryEntry, type ScheduleRule } from './event-scheduler'
 

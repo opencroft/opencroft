@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react'
 import { Flex } from 'ui/layout/flex'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
 
-import { listSshKeys } from '@/app/(ssh)/_server/ssh-keys-actions'
+import { listSshKeys } from '@/app/_authed/(ssh)/_server/ssh-keys-actions'
 
 interface SshKeySelectorProps {
   value?: string

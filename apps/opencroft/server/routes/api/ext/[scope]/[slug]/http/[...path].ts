@@ -1,6 +1,6 @@
 import { defineEventHandler } from 'nitro/h3'
 
-import { getExtensionModule } from '@/app/(extension-runtime)/_server/loader'
+import { getExtensionModule } from '@/app/_authed/(extension-runtime)/_server/loader'
 
 // Dispatches to an HTTP handler exposed by the extension's server module as
 // `routes[<path>]`. The handler receives the raw Request and returns a (possibly

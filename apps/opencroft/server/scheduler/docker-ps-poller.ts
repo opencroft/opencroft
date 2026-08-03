@@ -1,5 +1,5 @@
-import { getExtensionModule, loadAllManifests } from '@/app/(extension-runtime)/_server/loader'
-import { getSpacesRegistry } from '@/app/(space)/_server/store'
+import { getExtensionModule, loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
+import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { DockerContainerSnapshot } from '@/lib/sse-events'
 import { toastStore } from '@/lib/toast-store'
 

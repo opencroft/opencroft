@@ -14,7 +14,7 @@ import {
   startContainer,
   stopContainer,
   type VolumeMount,
-} from '@/app/(docker)/_server/actions'
+} from '@/app/_authed/(docker)/_server/actions'
 
 interface DockerState {
   containers: DockerContainer[]

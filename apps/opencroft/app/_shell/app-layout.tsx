@@ -1,8 +1,8 @@
 import { listPinnedDashboards } from '@opencroft/dashboards/server'
 
 import { AppShell } from '@/app/_shell/app-shell'
-import { listDashboards } from '@/app/(dashboards)/_server/actions'
-import { listSpaces } from '@/app/(space)/_server/actions'
+import { listDashboards } from '@/app/_authed/(dashboards)/_server/actions'
+import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 
 export async function AppLayout({
   children,

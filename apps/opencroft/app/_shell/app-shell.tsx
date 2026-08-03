@@ -28,14 +28,14 @@ import {
 } from 'ui/sidebar'
 
 import { DevBuildBadge } from '@/app/_components/dev-build-badge'
-import { RenameDialog } from '@/app/(agent)/_components/chat-hosts'
-import { ChatTabsProvider, useChatTabs } from '@/app/(agent)/_lib/chat-tabs-context'
-import { useAgentSessions } from '@/app/(agent)/_lib/use-agent-sessions'
-import { useChatListNodes } from '@/app/(agent)/_lib/use-chat-list-nodes'
-import { useSessionActivityKeys } from '@/app/(agent)/_lib/use-session-activity'
-import { stopProcessLocal } from '@/app/(agent)/_server/acp'
+import { RenameDialog } from '@/app/_authed/(agent)/_components/chat-hosts'
+import { ChatTabsProvider, useChatTabs } from '@/app/_authed/(agent)/_lib/chat-tabs-context'
+import { useAgentSessions } from '@/app/_authed/(agent)/_lib/use-agent-sessions'
+import { useChatListNodes } from '@/app/_authed/(agent)/_lib/use-chat-list-nodes'
+import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
+import { stopProcessLocal } from '@/app/_authed/(agent)/_server/acp'
 import { SignOutItem } from '@/app/(auth)/_components/sign-out-item'
-import type { SpaceSummary } from '@/app/(space)/_server/types'
+import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
 import { cn } from '@/lib/utils'
 
 interface Props {

@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { dispatchExecutionContext, NoExecTargetError } from '@/app/(extension-runtime)/_server/exec-dispatch'
-import { getSpacesRegistry } from '@/app/(space)/_server/store'
+import { dispatchExecutionContext, NoExecTargetError } from '@/app/_authed/(extension-runtime)/_server/exec-dispatch'
+import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 
 // ═══════════════════════════════════════════════════════════════════
 // Path matching — simple :param syntax

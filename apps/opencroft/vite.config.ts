@@ -138,7 +138,19 @@ export default defineConfig({
       srcDirectory: 'app',
       router: {
         routesDirectory: '.',
-        routeFileIgnorePattern: '(^|/)(_[^_/]|router\\.|server\\.|client\\.|start\\.|routeTree\\.gen\\.)',
+        // The base pattern excludes every `_`-prefixed name (that is how
+        // `_server`, `_components`, `_lib` etc. stay out of the route tree).
+        // `_authed` is the one exception: it is a real pathless layout route
+        // (see app/_authed.tsx), not a support directory, so it is carved out
+        // with a negative lookahead rather than widening the whole pattern —
+        // every other `_foo` directory in the app keeps exactly the exclusion
+        // it already had. The lookahead must also accept end-of-string: the
+        // generator matches this pattern against bare directory dirent names
+        // (e.g. "_authed", no trailing "." or "/"), so without the `|$`
+        // branch the directory itself is excluded and its children are never
+        // scanned, even though the sibling _authed.tsx file matches fine.
+        routeFileIgnorePattern:
+          '(^|/)(_(?!authed(\\.|/|$))[^_/]|router\\.|server\\.|client\\.|start\\.|routeTree\\.gen\\.)',
       },
     }),
     viteReact(),

@@ -52,7 +52,7 @@ import { and, desc, eq, isNull } from 'drizzle-orm'
 // opens the database at module load, and this script opens it itself. Two
 // PGlite handles on one datadir in one process is the silent-data-loss case in
 // the header comment.
-import { hashToken } from '@/app/(mcp)/_server/token-hash'
+import { hashToken } from '@/app/_authed/(mcp)/_server/token-hash'
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`)

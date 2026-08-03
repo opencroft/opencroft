@@ -3,10 +3,10 @@
 import type React from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
-import type { CreateDockerContainerData } from '@/app/(docker)/_server/actions'
-import type { DockerCompose } from '@/app/(docker)/_server/compose-actions'
-import { docker } from '@/app/(docker)/_server/compose-wrapper'
-import type { DockerContext } from '@/app/(docker)/_server/context-actions'
+import type { CreateDockerContainerData } from '@/app/_authed/(docker)/_server/actions'
+import type { DockerCompose } from '@/app/_authed/(docker)/_server/compose-actions'
+import { docker } from '@/app/_authed/(docker)/_server/compose-wrapper'
+import type { DockerContext } from '@/app/_authed/(docker)/_server/context-actions'
 
 interface DockerComposeState {
   composes: DockerCompose[]
