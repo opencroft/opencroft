@@ -55,6 +55,7 @@ async function setup(
   const promptCalls: string[] = []
   const configOptionCalls: Array<{ sessionId: string; configId: string; value: unknown }> = []
   const closeSessionCalls: string[] = []
+  const resumeCalls: string[] = []
   const turns: TurnDeferred[] = []
   const takeTurn = (index?: number) => (index === undefined ? turns.shift() : turns.splice(index, 1)[0])
   const connection = {
@@ -67,6 +68,10 @@ async function setup(
       return new Promise((resolve, reject) => {
         turns.push({ resolve, reject })
       })
+    },
+    resumeSession: async (params: { sessionId: string }) => {
+      resumeCalls.push(params.sessionId)
+      return {}
     },
     cancel: async () => {},
     setSessionConfigOption: async (params: { sessionId: string; configId: string; value: unknown }) => {
@@ -100,6 +105,7 @@ async function setup(
     promptCalls,
     configOptionCalls,
     closeSessionCalls,
+    resumeCalls,
     endTurn: (index?: number) => takeTurn(index)?.resolve({ stopReason: 'end_turn' }),
     failTurn: (message: string, index?: number) => takeTurn(index)?.reject(new Error(message)),
   }
@@ -874,6 +880,46 @@ test('hasActiveTurn is false before any prompt and true while one is in flight',
 test('an unknown session id reports no active turn rather than throwing', async () => {
   const h = await setup()
   assert.equal(h.client.hasActiveTurn(`${h.sessionId}-does-not-exist`), false)
+})
+
+// ── refreshMcpServers ────────────────────────────────────────────────────
+//
+// A global MCP server list change used to resume every live session
+// unconditionally, which sends session/resume over the same connection an
+// in-flight prompt is streaming on and cuts that turn off. An idle session is
+// still resumed right away; a session with a turn in flight is deferred until
+// that turn actually settles (see pendingMcpRefresh).
+
+test('refreshMcpServers resumes an idle session right away', async () => {
+  const h = await setup()
+  await h.client.refreshMcpServers()
+  assert.deepEqual(h.resumeCalls, [h.sessionId])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('refreshMcpServers does not resume a session with a turn in flight, and applies it once the turn settles', async () => {
+  const h = await setup()
+  await h.client.prompt(h.sessionId, 'hello')
+  await h.client.refreshMcpServers()
+  assert.deepEqual(h.resumeCalls, [], 'a live turn must not be interrupted by a resume')
+  assert.equal(h.client.hasActiveTurn(h.sessionId), true, 'refreshMcpServers must not itself end the turn')
+  h.endTurn()
+  await settle()
+  assert.deepEqual(h.resumeCalls, [h.sessionId], 'the deferred resume must still run once the turn actually ends')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a queued prompt still delivers after a deferred MCP resume runs', async () => {
+  const h = await setup()
+  await h.client.prompt(h.sessionId, 'first')
+  await h.client.prompt(h.sessionId, 'second') // queues: a turn is already active
+  await h.client.refreshMcpServers() // deferred: 'first' is still in flight
+  h.endTurn() // ends 'first'
+  await settle()
+  assert.deepEqual(h.resumeCalls, [h.sessionId])
+  assert.equal(h.promptCalls.length, 2, 'the queued prompt must still be delivered after the deferred resume runs')
+  assert.equal(h.promptCalls[1], 'second')
+  await h.client.deleteSession(h.sessionId)
 })
 
 // ── cancel + queue drain (the mechanics a force send relies on) ───────────
