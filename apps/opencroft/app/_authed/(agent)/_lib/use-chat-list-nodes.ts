@@ -111,18 +111,6 @@ function toEntries(nodes: ChatListNode[]): ChatListLayoutEntry[] {
 
 export interface UseChatListNodesResult {
   nodes: ChatListNode[]
-  // ChatList seeds its working tree from `nodes` once (on mount) and never
-  // resyncs — a controlled component would need a design-kit change. So this
-  // key forces a remount only when an EXTERNAL input a row displays (or
-  // whether it displays at all) changes — a session title, membership,
-  // hidden state, or status dot — never on a local order/folder edit. A local
-  // edit already lives in the component's own state and is persisted through
-  // onChange, so remounting on it would only discard in-flight interaction:
-  // fatally for "Move to new folder", whose post-commit inline rename would
-  // be reset by the remount before the user can type. Trade-off that remains:
-  // an external change still remounts mid-interaction, dropping an
-  // in-progress drag or open menu — acceptable until ChatList is made controlled.
-  nodesKey: string
   onChange: (nodes: ChatListNode[]) => void
   // Close = remove from the sidebar list without deleting the session (see
   // closeSession below) — persisted alongside the layout.
@@ -183,39 +171,10 @@ export function useChatListNodes(
   }, [])
 
   const nodes = useMemo(
-    () => (loaded ? buildNodes(entries, sessions, hiddenKeys, pendingKeys, activeKeys, aliveKeys, avatarByAgentId) : []),
+    () =>
+      loaded ? buildNodes(entries, sessions, hiddenKeys, pendingKeys, activeKeys, aliveKeys, avatarByAgentId) : [],
     [loaded, entries, sessions, hiddenKeys, pendingKeys, activeKeys, aliveKeys, avatarByAgentId],
   )
-  // Key on external inputs only (see UseChatListNodesResult.nodesKey): each
-  // session's identity, display text, avatar, hidden state, and status dot —
-  // deliberately NOT the layout order/folders the component owns after
-  // mount. Sorted by key so a reordered session fetch alone doesn't trigger a
-  // spurious remount. `loaded` is folded in so the initial false->true flip
-  // remounts once with the real tree: sessions can arrive (via SSE) before
-  // the layout GET returns, which seeds an empty `nodes`, and without this
-  // the list would stay empty until the next external change. Avatars
-  // resolve async too (their own fetch), so including them lets that arrival
-  // trigger its own one-time remount instead of leaving rows stuck on initials.
-  const nodesKey = useMemo(
-    () =>
-      `${loaded}:${JSON.stringify(
-        sessions
-          .filter((s) => !hiddenKeys.has(s.key))
-          .map((s) => ({
-            id: s.key,
-            title: s.title ?? s.jobName,
-            agent: s.agentName,
-            avatar: avatarByAgentId.get(s.agentNodeId),
-            pending: pendingKeys.has(s.key),
-            active: activeKeys.has(s.key),
-            alive: aliveKeys.has(s.key),
-            hasDraft: Boolean(s.draft?.trim()),
-          }))
-          .sort((a, b) => a.id.localeCompare(b.id)),
-      )}`,
-    [loaded, sessions, hiddenKeys, pendingKeys, activeKeys, aliveKeys, avatarByAgentId],
-  )
-
   const onChange = (next: ChatListNode[]) => {
     const nextEntries = toEntries(next)
     setEntries(nextEntries)
@@ -247,5 +206,5 @@ export function useChatListNodes(
     saveLayout({ entries, hiddenKeys: [...next] })
   }, [loaded, activeSessionKey, hiddenKeys, entries])
 
-  return { nodes, nodesKey, onChange, closeSession }
+  return { nodes, onChange, closeSession }
 }
