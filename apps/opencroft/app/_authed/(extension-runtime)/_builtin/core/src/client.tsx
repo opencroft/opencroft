@@ -1,4 +1,5 @@
-import { defineExtension } from '@ext/host'
+import { legacy } from '@opencroft/client'
+const { defineExtension } = legacy
 
 import { AgentInspector, AgentNode, AgentProfileTab } from './nodes/agent'
 import { AgentInstructionInspector, AgentInstructionNode } from './nodes/agent-instruction'

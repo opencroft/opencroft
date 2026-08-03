@@ -1,5 +1,7 @@
-import { icons, NodeFrame, type React, useGraphNodes } from '@ext/host'
-import { Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@ext/ui'
+import type { ChangeEvent } from 'react'
+
+import { legacy } from '@opencroft/client'
+const { Input, Label, NodeFrame, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, icons, useGraphNodes } = legacy
 
 export interface OpenAIAssistantData {
   name: string
@@ -38,7 +40,7 @@ export function OpenAIAssistantInspector({
         <Label>Name</Label>
         <Input
           value={data.name ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ name: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ name: e.target.value })}
           placeholder='My Assistant'
         />
       </div>
@@ -48,7 +50,7 @@ export function OpenAIAssistantInspector({
         <Label>API Base</Label>
         <Input
           value={data.chatApiBase ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ chatApiBase: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ chatApiBase: e.target.value })}
           placeholder='https://api.openai.com/v1'
         />
       </div>
@@ -57,7 +59,7 @@ export function OpenAIAssistantInspector({
         <Input
           type='password'
           value={data.chatApiKey ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ chatApiKey: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ chatApiKey: e.target.value })}
           placeholder='sk-…'
         />
       </div>
@@ -65,7 +67,7 @@ export function OpenAIAssistantInspector({
         <Label>Model</Label>
         <Input
           value={data.chatModel ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ chatModel: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ chatModel: e.target.value })}
           placeholder='gpt-4o-mini'
         />
       </div>
@@ -77,7 +79,7 @@ export function OpenAIAssistantInspector({
           min='0'
           max='2'
           value={data.temperature ?? 0.7}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ temperature: Number(e.target.value) })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ temperature: Number(e.target.value) })}
         />
       </div>
 
@@ -93,7 +95,7 @@ interface AssistantNode {
 
 export function useAssistantsList(): AssistantNode[] {
   const nodes = useGraphNodes()
-  return nodes.filter((n: { type?: string }) => n.type === 'openai-assistant') as AssistantNode[]
+  return nodes.filter((n) => n.type === 'openai-assistant') as unknown as AssistantNode[]
 }
 
 export function useAssistant(assistantId?: string): OpenAIAssistantData | null {

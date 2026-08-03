@@ -40,6 +40,64 @@ export interface ExtensionStorageApi {
   clear(): Promise<void>
 }
 
+/** `null` means unknown (offline session, no turn completed yet, or a harness that doesn't report usage) -- never "nothing held". */
+export interface HostContextUsage {
+  usedTokens: number
+  contextLimit: number | null
+}
+
+export interface HostSessionSummary {
+  sessionKey: string
+  agent: string
+  job: string
+  title: string
+  createdAt: number
+  lastActivityAt: number
+  status: 'offline' | 'idle' | 'working' | 'waiting'
+  contextUsage: HostContextUsage | null
+}
+
+export interface HostTurnSummary {
+  index: number
+  prompt: string
+  promptLength: number
+  status: 'finished' | 'in-progress' | 'interrupted' | 'unknown'
+  finalMessage?: string
+  finalMessageLength?: number
+}
+
+export interface HostTurnsPage {
+  turns: HostTurnSummary[]
+  hasMore: boolean
+  nextBeforeIndex: number | null
+  sessionStatus: 'offline' | 'idle' | 'working' | 'waiting'
+}
+
+export interface HostCompactResult {
+  sessionKey: string
+  contextUsageBefore: HostContextUsage | null
+  contextUsageAfter: HostContextUsage | null
+  compacted: boolean | null
+  instructionsRestored: boolean
+}
+
+/** Deliver through a SendMessage node's own path (session reuse/create, envelope composition) -- the same mechanism its `text-in` wiring uses. */
+export interface HostSendMessageApi {
+  send(nodeId: string, payload: Record<string, unknown>): Promise<{ sessionKey: string; created: boolean; forced: boolean }>
+  listAgents(nodeId: string): Promise<{ agent: string; jobs: string[] }[]>
+  listSessions(nodeId: string, params: { agent?: string; job?: string }): Promise<HostSessionSummary[]>
+  listTurns(
+    nodeId: string,
+    params: { sessionKey: string; turns?: number; beforeIndex?: number },
+  ): Promise<HostTurnsPage>
+  compact(nodeId: string, params: { sessionKey: string }): Promise<HostCompactResult>
+}
+
+export interface HostExecContextApi {
+  /** Dispatch an execution-context event to every target connected to `sourceHandleId` on `sourceNodeId` (broadcast). `primary`'s shape is caller-defined -- narrow it at the call site. */
+  dispatch(sourceNodeId: string, sourceHandleId: string, event: unknown): Promise<{ primary: unknown; results: unknown[] }>
+}
+
 /** A stored secret with its decrypted value. */
 export interface SecretRecord {
   id: string
@@ -88,6 +146,8 @@ export interface ExtensionServerHost {
   graph: HostGraphApi
   storage: ExtensionStorageApi
   secrets: HostSecretsApi
+  sendMessage: HostSendMessageApi
+  execContext: HostExecContextApi
   /**
    * Fire-and-forget push to all connected clients; received in extension
    * client code via getStream(extensionId, 'events').
@@ -123,6 +183,8 @@ export declare const settings: ExtensionServerHost['settings']
 export declare const graph: ExtensionServerHost['graph']
 export declare const storage: ExtensionServerHost['storage']
 export declare const secrets: ExtensionServerHost['secrets']
+export declare const sendMessage: ExtensionServerHost['sendMessage']
+export declare const execContext: ExtensionServerHost['execContext']
 export declare const events: ExtensionServerHost['events']
 export declare const openclaw: ExtensionServerHost['openclaw']
 export declare const terminal: ExtensionServerHost['terminal']

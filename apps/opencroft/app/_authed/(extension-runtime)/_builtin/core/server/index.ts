@@ -1,4 +1,4 @@
-import host from '@ext/host'
+import host from '@opencroft/server'
 import type { ExecOptions, ServerConfig, TerminalContext } from '@opencroft/server'
 import { AGENT_PROVIDERS } from 'agent-client/agent-providers'
 import { HARNESS_ADAPTERS } from 'agent-client/harness-adapters'

@@ -1,5 +1,7 @@
-import { icons, NodeResizer, type React, useReactFlow } from '@ext/host'
-import { Input, Label } from '@ext/ui'
+import type { ComponentType, CSSProperties } from 'react'
+
+import { legacy } from '@opencroft/client'
+const { Input, Label, NodeResizer, icons, useReactFlow } = legacy
 
 export interface SectionData {
   label: string
@@ -31,7 +33,7 @@ export function ResizableContainer({
   id: string
   selected?: boolean
   color: string
-  icon: React.ComponentType<{ className?: string }>
+  icon: ComponentType<{ className?: string; style?: CSSProperties }>
   label: string
 }) {
   const { setNodes } = useReactFlow()

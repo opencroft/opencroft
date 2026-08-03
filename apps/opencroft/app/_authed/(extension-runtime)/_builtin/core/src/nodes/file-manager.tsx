@@ -1,4 +1,5 @@
-import { InputHandle, icons, React, useNodeContext } from '@ext/host'
+import { legacy } from '@opencroft/client'
+const { InputHandle, React, icons, useNodeContext } = legacy
 
 import { WindowShell } from '../shared'
 

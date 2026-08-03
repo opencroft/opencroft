@@ -1,5 +1,7 @@
-import { icons, type React } from '@ext/host'
-import { Input, Label } from '@ext/ui'
+import type { ChangeEvent } from 'react'
+
+import { legacy } from '@opencroft/client'
+const { Input, Label, icons } = legacy
 
 import { ResizableContainer } from './section'
 
@@ -45,7 +47,7 @@ export function NetworkInspector({
         <Label className='text-xs'>Label</Label>
         <Input
           value={data.label ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ label: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ label: e.target.value })}
           className='h-7 text-xs'
         />
       </div>
@@ -53,7 +55,7 @@ export function NetworkInspector({
         <Label className='text-xs'>Network Name</Label>
         <Input
           value={data.networkName ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ networkName: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ networkName: e.target.value })}
           className='h-7 text-xs'
           placeholder='my-network'
         />
@@ -62,7 +64,7 @@ export function NetworkInspector({
         <Label className='text-xs'>Driver</Label>
         <Input
           value={data.driver ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ driver: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ driver: e.target.value })}
           className='h-7 text-xs'
           placeholder='bridge'
         />
@@ -71,7 +73,7 @@ export function NetworkInspector({
         <input
           type='checkbox'
           checked={data.external ?? false}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ external: e.target.checked })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ external: e.target.checked })}
         />
         External network
       </label>

@@ -1,5 +1,7 @@
-import { icons, NodeFrame, OutputHandle, type React } from '@ext/host'
-import { Input, Label, Textarea } from '@ext/ui'
+import type { ChangeEvent } from 'react'
+
+import { legacy } from '@opencroft/client'
+const { Input, Label, NodeFrame, OutputHandle, Textarea, icons } = legacy
 
 export interface AgentJobData {
   name: string
@@ -32,7 +34,7 @@ export function AgentJobInspector({
         <Label>Name</Label>
         <Input
           value={data.name ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ name: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ name: e.target.value })}
           placeholder='Job name'
         />
       </div>
@@ -40,7 +42,7 @@ export function AgentJobInspector({
         <Label>Working directory</Label>
         <Input
           value={data.workingDirectory ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ workingDirectory: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ workingDirectory: e.target.value })}
           placeholder='/path/to/workspace'
         />
       </div>
@@ -48,7 +50,7 @@ export function AgentJobInspector({
         <Label>Context</Label>
         <Textarea
           value={data.context ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateData({ context: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLTextAreaElement>) => updateData({ context: e.target.value })}
           placeholder='Plain-text context for the job…'
           className='min-h-48 font-mono text-xs'
         />

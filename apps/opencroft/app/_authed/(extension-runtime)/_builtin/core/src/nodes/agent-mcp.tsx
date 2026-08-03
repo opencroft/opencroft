@@ -1,16 +1,5 @@
-import { icons, React, toast } from '@ext/host'
-import {
-  Badge,
-  Button,
-  Input,
-  Label,
-  ScrollArea,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@ext/ui'
+import { legacy } from '@opencroft/client'
+const { Badge, Button, Input, Label, React, ScrollArea, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, icons, toast } = legacy
 
 import { type KeyValue, KeyValueEditor } from './key-value-editor'
 

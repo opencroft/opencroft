@@ -1,5 +1,5 @@
-import { InputHandle, icons, React, useNodeContext } from '@ext/host'
-import { Terminal } from '@ext/ui'
+import { legacy } from '@opencroft/client'
+const { InputHandle, React, Terminal, icons, useNodeContext } = legacy
 
 import { WindowShell } from '../shared'
 
@@ -91,7 +91,7 @@ export function TerminalWindowNode({ id, data, selected }: { id: string; data: W
     >
       {connection ? (
         <Terminal
-          connection={connection}
+          connection={connection as unknown as import('@opencroft/terminal/client').TerminalConfig}
           fontSize={13}
           sessionKey={id}
           restartToken={data.restartNonce}

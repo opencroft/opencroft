@@ -160,7 +160,7 @@ export interface ExtensionStorage {
 
 export declare const defineExtension: (decl: ExtensionDeclaration) => ExtensionDeclaration
 export declare const extensionId: string
-export declare const invoke: (name: string, ...args: unknown[]) => Promise<unknown>
+export declare const invoke: <T = unknown>(name: string, ...args: unknown[]) => Promise<T>
 export declare const dispatch: (nodeId: string, actionId: string, params?: Record<string, unknown>) => Promise<unknown>
 export declare const createStorage: (namespace?: string) => ExtensionStorage
 export declare const assetUrl: (path: string) => string
@@ -187,10 +187,29 @@ export declare const NodeFrame: ComponentType<Record<string, unknown>>
 export declare const NodeCard: ComponentType<Record<string, unknown>>
 export declare const NodeCardHeader: ComponentType<Record<string, unknown>>
 export declare const NodeCardContent: ComponentType<Record<string, unknown>>
-export declare const useNodeAccent: (...args: unknown[]) => unknown
-export declare const useNodeContext: (...args: unknown[]) => unknown
-export declare const inspectorIntent: (...args: unknown[]) => unknown
-export declare const useInspectorIntent: (...args: unknown[]) => unknown
+export declare const useNodeAccent: () => string
+
+/** A resolved context flowing through a connected edge. */
+export interface ResolvedContext<V = unknown> {
+  sourceNodeId: string
+  sourceHandleId: string
+  type: string
+  value: V
+}
+export declare const useNodeContext: <V = unknown>(nodeId: string, targetHandleId: string) => ResolvedContext<V> | null
+
+export interface InspectorIntent {
+  tab?: string
+  instanceId?: string
+  tabRequestId?: number
+}
+export declare const inspectorIntent: {
+  get: (nodeId: string) => InspectorIntent
+  open: (nodeId: string, tab: string, instanceId?: string) => void
+  setInstance: (nodeId: string, instanceId: string | undefined) => void
+  subscribe: (cb: () => void) => () => void
+}
+export declare const useInspectorIntent: (nodeId: string) => InspectorIntent
 
 /** Overlay control returned by useOverlay; activate(modeId, params?) opens a registered command mode. */
 export interface OverlayControl {
@@ -201,9 +220,19 @@ export declare const useOverlay: (slots?: Record<string, unknown>) => OverlayCon
 
 // ── Streaming ────────────────────────────────────────────────────────────────
 
-export declare const getStream: (...args: unknown[]) => unknown
-export declare const subscribe: (...args: unknown[]) => unknown
-export declare const broadcast: (...args: unknown[]) => unknown
+export interface TextChunk {
+  text: string
+  final: boolean
+}
+
+export interface Stream<T> {
+  subscribe(fn: (chunk: T) => void): () => void
+  broadcast(chunk: T): void
+}
+
+export declare const getStream: <T>(nodeId: string, handleId: string) => Stream<T>
+export declare const subscribe: <T>(stream: Stream<T>, fn: (chunk: T) => void) => () => void
+export declare const broadcast: <T>(stream: Stream<T>, chunk: T) => void
 
 // ── Docker container state (host-provided hooks) ────────────────────────────
 

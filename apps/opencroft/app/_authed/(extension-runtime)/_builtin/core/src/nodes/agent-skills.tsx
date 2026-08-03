@@ -1,5 +1,5 @@
-import { icons, React, toast } from '@ext/host'
-import { Button, Input, Label, ScrollArea, Textarea } from '@ext/ui'
+import { legacy } from '@opencroft/client'
+const { Button, Input, Label, React, ScrollArea, Textarea, icons, toast } = legacy
 
 const { useCallback, useEffect, useState } = React
 

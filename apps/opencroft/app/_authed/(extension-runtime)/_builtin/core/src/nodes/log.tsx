@@ -1,5 +1,5 @@
-import { InputHandle, icons, inspectorIntent, NodeFrame, React, useReactFlow } from '@ext/host'
-import { Button } from '@ext/ui'
+import { legacy } from '@opencroft/client'
+const { Button, InputHandle, NodeFrame, React, icons, inspectorIntent, useReactFlow } = legacy
 
 const { useCallback, useEffect, useRef } = React
 
@@ -26,7 +26,7 @@ export function LogNode({ id, data, selected }: { id: string; data: LogData; sel
   const entries = data.entries ?? []
 
   const focus = useCallback(() => {
-    setNodes((nds: { id: string }[]) => nds.map((n) => ({ ...n, selected: n.id === id })))
+    setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === id })))
   }, [id, setNodes])
 
   const openOutput = useCallback(() => {

@@ -1,4 +1,4 @@
-import host from '@ext/host'
+import host from '@opencroft/server'
 import type { ServerConfig } from '@opencroft/server'
 
 import { fireEvent } from './event'
@@ -50,7 +50,7 @@ interface TextChunk {
 }
 
 async function scriptRun(ctx: ActionCtx): Promise<ScriptResult> {
-  const data = ctx.data as ScriptData
+  const data = ctx.data as unknown as ScriptData
   if (!data.script?.trim()) {
     throw new Error('Script is empty')
   }

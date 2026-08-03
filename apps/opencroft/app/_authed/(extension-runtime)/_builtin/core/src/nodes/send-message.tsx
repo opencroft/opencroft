@@ -1,5 +1,5 @@
-import { InputHandle, icons, NodeFrame, React, useGraphEdges, useGraphNodes } from '@ext/host'
-import { Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@ext/ui'
+import { legacy } from '@opencroft/client'
+const { Input, InputHandle, Label, NodeFrame, React, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, icons, useGraphEdges, useGraphNodes } = legacy
 
 import {
   buildSessionKey,

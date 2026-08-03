@@ -1,6 +1,8 @@
-import { icons, NodeFrame, OutputHandle, React } from '@ext/host'
-import { Schedules } from '@ext/ui'
-import type { RunHistoryEntry as KitRunHistoryEntry, ScheduleRule as KitScheduleRule, UpcomingRun } from '@ext/ui'
+import { legacy } from '@opencroft/client'
+const { NodeFrame, OutputHandle, React, Schedules, icons } = legacy
+type KitRunHistoryEntry = legacy.RunHistoryEntry
+type KitScheduleRule = legacy.ScheduleRule
+type UpcomingRun = legacy.UpcomingRun
 
 const { useEffect, useState } = React
 
