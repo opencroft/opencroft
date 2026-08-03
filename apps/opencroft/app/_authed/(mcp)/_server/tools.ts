@@ -16,7 +16,7 @@ import { checkMcpServer } from 'agent-client/mcp-check'
 import type { KeyValue, McpServerConfig, McpTransport } from 'agent-client/mcp-types'
 
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
-import { readMcpServers, writeMcpServers } from '@/app/_authed/(agent)/_server/mcp-store'
+import { isConnectionNodeName, readMcpServers, writeMcpServers } from '@/app/_authed/(agent)/_server/mcp-store'
 import {
   ApprovalRejectedError,
   awaitApproval,
@@ -2699,9 +2699,19 @@ function buildHandlers(): Record<string, ToolHandler> {
     },
 
     mcp_set: withApprovalRequired(async (args) => {
-      const servers = await readMcpServers()
       const name = typeof args.name === 'string' ? args.name.trim() : ''
+      const servers = await readMcpServers()
       const idx = servers.findIndex((s) => s.name === name)
+      // A name already claimed by an MCP Connection node has its own reachable
+      // path and needs no global entry — refuse rather than let the global list
+      // and the node drift into two different definitions of the same name.
+      // Updating an entry that's already global (idx >= 0) is unaffected.
+      if (idx < 0 && (await isConnectionNodeName(name))) {
+        fail(
+          -32602,
+          `"${name}" is an MCP Connection node's own name — it's already reachable and doesn't need a global entry.`,
+        )
+      }
       const config = mcpConfigFromArgs(args, idx >= 0 ? servers[idx] : undefined)
       if (idx >= 0) {
         servers[idx] = config

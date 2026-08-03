@@ -1,6 +1,6 @@
 import { createAgentClient, type PermissionContext, type PermissionOutcome } from 'agent-client/agent-client'
 
-import { readMcpServers } from '@/app/_authed/(agent)/_server/mcp-store'
+import { readMcpServersForAgent } from '@/app/_authed/(agent)/_server/mcp-store'
 import { loadSkillDefs, skillBodyHandler } from '@/app/_authed/(agent)/_server/skill-store'
 import { opencroftLocalTools } from '@/app/_authed/(agent)/_server/tools-bridge'
 import { isYoloMode } from '@/app/_authed/(mcp)/_server/yolo'
@@ -39,7 +39,7 @@ function resolvePermission({ toolKind }: PermissionContext): PermissionOutcome {
 
 export const agentClient = createAgentClient({
   tools: opencroftLocalTools,
-  loadMcpServers: readMcpServers,
+  loadMcpServers: readMcpServersForAgent,
   // Global skill catalog from the settings DB, resolved per turn. For now every
   // configured skill is exposed to this agent client (not scoped per node).
   skills: loadSkillDefs,

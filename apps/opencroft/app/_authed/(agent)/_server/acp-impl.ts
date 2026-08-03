@@ -176,6 +176,9 @@ async function openLocalSession(data: {
     // this session to a stable gateway session/agent instead of an ephemeral
     // acp-bridge:<uuid> session.
     sessionKey: data.tabKey,
+    // Same slug used for the workspace dir — lets loadMcpServers (mcp-store.ts)
+    // surface this agent's own MCP Connection node(s) without a global entry.
+    mcpIdentity: workspaceSlug,
   }
   // Host spawn cwd must exist or spawn fails with ENOENT; the container path is
   // created inside the container when the harness is exec'd.
