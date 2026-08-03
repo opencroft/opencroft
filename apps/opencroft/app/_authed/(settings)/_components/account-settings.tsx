@@ -1,10 +1,12 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { useState } from 'react'
+'use client'
+
+import { useEffect, useState } from 'react'
 import { AccountPasswordForm } from 'ui/auth/account-password-form'
 import { AccountProfile } from 'ui/auth/account-profile'
 import { AccountProfileForm } from 'ui/auth/account-profile-form'
-import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
+import { Spinner } from 'ui/spinner'
 
+import TokenSettings from '@/app/_authed/(settings)/_components/token-settings'
 import {
   changeEmail,
   changePassword,
@@ -13,23 +15,37 @@ import {
   updateProfile,
 } from '@/app/_authed/(settings)/_server/account-actions'
 
-export const Route = createFileRoute('/_authed/(settings)/settings_/profile')({
-  loader: async (): Promise<{ account: OwnAccount }> => {
-    const account = await getAccount()
-    if (!account) {
-      // The root gate already refuses an unauthenticated request before this
-      // loader runs; a null account here means the session resolved to
-      // nothing between that check and this one (e.g. it just expired).
-      throw new Error('Not signed in')
-    }
-    return { account }
-  },
-  component: ProfileSettingsPage,
-})
+/**
+ * The account screen: avatar, profile, password and API tokens as one panel
+ * — the kit's `AccountProfile`. Previously split across a
+ * standalone "API Tokens" menu section and an unlinked `/settings/profile`
+ * route; the kit designs this as one screen, so the app renders it as one.
+ *
+ * Avatar is left empty — no image-storage backend exists on this instance
+ * yet, which is separate scope from this composition.
+ */
+export default function AccountSettings() {
+  const [account, setAccount] = useState<OwnAccount | null>(null)
 
-function ProfileSettingsPage() {
-  const { account } = Route.useLoaderData()
+  useEffect(() => {
+    getAccount().then(setAccount)
+  }, [])
 
+  if (!account) {
+    return (
+      <div className='flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground'>
+        <Spinner /> Loading account…
+      </div>
+    )
+  }
+
+  return <AccountSettingsForm account={account} />
+}
+
+// Split from AccountSettings so the profile/password state can initialise
+// straight from `account` -- it only mounts once `account` is loaded, so
+// there is no loading-then-syncing step to get wrong.
+function AccountSettingsForm({ account }: { account: OwnAccount }) {
   const [name, setName] = useState(account.name)
   const [nameError, setNameError] = useState<string>()
   const [profileError, setProfileError] = useState<string>()
@@ -101,43 +117,34 @@ function ProfileSettingsPage() {
   }
 
   return (
-    <ScrollPage>
-      <ScrollContent className='p-4'>
-        <AccountProfile
-          // Avatar upload has no storage backend to write to on this
-          // instance yet (the only existing upload endpoint is the file
-          // manager's, wired to SSH/S3/Docker/WSL targets, not image
-          // hosting) — a real one is separate scope from "profile edit and
-          // password change". The slot is left empty rather than wired to a
-          // button that does nothing when pressed.
-          profile={
-            <AccountProfileForm
-              name={name}
-              onNameChange={setName}
-              email={account.email}
-              onRequestEmailChange={handleRequestEmailChange}
-              onSubmit={handleSaveProfile}
-              nameError={nameError}
-              error={profileError}
-              submitting={savingProfile}
-            />
-          }
-          password={
-            <AccountPasswordForm
-              currentPassword={currentPassword}
-              onCurrentPasswordChange={setCurrentPassword}
-              newPassword={newPassword}
-              onNewPasswordChange={setNewPassword}
-              confirmPassword={confirmPassword}
-              onConfirmPasswordChange={setConfirmPassword}
-              onSubmit={handleSavePassword}
-              error={passwordError}
-              confirmPasswordError={confirmError}
-              submitting={savingPassword}
-            />
-          }
+    <AccountProfile
+      profile={
+        <AccountProfileForm
+          name={name}
+          onNameChange={setName}
+          email={account.email}
+          onRequestEmailChange={handleRequestEmailChange}
+          onSubmit={handleSaveProfile}
+          nameError={nameError}
+          error={profileError}
+          submitting={savingProfile}
         />
-      </ScrollContent>
-    </ScrollPage>
+      }
+      password={
+        <AccountPasswordForm
+          currentPassword={currentPassword}
+          onCurrentPasswordChange={setCurrentPassword}
+          newPassword={newPassword}
+          onNewPasswordChange={setNewPassword}
+          confirmPassword={confirmPassword}
+          onConfirmPasswordChange={setConfirmPassword}
+          onSubmit={handleSavePassword}
+          error={passwordError}
+          confirmPasswordError={confirmError}
+          submitting={savingPassword}
+        />
+      }
+      tokens={<TokenSettings />}
+    />
   )
 }

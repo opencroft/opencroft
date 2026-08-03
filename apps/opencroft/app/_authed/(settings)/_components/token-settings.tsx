@@ -7,7 +7,12 @@ import { ApiTokenReveal } from 'ui/auth/api-token-reveal'
 import { Button } from 'ui/button'
 import { Spinner } from 'ui/spinner'
 
-import { createMyToken, listMyTokens, type MyToken, revokeMyToken } from '@/app/_authed/(settings)/_server/token-actions'
+import {
+  createMyToken,
+  listMyTokens,
+  type MyToken,
+  revokeMyToken,
+} from '@/app/_authed/(settings)/_server/token-actions'
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString()
@@ -32,7 +37,11 @@ function toDisplay(t: MyToken): ApiToken {
 type Panel = { kind: 'list' } | { kind: 'create' } | { kind: 'reveal'; name: string; token: string }
 
 /**
- * A signed-in person's own API tokens: create, see, revoke.
+ * A signed-in person's own API tokens: create, see, revoke — the `tokens`
+ * row of the account screen (AccountProfile's `tokens` slot).
+ * No page frame of its own: the kit shell supplies the "API tokens" heading
+ * and description, so this renders only the toolbar and the create/reveal/
+ * list sequence beneath it.
  *
  * The server side already enforces the two properties that
  * stay non-negotiable regardless of anything this screen does — hash-only
@@ -112,19 +121,18 @@ export default function TokenSettings() {
   }
 
   return (
-    <div className='p-6 space-y-6 max-w-3xl'>
-      <div className='flex items-center justify-between gap-4'>
-        <div>
-          <h1 className='text-2xl font-bold flex items-center gap-2'>
-            API tokens
-            {pending && <Spinner className='size-5 text-muted-foreground' />}
-          </h1>
-          <p className='text-sm text-muted-foreground'>
-            Personal credentials for scripts and integrations. Each can do everything your account can, including
-            running commands on the host — treat one exactly like a password.
-          </p>
-        </div>
-        {panel.kind === 'list' && <Button onClick={() => setPanel({ kind: 'create' })}>New token</Button>}
+    <div className='space-y-4'>
+      <p className='text-sm text-muted-foreground'>
+        Each token can do everything your account can, including running commands on the host — treat one exactly like a
+        password.
+      </p>
+      <div className='flex items-center justify-end gap-2'>
+        {pending && <Spinner className='size-4 text-muted-foreground' />}
+        {panel.kind === 'list' && (
+          <Button size='sm' onClick={() => setPanel({ kind: 'create' })}>
+            New token
+          </Button>
+        )}
       </div>
 
       {panel.kind === 'create' && (

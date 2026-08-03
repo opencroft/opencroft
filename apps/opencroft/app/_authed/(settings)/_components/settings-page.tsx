@@ -1,11 +1,12 @@
 'use client'
 
-import { Archive, KeyRound, ScrollText } from 'lucide-react'
+import { Archive, ScrollText, User } from 'lucide-react'
 import type React from 'react'
 import { Suspense, useCallback } from 'react'
 import { MenuLayout } from 'ui/layout/menulayout'
 import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
 
+import AccountSettings from '@/app/_authed/(settings)/_components/account-settings'
 import AuditSettings from '@/app/_authed/(settings)/_components/audit-settings'
 import BackupSettings from '@/app/_authed/(settings)/_components/backup-settings'
 import {
@@ -13,7 +14,6 @@ import {
   findExtensionPage,
   useExtensionSettings,
 } from '@/app/_authed/(settings)/_components/extension-settings'
-import TokenSettings from '@/app/_authed/(settings)/_components/token-settings'
 import { useUrlState } from '@/components/hooks/use-url-state'
 import { cn } from '@/lib/utils'
 
@@ -25,7 +25,7 @@ interface BuiltinPage {
 }
 
 const BUILTIN_PAGES: BuiltinPage[] = [
-  { id: 'tokens', label: 'API Tokens', icon: KeyRound, component: TokenSettings },
+  { id: 'account', label: 'Account', icon: User, component: AccountSettings },
   { id: 'audit', label: 'MCP Audit', icon: ScrollText, component: AuditSettings },
   { id: 'backup', label: 'Backup & Restore', icon: Archive, component: BackupSettings },
 ]
