@@ -16,5 +16,5 @@ export const loadTemplates = createServerFn({ strict: { output: false } }).handl
 export const saveTemplates = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((templates: CustomTemplate[]) => templates)
   .handler(async ({ data: templates }): Promise<void> => {
-    await setSetting({ data: { id: SETTING_ID, data: templates } })
+    await setSetting({ data: { id: SETTING_ID, data: templates as unknown as Record<string, unknown> } })
   })
