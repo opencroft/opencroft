@@ -553,13 +553,22 @@ const EXT_CSS_ENTRY = `
 
 async function compileClientCss(extensionId: string): Promise<CompileError[]> {
   const srcDir = path.join(extDir(extensionId), 'src')
+  const finalOutfile = path.join(extDistDir(extensionId), 'client.css')
+  // Same reasoning as compileSide's publish step: client.css is served by the
+  // same route as client.js, and writing straight to the served path is not
+  // atomic — a reader can catch it mid-write. Build to a temp name beside the
+  // target and rename into place once ready.
+  buildAttemptCounter += 1
+  const outfile = `${finalOutfile}.building-${process.pid}-${buildAttemptCounter}`
   try {
     const compiler = await compileTailwind(EXT_CSS_ENTRY, { base: projectRoot(), onDependency: () => {} })
     const scanner = new Scanner({ sources: [{ base: srcDir, pattern: '**/*', negated: false }] })
     const css = compiler.build(scanner.scan())
-    await fs.writeFile(path.join(extDistDir(extensionId), 'client.css'), css)
+    await fs.writeFile(outfile, css)
+    await fs.rename(outfile, finalOutfile)
     return []
   } catch (err) {
+    await fs.rm(outfile, { force: true }).catch(() => {})
     return [{ file: 'client.css', message: String(err) }]
   }
 }
