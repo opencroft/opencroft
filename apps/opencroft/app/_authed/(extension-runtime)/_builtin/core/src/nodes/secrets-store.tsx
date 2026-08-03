@@ -124,6 +124,7 @@ interface GenerateSecretResult {
 
 export function SecretsStoreInspector({
   nodeId,
+  data,
   updateData,
 }: {
   nodeId: string
@@ -244,6 +245,12 @@ export function SecretsStoreInspector({
         format: genFormat,
       })
       setGenName('')
+      // invoke() writes straight to the secrets table; without this, a key
+      // created/rotated here never reaches the node's own secretKeys mirror —
+      // reload() alone only refreshes this panel's local rows.
+      if (!(data.secretKeys ?? []).includes(result.name)) {
+        updateData({ secretKeys: [...(data.secretKeys ?? []), result.name] })
+      }
       await reload()
       toast.success(`${result.name} ${result.status}`)
     } catch (err) {
@@ -251,7 +258,7 @@ export function SecretsStoreInspector({
     } finally {
       setGenerating(false)
     }
-  }, [genName, genLength, genFormat, nodeId, reload])
+  }, [genName, genLength, genFormat, nodeId, reload, data.secretKeys, updateData])
 
   return (
     <div className='flex flex-col gap-3'>

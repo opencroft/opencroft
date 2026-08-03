@@ -210,7 +210,15 @@ async function secretsStoreGenerateAction(ctx: ActionCtx): Promise<GenerateSecre
   }
   const length = typeof ctx.params.length === 'number' ? ctx.params.length : undefined
   const format: SecretFormat | undefined = ctx.params.format === 'symbols' ? 'symbols' : undefined
-  return secretsStoreGenerate(ctx.nodeId, name, { length, format })
+  const result = await secretsStoreGenerate(ctx.nodeId, name, { length, format })
+  // secretsStoreGenerate writes straight to the secrets table; without this,
+  // a key created/rotated through this action (the only path MCP callers have)
+  // never reaches the node's own secretKeys mirror.
+  const existingKeys = Array.isArray(ctx.data.secretKeys) ? (ctx.data.secretKeys as string[]) : []
+  if (!existingKeys.includes(result.name)) {
+    ctx.updateData({ secretKeys: [...existingKeys, result.name] })
+  }
+  return result
 }
 
 // ── Send Message node actions ─────────────────────────────────────────────
