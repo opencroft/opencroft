@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import { recordCaller, resolveCaller } from '@/app/(mcp)/_server/caller'
 import { getExtensionToolDefinitions } from '@/app/(mcp)/_server/extension-tools'
 import { getAgentToolDefinitions, handleToolCall, toolDefinitions } from '@/app/(mcp)/_server/tools'
 
@@ -83,6 +84,26 @@ export const Route = createFileRoute('/(mcp)/api/mcp')({
         if (body.jsonrpc !== '2.0') {
           return Response.json(mcpErr(body.id ?? null, -32600, 'Invalid Request'), { status: 400 })
         }
+
+        // OBSERVE ONLY (Stage A). Resolve whatever credential the
+        // caller presented and record that we saw them — then serve exactly as
+        // before, whoever they turned out to be. Nothing here can refuse a
+        // request, and it is meant to stay that way until the recorded caller
+        // population is fully accounted for.
+        //
+        // The awaits are deliberate. The whole value of this stage is a count
+        // that can be trusted, and a fire-and-forget write is one the process
+        // can lose on exit — which would undercount exactly the rare caller
+        // this exists to find, and undercounting reads as "all accounted for".
+        // resolveCaller only runs when an Authorization header is present;
+        // recordCaller swallows its own errors.
+        const caller = await resolveCaller(request)
+        await recordCaller({
+          caller,
+          method: body.method,
+          tool: body.method === 'tools/call' ? ((body.params?.name as string | undefined) ?? null) : null,
+          request,
+        })
 
         try {
           // HTTP callers are never internal.
