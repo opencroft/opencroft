@@ -428,25 +428,79 @@ export async function versionSourceMapLink(
 
 let buildAttemptCounter = 0
 
-async function compileSide(
+// A chunk's name IS its version — content-hashed, so different content is a
+// different file by construction. Nothing referencing an old chunk is ever
+// pointed at new content, and nothing needs a `?v=` the way the entry does.
+// Chunks pile up across rebuilds anyway (esbuild has no idea which ones a
+// previous build produced), so old ones are pruned once nothing published in
+// the last hour could still be an in-flight browser's only copy of one — a
+// tab that loaded an old `client.js` and only later takes the code path that
+// dynamically imports one of its chunks must still find it.
+const CHUNK_RETENTION_MS = 60 * 60 * 1000
+
+async function pruneOrphanChunks(outDir: string, justPublished: Set<string>): Promise<void> {
+  let entries: string[]
+  try {
+    entries = await fs.readdir(outDir)
+  } catch {
+    return
+  }
+  const now = Date.now()
+  for (const name of entries) {
+    if (!name.startsWith('chunk-') || justPublished.has(name)) {
+      continue
+    }
+    const file = path.join(outDir, name)
+    const stat = await fs.stat(file).catch(() => null)
+    if (stat && now - stat.mtimeMs > CHUNK_RETENTION_MS) {
+      await fs.rm(file, { force: true }).catch(() => {})
+    }
+  }
+}
+
+// Publishes a split client build from its staging directory into `outDir`.
+//
+// Splitting means there is no longer one file to swap into place — an entry
+// can import several chunks, and a chunk can import another. A reader must
+// never see an entry (under its final, requestable name) that references a
+// chunk that isn't at ITS final name yet: that is a transient 404 for
+// whichever browser's request lands in the gap. Publishing every non-entry
+// file first, entry last, makes that impossible — by the time the entry
+// becomes visible under `client.js`, everything it can reach already is.
+// Order among the non-entry files themselves doesn't matter: none of them is
+// reachable under a name anything has requested yet, so there is no reader
+// to protect until the entry itself is renamed.
+//
+// Chunk filenames are content-hashed by esbuild (`chunkNames: 'chunk-[hash]'`)
+// and never reused, so publishing them is a plain rename to the SAME name —
+// nothing to version, nothing that can collide with a previous build's chunk.
+async function publishClientBuild(stagingDir: string, outDir: string): Promise<void> {
+  const staged = await fs.readdir(stagingDir)
+  const nonEntry = staged.filter((name) => name !== 'client.js' && name !== 'client.js.map')
+  for (const name of nonEntry) {
+    await fs.rename(path.join(stagingDir, name), path.join(outDir, name))
+  }
+  await fs.rename(path.join(stagingDir, 'client.js.map'), path.join(outDir, 'client.js.map')).catch(() => {})
+  await fs.rename(path.join(stagingDir, 'client.js'), path.join(outDir, 'client.js'))
+  await fs.rmdir(stagingDir).catch(() => {})
+  await pruneOrphanChunks(outDir, new Set(nonEntry))
+}
+
+async function compileServerSide(
   extensionId: string,
   manifest: ExtensionManifest,
-  side: 'client' | 'server',
 ): Promise<{ errors: CompileError[]; warnings: CompileError[] }> {
   const src = extDir(extensionId)
   const outDir = extDistDir(extensionId)
   await fs.mkdir(outDir, { recursive: true })
 
-  const entries =
-    side === 'client'
-      ? ['src/client.tsx', 'src/client.ts', 'src/index.tsx', 'src/index.ts']
-      : ['server/index.ts', 'server/index.tsx', 'extension.ts', 'extension.tsx']
-  const entry = manifest.main && side === 'server' ? path.join(src, manifest.main) : await pickEntry(src, entries)
+  const entries = ['server/index.ts', 'server/index.tsx', 'extension.ts', 'extension.tsx']
+  const entry = manifest.main ? path.join(src, manifest.main) : await pickEntry(src, entries)
   if (!entry) {
     return { errors: [], warnings: [] }
   }
 
-  const finalOutfile = path.join(outDir, side === 'client' ? 'client.js' : 'server.js')
+  const finalOutfile = path.join(outDir, 'server.js')
   // buildExtension's in-flight guard stops two builds of the same extension
   // from running at once, but a route serving the finished bundle reads
   // straight off disk with no idea a build is running at all — and esbuild's
@@ -458,65 +512,41 @@ async function compileSide(
   // leftover from a previous crashed build can never collide with this one.
   buildAttemptCounter += 1
   const outfile = `${finalOutfile}.building-${process.pid}-${buildAttemptCounter}`
-  const format = side === 'client' ? 'esm' : 'cjs'
-  const platform = side === 'client' ? 'browser' : 'node'
 
   // Server bundles must not inline the extension's own dependencies: native
   // modules (sharp, ffmpeg-static) break when bundled, and bundling JS that is
   // then run against a different copy of the same package in the app's
   // node_modules causes version/ABI clashes. Keep them as runtime requires,
   // resolved from the extension's node_modules by the loader.
-  const serverExternals =
-    side === 'server'
-      ? [
-          ...SERVER_EXTERNAL_PACKAGES,
-          ...(await readDependencyNames(extensionId)).filter((name) => !ALWAYS_BUNDLED_PACKAGES.includes(name)),
-        ]
-      : []
+  const serverExternals = [
+    ...SERVER_EXTERNAL_PACKAGES,
+    ...(await readDependencyNames(extensionId)).filter((name) => !ALWAYS_BUNDLED_PACKAGES.includes(name)),
+  ]
 
   try {
     const result = await esbuild.build({
       entryPoints: [entry],
       bundle: true,
-      format,
-      platform,
+      format: 'cjs',
+      platform: 'node',
       target: 'es2022',
       outfile,
-      // Client bundles are downloaded by every browser that opens a space, and
-      // an inline map is three quarters of what they weigh. Written alongside
-      // instead, so the browser fetches it only when devtools ask for it.
-      //
-      // Server bundles stay inline: they are never sent over a network — the
-      // loader reads server.js off disk and evaluates it with `new Function`,
-      // which gives a linked map no base URL to resolve against, so an external
-      // one would just lose stack traces for no saving.
-      sourcemap: side === 'client' ? true : 'inline',
-      // Client bundles cross the network to every browser that opens a space.
-      // Server bundles are evaluated in-process from disk, where readable
-      // stack traces are worth more than the bytes minification saves.
-      minify: side === 'client',
+      // Server bundles are never sent over a network — the loader reads
+      // server.js off disk and evaluates it with `new Function`, which gives
+      // a linked map no base URL to resolve against, so an external one would
+      // just lose stack traces for no saving. Kept inline instead.
+      sourcemap: 'inline',
+      // Evaluated in-process from disk, where readable stack traces are worth
+      // more than the bytes minification saves.
+      minify: false,
       jsx: 'automatic',
-      plugins: [hostVirtualPlugin(side, extensionId)],
+      plugins: [hostVirtualPlugin('server', extensionId)],
       external: serverExternals,
       logLevel: 'silent',
       write: true,
       absWorkingDir: src,
       nodePaths: [path.join(src, 'node_modules'), ...PROJECT_NODE_MODULES],
     })
-    if (side === 'client') {
-      // The link has to name what the map will be published as, not what it's
-      // called right now — nobody ever requests the temp name.
-      await versionSourceMapLink(outfile, `${path.basename(finalOutfile)}.map`)
-    }
-    // Publish. Map before code: the code's last line is a versioned link to
-    // the map, so a devtools fetch racing the new code's arrival must never
-    // find the code in place without it. `.catch(() => {})` on both covers a
-    // build that produced errors and wrote nothing (`outfile` never existed) —
-    // the previous bundle is left serving, same as before this file had a
-    // publish step at all.
-    if (side === 'client') {
-      await fs.rename(`${outfile}.map`, `${finalOutfile}.map`).catch(() => {})
-    }
     await fs.rename(outfile, finalOutfile).catch(() => {})
     return {
       errors: toCompileErrors(result.errors),
@@ -524,13 +554,90 @@ async function compileSide(
     }
   } catch (err) {
     await fs.rm(outfile, { force: true }).catch(() => {})
-    await fs.rm(`${outfile}.map`, { force: true }).catch(() => {})
     const buildErr = err as esbuild.BuildFailure
     return {
       errors: buildErr.errors ? toCompileErrors(buildErr.errors) : [{ file: entry, message: String(err) }],
       warnings: buildErr.warnings ? toCompileErrors(buildErr.warnings) : [],
     }
   }
+}
+
+async function compileClientSide(
+  extensionId: string,
+  manifest: ExtensionManifest,
+): Promise<{ errors: CompileError[]; warnings: CompileError[] }> {
+  const src = extDir(extensionId)
+  const outDir = extDistDir(extensionId)
+  await fs.mkdir(outDir, { recursive: true })
+
+  const entries = ['src/client.tsx', 'src/client.ts', 'src/index.tsx', 'src/index.ts']
+  const entry = await pickEntry(src, entries)
+  if (!entry) {
+    return { errors: [], warnings: [] }
+  }
+
+  // A whole directory this time, not a single file — splitting can emit any
+  // number of chunks alongside the entry, and none of them may become visible
+  // under a served name before every file it (transitively) needs is already
+  // there (see publishClientBuild). Staged as a sibling of `dist`, same
+  // reasoning as the server side's temp file: same device, unique per attempt
+  // so a leftover from a crashed build can never collide with this one.
+  buildAttemptCounter += 1
+  const stagingDir = `${outDir}.building-${process.pid}-${buildAttemptCounter}`
+
+  try {
+    const result = await esbuild.build({
+      entryPoints: [entry],
+      bundle: true,
+      format: 'esm',
+      platform: 'browser',
+      target: 'es2022',
+      outdir: stagingDir,
+      // esbuild names split output from the entry point's own basename by
+      // default, which would vary with which of the candidate entries above
+      // matched. Pinned so the file callers actually request is always
+      // `client.js`, same as the single-file build this replaces.
+      entryNames: 'client',
+      // Content-hashed, never reused across builds — see publishClientBuild
+      // and pruneOrphanChunks.
+      chunkNames: 'chunk-[hash]',
+      splitting: true,
+      // Client bundles are downloaded by every browser that opens a space, and
+      // an inline map is three quarters of what they weigh. Written alongside
+      // instead, so the browser fetches it only when devtools ask for it.
+      sourcemap: true,
+      minify: true,
+      jsx: 'automatic',
+      plugins: [hostVirtualPlugin('client', extensionId)],
+      logLevel: 'silent',
+      write: true,
+      absWorkingDir: src,
+      nodePaths: [path.join(src, 'node_modules'), ...PROJECT_NODE_MODULES],
+    })
+    // The link has to name what the map will be published as, not what it's
+    // called right now — nobody ever requests the staging path.
+    await versionSourceMapLink(path.join(stagingDir, 'client.js'), 'client.js.map')
+    await publishClientBuild(stagingDir, outDir)
+    return {
+      errors: toCompileErrors(result.errors),
+      warnings: toCompileErrors(result.warnings),
+    }
+  } catch (err) {
+    await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => {})
+    const buildErr = err as esbuild.BuildFailure
+    return {
+      errors: buildErr.errors ? toCompileErrors(buildErr.errors) : [{ file: entry, message: String(err) }],
+      warnings: buildErr.warnings ? toCompileErrors(buildErr.warnings) : [],
+    }
+  }
+}
+
+async function compileSide(
+  extensionId: string,
+  manifest: ExtensionManifest,
+  side: 'client' | 'server',
+): Promise<{ errors: CompileError[]; warnings: CompileError[] }> {
+  return side === 'client' ? compileClientSide(extensionId, manifest) : compileServerSide(extensionId, manifest)
 }
 
 // Extensions compile at runtime, long after the host CSS was built — so each
