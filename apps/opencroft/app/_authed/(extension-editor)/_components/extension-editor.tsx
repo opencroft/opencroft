@@ -342,6 +342,7 @@ export function ExtensionEditor({ initialExtensionId, onBack, onExtensionChanged
           onDelete={handleDelete}
           onUpdate={handleUpdate}
           onUninstall={handleUninstall}
+          onInstalled={handleInstalled}
         />
         <InstallExtensionDialog
           open={installDialogOpen}

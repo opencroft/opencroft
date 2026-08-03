@@ -45,7 +45,7 @@ export interface ExtensionStorage {
 
 export function createStorage(extensionId: string): ExtensionStorage {
   return {
-    get: (key) => extensionStorageGet({ data: { extensionId, key } }),
+    get: <T = unknown>(key: string) => extensionStorageGet({ data: { extensionId, key } }) as Promise<T | null>,
     set: (key, value) => extensionStorageSet({ data: { extensionId, key, value } }),
     delete: (key) => extensionStorageDelete({ data: { extensionId, key } }),
     list: () => extensionStorageList({ data: extensionId }),
