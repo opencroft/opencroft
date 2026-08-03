@@ -16,7 +16,7 @@ export const Route = createFileRoute('/_authed/(settings)/api/backup/$filename')
         } catch {
           return Response.json({ error: 'Backup not found' }, { status: 404 })
         }
-        return new Response(body, {
+        return new Response(new Uint8Array(body), {
           headers: {
             'Content-Type': 'application/json',
             'Content-Disposition': `attachment; filename="${filename}"`,

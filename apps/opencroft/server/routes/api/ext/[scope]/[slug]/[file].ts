@@ -5,6 +5,7 @@ import { defineEventHandler } from 'nitro/h3'
 import { requireSession } from '@/app/_server/require-session'
 import { ensureExtensionBuilt } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { extDistFile } from '@/app/_authed/(extension-runtime)/_server/paths'
+import { extRouteParams } from '@/app/_authed/(extension-runtime)/_server/route-params'
 
 const CONTENT_TYPES: Record<string, string> = {
   'client.js': 'application/javascript; charset=utf-8',
@@ -31,7 +32,7 @@ const CACHE_CONTROL = 'public, max-age=31536000, immutable'
 export default defineEventHandler(async (event) => {
   const denied = await requireSession(event.req)
   if (denied) return denied
-  const { scope, slug, file } = event.context.params
+  const { scope, slug, file } = extRouteParams(event)
   const contentType = CONTENT_TYPES[file]
   if (!contentType) {
     return new Response('Not found', { status: 404 })

@@ -215,7 +215,7 @@ export const createDockerContext = createServerFn({ method: 'POST', strict: { ou
     const args = ['--exec', 'docker', 'context', 'create', contextName, '--docker', `host=${sshUrl}`]
     console.log(`$ wsl ${args.join(' ')}`)
 
-    return new Promise((resolve, reject) => {
+    return new Promise<void>((resolve, reject) => {
       const proc = spawn('wsl', args, {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,

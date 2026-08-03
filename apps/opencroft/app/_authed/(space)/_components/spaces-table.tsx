@@ -143,7 +143,7 @@ export function SpacesTable({ initialSpaces }: Props) {
             {spaces.map((space) => (
               <TableRow key={space.id}>
                 <TableCell>
-                  <Link to={`/space/${space.slug}`} className='font-medium hover:underline'>
+                  <Link to='/space/$slug' params={{ slug: space.slug }} className='font-medium hover:underline'>
                     {space.name}
                   </Link>
                 </TableCell>

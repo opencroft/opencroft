@@ -61,7 +61,7 @@ export const saveServer = createServerFn({ method: 'POST', strict: { output: fal
     }
 
     // Save new data first before cleaning up old
-    await setSetting({ data: { id: serverKey(newSlug), data: server } })
+    await setSetting({ data: { id: serverKey(newSlug), data: server as unknown as Record<string, unknown> } })
 
     const index = (await getSetting({ data: INDEX_KEY })) as Setting<ServerIndex> | null
     const slugs = (index?.data.slugs ?? []).filter((s) => s !== oldSlug)

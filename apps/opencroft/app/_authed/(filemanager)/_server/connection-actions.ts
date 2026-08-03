@@ -19,11 +19,12 @@ export const getConnections = createServerFn().handler(async (): Promise<Storage
     return []
   }
 
+  const { ids } = index.data as unknown as ConnectionIndex
   const results: StorageConnection[] = []
-  for (const id of index.data.ids) {
+  for (const id of ids) {
     const row = await getSetting({ data: connectionKey(id) })
     if (row) {
-      results.push(row.data)
+      results.push(row.data as unknown as StorageConnection)
     }
   }
   return results
@@ -35,7 +36,7 @@ export const saveConnection = createServerFn({ method: 'POST' })
     await setSetting({ data: { id: connectionKey(connection.id), data: connection } })
 
     const index = await getSetting({ data: INDEX_KEY })
-    const ids = index?.data.ids ?? []
+    const ids = (index?.data as unknown as ConnectionIndex | undefined)?.ids ?? []
     if (!ids.includes(connection.id)) {
       await setSetting({ data: { id: INDEX_KEY, data: { ids: [...ids, connection.id] } } })
     }
@@ -48,6 +49,7 @@ export const deleteConnection = createServerFn({ method: 'POST' })
 
     const index = await getSetting({ data: INDEX_KEY })
     if (index) {
-      await setSetting({ data: { id: INDEX_KEY, data: { ids: index.data.ids.filter((i) => i !== id) } } })
+      const { ids } = index.data as unknown as ConnectionIndex
+      await setSetting({ data: { id: INDEX_KEY, data: { ids: ids.filter((i) => i !== id) } } })
     }
   })

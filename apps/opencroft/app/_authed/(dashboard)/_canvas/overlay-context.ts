@@ -179,7 +179,7 @@ export function useBackIntercept(active: boolean, onClose: () => void) {
         return
       }
       e.intercept({
-        handler() {
+        async handler() {
           pushedRef.current = false
           onCloseRef.current()
         },

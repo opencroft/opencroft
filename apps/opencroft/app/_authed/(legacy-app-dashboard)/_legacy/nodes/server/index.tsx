@@ -1,6 +1,5 @@
 'use client'
 
-import { Link } from '@tanstack/react-router'
 import { type Node, type NodeProps, useReactFlow } from '@xyflow/react'
 import {
   Check,
@@ -60,10 +59,6 @@ function getSsh(features: ServerFeature[] | undefined): SshFeature | undefined {
 
 function getDocker(features: ServerFeature[] | undefined): DockerFeature | undefined {
   return features?.find((f) => f.type === 'docker') as DockerFeature | undefined
-}
-
-function hasDocker(features: ServerFeature[] | undefined): boolean {
-  return features?.some((f) => f.type === 'docker') ?? false
 }
 
 function buildTerminalConfig(data: ServerData): import('@opencroft/terminal').TerminalConfig | null {
@@ -212,15 +207,6 @@ function ServerComponent({ data, selected, positionAbsoluteX, positionAbsoluteY 
               onClick={openTerminal}
             />
             <ButtonPin handleId={HANDLE_FILESYSTEM} icon={FolderOpen} label='Files' side='right' onClick={openFiles} />
-            {hasDocker(data.features) && (
-              <div className='nodrag nopan'>
-                <Link to={`/docker/containers/${slug(data.name)}`}>
-                  <Button variant='ghost' size='sm' className='h-5 text-[10px] px-1.5'>
-                    <Container className='h-2.5 w-2.5 mr-0.5' /> Docker
-                  </Button>
-                </Link>
-              </div>
-            )}
           </>
         ) : undefined
       }
@@ -360,8 +346,6 @@ function StatsSubSection({ serverData }: { serverData: ServerData }) {
   const [stats, setStats] = useState<ServerStats | null>(null)
   const [loading, setLoading] = useState(false)
 
-  const s = slug(serverData.name)
-
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
@@ -392,23 +376,6 @@ function StatsSubSection({ serverData }: { serverData: ServerData }) {
         <Button variant='ghost' size='icon' className='h-5 w-5' onClick={refresh} disabled={loading}>
           <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
         </Button>
-        <Link to={`/terminal/${s}`}>
-          <Button variant='ghost' size='icon' className='h-5 w-5'>
-            <TerminalSquare className='h-3 w-3' />
-          </Button>
-        </Link>
-        <Link to={`/files/${s}`}>
-          <Button variant='ghost' size='icon' className='h-5 w-5'>
-            <FolderOpen className='h-3 w-3' />
-          </Button>
-        </Link>
-        {hasDocker(serverData.features) && (
-          <Link to={`/docker/containers/${s}`}>
-            <Button variant='ghost' size='icon' className='h-5 w-5'>
-              <Container className='h-3 w-3' />
-            </Button>
-          </Link>
-        )}
       </Flex>
       {loading && !stats ? (
         <Flex align='center' justify='center' className='py-2'>
