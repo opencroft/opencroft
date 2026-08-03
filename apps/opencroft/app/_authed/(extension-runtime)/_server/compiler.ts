@@ -683,18 +683,27 @@ export function buildExtension(extensionId: string, manifest: ExtensionManifest)
 function startBuild(extensionId: string, manifest: ExtensionManifest): Promise<BuildResult> {
   const running = buildExtensionNow(extensionId, manifest)
   inFlightBuilds.set(extensionId, { running, next: null })
-  running.finally(() => {
-    const slot = inFlightBuilds.get(extensionId)
-    // Only clear if nothing queued a follow-up while this build ran. If one
-    // was queued, its own `.then` (above) is about to call startBuild and
-    // overwrite this slot with the follow-up's own — clearing here first
-    // would open a gap where a caller arriving in between finds no slot at
-    // all and starts a redundant third build instead of joining the one
-    // already coalesced for it.
-    if (slot?.running === running && !slot.next) {
-      inFlightBuilds.delete(extensionId)
-    }
-  })
+  // `running` itself is returned below and handled by the caller. `.finally`
+  // derives a NEW promise that adopts running's rejection, and nothing here
+  // awaits or handles that derived one — left alone, a rejected build would
+  // be an unhandled rejection on a promise nobody but this cleanup ever
+  // touches, which Node turns into a crash. The `.catch` exists only to give
+  // that derived promise a handler; the real error still reaches the caller
+  // through `running`.
+  void running
+    .finally(() => {
+      const slot = inFlightBuilds.get(extensionId)
+      // Only clear if nothing queued a follow-up while this build ran. If one
+      // was queued, its own `.then` (above) is about to call startBuild and
+      // overwrite this slot with the follow-up's own — clearing here first
+      // would open a gap where a caller arriving in between finds no slot at
+      // all and starts a redundant third build instead of joining the one
+      // already coalesced for it.
+      if (slot?.running === running && !slot.next) {
+        inFlightBuilds.delete(extensionId)
+      }
+    })
+    .catch(() => {})
   return running
 }
 
