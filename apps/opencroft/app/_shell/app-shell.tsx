@@ -3,7 +3,15 @@
 import type { DashboardMeta } from '@opencroft/dashboards'
 import { DashboardsSidebarSection } from '@opencroft/dashboards/client'
 import { Link, useLocation } from '@tanstack/react-router'
-import { ChevronRight, MessageSquare, Network, PanelRightOpen, Puzzle, SettingsIcon } from 'lucide-react'
+import {
+  ChevronRight,
+  MessageSquare,
+  MessagesSquare,
+  Network,
+  PanelRightOpen,
+  Puzzle,
+  SettingsIcon,
+} from 'lucide-react'
 import { Suspense, useEffect, useState } from 'react'
 import { Button } from 'ui/button'
 import { ChatList } from 'ui/chat/chat-list'
@@ -27,15 +35,15 @@ import {
   SidebarTrigger,
 } from 'ui/sidebar'
 
-import { DevBuildBadge } from '@/app/_components/dev-build-badge'
 import { RenameDialog } from '@/app/_authed/(agent)/_components/chat-hosts'
 import { ChatTabsProvider, useChatTabs } from '@/app/_authed/(agent)/_lib/chat-tabs-context'
 import { useAgentSessions } from '@/app/_authed/(agent)/_lib/use-agent-sessions'
 import { useChatListNodes } from '@/app/_authed/(agent)/_lib/use-chat-list-nodes'
 import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
 import { stopProcessLocal } from '@/app/_authed/(agent)/_server/acp'
-import { SignOutItem } from '@/app/(auth)/_components/sign-out-item'
 import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
+import { DevBuildBadge } from '@/app/_components/dev-build-badge'
+import { SignOutItem } from '@/app/(auth)/_components/sign-out-item'
 import { cn } from '@/lib/utils'
 
 interface Props {
@@ -139,6 +147,26 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
           </SidebarMenu>
         </SidebarGroup>
         <DashboardsSidebarSection dashboards={pinnedDashboards} />
+        {/*
+          Group chats are their own section, separate from Chats — the product
+          owner's explicit shape, and they are not space-scoped the way the
+          Chats section is (a group chat belongs to its members, not to a
+          space), so this sits outside the `inSpace` block rather than inside
+          it. Routed rather than tab-based: a group chat is a place you
+          navigate to, not a session you dock.
+        */}
+        <SidebarGroup>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild tooltip='Group chats' isActive={pathname.startsWith('/group-chats')}>
+                <Link to='/group-chats'>
+                  <MessagesSquare />
+                  <span>Group chats</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
         {inSpace && (
           <SidebarGroup>
             <SidebarMenu>

@@ -204,8 +204,21 @@ export async function listThreadsInGroupChatView(
   }))
 }
 
-/** One thread, with its agent resolved. Refuses exactly as `getThread`. */
-export async function getThreadView(request: Request, threadId: string): Promise<GroupChatThreadEntry> {
+/**
+ * One thread, with its agent resolved and its session key.
+ *
+ * `sessionKey` is here and NOT on the list entries on purpose. Opening a
+ * thread's conversation needs it — it is the tab key the agent session was
+ * created under, so it is what reattaches to that same session — but a list
+ * of twenty threads has no use for twenty session keys, and a session key is
+ * bearer-equivalent inside the ACP layer (phase 1's note on `getThread`). Any
+ * member is entitled to it, so this is not a new exposure; it is simply not
+ * handed out where nothing reads it.
+ */
+export async function getThreadView(
+  request: Request,
+  threadId: string,
+): Promise<GroupChatThreadEntry & { sessionKey: string }> {
   const thread = await getThread(request, threadId)
   const agents = await agentsByNodeId()
   return {
@@ -214,5 +227,6 @@ export async function getThreadView(request: Request, threadId: string): Promise
     title: thread.title,
     agent: agents.get(thread.agentNodeId) ?? missingAgent(thread.agentNodeId),
     createdAt: thread.createdAt,
+    sessionKey: thread.sessionKey,
   }
 }

@@ -122,4 +122,7 @@ export const listGroupChatThreadsView = createServerFn({ method: 'GET', strict: 
 
 export const getGroupChatThreadView = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((threadId: string) => threadId)
-  .handler(async ({ data: threadId }): Promise<GroupChatThreadEntry> => getThreadView(getRequest(), threadId))
+  .handler(
+    async ({ data: threadId }): Promise<GroupChatThreadEntry & { sessionKey: string }> =>
+      getThreadView(getRequest(), threadId),
+  )

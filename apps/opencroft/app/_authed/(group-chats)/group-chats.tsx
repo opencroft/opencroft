@@ -1,0 +1,42 @@
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
+import { GroupChatList } from 'ui/group-chat/group-chat-list'
+import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
+
+import { GroupChatErrorState } from '@/app/_authed/(group-chats)/_components/group-chat-error'
+import { listMyGroupChatsView } from '@/app/_authed/(group-chats)/_server/actions'
+
+// The group-chat section index. Rendering only — the
+// list component comes from the design kit and is not reshaped here; the
+// loader hands it exactly the shape it declares.
+export const Route = createFileRoute('/_authed/(group-chats)/group-chats')({
+  loader: async () => ({ chats: await listMyGroupChatsView() }),
+  component: GroupChatsPage,
+  errorComponent: GroupChatErrorState,
+})
+
+function GroupChatsPage() {
+  const { chats } = Route.useLoaderData()
+  const navigate = useNavigate()
+
+  return (
+    <ScrollPage>
+      <ScrollContent className='p-4'>
+        <GroupChatList
+          chats={chats}
+          onSelect={(id) => navigate({ to: '/group-chats/$groupChatId', params: { groupChatId: id } })}
+          emptyState={
+            <Empty className='py-12'>
+              <EmptyHeader>
+                <EmptyTitle>No group chats yet</EmptyTitle>
+                <EmptyDescription>
+                  A group chat gathers a topic's threads, each one a conversation with an agent.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          }
+        />
+      </ScrollContent>
+    </ScrollPage>
+  )
+}
