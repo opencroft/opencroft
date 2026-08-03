@@ -1,4 +1,4 @@
-import host from '@ext/host'
+import host from '@opencroft/server'
 
 // ═══════════════════════════════════════════════════════════════════
 // Key Store

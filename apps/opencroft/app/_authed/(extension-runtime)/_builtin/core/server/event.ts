@@ -1,4 +1,4 @@
-import host from '@ext/host'
+import host from '@opencroft/server'
 
 export interface EventFireResult {
   status?: number
@@ -19,7 +19,7 @@ export async function fireEvent(eventNodeId: string, payload: unknown): Promise<
   try {
     const { primary } = await host.execContext.dispatch(eventNodeId, 'exec-out', event)
     await host.graph.updateNode(eventNodeId, { data: { lastRunAt: Date.now() } })
-    return primary
+    return primary as EventFireResult
   } catch (err) {
     // Cross the @ext/host boundary on name, not `instanceof` — extension code
     // and the core-app dispatcher that throws NoExecTargetError may not share
