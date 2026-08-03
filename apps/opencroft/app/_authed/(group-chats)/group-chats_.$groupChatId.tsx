@@ -4,7 +4,8 @@ import { GroupChatDetail } from 'ui/group-chat/group-chat-detail'
 import { GroupChatThreadList } from 'ui/group-chat/group-chat-thread-list'
 import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
 
-import { GroupChatErrorState } from '@/app/_authed/(group-chats)/_components/group-chat-error'
+import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
+import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
 import { getMyGroupChatView, listGroupChatThreadsView } from '@/app/_authed/(group-chats)/_server/actions'
 
 // Inside one group chat: its topic, who is taking part, and its threads.
@@ -14,22 +15,28 @@ import { getMyGroupChatView, listGroupChatThreadsView } from '@/app/_authed/(gro
 // `errorComponent` with copy that does not distinguish the two — see
 // `_lib/group-chat-error.ts` for why that matters.
 export const Route = createFileRoute('/_authed/(group-chats)/group-chats_/$groupChatId')({
-  loader: async ({ params }) => {
-    // Sequential rather than concurrent: if the membership check refuses, the
-    // second request is pointless, and firing both would mean two refusals to
-    // reconcile instead of one to report.
-    const chat = await getMyGroupChatView({ data: params.groupChatId })
-    const threads = await listGroupChatThreadsView({ data: params.groupChatId })
-    return { chat, threads }
-  },
+  loader: async ({ params }) =>
+    loadOrRefusal(async () => {
+      // Sequential rather than concurrent: if the membership check refuses, the
+      // second request is pointless, and firing both would mean two refusals to
+      // reconcile instead of one to report.
+      const chat = await getMyGroupChatView({ data: params.groupChatId })
+      const threads = await listGroupChatThreadsView({ data: params.groupChatId })
+      return { chat, threads }
+    }),
   component: GroupChatDetailPage,
   errorComponent: GroupChatErrorState,
 })
 
 function GroupChatDetailPage() {
-  const { chat, threads } = Route.useLoaderData()
+  const data = Route.useLoaderData()
   const { groupChatId } = Route.useParams()
   const navigate = useNavigate()
+
+  if (data.refused) {
+    return <GroupChatRefusal code={data.code} />
+  }
+  const { chat, threads } = data
 
   return (
     <ScrollPage>

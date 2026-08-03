@@ -17,6 +17,20 @@ import { and, eq } from 'drizzle-orm'
 import { ensureLocalSessionImpl, promptLocalImpl } from '@/app/_authed/(agent)/_server/acp-impl'
 import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { GroupChatAccessError } from '@/app/_authed/(group-chats)/_shared/access-error'
+
+// THE ONE MESSAGE every "you cannot have this" refusal carries.
+//
+// A non-member and a nonexistent id must be indistinguishable to the caller,
+// and that means indistinguishable ON THE WIRE — same code, same text — not
+// merely mapped to the same words by the screen. Testing caught the
+// earlier version failing exactly there: the copy matched, the response did
+// not, and the console showed which ids were real.
+//
+// Deliberately says nothing about existence or membership. Anything more
+// specific is the leak coming back; if a future refusal needs detail for an
+// operator, it belongs in a server-side log, never in what is returned.
+const UNAVAILABLE = 'Not available'
+
 import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 
 export type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
@@ -80,20 +94,21 @@ async function isAgentMember(groupChatId: string, agentNodeId: string): Promise<
  * THE CHECK. Every function below that touches a specific group chat's
  * content calls this first and uses nothing it has not returned.
  *
- * Refuses with `not-found` rather than `not-a-member` when the group chat
- * does not exist at all — indistinguishable from the outside (a non-member
- * gets the same refusal either way), and deliberately so: telling a
- * non-member "that id doesn't exist" vs "that id exists but you can't see
- * it" leaks which ids are real to someone who is not entitled to know.
+ * Refuses a nonexistent group chat and a caller who is not a member with the
+ * SAME code and the SAME message — see UNAVAILABLE above. Telling a
+ * non-member "that id doesn't exist" versus "that exists but you cannot see
+ * it" leaks which ids are real to someone not entitled to know, and doing it
+ * only on screen while the wire still distinguishes them is the bug found
+ * on phase 2.
  */
 async function requireGroupChatMember(request: Request, groupChatId: string): Promise<{ userId: string }> {
   const sessionUser = await requireSignedInUser(request)
   const [chat] = await db.select({ id: groupChat.id }).from(groupChat).where(eq(groupChat.id, groupChatId)).limit(1)
   if (!chat) {
-    throw new GroupChatAccessError('not-found', 'No such group chat')
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
   if (!(await isUserMember(groupChatId, sessionUser.id))) {
-    throw new GroupChatAccessError('not-a-member', 'You are not a member of this group chat')
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
   return { userId: sessionUser.id }
 }
@@ -168,7 +183,7 @@ export async function getGroupChat(request: Request, groupChatId: string): Promi
   // requireGroupChatMember already proved this row exists; a miss here would
   // mean it was deleted in the gap between the two queries.
   if (!row) {
-    throw new GroupChatAccessError('not-found', 'No such group chat')
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
   return row
 }
@@ -217,15 +232,16 @@ export async function getThread(request: Request, threadId: string): Promise<Gro
     .from(groupChatThread)
     .where(eq(groupChatThread.id, threadId))
     .limit(1)
-  // Same not-found/not-a-member indistinguishability as requireGroupChatMember,
-  // and for the same reason — reached directly here (rather than delegating)
-  // because the group chat id to check membership against is the row's own,
-  // not the caller's, so there is a row to find first.
+  // Same single refusal as requireGroupChatMember, for the same reason — and
+  // reached directly here rather than by delegating, because the group chat
+  // to check membership against is this row's own, so the row has to be found
+  // first. "Found it but you are not a member" and "no such thread" are the
+  // same answer to this caller.
   if (!row) {
-    throw new GroupChatAccessError('not-found', 'No such thread')
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
   if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
-    throw new GroupChatAccessError('not-a-member', 'You are not a member of this group chat')
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
   return row
 }
@@ -356,7 +372,7 @@ export async function startThread(
     .where(eq(groupChat.id, groupChatId))
     .limit(1)
   if (!chat) {
-    throw new GroupChatAccessError('not-found', 'No such group chat')
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
 
   const sessionKey = mintSessionKey(groupChatId, agentNodeId)
@@ -402,10 +418,10 @@ export async function sendMessageInThread(request: Request, threadId: string, te
     .where(eq(groupChatThread.id, threadId))
     .limit(1)
   if (!row) {
-    throw new GroupChatAccessError('not-found', 'No such thread')
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
   if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
-    throw new GroupChatAccessError('not-a-member', 'You are not a member of this group chat')
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
   const opened = await ensureLocalSessionImpl({
     agentNodeId: row.agentNodeId,

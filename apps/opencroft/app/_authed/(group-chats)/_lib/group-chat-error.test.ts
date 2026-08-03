@@ -29,7 +29,7 @@ async function overTheWire<T>(value: T): Promise<unknown> {
 }
 
 test('instanceof does NOT survive the RPC boundary — the whole reason this helper exists', async () => {
-  const thrown = new GroupChatAccessError('not-a-member', 'You are not a member of this group chat')
+  const thrown = new GroupChatAccessError('not-found', 'Not available')
   const received = await overTheWire(thrown)
 
   assert.equal(
@@ -41,7 +41,7 @@ test('instanceof does NOT survive the RPC boundary — the whole reason this hel
 })
 
 test('name and code do survive, and the helper reads them', async () => {
-  for (const code of ['unauthenticated', 'not-a-member', 'not-found', 'agent-not-a-member'] as const) {
+  for (const code of ['unauthenticated', 'not-found', 'agent-not-a-member'] as const) {
     const received = await overTheWire(new GroupChatAccessError(code, `message for ${code}`))
     assert.equal(groupChatAccessCode(received), code, `${code} must survive the round trip`)
     assert.equal(isGroupChatAccessError(received), true)
@@ -56,7 +56,7 @@ test('an unrelated error is not reported as an access refusal', async () => {
 })
 
 test('non-error values are handled rather than thrown on', () => {
-  for (const value of [null, undefined, 'not-a-member', 42, {}, { name: 'GroupChatAccessError' }]) {
+  for (const value of [null, undefined, 'not-found', 42, {}, { name: 'GroupChatAccessError' }]) {
     assert.equal(groupChatAccessCode(value), null)
   }
 })
@@ -65,30 +65,39 @@ test('non-error values are handled rather than thrown on', () => {
 // must not be reported with a wrong code — it falls through to null, and the
 // caller shows its generic message.
 test('an unrecognised code does not masquerade as a known one', async () => {
-  const rogue = new GroupChatAccessError('not-a-member', 'x')
+  const rogue = new GroupChatAccessError('not-found', 'x')
   ;(rogue as unknown as { code: string }).code = 'some-future-code'
   const received = await overTheWire(rogue)
   assert.equal(groupChatAccessCode(received), null)
 })
 
-// THE LEAK THAT WOULD MOVE FROM THE API TO THE SCREEN.
+// This file used to assert that two DIFFERENT codes mapped to the same copy,
+// and called that indistinguishability. It was not: the server was still
+// sending two codes and two messages, and a console capture read them
+// straight off the response. Matching copy cannot fix a distinguishable
+// response — it only hides it from the screen.
 //
-// The server refuses not-found and not-a-member identically so a non-member
-// cannot learn which ids are real. Different copy here would give that back.
-test('not-found and not-a-member read identically to the user', async () => {
-  const notFound = await overTheWire(new GroupChatAccessError('not-found', 'No such group chat'))
-  const notMember = await overTheWire(new GroupChatAccessError('not-a-member', 'You are not a member'))
-
-  const a = groupChatAccessMessage(notFound)
-  const b = groupChatAccessMessage(notMember)
-  assert.ok(a, 'not-found must have user-facing copy')
-  assert.equal(a, b, 'the two must be indistinguishable on screen, exactly as they are on the wire')
+// The real property now lives in model.test.ts, where two genuine refusals are
+// compared to each other. What belongs HERE is the client half: whatever the
+// server sends for "you cannot have this" must reach the user as one message
+// that says nothing about existence or membership.
+test('the refusal copy reveals neither existence nor membership', async () => {
+  const received = await overTheWire(new GroupChatAccessError('not-found', 'Not available'))
+  const shown = groupChatAccessMessage(received)
+  assert.ok(shown, 'a refusal must have user-facing copy')
+  for (const word of ['not a member', 'member', 'no such', "doesn't exist", 'does not exist']) {
+    assert.equal(
+      shown.toLowerCase().includes(word),
+      false,
+      `the copy must not say "${word}" — that is the distinction the collapse removes`,
+    )
+  }
 })
 
 test('the server message is not shown verbatim', async () => {
   // The server's own text is written for logs and may name things a
   // non-member should not be told. The helper returns its own copy.
-  const received = await overTheWire(new GroupChatAccessError('not-a-member', 'chat 7f3a is members-only'))
+  const received = await overTheWire(new GroupChatAccessError('not-found', 'chat 7f3a is members-only'))
   const shown = groupChatAccessMessage(received)
   assert.ok(shown)
   assert.equal(shown.includes('7f3a'), false, 'internal detail must not reach the screen')

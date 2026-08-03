@@ -91,6 +91,17 @@ function reqAnonymous(): Request {
   return new Request('http://localhost:9999/')
 }
 
+/** The refusal a call produces, so two of them can be compared field by field. */
+async function captureRefusal(run: () => Promise<unknown>): Promise<{ code: string; message: string }> {
+  try {
+    await run()
+  } catch (error) {
+    assert.ok(error instanceof model.GroupChatAccessError, 'expected a group-chat refusal')
+    return { code: error.code, message: error.message }
+  }
+  throw new Error('expected the call to be refused, but it resolved')
+}
+
 // ---------------------------------------------------------------------------
 // THE ACCESS RULE. This is the proof the access rule calls
 // for: a request that bypasses the UI entirely — no route, no component, a
@@ -132,7 +143,7 @@ test('a non-member is refused a thread directly, not just omitted from a list', 
     () => model.getThread(reqAs(outsider), thread.id),
     (error: unknown) => {
       assert.ok(error instanceof model.GroupChatAccessError, 'must be the access error, not some other failure')
-      assert.equal(error.code, 'not-a-member')
+      assert.equal(error.code, 'not-found')
       return true
     },
     'a non-member must be refused the thread directly, not shown an empty result',
@@ -154,19 +165,51 @@ test('a non-member is refused a thread directly, not just omitted from a list', 
   )
 })
 
-test('a not-found group chat and a not-a-member group chat refuse identically', async () => {
-  // Distinguishing the two from the outside would tell a non-member which
-  // ids are real. Both must be model.GroupChatAccessError with a code that
-  // does not leak existence — checked structurally rather than by message
-  // text, which is not a contract.
+// REGRESSION TEST for a defect found in testing.
+//
+// The version of this test that shipped asserted only that both cases threw a
+// GroupChatAccessError, and argued in its own comment that message text "is
+// not a contract". That was wrong twice over: the message is precisely what a
+// caller reads, and the two cases were in fact sending different codes AND
+// different messages (`No such group chat` vs `You are not a member of this
+// group chat`). The screen mapped both to the same words, which hid it from
+// the UI but not from anyone reading the response.
+//
+// So this now captures both refusals and compares them to EACH OTHER, field
+// by field. Comparing against a literal would drift; comparing the two is the
+// property itself.
+test('a nonexistent group chat and one the caller is not a member of are indistinguishable', async () => {
   const outsider = await makeUser('checker@example.test')
-
-  await assert.rejects(() => model.getGroupChat(reqAs(outsider), crypto.randomUUID()), model.GroupChatAccessError)
-
   const owner = await makeUser('owner2@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'a chat the checker is not in')
 
-  await assert.rejects(() => model.getGroupChat(reqAs(outsider), chat.id), model.GroupChatAccessError)
+  const fabricated = await captureRefusal(() => model.getGroupChat(reqAs(outsider), crypto.randomUUID()))
+  const real = await captureRefusal(() => model.getGroupChat(reqAs(outsider), chat.id))
+
+  assert.equal(fabricated.code, real.code, 'the codes must not tell the two apart')
+  assert.equal(fabricated.message, real.message, 'the messages must not tell the two apart either')
+  assert.equal(
+    real.message.includes('member'),
+    false,
+    'the refusal must not mention membership — that is what revealed the real id',
+  )
+
+  // Same property for threads, which have their own pair of refusal sites.
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: `group-chat:${chat.id}:agent-a:indistinguishable`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  const fakeThread = await captureRefusal(() => model.getThread(reqAs(outsider), crypto.randomUUID()))
+  const realThread = await captureRefusal(() => model.getThread(reqAs(outsider), thread.id))
+  assert.equal(fakeThread.code, realThread.code)
+  assert.equal(fakeThread.message, realThread.message)
 })
 
 test("one user's group chat does not appear in another's list", async () => {
@@ -237,7 +280,7 @@ test('a non-member calling addMember to add themselves is refused', async () => 
     () => model.addMember(reqAs(outsider), chat.id, { kind: 'user', userId: outsider.id }),
     (error: unknown) => {
       assert.ok(error instanceof model.GroupChatAccessError, 'must be the access error, not some other failure')
-      assert.equal(error.code, 'not-a-member')
+      assert.equal(error.code, 'not-found')
       return true
     },
     'a non-member must not be able to add themselves as a member',
@@ -277,7 +320,7 @@ test('a non-member calling sendMessageInThread is refused before any agent sessi
     () => model.sendMessageInThread(reqAs(outsider), thread.id, 'let me in'),
     (error: unknown) => {
       assert.ok(error instanceof model.GroupChatAccessError, 'must be the access error, not some other failure')
-      assert.equal(error.code, 'not-a-member')
+      assert.equal(error.code, 'not-found')
       return true
     },
     'a non-member must be refused before the call ever reaches the live agent session',

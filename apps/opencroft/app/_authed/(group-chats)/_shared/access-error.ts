@@ -15,12 +15,33 @@
 export type GroupChatAccessFailure =
   /** Not signed in, or signed in as nobody this system recognises. */
   | 'unauthenticated'
-  /** Signed in, but not a member of the group chat this request names. */
-  | 'not-a-member'
-  /** The request names a group chat, thread or agent that does not exist —
-   *  refused the same way as `not-a-member` (see the note on `getThread`). */
+  /**
+   * The request names a group chat or thread that this caller cannot have —
+   * because it does not exist, OR because they are not a member. **Those two
+   * are one code and one message on purpose, and there is no longer a
+   * `not-a-member` to tell them apart.**
+   *
+   * There used to be. The screen mapped both to identical copy, which looked
+   * like enough and was not: a browser console capture showed
+   * the raw refusal on the wire — `No such group chat` for a fabricated id,
+   * `You are not a member of this group chat` for a real one. Any client
+   * reading the response, rather than the screen, could tell which ids were
+   * real. The identical copy was masking a distinction that was still being
+   * transmitted.
+   *
+   * So the collapse is here, at the point the refusal is created, and the
+   * client-side mapping is belt-and-braces rather than the thing holding the
+   * property up. Emitting a distinguishable refusal for these two cases is a
+   * defect, not a style choice.
+   */
   | 'not-found'
-  /** The request names an agent that is not a member of the group chat. */
+  /**
+   * The request names an agent that is not a member of the group chat.
+   *
+   * Distinct on purpose and not part of the collapse above: reaching this
+   * requires already being a member of the group chat in question, so it
+   * cannot tell an outsider which ids are real.
+   */
   | 'agent-not-a-member'
 
 /**

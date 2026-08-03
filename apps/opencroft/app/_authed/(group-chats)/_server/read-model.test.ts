@@ -169,7 +169,7 @@ test('the view layer refuses a non-member exactly as the model does', async () =
     () => view.getGroupChatDetailView(reqAs(outsider), chat.id),
     (error: unknown) => {
       assert.ok(error instanceof model.GroupChatAccessError)
-      assert.equal(error.code, 'not-a-member')
+      assert.equal(error.code, 'not-found')
       return true
     },
     'the enriched detail must refuse a non-member, not leak the topic',
@@ -187,7 +187,7 @@ test('the view layer refuses a non-member exactly as the model does', async () =
     () => view.getThreadView(reqAs(outsider), thread.id),
     (error: unknown) => {
       assert.ok(error instanceof model.GroupChatAccessError)
-      assert.equal(error.code, 'not-a-member')
+      assert.equal(error.code, 'not-found')
       return true
     },
     'the enriched thread read must refuse a non-member',

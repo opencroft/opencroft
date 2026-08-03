@@ -19,7 +19,7 @@ import type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared
 
 export type { GroupChatAccessFailure }
 
-const FAILURES = ['unauthenticated', 'not-a-member', 'not-found', 'agent-not-a-member'] as const
+const FAILURES = ['unauthenticated', 'not-found', 'agent-not-a-member'] as const
 
 // Compile-time proof that the list above still matches the server's union. If
 // a fifth code is added to model.ts and not here, this stops compiling rather
@@ -55,16 +55,18 @@ export function isGroupChatAccessError(error: unknown): boolean {
   return groupChatAccessCode(error) !== null
 }
 
-// `not-found` and `not-a-member` MUST read identically.
+// One entry for "you cannot have this", because the server now sends one code
+// for it.
 //
-// The server refuses those two the same way on purpose: telling a non-member
-// "that id doesn't exist" versus "that exists but you can't see it" reveals
-// which ids are real to someone not entitled to know. Giving them different
-// copy here would hand back exactly what that care was protecting — the leak
-// would just have moved from the API to the screen.
+// This map used to carry `not-a-member` and `not-found` separately with
+// identical text, which read as sufficient and was not: the server was still
+// sending two different codes and two different messages, and a browser console
+// capture showed them. Matching copy on screen cannot make a distinguishable
+// response indistinguishable. The collapse belongs where the refusal is
+// created (see _shared/access-error.ts); this map is now the second line of
+// defence rather than the only one.
 const MESSAGES: Record<GroupChatAccessFailure, string> = {
   unauthenticated: 'Sign in to view group chats.',
-  'not-a-member': 'This group chat is not available.',
   'not-found': 'This group chat is not available.',
   'agent-not-a-member': 'That agent is not part of this group chat.',
 }
@@ -77,4 +79,15 @@ const MESSAGES: Record<GroupChatAccessFailure, string> = {
 export function groupChatAccessMessage(error: unknown): string | null {
   const code = groupChatAccessCode(error)
   return code ? MESSAGES[code] : null
+}
+
+/**
+ * The same copy, for a code a loader already resolved.
+ *
+ * Loaders catch a refusal and carry the CODE forward as ordinary data rather
+ * than rethrowing it (see the route files for why), so by render time there is
+ * no error object left to read — only the code.
+ */
+export function groupChatAccessMessageForCode(code: GroupChatAccessFailure): string {
+  return MESSAGES[code]
 }

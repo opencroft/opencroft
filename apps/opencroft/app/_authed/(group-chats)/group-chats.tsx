@@ -3,21 +3,28 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
 import { GroupChatList } from 'ui/group-chat/group-chat-list'
 import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
 
-import { GroupChatErrorState } from '@/app/_authed/(group-chats)/_components/group-chat-error'
+import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
+import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
 import { listMyGroupChatsView } from '@/app/_authed/(group-chats)/_server/actions'
 
 // The group-chat section index. Rendering only — the
 // list component comes from the design kit and is not reshaped here; the
 // loader hands it exactly the shape it declares.
 export const Route = createFileRoute('/_authed/(group-chats)/group-chats')({
-  loader: async () => ({ chats: await listMyGroupChatsView() }),
+  // A refusal comes back as data, not as a throw — see _lib/load-or-refusal.ts.
+  loader: async () => loadOrRefusal(async () => ({ chats: await listMyGroupChatsView() })),
   component: GroupChatsPage,
   errorComponent: GroupChatErrorState,
 })
 
 function GroupChatsPage() {
-  const { chats } = Route.useLoaderData()
+  const data = Route.useLoaderData()
   const navigate = useNavigate()
+
+  if (data.refused) {
+    return <GroupChatRefusal code={data.code} />
+  }
+  const { chats } = data
 
   return (
     <ScrollPage>

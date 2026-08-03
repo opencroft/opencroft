@@ -5,7 +5,9 @@ import { GroupChatThreadFraming } from 'ui/group-chat/group-chat-thread-framing'
 import { AgentChat } from '@/app/_authed/(agent)/_components/agent-chat'
 import type { LocalSource } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
-import { GroupChatErrorState } from '@/app/_authed/(group-chats)/_components/group-chat-error'
+import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
+import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
+import type { GroupChatDetailView, GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import { getGroupChatThreadView, getMyGroupChatView } from '@/app/_authed/(group-chats)/_server/actions'
 
 // Reading one thread inside a group chat.
@@ -14,30 +16,54 @@ import { getGroupChatThreadView, getMyGroupChatView } from '@/app/_authed/(group
 // agent session — phase 1 opened it through the same `ensureLocalSessionImpl`
 // a 1:1 chat uses, keyed on the thread's `sessionKey` — so this reattaches to
 // that session with the same hook and renders it with the same `AgentChat`
-// component the 1:1 chat renders. The kit's framing goes around it. Anything
-// else would be a fork of the chat surface, which is exactly what the design
-// kit being the source of truth is meant to prevent.
+// component the 1:1 chat renders. The kit's framing goes around it.
 //
 // Reading only, as phase 2 is scoped: `AgentChat` renders the conversation.
-// The composer is a separate component and arrives with phase 3, which is what
-// adds conversing.
+// The composer is a separate component and arrives with phase 3.
 export const Route = createFileRoute('/_authed/(group-chats)/group-chats_/$groupChatId_/$threadId')({
-  loader: async ({ params }) => {
-    const thread = await getGroupChatThreadView({ data: params.threadId })
-    // The framing shows the topic and who is taking part, which live on the
-    // group chat rather than the thread.
-    const chat = await getMyGroupChatView({ data: params.groupChatId })
-    return { thread, chat }
-  },
+  // Refusals come back as data rather than as a throw — see
+  // _lib/load-or-refusal.ts for the measurement behind that.
+  loader: async ({ params }) =>
+    loadOrRefusal(async () => {
+      const thread = await getGroupChatThreadView({ data: params.threadId })
+      // The framing shows the topic and who is taking part, which live on the
+      // group chat rather than the thread.
+      const chat = await getMyGroupChatView({ data: params.groupChatId })
+      return { thread, chat }
+    }),
   component: GroupChatThreadPage,
   errorComponent: GroupChatErrorState,
 })
 
 function GroupChatThreadPage() {
-  const { thread, chat } = Route.useLoaderData()
+  const data = Route.useLoaderData()
   const { groupChatId } = Route.useParams()
   const navigate = useNavigate()
 
+  if (data.refused) {
+    return <GroupChatRefusal code={data.code} />
+  }
+  // The session lives in its own component so its hooks are never behind the
+  // refusal branch above — a hook after an early return is a different hook
+  // order between renders, which React does not allow.
+  return (
+    <ThreadConversation
+      thread={data.thread}
+      chat={data.chat}
+      onBack={() => navigate({ to: '/group-chats/$groupChatId', params: { groupChatId } })}
+    />
+  )
+}
+
+function ThreadConversation({
+  thread,
+  chat,
+  onBack,
+}: {
+  thread: GroupChatThreadEntry & { sessionKey: string }
+  chat: GroupChatDetailView
+  onBack: () => void
+}) {
   // Memoised on the two values that identify the session, not rebuilt each
   // render: `useAcpSession` keys its effects on this object, so a fresh
   // identity every render would tear the session down and reopen it in a loop.
@@ -52,7 +78,7 @@ function GroupChatThreadPage() {
       groupChatTopic={chat.topic}
       threadTitle={thread.title}
       members={chat.members}
-      onBack={() => navigate({ to: '/group-chats/$groupChatId', params: { groupChatId } })}
+      onBack={onBack}
     >
       <AgentChat
         session={acp.session}
