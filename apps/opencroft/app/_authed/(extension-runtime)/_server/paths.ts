@@ -11,7 +11,7 @@ export function installedExtRoot(): string {
 }
 
 export function builtinExtRoot(): string {
-  return path.join(PROJECT_ROOT, 'app', '(extension-runtime)', '_builtin')
+  return path.join(PROJECT_ROOT, 'app', '_authed', '(extension-runtime)', '_builtin')
 }
 
 export function extDir(extensionId: string): string {
