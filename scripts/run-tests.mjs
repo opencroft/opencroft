@@ -7,10 +7,13 @@
 // Finds every *.test.ts(x) under the given roots (relative to cwd, default
 // ["src"]) and runs them through Node's test runner via tsx, one file at a
 // time. Serial, not parallel: some suites share the PGlite-per-datadir
-// pattern, and PGlite has no datadir lock -- two processes against the same
-// directory race on schema creation instead of failing loudly.
-import { existsSync, readdirSync, statSync } from 'node:fs'
+// pattern, and PGlite itself does not lock a datadir -- two processes against
+// the same directory corrupt it silently. packages/db now takes an advisory
+// lock and refuses the second opener, so that no longer passes unnoticed --
+// but a refusal is still a failed run, so these stay serial.
+
 import { spawnSync } from 'node:child_process'
+import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
 const roots = process.argv.slice(2)

@@ -34,6 +34,18 @@ works too, but then `DATABASE_URL`/`PGLITE_PATH` are yours to set
 correctly, and getting that wrong resets a password in the wrong database
 and looks like it succeeded.
 
+**On a PGlite-backed instance, stop the app first.** The command above runs
+inside the *running* container, and that open is now refused, with a message
+naming the process holding the database. The refusal is the point: before the
+datadir lock, the same command opened a second handle on a live datadir, read
+a stale copy of the database, and could discard the app's writes
+on close with everything appearing to have worked. Stop the app, run the
+script in an environment with the same `PGLITE_PATH` — the datadir lives on
+the instance's data volume — then start the app again. Instances backed by
+`DATABASE_URL` (the usual production setup) are unaffected: Postgres does
+its own locking, so `docker exec` against the live container stays correct
+there.
+
 This hashes the new password with the app's own password hasher (so the
 result is one the app can verify at sign-in — it does not reimplement
 hashing) and writes it directly to that account's credential row. It prints
