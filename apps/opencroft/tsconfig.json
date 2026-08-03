@@ -3,7 +3,8 @@
   "compilerOptions": {
     "paths": {
       "@/*": ["./*"]
-    }
+    },
+    "types": ["vite/client", "node", "dom-navigation"]
   },
   "include": ["**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules", "app/_authed/(extension-runtime)/_builtin/**", "data/extensions/**", "backup/**"]

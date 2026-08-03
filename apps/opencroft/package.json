@@ -28,9 +28,9 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@hookform/resolvers": "^5.2.2",
+    "@opencroft/auth": "*",
     "@opencroft/core": "*",
     "@opencroft/dashboards": "*",
-    "@opencroft/auth": "*",
     "@opencroft/db": "*",
     "@opencroft/db-backups": "*",
     "@opencroft/server": "*",
@@ -111,6 +111,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@tanstack/devtools-vite": "latest",
+    "@types/dom-navigation": "^1.0.7",
     "@types/node": "20.19.39",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19",
