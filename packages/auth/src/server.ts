@@ -128,10 +128,109 @@ export async function countUsers(): Promise<number> {
   return row?.value ?? 0
 }
 
+/**
+ * Why setup could not complete. Callers render their own copy from this — the
+ * messages on SetupError are for operators reading logs, and some of them name
+ * things (an address to delete by hand) that must not travel to whoever posted
+ * the form.
+ */
+export type SetupFailure =
+  /** An account already exists; setup is over. */
+  | 'already-completed'
+  /** The details were refused — e.g. the password is too weak for the policy. */
+  | 'rejected'
+  /** Anything else. The real cause is in the server log. */
+  | 'failed'
+
+export class SetupError extends Error {
+  constructor(
+    readonly code: SetupFailure,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'SetupError'
+  }
+}
+
 export interface CreateFirstAdminInput {
   name: string
   email: string
   password: string
+}
+
+// An arbitrary but fixed key identifying the setup critical section. Postgres
+// advisory locks are just an int64 agreed between callers; this one is only
+// ever taken here.
+const SETUP_ADVISORY_LOCK = '4872301996113004'
+
+// Serialises setup within this process. This is the half that does the real
+// work: both submissions of a form on one instance arrive at the same Node
+// process, and it is also the only mechanism available under the embedded
+// PGlite driver, which has a single connection and therefore cannot express a
+// lock one caller holds against another.
+let setupQueue: Promise<unknown> = Promise.resolve()
+
+interface PoolLike {
+  connect: () => Promise<{ query: (sql: string, values?: unknown[]) => Promise<unknown>; release: () => void }>
+}
+
+function poolOrNull(): PoolLike | null {
+  // `$client` is the driver handle drizzle wraps — a pg Pool for a remote
+  // Postgres, a PGlite instance for the embedded one. It is not on the shared
+  // `DB` type, which deliberately hides which driver is behind it, so this is
+  // the one place that looks.
+  const client = (db as { $client?: Partial<PoolLike> }).$client
+  return typeof client?.connect === 'function' ? (client as PoolLike) : null
+}
+
+/**
+ * Take the setup lock. Returns the release, which callers must run in a
+ * `finally` — a lock left held would make the instance permanently
+ * un-set-up-able, which is the failure this is meant to prevent.
+ */
+async function acquireSetupLock(): Promise<() => Promise<void>> {
+  let releaseLocal!: () => void
+  const mine = new Promise<void>((resolve) => {
+    releaseLocal = resolve
+  })
+  const ahead = setupQueue
+  setupQueue = ahead.then(() => mine)
+  await ahead
+
+  // Past this point `mine` is already in the queue, so EVERY exit has to
+  // resolve it. Anything that escapes without doing so leaves every later
+  // caller waiting on a promise that will never settle — setup bricked until
+  // the process restarts, which is the class of failure this whole function
+  // exists to prevent.
+  let connection: Awaited<ReturnType<PoolLike['connect']>> | null = null
+  try {
+    // Cross-process serialisation, for a remote Postgres shared by more than
+    // one app instance. Session-scoped, so it has to be taken and released on
+    // one pinned connection: released via the pool it could land on a
+    // different connection and free nothing. Absent under PGlite, where there
+    // is only ever one process anyway.
+    const pool = poolOrNull()
+    if (!pool) {
+      return async () => releaseLocal()
+    }
+    // Inside the try on purpose: a pool that cannot hand out a connection
+    // throws here, and that used to escape before anything released the queue.
+    connection = await pool.connect()
+    await connection.query('select pg_advisory_lock($1)', [SETUP_ADVISORY_LOCK])
+    const held = connection
+    return async () => {
+      try {
+        await held.query('select pg_advisory_unlock($1)', [SETUP_ADVISORY_LOCK])
+      } finally {
+        held.release()
+        releaseLocal()
+      }
+    }
+  } catch (error) {
+    connection?.release()
+    releaseLocal()
+    throw error
+  }
 }
 
 /**
@@ -140,13 +239,79 @@ export interface CreateFirstAdminInput {
  * Refuses once any account exists, so the route that calls it is safe to leave
  * reachable — the check is here rather than only in the caller, because this is
  * the thing that must not be re-runnable.
+ *
+ * Both hazards below end the same way: an instance nobody can administer, and
+ * no route left that would fix it. That is why this is careful out of
+ * proportion to how often it runs.
+ *
+ * 1. CHECK-AND-CREATE IS ONE CRITICAL SECTION. Two submissions arriving
+ *    together would both see an empty table and both create an account. A
+ *    session-level advisory lock serialises them, so the second waits and then
+ *    sees the first one's user. It is taken on a dedicated connection because
+ *    `pg_advisory_lock` is scoped to a session, and the pool would otherwise
+ *    hand the unlock to a different connection than the lock.
+ *
+ * 2. THE TWO WRITES MUST NOT PART COMPANY. If the account is created and the
+ *    role update then fails, an account exists, so setup refuses forever — and
+ *    it is not an admin. The account is removed before rethrowing, which
+ *    leaves the table empty and setup runnable, which is the only recoverable
+ *    state.
  */
 export async function createFirstAdmin(input: CreateFirstAdminInput): Promise<void> {
-  if ((await countUsers()) > 0) {
-    throw new Error('Setup has already been completed')
+  const unlock = await acquireSetupLock()
+  try {
+    if ((await countUsers()) > 0) {
+      throw new SetupError('already-completed', 'Setup has already been completed')
+    }
+
+    let created: { id: string }
+    try {
+      const signedUp = await ensureAuth().api.signUpEmail({ body: input })
+      created = signedUp.user
+    } catch (error) {
+      // Better Auth rejected the details themselves — a password below its
+      // policy, an address it will not accept. Nothing was created, so there
+      // is nothing to undo.
+      throw new SetupError('rejected', error instanceof Error ? error.message : 'Sign-up was refused')
+    }
+
+    // Both statements below address the row by the id sign-up returned, never
+    // by the address as it was typed. Better Auth may store a normalised form
+    // — lowercasing is usual — and then `Admin@Example.com` would match no row:
+    // the promotion would find nothing, the check below would throw, the
+    // rollback would delete nothing, and the instance would be left with an
+    // account that is not an administrator and setup refusing to run again.
+    // Addressing by id means the question of how the address was normalised
+    // never arises.
+    try {
+      const promoted = await db
+        .update(user)
+        .set({ role: 'admin' })
+        .where(eq(user.id, created.id))
+        .returning({ id: user.id })
+      // An update that matched nothing is as bad as one that threw: it leaves a
+      // non-admin account behind and setup refusing to run again.
+      if (promoted.length === 0) {
+        throw new SetupError('failed', 'The account was created but could not be made an administrator')
+      }
+    } catch (error) {
+      // Undo the account so the instance stays set-up-able. If this cleanup
+      // itself fails there is nothing further to try, so say plainly what is
+      // wrong and how to recover rather than surfacing the cleanup error.
+      try {
+        await db.delete(user).where(eq(user.id, created.id))
+      } catch {
+        throw new SetupError(
+          'failed',
+          'Setup failed after creating the account, and the account could not be removed. ' +
+            `Delete the user with id "${created.id}" from the database before running setup again.`,
+        )
+      }
+      throw error
+    }
+  } finally {
+    await unlock()
   }
-  await ensureAuth().api.signUpEmail({ body: input })
-  await db.update(user).set({ role: 'admin' }).where(eq(user.email, input.email))
 }
 
 /**

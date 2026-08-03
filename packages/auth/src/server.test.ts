@@ -46,6 +46,134 @@ test('the first account is created and is an administrator', async () => {
   assert.equal(rows[0].role, 'admin', 'the first account must be an admin, not a plain user')
 })
 
+// Both of the following end the same way if they regress: an instance with an
+// account but no administrator, and setup refusing to run again — nobody can
+// administer it and no route is left that would fix it.
+test('two concurrent setups on an EMPTY instance produce one account, not two', async () => {
+  const { db } = await import('@opencroft/db')
+  const { user } = await import('@opencroft/db/schema')
+  await db.delete(user)
+  assert.equal(await countUsers(), 0, 'the race only exists on an empty instance')
+
+  // Fired together with different addresses, which is the case a unique
+  // constraint on email would NOT catch: the hazard is both passing the
+  // "is it empty" check before either writes.
+  const outcomes = await Promise.allSettled([
+    createFirstAdmin({ name: 'Race A', email: 'race-a@example.test', password: 'a long enough passphrase' }),
+    createFirstAdmin({ name: 'Race B', email: 'race-b@example.test', password: 'a long enough passphrase' }),
+  ])
+
+  const created = outcomes.filter((outcome) => outcome.status === 'fulfilled')
+  const refused = outcomes.filter((outcome) => outcome.status === 'rejected')
+  assert.equal(created.length, 1, 'exactly one submission may win')
+  assert.equal(refused.length, 1, 'the other must be refused, not silently succeed')
+  assert.equal(await countUsers(), 1, 'two administrators is the failure this guards against')
+
+  const rows = await db.select().from(user)
+  assert.equal(rows[0].role, 'admin', 'the one that won must still be a real admin')
+
+  // Restore the state the remaining tests were written against.
+  await db.delete(user)
+  await createFirstAdmin(ADMIN)
+})
+
+test('a failed promotion removes the account, so setup stays runnable', async () => {
+  const { db } = await import('@opencroft/db')
+  const { user } = await import('@opencroft/db/schema')
+  await db.delete(user)
+  assert.equal(await countUsers(), 0, 'starting from an empty instance')
+
+  // Make the promotion fail the way a real one would — the update runs but
+  // matches nothing, which leaves an account behind that is not an admin.
+  const original = db.update
+  ;(db as { update: unknown }).update = ((table: unknown) => {
+    const builder = original.call(db, table as never)
+    return {
+      set: () => ({ where: () => ({ returning: async () => [] }) }),
+    } as unknown as typeof builder
+  }) as typeof db.update
+
+  try {
+    await assert.rejects(
+      createFirstAdmin({ name: 'Half', email: 'half@example.test', password: 'a long enough passphrase' }),
+      /could not be made an administrator/,
+    )
+  } finally {
+    ;(db as { update: unknown }).update = original
+  }
+
+  assert.equal(
+    await countUsers(),
+    0,
+    'the half-created account must be gone — otherwise setup refuses forever with no admin',
+  )
+
+  // And setup must genuinely still work afterwards. Re-creating the original
+  // admin rather than some other account also restores exactly the state the
+  // remaining tests were written against.
+  await createFirstAdmin(ADMIN)
+  const rows = await db.select().from(user)
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].email, ADMIN.email)
+  assert.equal(rows[0].role, 'admin')
+})
+
+// The address as typed is not necessarily the address as stored — lowercasing
+// on write is usual. Anything that matches on the typed form would find no row
+// here: the promotion would fail, the rollback would delete nothing, and the
+// instance would be left un-administerable with setup closed.
+test('a mixed-case address still yields an administrator', async () => {
+  const { db } = await import('@opencroft/db')
+  const { user } = await import('@opencroft/db/schema')
+  await db.delete(user)
+
+  await createFirstAdmin({
+    name: 'Mixed Case',
+    email: 'Admin@Example.COM',
+    password: 'a long enough passphrase',
+  })
+
+  const rows = await db.select().from(user)
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].role, 'admin', 'the account must be an admin regardless of how the address was cased')
+
+  await db.delete(user)
+  await createFirstAdmin(ADMIN)
+})
+
+test('setup stays usable when the database cannot hand out a connection', async () => {
+  const { db } = await import('@opencroft/db')
+  const client = (db as { $client?: { connect?: unknown } }).$client
+  assert.ok(client, 'the driver handle must be reachable for this test to mean anything')
+
+  // These tests run on the embedded driver, which takes no connection and so
+  // cannot fail this way on its own. Rather than skip — a silently skipped
+  // test is indistinguishable from a passing one — give it a `connect` that
+  // fails, which is exactly the pooled shape being guarded against.
+  const original = (client as { connect?: unknown }).connect
+  ;(client as { connect?: unknown }).connect = () => Promise.reject(new Error('pool exhausted'))
+  try {
+    await assert.rejects(
+      createFirstAdmin({ name: 'Nope', email: 'nope2@example.test', password: 'a long enough passphrase' }),
+      /pool exhausted/,
+    )
+  } finally {
+    if (original === undefined) {
+      delete (client as { connect?: unknown }).connect
+    } else {
+      ;(client as { connect?: unknown }).connect = original
+    }
+  }
+
+  // The point of the test: a failed acquisition must not leave the queue held,
+  // or every later attempt waits on a promise that never settles.
+  await assert.rejects(
+    createFirstAdmin({ name: 'After', email: 'after@example.test', password: 'a long enough passphrase' }),
+    /already been completed/,
+    'a later setup must still reach a real answer rather than hanging',
+  )
+})
+
 test('setup refuses to run a second time', async () => {
   await assert.rejects(
     createFirstAdmin({ name: 'Second', email: 'second@example.test', password: 'another long passphrase' }),
@@ -132,6 +260,40 @@ test('the refusal covers any endpoint under /sign-up, not just the one that exis
   assert.equal(isSignUpRequest(new Request('http://x/api/auth/sign-in/email')), false)
   assert.equal(isSignUpRequest(new Request('http://x/api/auth/get-session')), false)
   assert.equal(isSignUpRequest(new Request('http://x/api/auth/sign-out')), false)
+})
+
+// The setup endpoint is reachable by anyone before the first account exists,
+// so what it can be made to say matters. These pin the codes callers map on;
+// the messages themselves are operator-facing and must not be returned.
+test('failures carry a code to map on, not text to forward', async () => {
+  const { SetupError } = await import('./server')
+
+  const alreadyDone = await createFirstAdmin({
+    name: 'Nope',
+    email: 'nope@example.test',
+    password: 'a long enough passphrase',
+  }).then(
+    () => null,
+    (error: unknown) => error,
+  )
+  assert.ok(alreadyDone instanceof SetupError)
+  assert.equal(alreadyDone.code, 'already-completed')
+
+  // A password below the library's policy is a refusal of the details, not a
+  // broken instance — the difference the screen needs in order to say
+  // something useful.
+  const { db } = await import('@opencroft/db')
+  const { user } = await import('@opencroft/db/schema')
+  await db.delete(user)
+  const refused = await createFirstAdmin({ name: 'Short', email: 'short@example.test', password: 'x' }).then(
+    () => null,
+    (error: unknown) => error,
+  )
+  assert.ok(refused instanceof SetupError, 'a refused sign-up must be a SetupError, not a raw library error')
+  assert.equal(refused.code, 'rejected')
+  assert.equal(await countUsers(), 0, 'a refused sign-up must leave nothing behind')
+
+  await createFirstAdmin(ADMIN)
 })
 
 test('a request with no cookies has no user', async () => {
