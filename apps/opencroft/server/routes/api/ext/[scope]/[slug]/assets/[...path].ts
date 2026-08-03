@@ -5,6 +5,7 @@ import { defineEventHandler } from 'nitro/h3'
 
 import { requireSession } from '@/app/_server/require-session'
 import { extDir } from '@/app/_authed/(extension-runtime)/_server/paths'
+import { extRouteParams } from '@/app/_authed/(extension-runtime)/_server/route-params'
 
 const CONTENT_TYPES: Record<string, string> = {
   '.wasm': 'application/wasm',
@@ -22,7 +23,7 @@ const CONTENT_TYPES: Record<string, string> = {
 export default defineEventHandler(async (event) => {
   const denied = await requireSession(event.req)
   if (denied) return denied
-  const { scope, slug, path: splat } = event.context.params
+  const { scope, slug, path: splat } = extRouteParams(event)
   const segments = (splat ?? '').split('/').filter(Boolean)
   const extensionId = `${scope}/${slug}`
   const assetsRoot = path.join(extDir(extensionId), 'assets')
