@@ -1,7 +1,6 @@
 // Client entry for agent-chat: chat + configuration UI. Server wiring (runtime
 // registration, server functions, SSE handler) is exported from `agent-chat/server`.
 
-export { AgentChat, type AgentChatProps } from './agent-chat'
 export { AskUser, type AskUserProps, type AskUserQuestion } from './ask-user'
 export {
   ChainDot,
@@ -11,7 +10,6 @@ export {
   type ChainedProps,
 } from './chain'
 export { AgentChatInput, type AgentChatInputProps } from './chat-input'
-export { ChatView, type ChatViewProps } from './chat-view'
 export { ConfigOptionsBar, type ConfigOptionsBarProps } from './config-options-bar'
 export { markdownLinkComponents } from './markdown-link'
 export {
@@ -60,7 +58,6 @@ export {
   toolViewProps,
 } from './tool-views'
 export { TurnDetails, type TurnDetailsProps } from './turn-details'
-export { groupIntoTurnSections, type TurnSection } from './turn-sections'
 export {
   type AgentSessionController,
   type AgentUsage,
