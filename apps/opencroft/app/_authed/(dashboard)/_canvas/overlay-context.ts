@@ -144,14 +144,33 @@ function useManagedSlot(slot: Slot, nodes: OverlaySlotNodes | undefined, setSlot
  * sync while the calling component is mounted and clears them on unmount.
  */
 export function useOverlay(nodes?: OverlaySlotNodes): OverlayManager {
-  const manager = useContext(OverlayManagerContext)
+  const manager = useOptionalOverlay(nodes)
   if (!manager) {
     throw new Error('useOverlay must be used within an <OverlayProvider>')
   }
-  useManagedSlot('header', nodes, manager.slots.setSlot)
-  useManagedSlot('content', nodes, manager.slots.setSlot)
-  useManagedSlot('menu', nodes, manager.slots.setSlot)
-  useManagedSlot('bar', nodes, manager.slots.setSlot)
+  return manager
+}
+
+// Slot writes go nowhere when there is no overlay to write to. Module-level so
+// the reference is stable across renders, like a real setSlot.
+const discardSlot: OverlaySlots['setSlot'] = () => {}
+
+/**
+ * The overlay manager where one exists, `null` where it does not.
+ *
+ * For components that may render both inside the canvas overlay and on a
+ * standalone surface — a tool view in a chat transcript is the case that
+ * matters. `useOverlay` throwing there takes the whole route down, and the
+ * overlay is an enhancement rather than something they need to function, so
+ * its absence is reported as a value and the slots are simply discarded.
+ */
+export function useOptionalOverlay(nodes?: OverlaySlotNodes): OverlayManager | null {
+  const manager = useContext(OverlayManagerContext)
+  const setSlot = manager?.slots.setSlot ?? discardSlot
+  useManagedSlot('header', nodes, setSlot)
+  useManagedSlot('content', nodes, setSlot)
+  useManagedSlot('menu', nodes, setSlot)
+  useManagedSlot('bar', nodes, setSlot)
   return manager
 }
 
