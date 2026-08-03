@@ -16,43 +16,14 @@ import { and, eq } from 'drizzle-orm'
 
 import { ensureLocalSessionImpl, promptLocalImpl } from '@/app/_authed/(agent)/_server/acp-impl'
 import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
+import { GroupChatAccessError } from '@/app/_authed/(group-chats)/_shared/access-error'
 import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 
-export type GroupChatAccessFailure =
-  /** Not signed in, or signed in as nobody this system recognises. */
-  | 'unauthenticated'
-  /** Signed in, but not a member of the group chat this request names. */
-  | 'not-a-member'
-  /** The request names a group chat, thread or agent that does not exist —
-   *  refused the same way as `not-a-member` (see the note on `getThread`). */
-  | 'not-found'
-  /** The request names an agent that is not a member of the group chat. */
-  | 'agent-not-a-member'
-
-/**
- * PHASE 2 CONTRACT, verified against the actual wire format rather than
- * assumed: `createServerFn` sends a thrown error through seroval's
- * `toCrossJSONAsync` / `fromCrossJSON`, which reconstructs it as a plain
- * `Error` — a custom subclass is not in seroval's fixed constructor list, so
- * **`instanceof GroupChatAccessError` is false on the client even for one of
- * these.** `name` and every other own-enumerable property (so `code`) DO
- * survive, copied onto that plain `Error`. Confirmed by round-tripping an
- * instance through `toCrossJSONAsync`/`fromCrossJSON` directly.
- *
- * So: client code must branch on `error.name === 'GroupChatAccessError'` and
- * then read `.code` — never on `instanceof`. `model.test.ts`'s `instanceof`
- * checks are still correct as written; they call this module directly, never
- * crossing the RPC boundary this note describes.
- */
-export class GroupChatAccessError extends Error {
-  constructor(
-    readonly code: GroupChatAccessFailure,
-    message: string,
-  ) {
-    super(message)
-    this.name = 'GroupChatAccessError'
-  }
-}
+export type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
+// The refusal type lives in _shared/access-error.ts — dependency-free, so the
+// client can name it without importing this module's database tail. Re-exported
+// here so every existing server-side caller and `model.test.ts` are unchanged.
+export { GroupChatAccessError } from '@/app/_authed/(group-chats)/_shared/access-error'
 
 export interface GroupChatSummary {
   id: string

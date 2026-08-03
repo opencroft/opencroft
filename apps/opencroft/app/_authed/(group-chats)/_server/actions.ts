@@ -23,12 +23,35 @@ import {
   sendMessageInThread,
   startThread,
 } from '@/app/_authed/(group-chats)/_server/model'
+import type {
+  AgentRef,
+  GroupChatDetailView,
+  GroupChatListEntry,
+  GroupChatThreadEntry,
+  MemberRef,
+} from '@/app/_authed/(group-chats)/_server/read-model'
+import {
+  getGroupChatDetailView,
+  getThreadView,
+  listGroupChatsForUserView,
+  listThreadsInGroupChatView,
+} from '@/app/_authed/(group-chats)/_server/read-model'
 
 // So no client file ever has a reason to name model.ts directly — the same
 // pattern agents.ts just adopted for agents-impl.ts. These are erased at
 // build time and carry no runtime binding, so re-exporting them here is safe
 // even though model.ts's own runtime tail is not client-safe.
-export type { GroupChatSummary, GroupChatThreadSummary, MemberPrincipal, StartThreadResult }
+export type {
+  AgentRef,
+  GroupChatDetailView,
+  GroupChatListEntry,
+  GroupChatSummary,
+  GroupChatThreadEntry,
+  GroupChatThreadSummary,
+  MemberPrincipal,
+  MemberRef,
+  StartThreadResult,
+}
 
 export const listMyGroupChats = createServerFn({ method: 'GET', strict: { output: false } }).handler(
   async (): Promise<GroupChatSummary[]> => listGroupChatsForUser(getRequest()),
@@ -71,3 +94,32 @@ export const startGroupChatThread = createServerFn({ method: 'POST', strict: { o
 export const sendGroupChatThreadMessage = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { threadId: string; text: string }) => data)
   .handler(async ({ data }): Promise<void> => sendMessageInThread(getRequest(), data.threadId, data.text))
+
+// ── The reading surface's view model (phase 2) ───────────────────────────
+//
+// These sit ALONGSIDE the raw functions above rather than replacing them.
+// The raw shapes are phase 1's recorded contract and other callers (the
+// agent-side lookup, phase 3's writes) depend on them; the UI needs ids
+// resolved to names and avatars, which is a different concern and a heavier
+// query. Keeping both means neither surface pays for the other's needs.
+
+export const listMyGroupChatsView = createServerFn({ method: 'GET', strict: { output: false } }).handler(
+  async (): Promise<GroupChatListEntry[]> => listGroupChatsForUserView(getRequest()),
+)
+
+export const getMyGroupChatView = createServerFn({ method: 'GET', strict: { output: false } })
+  .inputValidator((groupChatId: string) => groupChatId)
+  .handler(
+    async ({ data: groupChatId }): Promise<GroupChatDetailView> => getGroupChatDetailView(getRequest(), groupChatId),
+  )
+
+export const listGroupChatThreadsView = createServerFn({ method: 'GET', strict: { output: false } })
+  .inputValidator((groupChatId: string) => groupChatId)
+  .handler(
+    async ({ data: groupChatId }): Promise<GroupChatThreadEntry[]> =>
+      listThreadsInGroupChatView(getRequest(), groupChatId),
+  )
+
+export const getGroupChatThreadView = createServerFn({ method: 'GET', strict: { output: false } })
+  .inputValidator((threadId: string) => threadId)
+  .handler(async ({ data: threadId }): Promise<GroupChatThreadEntry> => getThreadView(getRequest(), threadId))
