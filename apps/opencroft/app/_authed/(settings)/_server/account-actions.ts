@@ -1,13 +1,19 @@
 // Self-service account server functions: the signed-in person acting on
-// their own name, email and password. Admin-on-others actions live in
-// admin-users-actions.ts — a different design problem (see its header).
+// their own name, email, password and avatar. Admin-on-others actions live
+// in admin-users-actions.ts — a different design problem (see its header).
 //
 // EVERY export here must stay a `createServerFn`, for the same reason as
 // (auth)/_server/session.ts: this module pulls in the auth server and the
 // database connection, and only stays out of the browser bundle because the
 // client build replaces each server function with an RPC stub.
 
-import { changeOwnEmail, changeOwnPassword, getOwnAccount, updateOwnProfile } from '@opencroft/auth/server'
+import {
+  changeOwnEmail,
+  changeOwnPassword,
+  getOwnAccount,
+  updateOwnAvatar,
+  updateOwnProfile,
+} from '@opencroft/auth/server'
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 
@@ -32,6 +38,13 @@ export const changeEmail = createServerFn({ method: 'POST', strict: { output: fa
   .inputValidator((newEmail: string) => newEmail)
   .handler(async ({ data: newEmail }): Promise<void> => {
     await changeOwnEmail(getRequest(), newEmail)
+  })
+
+/** Set the avatar, or clear it with `null`. Stored on `user.image`. */
+export const updateAvatar = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((image: string | null) => image)
+  .handler(async ({ data: image }): Promise<void> => {
+    await updateOwnAvatar(getRequest(), image)
   })
 
 export const changePassword = createServerFn({ method: 'POST', strict: { output: false } })

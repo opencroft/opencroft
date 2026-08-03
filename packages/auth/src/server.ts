@@ -665,6 +665,41 @@ export async function updateOwnProfile(request: Request, name: string): Promise<
   await ensureAuth().api.updateUser({ body: { name }, headers: request.headers })
 }
 
+// An avatar is stored as a data URL in `user.image`, the same shape an agent
+// node stores its own avatar in — no upload endpoint and no object store, a
+// string in a column.
+//
+// The caller downscales before sending, but that is presentation: a server
+// function is a callable endpoint regardless of which screen calls it, so the
+// only bound that actually holds is this one. It matters more here than for an
+// agent node because these rows are read back as a LIST — the administrator's
+// user list carries every avatar at once, so one oversized row is paid for on
+// every load of that page by everyone.
+//
+// Measured in characters rather than bytes: base64 is one character per byte
+// to within a rounding error, and the point is a ceiling, not an audit.
+const MAX_AVATAR_CHARS = 64 * 1024
+const AVATAR_DATA_URL = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/
+
+/**
+ * Set or clear the signed-in person's own avatar. `null` clears it.
+ *
+ * Refuses anything that is not a small, self-contained image data URL —
+ * notably an `http(s)` URL, which would turn every render of this person into
+ * a request to somewhere else chosen by them.
+ */
+export async function updateOwnAvatar(request: Request, image: string | null): Promise<void> {
+  if (image !== null) {
+    if (!AVATAR_DATA_URL.test(image)) {
+      throw new Error('An avatar must be a PNG, JPEG or WebP image.')
+    }
+    if (image.length > MAX_AVATAR_CHARS) {
+      throw new Error('That image is too large to store. Choose a smaller one.')
+    }
+  }
+  await ensureAuth().api.updateUser({ body: { image }, headers: request.headers })
+}
+
 /**
  * Change the signed-in person's own email. Applied immediately rather than
  * through a confirmation link — this instance has no email delivery to send

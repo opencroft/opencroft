@@ -1,11 +1,11 @@
 import { listPinnedDashboards } from '@opencroft/dashboards/server'
 import { createFileRoute, Outlet, redirect } from '@tanstack/react-router'
 
-import { AppShell } from '@/app/_shell/app-shell'
-import { getAuthState } from '@/app/(auth)/_server/session'
 import { listDashboards } from '@/app/_authed/(dashboards)/_server/actions'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 import { SSEProvider } from '@/app/_authed/(sse)/_components/sse-provider'
+import { AppShell } from '@/app/_shell/app-shell'
+import { getAuthState } from '@/app/(auth)/_server/session'
 
 // Path prefixes reachable only by an administrator. Checked here rather than
 // per-route so a route added under one of these prefixes later is guarded by
@@ -14,7 +14,12 @@ import { SSEProvider } from '@/app/_authed/(sse)/_components/sse-provider'
 // which page links to it, so every admin-only server function checks
 // `requireAdminUser` (packages/auth/server.ts) independently. Losing this list
 // would show the wrong page; losing that check would let the action through.
-const ADMIN_ONLY_PREFIXES = ['/settings/users', '/settings/tokens']
+//
+// `/settings/tokens` was here until token management moved into the Account
+// screen. No such route exists any more, so the entry guarded
+// nothing — and a guard covering a route that does not exist quietly reads as
+// protection that is actually absent.
+const ADMIN_ONLY_PREFIXES = ['/settings/users']
 
 export const Route = createFileRoute('/_authed')({
   // The page-navigation gate. See __root.tsx for what this does NOT cover —
@@ -42,6 +47,13 @@ export const Route = createFileRoute('/_authed')({
     if (!isAdmin && ADMIN_ONLY_PREFIXES.some((prefix) => location.pathname.startsWith(prefix))) {
       throw redirect({ to: '/settings' })
     }
+    // Handed down as route context so anything that shows or hides an
+    // administrator-only affordance reads the SAME fact this redirect just
+    // acted on, rather than asking again and risking a second answer. A menu
+    // entry whose visibility drifted from the redirect would be an entry that
+    // bounces whoever clicks it — worse than no entry at all. One call, one
+    // truth, both consumers.
+    return { isAdmin }
   },
   loader: async () => {
     const [spaces, dashboards, pinnedDashboardSlugs] = await Promise.all([
