@@ -1,29 +1,20 @@
 import type { ChatEvent } from 'agent-client/types'
-import type { UserText } from 'ui/agent-chat/chat-turn'
+import type { Block } from 'ui/agent-chat/chat-conversation'
+import type { DetailItem, UserText } from 'ui/agent-chat/chat-turn'
 
 import type { ChatMessage } from '@/app/(agent)/_lib/messages'
 
-export type DetailItem =
-  | { kind: 'assistant-text'; text: string }
-  | { kind: 'thinking'; text: string }
-  | { kind: 'tool'; id: string; name: string; args: unknown; result?: { text: string; isError?: boolean } }
-
-// `id` is the React key, and it has to name the same block before and after a
-// "load older" prepend — otherwise React rewrites DOM across the visible range
-// and the scroll restore loses the element it measures against.
-//
-// A user block is named by its own message. A details block is named by the
-// TURN it belongs to, not by whichever message happens to be first in the
-// loaded slice: pages can land mid-turn, and consecutive agent messages fold
-// into one block, so a page merging into the block above would otherwise rename
-// it on every fetch. Naming it by the turn was always the honest identity — a
-// details block *is* one turn's replies — and it only looked stable before
-// because every page began at a turn boundary.
-//
-// The two namespaces are prefixed because a turn's identity is its own user
-// message's id, so the bare numbers would collide between the two kinds.
-export type Block = { id: string; kind: 'user'; text: UserText } | { id: string; kind: 'details'; items: DetailItem[] }
-
+// Re-exported rather than redeclared, same reasoning as `UserText` below: the
+// component that renders these is what defines their shape, so there is
+// exactly one definition. A second one here would drift the moment either
+// side changed independently — the app's copy briefly had an id on every
+// entry and a narrower tool result, which passed here and would only have
+// failed at the component boundary, in a different file, on a different day.
+// Re-exported rather than redeclared, same reasoning: `id` is the React key,
+// and it has to name the same block before and after a "load older" prepend,
+// which is a constraint owned by whichever component actually renders these —
+// see the type's own definition for why a user block and a details block are
+// named differently.
 // A user message's own words, with everything the app added on the way to the
 // agent removed. Branded so it cannot be produced by writing a string: anything
 // that renders a user message asks for this type, so the only way to get one is
@@ -38,7 +29,7 @@ export type Block = { id: string; kind: 'user'; text: UserText } | { id: string;
 // that demands it, so there is exactly one of it: two structurally different
 // brands for the same idea would each be unforgeable and mutually unassignable,
 // which is a cast at the boundary and the guarantee gone.
-export type { UserText }
+export type { Block, DetailItem, UserText }
 
 function stripOpencroftTags(text: string): string {
   return text.replace(/<opencroft-[a-z0-9-]+>[\s\S]*?<\/opencroft-[a-z0-9-]+>\s*/gi, '')

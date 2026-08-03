@@ -102,6 +102,17 @@ function Markdown({ text }: { text: string }) {
   )
 }
 
+// The one way older history is loaded. A click cannot fire at the wrong moment
+// or fail to fire at all, which is what four rebuilds of an automatic trigger
+// could not be made to guarantee.
+//
+// It is also where the guards that trigger needed now live, as states rather
+// than as code: absent once the host says there is nothing left, disabled while
+// a fetch is in flight. Same guarantees, nothing to remember to check.
+//
+// Rendered in the transcript's own flow rather than pinned above it, so on a
+// conversation too short to scroll it sits with the content instead of at the
+// top of an empty scroll area.
 export function ChatLoadOlderButton({ loading, onLoadOlder }: { loading: boolean; onLoadOlder: () => void }) {
   return (
     <Flex row justify='center' className='w-full py-1'>
