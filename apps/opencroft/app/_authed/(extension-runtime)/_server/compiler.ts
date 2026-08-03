@@ -468,6 +468,10 @@ async function compileSide(
       // which gives a linked map no base URL to resolve against, so an external
       // one would just lose stack traces for no saving.
       sourcemap: side === 'client' ? true : 'inline',
+      // Client bundles cross the network to every browser that opens a space.
+      // Server bundles are evaluated in-process from disk, where readable
+      // stack traces are worth more than the bytes minification saves.
+      minify: side === 'client',
       jsx: 'automatic',
       plugins: [hostVirtualPlugin(side, extensionId)],
       external: serverExternals,
