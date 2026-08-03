@@ -1,6 +1,6 @@
 import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
 
-import { authSchema } from './auth-schema'
+import { authSchema, user } from './auth-schema'
 
 // Timestamps are real Postgres `timestamptz` columns surfacing JS `Date`
 // objects, matching what the app expects (it calls `.toISOString()` /
@@ -73,31 +73,60 @@ export const mcpAuditLog = pgTable(
   ],
 )
 
-// Machine credentials for the HTTP MCP surface. Humans get cookie sessions;
-// agents and external MCP clients get one of these instead.
+// Bearer credentials for the API surfaces. Humans also get cookie sessions;
+// this is the credential for everything a cookie cannot reach — agents,
+// external MCP clients, and now a signed-in person's own personal tokens.
 //
 // Only the hash is stored. We only ever look up by a presented value, so there
 // is no reason to be able to read a token back — and a table we cannot read
 // back is one that leaks nothing if it is dumped.
 //
-// Several live tokens per agent is deliberate. With a single credential,
-// rotation means a window where the old token is dead and the new one is not
-// yet configured — downtime on the dispatch path to do routine hygiene. Many
-// live tokens make rotation issue → reconfigure → revoke, with no gap.
+// ONE TABLE, TWO KINDS OF PRINCIPAL, DISCRIMINATED BY `subjectType` — not two
+// mechanisms. Two code paths answering "is this bearer valid" is how one of
+// them gets a bug the other's tests do not catch.
+//
+//   'user'   userId is set (references user.id, cascades on delete), agentName
+//            is null. Created by someone who is signed in; dies with the
+//            account. Personal tokens require an expiry (enforced app-side,
+//            not here) — a forgotten one in shell history should stop working
+//            on its own.
+//
+//   'agent'  agentName is set, userId is null. Has to be mintable WITHOUT a
+//            session: on a fail-closed deployment there is no session until
+//            BETTER_AUTH_SECRET is provisioned and setup is done, so if agent
+//            credentials were personal tokens, issuing the first one would
+//            need the auth the token exists to bootstrap. No expiry by
+//            default — an unattended credential expiring on a date nobody
+//            remembers takes out dispatch; rotation is the answer instead.
+//
+// Several live tokens per subject is deliberate either way. With a single
+// credential, rotation means a window where the old token is dead and the new
+// one is not yet configured. Many live tokens make rotation
+// issue → reconfigure → revoke, with no gap.
 export const apiToken = pgTable(
   'ApiToken',
   {
     id: text().primaryKey().notNull().$defaultFn(uuid),
-    agent: text().notNull(),
-    // Free text, to tell one of an agent's live tokens from another when
-    // revoking — "laptop", "rotation-2026-08". Never a secret.
-    label: text().default('').notNull(),
+    // 'user' | 'agent' — see the table comment. Not an enum: this is an
+    // application-level discriminant, and Postgres enums are painful to widen
+    // later if a third kind ever shows up.
+    subjectType: text().notNull(),
+    userId: text().references(() => user.id, { onDelete: 'cascade' }),
+    agentName: text(),
+    // Free text set by whoever creates the token, to tell one of theirs from
+    // another when revoking — "laptop", "rotation-2026-08". Never a secret.
+    name: text().default('').notNull(),
     tokenHash: text().notNull(),
     createdAt: createdAt(),
     lastUsedAt: timestamp({ withTimezone: true, mode: 'date' }),
     revokedAt: timestamp({ withTimezone: true, mode: 'date' }),
+    expiresAt: timestamp({ withTimezone: true, mode: 'date' }),
   },
-  (t) => [uniqueIndex('ApiToken_tokenHash_key').on(t.tokenHash), index('ApiToken_agent_idx').on(t.agent)],
+  (t) => [
+    uniqueIndex('ApiToken_tokenHash_key').on(t.tokenHash),
+    index('ApiToken_agentName_idx').on(t.agentName),
+    index('ApiToken_userId_idx').on(t.userId),
+  ],
 )
 
 // DISTINCT (caller, method, tool) COMBINATIONS SEEN ON THE HTTP MCP SURFACE,

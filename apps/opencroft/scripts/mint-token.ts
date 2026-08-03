@@ -46,7 +46,7 @@ import path from 'node:path'
 // import itself had just created.
 import { openDb } from '@opencroft/db/connect'
 import { apiToken } from '@opencroft/db/schema'
-import { desc, eq, isNull } from 'drizzle-orm'
+import { and, desc, eq, isNull } from 'drizzle-orm'
 
 // Deliberately NOT from caller.ts: that imports `@opencroft/db`, whose index
 // opens the database at module load, and this script opens it itself. Two
@@ -121,13 +121,17 @@ const { db, close } = await (async () => {
 
 try {
   if (has('list')) {
-    const rows = await db.select().from(apiToken).where(isNull(apiToken.revokedAt)).orderBy(desc(apiToken.createdAt))
+    const rows = await db
+      .select()
+      .from(apiToken)
+      .where(and(eq(apiToken.subjectType, 'agent'), isNull(apiToken.revokedAt)))
+      .orderBy(desc(apiToken.createdAt))
     if (rows.length === 0) {
-      console.log('No live tokens.')
+      console.log('No live agent tokens.')
     }
     for (const r of rows) {
       const used = r.lastUsedAt ? r.lastUsedAt.toISOString() : 'never'
-      console.log(`${r.id}  ${r.agent.padEnd(16)} ${(r.label || '-').padEnd(20)} last used: ${used}`)
+      console.log(`${r.id}  ${(r.agentName ?? '').padEnd(16)} ${(r.name || '-').padEnd(20)} last used: ${used}`)
     }
   } else if (has('revoke')) {
     const id = arg('revoke')
@@ -139,12 +143,12 @@ try {
       .update(apiToken)
       .set({ revokedAt: new Date() })
       .where(eq(apiToken.id, id))
-      .returning({ id: apiToken.id, agent: apiToken.agent })
+      .returning({ id: apiToken.id, agentName: apiToken.agentName })
     if (!row) {
       console.error(`No token with id ${id}`)
       process.exit(1)
     }
-    console.log(`Revoked ${row.id} (${row.agent}). It stops working immediately — no restart needed.`)
+    console.log(`Revoked ${row.id} (${row.agentName}). It stops working immediately — no restart needed.`)
   } else {
     const agent = arg('agent')
     if (!agent) {
@@ -156,7 +160,7 @@ try {
     const token = `oc_${randomBytes(32).toString('base64url')}`
     const [row] = await db
       .insert(apiToken)
-      .values({ agent, label: arg('label') ?? '', tokenHash: hashToken(token) })
+      .values({ subjectType: 'agent', agentName: agent, name: arg('label') ?? '', tokenHash: hashToken(token) })
       .returning({ id: apiToken.id })
 
     console.log('')

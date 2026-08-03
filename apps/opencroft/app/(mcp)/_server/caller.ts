@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 
 import { apiToken, db, mcpCaller } from '@opencroft/db'
-import { and, eq, isNull, sql } from 'drizzle-orm'
+import { and, eq, isNull, or, sql } from 'drizzle-orm'
 
 import { mcpAuthMode } from '@/app/(mcp)/_server/mcp-auth-mode'
 import { hashToken } from '@/app/(mcp)/_server/token-hash'
@@ -76,17 +76,33 @@ async function lookup(presented: string): Promise<Caller> {
   // Look up by hash rather than scanning: the unique index does the work, and
   // the comparison below is belt-and-braces against a future change that makes
   // this a scan.
+  //
+  // Expiry is enforced HERE, alongside revokedAt, not by a background sweep —
+  // a personal token past its expiresAt must stop working the instant it is
+  // presented, not whenever a cleanup job next runs.
   const rows = await db
-    .select({ id: apiToken.id, agent: apiToken.agent, tokenHash: apiToken.tokenHash })
+    .select({
+      id: apiToken.id,
+      subjectType: apiToken.subjectType,
+      agentName: apiToken.agentName,
+      tokenHash: apiToken.tokenHash,
+    })
     .from(apiToken)
-    .where(and(eq(apiToken.tokenHash, presentedHash), isNull(apiToken.revokedAt)))
+    .where(
+      and(
+        eq(apiToken.tokenHash, presentedHash),
+        isNull(apiToken.revokedAt),
+        or(isNull(apiToken.expiresAt), sql`${apiToken.expiresAt} > now()`),
+      ),
+    )
     .limit(1)
 
   const row = rows[0]
   if (!row) {
     // Presented something, and it does not resolve. Deliberately not the same
     // as presenting nothing — this is a client that WAS configured and is now
-    // wrong (revoked, rotated, typo), which needs a person, not a rollout.
+    // wrong (revoked, rotated, expired, typo), which needs a person, not a
+    // rollout.
     return { credential: 'unknown', agent: null, tokenId: null }
   }
 
@@ -98,7 +114,12 @@ async function lookup(presented: string): Promise<Caller> {
     return { credential: 'unknown', agent: null, tokenId: null }
   }
 
-  return { credential: 'present', agent: row.agent, tokenId: row.id }
+  // `agent` here is specifically the agentName — a personal ('user') token
+  // resolves with agent: null. Stage A's observation exists to characterise
+  // /api/mcp's HTTP callers, which today are agents; a person's own token
+  // authenticating here is out of that scope and untested by this pass. Not
+  // silently papered over: recorded honestly rather than invented a label.
+  return { credential: 'present', agent: row.agentName, tokenId: row.id }
 }
 
 function fingerprintOf(parts: (string | null)[]): string {

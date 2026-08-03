@@ -36,7 +36,7 @@ function req(headers: Record<string, string> = {}): Request {
 async function mint(agent: string, token: string): Promise<string> {
   const [row] = await db
     .insert(apiToken)
-    .values({ agent, tokenHash: hashToken(token) })
+    .values({ subjectType: 'agent', agentName: agent, tokenHash: hashToken(token) })
     .returning({ id: apiToken.id })
   return row.id
 }
