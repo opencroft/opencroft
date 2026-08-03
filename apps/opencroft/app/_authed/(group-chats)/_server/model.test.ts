@@ -54,6 +54,7 @@ await db.insert(space).values({
     nodes: [
       { id: 'agent-a', type: 'agent', data: { name: 'Agent A' } },
       { id: 'agent-b', type: 'agent', data: { name: 'Agent B' } },
+      { id: 'agent-solo', type: 'agent', data: { name: 'Agent Solo' } },
     ],
     edges: [],
   }),
@@ -313,5 +314,39 @@ test('membership visibility holds in both directions for agents', async () => {
     agentIds.includes('agent-outsider'),
     false,
     'an agent never added must not appear as a member of this group chat',
+  )
+})
+
+// ---------------------------------------------------------------------------
+// listGroupChatsForAgent — a name-based lookup, not an authorization check
+// (a deliberate design choice). Agent names
+// are taken to be unique, also a deliberate choice — no collision
+// case to test here. `agent-solo` is the node seeded at the top of this file.
+// ---------------------------------------------------------------------------
+
+test('listGroupChatsForAgent returns exactly the group chats that agent is a member of', async () => {
+  const owner = await makeUser('agentlookup-owner@example.test')
+  const inChat = await model.createGroupChat(reqAs(owner), 'agent-solo is in this one')
+  const notInChat = await model.createGroupChat(reqAs(owner), 'agent-solo is not in this one')
+  await model.addMember(reqAs(owner), inChat.id, { kind: 'agent', agentNodeId: 'agent-solo' })
+
+  const chats = await model.listGroupChatsForAgent('Agent Solo')
+  const chatIds = chats.map((c) => c.id)
+  assert.ok(chatIds.includes(inChat.id), 'must include a group chat the named agent is a member of')
+  assert.equal(
+    chatIds.includes(notInChat.id),
+    false,
+    'must not include a group chat the named agent was never added to',
+  )
+})
+
+test('listGroupChatsForAgent refuses an unknown name as an ordinary not-found', async () => {
+  await assert.rejects(
+    () => model.listGroupChatsForAgent('No Such Agent'),
+    (error: unknown) => {
+      assert.ok(error instanceof model.GroupChatAccessError, 'must be the access error, not some other failure')
+      assert.equal(error.code, 'not-found')
+      return true
+    },
   )
 })

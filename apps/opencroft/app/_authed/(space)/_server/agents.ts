@@ -24,4 +24,10 @@ export type {
   AgentNodeRef,
 } from '@/app/_authed/(space)/_server/agents-impl'
 
-export const listAgentNodes = createServerFn().handler(listAgentNodesImpl)
+// The handler must be an arrow function, not the point-free `.handler(listAgentNodesImpl)`.
+// `vite build` tree-shakes the unreferenced `agents-impl` import away either
+// way, but `vite dev`'s per-module transform does not — point-free left a
+// bare `import "...agents-impl.ts"` in the client-served module, which pulls
+// in @opencroft/db's `node:path` import and breaks the browser at runtime.
+// Confirmed by diffing the dev server's transformed output for both forms.
+export const listAgentNodes = createServerFn().handler(async () => listAgentNodesImpl())

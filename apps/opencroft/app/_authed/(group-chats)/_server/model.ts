@@ -144,6 +144,43 @@ export async function listGroupChatsForUser(request: Request): Promise<GroupChat
     .where(eq(groupChatMember.userId, sessionUser.id))
 }
 
+/**
+ * The group chats a given agent is a member of, resolved by NAME rather than
+ * a checked identity.
+ *
+ * THIS IS A LOOKUP, NOT AN AUTHORIZATION CHECK — an explicit product
+ * decision, not an oversight (the reason: an
+ * agent's tool call carries no server-verifiable identity today, and
+ * threading one through `agent-client` was decided against). The server
+ * takes the caller's stated name at face value and returns whichever agent
+ * node that name resolves to's memberships. Nothing user-facing may rely on
+ * this to keep anything private — any caller that can say a name gets that
+ * agent's group chat list, whether or not it truly is that agent.
+ *
+ * Agent names are taken to be unique — also a deliberate decision,
+ * not an assumption made here. This resolves the first match and does not
+ * detect or refuse a collision; a name matching nothing is an ordinary
+ * `not-found`, the same code every other lookup in this file uses.
+ */
+export async function listGroupChatsForAgent(agentName: string): Promise<GroupChatSummary[]> {
+  const trimmed = agentName.trim()
+  const nodes = await listAgentNodesImpl()
+  const match = nodes.find((n) => n.name === trimmed)
+  if (!match) {
+    throw new GroupChatAccessError('not-found', `No agent named "${trimmed}" was found`)
+  }
+  return db
+    .select({
+      id: groupChat.id,
+      topic: groupChat.topic,
+      createdAt: groupChat.createdAt,
+      updatedAt: groupChat.updatedAt,
+    })
+    .from(groupChat)
+    .innerJoin(groupChatMember, eq(groupChatMember.groupChatId, groupChat.id))
+    .where(eq(groupChatMember.agentNodeId, match.nodeId))
+}
+
 /** One group chat's own fields. Refuses exactly as `requireGroupChatMember`. */
 export async function getGroupChat(request: Request, groupChatId: string): Promise<GroupChatSummary> {
   await requireGroupChatMember(request, groupChatId)
