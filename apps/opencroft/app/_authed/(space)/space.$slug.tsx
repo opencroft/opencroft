@@ -1,6 +1,7 @@
 import { createFileRoute, notFound, redirect } from '@tanstack/react-router'
 import { ReactFlowProvider } from '@xyflow/react'
 
+import { CanvasNodesProvider } from '@/app/_authed/(dashboard)/_canvas/canvas-nodes-context'
 import { SpaceCanvas } from '@/app/_authed/(space)/_components/space-canvas'
 import { listSpaces, setActiveSpaceSlug } from '@/app/_authed/(space)/_server/actions'
 
@@ -26,7 +27,12 @@ function SpacePage() {
   return (
     <div className='h-full w-full'>
       <ReactFlowProvider>
-        <SpaceCanvas slug={slug} spaces={spaces} />
+        {/* Inside the provider, so tool views rendered anywhere below — the
+            chat overlay included — can resolve node names. Surfaces without a
+            canvas simply do not have it, and degrade to bare node ids. */}
+        <CanvasNodesProvider>
+          <SpaceCanvas slug={slug} spaces={spaces} />
+        </CanvasNodesProvider>
       </ReactFlowProvider>
     </div>
   )

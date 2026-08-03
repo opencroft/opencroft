@@ -1,6 +1,5 @@
 'use client'
 
-import { useReactFlow } from '@xyflow/react'
 import { DiffEditor } from 'agent-chat/diff-editor'
 import { GitCompare, Loader2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
@@ -8,8 +7,9 @@ import { Button } from 'ui/button'
 import { Flex } from 'ui/layout/flex'
 
 import { readRemoteFile } from '@/app/_authed/(approvals)/_server/actions'
+import { useCanvasNodes } from '@/app/_authed/(dashboard)/_canvas/canvas-nodes-context'
 import { NodeCard } from '@/app/_authed/(dashboard)/_canvas/node-card'
-import { useOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
+import { useOptionalOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 import { cn } from '@/lib/utils'
 import { exceedsClamp, OpBlock, OpRow } from './op-block'
 import { registerToolView, type ToolViewProps } from './registry'
@@ -26,17 +26,17 @@ function FieldRow({ label, value }: { label: string; value: string }) {
 }
 
 function NodeRow({ nodeId }: { nodeId: string }) {
-  const { getNode } = useReactFlow()
-  const node = getNode(nodeId) as { data?: { name?: string } } | undefined
+  const canvas = useCanvasNodes()
+  const node = canvas?.getNode(nodeId) as { data?: { name?: string } } | undefined
   const name = node?.data?.name
   const value = name ? `${name} (${nodeId})` : nodeId
   return <FieldRow label='Node' value={value} />
 }
 
 function TargetRow({ target }: { target: string }) {
-  const { getNode } = useReactFlow()
+  const canvas = useCanvasNodes()
   const [nodeId, handleId] = target.split('/')
-  const node = getNode(nodeId) as { data?: { name?: string } } | undefined
+  const node = canvas?.getNode(nodeId) as { data?: { name?: string } } | undefined
   const name = node?.data?.name
   const label = name ? `${name} (${nodeId})` : nodeId
   const value = handleId ? `${label} / ${handleId}` : label
@@ -119,7 +119,7 @@ function ToolDiffPanel({
     )
   }, [current, next, label])
 
-  useOverlay(mode === 'approval' ? { content: diffNode } : undefined)
+  useOptionalOverlay(mode === 'approval' ? { content: diffNode } : undefined)
 
   return mode === 'history' ? diffNode : null
 }
@@ -282,18 +282,18 @@ function getByPath(obj: Record<string, unknown>, path: string): unknown {
 }
 
 function usePropertyLabel(nodeId: string | undefined, path: string | undefined): string | undefined {
-  const { getNode } = useReactFlow()
+  const canvas = useCanvasNodes()
   if (!nodeId || !path) {
     return undefined
   }
-  const node = getNode(nodeId) as { data?: { name?: string } } | undefined
+  const node = canvas?.getNode(nodeId) as { data?: { name?: string } } | undefined
   const name = node?.data?.name ?? nodeId
   return `${name} (${nodeId}) · ${path}`
 }
 
 function useLiveProperty(nodeId: string | undefined, path: string | undefined): string {
-  const { getNode } = useReactFlow()
-  const node = nodeId ? (getNode(nodeId) as { data?: Record<string, unknown> } | undefined) : undefined
+  const canvas = useCanvasNodes()
+  const node = nodeId ? (canvas?.getNode(nodeId) as { data?: Record<string, unknown> } | undefined) : undefined
   const raw = node && path ? getByPath(node.data ?? {}, path) : undefined
   return typeof raw === 'string' ? raw : ''
 }
@@ -604,8 +604,8 @@ function changeSummary(update: NodeUpdate): string {
 }
 
 function NodeDiff({ mode, update }: { mode: ToolViewProps['mode']; update: NodeUpdate }) {
-  const { getNode } = useReactFlow()
-  const node = getNode(update.nodeId) as
+  const canvas = useCanvasNodes()
+  const node = canvas?.getNode(update.nodeId) as
     | { data?: Record<string, unknown>; position?: { x: number; y: number } }
     | undefined
   const name = (node?.data?.name as string | undefined) ?? update.nodeId
@@ -633,7 +633,7 @@ function NodeDiff({ mode, update }: { mode: ToolViewProps['mode']; update: NodeU
 
 function UpdateNodesView({ args, requestId, mode }: ToolViewProps) {
   const updates = (args.updates ?? []) as NodeUpdate[]
-  const { getNode } = useReactFlow()
+  const canvas = useCanvasNodes()
   const [openId, setOpenId] = useState<string | null>(null)
 
   const openUpdate = openId ? (updates.find((u) => u.nodeId === openId) ?? null) : null
@@ -650,7 +650,7 @@ function UpdateNodesView({ args, requestId, mode }: ToolViewProps) {
     )
   }, [openUpdate, mode])
 
-  useOverlay(mode === 'approval' ? { content: diffNode } : undefined)
+  useOptionalOverlay(mode === 'approval' ? { content: diffNode } : undefined)
 
   // biome-ignore lint/correctness/useExhaustiveDependencies(requestId): collapse the open diff when a new request arrives
   useEffect(() => {
@@ -668,7 +668,7 @@ function UpdateNodesView({ args, requestId, mode }: ToolViewProps) {
       </div>
       <div className='space-y-1'>
         {updates.map((update) => {
-          const node = getNode(update.nodeId) as { data?: { name?: string } } | undefined
+          const node = canvas?.getNode(update.nodeId) as { data?: { name?: string } } | undefined
           const name = node?.data?.name ?? update.nodeId
           const active = openId === update.nodeId
           return (

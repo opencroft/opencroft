@@ -12,6 +12,7 @@ import { buildBlocks, type UserText } from '@/app/_authed/(agent)/_lib/build-blo
 import type { ChatMessage } from '@/app/_authed/(agent)/_lib/messages'
 import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { useProvided } from '@/app/_authed/(extension-runtime)/_client/provides'
+import { RenderBoundary } from '@/components/render-boundary'
 import { GenericToolView } from '@/components/tool-views/builtin-views'
 import { lookupToolView } from '@/components/tool-views/registry'
 
@@ -28,14 +29,24 @@ const CHAT_RENDERERS: ChatTurnRenderers = { Chained, ChainDot, ThinkingBlock }
 // otherwise (e.g. an external MCP server's tool, with no node/handle to point
 // at). Which views exist is this application's registry, so it is passed in
 // rather than known by the component.
+// Each block renders inside its own boundary. A tool view that throws would
+// otherwise unmount the entire route, and because the transcript is replayed
+// from stored history that failure is permanent: the same message re-renders
+// and re-throws on every visit, leaving the conversation unopenable. Contained
+// here, one block shows an error and the rest of the conversation still reads.
 function renderToolCall(item: Extract<KitDetailItem, { kind: 'tool' }>) {
   const spec = lookupToolView(item.name)
   const args = (item.args ?? {}) as Record<string, unknown>
-  if (spec) {
-    const ViewComponent = spec.body
-    return <ViewComponent tool={item.name} args={args} requestId={item.id} mode='history' result={item.result} />
-  }
-  return <GenericToolView tool={item.name} args={args} result={item.result} />
+  const ViewComponent = spec?.body
+  return (
+    <RenderBoundary scope='tool-view' label={item.name} resetKey={item.id}>
+      {ViewComponent ? (
+        <ViewComponent tool={item.name} args={args} requestId={item.id} mode='history' result={item.result} />
+      ) : (
+        <GenericToolView tool={item.name} args={args} result={item.result} />
+      )}
+    </RenderBoundary>
+  )
 }
 
 export interface AgentSession {

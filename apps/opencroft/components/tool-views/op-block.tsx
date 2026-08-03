@@ -1,11 +1,11 @@
 'use client'
 
-import { useReactFlow } from '@xyflow/react'
 import { Loader2 } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Flex } from 'ui/layout/flex'
 
+import { useCanvasNodes } from '@/app/_authed/(dashboard)/_canvas/canvas-nodes-context'
 import { sseEventsStore } from '@/app/_authed/(sse)/_lib/sse-events-store'
 import { cn } from '@/lib/utils'
 
@@ -116,17 +116,26 @@ export function exceedsClamp(text: string | undefined): boolean {
   return (text ?? '').split('\n').length > CLAMP_LINES
 }
 
-// The call's target ("<node-id>/<handle-id>"), shown as a small clickable
-// line under the header rather than hidden behind a hover tooltip — clicking
-// pans the canvas to that node (the same affordance the approval list offers
-// via its "View node" button).
+// The call's target ("<node-id>/<handle-id>"), shown as a small line under the
+// header rather than hidden behind a hover tooltip. Where a canvas is mounted
+// it resolves the node's name and clicking pans to it (the same affordance the
+// approval list offers via its "View node" button); on a surface without one
+// it is the plain target text.
 function TargetLine({ target }: { target: string }) {
-  const { getNode } = useReactFlow()
+  const canvas = useCanvasNodes()
   const [nodeId, handleId] = target.split('/')
-  const node = getNode(nodeId) as { data?: { name?: string } } | undefined
+  const node = canvas?.getNode(nodeId) as { data?: { name?: string } } | undefined
   const name = node?.data?.name
   const label = name ? `${name} (${nodeId})` : nodeId
   const value = handleId ? `${label}/${handleId}` : label
+
+  // No canvas to pan: the target is still worth showing, but as the text it
+  // is. A button here would look live and do nothing, since the focus event
+  // below is only listened for by the canvas.
+  if (!canvas) {
+    return <span className='block max-w-full break-all text-[10px] text-muted-foreground/80'>{value}</span>
+  }
+
   return (
     <button
       type='button'

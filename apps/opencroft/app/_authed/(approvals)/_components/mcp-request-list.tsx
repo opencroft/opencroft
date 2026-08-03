@@ -19,6 +19,7 @@ import {
   rejectRequest,
 } from '@/app/_authed/(approvals)/_server/actions'
 import { sseEventsStore, useSSEEvents } from '@/app/_authed/(sse)/_lib/sse-events-store'
+import { RenderBoundary } from '@/components/render-boundary'
 import { resolveToolView } from '@/components/tool-views/registry'
 import type { PendingApproval, PendingAskUser } from '@/lib/sse-events'
 import { cn } from '@/lib/utils'
@@ -131,7 +132,12 @@ function ApprovalDetail({ request }: { request: PendingApproval }) {
         )}
       </div>
       <div className='max-h-72 overflow-y-auto border-t'>
-        <ViewComponent tool={request.tool} args={request.args} requestId={request.id} mode='approval' />
+        {/* Same containment as the chat transcript: a view that throws here
+            would take the approvals surface down with it, leaving no way to
+            act on the request it was describing. */}
+        <RenderBoundary scope='tool-view' label={request.tool} resetKey={request.id}>
+          <ViewComponent tool={request.tool} args={request.args} requestId={request.id} mode='approval' />
+        </RenderBoundary>
       </div>
       <div className='flex flex-col gap-1.5 px-3 py-2 border-t'>
         <Button size='sm' onClick={onApprove} disabled={pending} className='justify-start w-full'>
