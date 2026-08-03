@@ -13,7 +13,11 @@ import { AiPanel } from '@/app/_authed/(dashboard)/_canvas/ai-panel'
 import type { CommandNodeEntry } from '@/app/_authed/(dashboard)/_canvas/canvas-command-bar'
 import { CommandBar, CommandBarMenu } from '@/app/_authed/(dashboard)/_canvas/command-bar'
 import { InspectorContext } from '@/app/_authed/(dashboard)/_canvas/inspector-context'
-import { useOverlay, useOverlayBackIntercept } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
+import {
+  useOverlay,
+  useOverlayBackIntercept,
+  useOverlaySlotValues,
+} from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 import { SearchFindBar } from '@/app/_authed/(dashboard)/_canvas/search-find-bar'
 import type { CommandModeDefinition } from '@/app/_authed/(extension-runtime)/_client/host'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
@@ -50,6 +54,9 @@ export function CanvasOverlay({
     setMode,
     setCommandFocused,
   } = useOverlay()
+  // This is the surface that paints the slots, so it is the one place that
+  // subscribes to their values — see useOverlaySlotValues.
+  const slotValues = useOverlaySlotValues()
   const searchParams = new URLSearchParams(useLocation({ select: (l) => l.searchStr }))
   const chatParam = searchParams.get('chat') ?? null
   const chatTabs = useChatTabsMaybe()
@@ -119,14 +126,14 @@ export function CanvasOverlay({
   // Notify parent when overlay content or header is active
   const prevActive = useRef(false)
   useEffect(() => {
-    const active = !!(slots.content || slots.header)
+    const active = !!(slotValues.content || slotValues.header)
     if (active !== prevActive.current) {
       prevActive.current = active
       onActiveChange?.(active)
     }
-  }, [slots.content, slots.header, onActiveChange])
+  }, [slotValues.content, slotValues.header, onActiveChange])
 
-  const overlayActive = !!(slots.content || slots.header)
+  const overlayActive = !!(slotValues.content || slotValues.header)
 
   const dismiss = useCallback(() => {
     dismissOverlay()
@@ -140,13 +147,13 @@ export function CanvasOverlay({
   // instead of the floating overlay; the command bar input stays at the bottom.
   useEffect(() => {
     setInspectorNode(
-      aiChatActive && slots.content ? (
-        <InspectorChat header={slots.header} onClose={dismiss}>
-          {slots.content}
+      aiChatActive && slotValues.content ? (
+        <InspectorChat header={slotValues.header} onClose={dismiss}>
+          {slotValues.content}
         </InspectorChat>
       ) : null,
     )
-  }, [aiChatActive, slots.content, slots.header, setInspectorNode, dismiss])
+  }, [aiChatActive, slotValues.content, slotValues.header, setInspectorNode, dismiss])
   useEffect(() => () => setInspectorNode(null), [setInspectorNode])
 
   const onOverlayMouseDown = useCallback(() => {
@@ -231,14 +238,14 @@ export function CanvasOverlay({
         onKeyDown={onOverlayKeyDown}
         className={cn(
           'absolute inset-0 z-10',
-          (slots.content && !aiChatActive) || slots.menu ? 'pointer-events-auto' : 'pointer-events-none',
+          (slotValues.content && !aiChatActive) || slotValues.menu ? 'pointer-events-auto' : 'pointer-events-none',
         )}
       >
         <div
           className={cn(
             'pointer-events-none absolute inset-0',
             'bg-background/80 transition-opacity duration-200',
-            slots.content && !aiChatActive ? 'opacity-100' : 'opacity-0',
+            slotValues.content && !aiChatActive ? 'opacity-100' : 'opacity-0',
           )}
         />
         <div className='absolute top-3 left-3 z-20'>
@@ -249,7 +256,7 @@ export function CanvasOverlay({
             onDeactivate={dismiss}
           />
         </div>
-        {slots.content && !aiChatActive && (
+        {slotValues.content && !aiChatActive && (
           <button
             type='button'
             title='Close overlay'
@@ -262,23 +269,23 @@ export function CanvasOverlay({
           </button>
         )}
         <ChatArea>
-          <ChatHeader fade={!!slots.content} onMouseDown={stopOverlayClose}>
-            {aiChatActive ? null : slots.header}
+          <ChatHeader fade={!!slotValues.content} onMouseDown={stopOverlayClose}>
+            {aiChatActive ? null : slotValues.header}
           </ChatHeader>
           <ChatContent
             compact={!activeExtMode?.fullWidth}
             className={cn(
               'bg-background rounded-xl',
               'transition-opacity duration-200',
-              slots.content && !aiChatActive ? 'opacity-100' : 'opacity-0',
+              slotValues.content && !aiChatActive ? 'opacity-100' : 'opacity-0',
             )}
             onMouseDown={stopOverlayClose}
           >
-            {aiChatActive ? null : slots.content}
+            {aiChatActive ? null : slotValues.content}
           </ChatContent>
-          <ChatBar compact fade={!!slots.content} onMouseDown={stopOverlayClose}>
-            {slots.menu && <CommandBarMenu>{slots.menu}</CommandBarMenu>}
-            {slots.bar && <CommandBar>{slots.bar}</CommandBar>}
+          <ChatBar compact fade={!!slotValues.content} onMouseDown={stopOverlayClose}>
+            {slotValues.menu && <CommandBarMenu>{slotValues.menu}</CommandBarMenu>}
+            {slotValues.bar && <CommandBar>{slotValues.bar}</CommandBar>}
           </ChatBar>
         </ChatArea>
       </Flex>
