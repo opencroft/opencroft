@@ -36,6 +36,8 @@ import {
   listGroupChatsForUserView,
   listThreadsInGroupChatView,
 } from '@/app/_authed/(group-chats)/_server/read-model'
+import type { DirectoryUser } from '@/app/_authed/(group-chats)/_server/user-directory'
+import { listDirectoryUsers } from '@/app/_authed/(group-chats)/_server/user-directory'
 
 // So no client file ever has a reason to name model.ts directly — the same
 // pattern agents.ts just adopted for agents-impl.ts. These are erased at
@@ -43,6 +45,7 @@ import {
 // even though model.ts's own runtime tail is not client-safe.
 export type {
   AgentRef,
+  DirectoryUser,
   GroupChatDetailView,
   GroupChatListEntry,
   GroupChatSummary,
@@ -92,8 +95,11 @@ export const startGroupChatThread = createServerFn({ method: 'POST', strict: { o
   )
 
 export const sendGroupChatThreadMessage = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { threadId: string; text: string }) => data)
-  .handler(async ({ data }): Promise<void> => sendMessageInThread(getRequest(), data.threadId, data.text))
+  .inputValidator((data: { threadId: string; text: string; front?: boolean }) => data)
+  .handler(
+    async ({ data }): Promise<void> =>
+      sendMessageInThread(getRequest(), data.threadId, data.text, { front: data.front }),
+  )
 
 // ── The reading surface's view model (phase 2) ───────────────────────────
 //
@@ -119,6 +125,12 @@ export const listGroupChatThreadsView = createServerFn({ method: 'GET', strict: 
     async ({ data: groupChatId }): Promise<GroupChatThreadEntry[]> =>
       listThreadsInGroupChatView(getRequest(), groupChatId),
   )
+
+// The people a member picker offers. Signed-in only; see user-directory.ts for
+// why this is its own function rather than a widened admin read.
+export const listDirectoryUsersForPicker = createServerFn({ method: 'GET', strict: { output: false } }).handler(
+  async (): Promise<DirectoryUser[]> => listDirectoryUsers(getRequest()),
+)
 
 export const getGroupChatThreadView = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((threadId: string) => threadId)

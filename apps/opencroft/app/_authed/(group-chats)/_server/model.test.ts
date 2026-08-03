@@ -393,3 +393,56 @@ test('listGroupChatsForAgent refuses an unknown name as an ordinary not-found', 
     },
   )
 })
+
+// THE PROPERTY THE TRANSPORT SEAM EXISTS TO PRESERVE.
+//
+// The composer in a group-chat thread routes its sends through this function
+// rather than through `promptLocal`, which is addressed by session id and
+// checks nothing. So "a non-member cannot send" has to hold HERE, and it has
+// to hold before any agent session is touched — the refusal below happens
+// ahead of `ensureLocalSessionImpl`, which is why this is testable without a
+// live agent process.
+test('a non-member cannot send into a thread', async () => {
+  const owner = await makeUser('send-owner@example.test')
+  const outsider = await makeUser('send-outsider@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'sending')
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: `group-chat:${chat.id}:agent-a:send-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  const refusal = await captureRefusal(() => model.sendMessageInThread(reqAs(outsider), thread.id, 'let me in'))
+  assert.equal(refusal.code, 'not-found')
+
+  // And a fabricated thread id refuses identically, so sending is not a way to
+  // probe which threads exist either.
+  const fabricated = await captureRefusal(() =>
+    model.sendMessageInThread(reqAs(outsider), crypto.randomUUID(), 'hello'),
+  )
+  assert.equal(fabricated.code, refusal.code)
+  assert.equal(fabricated.message, refusal.message)
+})
+
+test('an anonymous request cannot send into a thread', async () => {
+  const owner = await makeUser('send-owner2@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'anon sending')
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: `group-chat:${chat.id}:agent-a:anon-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  const refusal = await captureRefusal(() => model.sendMessageInThread(reqAnonymous(), thread.id, 'hello'))
+  assert.equal(refusal.code, 'unauthenticated')
+})
