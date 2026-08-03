@@ -10,6 +10,7 @@
     "./backup": "./src/backup.ts"
   },
   "scripts": {
+    "typecheck": "node ../../scripts/run-typecheck.mjs src",
     "generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate",
     "push": "drizzle-kit push",

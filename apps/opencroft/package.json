@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite dev",
     "test": "node ../../scripts/run-tests.mjs app server",
+    "typecheck": "node ../../scripts/run-typecheck.mjs app server",
     "dev:ext": "npx tsx scripts/watch-extensions.ts",
     "monitor": "npx tsx scripts/monitor-server.ts",
     "build": "vite build && npm run check:client-bundle",
