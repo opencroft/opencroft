@@ -56,7 +56,11 @@ export function AuthAdminSetupForm({
   const passwordId = useId()
 
   return (
+    // method='post' so a submit before hydration is a POST with credentials in
+    // the body, not the default GET that puts them in the URL. The handler
+    // still preventDefault()s and does the real submit.
     <form
+      method='post'
       className={className}
       onSubmit={(event) => {
         event.preventDefault()

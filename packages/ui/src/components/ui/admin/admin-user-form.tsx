@@ -73,7 +73,12 @@ export function AdminUserForm({
   const creating = mode === 'create'
 
   return (
+    // method='post' so a submit before hydration is a POST with the field
+    // values in the body, not the default GET that puts them in the URL. No
+    // password field here, but the same GET-fallback shape -- in scope per the
+    // form-hardening rule. The handler still preventDefault()s and does the real submit.
     <form
+      method='post'
       className={className}
       onSubmit={(event) => {
         event.preventDefault()

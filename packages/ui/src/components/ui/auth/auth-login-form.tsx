@@ -52,7 +52,12 @@ export function AuthLoginForm({
   const passwordId = useId()
 
   return (
+    // method='post' so a submit before hydration (before this handler attaches)
+    // is a POST with credentials in the body, not the default GET that puts
+    // them in the URL. The handler still preventDefault()s and does the real
+    // submit; this only changes the pre-hydration fallback.
     <form
+      method='post'
       className={className}
       onSubmit={(event) => {
         event.preventDefault()

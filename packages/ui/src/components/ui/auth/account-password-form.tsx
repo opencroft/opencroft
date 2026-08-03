@@ -58,7 +58,11 @@ export function AccountPasswordForm({
   const confirmId = useId()
 
   return (
+    // method='post' so a submit before hydration is a POST with the three
+    // passwords in the body, not the default GET that puts current/new/confirm
+    // in the URL. The handler still preventDefault()s and does the real submit.
     <form
+      method='post'
       className={className}
       onSubmit={(event) => {
         event.preventDefault()
