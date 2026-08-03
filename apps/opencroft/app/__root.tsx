@@ -17,8 +17,18 @@ import appCss from '@/app/globals.css?url'
 const UNGUARDED_PATHS = new Set(['/login', '/setup'])
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DO NOT REMOVE THE REVERSE PROXY'S BASIC AUTH. It is what protects everything
-// this boundary does not.
+// THE ROUTES BELOW HAVE NO AUTHENTICATION OF THEIR OWN. What stands in front of
+// them depends on the instance, so check yours rather than assuming:
+//
+//   behind proxy reverse-proxy basic auth. DO NOT REMOVE IT — it is the only
+//                thing in front of every route listed below.
+//   no proxy     NOTHING. If `proxyBasicAuth` is empty on the application node and
+//                the instance answers on a public domain, so these routes are
+//                open to anyone who finds the host, right now.
+//
+// An earlier version of this block said the proxy gate was "the only thing
+// there" without qualifying it. That reads as reassurance on the instance where
+// it is false, which is the internet-facing one.
 //
 // The gate below covers page navigation only. API routes are server handlers
 // matched outside the router's route tree, so none of the following check for
@@ -37,16 +47,27 @@ const UNGUARDED_PATHS = new Set(['/login', '/setup'])
 //   /api/route/$, /api/ext/action   remaining app and extension endpoints
 //
 // This is unchanged from before user accounts existed, and adding a login
-// screen did not make it worse. What it did change is the reason people
-// believe the proxy gate is needed: an instance that visibly asks for a
-// password looks like it is protecting itself, and the obvious next move is to
-// drop the "redundant" basic auth. Do that before the follow-up below lands and
-// every route above is open to anyone who can reach the host — starting with a
-// terminal.
+// screen did not make it worse. What it did change is the reason people believe
+// the proxy gate is needed: an instance that visibly asks for a password looks
+// like it is protecting itself, and the obvious next move is to drop the
+// "redundant" basic auth. On a public deployment, doing that before the follow-up lands
+// opens every route above to anyone who can reach the host.
 //
-// The follow-up is authenticating these surfaces in their own right, hardest
-// first: /api/ws/terminal, then /api/mcp, then the rest. Until it has landed,
-// the proxy gate is not redundant. It is the only thing there.
+// The follow-up is authenticating these surfaces in their own right.
+//
+// ORDER, AND THE TRAP IN IT. The obvious order is highest-privilege first,
+// which points at /api/ws/terminal because that is shell access. Acting on that
+// is worse than doing nothing, because it produces a false sense of closure:
+//
+//   /api/ws/terminal is reached ONLY by packages/terminal's xterm client.
+//   Agents never touch it. `remote_exec` arrives over /api/mcp, and remoteExec
+//   resolves the core extension's terminal.exec and calls it IN-PROCESS.
+//
+// So gating the websocket closes the browser path to a shell and leaves the
+// capability wide open behind an easier endpoint. SHELL ACCESS IS CLOSED WHEN
+// /api/mcp IS CLOSED, AND NOT BEFORE. Gate the terminal route early if you
+// like — it is cheap and blocks no agent — but do not record it as having
+// protected shell access.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const Route = createRootRoute({
