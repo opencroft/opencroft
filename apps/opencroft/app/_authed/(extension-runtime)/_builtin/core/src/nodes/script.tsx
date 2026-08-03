@@ -1,34 +1,10 @@
 import { javascript } from '@codemirror/lang-javascript'
 import { python } from '@codemirror/lang-python'
 import { oneDark } from '@codemirror/theme-one-dark'
-import {
-  dispatch,
-  getStream,
-  InputHandle,
-  icons,
-  inspectorIntent,
-  NodeFrame,
-  OutputHandle,
-  React,
-  type Stream,
-  type TextChunk,
-  toast,
-  useGraphNodes,
-  useNodeContext,
-  useReactFlow,
-} from '@ext/host'
-import {
-  Badge,
-  Button,
-  Input,
-  Label,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Textarea,
-} from '@ext/ui'
+import { legacy } from '@opencroft/client'
+const { Badge, Button, Input, InputHandle, Label, NodeFrame, OutputHandle, React, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Textarea, dispatch, getStream, icons, inspectorIntent, toast, useGraphNodes, useNodeContext, useReactFlow } = legacy
+type Stream<T> = legacy.Stream<T>
+type TextChunk = legacy.TextChunk
 import CodeMirror from '@uiw/react-codemirror'
 
 import { type ScriptResult, setScriptResult, useScriptResult } from './script-output-store'
@@ -77,7 +53,7 @@ function ScriptNode({ id, data, selected }: { id: string; data: ScriptData; sele
   const errors = (data as ScriptData & { __errors?: string[] }).__errors
 
   const focus = useCallback(() => {
-    setNodes((nds: { id: string }[]) => nds.map((n) => ({ ...n, selected: n.id === id })))
+    setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === id })))
   }, [id, setNodes])
 
   const openTab = useCallback(

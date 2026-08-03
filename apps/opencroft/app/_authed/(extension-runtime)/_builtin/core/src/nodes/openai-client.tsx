@@ -1,5 +1,5 @@
-import { createPortal, icons, invoke, NodeFrame, React, toast, useNodeAccent } from '@ext/host'
-import { Button, Label, Textarea } from '@ext/ui'
+import { legacy } from '@opencroft/client'
+const { Button, Label, NodeFrame, React, Textarea, createPortal, icons, invoke, toast, useNodeAccent } = legacy
 
 import { AssistantSelector, useAssistant } from './openai-assistant'
 

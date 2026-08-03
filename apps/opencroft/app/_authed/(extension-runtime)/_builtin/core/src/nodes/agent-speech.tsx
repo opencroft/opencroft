@@ -1,16 +1,5 @@
-import { invoke, React } from '@ext/host'
-import {
-  Input,
-  Label,
-  ScrollArea,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Slider,
-  Textarea,
-} from '@ext/ui'
+import { legacy } from '@opencroft/client'
+const { Input, Label, React, ScrollArea, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Slider, Textarea, invoke } = legacy
 
 import type { AgentData } from './agent'
 import { KeyValueEditor } from './key-value-editor'

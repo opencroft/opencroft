@@ -1,4 +1,5 @@
-import { React } from '@ext/host'
+import { legacy } from '@opencroft/client'
+const { React } = legacy
 
 export interface ScriptResult {
   stdout: string

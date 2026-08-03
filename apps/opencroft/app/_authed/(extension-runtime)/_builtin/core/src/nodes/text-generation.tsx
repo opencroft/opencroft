@@ -1,13 +1,9 @@
-import {
-  getStream,
-  InputHandle,
-  icons,
-  NodeFrame,
-  OutputHandle,
-  type React,
-  type Stream,
-  type TextChunk,
-} from '@ext/host'
+import type { ChangeEvent } from 'react'
+
+import { legacy } from '@opencroft/client'
+const { InputHandle, NodeFrame, OutputHandle, getStream, icons } = legacy
+type Stream<T> = legacy.Stream<T>
+type TextChunk = legacy.TextChunk
 
 import { AssistantSelector, useAssistant } from './openai-assistant'
 
@@ -53,7 +49,7 @@ export function TextGenerationInspector({
         <span>System Prompt (optional)</span>
         <textarea
           value={data.systemPrompt ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateData({ systemPrompt: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLTextAreaElement>) => updateData({ systemPrompt: e.target.value })}
           placeholder='You are a helpful assistant.'
           className='min-h-[80px] rounded border bg-transparent px-2 py-1 text-xs font-mono'
         />

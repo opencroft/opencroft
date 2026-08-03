@@ -1,27 +1,5 @@
-import {
-  icons,
-  inspectorIntent,
-  invoke,
-  NodeFrame,
-  OutputHandle,
-  React,
-  toast,
-  useGraphNodes,
-  useReactFlow,
-} from '@ext/host'
-import {
-  Badge,
-  Button,
-  Input,
-  Label,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Separator,
-  Terminal,
-} from '@ext/ui'
+import { legacy } from '@opencroft/client'
+const { Badge, Button, Input, Label, NodeFrame, OutputHandle, React, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Separator, Terminal, icons, inspectorIntent, invoke, toast, useGraphNodes, useReactFlow } = legacy
 
 import { InspectorFilesBody, PinButton, PinnedBody, StatsList } from '../shared'
 
@@ -144,7 +122,7 @@ export function ServerNode({ id, data, selected }: { id: string; data: ServerDat
       if (!data.address) {
         return
       }
-      rf.setNodes((nds) => nds.map((n: { id: string }) => ({ ...n, selected: n.id === id })))
+      rf.setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === id })))
       inspectorIntent.open(id, tab)
     },
     [id, rf, data.address],

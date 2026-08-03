@@ -1,4 +1,5 @@
-import { React, useGraphNodes } from '@ext/host'
+import { legacy } from '@opencroft/client'
+const { React, useGraphNodes } = legacy
 
 interface SecretsStoreNodeData {
   secretKeys?: string[]

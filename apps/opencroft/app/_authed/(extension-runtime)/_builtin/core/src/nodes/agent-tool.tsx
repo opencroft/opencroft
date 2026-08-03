@@ -1,5 +1,5 @@
-import { icons, NodeFrame, OutputHandle, React } from '@ext/host'
-import { Input, Label } from '@ext/ui'
+import { legacy } from '@opencroft/client'
+const { Input, Label, NodeFrame, OutputHandle, React, icons } = legacy
 
 import type { AgentToolData } from './agent-tool-shared'
 

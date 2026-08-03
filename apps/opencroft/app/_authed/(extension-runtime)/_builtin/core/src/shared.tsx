@@ -1,14 +1,5 @@
-import {
-  icons,
-  NodeCard,
-  NodeResizer,
-  OutputHandle,
-  React,
-  useNodeAccent,
-  useReactFlow,
-  useUpdateNodeInternals,
-} from '@ext/host'
-import { Button, FileBrowser, FileManagerProvider } from '@ext/ui'
+import { legacy } from '@opencroft/client'
+const { Button, FileBrowser, FileManagerProvider, NodeCard, NodeResizer, OutputHandle, React, icons, useNodeAccent, useReactFlow, useUpdateNodeInternals } = legacy
 
 const { useCallback, useEffect, useState } = React
 

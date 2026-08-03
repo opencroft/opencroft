@@ -1,15 +1,7 @@
-import {
-  dispatch,
-  getStream,
-  icons,
-  NodeFrame,
-  OutputHandle,
-  React,
-  type Stream,
-  type TextChunk,
-  toast,
-} from '@ext/host'
-import { Button, Textarea } from '@ext/ui'
+import { legacy } from '@opencroft/client'
+const { Button, NodeFrame, OutputHandle, React, Textarea, dispatch, getStream, icons, toast } = legacy
+type Stream<T> = legacy.Stream<T>
+type TextChunk = legacy.TextChunk
 
 const { useCallback, useState } = React
 

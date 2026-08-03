@@ -1,16 +1,5 @@
-import { icons, invoke, NodeFrame, React, toast } from '@ext/host'
-import {
-  Badge,
-  Button,
-  ControlledInput,
-  Flex,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Separator,
-} from '@ext/ui'
+import { legacy } from '@opencroft/client'
+const { Badge, Button, ControlledInput, Flex, NodeFrame, React, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Separator, icons, invoke, toast } = legacy
 
 const { useCallback, useEffect, useRef, useState } = React
 

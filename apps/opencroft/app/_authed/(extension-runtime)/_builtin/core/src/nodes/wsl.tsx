@@ -1,5 +1,5 @@
-import { icons, inspectorIntent, invoke, NodeFrame, OutputHandle, React, useReactFlow } from '@ext/host'
-import { Input, Label, Terminal } from '@ext/ui'
+import { legacy } from '@opencroft/client'
+const { Input, Label, NodeFrame, OutputHandle, React, Terminal, icons, inspectorIntent, invoke, useReactFlow } = legacy
 
 import { InspectorFilesBody, PinButton, PinnedBody, StatsList } from '../shared'
 
@@ -31,7 +31,7 @@ export function WslNode({ id, data, selected }: { id: string; data: WslData; sel
 
   const openInspector = useCallback(
     (tab: string) => {
-      rf.setNodes((nds) => nds.map((n: { id: string }) => ({ ...n, selected: n.id === id })))
+      rf.setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === id })))
       inspectorIntent.open(id, tab)
     },
     [id, rf],

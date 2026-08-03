@@ -1,5 +1,7 @@
-import type { React } from '@ext/host'
-import { Input, Label, ScrollArea } from '@ext/ui'
+import type { ChangeEvent } from 'react'
+
+import { legacy } from '@opencroft/client'
+const { Input, Label, ScrollArea } = legacy
 
 import type { AgentData } from './agent'
 import { KeyValueEditor } from './key-value-editor'
@@ -23,7 +25,7 @@ export function AgentSpeechRecognitionTab({
           <Label>API Base</Label>
           <Input
             value={data.asrApiBase ?? ''}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ asrApiBase: e.target.value })}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ asrApiBase: e.target.value })}
             placeholder='http://localhost:8881/v1'
           />
         </div>
@@ -32,7 +34,7 @@ export function AgentSpeechRecognitionTab({
           <Input
             type='password'
             value={data.asrApiKey ?? ''}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ asrApiKey: e.target.value })}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ asrApiKey: e.target.value })}
             placeholder='not-needed'
           />
         </div>
@@ -46,7 +48,7 @@ export function AgentSpeechRecognitionTab({
           <Label>Model</Label>
           <Input
             value={data.asrModel ?? ''}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ asrModel: e.target.value })}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ asrModel: e.target.value })}
             placeholder='Qwen/Qwen3-ASR-0.6B'
           />
         </div>
@@ -54,7 +56,7 @@ export function AgentSpeechRecognitionTab({
           <Label>Language (optional)</Label>
           <Input
             value={data.asrLanguage ?? ''}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ asrLanguage: e.target.value })}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ asrLanguage: e.target.value })}
             placeholder='auto-detect (e.g. en, ru)'
           />
         </div>

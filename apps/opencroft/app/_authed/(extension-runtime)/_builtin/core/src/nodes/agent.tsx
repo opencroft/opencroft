@@ -1,17 +1,5 @@
-import { InputHandle, icons, invoke, NodeFrame, React } from '@ext/host'
-import {
-  AgentAvatar,
-  Button,
-  Input,
-  Label,
-  ScrollArea,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Textarea,
-} from '@ext/ui'
+import { legacy } from '@opencroft/client'
+const { AgentAvatar, Button, Input, InputHandle, Label, NodeFrame, React, ScrollArea, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Textarea, icons, invoke } = legacy
 
 import type { KeyValue } from './key-value-editor'
 import { useSecretKeys } from './secrets'

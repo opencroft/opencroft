@@ -1,5 +1,7 @@
-import { icons, NodeFrame, OutputHandle, type React } from '@ext/host'
-import { Input, Label, Textarea } from '@ext/ui'
+import type { ChangeEvent } from 'react'
+
+import { legacy } from '@opencroft/client'
+const { Input, Label, NodeFrame, OutputHandle, Textarea, icons } = legacy
 
 export interface AgentInstructionData {
   name: string
@@ -38,7 +40,7 @@ export function AgentInstructionInspector({
         <Label>Name</Label>
         <Input
           value={data.name ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ name: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ name: e.target.value })}
           placeholder='Instruction name'
         />
       </div>
@@ -46,7 +48,7 @@ export function AgentInstructionInspector({
         <Label>Instruction</Label>
         <Textarea
           value={data.instruction ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateData({ instruction: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLTextAreaElement>) => updateData({ instruction: e.target.value })}
           placeholder='Instructions to inject into the first message of every chat session…'
           className='min-h-48 font-mono text-xs'
         />

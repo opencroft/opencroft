@@ -1,5 +1,7 @@
-import { icons, type React } from '@ext/host'
-import { Button, Input, Label } from '@ext/ui'
+import type { ChangeEvent } from 'react'
+
+import { legacy } from '@opencroft/client'
+const { Button, Input, Label, icons } = legacy
 
 // A name/value pair as stored in node data — request headers, environment
 // variables, and anything else shaped like a small string map that has to keep
@@ -35,13 +37,13 @@ export function KeyValueEditor({
             value={entry.name}
             placeholder='name'
             className='h-7 w-1/3 text-xs font-mono'
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => set(index, { name: e.target.value })}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => set(index, { name: e.target.value })}
           />
           <Input
             value={entry.value}
             placeholder={valuePlaceholder}
             className='h-7 text-xs font-mono'
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => set(index, { value: e.target.value })}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => set(index, { value: e.target.value })}
           />
           <Button
             variant='ghost'
