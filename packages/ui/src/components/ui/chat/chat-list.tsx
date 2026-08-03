@@ -36,6 +36,20 @@ interface ChatListProps {
   nodes: ChatListNode[]
   activeId?: string
   defaultFolderOpen?: boolean
+  // Whether the user may CREATE, RENAME and DELETE folders.
+  //
+  // A capability the host states outright, never inferred from which callbacks
+  // it passed. The folder callbacks below are NOTIFICATIONS -- this component
+  // does the work itself and tells the host afterwards -- and a notification
+  // must not decide whether a feature exists. Gating on one is what let a
+  // deliberately flat list still offer 'Move to new folder', and what forced a
+  // host that wanted folder rename/delete to pass two callbacks it had no use
+  // for.
+  //
+  // Folders already present in `nodes` still render, and items can still be
+  // dragged into them, whatever this says: it governs MANAGING folders, not
+  // having them.
+  allowFolders?: boolean
   onSelect?: (id: string) => void
   onRename?: (id: string) => void
   onStopProcess?: (id: string) => void
@@ -147,6 +161,40 @@ function initState(nodes: ChatListNode[], defaultFolderOpen: boolean): ListState
   return { items, folders, folderOrder, itemOrder }
 }
 
+// A content fingerprint of the host's tree. The resync below keys on this
+// rather than on the `nodes` array's identity, because a host that builds the
+// array inline -- the common case -- hands over a new one on every render, and
+// reconciling on identity would then set state on every render and never
+// settle. Folder `open` is deliberately excluded: it is view state this
+// component owns, so a change to it is not an upstream change.
+function leafSignature(l: ChatListLeaf) {
+  return [l.id, l.title, l.description ?? '', l.avatarUrl ?? '', l.status ?? '', l.hasDraft ? 1 : 0]
+}
+
+function nodesSignature(nodes: ChatListNode[]): string {
+  return JSON.stringify(
+    nodes.map((n) =>
+      n.type === 'item'
+        ? ['i', leafSignature(n.item)]
+        : ['f', n.folder.id, n.folder.name, n.folder.items.map(leafSignature)],
+    ),
+  )
+}
+
+// Rebuild the working tree from a new `nodes` prop, carrying over the one
+// thing the host does not have: which folders the user has opened. Everything
+// the host owns -- membership, order, titles, status -- comes from `nodes`, so
+// a chat added, renamed or removed upstream lands. A folder new to this pass
+// falls back to its own `open`, then to `defaultFolderOpen`.
+function reconcile(prev: ListState, nodes: ChatListNode[], defaultFolderOpen: boolean): ListState {
+  const next = initState(nodes, defaultFolderOpen)
+  for (const fid of next.folderOrder) {
+    const before = prev.folders[fid]
+    if (before) next.folders[fid].open = before.open
+  }
+  return next
+}
+
 function stateToNodes(s: ListState): ChatListNode[] {
   const out: ChatListNode[] = s.folderOrder.map((id) => ({
     type: 'folder',
@@ -227,9 +275,12 @@ function dragPayload(p: Press): Drag {
 // item. Folders reorder among themselves. File an item into a brand-new folder
 // via **Move to new folder** in its row menu. Folder headers carry no
 // always-visible buttons: rename + delete are reached through the same context
-// menu the chat rows use (right-click / long-press), each entry only when the
-// host passed its callback. Self-contained;
-// calls onChange on every structural change.
+// menu the chat rows use (right-click / long-press). All three folder actions
+// are gated on `allowFolders` -- a capability the host states -- and never on
+// which notification callbacks it passed. Self-contained; keeps a working copy
+// of the tree, resyncs it when the host's `nodes` change (folder open/closed
+// state and any in-flight drag survive), and calls onChange on every
+// structural change.
 //
 // Touch gesture arbitration (long-press pickup, no grip): the row
 // carries NO grip -- one press serves scroll, drag and menu, and movement tells
@@ -272,7 +323,7 @@ function dragPayload(p: Press): Drag {
 // keeps native HTML5 DnD + right-click untouched. Two identical short
 // vibration pulses mark the same two moments -- armed, then menu-open -- where
 // the Vibration API exists.
-export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, onRename, onStopProcess, onClose, onDelete, onChange, onRenameFolder, onCreateFolder, onDeleteFolder, className }: ChatListProps) {
+export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolders = true, onSelect, onRename, onStopProcess, onClose, onDelete, onChange, onRenameFolder, onCreateFolder, onDeleteFolder, className }: ChatListProps) {
   const [state, setState] = useState<ListState>(() => initState(nodes, defaultFolderOpen))
   const [drag, setDrag] = useState<Drag | null>(null)
   const [over, setOver] = useState<Over | null>(null)
@@ -306,6 +357,12 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
   // Mirror of `state` for the async touch handlers (they fire off-render).
   const stateRef = useRef(state)
   stateRef.current = state
+  // Resync bookkeeping -- see the effect further down. The signature is
+  // content-based, so an unmemoised `nodes` array does not read as a change.
+  const nodesSig = nodesSignature(nodes)
+  const lastNodesSigRef = useRef(nodesSig)
+  const pendingNodesRef = useRef<ChatListNode[] | null>(null)
+  const dragging = drag !== null || touchDrag !== null
 
   const reset = () => {
     setDrag(null)
@@ -419,9 +476,13 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
     onDeleteFolder?.(id)
   }
 
-  const itemActions: ChatListItemAction[] = [
-    { label: 'Move to new folder', icon: <FolderPlus className='size-3' />, onSelect: moveToNewFolder },
-  ]
+  // Gated on the declared capability, not on `onCreateFolder` or `onChange`.
+  // Creating a folder is something this component does itself; those callbacks
+  // only report it afterwards, so their presence says nothing about whether
+  // the action should exist at all. See `allowFolders`.
+  const itemActions: ChatListItemAction[] = allowFolders
+    ? [{ label: 'Move to new folder', icon: <FolderPlus className='size-3' />, onSelect: moveToNewFolder }]
+    : []
 
   // --- Touch gesture arbitration (long-press pickup, no grip) ---
 
@@ -604,6 +665,29 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
     ownMenuDispatchRef.current = false
   }, [menuArmed])
 
+  // Resync the working tree when the host's `nodes` change.
+  //
+  // The tree is uncontrolled by design -- drag-and-drop has to own it between
+  // commits -- but uncontrolled must not mean deaf: seeded once and never
+  // resynced, a chat added, renamed or removed upstream never appeared at all,
+  // and both call sites worked around that by keying the element on a
+  // serialisation of the data to force a remount, discarding every bit of
+  // internal state on each change.
+  //
+  // A reconcile mid-drag would pull the tree out from under the finger, so a
+  // change that arrives during one is held and applied on the drop.
+  useEffect(() => {
+    if (nodesSig !== lastNodesSigRef.current) {
+      lastNodesSigRef.current = nodesSig
+      pendingNodesRef.current = nodes
+    }
+    if (dragging) return
+    const pending = pendingNodesRef.current
+    if (!pending) return
+    pendingNodesRef.current = null
+    setState((s) => reconcile(s, pending, defaultFolderOpen))
+  }, [nodesSig, nodes, dragging, defaultFolderOpen])
+
   // Drop any in-flight press if the list unmounts mid-gesture (no listener leak).
   useEffect(() => () => { cancelPress() }, [])
 
@@ -716,22 +800,18 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, onSelect, 
             onBlur={() => commitRename(fid)}
             className='min-w-0 flex-1 rounded-sm bg-background px-1 py-0.5 text-foreground outline-none ring-1 ring-ring'
           />
-        ) : onRenameFolder || onDeleteFolder ? (
+        ) : allowFolders ? (
           <ContextMenu onOpenChange={handleMenuOpen}>
             <ContextMenuTrigger asChild disabled={touchInput && menuArmed?.id !== fid}>{toggle}</ContextMenuTrigger>
             <ContextMenuContent className='min-w-[8rem]' onClick={(e) => e.stopPropagation()}>
-              {onRenameFolder ? (
-                <ContextMenuItem onClick={() => startRename(fid, f.name)}>
-                  <Pencil className='size-3' />
-                  Rename
-                </ContextMenuItem>
-              ) : null}
-              {onDeleteFolder ? (
-                <ContextMenuItem className='text-destructive focus:text-destructive' onClick={() => deleteFolder(fid)}>
-                  <Trash2 className='size-3' />
-                  Delete
-                </ContextMenuItem>
-              ) : null}
+              <ContextMenuItem onClick={() => startRename(fid, f.name)}>
+                <Pencil className='size-3' />
+                Rename
+              </ContextMenuItem>
+              <ContextMenuItem className='text-destructive focus:text-destructive' onClick={() => deleteFolder(fid)}>
+                <Trash2 className='size-3' />
+                Delete
+              </ContextMenuItem>
             </ContextMenuContent>
           </ContextMenu>
         ) : (

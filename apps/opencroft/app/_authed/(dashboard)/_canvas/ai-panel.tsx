@@ -211,10 +211,6 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
     [sessions, pendingKeys, activeKeys, aliveKeys, avatarByAgentId],
   )
   const chatNodes = useMemo<ChatListNode[]>(() => chatLeaves.map((item) => ({ type: 'item', item })), [chatLeaves])
-  // ChatList seeds its working tree from `nodes` on mount and never resyncs, so
-  // a new or renamed session only appears when the component is remounted. The
-  // leaves ARE the external input here, so keying on them is exact.
-  const chatsKey = useMemo(() => JSON.stringify(chatLeaves), [chatLeaves])
 
   // Keep every open chat tab labelled with its session title, so the sidebar
   // shows readable names instead of the raw session-key suffix. Driven straight
@@ -265,21 +261,21 @@ export function AiPanel({ spaceName, spaceSlug, selectedNodeId, focused, onFocus
   // tracks only the data, with handlers reached through the ref.
   const listView = useMemo(
     () => (
-      // No folder callbacks: this surface is flat by construction, so there is
-      // nothing here for a folder edit to be persisted into. Rename and Close
-      // are deliberately not wired here — Close, in particular, does not
-      // belong: this surface exists to show every session including the ones
-      // closed from the sidebar.
+      // Rename and Close are deliberately not wired here — Close, in
+      // particular, does not belong: this surface exists to show every session
+      // including the ones closed from the sidebar.
       <ChatList
-        key={chatsKey}
         nodes={chatNodes}
+        // Flat by construction: there is nowhere here for a folder edit to be
+        // persisted into, so the folder affordances should not be offered.
+        allowFolders={false}
         activeId={activeSessionKey}
         onSelect={(key) => actionsRef.current.openSession(key)}
         onStopProcess={(key) => actionsRef.current.stopProcess(key)}
         onDelete={(key) => actionsRef.current.deleteSession(key)}
       />
     ),
-    [chatNodes, chatsKey, activeSessionKey],
+    [chatNodes, activeSessionKey],
   )
 
   const menuView = useMemo(

@@ -135,8 +135,8 @@ export function useAgentSessions(): UseAgentSessionsResult {
   // Unlike upsertSession/renameSession, deliberately doesn't re-sync `sessions`
   // from the POST response: this fires on every debounced keystroke while
   // typing, and the optimistic update above is already correct — chaining a
-  // second setSessions per tick would needlessly re-trigger the sidebar's
-  // nodesKey-driven remount more than the SSE broadcast alone already does.
+  // second setSessions per tick would needlessly re-run the sidebar's tree
+  // reconcile more than the SSE broadcast alone already does.
   const setDraft = useCallback((key: string, draft: string) => {
     setSessions((prev) => prev.map((s) => (s.key === key ? { ...s, draft } : s)))
     upsertSessionRemote({ key, draft }).catch((err) => console.error('Failed to save draft', key, err))
