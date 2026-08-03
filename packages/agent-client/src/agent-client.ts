@@ -75,8 +75,9 @@ export interface AgentClientOptions {
   // built-in local server and the user-configured ones.
   extraMcpServers?: AcpMcpServer[]
   // Source the user-configured MCP servers (defaults to reading mcp-config.json).
-  // Lets a host store them elsewhere, e.g. a database, instead of on disk.
-  loadMcpServers?: () => Promise<McpServerConfig[]>
+  // Lets a host store them elsewhere, e.g. a database, instead of on disk, and
+  // scope the result using the selection's mcpIdentity if it wants to.
+  loadMcpServers?: (selection: AgentSelection) => Promise<McpServerConfig[]>
   // System prompt and step cap for the in-process native harness (kind:'native'
   // adapter). Ignored by external ACP agents, which carry their own.
   systemPrompt?: string
@@ -709,8 +710,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // The real MCP servers the native harness should attach in-process — the
   // configured ones plus any extras, but NOT the built-in local server (its
   // tools/skills already run in-process). Re-evaluated per turn.
-  async function loadNativeMcpServers(): Promise<AcpMcpServer[]> {
-    const configured = options.loadMcpServers ? await options.loadMcpServers() : await readMcpConfig()
+  async function loadNativeMcpServers(selection: AgentSelection): Promise<AcpMcpServer[]> {
+    const configured = options.loadMcpServers ? await options.loadMcpServers(selection) : await readMcpConfig()
     return [...(options.extraMcpServers ?? []), ...resolveMcpServers(configured)]
   }
 
@@ -739,7 +740,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       url,
       headers: [],
     }
-    const configured = options.loadMcpServers ? await options.loadMcpServers() : await readMcpConfig()
+    const configured = options.loadMcpServers ? await options.loadMcpServers(selection) : await readMcpConfig()
     return { internal, servers: [internal, ...(options.extraMcpServers ?? []), ...resolveMcpServers(configured)] }
   }
 

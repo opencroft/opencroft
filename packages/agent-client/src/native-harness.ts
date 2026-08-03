@@ -34,7 +34,7 @@ export interface NativeHarnessConfig {
   // Resolve the real MCP servers (configured + extra) to attach in-process.
   // Excludes the built-in local server: its tools/skills already run here.
   // Re-evaluated per turn so refreshes apply without a session restart.
-  loadMcpServers?: () => Promise<AcpMcpServer[]>
+  loadMcpServers?: (selection: AgentSelection) => Promise<AcpMcpServer[]>
 }
 
 // The harness reaches every provider through its OpenAI-compatible endpoint.
@@ -137,6 +137,7 @@ async function buildToolset(
   config: NativeHarnessConfig,
   gate: ToolGate,
   permissions: ResolvedPermissions | undefined,
+  selection: AgentSelection,
 ): Promise<{ toolset: ToolSet; close: () => Promise<void> }> {
   const toolset: ToolSet = {}
 
@@ -176,7 +177,7 @@ async function buildToolset(
 
   // Real MCP servers (configured + extra). Role grants don't cover them, so they
   // gate like an 'Allow' tool: prompt unless bypass.
-  const mcpServers = config.loadMcpServers ? await config.loadMcpServers() : []
+  const mcpServers = config.loadMcpServers ? await config.loadMcpServers(selection) : []
   const mcp = await connectMcpToolset(mcpServers, { clientName: 'agent-client-native' })
   for (const [name, mcpTool] of Object.entries(mcp.tools)) {
     const execute = mcpTool.execute
@@ -339,7 +340,7 @@ export function createNativeHarness(
       session.messages.push({ role: 'user', content: text })
 
       const gate: ToolGate = { sessionId, client, getMode: () => session.mode }
-      const { toolset, close } = await buildToolset(config, gate, session.permissions)
+      const { toolset, close } = await buildToolset(config, gate, session.permissions, selection)
       // Reasoning effort goes to the OpenAI-compatible provider, keyed by the
       // provider name used in resolveModel (selection.providerId). 'off' is an
       // explicit "no preference" choice from the UI, not a literal effort value.

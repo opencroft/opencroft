@@ -35,6 +35,11 @@ export interface AgentSelection {
   // `docker exec` instead of on the host. `cwd` and the auth/config env vars are
   // forwarded into the container; unset means spawn on the host as before.
   containerName?: string
+  // Opaque per-caller identity, forwarded verbatim to AgentClientOptions'
+  // loadMcpServers so a host can scope its own MCP-server resolution to this
+  // caller (e.g. surface a caller's own configured servers in addition to a
+  // shared list) — the engine never reads or interprets this value itself.
+  mcpIdentity?: string
 }
 
 export interface SessionMeta {
