@@ -132,7 +132,7 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
                         {pinnedSpaces.map((space) => (
                           <SidebarMenuSubItem key={space.id}>
                             <SidebarMenuSubButton asChild isActive={pathname === `/space/${space.slug}`}>
-                              <Link to={`/space/${space.slug}`}>
+                              <Link to='/space/$slug' params={{ slug: space.slug }}>
                                 <span>{space.name}</span>
                               </Link>
                             </SidebarMenuSubButton>
