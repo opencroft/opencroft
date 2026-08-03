@@ -131,6 +131,11 @@ interface SessionState {
   // the drain because the two are separated in time: the flush is requested
   // while the turn it interrupts is still settling.
   flushQueue?: boolean
+  // Set by refreshMcpServers() when it finds this session mid-turn, instead of
+  // resuming it immediately — a resume rides the same connection a live
+  // prompt is streaming over. settleTurn applies the deferred resume once the
+  // turn that was running actually finishes, and clears this.
+  pendingMcpRefresh?: boolean
   // Last usage_update seen, mirrored here (like modes/configOptions/queue) so
   // a windowed subscribe/getEventsWindow can synthesize it without scanning
   // history — see the SNAPSHOT_KINDS handling below.
@@ -853,6 +858,34 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     return connection
   }
 
+  // Reconnects a session and pushes it the current MCP server list. Shared by
+  // the public resumeSession() and refreshMcpServers' deferred path (via
+  // settleTurn) — the latter is the reason this can't just live inline in
+  // resumeSession: it needs to be callable without going through `this`.
+  async function performResumeSession(sessionId: string): Promise<void> {
+    const session = store.sessions.get(sessionId)
+    if (!session) {
+      return
+    }
+    const connection = await ensureConnection(session.selection)
+    let mcpServers: AcpMcpServer[] = []
+    if (!isNativeSelection(session.selection) && supportsTools(session.selection)) {
+      // Retire the prior token for this session before minting a new one so
+      // repeated resumes (e.g. on every MCP-config refresh) don't leak tokens.
+      // permissionsFor resolves via the session record, which is already set.
+      dropSessionTokens(sessionId)
+      const { internal, servers } = await buildMcpServers(session.selection)
+      const token = randomUUID()
+      store.acpTokenSession.set(token, sessionId)
+      mcpServers = tagInternal(internal, servers, token)
+    }
+    await connection.resumeSession({
+      sessionId,
+      cwd: session.selection.cwd,
+      mcpServers,
+    })
+  }
+
   // The connection entry backing a selection (subprocess connections only;
   // native harnesses are stateless and reuse the global last-session fallback).
   function connEntryFor(selection: AgentSelection): ConnEntry | undefined {
@@ -958,24 +991,18 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // releases and drains — exactly the single-prompt error path of old. Queue
   // depth is small (hand-typed messages), so the drain's self-call chain stays
   // shallow: each delivery runs a full agent turn before the next drain.
-  function settleTurn(sessionId: string, outcome: { stopReason?: string }): void {
+  // A flush requested mid-turn (see prompt's `flush`) drains EVERYTHING as one
+  // delivery rather than one entry per turn — the agent would otherwise act on
+  // each stale message before reaching the newest one, which is the whole
+  // reason a flush was asked for. Split out of settleTurn so a deferred MCP
+  // resume (see pendingMcpRefresh) can run to completion first and still reach
+  // this: draining here while that resume is still in flight would deliver a
+  // prompt over the same connection the resume is using.
+  function drainQueue(sessionId: string): void {
     const session = store.sessions.get(sessionId)
     if (!session) {
       return
     }
-    session.activeTurns = Math.max(0, session.activeTurns - 1)
-    if (session.activeTurns > 0) {
-      return
-    }
-    if (outcome.stopReason !== undefined) {
-      emit(sessionId, { kind: 'turn_end', stopReason: outcome.stopReason })
-    }
-    // A flush requested mid-turn (see prompt's `flush`) drains EVERYTHING as
-    // one delivery rather than one entry per turn. This is the point where it
-    // can happen without racing the turn it interrupted: that turn has just
-    // settled, so nothing is in flight. Draining one-per-turn here would defeat
-    // the flush — the agent would act on each stale message before reaching the
-    // newest one, which is the whole reason a flush was asked for.
     if (session.flushQueue) {
       session.flushQueue = false
       const pending = session.queue ?? []
@@ -998,6 +1025,28 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     void deliverPrompt(sessionId, next.text).catch((error: unknown) =>
       emit(sessionId, { kind: 'error', message: errorMessage(error) }),
     )
+  }
+
+  function settleTurn(sessionId: string, outcome: { stopReason?: string }): void {
+    const session = store.sessions.get(sessionId)
+    if (!session) {
+      return
+    }
+    session.activeTurns = Math.max(0, session.activeTurns - 1)
+    if (session.activeTurns > 0) {
+      return
+    }
+    if (outcome.stopReason !== undefined) {
+      emit(sessionId, { kind: 'turn_end', stopReason: outcome.stopReason })
+    }
+    if (session.pendingMcpRefresh) {
+      session.pendingMcpRefresh = false
+      void performResumeSession(sessionId)
+        .catch((error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }))
+        .then(() => drainQueue(sessionId))
+      return
+    }
+    drainQueue(sessionId)
   }
 
   return {
@@ -1285,32 +1334,23 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     },
 
     async resumeSession(sessionId: string): Promise<void> {
-      const session = store.sessions.get(sessionId)
-      if (!session) {
-        return
-      }
-      const connection = await ensureConnection(session.selection)
-      let mcpServers: AcpMcpServer[] = []
-      if (!isNativeSelection(session.selection) && supportsTools(session.selection)) {
-        // Retire the prior token for this session before minting a new one so
-        // repeated resumes (e.g. on every MCP-config refresh) don't leak tokens.
-        // permissionsFor resolves via the session record, which is already set.
-        dropSessionTokens(sessionId)
-        const { internal, servers } = await buildMcpServers(session.selection)
-        const token = randomUUID()
-        store.acpTokenSession.set(token, sessionId)
-        mcpServers = tagInternal(internal, servers, token)
-      }
-      await connection.resumeSession({
-        sessionId,
-        cwd: session.selection.cwd,
-        mcpServers,
-      })
+      await performResumeSession(sessionId)
     },
 
+    // Applies the current global MCP server list to every live session.
+    // A session with a turn in flight is left alone — resuming it now would
+    // send session/resume over the same connection its live prompt is
+    // streaming on, which is what used to cut turns off mid-flight. It's
+    // marked pendingMcpRefresh instead, and settleTurn applies the resume the
+    // moment that turn actually ends, so the list is still applied — just not
+    // at the cost of interrupting whatever the session was doing.
     async refreshMcpServers(): Promise<void> {
-      for (const sessionId of store.sessions.keys()) {
-        await this.resumeSession(sessionId).catch((error: unknown) =>
+      for (const [sessionId, session] of store.sessions) {
+        if (session.activeTurns > 0) {
+          session.pendingMcpRefresh = true
+          continue
+        }
+        await performResumeSession(sessionId).catch((error: unknown) =>
           emit(sessionId, { kind: 'error', message: errorMessage(error) }),
         )
       }
