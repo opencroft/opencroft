@@ -32,10 +32,15 @@ export type ChainDotVariant = 'default' | 'success' | 'destructive'
 
 // One item inside a turn's detail chain. The host builds these; this component
 // only renders them.
+//
+// Only a tool call carries an `id`: it is the React key for the single node the
+// collapsed view re-renders, and it is the request id a tool view resolves
+// against. Text and thinking entries are keyed by position instead, so giving
+// them an id would be inventing data the host does not have.
 export type DetailItem =
-  | { kind: 'assistant-text'; id: string; text: string }
-  | { kind: 'thinking'; id: string; text: string }
-  | { kind: 'tool'; id: string; name: string; args?: unknown; result?: { isError?: boolean } }
+  | { kind: 'assistant-text'; text: string }
+  | { kind: 'thinking'; text: string }
+  | { kind: 'tool'; id: string; name: string; args: unknown; result?: { text: string; isError?: boolean } }
 
 export type DetailEntry = { kind: 'header' } | { kind: 'item'; item: DetailItem }
 

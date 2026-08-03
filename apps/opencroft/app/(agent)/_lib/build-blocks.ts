@@ -1,4 +1,5 @@
 import type { ChatEvent } from 'agent-client/types'
+import type { UserText } from 'ui/agent-chat/chat-turn'
 
 import type { ChatMessage } from '@/app/(agent)/_lib/messages'
 
@@ -23,8 +24,6 @@ export type DetailItem =
 // message's id, so the bare numbers would collide between the two kinds.
 export type Block = { id: string; kind: 'user'; text: UserText } | { id: string; kind: 'details'; items: DetailItem[] }
 
-declare const userTextBrand: unique symbol
-
 // A user message's own words, with everything the app added on the way to the
 // agent removed. Branded so it cannot be produced by writing a string: anything
 // that renders a user message asks for this type, so the only way to get one is
@@ -35,7 +34,11 @@ declare const userTextBrand: unique symbol
 // read text straight off the stream event, so that one turn showed the system
 // tags no other message shows. A convention that is remembered three times out
 // of four isn't a convention. This makes forgetting a type error.
-export type UserText = string & { readonly [userTextBrand]: true }
+// Re-exported rather than redeclared. The brand now lives with the component
+// that demands it, so there is exactly one of it: two structurally different
+// brands for the same idea would each be unforgeable and mutually unassignable,
+// which is a cast at the boundary and the guarantee gone.
+export type { UserText }
 
 function stripOpencroftTags(text: string): string {
   return text.replace(/<opencroft-[a-z0-9-]+>[\s\S]*?<\/opencroft-[a-z0-9-]+>\s*/gi, '')
