@@ -316,3 +316,38 @@ test('signing in yields a session that resolves back to the same user', async ()
   assert.ok(identified, 'the session cookie must resolve to a user')
   assert.equal(identified.email, ADMIN.email)
 })
+
+// The line between "logged out" and "silently let in". Once the route boundary
+// exists, whatever getSessionUser returns IS the gate — so a session the
+// database considers expired must resolve to nothing, not merely be tidied up
+// on some later sweep. Asserted against a real expired row rather than by
+// waiting, because the alternative is a test that sleeps or one that trusts the
+// library's own clock handling without checking it.
+test('an expired session resolves to null, not to its user', async () => {
+  const { ensureAuth } = await import('./server')
+  const { db } = await import('@opencroft/db')
+  const { session } = await import('@opencroft/db/schema')
+  const { lt, sql } = await import('drizzle-orm')
+
+  const response = await ensureAuth().api.signInEmail({
+    body: { email: ADMIN.email, password: ADMIN.password },
+    asResponse: true,
+  })
+  const cookie = response.headers.get('set-cookie')
+  assert.ok(cookie, 'sign-in must set a session cookie')
+
+  const live = await getSessionUser(new Request('http://localhost/', { headers: { cookie } }))
+  assert.ok(live, 'precondition: the fresh session must resolve, or this proves nothing')
+
+  // Backdate every session so the cookie points at an expired row.
+  const past = new Date(Date.now() - 60 * 60 * 1000)
+  await db.update(session).set({ expiresAt: past })
+  assert.equal(
+    (await db.select().from(session).where(lt(session.expiresAt, sql`now()`))).length > 0,
+    true,
+    'precondition: at least one session row must now be expired',
+  )
+
+  const expired = await getSessionUser(new Request('http://localhost/', { headers: { cookie } }))
+  assert.equal(expired, null, 'an expired session must not resolve to a user — that would be silently letting them in')
+})

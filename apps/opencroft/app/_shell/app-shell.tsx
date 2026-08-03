@@ -34,6 +34,7 @@ import { useAgentSessions } from '@/app/(agent)/_lib/use-agent-sessions'
 import { useChatListNodes } from '@/app/(agent)/_lib/use-chat-list-nodes'
 import { useSessionActivityKeys } from '@/app/(agent)/_lib/use-session-activity'
 import { stopProcessLocal } from '@/app/(agent)/_server/acp'
+import { SignOutItem } from '@/app/(auth)/_components/sign-out-item'
 import type { SpaceSummary } from '@/app/(space)/_server/types'
 import { cn } from '@/lib/utils'
 
@@ -238,6 +239,7 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
+        <SignOutItem />
         <DevBuildBadge />
       </SidebarFooter>
       <SidebarRail />

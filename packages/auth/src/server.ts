@@ -42,6 +42,38 @@ function resolveSecret(): string {
   )
 }
 
+// Social sign-in is configuration, not code: a provider is offered when both
+// halves of its credential are present and is simply absent otherwise. Nothing
+// here needs changing to turn one on — set the pair and it appears.
+const SOCIAL_PROVIDER_ENV = {
+  google: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'],
+  apple: ['APPLE_CLIENT_ID', 'APPLE_CLIENT_SECRET'],
+} as const
+
+export type SocialProviderId = keyof typeof SOCIAL_PROVIDER_ENV
+
+/**
+ * The providers this deployment can actually sign a person in with.
+ *
+ * The screens render from this rather than from a hard-coded list, so a button
+ * exists only when pressing it can work — an offer that cannot be honoured is
+ * worse than no offer.
+ */
+export function configuredSocialProviders(): SocialProviderId[] {
+  return (Object.keys(SOCIAL_PROVIDER_ENV) as SocialProviderId[]).filter((id) => {
+    const [idVar, secretVar] = SOCIAL_PROVIDER_ENV[id]
+    return Boolean(process.env[idVar]) && Boolean(process.env[secretVar])
+  })
+}
+
+function socialProviders() {
+  const entries = configuredSocialProviders().map((id) => {
+    const [idVar, secretVar] = SOCIAL_PROVIDER_ENV[id]
+    return [id, { clientId: process.env[idVar] as string, clientSecret: process.env[secretVar] as string }] as const
+  })
+  return Object.fromEntries(entries)
+}
+
 // Built on first use, not at import.
 //
 // This module is reached from the route that mounts the handler, so building
@@ -51,6 +83,9 @@ function resolveSecret(): string {
 // variable to set.
 function buildAuth() {
   return betterAuth({
+    // Read here rather than at import, so an unconfigured deployment still
+    // starts and the provider list reflects the environment at first use.
+    socialProviders: socialProviders(),
     database: drizzleAdapter(db, {
       provider: 'pg',
       // The tables live in the db package; pass them explicitly rather than
