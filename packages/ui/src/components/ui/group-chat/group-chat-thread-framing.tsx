@@ -13,26 +13,38 @@ export interface GroupChatThreadFramingProps {
   threadTitle?: string | null
   /** Optional participants, shown compactly on the trailing side. */
   members?: MemberRef[]
-  /** Back out of the conversation — to the thread list / group chat. */
+  /** Back out of the conversation -- to the thread list / group chat. */
   onBack?: () => void
-  /** The conversation itself — agent-chat/chat-conversation, reused not redrawn. */
+  /** The conversation itself -- agent-chat/chat-conversation, reused not redrawn. */
   children: ReactNode
+  /** The composer, pinned beneath the conversation. Reused from the agent-chat
+   * composer family, never redrawn here -- a group-chat thread is an ordinary
+   * agent session, so it gets the same composer a 1:1 chat uses. */
+  composer?: ReactNode
   className?: string
 }
 
 // The framing for a thread's conversation inside a group chat. The conversation
 // surface itself is reused unchanged (a group-chat thread is an ordinary agent
-// session — see agent-chat/chat-conversation); what is worth designing is the
+// session -- see agent-chat/chat-conversation); what is worth designing is the
 // context above it: the group chat a thread belongs to and its topic, with the
 // thread's own title, and a back affordance that matters most on minimal widths
-// where the conversation is a leaf view. No status, no locks — this only
+// where the conversation is a leaf view. No status, no locks -- this only
 // states where the reader is.
+//
+// The composer is a slot here rather than the host's business because this
+// component already owns the vertical arrangement: header pinned, conversation
+// scrolling, and now composer pinned. A composer placed inside `children` would
+// scroll away with the conversation, and a host rebuilding the arrangement
+// around this one would have to re-derive it -- which is exactly the layout
+// this already exists to keep right at a phone width.
 export function GroupChatThreadFraming({
   groupChatTopic,
   threadTitle,
   members,
   onBack,
   children,
+  composer,
   className,
 }: GroupChatThreadFramingProps) {
   return (
@@ -59,6 +71,9 @@ export function GroupChatThreadFraming({
         ) : null}
       </header>
       <div className='min-h-0 flex-1 overflow-hidden'>{children}</div>
+      {composer ? (
+        <div className='shrink-0 border-t border-border px-2 py-2'>{composer}</div>
+      ) : null}
     </div>
   )
 }

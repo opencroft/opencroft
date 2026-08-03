@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
+import { AgentCommandBar } from 'ui/agent-chat/agent-command-bar'
 import { GroupChatThreadFraming } from 'ui/group-chat/group-chat-thread-framing'
 
 import { AgentChat } from '@/app/_authed/(agent)/_components/agent-chat'
@@ -95,6 +96,35 @@ function ThreadConversation({
     [thread.id],
   )
   const acp = useAcpSession(source, undefined, thread.agent.name, undefined, sendTransport)
+  const [draft, setDraft] = useState('')
+
+  // The composer is the KIT's controlled command bar, not the app's
+  // AgentCommandBarHost: that host publishes itself into the dashboard's
+  // overlay via useOverlay, which is right where it lives and wrong on a
+  // standalone route — the same reason the conversation above uses AgentChat
+  // rather than ChatHost.
+  //
+  // Its send is `acp.session.send`, so it inherits the transport this route
+  // passed to useAcpSession: every message goes through
+  // sendGroupChatThreadMessage and is membership-checked, while keeping the
+  // hook's ordering, held-message and waiting behaviour.
+  const composer = (
+    <AgentCommandBar
+      value={draft}
+      onValueChange={setDraft}
+      onSend={(text) => {
+        acp.session.send(text)
+        setDraft('')
+      }}
+      sending={acp.session.sending}
+      busy={acp.session.waiting}
+      onStop={acp.session.stop}
+      disabled={acp.session.disabled}
+      queued={acp.queue}
+      onRemoveQueued={acp.removeQueued}
+      placeholder={`Message ${thread.agent.name}`}
+    />
+  )
 
   return (
     <GroupChatThreadFraming
@@ -102,6 +132,7 @@ function ThreadConversation({
       threadTitle={thread.title}
       members={chat.members}
       onBack={onBack}
+      composer={composer}
     >
       <AgentChat
         session={acp.session}

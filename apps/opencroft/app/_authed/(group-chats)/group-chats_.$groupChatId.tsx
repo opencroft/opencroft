@@ -4,9 +4,15 @@ import { GroupChatDetail } from 'ui/group-chat/group-chat-detail'
 import { GroupChatThreadList } from 'ui/group-chat/group-chat-thread-list'
 import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
 
+import { GroupChatDetailActions } from '@/app/_authed/(group-chats)/_components/group-chat-detail-actions'
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
-import { getMyGroupChatView, listGroupChatThreadsView } from '@/app/_authed/(group-chats)/_server/actions'
+import {
+  getMyGroupChatView,
+  listDirectoryUsersForPicker,
+  listGroupChatThreadsView,
+} from '@/app/_authed/(group-chats)/_server/actions'
+import { listAgentNodes } from '@/app/_authed/(space)/_server/agents'
 
 // Inside one group chat: its topic, who is taking part, and its threads.
 //
@@ -22,7 +28,12 @@ export const Route = createFileRoute('/_authed/(group-chats)/group-chats_/$group
       // reconcile instead of one to report.
       const chat = await getMyGroupChatView({ data: params.groupChatId })
       const threads = await listGroupChatThreadsView({ data: params.groupChatId })
-      return { chat, threads }
+      // The picker's candidates. Loaded here rather than on opening the dialog
+      // so the actions are usable the moment the screen is: both are small,
+      // membership-independent lists, and neither can refuse once the two
+      // reads above have already passed.
+      const [directory, agents] = await Promise.all([listDirectoryUsersForPicker(), listAgentNodes()])
+      return { chat, threads, directory, agents }
     }),
   component: GroupChatDetailPage,
   errorComponent: GroupChatErrorState,
@@ -36,7 +47,7 @@ function GroupChatDetailPage() {
   if (data.refused) {
     return <GroupChatRefusal code={data.code} />
   }
-  const { chat, threads } = data
+  const { chat, threads, directory, agents } = data
 
   return (
     <ScrollPage>
@@ -44,6 +55,17 @@ function GroupChatDetailPage() {
         <GroupChatDetail
           topic={chat.topic}
           members={chat.members}
+          actions={
+            <GroupChatDetailActions
+              groupChatId={groupChatId}
+              members={chat.members}
+              directory={directory}
+              agents={agents}
+              onThreadStarted={(threadId) =>
+                navigate({ to: '/group-chats/$groupChatId/$threadId', params: { groupChatId, threadId } })
+              }
+            />
+          }
           threads={
             threads.length > 0 ? (
               <GroupChatThreadList

@@ -3,6 +3,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
 import { GroupChatList } from 'ui/group-chat/group-chat-list'
 import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
 
+import { CreateGroupChatAction } from '@/app/_authed/(group-chats)/_components/create-group-chat-action'
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
 import { listMyGroupChatsView } from '@/app/_authed/(group-chats)/_server/actions'
@@ -32,6 +33,7 @@ function GroupChatsPage() {
         <GroupChatList
           chats={chats}
           onSelect={(id) => navigate({ to: '/group-chats/$groupChatId', params: { groupChatId: id } })}
+          action={<CreateGroupChatAction />}
           emptyState={
             <Empty className='py-12'>
               <EmptyHeader>
