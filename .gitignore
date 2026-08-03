@@ -51,3 +51,6 @@ data/
 .tanstack/
 .mcp.json
 *.gen.ts
+
+# written by a running instance's startup command, not by any build step
+.deploy-marker
