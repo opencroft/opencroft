@@ -34,7 +34,6 @@ const UNGUARDED_PATHS = new Set(['/login', '/setup'])
 // matched outside the router's route tree, so none of the following check for
 // a session — any request that reaches the host reaches them:
 //
-//   /api/ws/terminal                shell access to the host
 //   /api/mcp                        every agent tool call and node action
 //   /api/auth/*                     the auth handler (necessarily open)
 //   /api/ext/*                      extension assets, files and HTTP surfaces
@@ -55,19 +54,25 @@ const UNGUARDED_PATHS = new Set(['/login', '/setup'])
 //
 // The follow-up is authenticating these surfaces in their own right.
 //
-// ORDER, AND THE TRAP IN IT. The obvious order is highest-privilege first,
-// which points at /api/ws/terminal because that is shell access. Acting on that
-// is worse than doing nothing, because it produces a false sense of closure:
+// /api/ws/terminal IS DONE — it now requires the same cookie session as any
+// page (see server/routes/api/ws/terminal.ts), which is why it no longer
+// appears in the list above. Read what that does and does not buy before
+// assuming the job is finished:
+//
+// ORDER, AND THE TRAP IN IT. The obvious order was highest-privilege first,
+// which points at /api/ws/terminal because that is shell access. Acting on
+// that alone would have been worse than doing nothing, because it produces a
+// false sense of closure:
 //
 //   /api/ws/terminal is reached ONLY by packages/terminal's xterm client.
 //   Agents never touch it. `remote_exec` arrives over /api/mcp, and remoteExec
 //   resolves the core extension's terminal.exec and calls it IN-PROCESS.
 //
-// So gating the websocket closes the browser path to a shell and leaves the
+// So gating the websocket closed the BROWSER path to a shell and left the
 // capability wide open behind an easier endpoint. SHELL ACCESS IS CLOSED WHEN
-// /api/mcp IS CLOSED, AND NOT BEFORE. Gate the terminal route early if you
-// like — it is cheap and blocks no agent — but do not record it as having
-// protected shell access.
+// /api/mcp IS CLOSED, AND NOT BEFORE — that is still todo, is the harder half,
+// and is tracked separately. Do not read the terminal gate as having protected
+// shell access.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const Route = createRootRoute({
