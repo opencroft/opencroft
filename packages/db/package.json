@@ -7,9 +7,11 @@
     ".": "./src/index.ts",
     "./schema": "./src/schema.ts",
     "./connect": "./src/connect.ts",
-    "./backup": "./src/backup.ts"
+    "./backup": "./src/backup.ts",
+    "./datadir-lock": "./src/datadir-lock.ts"
   },
   "scripts": {
+    "test": "node ../../scripts/run-tests.mjs",
     "typecheck": "node ../../scripts/run-typecheck.mjs src",
     "generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate",

@@ -22,6 +22,11 @@ function isRemote(url: string | undefined): url is string {
  * embedded PGlite database (real Postgres compiled to WASM, in-process) that
  * persists to the data volume. `close` flushes + releases the driver — call it
  * in one-shot scripts so an embedded PGlite persists before the process exits.
+ *
+ * The embedded branch takes an advisory lock on the datadir first and throws
+ * `DatadirBusyError` if another process holds it, rather than opening a stale
+ * copy of the database. Only the embedded branch: a real Postgres server does
+ * its own locking.
  */
 export async function openDb(): Promise<{ db: DB; close: () => Promise<void> }> {
   const url = process.env.DATABASE_URL
@@ -41,9 +46,35 @@ export async function openDb(): Promise<{ db: DB; close: () => Promise<void> }> 
   // fails here instead of just starting up.
   const { mkdirSync } = await import('node:fs')
   mkdirSync(dataDir, { recursive: true })
-  const client = new PGlite(dataDir)
-  const db = drizzle(client, { schema })
-  const { migrate } = await import('drizzle-orm/pglite/migrator')
-  await migrate(db, { migrationsFolder })
-  return { db: db as unknown as DB, close: async () => void (await client.close()) }
+
+  // Before the datadir is opened, never after. PGlite will happily open a
+  // directory another process is already holding: it succeeds, hands back a
+  // stale database, and on close can discard the other process's writes with
+  // both sides exiting 0. The lock turns that into a refusal naming the
+  // holder. Keyed to the directory, so the throwaway datadir a test run makes
+  // for itself never contends with anything.
+  const { lockDatadir } = await import('./datadir-lock')
+  const lock = await lockDatadir(dataDir)
+  try {
+    const client = new PGlite(dataDir)
+    const db = drizzle(client, { schema })
+    const { migrate } = await import('drizzle-orm/pglite/migrator')
+    await migrate(db, { migrationsFolder })
+    return {
+      db: db as unknown as DB,
+      close: async () => {
+        // finally, not sequential: a driver that fails to close must not also
+        // leave the lock held for the rest of the process's life.
+        try {
+          await client.close()
+        } finally {
+          await lock.release()
+        }
+      },
+    }
+  } catch (error) {
+    // Nothing was returned, so no caller can reach close() to release this.
+    await lock.release()
+    throw error
+  }
 }
