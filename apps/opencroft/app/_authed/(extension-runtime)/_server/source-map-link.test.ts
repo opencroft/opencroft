@@ -135,11 +135,13 @@ test('a successful rewrite leaves no temp file behind', async () => {
 })
 
 test('two rewrites of one bundle at once cannot promote a half-written file', async () => {
-  // Nothing deduplicates builds, so two requests for the same extension can
-  // rewrite this bundle concurrently. With a temp name shared between them,
-  // one rename publishes the other's partially-written file — atomically, which
-  // makes it worse than the bug this fix replaces: a truncated bundle that
-  // arrives looking whole. Large enough that the writes genuinely overlap.
+  // buildExtension dedupes concurrent builds of the same extension, but this
+  // function takes a bare file path and has no idea whether its caller did —
+  // it has to be safe on its own. With a temp name shared between concurrent
+  // calls, one rename publishes the other's partially-written file —
+  // atomically, which makes it worse than the bug this fix replaces: a
+  // truncated bundle that arrives looking whole. Large enough that the writes
+  // genuinely overlap.
   const body = `${'y'.repeat(4_000_000)};\n`
   const js = await bundle(`${body}//# sourceMappingURL=client.js.map\n`, '{}', 1_700_000_000_000)
 
