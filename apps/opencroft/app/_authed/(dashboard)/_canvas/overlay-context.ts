@@ -9,6 +9,7 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react'
@@ -19,13 +20,18 @@ type Slot = 'header' | 'content' | 'menu' | 'bar'
 
 const BUILTIN_MODES: CommandMode[] = ['ai', 'search', 'find']
 
-export interface OverlaySlots {
+/** How a slot is written, and where the overlay paints. Stable for the life of the provider. */
+export interface OverlaySlotControls {
+  setSlot: (slot: Slot, node: ReactNode | null) => void
+  containerRef: React.RefObject<HTMLElement | null>
+}
+
+/** What has been published into each slot. */
+export interface OverlaySlotValues {
   header: ReactNode | null
   content: ReactNode | null
   menu: ReactNode | null
   bar: ReactNode | null
-  setSlot: (slot: Slot, node: ReactNode | null) => void
-  containerRef: React.RefObject<HTMLElement | null>
 }
 
 export interface OverlaySlotNodes {
@@ -41,16 +47,38 @@ export interface OverlayManager {
   params: unknown
   focusTick: number
   commandFocused: boolean
-  slots: OverlaySlots
+  slots: OverlaySlotControls
   activate: (mode: CommandMode, params?: unknown) => void
   dismiss: () => void
   setMode: (mode: CommandMode) => void
   setCommandFocused: (focused: boolean) => void
 }
 
+// Two contexts, deliberately, and the split is the whole point of this module.
+//
+// The manager is the control surface — mode, focus, and the setter. The slot
+// VALUES live apart from it, because a component that writes a slot must not
+// subscribe to what it wrote.
+//
+// It used to. The manager was rebuilt on every provider render, so writing a
+// slot produced a new context value, which re-rendered every holder of the
+// manager INCLUDING the publisher that had just written. That publisher built a
+// fresh node, published again, and the app died with "Maximum update depth
+// exceeded". A slot node that was not reference-stable therefore did not cost a
+// render, it hung the app — so every publisher had to hand-maintain reference
+// stability forever, with a crash as the penalty for missing once.
+//
+// With the values kept out of the manager, a write cannot re-render a writer.
+// Stability is an optimisation again: worth doing, not load-bearing.
 const OverlayManagerContext = createContext<OverlayManager | null>(null)
+const OverlaySlotValuesContext = createContext<OverlaySlotValues>({
+  header: null,
+  content: null,
+  menu: null,
+  bar: null,
+})
 
-function useOverlayState(): OverlaySlots {
+function useOverlayState(): { controls: OverlaySlotControls; values: OverlaySlotValues } {
   const [header, setHeader] = useState<ReactNode | null>(null)
   const [content, setContent] = useState<ReactNode | null>(null)
   const [menu, setMenu] = useState<ReactNode | null>(null)
@@ -73,12 +101,14 @@ function useOverlayState(): OverlaySlots {
     setBar(node)
   }, [])
 
-  return { header, content, menu, bar, setSlot, containerRef }
+  const controls = useMemo(() => ({ setSlot, containerRef }), [setSlot])
+  const values = useMemo(() => ({ header, content, menu, bar }), [header, content, menu, bar])
+  return { controls, values }
 }
 
 /** Owns the overlay's mode and slot state; useOverlay() works below this provider. */
 export function OverlayProvider({ children }: { children: ReactNode }) {
-  const slots = useOverlayState()
+  const { controls: slots, values } = useOverlayState()
   const [mode, setMode] = useState<CommandMode>('ai')
   const [params, setParams] = useState<unknown>(null)
   const [focusTick, setFocusTick] = useState(0)
@@ -106,22 +136,25 @@ export function OverlayProvider({ children }: { children: ReactNode }) {
     }
   }, [slots.setSlot])
 
-  const manager: OverlayManager = {
-    mode,
-    params,
-    focusTick,
-    commandFocused,
-    slots,
-    activate,
-    dismiss,
-    setMode,
-    setCommandFocused,
-  }
+  // Memoised WITHOUT the slot values: publishing changes `values`, leaves this
+  // identity alone, and so leaves every publisher un-rendered.
+  const manager: OverlayManager = useMemo(
+    () => ({ mode, params, focusTick, commandFocused, slots, activate, dismiss, setMode, setCommandFocused }),
+    [mode, params, focusTick, commandFocused, slots, activate, dismiss],
+  )
 
-  return createElement(OverlayManagerContext.Provider, { value: manager }, children)
+  return createElement(
+    OverlayManagerContext.Provider,
+    { value: manager },
+    createElement(OverlaySlotValuesContext.Provider, { value: values }, children),
+  )
 }
 
-function useManagedSlot(slot: Slot, nodes: OverlaySlotNodes | undefined, setSlot: OverlaySlots['setSlot']): void {
+function useManagedSlot(
+  slot: Slot,
+  nodes: OverlaySlotNodes | undefined,
+  setSlot: OverlaySlotControls['setSlot'],
+): void {
   const enabled = nodes !== undefined && slot in nodes
   const node = enabled ? (nodes[slot] ?? null) : null
   useLayoutEffect(() => {
@@ -153,7 +186,7 @@ export function useOverlay(nodes?: OverlaySlotNodes): OverlayManager {
 
 // Slot writes go nowhere when there is no overlay to write to. Module-level so
 // the reference is stable across renders, like a real setSlot.
-const discardSlot: OverlaySlots['setSlot'] = () => {}
+const discardSlot: OverlaySlotControls['setSlot'] = () => {}
 
 /**
  * The overlay manager where one exists, `null` where it does not.
@@ -164,6 +197,17 @@ const discardSlot: OverlaySlots['setSlot'] = () => {}
  * overlay is an enhancement rather than something they need to function, so
  * its absence is reported as a value and the slots are simply discarded.
  */
+/**
+ * The published slot nodes, for the surface that paints them.
+ *
+ * Deliberately not reachable through `useOverlay`: reading these means
+ * re-rendering on every publish, which is correct for the painter and wrong for
+ * everyone else.
+ */
+export function useOverlaySlotValues(): OverlaySlotValues {
+  return useContext(OverlaySlotValuesContext)
+}
+
 export function useOptionalOverlay(nodes?: OverlaySlotNodes): OverlayManager | null {
   const manager = useContext(OverlayManagerContext)
   const setSlot = manager?.slots.setSlot ?? discardSlot
