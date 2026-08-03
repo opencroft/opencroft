@@ -16,7 +16,7 @@ import test, { after } from 'node:test'
 
 const workdir = await mkdtemp(join(tmpdir(), 'opencroft-caller-test-'))
 process.env.PGLITE_PATH = join(workdir, 'pglite')
-process.env.DB_MIGRATIONS_DIR = join(import.meta.dirname, '..', '..', '..', '..', '..', 'packages', 'db', 'migrations')
+process.env.DB_MIGRATIONS_DIR = join(import.meta.dirname, '..', '..', '..', '..', '..', '..', 'packages', 'db', 'migrations')
 process.env.OPENCROFT_DATA_DIR = join(workdir, 'data')
 process.env.OPENCROFT_MCP_AUTH = 'observe'
 delete process.env.DATABASE_URL

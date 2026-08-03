@@ -12,6 +12,7 @@
   "scripts": {
     "check": "biome check",
     "fix": "biome check --write",
+    "test": "npm run test --workspaces --if-present",
     "dev": "npm run dev -w @opencroft/app",
     "build": "npm run build -w @opencroft/app",
     "start": "npm run start -w @opencroft/app"

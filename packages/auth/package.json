@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "test": "node ../../scripts/run-tests.mjs"
+  },
   "exports": {
     "./server": "./src/server.ts",
     "./client": "./src/client.ts"

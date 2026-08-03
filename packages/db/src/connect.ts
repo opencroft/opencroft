@@ -36,6 +36,11 @@ export async function openDb(): Promise<{ db: DB; close: () => Promise<void> }> 
   const { PGlite } = await import('@electric-sql/pglite')
   const { drizzle } = await import('drizzle-orm/pglite')
   const dataDir = process.env.PGLITE_PATH ?? path.join(process.cwd(), 'data', 'pglite')
+  // PGlite's own nodefs does not create intermediate directories, so a data
+  // volume that has never been written to (a fresh checkout, a first deploy)
+  // fails here instead of just starting up.
+  const { mkdirSync } = await import('node:fs')
+  mkdirSync(dataDir, { recursive: true })
   const client = new PGlite(dataDir)
   const db = drizzle(client, { schema })
   const { migrate } = await import('drizzle-orm/pglite/migrator')

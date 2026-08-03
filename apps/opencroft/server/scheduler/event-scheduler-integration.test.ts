@@ -104,6 +104,11 @@ test('processDueEvents caps run history at MAX_HISTORY, newest first', async () 
 
   for (let i = 0; i < MAX_HISTORY + 3; i++) {
     await processDueEvents(Date.now() - 65_000, Date.now())
+    // persistRunOutcome dedups by (nodeId, firedAt) -- deliberately, to make a
+    // duplicate application of the same fire a no-op. Back-to-back calls with
+    // no delay can land on the same millisecond, which that guard then
+    // (correctly) treats as the same fire happening twice.
+    await new Promise((resolve) => setTimeout(resolve, 2))
   }
 
   const history = historyOf(slug, eventId)

@@ -16,7 +16,7 @@ import test, { after } from 'node:test'
 
 const workdir = await mkdtemp(join(tmpdir(), 'opencroft-token-actions-test-'))
 process.env.PGLITE_PATH = join(workdir, 'pglite')
-process.env.DB_MIGRATIONS_DIR = join(import.meta.dirname, '..', '..', '..', '..', '..', 'packages', 'db', 'migrations')
+process.env.DB_MIGRATIONS_DIR = join(import.meta.dirname, '..', '..', '..', '..', '..', '..', 'packages', 'db', 'migrations')
 delete process.env.DATABASE_URL
 
 const { apiToken, db, user } = await import('@opencroft/db')
