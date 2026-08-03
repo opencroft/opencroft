@@ -20,7 +20,7 @@ process.env.DB_MIGRATIONS_DIR = join(import.meta.dirname, '..', '..', '..', '..'
 delete process.env.DATABASE_URL
 
 const { apiToken, db, user } = await import('@opencroft/db')
-const { createTokenForUser, listTokensForUser, revokeTokenForUser } = await import('./token-actions')
+const { createTokenForUser, listTokensForUser, revokeTokenForUser } = await import('./token-actions-impl')
 const { resolveCaller } = await import('@/app/(mcp)/_server/caller')
 
 after(async () => {
