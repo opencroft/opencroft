@@ -17,23 +17,26 @@ export interface AuthState {
   needsSetup: boolean
   /** This request carries a valid session. */
   signedIn: boolean
+  /** The signed-in session belongs to an administrator. False when signed out. */
+  isAdmin: boolean
 }
 
 /**
- * Both facts in one call, deliberately.
+ * All three facts in one call, deliberately.
  *
  * The guard needs to tell "nobody has set this up yet" apart from "you are not
- * signed in", and asking for them separately would mean two round-trips on
- * every navigation to decide one thing.
+ * signed in" apart from "you're in, but not an administrator", and asking for
+ * them separately would mean multiple round-trips on every navigation to
+ * decide one thing.
  */
 export const getAuthState = createServerFn({ method: 'GET', strict: { output: false } }).handler(
   async (): Promise<AuthState> => {
     const user = await getSessionUser(getRequest())
     if (user) {
       // Someone is signed in, so accounts plainly exist; skip the count.
-      return { needsSetup: false, signedIn: true }
+      return { needsSetup: false, signedIn: true, isAdmin: user.role === 'admin' }
     }
-    return { needsSetup: (await countUsers()) === 0, signedIn: false }
+    return { needsSetup: (await countUsers()) === 0, signedIn: false, isAdmin: false }
   },
 )
 

@@ -16,6 +16,17 @@ import appCss from '@/app/globals.css?url'
 // not send them in a circle.
 const UNGUARDED_PATHS = new Set(['/login', '/setup'])
 
+// Path prefixes reachable only by an administrator. Checked here rather than
+// per-route so a route added under one of these prefixes later is guarded by
+// default, the same reasoning `UNGUARDED_PATHS` and the gate below already
+// follow. This is the UX redirect, not the security
+// boundary: a `createServerFn` is a callable endpoint of its own regardless
+// of which page links to it, so every admin-only server function checks
+// `requireAdminUser` (packages/auth/server.ts) independently. Losing this
+// list would show the wrong page; losing that check would let the action
+// through.
+const ADMIN_ONLY_PREFIXES = ['/settings/users', '/settings/tokens']
+
 // ─────────────────────────────────────────────────────────────────────────────
 // THE ROUTES BELOW HAVE NO AUTHENTICATION OF THEIR OWN. What stands in front of
 // them depends on the instance, so check yours rather than assuming:
@@ -132,7 +143,7 @@ export const Route = createRootRoute({
     if (UNGUARDED_PATHS.has(location.pathname)) {
       return
     }
-    const { needsSetup, signedIn } = await getAuthState()
+    const { needsSetup, signedIn, isAdmin } = await getAuthState()
     if (needsSetup) {
       // Nobody has set this instance up: there is no account to sign in with,
       // so the login form would be a dead end.
@@ -142,6 +153,9 @@ export const Route = createRootRoute({
       // Carry where they were headed so signing in resumes it rather than
       // dumping everyone on the root.
       throw redirect({ to: '/login', search: { redirect: location.href } })
+    }
+    if (!isAdmin && ADMIN_ONLY_PREFIXES.some((prefix) => location.pathname.startsWith(prefix))) {
+      throw redirect({ to: '/settings' })
     }
   },
   head: () => ({
