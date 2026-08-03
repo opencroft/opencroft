@@ -47,17 +47,57 @@ function distFile(extensionId: string, name: string): string {
   return path.join(root, slug, 'dist', name)
 }
 
-test('concurrent builds of the same extension share one build, not two', async () => {
+test('a burst of late arrivals shares one follow-up build, not one each', async () => {
   const { id, manifest } = await makeFixture(largeClientSource('dedup-'))
 
-  const [a, b] = await Promise.all([buildExtension(id, manifest), buildExtension(id, manifest)])
-  assert.ok(a.success, `first build failed: ${JSON.stringify(a.errors)}`)
-  assert.equal(a, b, 'two concurrent callers must be handed the exact same result, not two separately-built ones')
+  // Every arrival here is synchronous relative to the first, so all three
+  // must join the SAME in-flight slot rather than each timing their own race
+  // against it. Late arrivals always get a re-checked build (never the first
+  // caller's own result — see the mid-edit test below for why), but that
+  // re-check must be shared among them, not run once per late arrival.
+  const [first, lateA, lateB, lateC] = await Promise.all([
+    buildExtension(id, manifest),
+    buildExtension(id, manifest),
+    buildExtension(id, manifest),
+    buildExtension(id, manifest),
+  ])
+  assert.ok(first.success, `first build failed: ${JSON.stringify(first.errors)}`)
+  for (const late of [lateA, lateB, lateC]) {
+    assert.ok(late.success, `late build failed: ${JSON.stringify(late.errors)}`)
+    assert.equal(late, lateA, 'every late arrival must share the exact same follow-up result, not one each')
+  }
 
   // A later, non-concurrent call is a fresh build, not a stale dedup entry.
-  const c = await buildExtension(id, manifest)
-  assert.ok(c.success, `second build failed: ${JSON.stringify(c.errors)}`)
-  assert.notEqual(c, a, 'a call after the first has settled must not still be deduped against it')
+  const after = await buildExtension(id, manifest)
+  assert.ok(after.success, `later build failed: ${JSON.stringify(after.errors)}`)
+  assert.notEqual(after, first, 'a call after everything has settled must not still be deduped against the first')
+})
+
+test('a source edit that lands mid-build is not lost to a late caller', async () => {
+  const { id, manifest } = await makeFixture(largeClientSource('before-'))
+  const srcFile = path.join(root, id.split('/')[1], 'src', 'client.tsx')
+
+  // `late` arrives synchronously behind `first`, so it is guaranteed to join
+  // the same in-flight slot rather than race it — this test is about what
+  // happens next, not about winning that timing. The fixture is large enough
+  // that `first`'s own esbuild pass is still running tens of milliseconds in,
+  // which is when the edit below lands.
+  const first = buildExtension(id, manifest)
+  const late = buildExtension(id, manifest)
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  await fs.writeFile(srcFile, largeClientSource('after-'))
+
+  const [firstResult, lateResult] = await Promise.all([first, late])
+  assert.ok(firstResult.success, `first build failed: ${JSON.stringify(firstResult.errors)}`)
+  assert.ok(lateResult.success, `late build failed: ${JSON.stringify(lateResult.errors)}`)
+  assert.notEqual(firstResult, lateResult, "the late caller must not be handed the stale build's own result")
+
+  const published = await fs.readFile(distFile(id, 'client.js'), 'utf-8')
+  assert.ok(published.includes('after-'), 'the published bundle must reflect the edit')
+  assert.ok(
+    !published.includes('before-'),
+    'the published bundle must not still be serving what the first build started with',
+  )
 })
 
 test('a concurrent reader never sees a partial client bundle or map', async () => {

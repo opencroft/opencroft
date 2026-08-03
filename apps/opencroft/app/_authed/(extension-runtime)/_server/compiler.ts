@@ -643,21 +643,59 @@ async function ensureDependencies(extensionId: string): Promise<CompileError[]> 
 // over the same output files. Deduplicating here, at the one function every
 // caller funnels through, protects all of them at once — a guard placed
 // only in ensureBuilt would miss the other three. Keyed by extension so
-// unrelated extensions still build in parallel; cleared once settled so a
-// failed build doesn't wedge every later request for that extension behind
-// a promise that already rejected.
-const inFlightBuilds = new Map<string, Promise<BuildResult>>()
+// unrelated extensions still build in parallel.
+interface BuildSlot {
+  running: Promise<BuildResult>
+  // Set once, by whichever caller is first to arrive while `running` is still
+  // in flight. Every later arrival gets handed this SAME promise rather than
+  // each queuing its own — otherwise a build that finishes just before a
+  // burst of late callers would let each of them kick off a redundant build
+  // of their own instead of sharing the one already coalesced for them.
+  next: Promise<BuildResult> | null
+}
+
+const inFlightBuilds = new Map<string, BuildSlot>()
 
 export function buildExtension(extensionId: string, manifest: ExtensionManifest): Promise<BuildResult> {
-  const existing = inFlightBuilds.get(extensionId)
-  if (existing) {
-    return existing
+  const slot = inFlightBuilds.get(extensionId)
+  if (!slot) {
+    return startBuild(extensionId, manifest)
   }
-  const build = buildExtensionNow(extensionId, manifest).finally(() => {
-    inFlightBuilds.delete(extensionId)
+  // A build for this extension is already running. Its result was read from
+  // whatever the source looked like when IT started, which may already be
+  // stale by the time this caller asked — handing this caller that build's
+  // own result would silently drop an edit that landed in between, and the
+  // atomic publish that just shipped makes that loss permanent: the
+  // published bundle's mtime becomes newer than the edit, so the mtime check
+  // that would otherwise have caught it never fires again. Queue exactly one
+  // more build to run right after the current one settles (success or
+  // failure — a late arrival wants a current answer regardless of how the
+  // one already running turns out), and answer this caller from that.
+  if (!slot.next) {
+    slot.next = slot.running.then(
+      () => startBuild(extensionId, manifest),
+      () => startBuild(extensionId, manifest),
+    )
+  }
+  return slot.next
+}
+
+function startBuild(extensionId: string, manifest: ExtensionManifest): Promise<BuildResult> {
+  const running = buildExtensionNow(extensionId, manifest)
+  inFlightBuilds.set(extensionId, { running, next: null })
+  running.finally(() => {
+    const slot = inFlightBuilds.get(extensionId)
+    // Only clear if nothing queued a follow-up while this build ran. If one
+    // was queued, its own `.then` (above) is about to call startBuild and
+    // overwrite this slot with the follow-up's own — clearing here first
+    // would open a gap where a caller arriving in between finds no slot at
+    // all and starts a redundant third build instead of joining the one
+    // already coalesced for it.
+    if (slot?.running === running && !slot.next) {
+      inFlightBuilds.delete(extensionId)
+    }
   })
-  inFlightBuilds.set(extensionId, build)
-  return build
+  return running
 }
 
 async function buildExtensionNow(extensionId: string, manifest: ExtensionManifest): Promise<BuildResult> {
