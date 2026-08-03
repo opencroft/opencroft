@@ -246,7 +246,10 @@ async function dispatchToHandleAction(
     try {
       await dispatchNodeAction({ data: { nodeId: target.id, actionId, params } })
     } catch (err) {
-      console.error(`[stream→${target.type}.${actionId}] dispatch failed:`, err instanceof Error ? err.message : String(err))
+      console.error(
+        `[stream→${target.type}.${actionId}] dispatch failed:`,
+        err instanceof Error ? err.message : String(err),
+      )
     }
   }
 }
@@ -418,26 +421,92 @@ export async function deliverToSendMessageNode(
 //   - Usage arrives as a separate ACP session update, and the protocol does not
 //     order that against the prompt response.
 //
-// So the turn is waited out here instead, by polling the same in-flight counter
-// the rest of the host reads. The caller refuses a session that already had a
-// turn running, so this normally waits out the compaction alone; and in the
-// rare case one starts first, the counter never returns to zero between the two
-// (see the caller), so the wait still covers the compaction rather than ending
-// early. Bounded, because a turn can run for a long time and an action must not
-// hang on it: a timeout reports usage as unknown, which makes the verdict
-// unknown, which restores the instructions — the safe direction.
-const TURN_SETTLE_POLL_MS = 250
+// So the turn is waited out here instead — but NOT by polling activeTurns
+// (hasActiveTurnImpl), which was this function's original approach and is
+// unsound whenever anything else was sent to the session while the dispatched
+// turn ran. A prompt arriving mid-turn is held (agent-client's queue), and
+// settleTurn drains the next held prompt SYNCHRONOUSLY, in the same tick it
+// decrements activeTurns to zero — so a caller polling that counter can never
+// observe the true-zero instant between "this turn ended" and "the next queued
+// one started"; it just sees activeTurns stay above zero and keeps waiting,
+// now for a turn it has no stake in. Two consequences follow, and both were
+// observed: the usage read meant to bracket the compaction ALONE
+// lands after that unrelated turn too, corrupting the verdict; and because
+// `promptLocalImpl` only awaits DISPATCH, never delivery (see above), the
+// restore was reported sent the instant it was handed off, whether or not its
+// own turn ever actually finished.
+//
+// Waiting for a specific event sidesteps the race: a session never runs two
+// turns at once — prompt() only calls deliverPrompt when activeTurns was
+// already zero, everything else queues (see prompt() in agent-client.ts) — so
+// turn_end/error events after a dispatch arrive in the exact order turns were
+// (or will be) delivered. That makes a dispatch's own outcome countable even
+// when it lands on a session that is not idle: if something is already
+// running, `dispatch`'s prompt queues behind it rather than starting
+// immediately, so its terminal event is the SECOND one to arrive, not the
+// first — and however many more turns were already queued ahead of it don't
+// change that count, because `front: true` (used for the restore below) puts
+// a queued prompt at the head of whatever else is waiting, immediately behind
+// only the turn currently running. `hasActiveTurnImpl` is read once, right
+// before dispatch, to decide how many terminal events to skip; like the
+// pre-flight check in this function's caller, that narrows the race rather
+// than closing it (a turn could still start in the gap between the read and
+// the dispatch landing), which is the same trade this file already makes
+// elsewhere for the same reason: closing it fully needs prompt() to report
+// queued-versus-delivered, its own separate work.
+//
+// Subscribing from the tail (not fromIndex 0, the default) matters too:
+// subscribe() replays a session's full history to a new subscriber before
+// going live, and an old turn_end from long before this dispatch would
+// otherwise be counted as one of the events being waited out.
 const TURN_SETTLE_TIMEOUT_MS = 5 * 60_000
 
-async function awaitSessionIdle(sessionId: string): Promise<boolean> {
-  const deadline = Date.now() + TURN_SETTLE_TIMEOUT_MS
-  while (hasActiveTurnImpl(sessionId)) {
-    if (Date.now() >= deadline) {
-      return false
-    }
-    await new Promise((resolve) => setTimeout(resolve, TURN_SETTLE_POLL_MS))
+export type DispatchedTurnOutcome = 'finished' | 'interrupted' | 'timeout'
+
+export async function awaitDispatchedTurn(
+  sessionId: string,
+  dispatch: () => Promise<void>,
+): Promise<DispatchedTurnOutcome> {
+  const turnsAhead = hasActiveTurnImpl(sessionId) ? 1 : 0
+  const tail = agentClient.getEventsWindow(sessionId, { turns: 1 })
+  const fromIndex = tail ? tail.startIndex + tail.events.length : 0
+
+  let seen = 0
+  let settle: (outcome: DispatchedTurnOutcome) => void = () => {}
+  const outcome = new Promise<DispatchedTurnOutcome>((resolve) => {
+    settle = resolve
+  })
+  const unsubscribe = agentClient.subscribe(
+    sessionId,
+    (event) => {
+      if (event.kind !== 'turn_end' && event.kind !== 'error') {
+        return
+      }
+      if (seen < turnsAhead) {
+        seen += 1
+        return
+      }
+      settle(
+        event.kind === 'error' || event.stopReason === 'cancelled' || event.stopReason === 'resumed'
+          ? 'interrupted'
+          : 'finished',
+      )
+    },
+    { fromIndex },
+  )
+  try {
+    await dispatch()
+    let resolveTimeout: (outcome: DispatchedTurnOutcome) => void = () => {}
+    const timeout = new Promise<DispatchedTurnOutcome>((resolve) => {
+      resolveTimeout = resolve
+    })
+    const timer = setTimeout(() => resolveTimeout('timeout'), TURN_SETTLE_TIMEOUT_MS)
+    const result = await Promise.race([outcome, timeout])
+    clearTimeout(timer)
+    return result
+  } finally {
+    unsubscribe()
   }
-  return true
 }
 
 // Appended after the re-delivered session-init block (see compactSessionOnGraph).
@@ -516,12 +585,13 @@ export async function compactSessionOnGraph(
   //
   // This check narrows the window rather than closing it: a turn can still start
   // between the check and the prompt landing. The measurement survives that —
-  // a `/compact` that does get queued keeps the in-flight counter continuously
-  // non-zero (settleTurn's drain calls deliverPrompt, which increments before
-  // its first await), so the wait below covers both turns and the read still
-  // lands after real compaction. What stays exposed in that rare window is only
-  // the two cases above. Closing it properly needs `prompt()` to report
-  // queued-versus-delivered, which is an agent-client change and its own work.
+  // awaitDispatchedTurn below reads `hasActiveTurnImpl` again, immediately
+  // before it dispatches `/compact`, so a turn that snuck in during this gap is
+  // still counted and skipped there, and the read afterwards still lands on
+  // `/compact`'s own settlement rather than the intruder's. What stays exposed
+  // in that rare window is only the two cases above. Closing it properly needs
+  // `prompt()` to report queued-versus-delivered, which is an agent-client
+  // change and its own work.
   if (hasActiveTurnImpl(existing.sessionId)) {
     throw new Error(
       `Session has a turn in flight, so /compact would be queued behind it rather than run now: ${sessionKey}. Compact it once it is idle.`,
@@ -533,13 +603,18 @@ export async function compactSessionOnGraph(
   const contextUsageBefore = readUsage()
   // Sent raw: a leading slash marks a command, and composeEnvelope passes those
   // through unwrapped anyway.
-  await promptLocalImpl({ sessionId: existing.sessionId, text: '/compact' })
-  // Read only once the turn has actually finished — see awaitSessionIdle for
-  // why the prompt call returning is not that moment. A turn that never
-  // settles leaves usage unknown rather than reporting a stale figure as if it
-  // were the post-compaction one.
-  const settled = await awaitSessionIdle(existing.sessionId)
-  const contextUsageAfter = settled ? readUsage() : null
+  const compactOutcome = await awaitDispatchedTurn(existing.sessionId, () =>
+    promptLocalImpl({ sessionId: existing.sessionId, text: '/compact' }),
+  )
+  // Read only once /compact's OWN turn has actually finished. 'interrupted'
+  // (cancelled, the connection dying mid-turn, or a plain error) and 'timeout'
+  // both leave usage unknown rather than reporting a stale or partial figure as
+  // if it were the post-compaction one — deliberately: a cancelled or errored
+  // compaction did not reliably shrink anything, so treating its usage as a
+  // trustworthy "after" reading could report a false compaction, and the whole
+  // point of `compacted === false` skipping the restore is that it must never
+  // be wrong in that direction.
+  const contextUsageAfter = compactOutcome === 'finished' ? readUsage() : null
   const compacted = compactionVerdict(contextUsageBefore, contextUsageAfter)
 
   // Restore on true (it worked, and the instructions went with the dropped
@@ -554,8 +629,21 @@ export async function compactSessionOnGraph(
     sessionInit: { jobContext: ctx.jobContext, instructions: ctx.instructions },
     isNewSession: true,
   })
-  await promptLocalImpl({ sessionId: existing.sessionId, text: restore })
-  return { contextUsageBefore, contextUsageAfter, compacted, instructionsRestored: true }
+  // `front: true`: if anything auto-drained into a turn while /compact's own
+  // turn was settling (see this function's header and awaitDispatchedTurn),
+  // that turn may still be running here. Without `front`, the restore would
+  // join the tail of whatever else is already queued behind it and could wait
+  // arbitrarily long to even start; `front` guarantees it is the very next
+  // thing delivered once the current turn ends, which is also the assumption
+  // awaitDispatchedTurn's turn-counting relies on.
+  const restoreOutcome = await awaitDispatchedTurn(existing.sessionId, () =>
+    promptLocalImpl({ sessionId: existing.sessionId, text: restore, front: true }),
+  )
+  // Honestly reflects whether the agent actually finished reading the restore,
+  // not merely whether it was handed to the connection — see this function's
+  // header comment for why dispatch and delivery are not the same moment, and
+  // what silently conflating them costs.
+  return { contextUsageBefore, contextUsageAfter, compacted, instructionsRestored: restoreOutcome === 'finished' }
 }
 
 interface SendMessageNodeData {

@@ -16,14 +16,16 @@ import {
   terminalRun,
   terminalRunResult,
 } from '@opencroft/terminal/server'
-
 import { foldEvents, isSnapshotEvent } from 'agent-client/fold'
 import type { ChatEvent } from 'agent-client/types'
 
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { readSessions } from '@/app/_authed/(agent)/_server/agent-sessions-store'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
-import { dispatchExecutionContext, type ExecDispatchSummary } from '@/app/_authed/(extension-runtime)/_server/exec-dispatch'
+import {
+  dispatchExecutionContext,
+  type ExecDispatchSummary,
+} from '@/app/_authed/(extension-runtime)/_server/exec-dispatch'
 import { parseSessionKey } from '@/app/_authed/(extension-runtime)/_server/send-message-helpers'
 import { type ContextUsage, toContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import {
@@ -196,7 +198,9 @@ const graphApi: HostGraphApi = {
     // imports this module, so a static edge back to it would close a cycle.
     // Same manifest source as getTerminalContext, so a handle this returns is
     // one that resolver can actually resolve.
-    const { listExtensionManifestsImpl } = await import('@/app/_authed/(extension-runtime)/_server/extension-action-impl')
+    const { listExtensionManifestsImpl } = await import(
+      '@/app/_authed/(extension-runtime)/_server/extension-action-impl'
+    )
     const { buildNodeTypeHandles, expandDynamicHandles, findDockerExtensionId } = await import(
       '@/app/_authed/(extension-runtime)/_server/node-handles'
     )
@@ -558,16 +562,22 @@ export interface CompactResult {
   // Never inferred from the command having been delivered without an error —
   // see compactionVerdict.
   compacted: boolean | null
-  // Whether the session's initial instructions were re-sent afterwards. False
-  // when there were none to re-send, and when `compacted` is false — a harness
-  // that answered `/compact` as an ordinary message did not drop them, so
-  // appending them again would only grow the context this action exists to
-  // shrink.
+  // Whether the session actually finished reading the re-sent instructions —
+  // not merely whether they were handed to the connection (those
+  // are different moments, and conflating them is how a caller ends up
+  // believing a session is primed when it silently is not). False when there
+  // were none to re-send, when `compacted` is false — a harness that answered
+  // `/compact` as an ordinary message did not drop them, so appending them
+  // again would only grow the context this action exists to shrink — and when
+  // the restore was sent but its own turn was interrupted or never settled.
   instructionsRestored: boolean
 }
 
 export interface HostSendMessageApi {
-  send(nodeId: string, payload: Record<string, unknown>): Promise<{ sessionKey: string; created: boolean; forced: boolean }>
+  send(
+    nodeId: string,
+    payload: Record<string, unknown>,
+  ): Promise<{ sessionKey: string; created: boolean; forced: boolean }>
   listAgents(nodeId: string): Promise<{ agent: string; jobs: string[] }[]>
   listSessions(nodeId: string, params: { agent?: string; job?: string }): Promise<SessionSummary[]>
   listTurns(nodeId: string, params: { sessionKey: string; turns?: number; beforeIndex?: number }): Promise<TurnsPage>
@@ -595,7 +605,9 @@ const sendMessageApi: HostSendMessageApi = {
       JSON.stringify(payload),
     )
     if (!result) {
-      throw new Error('No agent/job resolved for this message — check the agent/job slugs (or this node’s own defaults) against listAgents')
+      throw new Error(
+        'No agent/job resolved for this message — check the agent/job slugs (or this node’s own defaults) against listAgents',
+      )
     }
     return result
   },
@@ -690,7 +702,9 @@ const sendMessageApi: HostSendMessageApi = {
     const tailInProgress = params.beforeIndex === undefined && agentClient.hasActiveTurn(meta.id)
     const groups = splitIntoTurns(window.events, window.startIndex)
     return {
-      turns: groups.map((group, i) => buildTurnSummary(group.index, group.events, tailInProgress && i === groups.length - 1)),
+      turns: groups.map((group, i) =>
+        buildTurnSummary(group.index, group.events, tailInProgress && i === groups.length - 1),
+      ),
       hasMore: window.hasMore,
       nextBeforeIndex: window.hasMore ? window.startIndex : null,
       sessionStatus,
