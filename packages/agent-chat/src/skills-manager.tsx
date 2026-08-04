@@ -3,7 +3,6 @@
 import { Save, Trash } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { AddImportFooter } from 'ui/components/experimental/add-import-footer'
 import { Button } from 'ui/components/ui/button'
 import { Field, FieldLabel } from 'ui/components/ui/field'
 import { Input } from 'ui/components/ui/input'
@@ -12,6 +11,7 @@ import { MenuLayout } from 'ui/components/ui/layout/menulayout'
 import { ScrollContent, ScrollHeader, ScrollPage } from 'ui/components/ui/layout/scrollpage'
 import { SidebarMenuButton } from 'ui/components/ui/sidebar'
 
+import { AddImportFooter } from './add-import-footer'
 import type { SkillRecord } from './server/runtime'
 import { SkillEditor } from './skill-editor'
 

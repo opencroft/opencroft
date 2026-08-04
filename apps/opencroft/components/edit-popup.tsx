@@ -3,7 +3,7 @@
 import { type ComponentType, forwardRef, type ReactNode, type Ref, useImperativeHandle, useState } from 'react'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
-import { HorizontalBox } from 'ui/layout/horizontal-box'
+import { Flex } from 'ui/layout/flex'
 
 export interface EditPopupFormProps<T> {
   data?: T
@@ -74,7 +74,7 @@ function EditPopup<T>(
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
         <FormComponent data={data} setData={setData} />
-        <HorizontalBox reversed={true}>
+        <Flex row reversed className='gap-4'>
           {createMode ? (
             <Button onClick={handleCreate}>Create</Button>
           ) : (
@@ -89,7 +89,7 @@ function EditPopup<T>(
               <Button onClick={handleSave}>Save</Button>
             </>
           )}
-        </HorizontalBox>
+        </Flex>
       </DialogContent>
     </Dialog>
   )
