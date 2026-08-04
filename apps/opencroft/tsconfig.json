@@ -2,7 +2,16 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "paths": {
-      "@/*": ["./*"]
+      // Order is load-bearing: the app root must stay first. TypeScript tries
+      // each candidate in order and uses the first that resolves, so an app
+      // file's own "@/..." import always wins here and never falls through.
+      // The second entry only fires for a specifier with no match under the
+      // app root at all -- which happens for an installed kit component's
+      // internal imports, since packages/ui gets pulled into this program as
+      // raw source (see run-typecheck.mjs). Reordering or dropping the second
+      // entry as "unused" silently makes every installed component's internal
+      // "@/..." imports unresolvable again.
+      "@/*": ["./*", "../../packages/ui/src/*"]
     },
     "types": ["vite/client", "node", "dom-navigation"]
   },
