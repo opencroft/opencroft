@@ -75,7 +75,17 @@ async function workspacePackageNames() {
   return names
 }
 
-const IMPORT_SPECIFIER = /(?:from\s+|import\s*\(\s*)['"]([^'"]+)['"]/g
+// Three shapes, one pattern: `from '…'` (static import/export), `import('…')`
+// (dynamic), and a bare `import '…'` with no `from` clause (side-effect-only,
+// a realistic shape for a workspace package that self-registers on import).
+// The side-effect alternative is anchored to the start of a line so it does
+// not fire on `import { x } from '…'` (that line starts with `import {`, not
+// `import '…'`) or on a comment (which starts with `//` or `*`, not `import`).
+//
+// `require(...)` is deliberately unmatched: this package is `"type": "module"`
+// end to end, so a `require` call importing a workspace package would already
+// be a different, pre-existing bug this check does not claim to cover.
+const IMPORT_SPECIFIER = /(?:^\s*import\s+|from\s+|import\s*\(\s*)['"]([^'"]+)['"]/gm
 
 function packageNameFromSpecifier(specifier) {
   if (specifier.startsWith('.') || specifier.startsWith('/')) return null
@@ -92,6 +102,7 @@ async function main() {
     ...(await sourceFiles(join(APP_DIR, 'app'))),
     ...(await sourceFiles(join(APP_DIR, 'server'))),
     ...(await sourceFiles(join(APP_DIR, 'scripts'))),
+    ...(await sourceFiles(join(APP_DIR, 'components'))),
   ]
 
   // file -> Set(undeclared package names), so one file importing the same
