@@ -35,6 +35,7 @@ import {
   useDockerSnapshotReceived,
   useSeedDockerContainers,
 } from '@/app/_authed/(sse)/_lib/sse-events-store'
+import { useUrlParam } from '@/app/_lib/use-url-param'
 import { ControlledInput } from '@/components/ui/input/controlled-input'
 
 export interface ExtensionComponentProps<D = Record<string, unknown>> {
@@ -323,6 +324,7 @@ export const extensionHostApi = {
   inspectorIntent,
   useInspectorIntent,
   useOverlay,
+  useUrlParam,
   useGraphNodes: useNodes,
   useGraphEdges: useEdges,
   useReactFlow,
