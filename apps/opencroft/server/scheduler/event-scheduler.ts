@@ -136,17 +136,22 @@ async function persistRunOutcome(
   slug: string,
   nodeId: string,
   dueRuleIds: string[],
+  fireId: string,
   firedAt: number,
   outcome: { status: RunStatus; durationMs: number; error?: string },
 ): Promise<void> {
-  // Deterministic, not Date.now()+Math.random() computed inside the mutate
-  // closure: tied to the actual fire, not to whichever moment the mutate
-  // callback happens to run. Belt-and-suspenders against an earlier bug
-  // (a shared-object aliasing bug, fixed at its root in withGraphConflictRetry)
-  // — even if some other bug someday causes this same outcome to be applied
-  // twice, the dedup check below makes a second application a no-op instead of
-  // a second history entry.
-  const entryId = `run-${nodeId}-${firedAt}`
+  // fireId is generated once per fireAndRecord call (before any retry), not
+  // derived from firedAt: two genuinely separate fires can read an identical
+  // Date.now() millisecond (queued timers fire back-to-back once the event
+  // loop is free), and keying dedup off that value silently collapsed one of
+  // them into the other. fireId stays stable across
+  // withGraphConflictRetry's own retries of this SAME call — that's the case
+  // this dedup guards for real, belt-and-suspenders against
+  // a shared-object aliasing bug (fixed at its root
+  // in withGraphConflictRetry) — even if some other bug someday causes this
+  // same outcome to be applied twice, the dedup check below makes a second
+  // application a no-op instead of a second history entry.
+  const entryId = `run-${nodeId}-${fireId}`
   try {
     await withGraphConflictRetry(
       slug,
@@ -198,19 +203,22 @@ async function fireAndRecord(slug: string, nodeId: string, dueRuleIds: string[])
   }
   inFlight.add(key)
   const startedAt = Date.now()
+  // One id per fire attempt, independent of wall-clock resolution — see
+  // persistRunOutcome's fireId comment.
+  const fireId = crypto.randomUUID()
   try {
     const summary = await dispatchExecutionContext({
       sourceNodeId: nodeId,
       sourceHandleId: 'exec-out',
       event: { type: 'event', nodeId, firedAt: startedAt, payload: {} },
     })
-    await persistRunOutcome(slug, nodeId, dueRuleIds, startedAt, {
+    await persistRunOutcome(slug, nodeId, dueRuleIds, fireId, startedAt, {
       status: summary.primary.error ? 'error' : 'success',
       durationMs: Date.now() - startedAt,
       error: summary.primary.error,
     })
   } catch (err) {
-    await persistRunOutcome(slug, nodeId, dueRuleIds, startedAt, {
+    await persistRunOutcome(slug, nodeId, dueRuleIds, fireId, startedAt, {
       status: 'error',
       durationMs: Date.now() - startedAt,
       error: err instanceof Error ? err.message : String(err),
