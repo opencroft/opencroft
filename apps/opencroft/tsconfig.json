@@ -2,7 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*", "../../packages/ui/src/*"]
     },
     "types": ["vite/client", "node", "dom-navigation"]
   },
