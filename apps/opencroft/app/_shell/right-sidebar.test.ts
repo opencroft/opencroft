@@ -91,21 +91,7 @@ test('nothing is rendered until a panel is published', async () => {
   )
 })
 
-// The four tests below render a panel, which this runner cannot do. The shared
-// TypeScript configuration leaves the JSX transform to the bundler; the runner
-// has no bundler, falls back to the classic transform, and any component
-// containing JSX throws `React is not defined` the moment it renders. It is not
-// specific to this file — a four-line component with a single div fails the
-// same way.
-//
-// Skipped rather than deleted, and rather than left failing: the gap belongs in
-// the output where it can be seen, not implied away by a green run. Remove the
-// option once the runner compiles JSX with the automatic runtime.
-const RENDERS_A_COMPONENT = {
-  skip: 'the test runner compiles JSX with the classic transform, so rendering a component throws',
-}
-
-test('a published panel appears, with its body shown', RENDERS_A_COMPONENT, async () => {
+test('a published panel appears, with its body shown', async () => {
   publish(panel('outline', 'Outline'))
   await mountInRow()
 
@@ -113,7 +99,7 @@ test('a published panel appears, with its body shown', RENDERS_A_COMPONENT, asyn
   assert.notEqual(dom.container.querySelector('[data-testid="body-outline"]'), null)
 })
 
-test('every published panel gets a tab, and the first is the one open', RENDERS_A_COMPONENT, async () => {
+test('every published panel gets a tab, and the first is the one open', async () => {
   publish(panel('outline', 'Outline'), panel('palette', 'Palette'))
   await mountInRow()
 
@@ -123,7 +109,7 @@ test('every published panel gets a tab, and the first is the one open', RENDERS_
   assert.equal(dom.container.querySelector('[data-testid="body-palette"]'), null)
 })
 
-test('choosing another tab swaps which panel is shown', RENDERS_A_COMPONENT, async () => {
+test('choosing another tab swaps which panel is shown', async () => {
   publish(panel('outline', 'Outline'), panel('palette', 'Palette'))
   await mountInRow()
 
@@ -138,7 +124,7 @@ test('choosing another tab swaps which panel is shown', RENDERS_A_COMPONENT, asy
   assert.equal(dom.container.querySelector('[data-testid="body-outline"]'), null)
 })
 
-test('the panel host joins the page row instead of opening one of its own', RENDERS_A_COMPONENT, async () => {
+test('the panel host joins the page row instead of opening one of its own', async () => {
   // The reason it takes the sidebar state without the wrapper. A second
   // full-width flex container nested in the row would change that layout
   // rather than join it.
