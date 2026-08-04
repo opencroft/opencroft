@@ -36,10 +36,12 @@ import { useIsMobile } from 'ui/hooks/use-mobile'
 import { useSidebar } from 'ui/sidebar'
 import { Spinner } from 'ui/spinner'
 
+import { ExtensionsSettledContext } from '@/app/_authed/(dashboard)/_canvas/extensions-ready-context'
 import { InspectorContext, useInspectorState } from '@/app/_authed/(dashboard)/_canvas/inspector-context'
 import { NodeContextMenu } from '@/app/_authed/(dashboard)/_canvas/node-context-menu'
 import { subscribeNodeDataUpdates } from '@/app/_authed/(dashboard)/_canvas/node-data-events'
 import { type BrowserTab, NodeInspector } from '@/app/_authed/(dashboard)/_canvas/node-inspector'
+import { graphNodeTypes, nodeTypesKey, typesFromKey } from '@/app/_authed/(dashboard)/_canvas/node-type-keys'
 import { buildNodeTypes } from '@/app/_authed/(dashboard)/_canvas/node-wrapper'
 import { useBackIntercept, useOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 import { useClipboard } from '@/app/_authed/(dashboard)/_canvas/use-clipboard'
@@ -129,7 +131,12 @@ async function loadLocalExtensions(): Promise<void> {
 export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: string }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
-  const [loaded, setLoaded] = useState(false)
+  // Two independent readiness flags, not one. The graph decides whether there is
+  // anything to paint; the extensions decide only how completely each node can
+  // be drawn. Collapsing them into a single flag is what held the whole canvas
+  // behind the slower of the two.
+  const [graphReady, setGraphReady] = useState(false)
+  const [extensionsSettled, setExtensionsSettled] = useState(false)
   const [extensionsVersion, setExtensionsVersion] = useState(0)
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [inspectorWidth, setInspectorWidth] = useState(420)
@@ -169,13 +176,31 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     void extensionsVersion
     return extensionRegistry.allNodes()
   }, [extensionsVersion])
+  // The set of node types the graph contains, flattened to one string.
+  //
+  // Keyed on the SET rather than on `nodes` on purpose: this recomputes on every
+  // graph change, including each frame of a drag, but its VALUE only moves when
+  // a type first appears or the last node of a type goes away.
+  const graphTypesKey = useMemo(() => nodeTypesKey(graphNodeTypes(nodes)), [nodes])
+  // Load-bearing dependency array — do not "complete" it with `nodes`.
+  //
+  // Replacing this object remounts every node on the canvas: the flow library
+  // treats a new `nodeTypes` as a new set of components. So the dependencies
+  // have to be the things that genuinely change which components exist — the
+  // registered extensions, and the set of types in the graph — and nothing that
+  // moves per node or per frame. Getting this wrong trades one console message
+  // per node for a full remount of the canvas on every graph change, which is
+  // the more expensive of the two by a wide margin.
+  //
+  // `comment` is assigned after the spread so it keeps its own component even
+  // though the graph's types now feed the map as well.
   const nodeTypes = useMemo(
     () =>
       ({
-        ...buildNodeTypes(allNodes),
+        ...buildNodeTypes(allNodes, typesFromKey(graphTypesKey)),
         comment: CommentNode,
       }) as unknown as NodeTypes,
-    [allNodes],
+    [allNodes, graphTypesKey],
   )
   const selected = nodes.find((n) => n.selected && n.type !== 'comment') ?? null
   // The MCP Requests browser tab is visible only when no node is selected and
@@ -226,27 +251,45 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   })
 
   useEffect(() => {
-    async function boot() {
-      // The graph and the extensions are independent, so they are fetched
-      // together: awaiting extensions first put the graph request — the one
-      // thing the space is waiting on — behind every extension bundle, last
-      // in the queue. Time to first paint is now the slower of the two rather
-      // than their sum.
-      const extensions = loadLocalExtensions()
-      const graphResult = fetchSpaceGraph(slug)
-      const [{ graph, updatedAt }] = await Promise.all([graphResult, extensions])
+    // The graph and the extensions are independent, and now they are applied
+    // independently too. Fetching them together already stopped time to first
+    // paint being their sum; applying them separately makes it the graph's
+    // alone, with each node filling in when its extension registers.
+    let current = true
+    setGraphReady(false)
+    setExtensionsSettled(false)
+    const extensions = loadLocalExtensions()
+    const graphResult = fetchSpaceGraph(slug)
+    graphResult.then(({ graph, updatedAt }) => {
+      // Two results settling separately means two chances for a previous
+      // space's response to arrive after the slug changed, where there used to
+      // be one. Drop anything belonging to a space already navigated away from.
+      if (!current) {
+        return
+      }
       setNodes(graph.nodes as Node[])
       setEdges(graph.edges as Edge[])
       graphVersionRef.current = updatedAt
+      setGraphReady(true)
+    })
+    // loadLocalExtensions reports its own failures and always resolves, so this
+    // is a real "finished, either way" edge. That is what lets a node still
+    // waiting for its extension be told apart from one whose extension is never
+    // coming, without inferring it from how long it has taken.
+    extensions.then(() => {
+      if (!current) {
+        return
+      }
       setExtensionsVersion((v) => v + 1)
-      setLoaded(true)
+      setExtensionsSettled(true)
+    })
+    return () => {
+      current = false
     }
-    setLoaded(false)
-    boot()
   }, [slug, setNodes, setEdges])
 
   useEffect(() => {
-    if (!loaded || sse.graphVersion === 0) {
+    if (!graphReady || sse.graphVersion === 0) {
       return
     }
     fetchSpaceGraph(slug).then(({ graph, updatedAt }) => {
@@ -262,10 +305,10 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       setEdges(graph.edges as Edge[])
       graphVersionRef.current = updatedAt
     })
-  }, [slug, sse.graphVersion, loaded, setNodes, setEdges])
+  }, [slug, sse.graphVersion, graphReady, setNodes, setEdges])
 
   useEffect(() => {
-    if (!loaded || sse.extensionsVersion === 0) {
+    if (!graphReady || sse.extensionsVersion === 0) {
       return
     }
     async function reload() {
@@ -278,15 +321,15 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       graphVersionRef.current = updatedAt
     }
     reload()
-  }, [slug, sse.extensionsVersion, loaded, setNodes, setEdges])
+  }, [slug, sse.extensionsVersion, graphReady, setNodes, setEdges])
 
   const scheduleSave = useCallback(
     (n: Node[], e: Edge[]) => {
-      if (loaded) {
+      if (graphReady) {
         debouncedSave(n, e)
       }
     },
-    [loaded, debouncedSave],
+    [graphReady, debouncedSave],
   )
 
   useEffect(() => {
@@ -837,7 +880,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
 
   const colorMode = resolvedTheme === 'dark' ? 'dark' : 'light'
 
-  if (!loaded) {
+  if (!graphReady) {
     return (
       <div className='flex flex-col items-center justify-center h-full gap-3 text-muted-foreground'>
         <Spinner className='size-12' />
@@ -847,168 +890,175 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   }
 
   return (
-    <InspectorContext.Provider value={{ setNode: inspector.setNode }}>
-      <div className='flex h-full w-full'>
-        <div className='flex-1 relative min-w-0'>
-          <div
-            role='application'
-            className='dashboard-mvp-flow absolute inset-0'
-            onDragOver={handleDragOver}
-            onDrop={handleDrop}
-            onTouchStart={handleTouchStart}
-            onTouchEnd={handleTouchEnd}
-            onTouchMove={handleTouchMove}
-          >
-            <ReactFlow
-              nodes={nodes}
-              edges={styledEdges}
-              nodeTypes={nodeTypes}
-              onNodesChange={handleNodesChange}
-              onEdgesChange={handleEdgesChange}
-              onNodeDragStart={onNodeDragStart}
-              onNodeDrag={onNodeDrag}
-              onNodeDragStop={onNodeDragStop}
-              onConnect={onConnect}
-              onConnectEnd={onConnectEnd}
-              isValidConnection={isValidConnection}
-              onPaneContextMenu={onPaneContextMenu}
-              onNodeContextMenu={onNodeContextMenu}
-              onPaneClick={() => {
-                closeMenu()
-                setNodeMenu(null)
-                if (isMobile) {
-                  deselect()
-                  setMobileInspectorVisible(false)
-                }
-              }}
-              deleteKeyCode={['Backspace', 'Delete']}
-              multiSelectionKeyCode='Shift'
-              selectionKeyCode='Shift'
-              nodesDraggable={isMobile ? nodesMovable : undefined}
-              selectionOnDrag={!isMobile}
-              panOnDrag={isMobile ? true : [1]}
-              selectionMode={isMobile ? undefined : SelectionMode.Partial}
-              colorMode={colorMode}
-              maxZoom={1}
-              minZoom={0.25}
-              fitView
-              proOptions={{ hideAttribution: true }}
+    // Provided here rather than folded into `nodeTypes`: the node component map
+    // is memoised on the set of node types, so feeding readiness through it
+    // would replace the map the instant loading settled and remount every node
+    // — a visible jolt at exactly the moment the canvas is meant to quietly
+    // fill in.
+    <ExtensionsSettledContext.Provider value={extensionsSettled}>
+      <InspectorContext.Provider value={{ setNode: inspector.setNode }}>
+        <div className='flex h-full w-full'>
+          <div className='flex-1 relative min-w-0'>
+            <div
+              role='application'
+              className='dashboard-mvp-flow absolute inset-0'
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+              onTouchStart={handleTouchStart}
+              onTouchEnd={handleTouchEnd}
+              onTouchMove={handleTouchMove}
             >
-              <Background variant={BackgroundVariant.Dots} gap={10} />
-            </ReactFlow>
-            {/* Node context menu: desktop right-click and mobile long-press */}
-            {nodeMenu &&
-              (() => {
-                const target = nodes.find((n) => n.id === nodeMenu.nodeId)
-                if (!target) {
-                  return null
-                }
-                return (
-                  <NodeContextMenu
-                    position={nodeMenu.screen}
-                    node={target}
-                    resolvedNode={target.type ? extensionRegistry.resolveNode(target.type) : undefined}
-                    onCopy={() => copySelectedNodes()}
-                    onDelete={onDeleteSelected}
-                    onDetails={
-                      isMobile
-                        ? () => {
-                            openNodeDetails(nodeMenu.nodeId)
-                          }
-                        : undefined
-                    }
-                    onClose={() => setNodeMenu(null)}
-                  />
-                )
-              })()}
-            {/* Mobile overlay toolbar */}
-            {isMobile && !overlayActive && (
-              <div className='absolute top-3 left-3 z-40 flex flex-col gap-2'>
-                <button
-                  type='button'
-                  className='size-10 flex items-center justify-center rounded-lg bg-background/80 backdrop-blur border shadow-sm active:bg-accent'
-                  onClick={() => toggleSidebar()}
-                  title='Toggle sidebar'
-                >
-                  <PanelLeft className='size-5' />
-                </button>
-                <button
-                  type='button'
-                  className={`size-10 flex items-center justify-center rounded-lg border shadow-sm active:bg-accent ${nodesMovable ? 'bg-primary/20 border-primary' : 'bg-background/80 backdrop-blur'}`}
-                  onClick={() => setNodesMovable((v) => !v)}
-                  title={nodesMovable ? 'Pan canvas' : 'Move nodes'}
-                  aria-pressed={nodesMovable}
-                >
-                  <Move className='size-5' />
-                </button>
-              </div>
-            )}
-          </div>
-          {menu && (
-            <FlowContextMenu
-              position={menu.screen}
-              extensions={menuExtensions}
-              onSelect={onMenuSelect}
-              onNewExtension={() => openEditor(null)}
-              onClose={closeMenu}
-            />
-          )}
-          <CanvasOverlay
-            nodes={commandNodes}
-            spaceName={spaceName}
-            spaceSlug={slug}
-            selectedNodeId={selected?.id ?? null}
-            mcpRequestsActive={mcpRequestsActive}
-            onFocusNode={focusNode}
-            onActiveChange={isMobile ? setOverlayActive : undefined}
-          />
-          <McpRequestNotifications onOpen={openMcpRequests} />
-        </div>
-        {(!isMobile || mobileInspectorVisible) && !inspectorExpanded && (
-          <div
-            onPointerDown={startInspectorResize}
-            role='separator'
-            aria-orientation='vertical'
-            aria-label='Resize inspector'
-            className={`relative w-px bg-border cursor-col-resize flex items-center justify-center after:absolute after:inset-y-0 after:left-1/2 after:w-1 after:-translate-x-1/2 hover:bg-primary/60 transition-colors ${resizing ? 'bg-primary/80' : ''}`}
-          >
-            <div className='bg-border z-10 flex h-4 w-3 items-center justify-center rounded-xs border'>
-              <GripVertical className='size-2.5' />
+              <ReactFlow
+                nodes={nodes}
+                edges={styledEdges}
+                nodeTypes={nodeTypes}
+                onNodesChange={handleNodesChange}
+                onEdgesChange={handleEdgesChange}
+                onNodeDragStart={onNodeDragStart}
+                onNodeDrag={onNodeDrag}
+                onNodeDragStop={onNodeDragStop}
+                onConnect={onConnect}
+                onConnectEnd={onConnectEnd}
+                isValidConnection={isValidConnection}
+                onPaneContextMenu={onPaneContextMenu}
+                onNodeContextMenu={onNodeContextMenu}
+                onPaneClick={() => {
+                  closeMenu()
+                  setNodeMenu(null)
+                  if (isMobile) {
+                    deselect()
+                    setMobileInspectorVisible(false)
+                  }
+                }}
+                deleteKeyCode={['Backspace', 'Delete']}
+                multiSelectionKeyCode='Shift'
+                selectionKeyCode='Shift'
+                nodesDraggable={isMobile ? nodesMovable : undefined}
+                selectionOnDrag={!isMobile}
+                panOnDrag={isMobile ? true : [1]}
+                selectionMode={isMobile ? undefined : SelectionMode.Partial}
+                colorMode={colorMode}
+                maxZoom={1}
+                minZoom={0.25}
+                fitView
+                proOptions={{ hideAttribution: true }}
+              >
+                <Background variant={BackgroundVariant.Dots} gap={10} />
+              </ReactFlow>
+              {/* Node context menu: desktop right-click and mobile long-press */}
+              {nodeMenu &&
+                (() => {
+                  const target = nodes.find((n) => n.id === nodeMenu.nodeId)
+                  if (!target) {
+                    return null
+                  }
+                  return (
+                    <NodeContextMenu
+                      position={nodeMenu.screen}
+                      node={target}
+                      resolvedNode={target.type ? extensionRegistry.resolveNode(target.type) : undefined}
+                      onCopy={() => copySelectedNodes()}
+                      onDelete={onDeleteSelected}
+                      onDetails={
+                        isMobile
+                          ? () => {
+                              openNodeDetails(nodeMenu.nodeId)
+                            }
+                          : undefined
+                      }
+                      onClose={() => setNodeMenu(null)}
+                    />
+                  )
+                })()}
+              {/* Mobile overlay toolbar */}
+              {isMobile && !overlayActive && (
+                <div className='absolute top-3 left-3 z-40 flex flex-col gap-2'>
+                  <button
+                    type='button'
+                    className='size-10 flex items-center justify-center rounded-lg bg-background/80 backdrop-blur border shadow-sm active:bg-accent'
+                    onClick={() => toggleSidebar()}
+                    title='Toggle sidebar'
+                  >
+                    <PanelLeft className='size-5' />
+                  </button>
+                  <button
+                    type='button'
+                    className={`size-10 flex items-center justify-center rounded-lg border shadow-sm active:bg-accent ${nodesMovable ? 'bg-primary/20 border-primary' : 'bg-background/80 backdrop-blur'}`}
+                    onClick={() => setNodesMovable((v) => !v)}
+                    title={nodesMovable ? 'Pan canvas' : 'Move nodes'}
+                    aria-pressed={nodesMovable}
+                  >
+                    <Move className='size-5' />
+                  </button>
+                </div>
+              )}
             </div>
-          </div>
-        )}
-        {(!isMobile || mobileInspectorVisible || inspectorExpanded) && (
-          <div
-            className={
-              inspectorExpanded || (isMobile && mobileInspectorVisible)
-                ? 'fixed inset-0 z-50'
-                : 'h-full border-l shrink-0 max-w-6xl min-w-md'
-            }
-            style={inspectorExpanded || (isMobile && mobileInspectorVisible) ? undefined : { width: inspectorWidth }}
-          >
-            <NodeInspector
-              node={selected}
-              browserTab={browserTab}
-              expanded={inspectorExpanded}
-              extensions={allNodes}
-              graphNodes={nodes}
-              override={inspector.inspectorNode}
-              updateNodeData={updateNodeData}
-              onBrowserTabChange={setBrowserTab}
-              onDeselect={() => {
-                deselect()
-                if (isMobile) {
-                  setMobileInspectorVisible(false)
-                }
-              }}
-              onEditExtension={openEditor}
-              onNewExtension={() => openEditor(null)}
-              onExpandedChange={setInspectorExpanded}
+            {menu && (
+              <FlowContextMenu
+                position={menu.screen}
+                extensions={menuExtensions}
+                onSelect={onMenuSelect}
+                onNewExtension={() => openEditor(null)}
+                onClose={closeMenu}
+              />
+            )}
+            <CanvasOverlay
+              nodes={commandNodes}
+              spaceName={spaceName}
+              spaceSlug={slug}
+              selectedNodeId={selected?.id ?? null}
+              mcpRequestsActive={mcpRequestsActive}
               onFocusNode={focusNode}
+              onActiveChange={isMobile ? setOverlayActive : undefined}
             />
+            <McpRequestNotifications onOpen={openMcpRequests} />
           </div>
-        )}
-      </div>
-    </InspectorContext.Provider>
+          {(!isMobile || mobileInspectorVisible) && !inspectorExpanded && (
+            <div
+              onPointerDown={startInspectorResize}
+              role='separator'
+              aria-orientation='vertical'
+              aria-label='Resize inspector'
+              className={`relative w-px bg-border cursor-col-resize flex items-center justify-center after:absolute after:inset-y-0 after:left-1/2 after:w-1 after:-translate-x-1/2 hover:bg-primary/60 transition-colors ${resizing ? 'bg-primary/80' : ''}`}
+            >
+              <div className='bg-border z-10 flex h-4 w-3 items-center justify-center rounded-xs border'>
+                <GripVertical className='size-2.5' />
+              </div>
+            </div>
+          )}
+          {(!isMobile || mobileInspectorVisible || inspectorExpanded) && (
+            <div
+              className={
+                inspectorExpanded || (isMobile && mobileInspectorVisible)
+                  ? 'fixed inset-0 z-50'
+                  : 'h-full border-l shrink-0 max-w-6xl min-w-md'
+              }
+              style={inspectorExpanded || (isMobile && mobileInspectorVisible) ? undefined : { width: inspectorWidth }}
+            >
+              <NodeInspector
+                node={selected}
+                browserTab={browserTab}
+                expanded={inspectorExpanded}
+                extensions={allNodes}
+                graphNodes={nodes}
+                override={inspector.inspectorNode}
+                updateNodeData={updateNodeData}
+                onBrowserTabChange={setBrowserTab}
+                onDeselect={() => {
+                  deselect()
+                  if (isMobile) {
+                    setMobileInspectorVisible(false)
+                  }
+                }}
+                onEditExtension={openEditor}
+                onNewExtension={() => openEditor(null)}
+                onExpandedChange={setInspectorExpanded}
+                onFocusNode={focusNode}
+              />
+            </div>
+          )}
+        </div>
+      </InspectorContext.Provider>
+    </ExtensionsSettledContext.Provider>
   )
 }
