@@ -288,6 +288,12 @@ export async function sshExecResult(
         reject(err)
         return
       }
+      // Out-of-band env delivery (see buildEnvInjection): write once, then end the channel's
+      // writable side so a preamble's `read` sees EOF right after its own lines. Every other
+      // caller leaves the channel's stdin untouched, exactly as before this existed.
+      if (opts.stdin) {
+        stream.end(opts.stdin)
+      }
       timer = setTimeout(() => {
         timedOut = true
         stream.close()

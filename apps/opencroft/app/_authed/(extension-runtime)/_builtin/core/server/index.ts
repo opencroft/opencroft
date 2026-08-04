@@ -390,14 +390,20 @@ interface ServerStats {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Terminal exec (with optional cwd opt) — falls back to a server-built
-// `cd <cwd> &&` prefix; avoids depending on a structured ExecResult API
-// so this action keeps working even if the host wiring lags behind.
+// Terminal exec (with optional cwd/env opts) — routes through execResult so
+// both reach the backend properly (cwd via ExecOptions.cwd, env via the
+// backend's own out-of-band injection) instead of a hand-built `cd ... &&`
+// string that had no equivalent way to carry env at all.
 // ═══════════════════════════════════════════════════════════════════
 
 async function terminalExecWithOpts(ctx: TerminalContext, command: string, opts?: ExecOptions): Promise<string> {
-  const cwdPrefix = opts?.cwd ? `cd '${opts.cwd.replace(/'/g, "'\\''")}' && ` : ''
-  return host.terminal.exec(ctx, cwdPrefix + command)
+  const result = await host.terminal.execResult(ctx, command, opts)
+  if (result.exitCode !== 0) {
+    const detail = result.timedOut ? ' (timed out)' : ''
+    const suffix = result.stderr ? `: ${result.stderr}` : ''
+    throw new Error(`Command exited with code ${result.exitCode}${detail}${suffix}`)
+  }
+  return result.stdout
 }
 
 async function serverGetStats(config: ServerConfig): Promise<ServerStats> {
