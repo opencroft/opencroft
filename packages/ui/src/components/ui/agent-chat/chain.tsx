@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
-import { Flex } from 'ui/components/ui/layout/flex'
-import { cn } from 'ui/lib/utils'
+
+import { cn } from '@/lib/utils'
 
 const DOT_COLORS = {
   default: 'bg-muted-foreground',
@@ -33,13 +33,13 @@ export interface ChainedProps {
 export function Chained({ marker, lineAbove, lineBelow, align = 'center', children }: ChainedProps) {
   const top = align === 'start'
   return (
-    <Flex row className='min-h-8 min-w-0 gap-2'>
-      <Flex align='center' className='w-8 shrink-0'>
+    <div className='flex min-h-8 min-w-0 gap-2'>
+      <div className='flex flex-col items-center w-8 shrink-0'>
         <div className={cn('w-px', !top && 'flex-1', lineAbove && 'bg-secondary')} />
         <div className='shrink-0'>{marker}</div>
         <div className={cn('w-px flex-1', lineBelow && 'bg-secondary')} />
-      </Flex>
+      </div>
       <div className={cn('flex-1 min-w-0 py-2', top ? 'self-start' : 'self-center')}>{children}</div>
-    </Flex>
+    </div>
   )
 }

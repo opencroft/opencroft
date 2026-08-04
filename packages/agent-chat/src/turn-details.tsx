@@ -3,12 +3,12 @@
 import type { ChatMessage } from 'agent-client/fold'
 import { Maximize2, Minimize2 } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
+import { ChainDot, type ChainDotVariant, Chained } from 'ui/agent-chat/chain'
 import { Flex } from 'ui/components/ui/layout/flex'
 import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
 import { cn } from 'ui/lib/utils'
 
-import { ChainDot, type ChainDotVariant, Chained } from './chain'
-import { MessageView, type MessageHandlers } from './messages'
+import { type MessageHandlers, MessageView } from './messages'
 import type { ToolViewRegistry } from './tool-views'
 
 export interface TurnDetailsProps extends MessageHandlers {
@@ -139,7 +139,11 @@ export function TurnDetails({
     // (it's neither the last text nor a tool call) — surface any unresolved
     // one regardless, or it silently vanishes into a collapsed turn with no
     // cue that the session is waiting on the user.
-    const shown = new Set([lastText?.id, lastToolAfterText?.id, !lastText && lastEntry?.kind === 'item' ? lastEntry.item.id : undefined])
+    const shown = new Set([
+      lastText?.id,
+      lastToolAfterText?.id,
+      !lastText && lastEntry?.kind === 'item' ? lastEntry.item.id : undefined,
+    ])
     const unresolvedRequests = entries.filter(
       (entry): entry is Extract<Entry, { kind: 'item' }> =>
         entry.kind === 'item' &&
@@ -147,11 +151,7 @@ export function TurnDetails({
         !entry.item.resolved &&
         !shown.has(entry.item.id),
     )
-    const marker = agentAvatar ? (
-      <AgentAvatar avatar={agentAvatar} name={botName} size='md' />
-    ) : (
-      <ChainDot />
-    )
+    const marker = agentAvatar ? <AgentAvatar avatar={agentAvatar} name={botName} size='md' /> : <ChainDot />
     return (
       <Flex className='min-w-0 w-full'>
         <Chained marker={marker} lineAbove={false} lineBelow={false} align={agentAvatar ? 'start' : 'center'}>

@@ -5,6 +5,7 @@ import { Check, CheckCheck, X } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { ThinkingBlock } from 'ui/agent-chat/thinking-block'
 import { Badge } from 'ui/components/ui/badge'
 import { Button } from 'ui/components/ui/button'
 import { Input } from 'ui/components/ui/input'
@@ -12,9 +13,8 @@ import { Flex } from 'ui/components/ui/layout/flex'
 import { cn } from 'ui/lib/utils'
 
 import { markdownLinkComponents } from './markdown-link'
-import { ThinkingBlock } from './thinking-block'
 import { ToolCallBlock } from './tool-block'
-import { lookupToolView, toolViewProps, type ToolMessage, type ToolViewRegistry } from './tool-views'
+import { lookupToolView, type ToolMessage, type ToolViewRegistry, toolViewProps } from './tool-views'
 
 export type PermissionMessage = Extract<ChatMessage, { kind: 'permission' }>
 export type AskMessage = Extract<ChatMessage, { kind: 'ask' }>

@@ -2,8 +2,8 @@
 
 import { ChevronRight, Loader2 } from 'lucide-react'
 import { useState } from 'react'
-import { Flex } from 'ui/components/ui/layout/flex'
-import { cn } from 'ui/lib/utils'
+
+import { cn } from '@/lib/utils'
 
 export interface ThinkingBlockProps {
   // The model's reasoning text (may stream in while `pending`).
@@ -18,7 +18,7 @@ export interface ThinkingBlockProps {
 export function ThinkingBlock({ text, pending = false }: ThinkingBlockProps) {
   const [open, setOpen] = useState(false)
   return (
-    <Flex className='gap-1.5'>
+    <div className='flex flex-col gap-1.5'>
       <button
         type='button'
         onClick={() => setOpen((v) => !v)}
@@ -35,6 +35,6 @@ export function ThinkingBlock({ text, pending = false }: ThinkingBlockProps) {
           {text}
         </div>
       )}
-    </Flex>
+    </div>
   )
 }
