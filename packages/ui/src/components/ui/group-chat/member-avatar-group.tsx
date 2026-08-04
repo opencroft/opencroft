@@ -40,7 +40,12 @@ export function MemberAvatarGroup({ members, max = 4, size = 'sm', className }: 
     shown.map((m) => m.name).join(', ') + (overflow > 0 ? ` +${overflow} more` : '')
 
   return (
-    <span className={cn('flex items-center', className)} title={title}>
+    // shrink-0 belongs here, not on each caller. Every avatar inside is itself
+    // shrink-0, so squeezing this box does not compress them -- it makes them
+    // overflow it and ride over whatever sits alongside. Two of the three
+    // callers passed shrink-0 and one forgot, which is the argument for the
+    // cluster owning it rather than remembering to ask.
+    <span className={cn('flex shrink-0 items-center', className)} title={title}>
       {shown.map((m, i) => (
         <span key={m.id} className={cn('rounded-full ring-2 ring-background', i > 0 && overlap)}>
           <AgentAvatar avatar={m.avatarUrl} name={m.name} size={size} />

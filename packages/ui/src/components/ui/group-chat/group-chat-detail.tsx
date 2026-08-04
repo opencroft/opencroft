@@ -38,9 +38,18 @@ export function GroupChatDetail({
       <header className='flex shrink-0 flex-col gap-3 border-b border-border px-3 py-3'>
         <div className='flex min-w-0 items-center gap-3'>
           <h2 className='min-w-0 flex-1 truncate text-base font-semibold text-foreground'>{topic}</h2>
-          <MemberAvatarGroup members={members} max={6} size='md' className='shrink-0' />
-          {/* Kept out of the scroll region and never allowed to shrink: at a
-              minimal width the topic gives up its space first, because a
+          {/* Dropped below `sm`, and not because it does not matter: the same
+              people are listed by name directly underneath, so on a phone this
+              is the one thing in the header that is pure duplication. Six md
+              avatars hold ~142px the topic then cannot use, which at a 320px
+              width leaves the topic a few characters. Truncating a topic away
+              to nothing is not a narrow-width design; it is the desktop one
+              surviving. Above `sm` there is room for both and it comes back. */}
+          <span className='hidden shrink-0 sm:block'>
+            <MemberAvatarGroup members={members} max={6} size='md' />
+          </span>
+          {/* Kept out of the scroll region and never allowed to shrink: past
+              the cluster, the topic gives up its space first, because a
               truncated topic is still readable and a squeezed control is not. */}
           {actions ? <div className='flex shrink-0 items-center gap-1'>{actions}</div> : null}
         </div>
@@ -54,7 +63,12 @@ export function GroupChatDetail({
                     m.kind === 'agent' ? 'bg-primary' : 'bg-muted-foreground/40',
                   )}
                 />
-                <span className='truncate text-foreground'>{m.name}</span>
+                {/* min-w-0 as well as truncate. This is a flex item, so its
+                    automatic minimum size is the whole name: without it the
+                    ellipsis never fires, the row grows to fit instead, and a
+                    long name pushes the wrapping list -- and the header with
+                    it -- wider than the pane. */}
+                <span className='min-w-0 truncate text-foreground'>{m.name}</span>
                 <span className='text-muted-foreground/70'>{m.kind}</span>
               </li>
             ))}

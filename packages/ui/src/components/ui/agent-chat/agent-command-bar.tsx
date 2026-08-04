@@ -91,6 +91,16 @@ export interface AgentCommandBarProps {
 // this in a command bar, a sidebar or a dialog puts it there. That is the whole
 // reason the panel can be previewed at all: it needs nothing running behind it.
 //
+// **The host owns the width.** Every element from a queued message's text up to
+// this root carries `min-w-0`, and the text truncates -- so a long message, or
+// an unbroken one like a URL or a path, shortens to one line rather than
+// widening its row. That holds only while something above gives this panel a
+// bounded width. A containing block that is shrink-to-fit -- an overlay with no
+// width and no opposing inset, or `w-max` / `w-fit` / `inline-flex` on the way
+// down -- derives its width FROM this panel, and no class in here can clamp
+// against a width its own content produced. If a queued message runs off the
+// screen, the broken link is above this component.
+//
 // Enter sends, Shift+Enter inserts a newline, Escape clears.
 //
 // One structural rule matters more than it looks: **the wrapper column and the
