@@ -57,6 +57,8 @@ function SidebarProvider({
   defaultOpen = true,
   open: openProp,
   onOpenChange: setOpenProp,
+  storageKey = SIDEBAR_COOKIE_NAME,
+  keyboardShortcut = SIDEBAR_KEYBOARD_SHORTCUT,
   className,
   style,
   children,
@@ -65,6 +67,22 @@ function SidebarProvider({
   defaultOpen?: boolean
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  /**
+   * Cookie key this sidebar remembers its state under. Defaults to the shared
+   * one, so a lone sidebar behaves exactly as before.
+   *
+   * A second sidebar on the same page needs its own: the key and the shortcut
+   * below were module constants, which quietly assumed there would only ever be
+   * one instance. Two of them then shared one cookie, and collapsing either
+   * overwrote what the other remembered.
+   */
+  storageKey?: string
+  /**
+   * Key that toggles this sidebar when held with meta or control. Defaults to
+   * the shared one; pass `null` to give it no shortcut at all, so a second
+   * sidebar does not answer the same keystroke as the first.
+   */
+  keyboardShortcut?: string | null
 }) {
   const isMobile = useIsMobile()
   const [openMobile, setOpenMobile] = React.useState(false)
@@ -83,9 +101,9 @@ function SidebarProvider({
       }
 
       // This sets the cookie to keep the sidebar state.
-      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`
+      document.cookie = `${storageKey}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`
     },
-    [setOpenProp, open]
+    [setOpenProp, open, storageKey]
   )
 
   // Helper to toggle the sidebar.
@@ -95,11 +113,12 @@ function SidebarProvider({
 
   // Adds a keyboard shortcut to toggle the sidebar.
   React.useEffect(() => {
+    if (!keyboardShortcut) {
+      return
+    }
+
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.key === SIDEBAR_KEYBOARD_SHORTCUT &&
-        (event.metaKey || event.ctrlKey)
-      ) {
+      if (event.key === keyboardShortcut && (event.metaKey || event.ctrlKey)) {
         event.preventDefault()
         toggleSidebar()
       }
@@ -107,7 +126,7 @@ function SidebarProvider({
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [toggleSidebar])
+  }, [toggleSidebar, keyboardShortcut])
 
   // We add a state so that we can do data-state="expanded" or "collapsed".
   // This makes it easier to style the sidebar with Tailwind classes.
