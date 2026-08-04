@@ -1,12 +1,10 @@
-import { execFile as execFileCb } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { promisify } from 'node:util'
 
 import type { InstallAuth } from '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
 import { getSecretValue } from '@/app/_authed/(secrets-store)/_server/actions'
 
-const execFile = promisify(execFileCb)
+import { runGit } from './git-exec'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -264,7 +262,7 @@ async function fetchRegistryManifest(source: RegistrySource): Promise<ResolvedRe
       const cloneArgs = source.ref
         ? ['clone', '--depth', '1', '--branch', source.ref, '--single-branch', authedUrl, tmpDir]
         : ['clone', '--depth', '1', authedUrl, tmpDir]
-      await execFile('git', cloneArgs, { maxBuffer: 4 * 1024 * 1024 })
+      await runGit(cloneArgs, { maxBuffer: 4 * 1024 * 1024 })
       manifestJson = await fs.readFile(path.join(tmpDir, 'registry.json'), 'utf-8')
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})

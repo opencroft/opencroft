@@ -6,6 +6,7 @@ import { promisify } from 'node:util'
 import { createServerFn } from '@tanstack/react-start'
 
 import { buildExtension } from '@/app/_authed/(extension-runtime)/_server/compiler'
+import { runGit } from '@/app/_authed/(extension-runtime)/_server/git-exec'
 import { flushCache } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { extDir, installedExtRoot, localExtRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
 import type { ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
@@ -155,7 +156,7 @@ function applyAuthToUrl(url: string, creds: ResolvedAuth | null): string {
 
 async function listRemoteTags(url: string, creds: ResolvedAuth | null): Promise<string[]> {
   const authedUrl = applyAuthToUrl(url, creds)
-  const { stdout } = await execFile('git', ['ls-remote', '--tags', '--refs', authedUrl], { maxBuffer: 4 * 1024 * 1024 })
+  const { stdout } = await runGit(['ls-remote', '--tags', '--refs', authedUrl], { maxBuffer: 4 * 1024 * 1024 })
   const tags: string[] = []
   for (const line of stdout.split('\n')) {
     const trimmed = line.trim()
@@ -221,8 +222,8 @@ async function gitClone(
     refKind === 'tag'
       ? ['clone', '--depth', '1', '--branch', ref, '--single-branch', authedUrl, dest]
       : ['clone', '--depth', '1', authedUrl, dest]
-  await execFile('git', args, { maxBuffer: GIT_BUFFER })
-  const { stdout } = await execFile('git', ['-C', dest, 'rev-parse', 'HEAD'], {})
+  await runGit(args, { maxBuffer: GIT_BUFFER })
+  const { stdout } = await runGit(['-C', dest, 'rev-parse', 'HEAD'])
   const sha = stdout.trim().slice(0, 7)
   if (!keepGit) {
     await fs.rm(path.join(dest, '.git'), { recursive: true, force: true })
