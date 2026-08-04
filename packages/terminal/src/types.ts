@@ -26,6 +26,13 @@ export interface ExecOptions {
   timeoutMs?: number
   /** Stop accumulating output past this many bytes, per stream. Default 5MB. */
   maxOutputBytes?: number
+  /**
+   * Internal: raw bytes to write to the spawned process's stdin, then close it. Set by a
+   * `TerminalBackend` implementation to deliver `env` out-of-band (see `buildEnvInjection` in
+   * exec-util) when it can't pass a real env map to the transport -- not a caller-facing stdin
+   * passthrough.
+   */
+  stdin?: Buffer
 }
 
 /** The result of a `TerminalBackend.exec`/`run` call — identical shape across every backend. */

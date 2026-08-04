@@ -1588,7 +1588,7 @@ export async function resolveTerminalContext(
 export async function remoteExec(
   ctx: Record<string, unknown>,
   command: string,
-  opts?: { cwd?: string },
+  opts?: { cwd?: string; env?: Record<string, string> },
 ): Promise<string> {
   const core = await getExtensionModule(CORE_EXTENSION_ID)
   const execFn = core.actions['terminal.exec']
@@ -1766,21 +1766,24 @@ async function writeRemoteFileExact(
   }
 }
 
-async function resolveSecretsForExec(names: string[] | undefined): Promise<string> {
+// Resolves each name to a plain env map and lets the terminal backend (packages/terminal) inject
+// it out of band -- never build the command string ourselves. A value spliced into a shell
+// string, however it's encoded, ends up in that process's argv for its whole lifetime, readable
+// by `ps`/`pgrep` to anyone else on the same host; a value handed to the backend as `env` never
+// touches argv at all (see buildEnvInjection in packages/terminal/src/server/exec-util.ts).
+async function resolveSecretsEnv(names: string[] | undefined): Promise<Record<string, string> | undefined> {
   if (!names || names.length === 0) {
-    return ''
+    return undefined
   }
-  const lines: string[] = []
+  const env: Record<string, string> = {}
   for (const name of names) {
     const value = await secrets.resolve(name)
     if (value === null) {
       fail(-32602, `Secret "${name}" not found in any Secrets Store`)
     }
-    const b64 = Buffer.from(value, 'utf8').toString('base64')
-    lines.push(`export ${name}=$(echo ${b64} | base64 -d)`)
+    env[name] = value
   }
-  const prefix = `${lines.join('; ')}; `
-  return prefix
+  return env
 }
 
 function catN(content: string, startLine = 1): string {
@@ -2582,8 +2585,8 @@ function buildHandlers(): Record<string, ToolHandler> {
         const effectiveCwd = cwd
           ? resolveRemoteFilePath(cwd, ctx.cwd as string | undefined)
           : (ctx.cwd as string | undefined)
-        const prefix = await resolveSecretsForExec(args.secrets as string[] | undefined)
-        const output = await remoteExec(ctx, prefix + command, effectiveCwd ? { cwd: effectiveCwd } : undefined)
+        const env = await resolveSecretsEnv(args.secrets as string[] | undefined)
+        const output = await remoteExec(ctx, command, { cwd: effectiveCwd, env })
         return textResult(output)
       },
       { view: 'remote_exec' },
@@ -2602,15 +2605,15 @@ function buildHandlers(): Record<string, ToolHandler> {
         const effectiveCwd = cwd
           ? resolveRemoteFilePath(cwd, ctx.cwd as string | undefined)
           : (ctx.cwd as string | undefined)
-        const prefix = await resolveSecretsForExec(args.secrets as string[] | undefined)
+        const env = await resolveSecretsEnv(args.secrets as string[] | undefined)
         const tmpPath = `/tmp/opencroft-script-${crypto.randomUUID()}.sh`
         try {
           await writeRemoteFileExact(ctx, tmpPath, script)
           const argv = scriptArgs.map(shellQuote).join(' ')
           const output = await remoteExec(
             ctx,
-            `${prefix}bash ${shellQuote(tmpPath)} ${argv}; rc=$?; rm -f ${shellQuote(tmpPath)}; exit $rc`,
-            effectiveCwd ? { cwd: effectiveCwd } : undefined,
+            `bash ${shellQuote(tmpPath)} ${argv}; rc=$?; rm -f ${shellQuote(tmpPath)}; exit $rc`,
+            { cwd: effectiveCwd, env },
           )
           return textResult(output)
         } catch (err) {

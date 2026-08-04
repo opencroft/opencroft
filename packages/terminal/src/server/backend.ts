@@ -3,10 +3,10 @@ import os from 'node:os'
 
 import type { ExecOptions, ExecResult, SshCredentials, TerminalContext } from '../types'
 import {
+  buildEnvInjection,
   cdPrefix,
   DEFAULT_MAX_OUTPUT_BYTES,
   DEFAULT_TIMEOUT_MS,
-  envPrefix,
   OutputCollector,
   shellJoin,
 } from './exec-util'
@@ -54,6 +54,13 @@ function collectProcess(child: ChildProcess, opts: ExecOptions): Promise<ExecRes
     }, timeoutMs)
     timer.unref?.()
 
+    // Out-of-band env delivery (see buildEnvInjection): write once, then close stdin so a
+    // preamble's `read` sees EOF right after its own lines rather than hanging. Every other
+    // caller leaves stdin untouched, exactly as before this existed.
+    if (opts.stdin) {
+      child.stdin?.end(opts.stdin)
+    }
+
     child.stdout?.on('data', (chunk: Buffer) => stdout.push(chunk))
     child.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk))
 
@@ -87,13 +94,12 @@ function spawnLocal(cmd: string, args: string[], cwd: string | undefined, opts: 
 }
 
 // On Windows, "local" means "inside the default WSL distro" — same transport as `wslBackend`,
-// so env must be injected the same way (envPrefix in the shell string), not via the spawned
-// wsl.exe process's own env (which WSL does not forward into the distro).
-function spawnLocalWindows(cmd: string, args: string[], cwd: string | undefined, opts: ExecOptions): ChildProcess {
+// so env must be injected the same way (stdin, not the spawned wsl.exe process's own env, which
+// WSL does not forward into the distro).
+function spawnLocalWindows(cmd: string, args: string[], cwd: string | undefined, preamble: string): ChildProcess {
   const cdArgs = cwd ? ['--cd', cwd] : []
-  const hasEnv = opts.env && Object.keys(opts.env).length > 0
-  const invocation = hasEnv
-    ? [...cdArgs, '--exec', 'bash', '-c', envPrefix(opts.env) + shellJoin([cmd, ...args])]
+  const invocation = preamble
+    ? [...cdArgs, '--exec', 'bash', '-c', preamble + shellJoin([cmd, ...args])]
     : [...cdArgs, '--exec', cmd, ...args]
   return nodeSpawn('wsl', invocation, { windowsHide: true })
 }
@@ -102,7 +108,11 @@ const localBackend: TerminalBackend = {
   exec(ctx, command, opts = {}) {
     const cwd = contextCwd(ctx, opts)
     if (isWindows()) {
-      return collectProcess(spawnLocalWindows('bash', ['-c', command], cwd, opts), opts)
+      const { preamble, stdin } = buildEnvInjection(opts.env)
+      return collectProcess(spawnLocalWindows('bash', ['-c', command], cwd, preamble), {
+        ...opts,
+        stdin: stdin ?? opts.stdin,
+      })
     }
     return collectProcess(spawnLocal('bash', ['-c', command], cwd, opts), opts)
   },
@@ -110,7 +120,8 @@ const localBackend: TerminalBackend = {
     const cwd = contextCwd(ctx, opts)
     const [cmd, ...rest] = argv
     if (isWindows()) {
-      return collectProcess(spawnLocalWindows(cmd, rest, cwd, opts), opts)
+      const { preamble, stdin } = buildEnvInjection(opts.env)
+      return collectProcess(spawnLocalWindows(cmd, rest, cwd, preamble), { ...opts, stdin: stdin ?? opts.stdin })
     }
     return collectProcess(spawnLocal(cmd, rest, cwd, opts), opts)
   },
@@ -129,18 +140,18 @@ function wslArgs(ctx: TerminalContext, opts: ExecOptions): string[] {
 
 const wslBackend: TerminalBackend = {
   exec(ctx, command, opts = {}) {
-    const prefix = envPrefix(opts.env)
-    const child = nodeSpawn('wsl', [...wslArgs(ctx, opts), '--exec', 'bash', '-c', prefix + command], {
+    const { preamble, stdin } = buildEnvInjection(opts.env)
+    const child = nodeSpawn('wsl', [...wslArgs(ctx, opts), '--exec', 'bash', '-c', preamble + command], {
       windowsHide: true,
     })
-    return collectProcess(child, opts)
+    return collectProcess(child, { ...opts, stdin: stdin ?? opts.stdin })
   },
   run(ctx, argv, opts = {}) {
-    const hasEnv = opts.env && Object.keys(opts.env).length > 0
-    const args = hasEnv
-      ? [...wslArgs(ctx, opts), '--exec', 'bash', '-c', envPrefix(opts.env) + shellJoin(argv)]
+    const { preamble, stdin } = buildEnvInjection(opts.env)
+    const args = preamble
+      ? [...wslArgs(ctx, opts), '--exec', 'bash', '-c', preamble + shellJoin(argv)]
       : [...wslArgs(ctx, opts), '--exec', ...argv]
-    return collectProcess(nodeSpawn('wsl', args, { windowsHide: true }), opts)
+    return collectProcess(nodeSpawn('wsl', args, { windowsHide: true }), { ...opts, stdin: stdin ?? opts.stdin })
   },
 }
 
@@ -161,13 +172,15 @@ function credsFromCtx(ctx: TerminalContext): SshCredentials {
 const sshBackend: TerminalBackend = {
   exec(ctx, command, opts = {}) {
     const cwd = contextCwd(ctx, opts)
-    const full = cdPrefix(cwd) + envPrefix(opts.env) + command
-    return sshExecResult(credsFromCtx(ctx), full, opts)
+    const { preamble, stdin } = buildEnvInjection(opts.env)
+    const full = cdPrefix(cwd) + preamble + command
+    return sshExecResult(credsFromCtx(ctx), full, { ...opts, stdin: stdin ?? opts.stdin })
   },
   run(ctx, argv, opts = {}) {
     const cwd = contextCwd(ctx, opts)
-    const full = cdPrefix(cwd) + envPrefix(opts.env) + shellJoin(argv)
-    return sshExecResult(credsFromCtx(ctx), full, opts)
+    const { preamble, stdin } = buildEnvInjection(opts.env)
+    const full = cdPrefix(cwd) + preamble + shellJoin(argv)
+    return sshExecResult(credsFromCtx(ctx), full, { ...opts, stdin: stdin ?? opts.stdin })
   },
 }
 
@@ -185,23 +198,27 @@ function dockerArgv(ctx: TerminalContext, opts: ExecOptions): string[] {
   return ['docker', ...ctxArgs, 'exec', ...cwdArgs, ...userArgs, '-i', (ctx.containerId as string) ?? '']
 }
 
-/** Only the timeout/output-cap knobs travel to the parent call — cwd/env are consumed here. */
-function parentOpts(opts: ExecOptions): ExecOptions {
-  return { timeoutMs: opts.timeoutMs, maxOutputBytes: opts.maxOutputBytes }
+// Only the timeout/output-cap knobs travel to the parent call as opts -- cwd/env are consumed
+// here, folded into the inner `sh -c` preamble. `stdin` is the one exception: it's how that
+// preamble's payload actually reaches the container (the outer `docker exec -i` process forwards
+// its own stdin straight through), so it has to ride along on the parent call explicitly.
+function parentOpts(opts: ExecOptions, stdin: Buffer | undefined): ExecOptions {
+  return { timeoutMs: opts.timeoutMs, maxOutputBytes: opts.maxOutputBytes, stdin }
 }
 
 const dockerExecBackend: TerminalBackend = {
   exec(ctx, command, opts = {}) {
     const via = ctx.via ?? { type: 'local' }
-    const argv = [...dockerArgv(ctx, opts), 'sh', '-c', envPrefix(opts.env) + command]
-    return getBackend(via).run(via, argv, parentOpts(opts))
+    const { preamble, stdin } = buildEnvInjection(opts.env)
+    const argv = [...dockerArgv(ctx, opts), 'sh', '-c', preamble + command]
+    return getBackend(via).run(via, argv, parentOpts(opts, stdin))
   },
   run(ctx, argv, opts = {}) {
     const via = ctx.via ?? { type: 'local' }
-    const hasEnv = opts.env && Object.keys(opts.env).length > 0
-    const innerArgv = hasEnv ? ['sh', '-c', envPrefix(opts.env) + shellJoin(argv)] : argv
+    const { preamble, stdin } = buildEnvInjection(opts.env)
+    const innerArgv = preamble ? ['sh', '-c', preamble + shellJoin(argv)] : argv
     const fullArgv = [...dockerArgv(ctx, opts), ...innerArgv]
-    return getBackend(via).run(via, fullArgv, parentOpts(opts))
+    return getBackend(via).run(via, fullArgv, parentOpts(opts, stdin))
   },
 }
 

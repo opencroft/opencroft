@@ -21,17 +21,32 @@ export function shellJoin(args: string[]): string {
 }
 
 /**
- * Build a `export K=$(echo <base64> | base64 -d) && ...` prefix that injects env vars into a
- * remote shell command without quoting hazards. Empty/undefined env yields an empty string.
+ * Build the injection for `env`: a POSIX-sh-safe preamble that reads each value (base64, one
+ * per line) off stdin and exports it under its name, plus the exact stdin bytes that preamble
+ * expects, in the same order. The preamble text carries only secret NAMES -- already treated as
+ * non-sensitive everywhere in this codebase -- never a value; every value crosses the process
+ * boundary via stdin instead of argv. `ps`/`pgrep -fa` (and anything else that reads a process's
+ * command line, e.g. /proc/<pid>/cmdline) expose only the argv a process was started with, never
+ * the bytes written to its stdin pipe -- so a value that only ever travels over stdin cannot
+ * appear there, for the lifetime of the process, not just on failure. The previous approach here
+ * (`export K=$(echo <base64> | base64 -d)`, spliced directly into the command string) put the
+ * base64 text itself in argv; encoding a value differently on the command line is the same defect
+ * with a longer word. Base64 is kept only as a transport encoding (stdin is line-oriented here,
+ * and a raw value may contain newlines) -- it carries no protective weight on its own.
  */
-export function envPrefix(env?: Record<string, string>): string {
-  if (!env || Object.keys(env).length === 0) {
-    return ''
+export function buildEnvInjection(env?: Record<string, string>): { preamble: string; stdin: Buffer | undefined } {
+  const entries = Object.entries(env ?? {})
+  if (entries.length === 0) {
+    return { preamble: '', stdin: undefined }
   }
-  const exports = Object.entries(env)
-    .map(([key, value]) => `export ${key}=$(echo ${Buffer.from(value, 'utf8').toString('base64')} | base64 -d)`)
-    .join(' && ')
-  return `${exports} && `
+  const preamble = entries
+    .map(([key]) => `IFS= read -r __v; export ${key}="$(printf '%s' "$__v" | base64 -d)"; `)
+    .join('')
+  const stdin = Buffer.from(
+    entries.map(([, value]) => `${Buffer.from(value, 'utf8').toString('base64')}\n`).join(''),
+    'utf8',
+  )
+  return { preamble, stdin }
 }
 
 /** Prefix a shell command with a `cd <cwd> &&` when a cwd is set. */
