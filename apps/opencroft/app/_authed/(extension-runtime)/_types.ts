@@ -98,6 +98,19 @@ export interface ExtensionManifest {
   main?: string
   exports?: ExtensionExports
   activationEvents?: string[]
+  /** Bare specifiers to resolve to an empty module in the CLIENT build only.
+   *  For a dependency's own optional/runtime-gated branch (e.g. a library's
+   *  internal `if (someOption) await import('heavy-thing')`) that this
+   *  extension never reaches but esbuild still has to bundle, since it can't
+   *  prove a runtime branch dead. Declaring nothing here changes nothing
+   *  about the build. An entry that never matches an actual import in the
+   *  build is reported as a build error, not silently ignored. If the
+   *  stubbed code path is ever reached at runtime despite being declared
+   *  dead, the failure is a TypeError from calling something on an empty
+   *  module — not a module-resolution error — since the specifier still
+   *  resolves to real (empty) code rather than being left unresolvable in
+   *  the output. See compileClientSide in the extension compiler. */
+  clientStubs?: string[]
 }
 
 /** A manifest plus runtime-computed flags, as sent to the client loader. */
