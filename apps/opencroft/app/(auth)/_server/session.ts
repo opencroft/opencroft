@@ -8,7 +8,7 @@
 // connection behind it) unused and droppable. A plain exported function here
 // has no stub and would ship all of that to the browser.
 
-import { configuredSocialProviders, countUsers, getSessionUser } from '@opencroft/auth/server'
+import { configuredSocialProviders, countUsers, getSessionUser, type SocialProviderId } from '@opencroft/auth/server'
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 
@@ -47,7 +47,14 @@ export const getAuthState = createServerFn({ method: 'GET', strict: { output: fa
  * something the browser could know — and asked at all so the sign-in screen
  * offers only what can be honoured, and starts offering a provider the moment
  * its credentials exist, with no code change.
+ *
+ * Typed as the provider union rather than as strings. The values already are
+ * that union; annotating them as `string[]` only threw the knowledge away at
+ * the boundary, and the screen then could not hand the list to a component that
+ * asks for named providers. Keeping it means a provider added on one side and
+ * not the other fails to compile, which is where that disagreement should
+ * surface.
  */
 export const getSocialProviders = createServerFn({ method: 'GET', strict: { output: false } }).handler(
-  async (): Promise<string[]> => configuredSocialProviders(),
+  async (): Promise<SocialProviderId[]> => configuredSocialProviders(),
 )

@@ -10,15 +10,14 @@ import type { SocialProvider } from 'ui/auth/auth-social-buttons'
 // Which providers exist is deployment configuration, resolved server-side (see
 // the route's loader) so this screen offers only what can actually be honoured
 // and starts offering a provider the moment its credentials are set, with no
-// code change.
+// code change. The list is handed to the form, which renders those providers
+// and — for a deployment with none — neither the buttons nor the separator
+// above them.
 //
-// What is NOT yet driven by that: whether the buttons are shown at all. The
-// intended behaviour is to render the configured providers and nothing when
-// there are none, so the screen never advertises a feature this deployment
-// does not have. AuthLoginForm renders the pair unconditionally and exposes no
-// way to hide or disable it, and forking a kit component in the app is not
-// allowed — so until the kit takes a prop for it, the buttons are visible and
-// say this when pressed. Tracked against the kit, not worked around quietly.
+// A backstop, not a path anyone should reach: the form is only given providers
+// this deployment has, so an unconfigured one cannot be pressed. It stays
+// because the guard is what makes that a fact rather than a promise, and the
+// cost of it being wrong is a redirect to a provider that cannot sign anyone in.
 const SOCIAL_UNAVAILABLE = 'Social sign-in is not configured on this instance. Use your email and password.'
 
 export function LoginPage() {
@@ -85,6 +84,7 @@ export function LoginPage() {
         onPasswordChange={setPassword}
         onSubmit={onSubmit}
         onSocialSelect={onSocialSelect}
+        socialProviders={socialProviders}
         error={error}
         submitting={submitting}
       />
