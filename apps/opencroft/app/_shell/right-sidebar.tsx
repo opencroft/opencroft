@@ -1,9 +1,8 @@
 'use client'
 
 import { type ComponentType, useState } from 'react'
-import { Flex } from 'ui/components/ui/layout/flex'
-import { Separator } from 'ui/components/ui/separator'
 import { Sidebar, SidebarContent, SidebarStateProvider } from 'ui/components/ui/sidebar'
+import { PanelTabStrip } from 'ui/layouts/panel-tab-strip'
 
 import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { useProvided } from '@/app/_authed/(extension-runtime)/_client/provides'
@@ -62,29 +61,11 @@ export function RightSidebar() {
   return (
     <SidebarStateProvider storageKey={STORAGE_KEY} keyboardShortcut={null}>
       <Sidebar side='right' data-testid='right-sidebar'>
-        <Flex row className='items-center gap-0 px-3 pt-2 pb-0'>
-          {items.map((panel) => {
-            const PanelIcon = resolveIcon(panel.icon)
-            const isActive = panel.id === active.id
-            return (
-              <button
-                key={panel.id}
-                type='button'
-                onClick={() => setActiveId(panel.id)}
-                className={[
-                  'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border-b-2 transition-colors',
-                  isActive
-                    ? 'border-primary text-foreground'
-                    : 'border-transparent text-muted-foreground hover:text-foreground/80',
-                ].join(' ')}
-              >
-                <PanelIcon className='size-3' />
-                {panel.label}
-              </button>
-            )
-          })}
-        </Flex>
-        <Separator />
+        <PanelTabStrip
+          tabs={items.map((panel) => ({ id: panel.id, label: panel.label, icon: resolveIcon(panel.icon) }))}
+          activeId={active.id}
+          onSelect={setActiveId}
+        />
         <SidebarContent>
           <Body />
         </SidebarContent>
