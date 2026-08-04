@@ -5,6 +5,7 @@ import { promisify } from 'node:util'
 
 import { createServerFn } from '@tanstack/react-start'
 
+import { MANIFEST_FILE, rewriteManifestId } from '@/app/_authed/(extension-editor)/_actions/manifest-file'
 import { buildExtension } from '@/app/_authed/(extension-runtime)/_server/compiler'
 import { runGit } from '@/app/_authed/(extension-runtime)/_server/git-exec'
 import { flushCache } from '@/app/_authed/(extension-runtime)/_server/loader'
@@ -15,7 +16,6 @@ import { toastStore } from '@/lib/toast-store'
 
 const execFile = promisify(execFileCb)
 
-const MANIFEST_FILE = 'extension.json'
 const SIDECAR_FILE = 'installed.json'
 const GIT_BUFFER = 64 * 1024 * 1024
 
@@ -236,27 +236,6 @@ async function gitClone(
 // permanently "dirty" against its source repo for no semantic reason. Matching
 // the source file's own indent and trailing-newline convention keeps the diff
 // to exactly the fields that actually changed.
-function detectJsonIndent(raw: string): string | number {
-  const match = raw.match(/\n([ \t]+)\S/)
-  if (!match) {
-    return 0
-  }
-  return match[1].includes('\t') ? '\t' : match[1].length
-}
-
-export async function rewriteManifestId(dir: string, scopedId: string): Promise<ExtensionManifest> {
-  const file = path.join(dir, MANIFEST_FILE)
-  const raw = await fs.readFile(file, 'utf-8')
-  const manifest = JSON.parse(raw) as ExtensionManifest
-  manifest.id = scopedId
-  if (!manifest.version) {
-    manifest.version = '0.0.0'
-  }
-  const indent = detectJsonIndent(raw)
-  const trailingNewline = raw.endsWith('\n') ? '\n' : ''
-  await fs.writeFile(file, JSON.stringify(manifest, null, indent) + trailingNewline, 'utf-8')
-  return manifest
-}
 
 async function writeSidecar(dir: string, sidecar: InstalledSidecar): Promise<void> {
   await fs.writeFile(path.join(dir, SIDECAR_FILE), JSON.stringify(sidecar, null, 2) + '\n', 'utf-8')
