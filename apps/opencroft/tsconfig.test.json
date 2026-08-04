@@ -1,0 +1,20 @@
+{
+  // Read only by the test runner (scripts/run-tests.mjs, via TSX_TSCONFIG_PATH)
+  // -- never by typecheck or the build, both of which resolve tsconfig.json as
+  // normal. The runner has no bundler to hand the JSX transform to, so it
+  // needs the automatic runtime to actually execute a component; the app's
+  // real "jsx": "preserve" is correct for the bundler and stays untouched.
+  //
+  // tsx resolves a file's transform against whichever tsconfig's `include`
+  // actually claims it, not against this file globally -- a file this
+  // `include` doesn't own falls back to ITS OWN nearest tsconfig.json on
+  // disk, ignoring TSX_TSCONFIG_PATH entirely. packages/ui is added because
+  // the app's own tsconfig.json already treats it as part of this program
+  // (its `@/*` path alias resolves straight into packages/ui/src), so a
+  // rendered component reaching into it needs the same runtime here.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx"
+  },
+  "include": ["**/*.ts", "**/*.tsx", "../../packages/ui/src/**/*.ts", "../../packages/ui/src/**/*.tsx"]
+}
