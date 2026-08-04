@@ -1,7 +1,6 @@
 // Client entry for agent-chat: chat + configuration UI. Server wiring (runtime
 // registration, server functions, SSE handler) is exported from `agent-chat/server`.
 
-export { AskUser, type AskUserProps, type AskUserQuestion } from './ask-user'
 export {
   ChainDot,
   type ChainDotVariant,
@@ -9,7 +8,6 @@ export {
   type ChainedAlign,
   type ChainedProps,
 } from './chain'
-export { AgentChatInput, type AgentChatInputProps } from './chat-input'
 export { ConfigOptionsBar, type ConfigOptionsBarProps } from './config-options-bar'
 export { markdownLinkComponents } from './markdown-link'
 export {
@@ -35,7 +33,6 @@ export {
   canStartSelection,
   EMPTY_SELECTION,
 } from './preset-form'
-export { QueuedMessages, type QueuedMessagesProps } from './queued-messages'
 export { SkillEditor, type SkillEditorProps } from './skill-editor'
 export { type SkillRecord, SkillsManager, type SkillsManagerProps } from './skills-manager'
 export { ThinkingBlock, type ThinkingBlockProps } from './thinking-block'

@@ -2,11 +2,12 @@
 
 import { Check, MessageCircleQuestion, X } from 'lucide-react'
 import { type KeyboardEvent, useCallback, useEffect, useState } from 'react'
-import { Button } from 'ui/components/ui/button'
-import { Checkbox } from 'ui/components/ui/checkbox'
-import { Input } from 'ui/components/ui/input'
-import { Label } from 'ui/components/ui/label'
-import { RadioGroup, RadioGroupItem } from 'ui/components/ui/radio-group'
+
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 
 export interface AskUserQuestion {
   title: string
@@ -57,8 +58,6 @@ export function AskUser({ questions, onSubmit, onCancel, pending = false, onCurr
   const answered = isQuestionAnswered(title, answers, customTexts)
   const allAnswered = questions.every((q) => isQuestionAnswered(q.title, answers, customTexts))
 
-  // ── State helpers ──────────────────────────────────────────────────────
-
   const updateCustomText = useCallback(
     (value: string) => {
       setCustomTexts((prev) => ({ ...prev, [title]: value }))
@@ -100,8 +99,6 @@ export function AskUser({ questions, onSubmit, onCancel, pending = false, onCurr
     setCustomTexts((prev) => ({ ...prev, [title]: '' }))
   }, [customText, title, question.multiple])
 
-  // ── Resolve all answers into final string map ──────────────────────────
-
   const buildFinalAnswers = useCallback((): Record<string, string> => {
     const result: Record<string, string> = {}
     for (const q of questions) {
@@ -112,8 +109,6 @@ export function AskUser({ questions, onSubmit, onCancel, pending = false, onCurr
     }
     return result
   }, [questions, answers, customTexts])
-
-  // ── Actions ────────────────────────────────────────────────────────────
 
   const submit = useCallback(() => {
     onSubmit(buildFinalAnswers())
@@ -138,8 +133,6 @@ export function AskUser({ questions, onSubmit, onCancel, pending = false, onCurr
     },
     [advance],
   )
-
-  // ── Render ─────────────────────────────────────────────────────────────
 
   return (
     <div className='flex flex-col gap-2 px-3 py-2'>
