@@ -1,10 +1,10 @@
 'use client'
 
-import { ChainDot, Chained } from 'agent-chat/chain'
-import { ThinkingBlock } from 'agent-chat/thinking-block'
 import { type ComponentType, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ChainDot, Chained } from 'ui/agent-chat/chain'
 import { type Block, ChatConversation, type ChatConversationHandle } from 'ui/agent-chat/chat-conversation'
 import type { ChatTurnRenderers, DetailItem as KitDetailItem } from 'ui/agent-chat/chat-turn'
+import { ThinkingBlock } from 'ui/agent-chat/thinking-block'
 import { TypingDots } from 'ui/chat/typing-dots'
 import { Flex } from 'ui/layout/flex'
 
