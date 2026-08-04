@@ -39,7 +39,7 @@ Object.defineProperty(globalThis.document, 'cookie', {
 // After the DOM exists, never before — react-dom binds to the globals it finds.
 const { act, createElement } = await import('react')
 const { createRoot } = await import('react-dom/client')
-const { SidebarProvider, useSidebar } = await import('ui/components/ui/sidebar')
+const { SidebarProvider, SidebarStateProvider, useSidebar } = await import('ui/components/ui/sidebar')
 
 after(() => dom.cleanup())
 
@@ -157,4 +157,71 @@ test('a lone sidebar is unchanged: the shared key and the shared shortcut still 
 
   await pressShortcut('b')
   assert.equal(open, true, 'still answers the original shortcut')
+})
+
+// The wrapper and the state are separate responsibilities that used to be
+// bundled. A page whose sidebar is the layout wants both; a second sidebar
+// joining a row that already exists wants only the state, because another
+// full-width flex container nested inside the row would change that layout
+// rather than join it.
+test('a second sidebar joins the existing row without inserting a container', async () => {
+  const root = createRoot(dom.container)
+  after(() => {
+    act(() => root.unmount())
+  })
+
+  await act(async () => {
+    root.render(
+      createElement(
+        SidebarProvider,
+        { storageKey: 'left_sidebar_state' },
+        createElement('div', { 'data-testid': 'left' }),
+        createElement(
+          SidebarStateProvider,
+          { storageKey: 'right_sidebar_state', keyboardShortcut: null },
+          createElement('div', { 'data-testid': 'right' }),
+        ),
+      ),
+    )
+  })
+
+  const wrappers = dom.container.querySelectorAll('[data-slot="sidebar-wrapper"]')
+  assert.equal(wrappers.length, 1, 'only the page row opens a wrapper')
+
+  const left = dom.container.querySelector('[data-testid="left"]')
+  const right = dom.container.querySelector('[data-testid="right"]')
+  assert.equal(right?.parentElement, wrappers[0], 'the second sidebar sits directly in the row')
+  assert.equal(left?.parentElement, right?.parentElement, 'both sidebars are siblings of one another')
+})
+
+test('the state provider keeps its own persistence, exactly as the full one does', async () => {
+  // Splitting the wrapper off must not have taken any behaviour with it.
+  let toggle: (() => void) | undefined
+
+  function Probe() {
+    toggle = useSidebar().toggleSidebar
+    return null
+  }
+
+  const root = createRoot(dom.container)
+  after(() => {
+    act(() => root.unmount())
+  })
+
+  await act(async () => {
+    root.render(
+      createElement(
+        SidebarProvider,
+        { storageKey: 'left_sidebar_state' },
+        createElement(
+          SidebarStateProvider,
+          { storageKey: 'right_sidebar_state', keyboardShortcut: null },
+          createElement(Probe, null),
+        ),
+      ),
+    )
+  })
+
+  await act(async () => toggle?.())
+  assert.deepEqual(cookieWrites, ['right_sidebar_state=false'], 'writes its own key, not the row’s')
 })
