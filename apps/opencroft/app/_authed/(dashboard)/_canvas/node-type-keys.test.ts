@@ -1,26 +1,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { graphNodeTypes, nodeTypeIds, nodeTypesKey, typesFromKey } from './node-type-keys'
+import { graphNodeTypes, nodeTypesKey, typesFromKey } from './node-type-keys'
 
 // The reason the canvas can paint before extensions arrive. A type present only
 // in the graph still needs a component, or the flow library substitutes its own
 // and logs once per node — and the node never reaches the code that would draw
-// it as loading or as missing.
-test('a type only the graph knows about still gets an entry', () => {
-  const ids = nodeTypeIds(['agent'], ['agent', 'docker'])
-  assert.deepEqual([...ids].sort(), ['agent', 'docker'])
-})
-
-test('registered types survive when the graph contains none of them', () => {
-  assert.deepEqual(nodeTypeIds(['agent'], []), ['agent'])
-})
-
-test('a type both registered and present in the graph appears once', () => {
-  const ids = nodeTypeIds(['agent', 'agent'], ['agent'])
-  assert.deepEqual(ids, ['agent'])
-})
-
+// it as loading or as missing. The graph's own types are the whole input: a
+// wrapper resolves its component during render, so no entry has to be rebuilt
+// when an extension registers.
 test('graph node types are de-duplicated, sorted, and skip nodes with no type', () => {
   const types = graphNodeTypes([{ type: 'docker' }, { type: 'agent' }, { type: 'docker' }, {}, { type: '' }])
   assert.deepEqual(types, ['agent', 'docker'])

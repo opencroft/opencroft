@@ -5,9 +5,8 @@ import { memo } from 'react'
 
 import { useExtensionsSettled } from '@/app/_authed/(dashboard)/_canvas/extensions-ready-context'
 import { NodeAccentProvider } from '@/app/_authed/(dashboard)/_canvas/node-frame'
-import { nodeTypeIds } from '@/app/_authed/(dashboard)/_canvas/node-type-keys'
 import { UnresolvedNode } from '@/app/_authed/(dashboard)/_canvas/unresolved-node'
-import { extensionRegistry, type ResolvedNode } from '@/app/_authed/(extension-runtime)/_client/registry'
+import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
 import type { NodeData } from '@/app/_authed/(extension-runtime)/_types'
 import { RenderBoundary } from '@/components/render-boundary'
 
@@ -39,19 +38,20 @@ function NodeWrapperImpl(props: NodeWrapperProps) {
   )
 }
 
-// Every type the canvas may be asked to draw needs an entry here, which is more
-// than the types that currently resolve: `graphTypes` carries the types present
-// in the graph, including those whose extension has not registered yet or never
-// will. Without them the flow library substitutes its own default node and logs
-// once per node, and the unresolved case never reaches the wrapper above at all
-// — so both the loading state and the missing-extension state would be
-// unreachable exactly when they are needed.
-export function buildNodeTypes(nodes: ResolvedNode[], graphTypes: readonly string[] = []) {
+// One entry per node type PRESENT IN THE GRAPH, including types whose extension
+// has not registered yet or never will. Without an entry the flow library
+// substitutes its own default node and logs once per node, and the unresolved
+// case never reaches the wrapper above at all — so both the loading state and
+// the missing-extension state would be unreachable exactly when they are needed.
+//
+// Deliberately NOT the registered extensions, and that is the whole trick: an
+// entry is a wrapper that resolves its component during render, so it does not
+// have to be rebuilt when its extension arrives, and a registered type with no
+// node on the canvas is never looked up. Building from the graph's types alone
+// means this map does not change when extensions settle — which is what stops
+// the flow library discarding and recreating every node at that moment.
+export function buildNodeTypes(typeIds: readonly string[]) {
   const entries: Record<string, React.ComponentType<NodeProps<Node<NodeData>>>> = {}
-  const typeIds = nodeTypeIds(
-    nodes.map((resolved) => resolved.typeId),
-    graphTypes,
-  )
   for (const typeId of typeIds) {
     const Wrapped = (props: NodeProps<Node<NodeData>>) => <NodeWrapperImpl {...props} type={typeId} />
     Wrapped.displayName = `ExtensionNode(${typeId})`

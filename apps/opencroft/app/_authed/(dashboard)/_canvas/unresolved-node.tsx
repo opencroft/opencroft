@@ -47,14 +47,24 @@ export function UnresolvedNode({ type, name, settled }: UnresolvedNodeProps) {
   return (
     // One box for both states, and it is the host's to define — the placeholder
     // deliberately carries no size of its own, and a node element on this canvas
-    // has no width or height either. Sharing it matters more than its exact
-    // value: if the two states were sized by their own content, a node whose
-    // extension is genuinely absent would shrink the moment loading settled,
-    // moving itself and every edge endpoint on it. That is the jump this whole
-    // design exists to prevent, and it would have survived in the failure path.
+    // has no width or height either.
+    //
+    // The width is DEFINITE, not a range, and that is the point. A shared
+    // minimum and maximum is not a shared size: with `min-w`/`max-w` both states
+    // sat inside the same bounds but each was sized by its own text, so the
+    // longer "Unknown extension: …" settled 40px wider than the placeholder and
+    // the node still changed shape — measured in a browser as the placeholder
+    // sitting at the 200px minimum and the error box pushed to the 240px
+    // maximum.
+    // A definite width cannot be pushed by content, so neither state can widen
+    // the other out of step no matter how long a node's name or type id is.
+    //
+    // The value is the node shell's minimum, which is the narrowest a real node
+    // is ever drawn. It is the third hardcoded bound in this tree and belongs
+    // with the other two in whatever the shell ends up exporting.
     //
     // `relative` because the handles below are positioned against this box.
-    <div className='relative h-24 min-w-[200px] max-w-60'>
+    <div className='relative h-24 w-[200px]'>
       {/* Rendered in both states: a node whose extension is never coming still
           has edges, and they still need somewhere to land. */}
       {handles.target.map((id) => (
@@ -64,7 +74,15 @@ export function UnresolvedNode({ type, name, settled }: UnresolvedNodeProps) {
         <Handle key={`source:${id}`} id={id} type='source' position={Position.Right} />
       ))}
       {settled ? (
-        <div className='rounded-md border border-destructive bg-destructive/10 text-destructive px-2 py-1 text-xs'>
+        /* `truncate` because the box no longer grows to fit: without it a long
+           type id would simply overflow the node. `title` keeps the full id
+           reachable for whoever is actually debugging it — nobody needs to read
+           a type id in full to know what is wrong, but the one person who does
+           should not have to go to the console for it. */
+        <div
+          title={type}
+          className='truncate rounded-md border border-destructive bg-destructive/10 text-destructive px-2 py-1 text-xs'
+        >
           Unknown extension: {type}
         </div>
       ) : (
