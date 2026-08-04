@@ -230,7 +230,20 @@ async function gitClone(
   return sha
 }
 
-async function rewriteManifestId(dir: string, scopedId: string): Promise<ExtensionManifest> {
+// Re-serialising with a fixed style would rewrite every byte of a file we only
+// meant to patch two fields of, leaving every installed extension's manifest
+// permanently "dirty" against its source repo for no semantic reason. Matching
+// the source file's own indent and trailing-newline convention keeps the diff
+// to exactly the fields that actually changed.
+function detectJsonIndent(raw: string): string | number {
+  const match = raw.match(/\n([ \t]+)\S/)
+  if (!match) {
+    return 0
+  }
+  return match[1].includes('\t') ? '\t' : match[1].length
+}
+
+export async function rewriteManifestId(dir: string, scopedId: string): Promise<ExtensionManifest> {
   const file = path.join(dir, MANIFEST_FILE)
   const raw = await fs.readFile(file, 'utf-8')
   const manifest = JSON.parse(raw) as ExtensionManifest
@@ -238,7 +251,9 @@ async function rewriteManifestId(dir: string, scopedId: string): Promise<Extensi
   if (!manifest.version) {
     manifest.version = '0.0.0'
   }
-  await fs.writeFile(file, JSON.stringify(manifest, null, 2) + '\n', 'utf-8')
+  const indent = detectJsonIndent(raw)
+  const trailingNewline = raw.endsWith('\n') ? '\n' : ''
+  await fs.writeFile(file, JSON.stringify(manifest, null, indent) + trailingNewline, 'utf-8')
   return manifest
 }
 
