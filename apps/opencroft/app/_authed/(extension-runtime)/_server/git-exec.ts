@@ -1,4 +1,7 @@
 import { execFile as execFileCb } from 'node:child_process'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { promisify } from 'node:util'
 
 const execFile = promisify(execFileCb)
@@ -28,7 +31,7 @@ export interface GitExecError extends Error {
 // just by using this instead of execFile directly.
 export async function runGit(
   args: string[],
-  options: { maxBuffer?: number } = {},
+  options: { maxBuffer?: number; env?: NodeJS.ProcessEnv } = {},
 ): Promise<{ stdout: string; stderr: string }> {
   try {
     return await execFile('git', args, options)
@@ -42,5 +45,44 @@ export async function runGit(
       redacted.stderr = redact(e.stderr)
     }
     throw redacted
+  }
+}
+
+export interface GitCredentials {
+  username: string
+  token: string
+}
+
+/**
+ * Resolves a credential for a `runGit` read (clone/ls-remote) to a
+ * username-only URL plus a `GIT_ASKPASS` env, instead of splicing the token
+ * into the URL string. A token in the URL sits in the argv of `git` and of
+ * the `git-remote-https` helper it spawns -- readable by anything on the
+ * host via `ps`/`/proc/<pid>/cmdline` for as long as either runs, whether
+ * the command succeeds or fails. The env
+ * carries the token instead; only the username (never secret) reaches argv.
+ *
+ * Call the returned `cleanup` once the git command has finished -- it
+ * removes the temporary askpass script. `creds: null` (no auth configured)
+ * passes the URL through unchanged with no env override.
+ */
+export async function withGitAuth(
+  url: string,
+  creds: GitCredentials | null,
+): Promise<{ url: string; env: NodeJS.ProcessEnv | undefined; cleanup: () => Promise<void> }> {
+  if (!creds) {
+    return { url, env: undefined, cleanup: async () => {} }
+  }
+  const parsed = new URL(url)
+  parsed.username = encodeURIComponent(creds.username)
+  parsed.password = ''
+
+  const dir = await mkdtemp(path.join(tmpdir(), 'git-askpass-'))
+  const scriptPath = path.join(dir, 'askpass.sh')
+  await writeFile(scriptPath, '#!/bin/sh\nprintf \'%s\' "$GIT_ASKPASS_PASSWORD"\n', { mode: 0o700 })
+  return {
+    url: parsed.toString(),
+    env: { ...process.env, GIT_ASKPASS: scriptPath, GIT_ASKPASS_PASSWORD: creds.token },
+    cleanup: () => rm(dir, { recursive: true, force: true }),
   }
 }

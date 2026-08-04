@@ -4,7 +4,7 @@ import path from 'node:path'
 import type { InstallAuth } from '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
 import { getSecretValue } from '@/app/_authed/(secrets-store)/_server/actions'
 
-import { runGit } from './git-exec'
+import { runGit, withGitAuth } from './git-exec'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -169,20 +169,6 @@ async function resolveAuth(source: RegistrySource): Promise<{ username: string; 
   return { username: username ?? 'x-access-token', token }
 }
 
-function applyAuthToUrl(url: string, creds: { username: string; token: string } | null): string {
-  if (!creds) {
-    return url
-  }
-  try {
-    const parsed = new URL(url)
-    parsed.username = encodeURIComponent(creds.username)
-    parsed.password = encodeURIComponent(creds.token)
-    return parsed.toString()
-  } catch {
-    return url
-  }
-}
-
 // ── URL Resolution ──────────────────────────────────────────────────
 
 function resolveGitUrl(input: string): string {
@@ -255,16 +241,17 @@ async function fetchRegistryManifest(source: RegistrySource): Promise<ResolvedRe
     manifestJson = await response.text()
   } catch {
     // Fallback: git clone
-    const authedUrl = applyAuthToUrl(gitUrl, creds)
     const tmpDir = path.join(process.cwd(), '.cache', 'registry-tmp', `reg-${Date.now()}`)
+    const { url: authedUrl, env, cleanup } = await withGitAuth(gitUrl, creds)
     try {
       await fs.mkdir(tmpDir, { recursive: true })
       const cloneArgs = source.ref
         ? ['clone', '--depth', '1', '--branch', source.ref, '--single-branch', authedUrl, tmpDir]
         : ['clone', '--depth', '1', authedUrl, tmpDir]
-      await runGit(cloneArgs, { maxBuffer: 4 * 1024 * 1024 })
+      await runGit(cloneArgs, { maxBuffer: 4 * 1024 * 1024, env })
       manifestJson = await fs.readFile(path.join(tmpDir, 'registry.json'), 'utf-8')
     } finally {
+      await cleanup()
       await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
     }
   }
