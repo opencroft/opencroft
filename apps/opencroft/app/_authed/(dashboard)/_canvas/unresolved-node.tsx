@@ -5,6 +5,7 @@ import { useMemo } from 'react'
 import { NodeLoadingPlaceholder } from 'ui/nodes/node-loading-placeholder'
 
 import { edgeHandleIds } from '@/app/_authed/(dashboard)/_canvas/edge-handles'
+import { NODE_CARD_MIN_WIDTH } from '@/app/_authed/(dashboard)/_canvas/node-card'
 
 interface UnresolvedNodeProps {
   /** The node type the graph asked for, which nothing has claimed. */
@@ -47,24 +48,22 @@ export function UnresolvedNode({ type, name, settled }: UnresolvedNodeProps) {
   return (
     // One box for both states, and it is the host's to define — the placeholder
     // deliberately carries no size of its own, and a node element on this canvas
-    // has no width or height either.
+    // has no width or height either. Sharing it matters more than its exact
+    // value: if the two states were sized by their own content, a node whose
+    // extension is genuinely absent would shrink the moment loading settled,
+    // moving itself and every edge endpoint on it. That is the jump this whole
+    // design exists to prevent, and it would have survived in the failure path.
     //
-    // The width is DEFINITE, not a range, and that is the point. A shared
-    // minimum and maximum is not a shared size: with `min-w`/`max-w` both states
-    // sat inside the same bounds but each was sized by its own text, so the
-    // longer "Unknown extension: …" settled 40px wider than the placeholder and
-    // the node still changed shape — measured in a browser as the placeholder
-    // sitting at the 200px minimum and the error box pushed to the 240px
-    // maximum.
-    // A definite width cannot be pushed by content, so neither state can widen
-    // the other out of step no matter how long a node's name or type id is.
-    //
-    // The value is the node shell's minimum, which is the narrowest a real node
-    // is ever drawn. It is the third hardcoded bound in this tree and belongs
-    // with the other two in whatever the shell ends up exporting.
+    // The width is DEFINITE, not a range, for the same reason: a shared min/max
+    // is not a shared size, since each state was still sized by its own text
+    // inside those bounds — measured as the placeholder sitting at the minimum
+    // and the longer "Unknown extension: …" pushed out to the maximum. A
+    // definite width cannot be pushed by content, so neither state can widen
+    // the other out of step. The value is the node shell's own exported
+    // minimum now, not a copied number, so it cannot drift out of step with it.
     //
     // `relative` because the handles below are positioned against this box.
-    <div className='relative h-24 w-[200px]'>
+    <div className='relative h-24' style={{ width: NODE_CARD_MIN_WIDTH }}>
       {/* Rendered in both states: a node whose extension is never coming still
           has edges, and they still need somewhere to land. */}
       {handles.target.map((id) => (

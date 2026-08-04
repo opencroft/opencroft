@@ -1,25 +1,12 @@
 'use client'
 
 import { useEdges as useConnections, useInternalNode, useNodeId } from '@xyflow/react'
-import { AlertTriangle, Copy, type LucideIcon } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { Button } from 'ui/button'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from 'ui/tooltip'
-import type { StatusVariant as IndicatorVariant } from 'ui/utils/status-indicator'
+import { NodeFrame as KitNodeFrame, type NodeStatus } from 'ui/nodes/node-frame'
 
-import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/_authed/(dashboard)/_canvas/node-card'
 import { InputHandle, OutputHandle } from '@/app/_authed/(extension-runtime)/_client/host'
-
-type StatusVariant = 'success' | 'warning' | 'error' | 'info' | 'neutral'
-
-const STATUS_MAP: Record<StatusVariant, IndicatorVariant | undefined> = {
-  success: 'success',
-  warning: 'warning',
-  error: 'destructive',
-  info: 'primary',
-  neutral: undefined,
-}
 
 const NodeAccentContext = createContext<string>('var(--muted-foreground)')
 
@@ -177,7 +164,7 @@ interface NodeFrameProps {
   icon: LucideIcon
   title: string
   subtitle?: string
-  status?: StatusVariant
+  status?: NodeStatus
   extra?: ReactNode
   selected: boolean
   loading?: boolean
@@ -187,43 +174,11 @@ interface NodeFrameProps {
   children?: ReactNode
 }
 
-function copyToClipboard(message: string) {
-  navigator.clipboard.writeText(message)
-  toast.success('Copied error to clipboard')
-}
-
-function NodeErrorTooltip({ errors, children }: { errors: string[]; children: ReactNode }) {
-  return (
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <div>{children}</div>
-        </TooltipTrigger>
-        <TooltipContent
-          side='top'
-          className='nodrag nopan max-w-sm bg-destructive text-destructive-foreground p-2 pointer-events-auto select-text'
-        >
-          <div className='flex flex-col gap-1'>
-            {errors.map((msg, i) => (
-              <div key={i} className='flex items-start gap-2'>
-                <span className='text-xs whitespace-pre-wrap break-words flex-1 font-mono'>{msg}</span>
-                <Button
-                  variant='ghost'
-                  size='icon'
-                  className='h-5 w-5 shrink-0 text-destructive-foreground hover:bg-destructive-foreground/20 hover:text-destructive-foreground'
-                  onClick={() => copyToClipboard(msg)}
-                >
-                  <Copy className='h-3 w-3' />
-                </Button>
-              </div>
-            ))}
-          </div>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  )
-}
-
+// What is NOT here is as deliberate as what is. The canvas keeps the accent
+// context, the connection handles and the stale-handle detection, because
+// each of those reads live graph state -- and the kit's own NodeFrame cannot
+// depend on a graph to render, since that is exactly what makes it usable in
+// a preview. They arrive as a prop and a footer slot instead.
 export function NodeFrame(props: NodeFrameProps) {
   return (
     <ErrorHandleIdsProvider>
@@ -232,45 +187,16 @@ export function NodeFrame(props: NodeFrameProps) {
   )
 }
 
-function NodeFrameInner({
-  icon,
-  title,
-  subtitle,
-  status,
-  extra,
-  selected,
-  loading,
-  errors,
-  input,
-  output,
-  children,
-}: NodeFrameProps) {
-  const accent = useContext(NodeAccentContext)
-  const hasErrors = !!errors && errors.length > 0
-  const displayIcon = hasErrors ? AlertTriangle : icon
-  const iconClassName = hasErrors ? 'text-destructive' : undefined
-  const titleClassName = hasErrors ? 'text-destructive' : undefined
-
-  const card = (
-    <NodeCard selected={selected} loading={loading} accent={accent} error={hasErrors}>
-      <NodeCardHeader
-        icon={displayIcon}
-        iconClassName={iconClassName}
-        title={title}
-        titleClassName={titleClassName}
-        subtitle={subtitle}
-        status={status ? STATUS_MAP[status] : undefined}
-        extra={extra}
-        input={input}
-        output={output}
-      />
-      {children && <NodeCardContent>{children}</NodeCardContent>}
-      <StaleHandlesBody />
-    </NodeCard>
+function NodeFrameInner({ children, ...props }: NodeFrameProps) {
+  const accent = useNodeAccent()
+  return (
+    <KitNodeFrame
+      {...props}
+      accent={accent}
+      footer={<StaleHandlesBody />}
+      onCopyError={() => toast.success('Copied error to clipboard')}
+    >
+      {children}
+    </KitNodeFrame>
   )
-
-  if (!hasErrors) {
-    return card
-  }
-  return <NodeErrorTooltip errors={errors}>{card}</NodeErrorTooltip>
 }

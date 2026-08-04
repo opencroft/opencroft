@@ -4,6 +4,7 @@ import type { Node, NodeProps } from '@xyflow/react'
 import { memo } from 'react'
 
 import { useExtensionsSettled } from '@/app/_authed/(dashboard)/_canvas/extensions-ready-context'
+import { NODE_CARD_MAX_WIDTH } from '@/app/_authed/(dashboard)/_canvas/node-card'
 import { NodeAccentProvider } from '@/app/_authed/(dashboard)/_canvas/node-frame'
 import { UnresolvedNode } from '@/app/_authed/(dashboard)/_canvas/unresolved-node'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
@@ -31,7 +32,7 @@ function NodeWrapperImpl(props: NodeWrapperProps) {
   const Component = resolved.component
   return (
     <NodeAccentProvider accent={resolved.accent}>
-      <RenderBoundary scope='ext' label={props.type} resetKey={props.type} className='max-w-60'>
+      <RenderBoundary scope='ext' label={props.type} resetKey={props.type} style={{ maxWidth: NODE_CARD_MAX_WIDTH }}>
         <Component {...props} />
       </RenderBoundary>
     </NodeAccentProvider>

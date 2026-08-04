@@ -13,6 +13,7 @@ interface RenderBoundaryProps {
   /** When this changes, a previous failure is cleared and the child retried. */
   resetKey?: string
   className?: string
+  style?: React.CSSProperties
   children: ReactNode
 }
 
@@ -59,6 +60,7 @@ export class RenderBoundary extends Component<RenderBoundaryProps, RenderBoundar
           'rounded-md border border-destructive bg-destructive/10 text-destructive px-2 py-1 text-xs',
           this.props.className,
         )}
+        style={this.props.style}
       >
         <div className='flex items-center gap-1 font-semibold'>
           <AlertTriangle className='size-3' />
