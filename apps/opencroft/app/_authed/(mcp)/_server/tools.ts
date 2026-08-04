@@ -2264,6 +2264,8 @@ function buildHandlers(): Record<string, ToolHandler> {
         nodeCount: record.manifest.nodes?.length ?? 0,
         fileCount: Object.keys(record.files).length,
         updatedAt: record.updatedAt,
+        sourceCommit: record.sourceCommit,
+        sourceDirty: record.sourceDirty,
         target: `${LOCAL_EXTENSION_HANDLE_NODE_ID}/${record.slug}`,
       }))
       return textResult(JSON.stringify(summaries, null, 2))
