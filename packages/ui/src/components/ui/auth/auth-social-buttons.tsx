@@ -8,10 +8,12 @@ import { cn } from '@/lib/utils'
 
 export type SocialProvider = 'apple' | 'google'
 
-// The providers are the design, not the host's data: these two are what the
-// auth screens offer. Their marks are drawn here because lucide carries no
-// brand icons, and they take no dimensions of their own -- the button sizes
-// its own svg children, so an explicit size here would fight it.
+// The providers and their marks are the design, not the host's data: these two
+// are what the auth screens know how to offer. Which of them a given
+// deployment has credentials for is the host's business, and arrives as
+// `providers`. Their marks are drawn here because lucide carries no brand
+// icons, and they take no dimensions of their own -- the button sizes its own
+// svg children, so an explicit size here would fight it.
 const PROVIDERS: Array<{ id: SocialProvider; label: string; icon: ReactNode }> = [
   {
     id: 'apple',
@@ -43,7 +45,11 @@ export interface AuthSocialButtonsProps {
   // Reports the chosen provider. The sign-in itself, and whatever happens
   // after it, belong to the host.
   onSelect: (provider: SocialProvider) => void
-  // Both buttons go inert -- for a host that is already signing in.
+  // Which providers this deployment has configured. Omit to offer every one
+  // the component knows; an empty list renders nothing at all, so a screen
+  // never advertises a sign-in method that is not actually wired up.
+  providers?: SocialProvider[]
+  // The offered buttons go inert -- for a host that is already signing in.
   disabled?: boolean
   className?: string
 }
@@ -51,11 +57,21 @@ export interface AuthSocialButtonsProps {
 // The "Continue with Apple / Google" pair from the auth screens.
 //
 // Two up from the `sm` breakpoint and stacked below it, so it holds at a phone
-// width without the caller arranging anything.
-export function AuthSocialButtons({ onSelect, disabled, className }: AuthSocialButtonsProps) {
+// width without the caller arranging anything. With one provider offered it is
+// a single full-width button, which the same grid already gives.
+export function AuthSocialButtons({ onSelect, providers, disabled, className }: AuthSocialButtonsProps) {
+  // Filtering PROVIDERS rather than mapping the prop keeps the order the
+  // design chose, whatever order the host lists them in, and drops any name
+  // this component has no mark for instead of rendering a blank button.
+  const offered = providers ? PROVIDERS.filter((provider) => providers.includes(provider.id)) : PROVIDERS
+
+  // Nothing configured: render nothing, not an empty box. The caller owns
+  // whatever sat above it -- see auth-login-form's "Or" separator.
+  if (offered.length === 0) return null
+
   return (
     <Field className={cn('grid gap-4 sm:grid-cols-2', className)}>
-      {PROVIDERS.map((provider) => (
+      {offered.map((provider) => (
         <Button
           key={provider.id}
           type='button'

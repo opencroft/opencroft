@@ -16,6 +16,10 @@ export interface AuthLoginFormProps {
   // calls nothing -- what happens next, and what comes back, is the host's.
   onSubmit: () => void
   onSocialSelect: (provider: SocialProvider) => void
+  // Which social providers this deployment has configured. Omit to offer every
+  // provider the pair knows; an empty list renders neither the buttons nor the
+  // "Or" separator above them, leaving an email-only sign-in.
+  socialProviders?: SocialProvider[]
   // Per-field messages, each shown under the field it belongs to. Displayed,
   // not decided: the host owns the rules that produced them.
   emailError?: string
@@ -40,6 +44,7 @@ export function AuthLoginForm({
   onPasswordChange,
   onSubmit,
   onSocialSelect,
+  socialProviders,
   emailError,
   passwordError,
   error,
@@ -50,6 +55,12 @@ export function AuthLoginForm({
   // over, and duplicate ids would point every label at the first field.
   const emailId = useId()
   const passwordId = useId()
+
+  // Omitted means every provider the pair knows; an empty list is a deployment
+  // with none configured. The separator belongs to this form rather than to the
+  // pair, so dropping it is this component's job -- an "Or" introducing nothing
+  // is worse than no separator at all.
+  const offersSocial = socialProviders === undefined || socialProviders.length > 0
 
   return (
     // method='post' so a submit before hydration (before this handler attaches)
@@ -104,9 +115,19 @@ export function AuthLoginForm({
           </Button>
         </Field>
 
-        <FieldSeparator>Or</FieldSeparator>
+        {offersSocial ? (
+          <>
+            <FieldSeparator>Or</FieldSeparator>
 
-        <AuthSocialButtons onSelect={onSocialSelect} />
+            <AuthSocialButtons
+              providers={socialProviders}
+              onSelect={onSocialSelect}
+              // A sign-in already in flight takes the pair inert along with the
+              // submit, so a second one cannot be started to race the first.
+              disabled={submitting}
+            />
+          </>
+        ) : null}
       </FieldGroup>
     </form>
   )
