@@ -10,7 +10,7 @@ import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { admin } from 'better-auth/plugins'
 import { tanstackStartCookies } from 'better-auth/tanstack-start'
-import { count, eq, sql } from 'drizzle-orm'
+import { count, eq } from 'drizzle-orm'
 
 // The placeholder an explicitly-development deployment falls back to. Fixed
 // rather than random because sessions are signed with it: a value that changed
@@ -110,6 +110,19 @@ function buildAuth() {
       // step exists when nothing can send it. The seam is here for when it
       // does.
       changeEmail: { enabled: true, updateEmailWithoutVerification: true },
+    },
+    // Stamps `user.lastSeenAt` on every sign-in. Deliberately not derived from
+    // the session table at read time (see the column's own comment in
+    // auth-schema.ts): banning a user deletes its sessions, which would erase
+    // a derived value right when an administrator most needs it.
+    databaseHooks: {
+      session: {
+        create: {
+          after: async (created) => {
+            await db.update(user).set({ lastSeenAt: new Date() }).where(eq(user.id, created.userId))
+          },
+        },
+      },
     },
     // `admin()` supplies the role/ban columns the first-run administrator
     // needs. `tanstackStartCookies()` is what makes Set-Cookie work under
@@ -469,24 +482,12 @@ export interface AdminListedUser {
   lastSeenAt: Date | null
 }
 
-/**
- * Every account, for the administrator's users list. Admin-only.
- *
- * `lastSeenAt` is not a tracked column — nothing on this instance recorded it
- * before today. It is derived from the most recent session row per user,
- * which is the honest proxy already sitting in the database, rather than
- * adding a new column nothing else would keep up to date.
- */
+/** Every account, for the administrator's users list. Admin-only. */
 export async function listUsersAsAdmin(request: Request): Promise<AdminListedUser[]> {
   if (!(await requireAdminUser(request))) {
     throw new AdminActionError('forbidden', 'Only an administrator can list accounts')
   }
   const rows = await db.select().from(user)
-  const lastSeenRows = await db
-    .select({ userId: session.userId, lastSeenAt: sql<Date>`max(${session.updatedAt})` })
-    .from(session)
-    .groupBy(session.userId)
-  const lastSeenByUser = new Map(lastSeenRows.map((row) => [row.userId, row.lastSeenAt]))
   return rows.map((row) => ({
     id: row.id,
     name: row.name,
@@ -495,7 +496,7 @@ export async function listUsersAsAdmin(request: Request): Promise<AdminListedUse
     role: row.role,
     disabled: row.banned ?? false,
     createdAt: row.createdAt,
-    lastSeenAt: lastSeenByUser.get(row.id) ?? null,
+    lastSeenAt: row.lastSeenAt,
   }))
 }
 
@@ -508,10 +509,6 @@ export async function getUserAsAdmin(request: Request, userId: string): Promise<
   if (!row) {
     return null
   }
-  const [lastSeen] = await db
-    .select({ lastSeenAt: sql<Date>`max(${session.updatedAt})` })
-    .from(session)
-    .where(eq(session.userId, userId))
   return {
     id: row.id,
     name: row.name,
@@ -520,7 +517,7 @@ export async function getUserAsAdmin(request: Request, userId: string): Promise<
     role: row.role,
     disabled: row.banned ?? false,
     createdAt: row.createdAt,
-    lastSeenAt: lastSeen?.lastSeenAt ?? null,
+    lastSeenAt: row.lastSeenAt,
   }
 }
 
