@@ -7,7 +7,7 @@ import { createServerFn } from '@tanstack/react-start'
 
 import { MANIFEST_FILE, rewriteManifestId } from '@/app/_authed/(extension-editor)/_actions/manifest-file'
 import { buildExtension } from '@/app/_authed/(extension-runtime)/_server/compiler'
-import { runGit } from '@/app/_authed/(extension-runtime)/_server/git-exec'
+import { runGit, withGitAuth } from '@/app/_authed/(extension-runtime)/_server/git-exec'
 import { flushCache } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { extDir, installedExtRoot, localExtRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
 import type { ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
@@ -140,23 +140,14 @@ async function resolveAuth(auth?: InstallAuth): Promise<ResolvedAuth | null> {
   return { username: username ?? 'x-access-token', token }
 }
 
-function applyAuthToUrl(url: string, creds: ResolvedAuth | null): string {
-  if (!creds) {
-    return url
-  }
-  try {
-    const parsed = new URL(url)
-    parsed.username = encodeURIComponent(creds.username)
-    parsed.password = encodeURIComponent(creds.token)
-    return parsed.toString()
-  } catch {
-    return url
-  }
-}
-
 async function listRemoteTags(url: string, creds: ResolvedAuth | null): Promise<string[]> {
-  const authedUrl = applyAuthToUrl(url, creds)
-  const { stdout } = await runGit(['ls-remote', '--tags', '--refs', authedUrl], { maxBuffer: 4 * 1024 * 1024 })
+  const { url: authedUrl, env, cleanup } = await withGitAuth(url, creds)
+  let stdout: string
+  try {
+    ;({ stdout } = await runGit(['ls-remote', '--tags', '--refs', authedUrl], { maxBuffer: 4 * 1024 * 1024, env }))
+  } finally {
+    await cleanup()
+  }
   const tags: string[] = []
   for (const line of stdout.split('\n')) {
     const trimmed = line.trim()
@@ -217,12 +208,16 @@ async function gitClone(
 ): Promise<string> {
   await fs.mkdir(path.dirname(dest), { recursive: true })
   await fs.rm(dest, { recursive: true, force: true })
-  const authedUrl = applyAuthToUrl(url, creds)
+  const { url: authedUrl, env, cleanup } = await withGitAuth(url, creds)
   const args =
     refKind === 'tag'
       ? ['clone', '--depth', '1', '--branch', ref, '--single-branch', authedUrl, dest]
       : ['clone', '--depth', '1', authedUrl, dest]
-  await runGit(args, { maxBuffer: GIT_BUFFER })
+  try {
+    await runGit(args, { maxBuffer: GIT_BUFFER, env })
+  } finally {
+    await cleanup()
+  }
   const { stdout } = await runGit(['-C', dest, 'rev-parse', 'HEAD'])
   const sha = stdout.trim().slice(0, 7)
   if (!keepGit) {
