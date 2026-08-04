@@ -305,6 +305,7 @@ export const useNodeContext = host.useNodeContext;
 export const inspectorIntent = host.inspectorIntent;
 export const useInspectorIntent = host.useInspectorIntent;
 export const useOverlay = host.useOverlay;
+export const useUrlParam = host.useUrlParam;
 export const useGraphNodes = host.useGraphNodes;
 export const useGraphEdges = host.useGraphEdges;
 export const useReactFlow = host.useReactFlow;

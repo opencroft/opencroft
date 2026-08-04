@@ -1,7 +1,8 @@
 'use client'
 
-import { useLocation, useRouter } from '@tanstack/react-router'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+
+import { useUrlParam } from '@/app/_lib/use-url-param'
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -97,9 +98,7 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
   // Set right before applying server-loaded state so the persist effect skips
   // writing it straight back.
   const skipPersist = useRef(false)
-  const router = useRouter()
-  const pathname = useLocation({ select: (l) => l.pathname })
-  const searchStr = useLocation({ select: (l) => l.searchStr })
+  const chatParam = useUrlParam('chat')
 
   // Load open tabs + chat mode from the settings DB on mount. (No auto-select —
   // the chat opens only when a session is chosen, so the inspector lands on the
@@ -154,24 +153,15 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const real = !!activeSessionKey && activeSessionKey !== fallbackKey
     const desired = real ? activeSessionKey : null
-    const params = new URLSearchParams(searchStr)
-    if ((params.get('chat') ?? null) === desired) {
+    if (chatParam.value === desired) {
       return
     }
-    // Rebuild the search object from scratch (preserving other params) and pass
-    // it as a plain object — a function updater here merges with prev, so a
-    // removed/undefined `chat` key is dropped on the floor and never cleared.
-    const next: Record<string, string> = {}
-    params.forEach((value, key) => {
-      if (key !== 'chat') {
-        next[key] = value
-      }
-    })
-    if (desired) {
-      next.chat = desired
+    if (desired === null) {
+      chatParam.remove()
+    } else {
+      chatParam.set(desired)
     }
-    router.navigate({ to: pathname, replace: true, search: next })
-  }, [activeSessionKey, fallbackKey, pathname, searchStr, router])
+  }, [activeSessionKey, fallbackKey, chatParam])
 
   const openTab = useCallback((key: string, meta?: TabMeta) => {
     setTabs((prev) => {

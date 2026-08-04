@@ -112,3 +112,34 @@ test('a publisher that re-renders for its own reasons republishes without loopin
   assert.equal(harness.publisherRenders, 2, 'the publisher renders once more, because it asked to')
   assert.ok(harness.painterRenders > before, 'and the new node reaches the painter')
 })
+
+// The header slot is reachable through the same hook extensions are handed, not
+// only through the canvas's own components. An extension overlay that wants a
+// titlebar has nowhere else to put one, so this is the difference between the
+// slot existing and the slot being usable.
+test('a node published into the header slot reaches the painter', async () => {
+  let painted: unknown = null
+
+  function HeaderPublisher() {
+    useOverlay({ header: createElement('div', null, 'titlebar') })
+    return null
+  }
+
+  function Painter() {
+    painted = useOverlaySlotValues().header
+    return null
+  }
+
+  const root = createRoot(dom.container)
+  after(() => {
+    act(() => root.unmount())
+  })
+
+  await act(async () => {
+    root.render(
+      createElement(OverlayProvider, null, createElement(HeaderPublisher, null), createElement(Painter, null)),
+    )
+  })
+
+  assert.notEqual(painted, null, 'a header published through useOverlay must reach the painter')
+})
