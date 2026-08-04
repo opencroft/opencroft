@@ -168,17 +168,33 @@ export function SecretsStoreInspector({
   }, [reload])
 
   const persist = useCallback(async () => {
-    for (const key of removed) {
-      await invoke('secretsStore.deleteSecret', nodeId, key)
-    }
-    for (const row of rows) {
-      if (row.key && row.dirty) {
-        await invoke('secretsStore.setSecret', nodeId, row.key, row.value)
+    try {
+      for (const key of removed) {
+        await invoke('secretsStore.deleteSecret', nodeId, key)
       }
+      for (const row of rows) {
+        if (row.key && row.dirty) {
+          await invoke('secretsStore.setSecret', nodeId, row.key, row.value)
+        }
+      }
+      toast.success('Secrets saved')
+    } catch (err) {
+      // Without this, a thrown invoke() call (network error, a store row that
+      // fails to write, ...) aborted here silently — the delete/set loop above
+      // had no try/catch at all, so nothing after the failure point ran: no
+      // error toast, no secretKeys sync, no reload. The user saw an
+      // unresponsive Save button and the secret was never written.
+      toast.error(`Could not save secrets: ${String(err)}`)
+    } finally {
+      // Re-derive secretKeys from what's actually in the store rather than
+      // from this panel's local `rows`, so a PARTIAL failure (row 2 of 3
+      // fails) still leaves the mirror matching row 1's real write instead of
+      // silently omitting it — the same class of drift this mirror has had
+      // before, from a different cause.
+      const current = await invoke<{ key: string }[]>('secretsStore.getSecrets', nodeId)
+      updateData({ secretKeys: current.map((s) => s.key) })
+      await reload()
     }
-    updateData({ secretKeys: rows.filter((r) => r.key).map((r) => r.key) })
-    await reload()
-    toast.success('Secrets saved')
   }, [rows, removed, nodeId, updateData, reload])
 
   const addRow = useCallback(() => {
