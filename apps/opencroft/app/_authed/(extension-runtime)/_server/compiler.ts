@@ -67,6 +67,41 @@ function toCompileErrors(messages: esbuild.Message[]): CompileError[] {
   }))
 }
 
+// Resolves each declared specifier to an empty module instead of letting
+// esbuild bundle whatever it really points at. For a dependency's own
+// internal, runtime-gated branch (an `if` esbuild can't prove dead) that this
+// extension never reaches — see ExtensionManifest.clientStubs for the full
+// contract. `matched` is populated as specifiers are actually resolved during
+// the build, so the caller can tell a declared-and-used stub from a
+// declared-but-never-imported one after the build finishes.
+//
+// An empty module (not `external`) on purpose: a browser ESM bundle has no
+// runtime module resolver, so leaving a bare specifier unresolved in the
+// output would be a hard resolution error if the "dead" branch were ever
+// actually reached. Resolving to real, empty code instead means that same
+// mistake surfaces as a TypeError from calling something on `undefined` —
+// still a bug, but a debuggable one at the call site instead of a blank
+// browser tab.
+function clientStubPlugin(specifiers: string[], matched: Set<string>): esbuild.Plugin {
+  const declared = new Set(specifiers)
+  return {
+    name: 'ext-client-stub',
+    setup(build) {
+      build.onResolve({ filter: /.*/ }, (args) => {
+        if (!declared.has(args.path)) {
+          return null
+        }
+        matched.add(args.path)
+        return { path: args.path, namespace: 'ext-client-stub' }
+      })
+      build.onLoad({ filter: /.*/, namespace: 'ext-client-stub' }, () => ({
+        contents: 'export {}\n',
+        loader: 'js',
+      }))
+    },
+  }
+}
+
 function hostVirtualPlugin(side: 'client' | 'server', extensionId: string): esbuild.Plugin {
   return {
     name: 'ext-host-virtual',
@@ -585,6 +620,12 @@ async function compileClientSide(
   buildAttemptCounter += 1
   const stagingDir = `${outDir}.building-${process.pid}-${buildAttemptCounter}`
 
+  // Declaring nothing here must change nothing about the build: an empty
+  // list means clientStubPlugin registers zero onResolve matches and every
+  // import resolves exactly as it did before this option existed.
+  const stubSpecifiers = manifest.clientStubs ?? []
+  const matchedStubs = new Set<string>()
+
   try {
     const result = await esbuild.build({
       entryPoints: [entry],
@@ -608,7 +649,7 @@ async function compileClientSide(
       sourcemap: true,
       minify: true,
       jsx: 'automatic',
-      plugins: [hostVirtualPlugin('client', extensionId)],
+      plugins: [hostVirtualPlugin('client', extensionId), clientStubPlugin(stubSpecifiers, matchedStubs)],
       logLevel: 'silent',
       write: true,
       absWorkingDir: src,
@@ -618,8 +659,19 @@ async function compileClientSide(
     // called right now — nobody ever requests the staging path.
     await versionSourceMapLink(path.join(stagingDir, 'client.js'), 'client.js.map')
     await publishClientBuild(stagingDir, outDir)
+    // A declared stub that never matched an import is the same class of
+    // mistake as a typo'd dependency name — reported as a build error rather
+    // than silently doing nothing, so the extension author finds out from
+    // the build instead of from a bundle that quietly stayed large.
+    const unmatchedStubs = stubSpecifiers.filter((specifier) => !matchedStubs.has(specifier))
     return {
-      errors: toCompileErrors(result.errors),
+      errors: [
+        ...toCompileErrors(result.errors),
+        ...unmatchedStubs.map((specifier) => ({
+          file: 'extension.json',
+          message: `clientStubs entry "${specifier}" never matched an import in the client build — remove it or fix the specifier.`,
+        })),
+      ],
       warnings: toCompileErrors(result.warnings),
     }
   } catch (err) {
