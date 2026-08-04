@@ -50,6 +50,13 @@
       "when": 1785762792021,
       "tag": "0006_cool_starfox",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1785842448697,
+      "tag": "0007_open_vertigo",
+      "breakpoints": true
     }
   ]
 }

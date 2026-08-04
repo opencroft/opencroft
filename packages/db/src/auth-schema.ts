@@ -37,6 +37,13 @@ export const user = pgTable('user', {
   banned: boolean('banned').default(false),
   banReason: text('ban_reason'),
   banExpires: timestamp('ban_expires', { withTimezone: true, mode: 'date' }),
+  // Set from a databaseHooks.session.create.after hook in packages/auth, not
+  // derived from the session table's own updatedAt: banning a user deletes
+  // its session rows outright (Better Auth's admin plugin does this on every
+  // ban), which would silently erase a derived "last seen" the moment an
+  // account is disabled -- exactly the account an administrator most needs
+  // this fact about. A column on the user row survives that deletion.
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true, mode: 'date' }),
 })
 
 export const session = pgTable(

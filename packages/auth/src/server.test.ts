@@ -351,3 +351,42 @@ test('an expired session resolves to null, not to its user', async () => {
   const expired = await getSessionUser(new Request('http://localhost/', { headers: { cookie } }))
   assert.equal(expired, null, 'an expired session must not resolve to a user — that would be silently letting them in')
 })
+
+// Better Auth's admin plugin deletes a user's session rows outright when it
+// is banned — a derived "last seen" (the session table's own most recent
+// row) would vanish at exactly the moment disabling an account is supposed
+// to keep its data, per the toggle's own copy. lastSeenAt lives on the user
+// row instead, set from a sign-in hook, so it survives that deletion.
+test('disabling and re-enabling sign-in access does not erase when the account was last seen', async () => {
+  const { createUserAsAdmin, setUserDisabledAsAdmin, getUserAsAdmin, ensureAuth } = await import('./server')
+
+  const adminSignIn = await ensureAuth().api.signInEmail({
+    body: { email: ADMIN.email, password: ADMIN.password },
+    asResponse: true,
+  })
+  const adminCookie = adminSignIn.headers.get('set-cookie')
+  assert.ok(adminCookie, 'precondition: the admin must be able to sign in')
+  const adminRequest = () => new Request('http://localhost/', { headers: { cookie: adminCookie as string } })
+
+  const account = { name: 'Watched', email: 'watched@example.test', password: 'a long enough passphrase' }
+  const created = await createUserAsAdmin(adminRequest(), { ...account, role: 'user' })
+
+  const beforeSignIn = await getUserAsAdmin(adminRequest(), created.id)
+  assert.equal(beforeSignIn?.lastSeenAt, null, 'precondition: an account that has never signed in has no last-seen date')
+
+  const signIn = await ensureAuth().api.signInEmail({ body: { email: account.email, password: account.password }, asResponse: true })
+  assert.equal(signIn.status, 200, 'precondition: the created account must be able to sign in for this test to mean anything')
+
+  const afterSignIn = await getUserAsAdmin(adminRequest(), created.id)
+  assert.ok(afterSignIn?.lastSeenAt, 'signing in must record a last-seen date')
+  const seenAt = afterSignIn.lastSeenAt as Date
+
+  await setUserDisabledAsAdmin(adminRequest(), created.id, true)
+  const disabled = await getUserAsAdmin(adminRequest(), created.id)
+  assert.equal(disabled?.disabled, true, 'precondition: the account must actually be disabled')
+  assert.deepEqual(disabled?.lastSeenAt, seenAt, 'disabling sign-in access must not erase when the account was last seen')
+
+  await setUserDisabledAsAdmin(adminRequest(), created.id, false)
+  const reenabled = await getUserAsAdmin(adminRequest(), created.id)
+  assert.deepEqual(reenabled?.lastSeenAt, seenAt, 're-enabling must not have already lost it while disabled')
+})
