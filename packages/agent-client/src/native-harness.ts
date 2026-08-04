@@ -101,29 +101,69 @@ interface ToolGate {
   getMode: () => string
 }
 
+export const CANCELLED = Symbol('cancelled')
+
+// Races a promise against an abort signal. The signal firing resolves with
+// CANCELLED immediately — it does not wait for (or care about) whatever the
+// raced promise eventually settles to.
+export function raceAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T | typeof CANCELLED> {
+  if (!signal) {
+    return promise
+  }
+  if (signal.aborted) {
+    return Promise.resolve(CANCELLED)
+  }
+  return new Promise<T | typeof CANCELLED>((resolve, reject) => {
+    const onAbort = () => resolve(CANCELLED)
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      },
+    )
+  })
+}
+
 // Gate a tool call through the ACP permission flow. 'AlwaysAllow' skips the
 // prompt; otherwise (an 'Allow' grant or an MCP/ungranted tool) the prompt is
 // shown unless the session is in bypass mode. Returns a denial string when the
-// user rejects, else null to proceed.
+// user rejects or the turn is cancelled first, else null to proceed.
+//
+// requestPermission is a round trip to the operator and can be slow; a turn
+// cancelled while it's in flight (cancel() aborts the turn's own signal) must
+// not let a permission that resolves afterward reach the real tool call —
+// abortSignal is raced against it rather than awaited alongside it, so a late
+// 'allow' can never arrive after this function has already returned.
 async function gateToolCall(
   gate: ToolGate,
   name: string,
   input: unknown,
   toolCallId: string,
   access: PermissionValue,
+  abortSignal?: AbortSignal,
 ): Promise<string | null> {
   if (access === 'AlwaysAllow' || gate.getMode() === 'bypass') {
     return null
   }
-  const response = await gate.client.requestPermission({
-    sessionId: gate.sessionId,
-    toolCall: { toolCallId, title: name, rawInput: input },
-    options: [
-      { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
-      { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
-    ],
-  })
-  if (response.outcome.outcome !== 'selected' || response.outcome.optionId !== 'allow') {
+  const response = await raceAbort(
+    Promise.resolve(
+      gate.client.requestPermission({
+        sessionId: gate.sessionId,
+        toolCall: { toolCallId, title: name, rawInput: input },
+        options: [
+          { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+          { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+        ],
+      }),
+    ),
+    abortSignal,
+  )
+  if (response === CANCELLED || response.outcome.outcome !== 'selected' || response.outcome.optionId !== 'allow') {
     return 'Permission denied by user.'
   }
   return null
@@ -151,10 +191,10 @@ async function buildToolset(
     toolset[local.name] = tool({
       description: local.description,
       inputSchema: z.object(local.inputSchema),
-      execute: async (input, { toolCallId }) => {
-        const denied = await gateToolCall(gate, local.name, input, toolCallId, access)
-        if (denied) {
-          return denied
+      execute: async (input, { toolCallId, abortSignal }) => {
+        const denied = await gateToolCall(gate, local.name, input, toolCallId, access, abortSignal)
+        if (denied || abortSignal?.aborted) {
+          return denied ?? 'Permission denied by user.'
         }
         return flattenToolResult(await local.handler(input as Record<string, unknown>))
       },
@@ -187,9 +227,9 @@ async function buildToolset(
     toolset[name] = {
       ...mcpTool,
       execute: async (input: unknown, callOptions) => {
-        const denied = await gateToolCall(gate, name, input, callOptions.toolCallId, 'Allow')
-        if (denied) {
-          return denied
+        const denied = await gateToolCall(gate, name, input, callOptions.toolCallId, 'Allow', callOptions.abortSignal)
+        if (denied || callOptions.abortSignal?.aborted) {
+          return denied ?? 'Permission denied by user.'
         }
         return execute(input, callOptions)
       },
