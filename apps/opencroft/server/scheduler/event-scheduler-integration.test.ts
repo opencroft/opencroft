@@ -102,19 +102,38 @@ test('processDueEvents caps run history at MAX_HISTORY, newest first', async () 
   const slug = `scheduler-cap-${crypto.randomUUID()}`
   const eventId = await freshSpaceWithEventAndScript(slug, [{ id: 'r1', enabled: true, mode: 'cron', cron: '* * * * *' }])
 
+  // No inter-iteration delay: each fire gets its own identity (fireId), not
+  // one derived from Date.now(), so back-to-back calls landing in the same
+  // millisecond no longer collide.
   for (let i = 0; i < MAX_HISTORY + 3; i++) {
     await processDueEvents(Date.now() - 65_000, Date.now())
-    // persistRunOutcome dedups by (nodeId, firedAt) -- deliberately, to make a
-    // duplicate application of the same fire a no-op. Back-to-back calls with
-    // no delay can land on the same millisecond, which that guard then
-    // (correctly) treats as the same fire happening twice.
-    await new Promise((resolve) => setTimeout(resolve, 2))
   }
 
   const history = historyOf(slug, eventId)
   assert.equal(history.length, MAX_HISTORY)
   // Newest entry first.
   assert.ok(history[0].at >= history[history.length - 1].at)
+})
+
+// Freezes Date.now() so two genuinely separate processDueEvents calls read
+// the identical millisecond, rather than waiting for real fires to collide
+// by chance -- drives the clock instead of racing it.
+test('processDueEvents records two separate fires that land in the same millisecond as two separate history entries', async () => {
+  const slug = `scheduler-same-ms-${crypto.randomUUID()}`
+  const eventId = await freshSpaceWithEventAndScript(slug, [{ id: 'r1', enabled: true, mode: 'cron', cron: '* * * * *' }])
+
+  const frozenNow = Date.now()
+  const realDateNow = Date.now
+  Date.now = () => frozenNow
+  try {
+    await processDueEvents(frozenNow - 65_000, frozenNow)
+    await processDueEvents(frozenNow - 65_000, frozenNow)
+  } finally {
+    Date.now = realDateNow
+  }
+
+  const history = historyOf(slug, eventId)
+  assert.equal(history.length, 2, 'two genuinely separate fires must both be recorded, even when Date.now() reads identically for both')
 })
 
 test('processDueEvents records a failed dispatch as an error entry, not a crash', async () => {
