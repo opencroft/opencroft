@@ -43,6 +43,7 @@ import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-a
 import { stopProcessLocal } from '@/app/_authed/(agent)/_server/acp'
 import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
 import { DevBuildBadge } from '@/app/_components/dev-build-badge'
+import { RightSidebar } from '@/app/_shell/right-sidebar'
 import { SignOutItem } from '@/app/(auth)/_components/sign-out-item'
 import { cn } from '@/lib/utils'
 
@@ -285,6 +286,7 @@ export function AppShell({ pinnedSpaces, dashboards, pinnedDashboardSlugs, child
             />
           </Suspense>
           <main className='flex flex-col w-full h-dvh'>{children}</main>
+          <RightSidebar />
         </SidebarProvider>
       </ChatTabsProvider>
     </TitlebarProvider>
