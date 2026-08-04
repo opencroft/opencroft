@@ -1,32 +1,44 @@
 'use client'
 
+import { NodeCard, NodeCardContent, NodeCardHeader } from '@/components/ui/nodes/node-card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { cn } from '@/lib/utils'
 
 export interface NodeLoadingPlaceholderProps {
   /** The node's name. The graph carries it before the extension does, so this
    * is real text, never a bar -- see the note in the body. */
   name: string
+  /** Whether the node is selected on the canvas. Passed straight to the card,
+   * which owns what selection looks like. */
+  selected?: boolean
   className?: string
 }
 
 // What a canvas node looks like in the window between the graph painting and
 // its extension registering.
 //
-// **It takes no size of its own.** `h-full w-full` and nothing else: the canvas
-// already positions and sizes each node's box, and edge attachment points are
-// computed from that box -- so filling it is the only version that cannot be
-// the wrong size. A placeholder carrying its own dimensions would have to be
-// kept in step with the app's node shell by hand, and the day it drifted every
-// node would jump and drag its edges when the extension landed. Inheriting is
-// not laziness here; it is the constraint being met by construction.
+// **It IS a node card.** Not a box that resembles one -- the same component the
+// real node is drawn with, holding skeleton rows instead of content. That is
+// the whole design, and it is the second attempt: the first was a separate box
+// that agreed with the card on radius, padding, border, shadow, background,
+// brightness and width by having the same values written in two files. Two of
+// those seven were found wrong within two days, both by someone comparing them
+// by hand. Composition ends the category -- there is no value to disagree about
+// because there is only one of each.
+//
+// The header is shared too, rather than rebuilt with matching padding: a
+// rebuilt row would have traded seven agreements for six and added a new one.
+// `NodeCardHeader` takes an element for its icon precisely so this can pass a
+// bar, and the name then gets the real title's size, weight and truncation for
+// free.
 //
 // **What is a bar and what is text says what is known.** The name is real text
-// because the graph has it already, and showing a grey bar where we hold a name
-// would make this state less readable than the canvas is today -- a regression
+// because the graph has it already; showing a grey bar where we hold a name
+// would make this state less readable than the canvas is today, a regression
 // inside the very window it exists to improve. The icon IS a bar, because the
-// icon belongs to the extension, which is exactly what has not arrived. Read
-// together, the card is an honest picture of what is and is not known yet.
+// icon belongs to the extension, which is exactly what has not arrived. No
+// accent is passed for the same reason -- a node's colour comes from its type,
+// and the type is not resolved yet -- so there are no hairlines and no
+// travelling dots, and the card reads as quiet rather than working.
 //
 // **Three channels separate this from the missing-extension error**, because
 // any one of them fails somebody:
@@ -36,36 +48,32 @@ export interface NodeLoadingPlaceholderProps {
 // Motion is deliberately dropped under `prefers-reduced-motion`. That is safe
 // precisely because it is one of three: colour and text still carry the
 // distinction on their own, so nobody loses it.
-export function NodeLoadingPlaceholder({ name, className }: NodeLoadingPlaceholderProps) {
+//
+// Height is content-driven, exactly as a real node's is -- neither carries a
+// definite height and the graph does not supply one. This is as tall as three
+// skeleton rows, which is a guess at the node's own content and the one thing
+// here that still cannot be right by construction. It does not collapse: with
+// the header and caption both intrinsic, an ancestor of zero height still
+// leaves the name legible.
+export function NodeLoadingPlaceholder({ name, selected, className }: NodeLoadingPlaceholderProps) {
   return (
-    <div
-      aria-busy='true'
-      aria-label={`${name}, loading`}
-      className={cn(
-        'flex h-full w-full min-w-0 flex-col gap-2 overflow-hidden rounded-lg border border-border bg-card p-2',
-        className,
-      )}
-    >
-      <div className='flex min-w-0 shrink-0 items-center gap-2'>
-        <Skeleton className='size-5 shrink-0 rounded-md motion-reduce:animate-none' />
-        {/* min-w-0 as well as truncate: this is a flex item, so without it the
-            automatic minimum size is the whole name, the ellipsis never fires,
-            and a long name widens the card past the node's box. */}
-        <span className='min-w-0 flex-1 truncate text-xs font-medium text-foreground'>{name}</span>
-      </div>
-
-      {/* Three bars at full, four-fifths and three-fifths. Decreasing widths
-          read as lines of content rather than as a filled rectangle, and three
-          is enough to say "something goes here" without implying a shape the
-          arriving extension then contradicts. They clip rather than squeeze on
-          a short node -- a placeholder is not worth a scroll region. */}
-      <div className='flex min-h-0 flex-1 flex-col gap-1.5 overflow-hidden'>
-        <Skeleton className='h-2 w-full shrink-0 rounded-sm motion-reduce:animate-none' />
-        <Skeleton className='h-2 w-4/5 shrink-0 rounded-sm motion-reduce:animate-none' />
-        <Skeleton className='h-2 w-3/5 shrink-0 rounded-sm motion-reduce:animate-none' />
-      </div>
-
-      <span className='shrink-0 truncate text-xs text-muted-foreground'>Loading</span>
-    </div>
+    <NodeCard selected={selected} className={className} aria-busy='true' aria-label={`${name}, loading`}>
+      <NodeCardHeader
+        icon={<Skeleton className='h-4 w-4 rounded-sm motion-reduce:animate-none' />}
+        title={name}
+      />
+      <NodeCardContent>
+        {/* Three bars at full, four-fifths and three-fifths. Decreasing widths
+            read as lines of content rather than as a filled rectangle, and
+            three is enough to say "something goes here" without implying a
+            shape the arriving extension then contradicts. */}
+        <div className='flex flex-col gap-1.5'>
+          <Skeleton className='h-2 w-full rounded-sm motion-reduce:animate-none' />
+          <Skeleton className='h-2 w-4/5 rounded-sm motion-reduce:animate-none' />
+          <Skeleton className='h-2 w-3/5 rounded-sm motion-reduce:animate-none' />
+        </div>
+        <span className='mt-2 block truncate text-xs text-muted-foreground'>Loading</span>
+      </NodeCardContent>
+    </NodeCard>
   )
 }
