@@ -18,7 +18,22 @@ export function ChatArea({ fromEnd, children, className }: ChatAreaProps) {
   return (
     <ScrollArea
       className={cn(
-        'flex-1',
+        // `min-w-0` is not decoration here, it is the other half of `flex-1`.
+        // This is laid out as a row item, so its automatic minimum size is its
+        // content's min-content width — and content is caller-provided, so one
+        // unbreakable token (a URL, a path, a long word) sets that floor and the
+        // box refuses to shrink below it however narrow the screen gets.
+        // Measured before this line existed: 784px against a 360px viewport.
+        //
+        // Nothing further down can rescue it. Every descendant already clears
+        // its own minimum correctly; they were simply dividing up a box that
+        // was too wide before they were consulted, which is why the truncation
+        // they ask for looked present and did nothing.
+        //
+        // A scroll container is also the one place this belongs: overflow is
+        // its whole purpose, so being sized BY its content is a contradiction —
+        // it grows instead of scrolling.
+        'flex-1 min-w-0',
         '[&_[data-radix-scroll-area-viewport]>div]:!flex',
         '[&_[data-radix-scroll-area-viewport]>div]:!flex-col',
         '[&_[data-radix-scroll-area-viewport]>div]:!min-h-full',
