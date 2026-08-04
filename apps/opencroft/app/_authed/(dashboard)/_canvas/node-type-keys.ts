@@ -3,9 +3,15 @@
 //
 // The flow library looks each node's `type` up in its `nodeTypes` map. A type it
 // cannot find is silently replaced by the library's own default node and logged,
-// once per node. So the map has to cover every type present in the GRAPH, not
-// only the types an extension has registered — on a cold load the graph arrives
-// first and the extensions follow.
+// once per node. So the map has to cover every type present in the GRAPH — on a
+// cold load the graph arrives first and the extensions follow, and a node whose
+// extension has not registered still has to be drawn.
+//
+// The types in the graph are ALL it has to cover. An entry does not name a
+// component; it names a wrapper that looks the component up during render. So
+// an entry does not need rebuilding when its extension registers — it simply
+// starts resolving — and a registered type with no node on the canvas is never
+// looked up at all.
 
 /** The sorted, de-duplicated node types present in a graph. */
 export function graphNodeTypes(nodes: readonly { type?: string }[]): string[] {
@@ -39,25 +45,4 @@ export function nodeTypesKey(types: readonly string[]): string {
 
 export function typesFromKey(key: string): string[] {
   return key ? (JSON.parse(key) as string[]) : []
-}
-
-/**
- * Every node type the canvas needs a component for: the ones extensions have
- * registered, plus the ones the graph actually contains.
- *
- * The second half is the part that is easy to leave out. A type only the graph
- * knows about is one whose extension has not registered — either not yet, or
- * never — and those are exactly the nodes that need drawing as loading or as
- * missing. Without an entry they never reach our component at all.
- *
- * Kept here, apart from the components, so it can be exercised directly: the
- * module that builds the components pulls in a stylesheet, which a plain test
- * runner cannot load.
- */
-export function nodeTypeIds(registered: readonly string[], graphTypes: readonly string[]): string[] {
-  const ids = new Set<string>(registered)
-  for (const type of graphTypes) {
-    ids.add(type)
-  }
-  return [...ids]
 }

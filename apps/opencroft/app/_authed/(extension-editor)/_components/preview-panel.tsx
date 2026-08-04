@@ -19,7 +19,9 @@ export function PreviewPanel({ previewTypeId, version }: PreviewPanelProps) {
     [previewTypeId, version],
   )
 
-  const nodeTypes = useMemo(() => (resolved ? buildNodeTypes([resolved]) : {}), [resolved])
+  // The preview graph holds exactly one node, of this type — so the map covers
+  // the graph, same rule as the canvas.
+  const nodeTypes = useMemo(() => (resolved ? buildNodeTypes([resolved.typeId]) : {}), [resolved])
 
   const nodes: Node[] = useMemo(() => {
     if (!resolved) {

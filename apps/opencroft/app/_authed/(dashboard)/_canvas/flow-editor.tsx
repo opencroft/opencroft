@@ -36,7 +36,7 @@ import { useIsMobile } from 'ui/hooks/use-mobile'
 import { useSidebar } from 'ui/sidebar'
 import { Spinner } from 'ui/spinner'
 
-import { ExtensionsSettledContext } from '@/app/_authed/(dashboard)/_canvas/extensions-ready-context'
+import { ExtensionsStateContext } from '@/app/_authed/(dashboard)/_canvas/extensions-ready-context'
 import { InspectorContext, useInspectorState } from '@/app/_authed/(dashboard)/_canvas/inspector-context'
 import { NodeContextMenu } from '@/app/_authed/(dashboard)/_canvas/node-context-menu'
 import { subscribeNodeDataUpdates } from '@/app/_authed/(dashboard)/_canvas/node-data-events'
@@ -176,31 +176,46 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     void extensionsVersion
     return extensionRegistry.allNodes()
   }, [extensionsVersion])
+  // Both readiness facts in one value, so the node wrappers re-render once when
+  // extensions settle rather than twice. `version` is here for its identity
+  // alone — a wrapper resolves its component from the registry during render,
+  // and the registry is not reactive, so a write to it has to reach React as a
+  // changed context value or the node keeps drawing its old answer.
+  const extensionsState = useMemo(
+    () => ({ settled: extensionsSettled, version: extensionsVersion }),
+    [extensionsSettled, extensionsVersion],
+  )
   // The set of node types the graph contains, flattened to one string.
   //
   // Keyed on the SET rather than on `nodes` on purpose: this recomputes on every
   // graph change, including each frame of a drag, but its VALUE only moves when
   // a type first appears or the last node of a type goes away.
   const graphTypesKey = useMemo(() => nodeTypesKey(graphNodeTypes(nodes)), [nodes])
-  // Load-bearing dependency array — do not "complete" it with `nodes`.
+  // Load-bearing dependency array — do not "complete" it with `nodes`, and do
+  // not add `allNodes` or `extensionsVersion` back.
   //
   // Replacing this object remounts every node on the canvas: the flow library
-  // treats a new `nodeTypes` as a new set of components. So the dependencies
-  // have to be the things that genuinely change which components exist — the
-  // registered extensions, and the set of types in the graph — and nothing that
-  // moves per node or per frame. Getting this wrong trades one console message
-  // per node for a full remount of the canvas on every graph change, which is
-  // the more expensive of the two by a wide margin.
+  // treats a new `nodeTypes` as a new set of components. The only thing that
+  // legitimately changes which entries exist is the set of types in the graph.
+  //
+  // The registered extensions are deliberately absent. An entry does not hold a
+  // component, it holds a wrapper that resolves one during render, so an entry
+  // does not need rebuilding when its extension registers — it starts resolving
+  // on the next render, which the readiness context triggers. Depending on the
+  // registry here is what made the map change at the exact moment extensions
+  // settled, remounting every node just as the canvas was meant to quietly fill
+  // in, and raising the flow library's "new nodeTypes object" warning once per
+  // load.
   //
   // `comment` is assigned after the spread so it keeps its own component even
-  // though the graph's types now feed the map as well.
+  // though the graph's types feed the map.
   const nodeTypes = useMemo(
     () =>
       ({
-        ...buildNodeTypes(allNodes, typesFromKey(graphTypesKey)),
+        ...buildNodeTypes(typesFromKey(graphTypesKey)),
         comment: CommentNode,
       }) as unknown as NodeTypes,
-    [allNodes, graphTypesKey],
+    [graphTypesKey],
   )
   const selected = nodes.find((n) => n.selected && n.type !== 'comment') ?? null
   // The MCP Requests browser tab is visible only when no node is selected and
@@ -891,11 +906,15 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
 
   return (
     // Provided here rather than folded into `nodeTypes`: the node component map
-    // is memoised on the set of node types, so feeding readiness through it
-    // would replace the map the instant loading settled and remount every node
-    // — a visible jolt at exactly the moment the canvas is meant to quietly
-    // fill in.
-    <ExtensionsSettledContext.Provider value={extensionsSettled}>
+    // is memoised on the set of node types, so feeding either of these through
+    // it would replace the map the instant loading settled and remount every
+    // node — a visible jolt at exactly the moment the canvas is meant to
+    // quietly fill in.
+    //
+    // This is also how a node picks up its component. Changing this value is
+    // the only thing that re-renders the node wrappers when the registry has
+    // been written to, and a wrapper resolves its component during render.
+    <ExtensionsStateContext.Provider value={extensionsState}>
       <InspectorContext.Provider value={{ setNode: inspector.setNode }}>
         <div className='flex h-full w-full'>
           <div className='flex-1 relative min-w-0'>
@@ -1059,6 +1078,6 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
           )}
         </div>
       </InspectorContext.Provider>
-    </ExtensionsSettledContext.Provider>
+    </ExtensionsStateContext.Provider>
   )
 }
