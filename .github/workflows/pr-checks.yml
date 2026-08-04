@@ -8,6 +8,13 @@ on:
       - opened
       - synchronize
       - reopened
+  # A pull_request-triggered workflow can't trigger on the PR that introduces
+  # it -- Actions discovers pull_request workflows from the target branch,
+  # not the PR's own branch, so the very first PR carrying this file has
+  # nothing to observe it against. workflow_dispatch gives a way to run it
+  # for real, on this exact definition, before it ever lands on the target
+  # branch and pull_request triggering becomes observable on its own.
+  workflow_dispatch:
 
 # A push to a PR branch supersedes whatever check was already running for its
 # previous commit -- the old run's answer is about code nobody will merge
