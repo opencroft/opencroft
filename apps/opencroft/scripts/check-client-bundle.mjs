@@ -22,16 +22,38 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { builtinModules } from 'node:module'
 import { dirname, join, relative, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const PUBLIC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '.output', 'public')
 
 // The full Node builtin set rather than a hand-kept list, so a leak through a
 // less obvious module (`events`, `buffer`, `dns`, `perf_hooks`, …) fails too.
-// Plus the native-dependent packages that have actually reached the browser
-// this way, which are ordinary npm names and so not covered by the above.
-const NATIVE_PACKAGES = ['esbuild', 'ssh2', '@tailwindcss/node', 'jiti', 'lightningcss']
-const FORBIDDEN = new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`), ...NATIVE_PACKAGES])
+// Plus server-only packages, which are ordinary npm names and so not covered by
+// the above: the native-dependent ones that have actually reached the browser
+// this way, and the database stack, which is server-only for the same reason
+// but had never been listed — a leak through it would have passed this check.
+const SERVER_ONLY_PACKAGES = [
+  'esbuild',
+  'ssh2',
+  '@tailwindcss/node',
+  'jiti',
+  'lightningcss',
+  '@electric-sql/pglite',
+  'drizzle-orm',
+  'pg',
+  'postgres',
+]
+const FORBIDDEN = new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`), ...SERVER_ONLY_PACKAGES])
+
+// A specifier is forbidden if it names one of the above OR reaches into one:
+// `drizzle-orm/pg-core` and `ssh2/lib/client` are the same leak as the bare
+// name, and matching only the exact string missed both.
+export function isForbidden(specifier) {
+  if (FORBIDDEN.has(specifier)) {
+    return true
+  }
+  return SERVER_ONLY_PACKAGES.some((name) => specifier.startsWith(`${name}/`))
+}
 
 // Deliberately NOT "flag every non-relative specifier", which would be stronger
 // in principle but false-positives on the real output today: dynamic imports
@@ -40,10 +62,30 @@ const FORBIDDEN = new Set([...builtinModules, ...builtinModules.map((name) => `n
 // Matching an exact known-forbidden name keeps this a signal rather than noise.
 const SPECIFIER = /(?:\bfrom\s*|(?:^|[^.\w])\bimport\s*\(?\s*)["']([^"']+)["']/g
 
-function offendingSpecifiers(code) {
+// A specifier scan only sees what stayed EXTERNAL. A pure-JavaScript package is
+// bundled inline instead, so no specifier survives for the scan above to match
+// and the leak is invisible to it — verified by importing `drizzle-orm/pg-core`
+// into a client component: the emitted chunk contained the library's internals
+// and the specifier scan reported the bundle clean.
+//
+// So bundled packages are matched on a fingerprint of their own code. The
+// fingerprint must be something the library emits and nothing else plausibly
+// contains: grepping for the bare package name is NOT safe, because a clean
+// bundle already contains the string "drizzle" — it is the name of a lucide
+// icon (`cloud-drizzle`). A namespaced symbol tag cannot collide that way.
+//
+// Only fingerprints that have been verified against a real build belong here.
+// An unverified guess would fail in whichever direction nobody checked.
+const BUNDLED_FINGERPRINTS = [{ pkg: 'drizzle-orm', marker: 'drizzle:entityKind' }]
+
+export function bundledFingerprints(code) {
+  return BUNDLED_FINGERPRINTS.filter(({ marker }) => code.includes(marker)).map(({ pkg }) => `${pkg} (bundled)`)
+}
+
+export function offendingSpecifiers(code) {
   const hits = new Set()
   for (const match of code.matchAll(SPECIFIER)) {
-    if (FORBIDDEN.has(match[1])) {
+    if (isForbidden(match[1])) {
       hits.add(match[1])
     }
   }
@@ -83,7 +125,8 @@ async function main() {
 
   const failures = []
   for (const file of files) {
-    const hits = offendingSpecifiers(await readFile(file, 'utf8'))
+    const code = await readFile(file, 'utf8')
+    const hits = [...offendingSpecifiers(code), ...bundledFingerprints(code)]
     if (hits.length > 0) {
       failures.push({ file: relative(PUBLIC_DIR, file), hits })
     }
@@ -105,4 +148,8 @@ async function main() {
   console.log(`[check-client-bundle] ok — ${files.length} scripts under .output/public, no server-only imports`)
 }
 
-await main()
+// Only when run as a script. Importing this module — which the test does —
+// must not run the check or exit the process.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main()
+}
