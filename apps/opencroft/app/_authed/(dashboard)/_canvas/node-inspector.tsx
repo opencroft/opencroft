@@ -8,6 +8,7 @@ import { toast } from 'sonner'
 import { Button } from 'ui/button'
 import { Flex } from 'ui/layout/flex'
 import { ScrollArea } from 'ui/layout/scroll-area'
+import { PanelTabStrip } from 'ui/layouts/panel-tab-strip'
 import { Separator } from 'ui/separator'
 
 import { McpRequestList } from '@/app/_authed/(approvals)/_components/mcp-request-list'
@@ -206,31 +207,11 @@ export function NodeInspector({
       </Flex>
       <Separator />
       {hasTabs && (
-        <>
-          <Flex row className='items-center gap-0 px-3 pt-2 pb-0'>
-            {tabs.map((tab) => {
-              const TabIcon = resolveIcon(tab.icon)
-              const isActive = activeTab === tab.id
-              return (
-                <button
-                  key={tab.id}
-                  type='button'
-                  onClick={() => setActiveTab(tab.id)}
-                  className={[
-                    'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border-b-2 transition-colors',
-                    isActive
-                      ? 'border-primary text-foreground'
-                      : 'border-transparent text-muted-foreground hover:text-foreground/80',
-                  ].join(' ')}
-                >
-                  <TabIcon className='size-3' />
-                  {tab.label}
-                </button>
-              )
-            })}
-          </Flex>
-          <Separator />
-        </>
+        <PanelTabStrip
+          tabs={tabs.map((tab) => ({ id: tab.id, label: tab.label, icon: resolveIcon(tab.icon) }))}
+          activeId={activeTab}
+          onSelect={setActiveTab}
+        />
       )}
       {body}
     </Flex>
@@ -262,31 +243,16 @@ function NodeBrowser({ tab, extensions, graphNodes, onTabChange, onEditExtension
         <span className='text-sm font-semibold'>Inspector</span>
       </div>
       <Separator />
-      <Flex row className='items-center gap-0 px-3 pt-2 pb-0'>
-        {browserTabs.map((entry) => {
-          const TabIcon = entry.icon
-          return (
-            <button
-              key={entry.id}
-              type='button'
-              onClick={() => onTabChange(entry.id)}
-              className={[
-                'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border-b-2 transition-colors',
-                tab === entry.id
-                  ? 'border-primary text-foreground'
-                  : 'border-transparent text-muted-foreground hover:text-foreground/80',
-              ].join(' ')}
-            >
-              <TabIcon className='size-3' />
-              {entry.label}
-              {entry.id === 'mcp' && pendingCount > 0 && (
-                <span className='rounded-full bg-primary/15 px-1.5 text-[10px] text-primary'>{pendingCount}</span>
-              )}
-            </button>
-          )
-        })}
-      </Flex>
-      <Separator />
+      <PanelTabStrip
+        tabs={browserTabs.map((entry) => ({
+          id: entry.id,
+          label: entry.label,
+          icon: entry.icon,
+          count: entry.id === 'mcp' ? pendingCount : undefined,
+        }))}
+        activeId={tab}
+        onSelect={(id) => onTabChange(id as BrowserTab)}
+      />
       {tab === 'outline' && <OutlineTab graphNodes={graphNodes} onFocusNode={onFocusNode} />}
       {tab === 'palette' && <PaletteTab extensions={extensions} onEditExtension={onEditExtension} />}
       {tab === 'mcp' && <McpRequestList />}
