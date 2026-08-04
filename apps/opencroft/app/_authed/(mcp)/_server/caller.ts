@@ -3,15 +3,17 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 import { apiToken, db, mcpCaller } from '@opencroft/db'
 import { and, eq, isNull, or, sql } from 'drizzle-orm'
 
+import type { McpAuthMode } from '@/app/_authed/(mcp)/_server/mcp-auth-mode'
 import { mcpAuthMode } from '@/app/_authed/(mcp)/_server/mcp-auth-mode'
 import { hashToken } from '@/app/_authed/(mcp)/_server/token-hash'
 
 /**
  * Who is calling the HTTP MCP surface.
  *
- * In Stage A this resolves and records and refuses nothing — the point is to
- * measure the caller population before anything depends on the answer. See
- * mcp-auth-mode.ts for why that staging exists.
+ * In Stage A (`observe`) this resolves and records and refuses nothing — the
+ * point is to measure the caller population before anything depends on the
+ * answer. Stage B (`require`) uses the same resolution to refuse; see
+ * `refuses` below and mcp-auth-mode.ts for why the staging exists.
  */
 
 export type CredentialState = 'present' | 'absent' | 'unknown'
@@ -68,6 +70,20 @@ export async function resolveCaller(request: Request): Promise<Caller> {
     console.error('[mcp-auth] token lookup failed, treating caller as unresolved', e)
     return { credential: 'unknown', agent: null, tokenId: null }
   }
+}
+
+/**
+ * Whether Stage B refuses this caller. `require` refuses anyone who did not
+ * resolve to `present` — that covers both `absent` (no credential presented)
+ * and `unknown` (presented, but not valid: unrecognised, revoked, expired, or
+ * the lookup itself failed) alike, because a caller with no accepted
+ * credential is a caller with no accepted credential regardless of which of
+ * those it is. `observe` and `off` never refuse: `off` is the kill switch and
+ * must not gain a refusal path, and `observe` is Stage A, whose entire point
+ * is measuring the caller population before anything depends on the answer.
+ */
+export function refuses(mode: McpAuthMode, caller: Caller): boolean {
+  return mode === 'require' && caller.credential !== 'present'
 }
 
 async function lookup(presented: string): Promise<Caller> {

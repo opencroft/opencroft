@@ -22,7 +22,7 @@ process.env.OPENCROFT_MCP_AUTH = 'observe'
 delete process.env.DATABASE_URL
 
 const { apiToken, db, mcpCaller } = await import('@opencroft/db')
-const { hashToken, recordCaller, resolveCaller } = await import('./caller')
+const { hashToken, recordCaller, refuses, resolveCaller } = await import('./caller')
 const { KILL_SWITCH_PATH, mcpAuthMode, resetKillSwitchCache } = await import('./mcp-auth-mode')
 
 after(async () => {
@@ -214,6 +214,27 @@ test('every observed request emits exactly one [mcp-caller] line', async () => {
 
   assert.equal(lines.length, 3, 'the log keeps every call — collapsing them is the table’s job')
   assert.equal(lines[0], '[mcp-caller] credential=absent agent=- method=tools/list tool=- ip=10.0.0.9 ua="liner/1.0"')
+})
+
+// Stage B: `refuses` is the one decision the route defers to.
+// Exercised directly against every (mode, credential) pair rather than only
+// the cases expected to matter, because the property that must hold is "only
+// `require` + not-`present`", and the only way to be sure nothing else
+// accidentally satisfies that is to check the whole table.
+test('refuses is true only for require mode with a non-present credential', () => {
+  const present = { credential: 'present' as const, agent: 'carol', tokenId: 'x' }
+  const absent = { credential: 'absent' as const, agent: null, tokenId: null }
+  const unknown = { credential: 'unknown' as const, agent: null, tokenId: null }
+
+  for (const mode of ['off', 'observe'] as const) {
+    assert.equal(refuses(mode, present), false, `${mode} must never refuse a present credential`)
+    assert.equal(refuses(mode, absent), false, `${mode} must never refuse`)
+    assert.equal(refuses(mode, unknown), false, `${mode} must never refuse`)
+  }
+
+  assert.equal(refuses('require', present), false, 'require must not refuse a caller holding a valid credential')
+  assert.equal(refuses('require', absent), true, 'require must refuse a caller who presented nothing')
+  assert.equal(refuses('require', unknown), true, 'require must refuse a caller whose credential did not resolve')
 })
 
 // A user agent with a space or a quote must not be able to forge extra fields

@@ -40,3 +40,29 @@ test('the MCP route does not take `internal` from the request', async () => {
     'the HTTP path must pass internal: false explicitly, so the intent is visible at the call site',
   )
 })
+
+// Stage B wiring. `refuses`/`mcpAuthMode` are unit-tested for
+// their actual behaviour in caller.test.ts; what has to be proved HERE, at
+// the route, is the ordering — the decision runs, and it runs before any tool
+// gets a chance to execute. A request-level test cannot observe that ordering
+// from the outside (a refused request and one that reached `handleMethod` and
+// then also failed look the same from outside without deep, brittle response
+// introspection), so this asserts it structurally, matching this file's
+// existing approach for `internal: false` above.
+test('the MCP route checks refuses() before calling handleMethod', async () => {
+  const source = await readFile(join(import.meta.dirname, 'mcp.ts'), 'utf8')
+
+  const refusalIndex = source.search(/if\s*\(\s*refuses\(/)
+  const recordCallerIndex = source.indexOf('await recordCaller(')
+  const handleMethodIndex = source.indexOf('await handleMethod(')
+
+  assert.ok(refusalIndex !== -1, 'the route must call refuses() to decide whether to serve a require-mode caller')
+  assert.ok(
+    recordCallerIndex !== -1 && recordCallerIndex < refusalIndex,
+    'the caller must be recorded before the refusal decision, so a refused request is still observed',
+  )
+  assert.ok(
+    handleMethodIndex !== -1 && refusalIndex < handleMethodIndex,
+    'a refused caller must never reach handleMethod — the check has to gate the call, not follow it',
+  )
+})
