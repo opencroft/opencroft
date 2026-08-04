@@ -1,7 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { recordCaller, resolveCaller } from '@/app/_authed/(mcp)/_server/caller'
+import { recordCaller, refuses, resolveCaller } from '@/app/_authed/(mcp)/_server/caller'
 import { getExtensionToolDefinitions } from '@/app/_authed/(mcp)/_server/extension-tools'
+import { mcpAuthMode } from '@/app/_authed/(mcp)/_server/mcp-auth-mode'
 import { getAgentToolDefinitions, handleToolCall, toolDefinitions } from '@/app/_authed/(mcp)/_server/tools'
 
 type MCPRequest = {
@@ -85,18 +86,18 @@ export const Route = createFileRoute('/_authed/(mcp)/api/mcp')({
           return Response.json(mcpErr(body.id ?? null, -32600, 'Invalid Request'), { status: 400 })
         }
 
-        // OBSERVE ONLY (Stage A). Resolve whatever credential the
-        // caller presented and record that we saw them — then serve exactly as
-        // before, whoever they turned out to be. Nothing here can refuse a
-        // request, and it is meant to stay that way until the recorded caller
-        // population is fully accounted for.
+        // Resolve whatever credential the caller presented and record that we
+        // saw them, in every mode including `require` — Stage B still needs
+        // the caller population recorded, refused requests included, or a
+        // spike in refusals after a rollout would be invisible everywhere
+        // except the client's own error, which is exactly the situation this
+        // observability exists to avoid.
         //
-        // The awaits are deliberate. The whole value of this stage is a count
-        // that can be trusted, and a fire-and-forget write is one the process
-        // can lose on exit — which would undercount exactly the rare caller
-        // this exists to find, and undercounting reads as "all accounted for".
-        // resolveCaller only runs when an Authorization header is present;
-        // recordCaller swallows its own errors.
+        // The awaits are deliberate. A fire-and-forget write is one the
+        // process can lose on exit, which would undercount exactly the rare
+        // caller this exists to find, and undercounting reads as "all
+        // accounted for". resolveCaller only runs when an Authorization
+        // header is present; recordCaller swallows its own errors.
         const caller = await resolveCaller(request)
         await recordCaller({
           caller,
@@ -104,6 +105,19 @@ export const Route = createFileRoute('/_authed/(mcp)/api/mcp')({
           tool: body.method === 'tools/call' ? ((body.params?.name as string | undefined) ?? null) : null,
           request,
         })
+
+        // Stage B. `observe` and `off` never reach this: `refuses`
+        // is false for both, by construction (see caller.ts). Only `require`
+        // can end the request here, and only for a caller that did not
+        // resolve to a credential we issued — present-and-valid callers are
+        // unaffected in every mode.
+        if (refuses(mcpAuthMode(), caller)) {
+          const message =
+            caller.credential === 'absent'
+              ? 'Missing credential — send Authorization: Bearer <token>.'
+              : 'Credential not recognised — it may be mistyped, revoked, or expired.'
+          return Response.json(mcpErr(body.id ?? null, -32001, message), { status: 401 })
+        }
 
         try {
           // HTTP callers are never internal.
