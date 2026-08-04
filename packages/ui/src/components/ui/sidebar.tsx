@@ -53,17 +53,7 @@ function useSidebar() {
   return context
 }
 
-function SidebarProvider({
-  defaultOpen = true,
-  open: openProp,
-  onOpenChange: setOpenProp,
-  storageKey = SIDEBAR_COOKIE_NAME,
-  keyboardShortcut = SIDEBAR_KEYBOARD_SHORTCUT,
-  className,
-  style,
-  children,
-  ...props
-}: React.ComponentProps<"div"> & {
+type SidebarStateProps = {
   defaultOpen?: boolean
   open?: boolean
   onOpenChange?: (open: boolean) => void
@@ -83,7 +73,31 @@ function SidebarProvider({
    * sidebar does not answer the same keystroke as the first.
    */
   keyboardShortcut?: string | null
-}) {
+}
+
+/**
+ * A sidebar's state, with no markup of its own.
+ *
+ * Every consumer of a sidebar needs this part. The wrapper element that
+ * `SidebarProvider` puts around it is a separate convenience, for a page whose
+ * sidebar is the layout — it opens a full-width flex row for the sidebar and
+ * the content to sit in.
+ *
+ * A second sidebar joining a row that already exists needs the state and not
+ * the wrapper: another full-width flex container nested inside the row would
+ * change that layout rather than join it.
+ *
+ * Renders no tooltip provider either. Menu-button tooltips expect one above
+ * them, which `SidebarProvider` supplies for the common case.
+ */
+function SidebarStateProvider({
+  defaultOpen = true,
+  open: openProp,
+  onOpenChange: setOpenProp,
+  storageKey = SIDEBAR_COOKIE_NAME,
+  keyboardShortcut = SIDEBAR_KEYBOARD_SHORTCUT,
+  children,
+}: SidebarStateProps & { children?: React.ReactNode }) {
   const isMobile = useIsMobile()
   const [openMobile, setOpenMobile] = React.useState(false)
 
@@ -145,8 +159,35 @@ function SidebarProvider({
     [state, open, setOpen, isMobile, openMobile, setOpenMobile, toggleSidebar]
   )
 
+  return <SidebarContext.Provider value={contextValue}>{children}</SidebarContext.Provider>
+}
+
+/**
+ * A sidebar together with the layout row it lives in — the state above, plus
+ * the full-width flex wrapper that the sidebar and the page content share.
+ *
+ * This is the right thing for a page whose sidebar is the layout. Where a row
+ * already exists, use `SidebarStateProvider` and let the sidebar join it.
+ */
+function SidebarProvider({
+  defaultOpen,
+  open,
+  onOpenChange,
+  storageKey,
+  keyboardShortcut,
+  className,
+  style,
+  children,
+  ...props
+}: React.ComponentProps<"div"> & SidebarStateProps) {
   return (
-    <SidebarContext.Provider value={contextValue}>
+    <SidebarStateProvider
+      defaultOpen={defaultOpen}
+      open={open}
+      onOpenChange={onOpenChange}
+      storageKey={storageKey}
+      keyboardShortcut={keyboardShortcut}
+    >
       <TooltipProvider delayDuration={0}>
         <div
           data-slot="sidebar-wrapper"
@@ -166,7 +207,7 @@ function SidebarProvider({
           {children}
         </div>
       </TooltipProvider>
-    </SidebarContext.Provider>
+    </SidebarStateProvider>
   )
 }
 
@@ -740,6 +781,7 @@ export {
   SidebarProvider,
   SidebarRail,
   SidebarSeparator,
+  SidebarStateProvider,
   SidebarTrigger,
   useSidebar,
 }
