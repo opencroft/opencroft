@@ -2,6 +2,7 @@
 
 import { type ExtensionDeclaration, installClientHost } from '@/app/_authed/(extension-runtime)/_client/host'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
+import { assertUniqueNodeTypeIds } from '@/app/_authed/(extension-runtime)/_node-type-guard'
 import { listExtensionManifests } from '@/app/_authed/(extension-runtime)/_server/actions'
 import type { ExtensionManifest, ExtensionManifestInfo } from '@/app/_authed/(extension-runtime)/_types'
 
@@ -97,15 +98,18 @@ export async function loadAllExtensions(): Promise<ExtensionDeclaration[]> {
   const declarations = await Promise.all(
     withClient.map((manifest) => importExtension(manifest, manifest.clientVersion)),
   )
-  // Registered afterwards, in manifest order rather than arrival order, so
-  // which extension wins a duplicate typeId cannot depend on which bundle
-  // happened to download first.
-  const loaded: ExtensionDeclaration[] = []
-  for (const decl of declarations) {
-    if (decl) {
-      extensionRegistry.register(decl)
-      loaded.push(decl)
-    }
+  const loaded = declarations.filter((decl): decl is ExtensionDeclaration => decl !== null)
+  // A duplicate typeId across two extensions is a configuration error, not a
+  // race to be resolved by ordering — checked here, over every bundle's real
+  // declared nodes, before any of them register. (extension.json's own
+  // `nodes` field is only a hint for lazy palette discovery and can be stale
+  // relative to what a bundle actually declares, so this can't be checked
+  // any earlier than this, once each bundle has actually been evaluated.)
+  assertUniqueNodeTypeIds(
+    loaded.map((decl) => ({ extensionId: decl.manifest.id, typeIds: (decl.nodes ?? []).map((n) => n.typeId) })),
+  )
+  for (const decl of loaded) {
+    extensionRegistry.register(decl)
   }
   return loaded
 }

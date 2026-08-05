@@ -35,4 +35,17 @@ async function preload(): Promise<void> {
   } catch (err) {
     console.error('[startup] extension auto-install failed', err)
   }
+  // Deliberately NOT try/caught like the steps above: a type-id collision
+  // between two installed extensions means one of them cannot actually work
+  // (something owns the type; the other's declaration is dead), and letting
+  // the server come up anyway would serve that broken state as if it were
+  // fine. This is meant to fail the boot, loudly, not log and continue.
+  await assertNodeTypeIdsUniqueAtBoot()
+}
+
+async function assertNodeTypeIdsUniqueAtBoot(): Promise<void> {
+  const { loadAllManifests } = await import('@/app/_authed/(extension-runtime)/_server/loader')
+  const { assertUniqueNodeTypeIds, manifestOwners } = await import('@/app/_authed/(extension-runtime)/_node-type-guard')
+  const manifests = await loadAllManifests()
+  assertUniqueNodeTypeIds(manifestOwners(manifests))
 }
