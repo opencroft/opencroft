@@ -1,3 +1,4 @@
+import { assertUniqueNodeTypeIds, manifestOwners } from '@/app/_authed/(extension-runtime)/_node-type-guard'
 import { invokeExtensionActionImpl } from '@/app/_authed/(extension-runtime)/_server/extension-action-impl'
 import type { ExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
 
@@ -17,7 +18,12 @@ export interface NodeTypeHandles {
 
 // Which extension owns each node type, and what handles that type declares.
 // Pure, so each caller keeps its own manifest source while sharing the mapping.
+//
+// Two manifests declaring the same type id is a configuration error, not a
+// pick-one situation — asserted up front rather than left to whichever
+// manifest happened to iterate last silently winning.
 export function buildNodeTypeHandles(manifests: ManifestLike[]): Map<string, NodeTypeHandles> {
+  assertUniqueNodeTypeIds(manifestOwners(manifests))
   const map = new Map<string, NodeTypeHandles>()
   for (const manifest of manifests) {
     for (const node of manifest.nodes ?? []) {

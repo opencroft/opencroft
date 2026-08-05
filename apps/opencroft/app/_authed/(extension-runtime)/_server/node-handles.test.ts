@@ -31,15 +31,15 @@ test('a manifest contributing no nodes contributes no entries', () => {
   assert.equal(map.size, 0)
 })
 
-test('a later manifest wins a type-id collision', () => {
-  // Documents current behaviour rather than endorsing it: two extensions
-  // claiming one type id is a conflict, and last-write-wins is what both
-  // former copies of this loop did.
-  const map = buildNodeTypeHandles([
-    { id: 'local/first', nodes: [{ typeId: 'shared', handles: [handle('a', 'source')] }] },
-    { id: 'local/second', nodes: [{ typeId: 'shared', handles: [handle('b', 'source')] }] },
-  ])
-  assert.equal(map.get('shared')?.extensionId, 'local/second')
+test('a type-id collision throws instead of one manifest silently winning', () => {
+  assert.throws(
+    () =>
+      buildNodeTypeHandles([
+        { id: 'local/first', nodes: [{ typeId: 'shared', handles: [handle('a', 'source')] }] },
+        { id: 'local/second', nodes: [{ typeId: 'shared', handles: [handle('b', 'source')] }] },
+      ]),
+    /"shared"/,
+  )
 })
 
 test('an empty manifest list yields an empty map', () => {
