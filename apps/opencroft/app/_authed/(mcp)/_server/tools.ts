@@ -30,15 +30,18 @@ import {
   updateInstalledExtension,
 } from '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
 import {
-  compileLocalExtension,
-  createLocalExtension,
-  deleteLocalExtension,
-  getLocalExtension,
-  listLocalExtensions,
-} from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions'
+  compileLocalExtensionImpl,
+  createLocalExtensionImpl,
+  deleteLocalExtensionImpl,
+  getLocalExtensionImpl,
+  listLocalExtensionsImpl,
+} from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions-impl'
 import { dispatchExecutionContext, NoExecTargetError } from '@/app/_authed/(extension-runtime)/_server/exec-dispatch'
 import { getExtensionModule, loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
-import { dispatchNodeAction, listNodeActions } from '@/app/_authed/(extension-runtime)/_server/node-actions'
+import {
+  dispatchNodeActionImpl,
+  listNodeActionsImpl,
+} from '@/app/_authed/(extension-runtime)/_server/node-actions-impl'
 import {
   buildNodeTypeHandles,
   expandDynamicHandles,
@@ -1536,7 +1539,7 @@ async function resolveLocalExtensionContext(ep: ParsedEndpoint): Promise<Record<
   if (!slug || !isValidLocalExtensionSlug(slug)) {
     fail(-32602, `Invalid local extension handle: "${ep.handle ?? ''}"`)
   }
-  const records = await listLocalExtensions()
+  const records = await listLocalExtensionsImpl()
   return buildLocalExtensionCtx(
     slug,
     records.map((r) => r.slug),
@@ -2253,7 +2256,7 @@ function buildHandlers(): Record<string, ToolHandler> {
 
     // ── list_extensions ─────────────────────────────────────────────
     list_extensions: async () => {
-      const records = await listLocalExtensions()
+      const records = await listLocalExtensionsImpl()
       // Identity + counts only. Use get_extension for the manifest and source file list; read/edit
       // file contents via the remote_* tools against `target`.
       const summaries = records.map((record) => ({
@@ -2277,7 +2280,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!extensionId) {
         fail(-32602, 'Missing required param: extensionId')
       }
-      const record = await getLocalExtension({ data: extensionId })
+      const record = await getLocalExtensionImpl(extensionId)
       if (!record) {
         fail(-32602, `Extension not found: ${extensionId}`)
       }
@@ -2308,7 +2311,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!files['extension.json']) {
         fail(-32602, 'files must include "extension.json"')
       }
-      const record = await createLocalExtension({ data: files })
+      const record = await createLocalExtensionImpl(files)
       broadcastExtensionsUpdated()
       return textResult(`Extension ${record.id} installed with ${Object.keys(files).length} files.`)
     }),
@@ -2319,7 +2322,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!extensionId) {
         fail(-32602, 'Missing required param: extensionId')
       }
-      await deleteLocalExtension({ data: extensionId })
+      await deleteLocalExtensionImpl(extensionId)
       broadcastExtensionsUpdated()
       return textResult(`Extension ${extensionId} uninstalled.`)
     }),
@@ -2380,7 +2383,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         fail(-32602, 'Missing required param: extensionId')
       }
       try {
-        const result = await compileLocalExtension({ data: extensionId })
+        const result = await compileLocalExtensionImpl(extensionId)
         const parts: string[] = []
         parts.push(`Build ${result.success ? '✅ succeeded' : '❌ failed'}`)
         if (result.errors.length > 0) {
@@ -2639,7 +2642,7 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!nodeId) {
         fail(-32602, 'Missing required param: nodeId')
       }
-      const actions = await listNodeActions({ data: nodeId })
+      const actions = await listNodeActionsImpl(nodeId)
       return textResult(JSON.stringify(actions, null, 2))
     },
 
@@ -2652,7 +2655,7 @@ function buildHandlers(): Record<string, ToolHandler> {
           fail(-32602, 'Missing required params: nodeId, action')
         }
         const params = (args.params as Record<string, unknown> | undefined) ?? {}
-        const result = await dispatchNodeAction({ data: { nodeId, actionId: action, params } })
+        const result = await dispatchNodeActionImpl({ nodeId, actionId: action, params })
         const text = result === undefined ? `Action ${action} completed.` : JSON.stringify(result, null, 2)
         return textResult(text)
       },
