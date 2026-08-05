@@ -105,11 +105,14 @@ export const forkLocal = createServerFn({ method: 'POST', strict: { output: fals
     if (!meta) {
       return null
     }
-    // The fork keeps the same agent, so steering capability carries over.
+    // The fork keeps the same agent, so steering capability carries over. A
+    // fork rewinds an already-prompted conversation, so its session is never
+    // "new" for envelope purposes.
     tabSessions.set(data.tabKey, {
       id: meta.id,
       canFork: true,
       canSteer: tabSessions.get(data.tabKey)?.canSteer ?? false,
+      everPrompted: true,
     })
     // Re-point the durable pointer at the fork so a restart resumes the branch.
     await writePersistedSession(data.tabKey, meta.id)
