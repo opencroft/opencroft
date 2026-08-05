@@ -21,6 +21,12 @@ import type { ChatEvent } from 'agent-client/types'
 
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { readSessions } from '@/app/_authed/(agent)/_server/agent-sessions-store'
+import {
+  agentJobName,
+  agentNodeName,
+  isAgentJobNode,
+  isAgentNode,
+} from '@/app/_authed/(agent)/_shared/agent-node-shape'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import {
   dispatchExecutionContext,
@@ -345,8 +351,8 @@ function reachableAgentJobs(
 ): { agent: string; jobs: string[] }[] {
   const jobsByAgentId = new Map<string, string[]>()
   for (const edge of edges) {
-    const job = nodes.find((n) => n.id === edge.source && n.type === 'agent-job')
-    const jobName = (job?.data?.['name'] as string | undefined)?.trim()
+    const job = nodes.find((n) => n.id === edge.source && isAgentJobNode(n))
+    const jobName = job ? agentJobName(job) : ''
     if (!job || !jobName) {
       continue
     }
@@ -356,10 +362,10 @@ function reachableAgentJobs(
   }
   const out: { agent: string; jobs: string[] }[] = []
   for (const node of nodes) {
-    if (node.type !== 'agent') {
+    if (!isAgentNode(node)) {
       continue
     }
-    const name = (node.data?.['name'] as string | undefined)?.trim()
+    const name = agentNodeName(node)
     if (!name) {
       continue
     }
