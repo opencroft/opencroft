@@ -1,4 +1,4 @@
-import { listExtensionManifests } from '@/app/_authed/(extension-runtime)/_server/actions'
+import { listExtensionManifestsImpl } from '@/app/_authed/(extension-runtime)/_server/extension-action-impl'
 import type { GraphNodeRecord, GraphSnapshot } from '@/app/_authed/(extension-runtime)/_server/host'
 import { getExtensionModule } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { buildNodeTypeHandles } from '@/app/_authed/(extension-runtime)/_server/node-handles'
@@ -19,7 +19,10 @@ const CONTEXT_KEY = '__resolvedContexts'
  * and writes resolved context into target nodes' data.
  */
 export async function resolveGraphContexts(graph: GraphSnapshot): Promise<GraphSnapshot> {
-  const nodeTypeToExtension = buildNodeTypeHandles(await listExtensionManifests())
+  // The -impl variant, not the server fn: this resolver runs from MCP calls,
+  // the scheduler and other non-request contexts, where a TanStack Start
+  // server fn has no Start context and does not return the manifest list.
+  const nodeTypeToExtension = buildNodeTypeHandles(await listExtensionManifestsImpl())
 
   // Reset all __resolvedContexts
   const updatedNodes = graph.nodes.map((n) => {
