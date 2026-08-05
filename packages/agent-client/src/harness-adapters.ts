@@ -97,9 +97,11 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     id: 'gemini',
     label: 'Gemini CLI',
     command: 'npx',
-    args: ['-y', '@google/gemini-cli@latest', '--experimental-acp'],
+    args: ['-y', '@google/gemini-cli@latest', '--acp'],
     protocol: 'gemini',
     keyEnv: 'GEMINI_API_KEY',
+    modelEnv: 'GEMINI_MODEL',
+    note: 'Model accepts a Gemini CLI alias (auto, pro, flash) or a concrete Gemini model id.',
   },
   {
     id: 'opencode',

@@ -49,7 +49,7 @@ export const DEFAULT_PROFILES: AgentProfile[] = [
     selection: {
       providerId: 'google',
       adapterId: 'gemini',
-      model: 'gemini-2.5-pro',
+      model: 'auto',
       apiKey: '',
       cwd: '.',
     },

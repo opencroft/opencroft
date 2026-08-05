@@ -56,7 +56,10 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
     id: 'google',
     label: 'Google',
     endpoints: { gemini: '' },
-    models: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+    // Gemini CLI model aliases — the CLI resolves each to the current model
+    // generation, so the list survives model turnover. Concrete model ids can
+    // be typed in as a custom value.
+    models: ['auto', 'pro', 'flash', 'flash-lite'],
     keyEnv: 'GEMINI_API_KEY',
   },
   {
