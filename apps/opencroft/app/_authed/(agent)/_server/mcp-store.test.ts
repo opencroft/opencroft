@@ -1,13 +1,15 @@
-// Exercises the real database (embedded PGlite by default) — see store.test.ts
-// for the isolation note (PGLITE_PATH). A caller's own MCP Connection node
-// must be surfaced without a global entry, and only to that caller.
+// Exercises the real database (embedded PGlite by default) — see @opencroft/db's
+// test-env for how this stays off the shared dev/production database. A caller's
+// own MCP Connection node must be surfaced without a global entry, and only to
+// that caller.
+import '@opencroft/db/test-env'
+
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type { AgentSelection } from 'agent-client/types'
 
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
-
 import { isConnectionNodeName, readMcpServersForAgent, writeMcpServers } from './mcp-store'
 
 function selectionWithIdentity(mcpIdentity?: string): AgentSelection {

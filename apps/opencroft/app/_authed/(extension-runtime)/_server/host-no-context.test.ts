@@ -1,7 +1,6 @@
 // Exercises the real database (embedded PGlite by default) and the real builtin/core
-// extension bundle. Run with an isolated PGLITE_PATH so this doesn't touch the shared
-// dev database, e.g.:
-//   PGLITE_PATH=$(mktemp -d) node_modules/.bin/tsx --test app/\(extension-runtime\)/_server/host-no-context.test.ts
+// extension bundle — see @opencroft/db's test-env for how this stays off the shared
+// dev/production database regardless of the ambient environment.
 //
 // The point of this file: host.storage, host.terminal.getContext and
 // host.graph.listHandles must work when called from code with NO TanStack Start
@@ -9,6 +8,8 @@
 // handler is in. Deliberately does NOT wrap anything in a request/middleware context,
 // unlike how these functions are normally reached from an extension action (a real
 // createFileRoute call, which does establish that context).
+import '@opencroft/db/test-env'
+
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'

@@ -8,7 +8,8 @@
     "./schema": "./src/schema.ts",
     "./connect": "./src/connect.ts",
     "./backup": "./src/backup.ts",
-    "./datadir-lock": "./src/datadir-lock.ts"
+    "./datadir-lock": "./src/datadir-lock.ts",
+    "./test-env": "./src/test-env.ts"
   },
   "scripts": {
     "test": "node ../../scripts/run-tests.mjs",

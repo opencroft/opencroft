@@ -1,18 +1,18 @@
 // Exercises the real database (embedded PGlite by default) and the real builtin/core
-// extension bundle. Run with an isolated PGLITE_PATH so this doesn't touch the shared
-// dev database, e.g.:
-//   PGLITE_PATH=$(mktemp -d) node_modules/.bin/tsx --test app/\(extension-runtime\)/_server/exec-dispatch-no-context.test.ts
+// extension bundle — see @opencroft/db's test-env for how this stays off the shared
+// dev/production database regardless of the ambient environment.
 //
 // The point of this file: dispatchExecutionContext must work when called from code
 // with NO TanStack Start request context at all — that's the situation a background
-// scheduler tick is in. Deliberately does NOT wrap
-// anything in a request/middleware context, unlike how these functions are normally
-// reached in production (an HTTP request, or a client-triggered server function call).
+// scheduler tick is in. Deliberately does NOT wrap anything in a request/middleware
+// context, unlike how these functions are normally reached in production (an HTTP
+// request, or a client-triggered server function call).
+import '@opencroft/db/test-env'
+
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
-
 import { dispatchExecutionContext } from './exec-dispatch'
 
 async function freshSpaceWithEventAndScript(slug: string) {

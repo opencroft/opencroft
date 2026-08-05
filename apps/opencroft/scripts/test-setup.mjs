@@ -1,16 +1,7 @@
-// Preloaded (via --import) before every test file's own top-level code runs.
-//
-// Most suites that touch the database set their own throwaway PGLITE_PATH
-// before importing anything from @opencroft/db. This covers the rest: a test
-// file that reaches the db package only as a side effect of an unrelated
-// import chain, with no PGLITE_PATH of its own. Without this, that suite
-// falls through to connect.ts's default -- a real, persistent data directory
-// under the workspace -- which is the wrong place for anything a test run
-// creates.
-if (!process.env.PGLITE_PATH) {
-  const { mkdtempSync } = await import('node:fs')
-  const { tmpdir } = await import('node:os')
-  const { join } = await import('node:path')
-  const dir = mkdtempSync(join(tmpdir(), 'opencroft-test-'))
-  process.env.PGLITE_PATH = join(dir, 'pglite')
-}
+// Preloaded before every test file in this workspace (see run-tests.mjs's
+// --import hook). A backstop for suites that never got around to isolating
+// themselves: without it, a forgotten PGLITE_PATH plus an ambient
+// DATABASE_URL sends the database code straight at whatever real Postgres
+// server the shell happens to be pointed at. See @opencroft/db's test-env
+// for what this actually does.
+import '@opencroft/db/test-env'
