@@ -2,7 +2,14 @@ import { resolveGraphContexts } from '@/app/_authed/(extension-runtime)/_server/
 import type { GraphSnapshot } from '@/app/_authed/(extension-runtime)/_server/host'
 import { getExtensionModule, loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { getStream } from '@/app/_authed/(extension-runtime)/_server/stream'
-import type { ConnectedSource, NodeActionCtx, NodeActionCtxNode, ResolvedInput, Stream } from '@/app/_authed/(extension-runtime)/_types'
+import type {
+  ConnectedSource,
+  NodeActionCtx,
+  NodeActionCtxNode,
+  NodeActionDescriptor,
+  ResolvedInput,
+  Stream,
+} from '@/app/_authed/(extension-runtime)/_types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
 
@@ -214,6 +221,35 @@ async function persistData(found: FoundNode, patch: Record<string, unknown>): Pr
   }
   node.data = { ...(node.data ?? {}), ...patch }
   await r.saveGraph(found.slug, space.graph)
+}
+
+// Plain (non-server-fn) implementation — see extension-action-impl.ts's
+// invokeExtensionActionImpl for why this exists alongside the createServerFn-wrapped
+// version in node-actions.ts: a caller with no Start request context (an MCP call,
+// the scheduler) gets nothing back from the server-fn wrapper — the handler runs but
+// its return value is dropped — while this plain function returns it normally.
+export async function listNodeActionsImpl(nodeId: string): Promise<NodeActionDescriptor[]> {
+  const found = await findNodeWithGraph(nodeId)
+  if (!found || !found.node.type) {
+    return []
+  }
+  const manifests = await loadAllManifests()
+  for (const manifest of manifests) {
+    const meta = manifest.nodes?.find((n) => n.typeId === found.node.type)
+    if (!meta?.actions) {
+      continue
+    }
+    return meta.actions.map((a) => ({
+      nodeId,
+      typeId: found.node.type ?? '',
+      extensionId: manifest.id,
+      actionId: a.id,
+      label: a.label,
+      description: a.description,
+      inputSchema: a.inputSchema,
+    }))
+  }
+  return []
 }
 
 // Plain (non-server-fn) implementation — see extension-action-impl.ts's

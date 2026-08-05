@@ -6,35 +6,17 @@
 // node-actions-impl.ts instead.
 import { createServerFn } from '@tanstack/react-start'
 
-import { loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
-import { dispatchNodeActionImpl, findNodeWithGraph } from '@/app/_authed/(extension-runtime)/_server/node-actions-impl'
+import {
+  dispatchNodeActionImpl,
+  listNodeActionsImpl,
+} from '@/app/_authed/(extension-runtime)/_server/node-actions-impl'
 import type { NodeActionDescriptor } from '@/app/_authed/(extension-runtime)/_types'
 
+// Client-callable wrapper — see node-actions-impl.ts's listNodeActionsImpl for why
+// the plain implementation lives in its own module, separate from this file.
 export const listNodeActions = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((nodeId: string) => nodeId)
-  .handler(async ({ data: nodeId }): Promise<NodeActionDescriptor[]> => {
-    const found = await findNodeWithGraph(nodeId)
-    if (!found || !found.node.type) {
-      return []
-    }
-    const manifests = await loadAllManifests()
-    for (const manifest of manifests) {
-      const meta = manifest.nodes?.find((n) => n.typeId === found.node.type)
-      if (!meta?.actions) {
-        continue
-      }
-      return meta.actions.map((a) => ({
-        nodeId,
-        typeId: found.node.type ?? '',
-        extensionId: manifest.id,
-        actionId: a.id,
-        label: a.label,
-        description: a.description,
-        inputSchema: a.inputSchema,
-      }))
-    }
-    return []
-  })
+  .handler(async ({ data: nodeId }): Promise<NodeActionDescriptor[]> => listNodeActionsImpl(nodeId))
 
 // Client-callable wrapper — see node-actions-impl.ts's dispatchNodeActionImpl for why
 // the plain implementation lives in its own module, separate from this file.
