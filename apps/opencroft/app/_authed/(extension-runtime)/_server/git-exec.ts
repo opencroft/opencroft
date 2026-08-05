@@ -21,6 +21,35 @@ export interface GitExecError extends Error {
   stderr?: string
 }
 
+/**
+ * Prepends `-c credential.helper=` when the caller brought its own askpass.
+ *
+ * git resolves a credential by consulting `credential.helper` FIRST and only
+ * falling back to `GIT_ASKPASS` when no helper answers. So a helper coming
+ * from config this process does not own -- `/etc/gitconfig` baked into a
+ * container image, a `~/.gitconfig` on a developer machine -- decides the
+ * credential instead of the one `withGitAuth` just resolved, and a helper
+ * that is merely broken fails the whole command before our askpass is ever
+ * reached -- a real case being a helper answering with a bash indirect
+ * expansion that errors on every invocation, which breaks every
+ * authenticated read while leaving unauthenticated ones untouched.
+ *
+ * An EMPTY value is the documented way to reset the helper list rather than
+ * append to it, which is why this is a value-less `-c` rather than an unset.
+ * Note that `git config --get-all credential.helper` still lists both
+ * entries afterwards; it is the credential subsystem, not config lookup,
+ * that honours the reset.
+ *
+ * Deliberately scoped to the authenticated path. With no credential of our
+ * own there is nothing for an ambient helper to override, and on that path
+ * it may legitimately be the only way a call is expected to authenticate --
+ * clearing it unconditionally would be a behaviour change well beyond the
+ * fault this addresses.
+ */
+export function effectiveGitArgs(args: string[], env: NodeJS.ProcessEnv | undefined): string[] {
+  return env?.GIT_ASKPASS ? ['-c', 'credential.helper=', ...args] : args
+}
+
 // The only sanctioned way to shell out to git in this codebase. A command
 // whose args embed a credentialed URL (a clone or ls-remote against a
 // private repo) fails in exactly the way that makes Node put the full
@@ -34,7 +63,7 @@ export async function runGit(
   options: { maxBuffer?: number; env?: NodeJS.ProcessEnv } = {},
 ): Promise<{ stdout: string; stderr: string }> {
   try {
-    return await execFile('git', args, options)
+    return await execFile('git', effectiveGitArgs(args, options.env), options)
   } catch (err) {
     const e = err as { message?: string; stdout?: string; stderr?: string }
     const redacted: GitExecError = new Error(redact(e.message ?? String(err)))
