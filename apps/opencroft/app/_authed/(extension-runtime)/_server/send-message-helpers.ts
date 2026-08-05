@@ -1,3 +1,12 @@
+import {
+  agentInstructionText,
+  agentJobContext,
+  agentJobName,
+  agentNodeName,
+  isAgentJobNode,
+  isAgentNode,
+} from '@/app/_authed/(agent)/_shared/agent-node-shape'
+
 export interface NodeLike {
   id: string
   type?: string
@@ -46,10 +55,6 @@ function slug(name: string): string {
     .replace(/^-|-$/g, '')
 }
 
-function nodeName(node: NodeLike): string {
-  return ((node.data?.['name'] as string) || '').trim()
-}
-
 export function buildSessionKey(agentName: string, jobName: string, key?: string): string {
   const base = `agent:${slug(agentName)}:${slug(jobName)}`
   const k = (key ?? '').trim()
@@ -94,7 +99,7 @@ export function tryParseJsonMessage(text: string): ParsedMessage | null {
 
 function findAgentBySlug(agentSlug: string, nodes: NodeLike[]): NodeLike | null {
   for (const n of nodes) {
-    if (n.type === 'agent' && slug(nodeName(n)) === agentSlug) {
+    if (isAgentNode(n) && slug(agentNodeName(n)) === agentSlug) {
       return n
     }
   }
@@ -103,7 +108,7 @@ function findAgentBySlug(agentSlug: string, nodes: NodeLike[]): NodeLike | null 
 
 function findJobBySlug(jobSlug: string, nodes: NodeLike[]): NodeLike | null {
   for (const n of nodes) {
-    if (n.type === 'agent-job' && slug(nodeName(n)) === jobSlug) {
+    if (isAgentJobNode(n) && slug(agentJobName(n)) === jobSlug) {
       return n
     }
   }
@@ -128,19 +133,18 @@ export function resolveSessionOnGraph(sessionKey: string, nodes: NodeLike[], edg
   const instructions: string[] = []
   for (const ie of instrEdges) {
     const instrNode = nodes.find((n) => n.id === ie.source)
-    const text = ((instrNode?.data?.['instruction'] as string) || '').trim()
+    const text = instrNode ? agentInstructionText(instrNode).trim() : ''
     if (text) {
       instructions.push(text)
     }
   }
 
   return {
-    agentName: nodeName(agentNode),
+    agentName: agentNodeName(agentNode),
     agentNodeId: agentNode.id,
-    jobName: nodeName(jobNode),
+    jobName: agentJobName(jobNode),
     jobNodeId: jobNode.id,
-    jobContext: ((jobNode.data?.['context'] as string) || '').trim(),
+    jobContext: agentJobContext(jobNode).trim(),
     instructions,
   }
 }
-

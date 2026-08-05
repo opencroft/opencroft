@@ -20,6 +20,18 @@
 // another's handler (group chats' `addMember`, validating an agent principal)
 // therefore import from here.
 
+import {
+  agentInstructionName,
+  agentInstructionText,
+  agentJobContext,
+  agentJobName,
+  agentJobWorkingDirectory,
+  agentNodeAvatar,
+  agentNodeName,
+  isAgentInstructionNode,
+  isAgentJobNode,
+  isAgentNode,
+} from '@/app/_authed/(agent)/_shared/agent-node-shape'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 
 export interface AgentJobRef {
@@ -80,10 +92,10 @@ export async function listAgentNodesImpl(): Promise<AgentNodeRef[]> {
     const jobsById = new Map<string, NodeShape>()
     const instructionsById = new Map<string, NodeShape>()
     for (const node of nodes) {
-      if (node.type === 'agent-job' && node.id) {
+      if (isAgentJobNode(node) && node.id) {
         jobsById.set(node.id, node)
       }
-      if (node.type === 'agent-instruction' && node.id) {
+      if (isAgentInstructionNode(node) && node.id) {
         instructionsById.set(node.id, node)
       }
     }
@@ -93,14 +105,14 @@ export async function listAgentNodesImpl(): Promise<AgentNodeRef[]> {
       }
       // Jobs connected to agent via agent-in handle (skip unnamed jobs)
       const job = jobsById.get(edge.source)
-      const jobName = job?.data?.name?.trim()
+      const jobName = job ? agentJobName(job) : ''
       if (job && jobName) {
         const list = jobsByAgent.get(edge.target) ?? []
         list.push({
           nodeId: edge.source,
           name: jobName,
-          context: job.data?.context ?? '',
-          workingDirectory: job.data?.workingDirectory ?? '',
+          context: agentJobContext(job),
+          workingDirectory: agentJobWorkingDirectory(job),
         })
         jobsByAgent.set(edge.target, list)
       }
@@ -110,20 +122,20 @@ export async function listAgentNodesImpl(): Promise<AgentNodeRef[]> {
         const list = instructionsByAgent.get(edge.target) ?? []
         list.push({
           nodeId: edge.source,
-          name: instr.data?.name?.trim() || 'Instruction',
-          instruction: instr.data?.instruction ?? '',
+          name: agentInstructionName(instr) || 'Instruction',
+          instruction: agentInstructionText(instr),
         })
         instructionsByAgent.set(edge.target, list)
       }
     }
     for (const node of nodes) {
-      if (node.type !== 'agent' || !node.id) {
+      if (!isAgentNode(node) || !node.id) {
         continue
       }
       out.push({
         nodeId: node.id,
-        name: node.data?.name?.trim() || 'Agent',
-        avatar: node.data?.avatar,
+        name: agentNodeName(node) || 'Agent',
+        avatar: agentNodeAvatar(node),
         spaceSlug: space.slug,
         spaceName: space.name,
         jobs: jobsByAgent.get(node.id) ?? [],
