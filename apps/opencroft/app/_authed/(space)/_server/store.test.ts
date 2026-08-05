@@ -1,6 +1,8 @@
-// Exercises the real database (embedded PGlite by default). Run with an
-// isolated PGLITE_PATH so these tests don't touch the shared dev database, e.g.:
-//   PGLITE_PATH=$(mktemp -d) node_modules/.bin/tsx --test app/\(space\)/_server/store.test.ts
+// Exercises the real database (embedded PGlite by default) — see @opencroft/db's
+// test-env for how this stays off the shared dev/production database regardless
+// of the ambient environment.
+import '@opencroft/db/test-env'
+
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'

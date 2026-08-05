@@ -5,6 +5,11 @@
 // extension-runtime tree). That gap is exactly what let list_actions/call silently
 // return no data: their handlers ran, but a server-fn wrapper called with no Start
 // context drops its return value instead of throwing.
+//
+// See @opencroft/db's test-env for how this stays off the shared dev/production
+// database regardless of the ambient environment.
+import '@opencroft/db/test-env'
+
 import assert from 'node:assert/strict'
 import test from 'node:test'
 

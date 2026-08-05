@@ -1,8 +1,10 @@
 // Exercises the real database (embedded PGlite by default) and the real
 // builtin/core extension bundle — same setup as
-// app/(extension-runtime)/_server/exec-dispatch-no-context.test.ts. Run with an
-// isolated PGLITE_PATH:
-//   PGLITE_PATH=$(mktemp -d) node_modules/.bin/tsx --test server/scheduler/event-scheduler-integration.test.ts
+// app/(extension-runtime)/_server/exec-dispatch-no-context.test.ts. See
+// @opencroft/db's test-env for how this stays off the shared dev/production
+// database regardless of the ambient environment.
+import '@opencroft/db/test-env'
+
 import assert from 'node:assert/strict'
 import test from 'node:test'
 

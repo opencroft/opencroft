@@ -17,7 +17,11 @@
 // ever been prompted" (TabSession.everPrompted, flipped in promptLocalImpl),
 // which is a fact about the session, not about which call happened to
 // observe it first. These tests drive ensureLocalSessionImpl/promptLocalImpl
-// the same way repeated mounts and the first real send would.
+// the same way repeated mounts and the first real send would, against the
+// real database (embedded PGlite by default) — see @opencroft/db's test-env
+// for how this stays off the shared dev/production database.
+import '@opencroft/db/test-env'
+
 import assert from 'node:assert/strict'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -27,9 +31,8 @@ import type { AgentConnection } from 'agent-client/connection'
 import { buildSpawnConfig } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
 
-import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import { slug } from '@/app/_authed/(server)/_server/types'
-
+import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import { ensureLocalSessionImpl, promptLocalImpl } from './acp-impl'
 
 interface AcpStoreShape {
