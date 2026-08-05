@@ -14,7 +14,7 @@ import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 
-const { readGitState } = await import('./local-extensions-actions')
+const { readGitState } = await import('./local-extensions-actions-impl')
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-git-state-'))
 
