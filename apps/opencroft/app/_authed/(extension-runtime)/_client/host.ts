@@ -11,7 +11,7 @@ import {
   useReactFlow,
   useUpdateNodeInternals,
 } from '@xyflow/react'
-import * as icons from 'lucide-react'
+import type * as icons from 'lucide-react'
 import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
@@ -24,7 +24,14 @@ import { NodeFrame, useNodeAccent } from '@/app/_authed/(dashboard)/_canvas/node
 import { useOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 import { useNodeContext } from '@/app/_authed/(dashboard)/_extension-system/use-node-context'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
-import { broadcast, getStream, type Stream, subscribe, type TextChunk } from '@/app/_authed/(extension-runtime)/_client/stream'
+import { createSafeIcons } from '@/app/_authed/(extension-runtime)/_client/safe-icons'
+import {
+  broadcast,
+  getStream,
+  type Stream,
+  subscribe,
+  type TextChunk,
+} from '@/app/_authed/(extension-runtime)/_client/stream'
 import { invokeExtensionAction } from '@/app/_authed/(extension-runtime)/_server/actions'
 import { dispatchNodeAction } from '@/app/_authed/(extension-runtime)/_server/node-actions'
 import type { ExtensionContextType, ExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
@@ -37,6 +44,10 @@ import {
 } from '@/app/_authed/(sse)/_lib/sse-events-store'
 import { useUrlParam } from '@/app/_lib/use-url-param'
 import { ControlledInput } from '@/components/ui/input/controlled-input'
+
+// What extension code actually receives as `icons` -- see safe-icons.ts for
+// why this has to be the namespace's source, not something callers opt into.
+const safeIcons = createSafeIcons()
 
 export interface ExtensionComponentProps<D = Record<string, unknown>> {
   id: string
@@ -335,7 +346,7 @@ export const extensionHostApi = {
   callNodeAction,
   createStorage: createStorageFor,
   createPortal,
-  icons,
+  icons: safeIcons,
   toast,
   getStream,
   subscribe,

@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { compile as compileTailwind } from '@tailwindcss/node'
 import { Scanner } from '@tailwindcss/oxide'
 import * as esbuild from 'esbuild'
+import * as lucideIcons from 'lucide-react'
 
 import { extDir, extDistDir, projectRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
 import type { BuildResult, CompileError, ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
@@ -100,6 +101,73 @@ function clientStubPlugin(specifiers: string[], matched: Set<string>): esbuild.P
       }))
     },
   }
+}
+
+// Real icon exports, computed once from the actual package rather than
+// hand-kept, so this can never drift from what `icons.<Name>` really
+// resolves to at runtime. A small, fixed set of names on the same namespace
+// are TypeScript types with no runtime binding (`icon: icons.LucideIcon` in
+// a prop type, not a component) -- real, correct, existing code, and not
+// what this check exists to catch.
+const ICON_NAMES = new Set(Object.keys(lucideIcons))
+const ICON_NAMESPACE_TYPE_EXPORTS = new Set(['LucideIcon', 'LucideProps', 'IconNode'])
+
+interface IconNameViolation {
+  file: string
+  name: string
+}
+
+// Flags `icons.<Name>` member access and names destructured out of `icons`
+// where <Name> isn't a real export of the bundled icon package -- an icon
+// name that only ever arrives as data, rather than being written into
+// source, can't be seen here (see safe-icons.ts on the app side for that
+// half). A regex scan over source text, not an AST walk: the same
+// mechanical, good-enough approach the workspace-dependency check already
+// uses elsewhere in this codebase, chosen for the same reason -- it is
+// simple to read, simple to trust, and the failure mode of a false positive
+// (an unnecessary build error) is far cheaper than the crash this exists to
+// prevent, so a little imprecision is an acceptable trade.
+//
+// A standalone post-build scan over the metafile's own input list, not an
+// esbuild plugin hooked into onLoad -- an onLoad callback runs DURING the
+// build, reading the same files esbuild's own loader is reading at the same
+// time. That doubled, independent read is exactly what turned a source edit
+// landing mid-build (already exercised deliberately by build-race.test.ts)
+// into a torn read and a real build failure — confirmed directly by running
+// that test with and without this function wired in as a plugin. Reading
+// once, after the build has already settled on what it bundled, has no such
+// interaction with esbuild's own file access.
+async function findIconViolations(src: string, metafile: esbuild.Metafile): Promise<IconNameViolation[]> {
+  const MEMBER_RE = /\bicons\.([A-Za-z_$][\w$]*)/g
+  const DESTRUCTURE_RE = /\{([^{}]*)\}\s*=\s*icons\b/g
+  const violations: IconNameViolation[] = []
+  for (const relPath of Object.keys(metafile.inputs)) {
+    if (!/\.[jt]sx?$/.test(relPath) || relPath.includes('node_modules')) {
+      continue
+    }
+    const source = await fs.readFile(path.resolve(src, relPath), 'utf-8').catch(() => null)
+    if (source === null) {
+      continue
+    }
+    for (const match of source.matchAll(MEMBER_RE)) {
+      const name = match[1]
+      if (!ICON_NAMES.has(name) && !ICON_NAMESPACE_TYPE_EXPORTS.has(name)) {
+        violations.push({ file: relPath, name })
+      }
+    }
+    for (const match of source.matchAll(DESTRUCTURE_RE)) {
+      for (const raw of match[1].split(',')) {
+        const name = raw.trim().split(':')[0].trim()
+        if (!name || name.startsWith('...')) {
+          continue
+        }
+        if (!ICON_NAMES.has(name) && !ICON_NAMESPACE_TYPE_EXPORTS.has(name)) {
+          violations.push({ file: relPath, name })
+        }
+      }
+    }
+  }
+  return violations
 }
 
 function hostVirtualPlugin(side: 'client' | 'server', extensionId: string): esbuild.Plugin {
@@ -651,6 +719,9 @@ async function compileClientSide(
       minify: true,
       jsx: 'automatic',
       plugins: [hostVirtualPlugin('client', extensionId), clientStubPlugin(stubSpecifiers, matchedStubs)],
+      // Only for findIconViolations below, read after the build has settled
+      // — see its own comment for why that must not happen during the build.
+      metafile: true,
       logLevel: 'silent',
       write: true,
       absWorkingDir: src,
@@ -665,12 +736,17 @@ async function compileClientSide(
     // than silently doing nothing, so the extension author finds out from
     // the build instead of from a bundle that quietly stayed large.
     const unmatchedStubs = stubSpecifiers.filter((specifier) => !matchedStubs.has(specifier))
+    const iconViolations = result.metafile ? await findIconViolations(src, result.metafile) : []
     return {
       errors: [
         ...toCompileErrors(result.errors),
         ...unmatchedStubs.map((specifier) => ({
           file: 'extension.json',
           message: `clientStubs entry "${specifier}" never matched an import in the client build — remove it or fix the specifier.`,
+        })),
+        ...iconViolations.map((v) => ({
+          file: v.file,
+          message: `icons.${v.name} is not an export of the bundled icon package — this renders as a blank element at runtime (React error #130), not a build failure the bundler can see on its own.`,
         })),
       ],
       warnings: toCompileErrors(result.warnings),

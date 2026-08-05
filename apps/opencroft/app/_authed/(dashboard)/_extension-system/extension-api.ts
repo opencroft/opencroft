@@ -1,6 +1,6 @@
 'use client'
 
-import * as icons from 'lucide-react'
+import type * as icons from 'lucide-react'
 import * as React from 'react'
 import { toast } from 'sonner'
 import { Badge } from 'ui/badge'
@@ -23,6 +23,7 @@ import {
 } from '@/app/_authed/(dashboard)/_extension-system/extension-storage'
 import { useNodeContext } from '@/app/_authed/(dashboard)/_extension-system/use-node-context'
 import { defineExtension } from '@/app/_authed/(extension-runtime)/_client/host'
+import { createSafeIcons } from '@/app/_authed/(extension-runtime)/_client/safe-icons'
 import {
   copyKeyToWsl,
   createKey,
@@ -34,6 +35,10 @@ import {
 } from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/key-store/actions'
 import { deleteSecret, getSecrets, setSecret } from '@/app/_authed/(secrets-store)/_server/actions'
 import { ControlledInput } from '@/components/ui/input/controlled-input'
+
+// What extension code actually receives as `icons` -- see safe-icons.ts for
+// why this has to be the namespace's source, not something callers opt into.
+const safeIcons = createSafeIcons()
 
 export interface ExtensionStorage {
   get<T = unknown>(key: string): Promise<T | null>
@@ -104,7 +109,7 @@ export const extensionApi: ExtensionApi = {
   defineExtension,
   NodeFrame,
   useNodeContext,
-  icons,
+  icons: safeIcons,
   createStorage,
   ui,
   actions,
