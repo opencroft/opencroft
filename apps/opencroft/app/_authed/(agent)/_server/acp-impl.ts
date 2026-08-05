@@ -56,6 +56,16 @@ export interface OpenedSession {
   sessionId: string
   canFork: boolean
   canSteer: boolean
+  // Whether this session has never had a prompt delivered into it yet — the
+  // one authoritative signal for whether the caller's next message is the
+  // session's first. NOT "did this call just create the session object":
+  // ensureLocalSessionImpl is idempotent per tab and can be called more than
+  // once (mount, remount, a second surface warming the same tab) before the
+  // user ever sends anything, so a later call for the same still-untouched
+  // tab must answer `true` too, not just the one call that happened to spin
+  // the session up. Callers key session-scoped envelope content (task
+  // context, instructions) off this instead of inferring it themselves — see
+  // the message-envelope module.
   created: boolean
 }
 
@@ -66,6 +76,13 @@ export interface TabSession {
   // Whether this tab's agent accepts mid-turn prompts as live-turn input
   // (adapter-declared; see agent-client's supportsMidTurnInput).
   canSteer: boolean
+  // Whether a prompt has ever been delivered into this session. Session
+  // creation and "has the first message gone out yet" are different events —
+  // ensureLocalSessionImpl can be (and routinely is) called more than once for
+  // the same tab before the user's first message is actually sent, so `created`
+  // below is derived from this instead of "did this particular call just spin
+  // the session up". See OpenedSession.created's doc comment.
+  everPrompted: boolean
 }
 
 // ACP sessions live only in agentClient's memory, so they don't survive a dev
@@ -131,11 +148,6 @@ export async function ensureLocalSessionImpl(data: {
   }
 }
 
-// `created` is the one authoritative signal for whether a brand-new ACP
-// session was just spun up (agentClient.createSession) vs. an existing one
-// reused (in-memory tab-cache hit or a cold-start session/load resume).
-// Callers key session-scoped envelope content (task context, instructions) off
-// this instead of inferring it themselves — see the message-envelope module.
 async function openLocalSession(data: {
   agentNodeId: string
   jobNodeId: string
@@ -143,9 +155,17 @@ async function openLocalSession(data: {
 }): Promise<OpenedSession> {
   const known = tabSessions.get(data.tabKey)
   if (known && agentClient.listSessions().some((s) => s.id === known.id)) {
-    // `?? false` covers entries recorded before canSteer existed (the map
-    // survives dev hot-reloads).
-    return { sessionId: known.id, canFork: known.canFork, canSteer: known.canSteer ?? false, created: false }
+    // `?? false` / `?? true` cover entries recorded before canSteer/everPrompted
+    // existed (the map survives dev hot-reloads) — `true` is the safe default for
+    // everPrompted specifically, since treating an old, possibly-already-prompted
+    // session as still-new risks re-injecting session-init content into a
+    // conversation that already has it, which is worse than the reverse.
+    return {
+      sessionId: known.id,
+      canFork: known.canFork,
+      canSteer: known.canSteer ?? false,
+      created: !(known.everPrompted ?? true),
+    }
   }
   const agent = await findNodeData<AgentNodeData>(data.agentNodeId)
   if (!agent) {
@@ -200,7 +220,9 @@ async function openLocalSession(data: {
     const resumed = await agentClient.loadSession(persistedId, selection).catch(() => null)
     if (resumed) {
       const canFork = resumed.canFork ?? false
-      tabSessions.set(data.tabKey, { id: resumed.id, canFork, canSteer })
+      // Persistence only happens after a session's first prompt (see
+      // promptLocalImpl), so a resumed session has necessarily been prompted.
+      tabSessions.set(data.tabKey, { id: resumed.id, canFork, canSteer, everPrompted: true })
       // Re-apply any per-session config overrides (e.g. reasoning effort) the
       // user set before this tab's in-memory session was lost — loadSession
       // only reflects the agent's own resumed state, which has no way to know
@@ -217,7 +239,7 @@ async function openLocalSession(data: {
   // Forking rewinds an agent's own message history, which only the in-process
   // (native) harness owns — external ACP agents can't truncate it.
   const canFork = meta.canFork ?? false
-  tabSessions.set(data.tabKey, { id: meta.id, canFork, canSteer })
+  tabSessions.set(data.tabKey, { id: meta.id, canFork, canSteer, everPrompted: false })
   return { sessionId: meta.id, canFork, canSteer, created: true }
 }
 
@@ -231,15 +253,24 @@ export async function promptLocalImpl(data: {
   front?: boolean
   flush?: boolean
 }): Promise<void> {
+  // Claimed before the prompt is even sent (matching the client's own
+  // deliveredOnceRef, set at deliver() call time) — a concurrent
+  // ensureLocalSession call for this tab must see the claim immediately, not
+  // only after the turn completes.
+  let tabKey: string | undefined
+  for (const [key, entry] of tabSessions) {
+    if (entry.id === data.sessionId) {
+      entry.everPrompted = true
+      tabKey = key
+      break
+    }
+  }
   await agentClient.prompt(data.sessionId, data.text, { front: data.front, flush: data.flush })
   // Persist the tab→session pointer now that the session has real history, so a
   // later restart can resume it via session/load. We never persist — and so
   // never try to load — an empty, never-prompted session.
-  for (const [tabKey, entry] of tabSessions) {
-    if (entry.id === data.sessionId) {
-      await writePersistedSession(tabKey, data.sessionId)
-      break
-    }
+  if (tabKey) {
+    await writePersistedSession(tabKey, data.sessionId)
   }
 }
 
