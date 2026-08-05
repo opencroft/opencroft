@@ -2,6 +2,7 @@ import host from '@opencroft/server'
 import type { ExecOptions, ServerConfig, TerminalContext } from '@opencroft/server'
 import { AGENT_PROVIDERS } from 'agent-client/agent-providers'
 import { HARNESS_ADAPTERS } from 'agent-client/harness-adapters'
+import { disconnectOauth, oauthLoginStatus, startOauthLogin, submitOauthCode } from 'agent-client/oauth-login'
 import { reasoningEfforts } from 'agent-client/reasoning'
 
 import {
@@ -26,7 +27,7 @@ export { nodeActions }
 // ═══════════════════════════════════════════════════════════════════
 
 interface AgentCatalog {
-  adapters: { id: string; label: string; protocol: string; kind: 'acp' | 'native' }[]
+  adapters: { id: string; label: string; protocol: string; kind: 'acp' | 'native'; supportsOauthLogin: boolean }[]
   providers: { id: string; label: string; models: string[]; protocols: string[] }[]
 }
 
@@ -37,6 +38,7 @@ function listAgentCatalog(): AgentCatalog {
       label: a.label,
       protocol: a.protocol,
       kind: a.kind ?? 'acp',
+      supportsOauthLogin: a.supportsOauthLogin ?? false,
     })),
     providers: AGENT_PROVIDERS.map((p) => ({
       id: p.id,
@@ -470,6 +472,11 @@ export const actions = {
   // covers models discovered from an OpenAI-compatible endpoint or typed in by
   // hand, not just the static AGENT_PROVIDERS catalog.
   'agent.reasoningEfforts': (model: string) => reasoningEfforts(String(model ?? '')),
+  'agent.oauthStatus': (adapterId: string) => oauthLoginStatus(String(adapterId ?? '')),
+  'agent.oauthStart': (adapterId: string) => startOauthLogin(String(adapterId ?? '')),
+  'agent.oauthSubmitCode': (params: { loginId?: string; code?: string }) =>
+    submitOauthCode(String(params?.loginId ?? ''), String(params?.code ?? '')),
+  'agent.oauthDisconnect': (adapterId: string) => disconnectOauth(String(adapterId ?? '')),
   'tts.capabilities': (params: { baseUrl?: string; apiKey?: string; headers?: HeaderPair[] }) =>
     ttsCapabilities(params),
 }

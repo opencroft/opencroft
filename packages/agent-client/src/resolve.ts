@@ -27,6 +27,9 @@ export function buildSpawnConfig(selection: AgentSelection): SpawnConfig {
   const provider = findProvider(selection.providerId)
   const env: Record<string, string> = {}
 
+  if (adapter?.staticEnv) {
+    Object.assign(env, adapter.staticEnv)
+  }
   if (adapter && provider) {
     const keyEnv = adapter.keyEnv ?? (adapter.protocol === 'native' ? provider.keyEnv : undefined)
     if (keyEnv && selection.apiKey) {

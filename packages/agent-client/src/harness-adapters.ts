@@ -17,6 +17,13 @@ export interface HarnessAdapter {
   // support). Defaults to true. Set false for agents whose ACP bridge rejects
   // per-session MCP servers (e.g. OpenClaw), so the client sends an empty list.
   supportsTools?: boolean
+  // Fixed environment for every spawn of this harness (e.g. forcing the
+  // harness's auth mode); merged under the per-selection values.
+  staticEnv?: Record<string, string>
+  // Whether the harness supports the interactive OAuth login driven by
+  // ./oauth-login: credentials live in the harness's own config files and are
+  // rotated by the harness, not passed through an environment variable.
+  supportsOauthLogin?: boolean
   // Whether the agent accepts `session/prompt` while a turn is already running
   // and feeds it into the live turn as streaming input ("steering"). This is
   // NOT an ACP capability — the protocol declares none for it — so the flag
@@ -102,6 +109,19 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     keyEnv: 'GEMINI_API_KEY',
     modelEnv: 'GEMINI_MODEL',
     note: 'Model accepts a Gemini CLI alias (auto, pro, flash) or a concrete Gemini model id.',
+  },
+  {
+    id: 'gemini-subscription',
+    label: 'Gemini CLI (subscription)',
+    command: 'npx',
+    args: ['-y', '@google/gemini-cli@latest', '--acp'],
+    protocol: 'gemini',
+    // No keyEnv: credentials come from the CLI's own token manager, populated
+    // by the interactive Google OAuth login and rotated by the CLI itself.
+    modelEnv: 'GEMINI_MODEL',
+    staticEnv: { GEMINI_DEFAULT_AUTH_TYPE: 'oauth-personal' },
+    supportsOauthLogin: true,
+    note: 'Sign in with your Google account (Gemini subscription); credentials are stored and rotated by the CLI itself.',
   },
   {
     id: 'opencode',

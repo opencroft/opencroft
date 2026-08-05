@@ -137,7 +137,7 @@ export function AgentInspector({
 // ─── Agent Profile Tab (local agent-client backend) ─────────────────
 
 interface AgentCatalog {
-  adapters: { id: string; label: string; protocol: string; kind: 'acp' | 'native' }[]
+  adapters: { id: string; label: string; protocol: string; kind: 'acp' | 'native'; supportsOauthLogin: boolean }[]
   providers: { id: string; label: string; models: string[]; protocols: string[] }[]
 }
 
@@ -294,30 +294,34 @@ function LocalProfileFields({
           </SelectContent>
         </Select>
       </div>
-      <div className='flex flex-col gap-1'>
-        <Label className='text-xs'>API key secret</Label>
-        <Select
-          value={data.apiKeySecret || NO_SECRET}
-          onValueChange={(v: string) => updateData({ apiKeySecret: v === NO_SECRET ? '' : v })}
-        >
-          <SelectTrigger className='h-8 text-xs'>
-            <SelectValue placeholder='None' />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={NO_SECRET}>None</SelectItem>
-            {secretKeys.map((k) => (
-              <SelectItem key={k} value={k} className='font-mono text-xs'>
-                {k}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {secretKeys.length === 0 ? (
-          <p className='text-[10px] text-muted-foreground'>
-            Add a Secrets Store node with the provider key to reference it here.
-          </p>
-        ) : null}
-      </div>
+      {adapter?.supportsOauthLogin ? (
+        <OauthAccountSection adapterId={adapter.id} />
+      ) : (
+        <div className='flex flex-col gap-1'>
+          <Label className='text-xs'>API key secret</Label>
+          <Select
+            value={data.apiKeySecret || NO_SECRET}
+            onValueChange={(v: string) => updateData({ apiKeySecret: v === NO_SECRET ? '' : v })}
+          >
+            <SelectTrigger className='h-8 text-xs'>
+              <SelectValue placeholder='None' />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_SECRET}>None</SelectItem>
+              {secretKeys.map((k) => (
+                <SelectItem key={k} value={k} className='font-mono text-xs'>
+                  {k}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {secretKeys.length === 0 ? (
+            <p className='text-[10px] text-muted-foreground'>
+              Add a Secrets Store node with the provider key to reference it here.
+            </p>
+          ) : null}
+        </div>
+      )}
       {efforts.length > 0 ? (
         <div className='flex flex-col gap-1'>
           <Label className='text-xs'>Reasoning effort</Label>
@@ -377,6 +381,127 @@ function LocalProfileFields({
 
 // System prompt + temperature only apply to the in-process Custom (native)
 // harness; ACP agents carry their own prompt and manage their own sampling.
+// Connect/disconnect UI for harnesses that keep their own file-based OAuth
+// credentials (see agent-client's oauth-login): the harness prints a consent
+// URL, the user signs in and pastes the authorization code back, and the
+// harness stores and rotates the tokens itself.
+function OauthAccountSection({ adapterId }: { adapterId: string }) {
+  const [connected, setConnected] = useState<boolean | null>(null)
+  const [login, setLogin] = useState<{ loginId: string; authUrl: string } | null>(null)
+  const [code, setCode] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const refresh = useCallback(() => {
+    invoke<{ connected: boolean }>('agent.oauthStatus', adapterId)
+      .then((s: { connected: boolean }) => setConnected(s.connected))
+      .catch(() => setConnected(null))
+  }, [adapterId])
+
+  useEffect(() => {
+    setLogin(null)
+    setCode('')
+    setError('')
+    refresh()
+  }, [refresh])
+
+  const start = useCallback(async () => {
+    setBusy(true)
+    setError('')
+    try {
+      setLogin(await invoke<{ loginId: string; authUrl: string }>('agent.oauthStart', adapterId))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [adapterId])
+
+  const submit = useCallback(async () => {
+    if (!login || !code.trim()) {
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      const result = await invoke<{ ok: boolean; error?: string }>('agent.oauthSubmitCode', {
+        loginId: login.loginId,
+        code,
+      })
+      if (result.ok) {
+        setLogin(null)
+        setCode('')
+        refresh()
+      } else {
+        setError(result.error || 'Login failed')
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [login, code, refresh])
+
+  const disconnect = useCallback(async () => {
+    setBusy(true)
+    setError('')
+    try {
+      await invoke('agent.oauthDisconnect', adapterId)
+      setLogin(null)
+      setCode('')
+      refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [adapterId, refresh])
+
+  return (
+    <div className='flex flex-col gap-1'>
+      <Label className='text-xs'>Account</Label>
+      {connected ? (
+        <div className='flex items-center gap-2'>
+          <p className='flex-1 text-xs text-muted-foreground'>
+            Connected — credentials are stored and rotated by the harness.
+          </p>
+          <Button variant='outline' size='sm' onClick={disconnect} disabled={busy}>
+            Disconnect
+          </Button>
+        </div>
+      ) : login ? (
+        <div className='flex flex-col gap-1.5'>
+          <p className='text-[10px] text-muted-foreground'>
+            Open the sign-in page, approve access, then paste the authorization code below.
+          </p>
+          <a href={login.authUrl} target='_blank' rel='noreferrer' className='break-all text-xs underline'>
+            Open Google sign-in
+          </a>
+          <div className='flex items-center gap-2'>
+            <Input
+              value={code}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCode(e.target.value)}
+              placeholder='Authorization code'
+              className='h-8 text-xs'
+            />
+            <Button size='sm' onClick={submit} disabled={busy || !code.trim()}>
+              Submit
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className='flex items-center gap-2'>
+          <p className='flex-1 text-xs text-muted-foreground'>Not connected.</p>
+          <Button variant='outline' size='sm' onClick={start} disabled={busy || connected === null}>
+            {busy ? 'Starting…' : 'Connect'}
+          </Button>
+        </div>
+      )}
+      {error ? <p className='text-[10px] text-destructive'>{error}</p> : null}
+    </div>
+  )
+}
+
 function NativeProfileFields({ data, updateData }: { data: AgentData; updateData: (p: Partial<AgentData>) => void }) {
   return (
     <div className='flex flex-col gap-3'>
