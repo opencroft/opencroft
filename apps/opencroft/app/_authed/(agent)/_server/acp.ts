@@ -11,17 +11,13 @@ import {
   cancelLocalImpl,
   ensureLocalSessionImpl,
   findTargetSessionImpl,
+  forgetLocalSessionImpl,
   hasActiveTurnImpl,
   type OpenedSession,
   promptLocalImpl,
   tabSessions,
 } from '@/app/_authed/(agent)/_server/acp-impl'
-import {
-  deletePersistedConfigOptions,
-  deletePersistedSession,
-  writePersistedConfigOption,
-  writePersistedSession,
-} from '@/app/_authed/(agent)/_server/acp-session-store'
+import { writePersistedConfigOption, writePersistedSession } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 
 export const ensureLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
@@ -84,16 +80,7 @@ export const hasActiveTurn = createServerFn({ method: 'GET', strict: { output: f
 
 export const forgetLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((tabKey: string) => tabKey)
-  .handler(async ({ data: tabKey }): Promise<void> => {
-    const entry = tabSessions.get(tabKey)
-    if (entry) {
-      await agentClient.deleteSession(entry.id)
-      tabSessions.delete(tabKey)
-    }
-    // Drop the durable pointer too, so a later restart doesn't resurrect it.
-    await deletePersistedSession(tabKey)
-    await deletePersistedConfigOptions(tabKey)
-  })
+  .handler(async ({ data: tabKey }): Promise<void> => forgetLocalSessionImpl(tabKey))
 
 // Branch the tab's session into a new one rewound to a user turn (0-based;
 // drops that turn and everything after). Re-point the tab at the fork so a

@@ -1,4 +1,7 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
+import { useState } from 'react'
+import { Button } from 'ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
 import { GroupChatDetail } from 'ui/group-chat/group-chat-detail'
 import { GroupChatThreadList } from 'ui/group-chat/group-chat-thread-list'
@@ -6,8 +9,11 @@ import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
 
 import { GroupChatDetailActions } from '@/app/_authed/(group-chats)/_components/group-chat-detail-actions'
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
+import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
+import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
 import {
+  deleteGroupChatThread,
   getMyGroupChatView,
   listDirectoryUsersForPicker,
   listGroupChatThreadsView,
@@ -18,7 +24,7 @@ import { listAgentNodes } from '@/app/_authed/(space)/_server/agents'
 //
 // Both reads are membership-gated server-side and refuse identically for a
 // non-member and for a chat that does not exist, so a failure here lands on
-// `errorComponent` with copy that does not distinguish the two — see
+// `errorComponent` with copy that does not distinguish the two -- see
 // `_lib/group-chat-error.ts` for why that matters.
 export const Route = createFileRoute('/_authed/(group-chats)/group-chats_/$groupChatId')({
   loader: async ({ params }) =>
@@ -43,6 +49,33 @@ function GroupChatDetailPage() {
   const data = Route.useLoaderData()
   const { groupChatId } = Route.useParams()
   const navigate = useNavigate()
+  const router = useRouter()
+  // Delete confirm. The kit's ChatListItem calls onDelete immediately; the
+  // confirm lives here rather than in the kit because whether to confirm (and
+  // with what copy) is a product call, and the kit is agnostic to it.
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string>()
+
+  const goToThread = (threadId: string) =>
+    navigate({ to: '/group-chats/$groupChatId/$threadId', params: { groupChatId, threadId } })
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) {
+      return
+    }
+    setDeleteError(undefined)
+    setDeleting(true)
+    try {
+      await deleteGroupChatThread({ data: deleteTarget })
+      setDeleteTarget(null)
+      await router.invalidate()
+    } catch (e) {
+      setDeleteError(failureMessage(e, 'The thread could not be deleted.'))
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   if (data.refused) {
     return <GroupChatRefusal code={data.code} />
@@ -61,21 +94,17 @@ function GroupChatDetailPage() {
               members={chat.members}
               directory={directory}
               agents={agents}
-              onThreadStarted={(threadId) =>
-                navigate({ to: '/group-chats/$groupChatId/$threadId', params: { groupChatId, threadId } })
-              }
             />
           }
           threads={
             threads.length > 0 ? (
               <GroupChatThreadList
                 threads={threads}
-                onSelect={(threadId) =>
-                  navigate({
-                    to: '/group-chats/$groupChatId/$threadId',
-                    params: { groupChatId, threadId },
-                  })
-                }
+                onSelect={(threadId) => goToThread(threadId)}
+                onDelete={(threadId) => {
+                  setDeleteError(undefined)
+                  setDeleteTarget(threadId)
+                }}
               />
             ) : undefined
           }
@@ -89,8 +118,43 @@ function GroupChatDetailPage() {
               </EmptyHeader>
             </Empty>
           }
+          composer={
+            <GroupChatStartThreadComposer
+              groupChatId={groupChatId}
+              members={chat.members}
+              onThreadStarted={goToThread}
+            />
+          }
         />
       </ScrollContent>
+
+      <Dialog
+        open={deleteTarget !== null}
+        onOpenChange={(next) => {
+          if (!next) {
+            setDeleteTarget(null)
+            setDeleteError(undefined)
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete thread</DialogTitle>
+          </DialogHeader>
+          <p className='text-sm text-muted-foreground'>
+            The conversation, its session and the agent process underneath it will be removed. This cannot be undone.
+          </p>
+          {deleteError ? <p className='text-sm text-destructive'>{deleteError}</p> : null}
+          <div className='flex justify-end gap-2'>
+            <Button variant='outline' onClick={() => setDeleteTarget(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant='destructive' onClick={() => void confirmDelete()} disabled={deleting}>
+              {deleting ? 'Deleting…' : 'Delete'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </ScrollPage>
   )
 }
