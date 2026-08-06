@@ -152,7 +152,8 @@ export const commandBarControlClass = 'size-7 shrink-0'
 // against a width its own content produced. If a queued message runs off the
 // screen, the broken link is above this component.
 //
-// Enter sends, Shift+Enter inserts a newline, Escape clears.
+// Enter sends on a fine-pointer client (Shift+Enter inserts a newline; on touch
+// there is no Shift key, so the button sends); Escape clears.
 //
 // One structural rule matters more than it looks: **the wrapper column, the
 // composer and the action row are rendered unconditionally**, even with nothing
@@ -215,7 +216,14 @@ export function AgentCommandBar({
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
+    // On a touch device (phone soft keyboard) there's no accessible Shift key,
+    // so Enter inserts a newline like in any other textarea; only fine-pointer
+    // clients (mouse / physical keyboard) send on Enter. Read at event time --
+    // the handler only runs client-side on interaction, so there's nothing to hydrate.
+    const isCoarsePointer =
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(pointer: coarse)').matches
+    if (event.key === 'Enter' && !event.shiftKey && !isCoarsePointer) {
       event.preventDefault()
       send()
       return
