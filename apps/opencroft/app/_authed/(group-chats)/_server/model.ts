@@ -14,7 +14,7 @@ import { getSessionUser } from '@opencroft/auth/server'
 import { db, groupChat, groupChatMember, groupChatThread, user } from '@opencroft/db'
 import { and, eq } from 'drizzle-orm'
 
-import { ensureLocalSessionImpl, promptLocalImpl } from '@/app/_authed/(agent)/_server/acp-impl'
+import { ensureLocalSessionImpl, forgetLocalSessionImpl, promptLocalImpl } from '@/app/_authed/(agent)/_server/acp-impl'
 import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { GroupChatAccessError } from '@/app/_authed/(group-chats)/_shared/access-error'
 
@@ -440,4 +440,34 @@ export async function sendMessageInThread(
   // silently ignored it would behave differently from a 1:1 chat in exactly
   // the situation the user is trying to correct the agent.
   await promptLocalImpl({ sessionId: opened.sessionId, text, front: opts?.front })
+}
+
+/**
+ * Delete a thread: its durable row, and the session + process underneath it.
+ *
+ * Membership-gated like getThread -- found first, then the same single refusal
+ * for a missing thread and a non-member, so the two stay indistinguishable. The
+ * session teardown reuses forgetLocalSessionImpl, the same path the sidebar's
+ * chat delete takes, because a thread is an ordinary agent session keyed on its
+ * sessionKey. Nothing here is special to group chats beyond dropping the row.
+ */
+export async function deleteThread(request: Request, threadId: string): Promise<void> {
+  const sessionUser = await requireSignedInUser(request)
+  const [row] = await db
+    .select({
+      groupChatId: groupChatThread.groupChatId,
+      sessionKey: groupChatThread.sessionKey,
+    })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.id, threadId))
+    .limit(1)
+  if (!row) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  await db.delete(groupChatThread).where(eq(groupChatThread.id, threadId))
+  // Tear down the session + its process via the shared path the sidebar uses.
+  await forgetLocalSessionImpl(row.sessionKey)
 }

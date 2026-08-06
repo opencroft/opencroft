@@ -15,6 +15,7 @@ import type {
 import {
   addMember,
   createGroupChat,
+  deleteThread,
   getGroupChat,
   getThread,
   listGroupChatsForUser,
@@ -138,3 +139,7 @@ export const getGroupChatThreadView = createServerFn({ method: 'GET', strict: { 
     async ({ data: threadId }): Promise<GroupChatThreadEntry & { sessionKey: string }> =>
       getThreadView(getRequest(), threadId),
   )
+
+export const deleteGroupChatThread = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((threadId: string) => threadId)
+  .handler(async ({ data: threadId }): Promise<void> => deleteThread(getRequest(), threadId))

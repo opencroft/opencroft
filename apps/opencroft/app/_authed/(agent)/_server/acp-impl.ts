@@ -29,6 +29,8 @@ import { supportsMidTurnInput } from 'agent-client'
 import type { AgentSelection } from 'agent-client/types'
 
 import {
+  deletePersistedConfigOptions,
+  deletePersistedSession,
   readPersistedConfigOptions,
   readPersistedSession,
   writePersistedSession,
@@ -315,4 +317,20 @@ export async function cancelLocalImpl(sessionId: string): Promise<void> {
 
 export function hasActiveTurnImpl(sessionId: string): boolean {
   return agentClient.hasActiveTurn(sessionId)
+}
+
+// Drop a tab's session entirely: the live ACP session (and the agent process it
+// owns), the in-memory tab->session pointer, and the durable pointer + config
+// overrides a restart would otherwise resume from. Shared by the sidebar's chat
+// delete (acp.ts) and a group-chat thread delete -- a thread is an ordinary
+// session, so it goes away the same way.
+export async function forgetLocalSessionImpl(tabKey: string): Promise<void> {
+  const entry = tabSessions.get(tabKey)
+  if (entry) {
+    await agentClient.deleteSession(entry.id)
+    tabSessions.delete(tabKey)
+  }
+  // Drop the durable pointer too, so a later restart doesn't resurrect it.
+  await deletePersistedSession(tabKey)
+  await deletePersistedConfigOptions(tabKey)
 }

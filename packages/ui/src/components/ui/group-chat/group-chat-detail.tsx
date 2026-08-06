@@ -13,9 +13,16 @@ export interface GroupChatDetailProps {
    * chat with no threads yet is an empty state, not a blank. */
   threads?: ReactNode
   emptyState?: ReactNode
-  /** Header affordances -- adding a member, starting a thread. Any member may
-   * add another, so these are ordinary member controls, not admin ones. */
+  /** Header affordances -- adding a member. Any member may add another, so
+   * these are ordinary member controls, not admin ones. Starting a thread is
+   * the composer below, not a header button: a thread begins with a first
+   * message, and a form opened in a dialog would put that message somewhere
+   * other than where the thread is about to land. */
   actions?: ReactNode
+  /** Pinned beneath the threads -- the new-thread composer. It stays put while
+   * the thread list scrolls above it, the way a chat composer stays put while
+   * the conversation scrolls. */
+  composer?: ReactNode
   className?: string
 }
 
@@ -31,6 +38,7 @@ export function GroupChatDetail({
   threads,
   emptyState,
   actions,
+  composer,
   className,
 }: GroupChatDetailProps) {
   return (
@@ -81,6 +89,9 @@ export function GroupChatDetail({
             <p className='px-3 py-10 text-center text-sm text-muted-foreground'>No threads yet.</p>
           )}
       </div>
+      {composer ? (
+        <div className='shrink-0 border-t border-border px-3 py-2'>{composer}</div>
+      ) : null}
     </div>
   )
 }

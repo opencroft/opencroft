@@ -20,6 +20,9 @@ export interface GroupChatThreadListProps {
   threads: GroupChatThreadListItem[]
   activeId?: string
   onSelect?: (id: string) => void
+  /** Per-row delete. Forwards to ChatListItem's context-menu Delete; the host
+     decides whether to confirm before acting (the kit does not). */
+  onDelete?: (id: string) => void
   className?: string
 }
 
@@ -31,7 +34,7 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 
 // that data does not exist in phase 1. `createdAt` is shown labelled "created"
 // so it can never read as activity (GroupChat.updatedAt is not bumped by thread
 // activity, so a bare timestamp would be quietly misleading).
-export function GroupChatThreadList({ threads, activeId, onSelect, className }: GroupChatThreadListProps) {
+export function GroupChatThreadList({ threads, activeId, onSelect, onDelete, className }: GroupChatThreadListProps) {
   return (
     <div className={cn('flex w-full min-w-0 flex-col gap-0.5', className)}>
       {threads.map((t) => (
@@ -43,6 +46,7 @@ export function GroupChatThreadList({ threads, activeId, onSelect, className }: 
           avatarUrl={t.agent.avatarUrl}
           active={t.id === activeId}
           onSelect={onSelect}
+          onDelete={onDelete}
         />
       ))}
     </div>
