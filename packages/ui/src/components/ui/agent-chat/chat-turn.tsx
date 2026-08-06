@@ -7,9 +7,8 @@ import ReactMarkdown from 'react-markdown'
 import type { Components, ExtraProps } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
-import { Button } from '@/components/ui/button'
-import { Flex } from '@/components/ui/layout/flex'
 import { AgentAvatar } from '@/components/ui/media/agent-avatar'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 // The attribute the host's scroll restore uses to find a block again and
@@ -66,7 +65,7 @@ export interface ChatTurnRenderers {
     marker: ReactNode
     lineAbove: boolean
     lineBelow: boolean
-    align?: 'center' | 'start'
+    align?: 'first-line' | 'start'
     children: ReactNode
   }>
   // The small status dot used as a rail marker.
@@ -115,11 +114,11 @@ function Markdown({ text }: { text: string }) {
 // top of an empty scroll area.
 export function ChatLoadOlderButton({ loading, onLoadOlder }: { loading: boolean; onLoadOlder: () => void }) {
   return (
-    <Flex row justify='center' className='w-full py-1'>
+    <div className='flex justify-center w-full py-1'>
       <Button variant='ghost' size='sm' disabled={loading} onClick={onLoadOlder}>
         {loading ? 'loading…' : 'load older messages'}
       </Button>
-    </Flex>
+    </div>
   )
 }
 
@@ -202,8 +201,8 @@ export function ChatUserMessage({ blockId, text, editDisabled, onEdit, sticky, r
       )}
 
       <Chained marker={<AgentAvatar size='md' />} lineAbove={false} lineBelow={false} align='start'>
-        <Flex row align='start' className='group w-full gap-1'>
-          <Flex expanded className='relative gap-1.5 rounded-md bg-muted border-1 p-2'>
+        <div className='flex items-start group w-full gap-1'>
+          <div className='flex flex-col flex-1 relative gap-1.5 rounded-md bg-muted border-1 p-2'>
             {sticky && (
               // The stuck message's shadow -- the command bar's, on the same
               // opaque rounded box the composer's card uses, so it floats on
@@ -249,7 +248,7 @@ export function ChatUserMessage({ blockId, text, editDisabled, onEdit, sticky, r
             <div className='prose-chat [@container_scroll-state(stuck:top)]:line-clamp-3'>
               <Markdown text={text} />
             </div>
-          </Flex>
+          </div>
           {onEdit && (
             <Button
               type='button'
@@ -263,7 +262,7 @@ export function ChatUserMessage({ blockId, text, editDisabled, onEdit, sticky, r
               <Pencil className='size-3.5' />
             </Button>
           )}
-        </Flex>
+        </div>
       </Chained>
     </div>
   )
@@ -298,17 +297,17 @@ export function ChatAssistantText({
   toggle?: ReactNode
 }) {
   return (
-    <Flex className='min-w-0 w-full gap-1'>
-      <Flex row className='items-center justify-between w-full'>
+    <div className='flex flex-col min-w-0 w-full gap-1'>
+      <div className='flex items-center justify-between w-full'>
         {botName ? <div className='text-xs font-medium text-foreground'>{botName}</div> : null}
         {toggle}
-      </Flex>
+      </div>
       {text ? (
         <div className='prose-chat'>
           <Markdown text={text} />
         </div>
       ) : null}
-    </Flex>
+    </div>
   )
 }
 
@@ -415,13 +414,13 @@ export function ChatTurnDetails({
     const marker = hasAvatar ? <AgentAvatar avatar={agentAvatar} name={botName} size='md' /> : <ChainDot />
 
     return (
-      <Flex className='min-w-0 w-full' {...{ [BLOCK_ID_ATTR]: blockId }}>
-        <Chained marker={marker} lineAbove={false} lineBelow={false} align={hasAvatar ? 'start' : 'center'}>
-          <Flex className='min-w-0 w-full gap-1'>
-            <Flex row className='items-center justify-between w-full'>
+      <div className='flex flex-col min-w-0 w-full' {...{ [BLOCK_ID_ATTR]: blockId }}>
+        <Chained marker={marker} lineAbove={false} lineBelow={false} align={hasAvatar ? 'start' : 'first-line'}>
+          <div className='flex flex-col min-w-0 w-full gap-1'>
+            <div className='flex items-center justify-between w-full'>
               <div className='text-xs font-medium text-foreground'>{botName}</div>
               {toggle}
-            </Flex>
+            </div>
             {/* Text — no animation, stable */}
             {lastTextEntry &&
               lastTextEntry.kind === 'item' &&
@@ -453,14 +452,14 @@ export function ChatTurnDetails({
                 }
                 return null
               })()}
-          </Flex>
+          </div>
         </Chained>
-      </Flex>
+      </div>
     )
   }
 
   return (
-    <Flex className='min-w-0 w-full relative' {...{ [BLOCK_ID_ATTR]: blockId }}>
+    <div className='flex flex-col min-w-0 w-full relative' {...{ [BLOCK_ID_ATTR]: blockId }}>
       {entries.map((entry, i) => {
         const isFirst = i === 0
         const isLast = i === entries.length - 1
@@ -476,12 +475,12 @@ export function ChatTurnDetails({
             marker={marker}
             lineAbove={!isFirst}
             lineBelow={!isLast}
-            align={hasAvatar ? 'start' : 'center'}
+            align={hasAvatar ? 'start' : 'first-line'}
           >
             {renderEntry(entry, isFirst ? botName : undefined, isFirst ? toggle : undefined, isLast && pending)}
           </Chained>
         )
       })}
-    </Flex>
+    </div>
   )
 }
