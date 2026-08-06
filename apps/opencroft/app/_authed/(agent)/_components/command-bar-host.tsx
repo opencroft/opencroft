@@ -4,7 +4,8 @@ import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { ConfigOptionsBar } from 'agent-chat/config-options-bar'
 import type { QueuedPrompt } from 'agent-client/types'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { AgentCommandBar } from 'ui/agent-chat/agent-command-bar'
+import { AgentCommandBar, type CommandBarConfig } from 'ui/agent-chat/agent-command-bar'
+import { ContextRing } from 'ui/agent-chat/context-ring'
 
 import { AgentChatInputControls, type AgentSession } from '@/app/_authed/(agent)/_components/agent-chat'
 import { userText } from '@/app/_authed/(agent)/_lib/build-blocks'
@@ -263,21 +264,45 @@ export function AgentCommandBarHost({
   // is being held.
   const queuedItems = useMemo(() => queued?.map((m) => ({ id: m.id, text: userText(m.text) ?? '' })), [queued])
 
-  const configBar = useMemo(
+  // String choices (model / effort / mode) collapse into the command bar's
+  // settings dropdown via configs. The context-usage ring and any boolean
+  // toggles ride along in the action row via configExtra.
+  const onSetConfigOptionRef = useRef(onSetConfigOption)
+  onSetConfigOptionRef.current = onSetConfigOption
+  const handleConfigChange = useCallback((id: string, value: string) => {
+    onSetConfigOptionRef.current?.(id, value)
+  }, [])
+
+  const configs = useMemo<CommandBarConfig[]>(
     () =>
-      configOptions && onSetConfigOption ? (
-        // ConfigOptionsBar itself renders nothing when there's no config option
-        // and no usage to show — this only decides whether the props to check
-        // for that are even wired up.
-        <ConfigOptionsBar
-          options={configOptions}
-          onSetOption={onSetConfigOption}
-          usage={usage}
-          className='flex-wrap gap-2 px-1 pb-0.5 text-xs text-muted-foreground'
-        />
-      ) : null,
-    [configOptions, onSetConfigOption, usage],
+      (configOptions ?? [])
+        .filter((option) => option.type !== 'boolean')
+        .map((option) => ({
+          id: option.id,
+          label: option.name,
+          value: String(option.currentValue ?? ''),
+          options: flattenOptions(option.options),
+        })),
+    [configOptions],
   )
+
+  const configExtra = useMemo(() => {
+    const booleanOptions = (configOptions ?? []).filter((option) => option.type === 'boolean')
+    if (!usage && booleanOptions.length === 0) {
+      return null
+    }
+    return (
+      <>
+        {usage ? <ContextRing used={usage.used} size={usage.size ?? 0} /> : null}
+        {booleanOptions.length > 0 ? (
+          <ConfigOptionsBar
+            options={booleanOptions}
+            onSetOption={(id, value) => onSetConfigOptionRef.current?.(id, value)}
+          />
+        ) : null}
+      </>
+    )
+  }, [configOptions, usage])
 
   // Memoized for element identity, not for render cost: recreating this node
   // would give the textarea a new identity, React would remount it, and focus
@@ -311,7 +336,9 @@ export function AgentCommandBarHost({
         leading={leadingBarContent}
         onStartIconClick={onStartIconClick}
         controls={voiceControls}
-        configBar={configBar}
+        configs={configs}
+        onConfigChange={handleConfigChange}
+        configExtra={configExtra}
         queued={queuedItems}
         onRemoveQueued={onRemoveQueued}
         autoApprove={autoApprove}
@@ -337,18 +364,42 @@ export function AgentCommandBarHost({
       leadingBarContent,
       onStartIconClick,
       voiceControls,
-      configBar,
+      configs,
+      configExtra,
       queuedItems,
       onRemoveQueued,
       autoApprove,
       toggleAutoApprove,
       yoloMode,
+      handleConfigChange,
     ],
   )
 
   useOverlay({ menu: focusMenu ?? null, bar: barNode })
 
   return null
+}
+
+// A config option's values can be a flat list or grouped under labeled
+// sections — flatten to the { value, label } pairs the command bar's settings
+// dropdown takes.
+function flattenOptions(options: unknown): Array<{ value: string; label: string }> {
+  const flat: Array<{ value: string; label: string }> = []
+  if (!Array.isArray(options)) {
+    return flat
+  }
+  for (const entry of options as Array<Record<string, unknown>>) {
+    if (Array.isArray(entry.options)) {
+      for (const option of entry.options as Array<{ name?: string; value?: string }>) {
+        if (typeof option.value === 'string') {
+          flat.push({ value: option.value, label: option.name ?? option.value })
+        }
+      }
+    } else if (typeof entry.value === 'string' && typeof entry.name === 'string') {
+      flat.push({ value: entry.value, label: entry.name })
+    }
+  }
+  return flat
 }
 
 // A session key is long and mostly noise; the tail identifies it well enough
