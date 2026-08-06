@@ -1,10 +1,10 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
-import { AgentCommandBar } from 'ui/agent-chat/agent-command-bar'
+import { useMemo } from 'react'
 import { GroupChatThreadFraming } from 'ui/group-chat/group-chat-thread-framing'
 import { ScrollPage } from 'ui/layout/scrollpage'
 
 import { AgentChat } from '@/app/_authed/(agent)/_components/agent-chat'
+import { AgentCommandBarHost } from '@/app/_authed/(agent)/_components/command-bar-host'
 import type { LocalSource, SendTransport } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
@@ -97,32 +97,27 @@ function ThreadConversation({
     [thread.id],
   )
   const acp = useAcpSession(source, undefined, thread.agent.name, undefined, sendTransport)
-  const [draft, setDraft] = useState('')
 
-  // The composer is the KIT's controlled command bar, not the app's
-  // AgentCommandBarHost: that host publishes itself into the dashboard's
-  // overlay via useOverlay, which is right where it lives and wrong on a
-  // standalone route — the same reason the conversation above uses AgentChat
-  // rather than ChatHost.
+  // The composer reuses AgentCommandBarHost (the same component the 1:1 chat
+  // uses) with `inline` -- it renders the bar here instead of publishing to the
+  // dashboard overlay, which a standalone route has no provider for. startIcon
+  // is false: a thread is with one fixed agent, so there is no session picker.
   //
-  // Its send is `acp.session.send`, so it inherits the transport this route
+  // The host sends through `acp.session.send`, which inherits the transport
   // passed to useAcpSession: every message goes through
   // sendGroupChatThreadMessage and is membership-checked, while keeping the
   // hook's ordering, held-message and waiting behaviour.
   const composer = (
-    <AgentCommandBar
-      value={draft}
-      onValueChange={setDraft}
-      onSend={(text) => {
-        acp.session.send(text)
-        setDraft('')
-      }}
-      sending={acp.session.sending}
-      busy={acp.session.waiting}
-      onStop={acp.session.stop}
-      disabled={acp.session.disabled}
+    <AgentCommandBarHost
+      inline
+      startIcon={false}
+      session={acp.session}
+      agentNodeId={thread.agent.nodeId}
       queued={acp.queue}
       onRemoveQueued={acp.removeQueued}
+      configOptions={acp.configOptions}
+      onSetConfigOption={acp.setConfigOption}
+      usage={acp.usage}
       placeholder={`Message ${thread.agent.name}`}
     />
   )

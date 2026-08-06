@@ -89,6 +89,10 @@ export interface AgentCommandBarProps {
   leading?: ReactNode
   // Turns the start icon into a button. Left unset it stays a plain mark.
   onStartIconClick?: () => void
+  // Show the sparkles start icon at all. Default true; false hides it for a view
+  // where the agent is fixed (a group-chat thread) and there is no session
+  // picker to open.
+  startIcon?: boolean
   // Host slot: rendered in the action row after the settings button -- where
   // input controls the host provides (dictation, attachments) belong.
   controls?: ReactNode
@@ -171,6 +175,7 @@ export function AgentCommandBar({
   disabled = false,
   leading,
   onStartIconClick,
+  startIcon,
   controls,
   configs,
   onConfigChange,
@@ -264,7 +269,7 @@ export function AgentCommandBar({
         <div className='flex min-w-0 flex-1 items-center gap-1 overflow-hidden'>
           {leading}
 
-          {onStartIconClick ? (
+          {startIcon === false ? null : onStartIconClick ? (
             <Button
               type='button'
               size='icon'
