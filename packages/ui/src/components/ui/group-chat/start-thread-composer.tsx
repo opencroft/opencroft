@@ -51,7 +51,8 @@ export interface StartThreadComposerProps {
 //
 // The agent is chosen from a dropdown of member agents (avatar + name, the
 // chosen one checked), the textarea grows with what is typed, and Enter starts
-// the thread while Shift+Enter moves to a new line.
+// the thread on a fine-pointer client (Shift+Enter, or any Enter on touch,
+// moves to a new line).
 export function StartThreadComposer({
   agents,
   selectedAgentNodeId,
@@ -133,7 +134,12 @@ export function StartThreadComposer({
           disabled={inert}
           onChange={(event) => onValueChange(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
+            // No Shift key on a phone soft keyboard, so Enter inserts a newline
+            // there (send with the button); only fine-pointer clients send on Enter.
+            const isCoarsePointer =
+              typeof window !== 'undefined' &&
+              window.matchMedia?.('(pointer: coarse)').matches
+            if (event.key === 'Enter' && !event.shiftKey && !isCoarsePointer) {
               event.preventDefault()
               onSubmit()
             }
