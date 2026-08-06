@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 import { AgentCommandBar } from 'ui/agent-chat/agent-command-bar'
 import { GroupChatThreadFraming } from 'ui/group-chat/group-chat-thread-framing'
-import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
+import { ScrollPage } from 'ui/layout/scrollpage'
 
 import { AgentChat } from '@/app/_authed/(agent)/_components/agent-chat'
 import type { LocalSource, SendTransport } from '@/app/_authed/(agent)/_components/use-acp-session'
@@ -129,22 +129,20 @@ function ThreadConversation({
 
   return (
     <ScrollPage>
-      <ScrollContent>
-        <GroupChatThreadFraming
-          groupChatTopic={chat.topic}
-          threadTitle={thread.title}
-          members={chat.members}
-          onBack={onBack}
-          composer={composer}
-        >
-          <AgentChat
-            session={acp.session}
-            agentAvatar={thread.agent.avatarUrl ?? undefined}
-            agentName={thread.agent.name}
-            defaultExpanded
-          />
-        </GroupChatThreadFraming>
-      </ScrollContent>
+      <GroupChatThreadFraming
+        groupChatTopic={chat.topic}
+        threadTitle={thread.title}
+        members={chat.members}
+        onBack={onBack}
+        composer={composer}
+      >
+        <AgentChat
+          session={acp.session}
+          agentAvatar={thread.agent.avatarUrl ?? undefined}
+          agentName={thread.agent.name}
+          defaultExpanded
+        />
+      </GroupChatThreadFraming>
     </ScrollPage>
   )
 }
