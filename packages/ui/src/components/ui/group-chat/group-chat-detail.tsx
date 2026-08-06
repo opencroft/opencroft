@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 
 import { MemberAvatarGroup, type MemberRef } from '@/components/ui/group-chat/member-avatar-group'
 import { cn } from '@/lib/utils'
+import { NodeCard } from '@/components/ui/nodes/node-card'
 
 export interface GroupChatDetailProps {
   topic: string
@@ -90,7 +91,9 @@ export function GroupChatDetail({
           )}
       </div>
       {composer ? (
-        <div className='shrink-0 border-t border-border px-3 py-2'>{composer}</div>
+        <NodeCard accent='var(--primary)' selected className='shrink-0'>
+          <div className='px-3 py-2'>{composer}</div>
+        </NodeCard>
       ) : null}
     </div>
   )

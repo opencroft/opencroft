@@ -10,7 +10,7 @@ import { ContextRing } from 'ui/agent-chat/context-ring'
 import { AgentChatInputControls, type AgentSession } from '@/app/_authed/(agent)/_components/agent-chat'
 import { userText } from '@/app/_authed/(agent)/_lib/build-blocks'
 import { getAutoApprove, setAutoApprove } from '@/app/_authed/(approvals)/_server/actions'
-import { useOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
+import { useOptionalOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 
 interface AgentCommandBarHostProps {
   session: AgentSession
@@ -49,6 +49,13 @@ interface AgentCommandBarHostProps {
    * with the session key so a flush during a session switch always targets the
    * session the text actually belongs to. */
   onDraftChange?: (key: string, text: string) => void
+  /** Render the bar inline (return it) instead of publishing to the canvas
+   *  overlay. For a standalone route with no OverlayProvider (a group-chat
+   *  thread). Default false (publish to overlay). */
+  inline?: boolean
+  /** Show the sparkles start icon. Default true; false hides it where the agent
+   *  is fixed (a group-chat thread) and there is no session picker. */
+  startIcon?: boolean
 }
 
 // Debounce composer draft saves so normal typing doesn't POST every keystroke.
@@ -87,6 +94,8 @@ export function AgentCommandBarHost({
   usage,
   savedDraft,
   onDraftChange,
+  inline = false,
+  startIcon = true,
 }: AgentCommandBarHostProps) {
   // Lazy init so a session opened with an existing draft paints with it already
   // in place — no separate fetch-then-fill flicker.
@@ -335,6 +344,7 @@ export function AgentCommandBarHost({
         disabled={session.disabled}
         leading={leadingBarContent}
         onStartIconClick={onStartIconClick}
+        startIcon={startIcon}
         controls={voiceControls}
         configs={configs}
         onConfigChange={handleConfigChange}
@@ -363,6 +373,7 @@ export function AgentCommandBarHost({
       session.disabled,
       leadingBarContent,
       onStartIconClick,
+      startIcon,
       voiceControls,
       configs,
       configExtra,
@@ -375,9 +386,9 @@ export function AgentCommandBarHost({
     ],
   )
 
-  useOverlay({ menu: focusMenu ?? null, bar: barNode })
+  useOptionalOverlay({ menu: focusMenu ?? null, bar: barNode })
 
-  return null
+  return inline ? barNode : null
 }
 
 // A config option's values can be a flat list or grouped under labeled
