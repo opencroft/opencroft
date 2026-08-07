@@ -7,6 +7,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 
 import type {
+  GroupChatPinSummary,
   GroupChatSummary,
   GroupChatThreadSummary,
   MemberPrincipal,
@@ -14,14 +15,18 @@ import type {
 } from '@/app/_authed/(group-chats)/_server/model'
 import {
   addMember,
+  addPin,
   createGroupChat,
   deleteThread,
+  editPin,
   getGroupChat,
   getThread,
   listGroupChatsForUser,
   listMembers,
+  listPins,
   listThreadsInGroupChat,
   removeMember,
+  removePin,
   renameGroupChat,
   sendMessageInThread,
   setGroupChatTopic,
@@ -54,6 +59,7 @@ export type {
   DirectoryUser,
   GroupChatDetailView,
   GroupChatListEntry,
+  GroupChatPinSummary,
   GroupChatSummary,
   GroupChatThreadEntry,
   GroupChatThreadSummary,
@@ -181,6 +187,36 @@ export const sendGroupChatThreadMessage = createServerFn({ method: 'POST', stric
   .handler(
     async ({ data }): Promise<SendThreadMessageResult> =>
       asWriteResult(() => sendMessageInThread(getRequest(), data.threadId, data.text, { front: data.front })),
+  )
+
+// ── Pinned notes ─────────────────────────────────────────────────────────
+
+export const listMyGroupChatPins = createServerFn({ method: 'GET', strict: { output: false } })
+  .inputValidator((groupChatId: string) => groupChatId)
+  .handler(async ({ data: groupChatId }): Promise<GroupChatPinSummary[]> => listPins(getRequest(), groupChatId))
+
+// Returns the write result rather than the new pin: the caller reloads the
+// list anyway, and the cap refusal is the outcome it actually has to branch on.
+export const addGroupChatPin = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { groupChatId: string; text: string }) => data)
+  .handler(
+    async ({ data }): Promise<GroupChatWriteResult> =>
+      asWriteResult(async () => {
+        await addPin(getRequest(), data.groupChatId, data.text)
+      }),
+  )
+
+export const editGroupChatPin = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { pinId: string; text: string }) => data)
+  .handler(
+    async ({ data }): Promise<GroupChatWriteResult> =>
+      asWriteResult(() => editPin(getRequest(), data.pinId, data.text)),
+  )
+
+export const removeGroupChatPin = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((pinId: string) => pinId)
+  .handler(
+    async ({ data: pinId }): Promise<GroupChatWriteResult> => asWriteResult(() => removePin(getRequest(), pinId)),
   )
 
 // ── The reading surface's view model (phase 2) ───────────────────────────

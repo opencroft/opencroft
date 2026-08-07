@@ -273,6 +273,36 @@ export const groupChatMember = pgTable(
   ],
 )
 
+// A pinned note on a group chat: standing guidance every thread's agent is
+// told, kept apart from the topic because a topic is one statement of purpose
+// and these are a list that changes.
+//
+// `position` orders them and is assigned at insert (max + 1). It is an integer
+// rather than a fractional rank because nothing reorders pins today; when
+// something does, that is the moment to decide between renumbering and a rank
+// scheme, and guessing now would bake in whichever guess was wrong.
+//
+// No cap in the schema. The limit exists to keep what is injected into an
+// agent's context bounded, which is a rule about delivery, and it is enforced
+// where the refusal can be explained to the person adding one.
+export const groupChatPin = pgTable(
+  'GroupChatPin',
+  {
+    id: text().primaryKey().notNull().$defaultFn(uuid),
+    groupChatId: text()
+      .notNull()
+      .references(() => groupChat.id, { onDelete: 'cascade' }),
+    text: text().notNull(),
+    position: integer().notNull(),
+    // Provenance, not ownership — same reasoning as GroupChat.createdByUserId.
+    // Any member may edit or unpin any pin, so who wrote it decides nothing.
+    createdByUserId: text().references(() => user.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('GroupChatPin_groupChatId_idx').on(t.groupChatId)],
+)
+
 // A thread: one agent, fixed at creation, bound to the same kind of ACP
 // session a 1:1 agent chat uses. `sessionKey` is that session's tabKey —
 // globally unique the same way the existing chat registry's session keys
@@ -294,6 +324,21 @@ export const groupChatThread = pgTable(
     agentNodeId: text().notNull(),
     sessionKey: text().notNull(),
     title: text(),
+    // A signature of the STANDING CONTEXT this thread's agent was last told --
+    // the chat's topic and its pins together, because they are one block from
+    // the agent's point of view and either changing is a change worth
+    // re-delivering. See the model module for how it is computed.
+    //
+    // NULL means "nothing has been delivered into this thread yet", which is
+    // deliberately distinct from the signature of an empty pin set: a thread
+    // that has never carried context and one whose pins were all removed are
+    // different states, and only the second has something to say.
+    //
+    // This lives on the thread rather than in a join table because the
+    // question it answers is per-thread and single-valued -- "is what this
+    // agent holds still current?" -- and a table would store one row per
+    // thread to answer it.
+    deliveredContextSignature: text(),
     // Provenance, not ownership — same reasoning as GroupChat.createdByUserId
     // above. Deleting the user who started a thread must not delete the
     // binding row while the ACP session it points at keeps existing.
@@ -316,6 +361,7 @@ export const schema = {
   mcpCaller,
   groupChat,
   groupChatMember,
+  groupChatPin,
   groupChatThread,
   ...authSchema,
 }
@@ -327,6 +373,7 @@ export type McpAuditLog = typeof mcpAuditLog.$inferSelect
 export type ApiToken = typeof apiToken.$inferSelect
 export type McpCaller = typeof mcpCaller.$inferSelect
 export type GroupChat = typeof groupChat.$inferSelect
+export type GroupChatPin = typeof groupChatPin.$inferSelect
 export type GroupChatMember = typeof groupChatMember.$inferSelect
 export type GroupChatThread = typeof groupChatThread.$inferSelect
 

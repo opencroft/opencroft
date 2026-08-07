@@ -11,8 +11,8 @@
 // bug, not a style choice.
 
 import { getSessionUser } from '@opencroft/auth/server'
-import { db, groupChat, groupChatMember, groupChatThread, user } from '@opencroft/db'
-import { and, eq } from 'drizzle-orm'
+import { db, groupChat, groupChatMember, groupChatPin, groupChatThread, user } from '@opencroft/db'
+import { and, asc, eq } from 'drizzle-orm'
 
 import {
   ensureLocalSessionImpl,
@@ -470,6 +470,235 @@ export async function listMembers(
     .where(eq(groupChatMember.groupChatId, groupChatId))
 }
 
+// ── Pinned notes ────────────────────────────────────────────────────────
+
+/**
+ * How many pins one chat may hold.
+ *
+ * The reason is delivery, not storage: every pin is injected into what an
+ * agent is told, so an unbounded list is an unbounded prompt. Ten is small
+ * enough that the whole set stays readable in one block and large enough that
+ * nobody hits it while using the feature as intended.
+ */
+export const MAX_PINS_PER_GROUP_CHAT = 10
+
+export interface GroupChatPinSummary {
+  id: string
+  groupChatId: string
+  text: string
+  position: number
+  createdAt: Date
+  updatedAt: Date
+}
+
+const pinColumns = {
+  id: groupChatPin.id,
+  groupChatId: groupChatPin.groupChatId,
+  text: groupChatPin.text,
+  position: groupChatPin.position,
+  createdAt: groupChatPin.createdAt,
+  updatedAt: groupChatPin.updatedAt,
+}
+
+/** A chat's pins in their pinned order. Membership-gated. */
+export async function listPins(request: Request, groupChatId: string): Promise<GroupChatPinSummary[]> {
+  await requireGroupChatMember(request, groupChatId)
+  return db
+    .select(pinColumns)
+    .from(groupChatPin)
+    .where(eq(groupChatPin.groupChatId, groupChatId))
+    .orderBy(asc(groupChatPin.position))
+}
+
+/**
+ * Pin a note. Any member may, mirroring membership and every other write here.
+ *
+ * The cap is a REFUSAL, not a fault: the person hit a limit that exists for a
+ * reason and can act on it by unpinning something, so it crosses the wire with
+ * a code the screen can turn into that sentence.
+ */
+export async function addPin(request: Request, groupChatId: string, text: string): Promise<GroupChatPinSummary> {
+  const { userId } = await requireGroupChatMember(request, groupChatId)
+  const trimmed = text.trim()
+  if (!trimmed) {
+    throw new Error('A pin needs some text')
+  }
+  const existing = await db
+    .select({ position: groupChatPin.position })
+    .from(groupChatPin)
+    .where(eq(groupChatPin.groupChatId, groupChatId))
+  if (existing.length >= MAX_PINS_PER_GROUP_CHAT) {
+    throw new GroupChatAccessError(
+      'pin-limit',
+      `A group chat can hold ${MAX_PINS_PER_GROUP_CHAT} pins. Unpin one to add another`,
+    )
+  }
+  // max + 1 rather than count + 1: a removed pin leaves a gap, and reusing a
+  // number that a surviving pin already holds would make the order ambiguous.
+  const next = existing.reduce((highest, row) => Math.max(highest, row.position), -1) + 1
+  const [pin] = await db
+    .insert(groupChatPin)
+    .values({ groupChatId, text: trimmed, position: next, createdByUserId: userId })
+    .returning(pinColumns)
+  if (!pin) {
+    throw new Error('The pin could not be created')
+  }
+  return pin
+}
+
+/**
+ * A pin's own row plus the gate for the chat it belongs to.
+ *
+ * Found first, then membership-checked, then the SAME single refusal for both
+ * misses — identical to `getThread`, and for the same reason: a pin id must not
+ * be a way to learn which pins exist.
+ */
+async function requirePin(request: Request, pinId: string): Promise<{ groupChatId: string }> {
+  const sessionUser = await requireSignedInUser(request)
+  const [row] = await db
+    .select({ groupChatId: groupChatPin.groupChatId })
+    .from(groupChatPin)
+    .where(eq(groupChatPin.id, pinId))
+    .limit(1)
+  if (!row) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  return row
+}
+
+/** Edit a pin's text. Any member may edit any pin — who wrote it decides nothing. */
+export async function editPin(request: Request, pinId: string, text: string): Promise<void> {
+  await requirePin(request, pinId)
+  const trimmed = text.trim()
+  if (!trimmed) {
+    throw new Error('A pin needs some text')
+  }
+  await db.update(groupChatPin).set({ text: trimmed }).where(eq(groupChatPin.id, pinId))
+}
+
+/** Unpin a note. The gap it leaves in `position` is intentional — see `addPin`. */
+export async function removePin(request: Request, pinId: string): Promise<void> {
+  await requirePin(request, pinId)
+  await db.delete(groupChatPin).where(eq(groupChatPin.id, pinId))
+}
+
+/**
+ * The pin texts an agent should currently be told, in order. UNGATED, and
+ * private: every caller is a delivery path that has already proved the caller
+ * may reach the thread it is delivering into.
+ */
+async function pinTextsFor(groupChatId: string): Promise<string[]> {
+  const rows = await db
+    .select({ text: groupChatPin.text })
+    .from(groupChatPin)
+    .where(eq(groupChatPin.groupChatId, groupChatId))
+    .orderBy(asc(groupChatPin.position))
+  return rows.map((r) => r.text)
+}
+
+/**
+ * STANDING CONTEXT: everything a thread's agent should be holding about the
+ * group chat it is in — the topic it exists for, and the notes pinned to it.
+ *
+ * One assembler, three delivery points, and that is the point of it being one
+ * function rather than three call sites that each remember to include pins:
+ *
+ *   1. session-init, when a thread opens;
+ *   2. the restore after a compaction, which drops the messages that carried
+ *      it — so re-delivering CURRENT context is what makes pins survive
+ *      compaction by construction rather than by anyone remembering;
+ *   3. the next send after it changes, once.
+ *
+ * Assembled from current state every time it is asked for. Nothing caches it,
+ * because a cached standing context is exactly the bug this replaced: a thing
+ * delivered once and silently stale ever after.
+ */
+export interface StandingContext {
+  /** The task context line, in the envelope's `jobContext` slot. */
+  jobContext: string
+  /** Marked guidance blocks, in the envelope's `instructions` slot. */
+  instructions: string[]
+  /**
+   * A fingerprint of the two above, so a thread can record what it was told
+   * and a later change can be recognised as one.
+   */
+  signature: string
+}
+
+/**
+ * ORDER- AND CONTENT-SENSITIVE, both deliberately: reordering pins changes
+ * what the block reads like, and an edit changes it outright, so both count as
+ * a change worth re-delivering. Length-prefixed so two different lists cannot
+ * collide by concatenating to the same string ('ab' + 'c' versus 'a' + 'bc').
+ *
+ * The empty pin set still produces a signature rather than an empty string, so
+ * "nothing pinned" is a state that can be recorded as delivered and told apart
+ * from the NULL that means nothing has ever been delivered.
+ */
+export function standingSignature(topic: string, pinTexts: string[]): string {
+  const parts = [topic, ...pinTexts]
+  return `v1:${parts.length}:${parts.map((t) => `${t.length}:${t}`).join('|')}`
+}
+
+/**
+ * The block a thread's agent reads pins as: one clearly-marked reminder, not a
+ * message from a person. Empty when there is nothing pinned, so a caller can
+ * drop it without deciding what emptiness means.
+ */
+export function composePinReminder(texts: string[]): string {
+  if (texts.length === 0) {
+    return ''
+  }
+  const lines = texts.map((t) => `- ${t}`).join('\n')
+  return `Pinned notes for this group chat — standing guidance, not a new request:\n${lines}`
+}
+
+/** Assemble one group chat's standing context from its current row and pins. */
+async function standingContextForChat(groupChatId: string): Promise<StandingContext | null> {
+  const [chat] = await db
+    .select({ topic: groupChat.topic })
+    .from(groupChat)
+    .where(eq(groupChat.id, groupChatId))
+    .limit(1)
+  if (!chat) {
+    return null
+  }
+  const pins = await pinTextsFor(groupChatId)
+  const reminder = composePinReminder(pins)
+  return {
+    jobContext: `Group chat topic: ${chat.topic}`,
+    // Pins ride the envelope's existing instruction axis rather than a new
+    // one: that axis already means standing guidance rather than a request,
+    // which is what a pin is.
+    instructions: reminder ? [reminder] : [],
+    signature: standingSignature(chat.topic, pins),
+  }
+}
+
+/**
+ * The standing context for a session key, or null when the key is not a group
+ * chat thread's.
+ *
+ * UNGATED, and that is correct rather than an oversight: the callers are
+ * delivery paths acting on behalf of the session itself, not on behalf of a
+ * request. Nothing here is returned to a browser. The membership rule governs
+ * who may read and change a chat, which is enforced on every function that
+ * does either.
+ *
+ * This is the shape the session layer asks for by session key.
+ */
+export async function groupChatStandingContext(sessionKey: string): Promise<StandingContext | null> {
+  const [row] = await db
+    .select({ groupChatId: groupChatThread.groupChatId })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.sessionKey, sessionKey))
+    .limit(1)
+  return row ? standingContextForChat(row.groupChatId) : null
+}
+
 // A thread's session key is namespaced away from the 1:1 chat registry's
 // `agent:<agent>:<job>[:<key>]` shape on purpose — the two must never collide
 // even by coincidence, and a reader who sees this prefix knows immediately
@@ -507,18 +736,22 @@ export async function startThread(
   if (!(await isAgentMember(groupChatId, agentNodeId))) {
     throw new GroupChatAccessError('agent-not-a-member', 'That agent is not a member of this group chat')
   }
-  const [chat] = await db
-    .select({ topic: groupChat.topic })
-    .from(groupChat)
-    .where(eq(groupChat.id, groupChatId))
-    .limit(1)
-  if (!chat) {
+  const standing = await standingContextForChat(groupChatId)
+  if (!standing) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
 
   const sessionKey = mintSessionKey(groupChatId, agentNodeId)
   const [thread] = await db
     .insert(groupChatThread)
+    // `deliveredContextSignature` is deliberately left NULL here and written
+    // only once the prompt below has been accepted -- same rule as
+    // `sendMessageInThread`, and for the same reason. Recording it at insert
+    // time would mark the context delivered even when the first prompt throws
+    // (agent node down, gateway hiccup), leaving a thread whose agent was
+    // never told its topic or pins and will not be told until something else
+    // changes. Left NULL, a retry re-delivers through the once-on-change path
+    // without needing a second mechanism.
     .values({ groupChatId, agentNodeId, sessionKey, createdByUserId: userId })
     .returning({
       id: groupChatThread.id,
@@ -534,10 +767,17 @@ export async function startThread(
 
   const opened = await ensureLocalSessionImpl({ agentNodeId, jobNodeId: '', tabKey: sessionKey })
   const envelope = composeEnvelope(firstMessage, {
-    sessionInit: { jobContext: `Group chat topic: ${chat.topic}` },
+    sessionInit: { jobContext: standing.jobContext, instructions: standing.instructions },
     isNewSession: opened.created,
   })
   await promptLocalImpl({ sessionId: opened.sessionId, text: envelope })
+  // Accepted, so what it carried is now on the record. A thread that starts
+  // with nothing pinned still records a signature rather than NULL, so the
+  // first pin added afterwards reads as a change.
+  await db
+    .update(groupChatThread)
+    .set({ deliveredContextSignature: standing.signature })
+    .where(eq(groupChatThread.id, thread.id))
 
   return { thread, sessionId: opened.sessionId }
 }
@@ -559,6 +799,7 @@ export async function sendMessageInThread(
       groupChatId: groupChatThread.groupChatId,
       agentNodeId: groupChatThread.agentNodeId,
       sessionKey: groupChatThread.sessionKey,
+      deliveredContextSignature: groupChatThread.deliveredContextSignature,
     })
     .from(groupChatThread)
     .where(eq(groupChatThread.id, threadId))
@@ -584,13 +825,46 @@ export async function sendMessageInThread(
     jobNodeId: '',
     tabKey: row.sessionKey,
   })
+
+  // ONCE ON CHANGE. If the chat's standing context has moved on since this
+  // thread was last told about it, this message carries the new one; otherwise
+  // it goes as it was typed.
+  //
+  // Not with every message, which would put the whole block in front of every
+  // turn for no new information. Not force-pushed into an idle session either:
+  // a note is not worth interrupting a turn for, so it waits for the person to
+  // say something anyway.
+  //
+  // `isNewSession: true` against a session that is not new is deliberate and
+  // has precedent — the compaction restore attaches standing context to an
+  // ordinary message the same way. The flag decides whether the session-init
+  // parts are attached to THIS message, which is exactly what is wanted here;
+  // its name describes only the first of its two uses.
+  const standing = await standingContextForChat(row.groupChatId)
+  const changed = standing && standing.signature !== row.deliveredContextSignature
+  const payload =
+    changed && standing
+      ? composeEnvelope(text, {
+          sessionInit: { jobContext: standing.jobContext, instructions: standing.instructions },
+          isNewSession: true,
+        })
+      : text
   // `front` is forwarded rather than dropped. It is set by the permission
   // "tell it what to do differently" flow, which cancels the run and needs its
   // guidance queued ahead of anything already held. A group-chat thread is an
   // ordinary agent session and reaches that flow too, so a send path that
   // silently ignored it would behave differently from a 1:1 chat in exactly
   // the situation the user is trying to correct the agent.
-  await promptLocalImpl({ sessionId: opened.sessionId, text, front: opts?.front })
+  await promptLocalImpl({ sessionId: opened.sessionId, text: payload, front: opts?.front })
+  // Recorded only after the message carrying it has been accepted: a send that
+  // threw would otherwise mark context delivered that never went anywhere, and
+  // the next send would skip it.
+  if (changed && standing) {
+    await db
+      .update(groupChatThread)
+      .set({ deliveredContextSignature: standing.signature })
+      .where(eq(groupChatThread.id, threadId))
+  }
 }
 
 /**

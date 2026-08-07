@@ -52,6 +52,15 @@ export type GroupChatAccessFailure =
    * the Remove they pressed did nothing.
    */
   | 'last-user-member'
+  /**
+   * A chat already holds as many pins as it may.
+   *
+   * Outside the collapse for the same reason as the two above: only a member
+   * can reach it, and the person who pressed Pin needs to be told that the
+   * limit is why nothing happened — "that didn't work" would send them
+   * looking for a fault that is not there.
+   */
+  | 'pin-limit'
 
 /**
  * PHASE 2 CONTRACT, verified against the actual wire format rather than

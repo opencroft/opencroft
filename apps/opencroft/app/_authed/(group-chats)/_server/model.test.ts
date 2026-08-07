@@ -801,11 +801,15 @@ test('a non-member can neither rename a chat nor change its topic', async () => 
   assert.equal(untouched.topic, 'not yours')
 })
 
-// THE DELIVERY BOUNDARY, and the surprising half of this feature: editing the
-// topic reaches the NEXT thread and nothing already open. Asserted from the
-// mock connection's own `prompt`, so what is checked is the text an agent
-// actually receives, not the arguments the model was called with.
-test('a changed topic reaches the next thread and not a session already open', async () => {
+// WHAT AN OPEN SESSION IS TOLD WHEN THE STANDING CONTEXT MOVES. A changed
+// topic (or pin set) rides the NEXT message into the thread, exactly once --
+// not with every message, which would put the whole block in front of every
+// turn for no new information.
+//
+// Asserted from the mock connection's own `prompt`, so what is checked is the
+// text an agent actually receives rather than the arguments the model was
+// called with.
+test('a changed topic rides the next send into an open thread, once', async () => {
   const owner = await makeUser('topic-delivery-owner@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'delivery', 'the first purpose')
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
@@ -845,20 +849,81 @@ test('a changed topic reaches the next thread and not a session already open', a
   await waitForPrompts(prompts, 1)
   assert.match(prompts[0] ?? '', /the first purpose/, 'a new thread is told the topic as it stands')
 
+  // Nothing has changed, so an ordinary send carries nothing extra.
+  await model.sendMessageInThread(reqAs(owner), first.thread.id, 'an ordinary message')
+  await waitForPrompts(prompts, 2)
+  assert.doesNotMatch(prompts[1] ?? '', /the first purpose/, 'unchanged context is not restated on every turn')
+
   await model.setGroupChatTopic(reqAs(owner), chat.id, 'the second purpose')
 
-  await model.sendMessageInThread(reqAs(owner), first.thread.id, 'a later message')
-  await waitForPrompts(prompts, 2)
-  assert.doesNotMatch(
-    prompts[1] ?? '',
-    /the second purpose/,
-    'an open session keeps the context it was opened with — restating it would mean interrupting a turn to repeat something nobody asked for',
-  )
-
-  await model.startThread(reqAs(owner), chat.id, 'agent-session', 'a fresh thread')
+  await model.sendMessageInThread(reqAs(owner), first.thread.id, 'a message after the edit')
   await waitForPrompts(prompts, 3)
-  assert.match(prompts[2] ?? '', /the second purpose/, 'the next thread is told the edited topic')
-  assert.doesNotMatch(prompts[2] ?? '', /the first purpose/)
+  assert.match(prompts[2] ?? '', /the second purpose/, 'the change rides the next message into the open thread')
+
+  // ONCE. The thread has now been told, so the message after it is plain again.
+  await model.sendMessageInThread(reqAs(owner), first.thread.id, 'and one more')
+  await waitForPrompts(prompts, 4)
+  assert.doesNotMatch(prompts[3] ?? '', /the second purpose/, 'and is not repeated on every message afterwards')
+
+  // A thread started now is told the edited topic at session-init, from the
+  // same assembler rather than a second code path that has to remember.
+  await model.startThread(reqAs(owner), chat.id, 'agent-session', 'a fresh thread')
+  await waitForPrompts(prompts, 5)
+  assert.match(prompts[4] ?? '', /the second purpose/)
+  assert.doesNotMatch(prompts[4] ?? '', /the first purpose/)
+})
+
+test('a changed pin set rides the next send the same way the topic does', async () => {
+  const owner = await makeUser('pin-change-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'pin change', 'the purpose')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const prompts: string[] = []
+  const connection = {
+    newSession: async () => ({ sessionId: `pin-change-session-${crypto.randomUUID()}` }),
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      prompts.push(params.prompt.map((block) => block.text ?? '').join(''))
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+
+  const workspaceSlug = slug('Agent Session')
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store)
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  const thread = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message')
+  await waitForPrompts(prompts, 1)
+
+  const pin = await model.addPin(reqAs(owner), chat.id, 'do not deploy on a Friday')
+  await model.sendMessageInThread(reqAs(owner), thread.thread.id, 'after pinning')
+  await waitForPrompts(prompts, 2)
+  assert.match(prompts[1] ?? '', /do not deploy on a Friday/, 'a new pin reaches the open thread')
+
+  // And unpinning everything is itself a change: the block goes away, and the
+  // thread is not told about pins it no longer has.
+  await model.removePin(reqAs(owner), pin.id)
+  await model.sendMessageInThread(reqAs(owner), thread.thread.id, 'after unpinning')
+  await waitForPrompts(prompts, 3)
+  assert.doesNotMatch(prompts[2] ?? '', /do not deploy on a Friday/, 'an unpinned note stops being delivered')
+  assert.doesNotMatch(prompts[2] ?? '', /standing guidance/, 'and no empty reminder block is sent in its place')
 })
 
 test('the name is never delivered to an agent', async () => {
@@ -905,5 +970,310 @@ test('the name is never delivered to an agent', async () => {
     prompts[0] ?? '',
     /A name no agent should see/,
     'the name is presentation — a rename must never be able to change what an agent was told',
+  )
+})
+
+// ---------------------------------------------------------------------------
+// PINNED NOTES. Standing guidance on the chat, delivered to the agents in its
+// threads. This file covers the notes themselves and what a NEW thread is
+// told; delivery into an already-open session is its own slice.
+// ---------------------------------------------------------------------------
+
+test('pins are kept in the order they were pinned, and trimmed', async () => {
+  const owner = await makeUser('pin-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'pinning')
+
+  await model.addPin(reqAs(owner), chat.id, '  first note  ')
+  await model.addPin(reqAs(owner), chat.id, 'second note')
+
+  const pins = await model.listPins(reqAs(owner), chat.id)
+  assert.deepEqual(
+    pins.map((p) => p.text),
+    ['first note', 'second note'],
+  )
+})
+
+test('unpinning leaves the surviving order intact and does not reuse a position', async () => {
+  const owner = await makeUser('pin-order-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'ordering')
+
+  await model.addPin(reqAs(owner), chat.id, 'one')
+  const two = await model.addPin(reqAs(owner), chat.id, 'two')
+  await model.addPin(reqAs(owner), chat.id, 'three')
+
+  await model.removePin(reqAs(owner), two.id)
+  const four = await model.addPin(reqAs(owner), chat.id, 'four')
+
+  // The gap left by 'two' is not refilled: reusing its position would put the
+  // new pin in the middle of a list nobody reordered.
+  assert.ok(four.position > 2, 'a new pin goes after the highest position, not into the gap')
+  const pins = await model.listPins(reqAs(owner), chat.id)
+  assert.deepEqual(
+    pins.map((p) => p.text),
+    ['one', 'three', 'four'],
+  )
+})
+
+test('the pin cap is a refusal the person can act on, not a fault', async () => {
+  const owner = await makeUser('pin-cap-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'capped')
+
+  for (let i = 0; i < model.MAX_PINS_PER_GROUP_CHAT; i += 1) {
+    await model.addPin(reqAs(owner), chat.id, `note ${i}`)
+  }
+
+  const refusal = await captureRefusal(() => model.addPin(reqAs(owner), chat.id, 'one too many'))
+  assert.equal(refusal.code, 'pin-limit')
+
+  // And the limit is a real stop, not a warning.
+  const pins = await model.listPins(reqAs(owner), chat.id)
+  assert.equal(pins.length, model.MAX_PINS_PER_GROUP_CHAT)
+})
+
+test('any member may edit or unpin any pin, whoever wrote it', async () => {
+  const owner = await makeUser('pin-author@example.test')
+  const other = await makeUser('pin-editor@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'shared pins')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'user', userId: other.id })
+
+  const pin = await model.addPin(reqAs(owner), chat.id, 'the original wording')
+  await model.editPin(reqAs(other), pin.id, 'reworded by someone else')
+
+  let pins = await model.listPins(reqAs(owner), chat.id)
+  assert.equal(pins[0]?.text, 'reworded by someone else')
+
+  await model.removePin(reqAs(other), pin.id)
+  pins = await model.listPins(reqAs(owner), chat.id)
+  assert.equal(pins.length, 0)
+})
+
+test('a non-member can neither read, add, edit nor remove pins', async () => {
+  const owner = await makeUser('pin-gate-owner@example.test')
+  const outsider = await makeUser('pin-gate-outsider@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'gated pins')
+  const pin = await model.addPin(reqAs(owner), chat.id, 'members only')
+
+  const list = await captureRefusal(() => model.listPins(reqAs(outsider), chat.id))
+  const add = await captureRefusal(() => model.addPin(reqAs(outsider), chat.id, 'mine now'))
+  const edit = await captureRefusal(() => model.editPin(reqAs(outsider), pin.id, 'mine now'))
+  const remove = await captureRefusal(() => model.removePin(reqAs(outsider), pin.id))
+
+  for (const refusal of [list, add, edit, remove]) {
+    assert.equal(refusal.code, 'not-found')
+  }
+  // A real pin id and a fabricated one refuse identically, so a pin id is not a
+  // way to learn which pins exist either.
+  const fabricated = await captureRefusal(() => model.editPin(reqAs(outsider), crypto.randomUUID(), 'probe'))
+  assert.equal(fabricated.code, edit.code)
+  assert.equal(fabricated.message, edit.message)
+
+  const untouched = await model.listPins(reqAs(owner), chat.id)
+  assert.equal(untouched[0]?.text, 'members only', 'a refused write must also have written nothing')
+})
+
+// The signature is what decides whether an agent is still up to date, so what
+// counts as a change is worth pinning down rather than trusting to a hash.
+test('the standing signature distinguishes order, content, emptiness and ambiguous joins', async () => {
+  const { standingSignature } = model
+
+  assert.notEqual(standingSignature('t', ['a', 'b']), standingSignature('t', ['b', 'a']), 'reordering is a change')
+  assert.notEqual(standingSignature('t', ['a']), standingSignature('t', ['a!']), 'an edit is a change')
+  assert.notEqual(standingSignature('t', []), standingSignature('t', ['']), 'no pins is not one empty pin')
+  assert.notEqual(
+    standingSignature('t', ['ab', 'c']),
+    standingSignature('t', ['a', 'bc']),
+    'two different lists must not collide by concatenating to the same string',
+  )
+  // The topic is part of the same fingerprint: it and the pins are one block
+  // from the agent's side, so either moving is a change worth re-delivering.
+  assert.notEqual(standingSignature('t', ['a']), standingSignature('t2', ['a']), 'the topic counts too')
+  assert.equal(standingSignature('t', ['a', 'b']), standingSignature('t', ['a', 'b']), 'the same state is the same')
+})
+
+test('a new thread is told the pins, and records what it was told', async () => {
+  const owner = await makeUser('pin-delivery-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'pin delivery', 'the stated purpose')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addPin(reqAs(owner), chat.id, 'always check the runbook first')
+
+  const prompts: string[] = []
+  const connection = {
+    newSession: async () => ({ sessionId: `pin-session-${crypto.randomUUID()}` }),
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      prompts.push(params.prompt.map((block) => block.text ?? '').join(''))
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+
+  const workspaceSlug = slug('Agent Session')
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store)
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'hello')
+  await waitForPrompts(prompts, 1)
+
+  const envelope = prompts[0] ?? ''
+  assert.match(envelope, /always check the runbook first/, 'the pin must reach the agent')
+  assert.match(envelope, /standing guidance, not a new request/, 'and be marked as guidance rather than a request')
+  assert.match(envelope, /the stated purpose/, 'without displacing the topic')
+
+  // What it was told is recorded, so a later change can be recognised as one.
+  const [row] = await db
+    .select({ signature: groupChatThread.deliveredContextSignature })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.id, started.thread.id))
+  assert.equal(row?.signature, model.standingSignature('the stated purpose', ['always check the runbook first']))
+})
+
+test('a chat with nothing pinned sends the envelope it sent before pins existed', async () => {
+  const owner = await makeUser('pin-empty-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'no pins', 'the stated purpose')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const prompts: string[] = []
+  const connection = {
+    newSession: async () => ({ sessionId: `empty-pin-session-${crypto.randomUUID()}` }),
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      prompts.push(params.prompt.map((block) => block.text ?? '').join(''))
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+
+  const workspaceSlug = slug('Agent Session')
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store)
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'hello')
+  await waitForPrompts(prompts, 1)
+
+  assert.doesNotMatch(prompts[0] ?? '', /standing guidance/, 'no pins must mean no reminder block at all')
+
+  // But the empty set is still recorded as delivered, so the first pin added
+  // afterwards reads as a change rather than as "nothing has happened yet".
+  const [row] = await db
+    .select({ signature: groupChatThread.deliveredContextSignature })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.id, started.thread.id))
+  assert.equal(row?.signature, model.standingSignature('the stated purpose', []))
+  assert.notEqual(row?.signature, null)
+})
+
+// THE RECORD FOLLOWS THE DELIVERY, NEVER PRECEDES IT. Both delivery paths
+// write the signature only once the message carrying the context has been
+// accepted. Recording it earlier would mark a thread's agent as told when the
+// send threw, and nothing would tell it until something else changed — the
+// quiet kind of loss, since the row looks complete either way.
+test('a first prompt that fails leaves the context unrecorded, and a later send delivers it', async () => {
+  const owner = await makeUser('start-failure-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'start failure', 'the purpose that must arrive')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addPin(reqAs(owner), chat.id, 'and the pin that must arrive with it')
+
+  const prompts: string[] = []
+  let failNextSession = true
+  const connection = {
+    newSession: async () => {
+      if (failNextSession) {
+        failNextSession = false
+        // What an agent node being down looks like from here.
+        throw new Error('agent process unavailable')
+      }
+      return { sessionId: `retry-session-${crypto.randomUUID()}` }
+    },
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      prompts.push(params.prompt.map((block) => block.text ?? '').join(''))
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+
+  const workspaceSlug = slug('Agent Session')
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store)
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  await assert.rejects(
+    () => model.startThread(reqAs(owner), chat.id, 'agent-session', 'the message that never lands'),
+    'a thread whose session cannot be opened must not resolve as if it had',
+  )
+  assert.equal(prompts.length, 0, 'nothing reached the agent')
+
+  // The row survives the failure -- it is written before the session is opened
+  // on purpose, so the thread is not lost -- but nothing may be recorded as
+  // delivered through it.
+  const [row] = await db
+    .select({ id: groupChatThread.id, signature: groupChatThread.deliveredContextSignature })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.groupChatId, chat.id))
+  assert.ok(row, 'the thread row is kept so the thread is not silently lost')
+  assert.equal(row.signature, null, 'a context that never went anywhere must not be recorded as delivered')
+
+  // And because it is NULL rather than recorded, the ordinary once-on-change
+  // path re-delivers it on the next send -- no second recovery mechanism.
+  await model.sendMessageInThread(reqAs(owner), row.id, 'trying again')
+  await waitForPrompts(prompts, 1)
+  assert.match(prompts[0] ?? '', /the purpose that must arrive/, 'the topic reaches the agent on the retry')
+  assert.match(prompts[0] ?? '', /and the pin that must arrive with it/, 'and so do the pins')
+
+  const [after] = await db
+    .select({ signature: groupChatThread.deliveredContextSignature })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.id, row.id))
+  assert.equal(
+    after?.signature,
+    model.standingSignature('the purpose that must arrive', ['and the pin that must arrive with it']),
+    'and now it is recorded, because this time it was accepted',
   )
 })
