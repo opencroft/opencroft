@@ -5,14 +5,26 @@ import { toastStore } from '@/lib/toast-store'
 
 const TICK_MS = 10_000
 
+// A host that fails is backed off exponentially (30s, 1m, 2m, 4m, ... capped at 10m) instead of
+// being retried every tick forever — a host that has been down for days would otherwise still be
+// polled, and fail, every 10 seconds.
+const BASE_BACKOFF_MS = 30_000
+const MAX_BACKOFF_MS = 10 * 60_000
+
 interface GraphNode {
   id?: string
   type?: string
 }
 
+export interface HostFailureState {
+  consecutiveFailures: number
+  nextAttemptAt: number
+}
+
 interface PollerState {
   lastSnapshot: Map<string, DockerContainerSnapshot[]>
   inFlight: Set<string>
+  failures: Map<string, HostFailureState>
 }
 
 const g = globalThis as Record<string, unknown>
@@ -20,11 +32,42 @@ if (!g.__DOCKER_PS_STATE__) {
   g.__DOCKER_PS_STATE__ = {
     lastSnapshot: new Map<string, DockerContainerSnapshot[]>(),
     inFlight: new Set<string>(),
+    failures: new Map<string, HostFailureState>(),
   } satisfies PollerState
 }
 const state = g.__DOCKER_PS_STATE__ as PollerState
 const lastSnapshot = state.lastSnapshot
 const inFlight = state.inFlight
+const failures = state.failures
+
+export function backoffMs(consecutiveFailures: number): number {
+  return Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (consecutiveFailures - 1))
+}
+
+// Pure state transition for one host's poll outcome — no globals, no I/O, so the backoff
+// progression and the log-on-transition-only behavior are unit-testable without mocking the
+// extension loader / spaces registry / toast store this module otherwise depends on.
+// `transitioned` is true only on failing<->reachable edges, which is exactly when pollOne should
+// log — every other tick for an already-known-good or already-known-bad host logs nothing.
+export function nextFailureState(
+  current: HostFailureState | undefined,
+  outcome: 'ok' | 'error',
+  now: number,
+): { next: HostFailureState | undefined; transitioned: boolean } {
+  if (outcome === 'ok') {
+    return { next: undefined, transitioned: current !== undefined }
+  }
+  const consecutiveFailures = (current?.consecutiveFailures ?? 0) + 1
+  return {
+    next: { consecutiveFailures, nextAttemptAt: now + backoffMs(consecutiveFailures) },
+    transitioned: consecutiveFailures === 1,
+  }
+}
+
+// A host currently inside its backoff window is not due for another attempt yet.
+export function isDue(current: HostFailureState | undefined, now: number): boolean {
+  return (current?.nextAttemptAt ?? 0) <= now
+}
 
 function collectDockerNodeIds(): string[] {
   const r = getSpacesRegistry()
@@ -94,6 +137,15 @@ async function pollOne(dockerNodeId: string): Promise<void> {
   inFlight.add(dockerNodeId)
   try {
     const fresh = sortContainers(await callDockerPs(dockerNodeId))
+    const { next, transitioned } = nextFailureState(failures.get(dockerNodeId), 'ok', Date.now())
+    if (next) {
+      failures.set(dockerNodeId, next)
+    } else {
+      failures.delete(dockerNodeId)
+    }
+    if (transitioned) {
+      console.log(`[docker-ps-poller] ${dockerNodeId} reachable again`)
+    }
     const prev = lastSnapshot.get(dockerNodeId)
     if (prev && containersEqual(prev, fresh)) {
       return
@@ -101,7 +153,13 @@ async function pollOne(dockerNodeId: string): Promise<void> {
     lastSnapshot.set(dockerNodeId, fresh)
     toastStore.broadcast({ type: 'docker_ps_updated', dockerNodeId, containers: fresh })
   } catch (err) {
-    console.error(`[docker-ps-poller] ${dockerNodeId} failed:`, err)
+    const { next, transitioned } = nextFailureState(failures.get(dockerNodeId), 'error', Date.now())
+    if (next) {
+      failures.set(dockerNodeId, next)
+    }
+    if (transitioned) {
+      console.error(`[docker-ps-poller] ${dockerNodeId} unreachable, backing off:`, err)
+    }
   } finally {
     inFlight.delete(dockerNodeId)
   }
@@ -117,7 +175,14 @@ async function tick(): Promise<void> {
       lastSnapshot.delete(id)
     }
   }
-  await Promise.all(ids.map(pollOne))
+  for (const id of [...failures.keys()]) {
+    if (!known.has(id)) {
+      failures.delete(id)
+    }
+  }
+  const now = Date.now()
+  const due = ids.filter((id) => isDue(failures.get(id), now))
+  await Promise.all(due.map(pollOne))
 }
 
 export function getAllDockerSnapshots(): { dockerNodeId: string; containers: DockerContainerSnapshot[] }[] {
@@ -125,6 +190,13 @@ export function getAllDockerSnapshots(): { dockerNodeId: string; containers: Doc
 }
 
 function refreshDockerNode(dockerNodeId: string): void {
+  // An explicit invalidation (e.g. a deploy action just ran against this node) is a deliberate
+  // signal that the state may have changed -- it must not be silently dropped by a backoff window
+  // from an earlier, unrelated failure.
+  const failing = failures.get(dockerNodeId)
+  if (failing) {
+    failures.set(dockerNodeId, { ...failing, nextAttemptAt: 0 })
+  }
   pollOne(dockerNodeId).catch((err) => {
     console.error(`[docker-ps-poller] refresh ${dockerNodeId} failed`, err)
   })
