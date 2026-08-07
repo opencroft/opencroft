@@ -226,11 +226,25 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   // movement is known, so a stationary tap or hold is claimed exactly the
   // same as an actual pan). xyflow's own escape hatch for this is the 'nopan'
   // class, which it only applies itself to a node when that node is
-  // draggable (nodesDraggable / nodesMovable is off by default on mobile --
-  // "Pan canvas" mode). Without it, our own long-press handling below
+  // draggable. Without it, our own long-press handling below
   // (handleTouchStart) never even sees the touchstart, because propagation
   // never reaches the wrapper div it's attached to -- which is the actual
   // mechanism behind the context menu never opening on a phone.
+  //
+  // This is not a restoration of behavior mobile ever actually had. Before
+  // nodesDraggable/nodesMovable defaulted off (nodes draggable by default,
+  // no lock), a node's OWN drag handler (XYDrag, from the same @xyflow/react
+  // + d3-drag stack, attached directly to the node whenever it's draggable)
+  // called the identical stopImmediatePropagation on touchstart, for the
+  // same reason -- confirmed directly, against byte-identical
+  // @xyflow/react/d3-drag/d3-zoom versions to the ones running today, going
+  // back to the mobile long-press handling's own original introduction.
+  // Node-drag and pane-pan are mutually exclusive on the same touch by
+  // construction (whichever is enabled preempts the touch before the other
+  // ever sees it) -- so "pan starting on a node" never coexisted with a
+  // working long-press menu either, in any configuration this app has run.
+  // 'nopan' on every mobile node is the first configuration where a touch
+  // landing on a node reaches this handler at all.
   const nodesForFlow = useMemo(
     () => (isMobile ? nodes.map((n) => ({ ...n, className: cn(n.className, 'nopan') })) : nodes),
     [nodes, isMobile],
@@ -896,7 +910,20 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
         return
       }
       cancelLongPress()
-      if (!longPressFired.current) {
+      if (longPressFired.current) {
+        // This touchend is the release of the very long-press that just
+        // opened a menu -- its target is locked to wherever the touch
+        // started (the node), never the menu itself, since the menu didn't
+        // exist yet when the touch began. Without stopping it here, it
+        // reaches the menu's own outside-close listener (document-level
+        // 'touchend') and reads as a dismiss, closing the menu before a
+        // separate tap can ever land on it. preventDefault additionally
+        // suppresses the browser's own trailing synthetic mousedown/click
+        // for this same touch (standard touch-event behavior), which would
+        // otherwise reach the same listener a second time.
+        e.preventDefault()
+        e.stopPropagation()
+      } else {
         // Short tap on empty space -> deselect and hide inspector
         const touch = e.changedTouches[0]
         const el =
