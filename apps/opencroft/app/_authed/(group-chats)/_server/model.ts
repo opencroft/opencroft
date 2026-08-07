@@ -21,6 +21,8 @@ import {
   stopLocalSessionProcessImpl,
 } from '@/app/_authed/(agent)/_server/acp-impl'
 import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
+import type { CompactAck, CompactStatus } from '@/app/_authed/(extension-runtime)/_server/stream'
+import { getCompactStatusOnGraph, requestCompactOnGraph } from '@/app/_authed/(extension-runtime)/_server/stream'
 import { GroupChatAccessError } from '@/app/_authed/(group-chats)/_shared/access-error'
 
 // THE ONE MESSAGE every "you cannot have this" refusal carries.
@@ -895,6 +897,66 @@ async function deliverIntoThread(row: ThreadDeliveryTarget, text: string, opts?:
       .set({ deliveredContextSignature: standing.signature })
       .where(eq(groupChatThread.id, row.id))
   }
+}
+
+/**
+ * Compact a thread's session and, on success, re-deliver its CURRENT standing
+ * context (topic + pins) rather than whatever was true when the thread last
+ * heard from it — see `groupChatStandingContext`'s header for why that is the
+ * whole point.
+ *
+ * `requestCompactOnGraph` resolves standing context two ways: a real graph
+ * node/edge presence, or a registered `StandingContextResolver` — a group-chat
+ * thread has no graph presence at all, so `[]`/`[]` here is correct rather
+ * than a stand-in for "not implemented yet": the resolver registered at
+ * server boot (see server/startup.ts) is the only thing that can claim this
+ * sessionKey, exactly as it is the only thing that can claim it at restore
+ * time inside performCompact.
+ *
+ * Membership-gated the same way `sendMessageInThread` is, including the
+ * agent-still-a-member check: compaction sends `/compact` and a restore
+ * prompt into the live session same as an ordinary send does, so a removed
+ * agent's threads are refused here for the same reason they are refused a
+ * send.
+ */
+export async function compactThread(request: Request, threadId: string): Promise<CompactAck> {
+  const sessionUser = await requireSignedInUser(request)
+  const [row] = await db
+    .select({
+      groupChatId: groupChatThread.groupChatId,
+      agentNodeId: groupChatThread.agentNodeId,
+      sessionKey: groupChatThread.sessionKey,
+    })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.id, threadId))
+    .limit(1)
+  if (!row) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  if (!(await isAgentMember(row.groupChatId, row.agentNodeId))) {
+    throw new GroupChatAccessError('agent-not-a-member', 'That agent is no longer a member of this group chat')
+  }
+  return requestCompactOnGraph([], [], row.sessionKey)
+}
+
+/** The compact job's status for a thread — same membership gate as `compactThread`. */
+export async function threadCompactStatus(request: Request, threadId: string): Promise<CompactStatus> {
+  const sessionUser = await requireSignedInUser(request)
+  const [row] = await db
+    .select({ groupChatId: groupChatThread.groupChatId, sessionKey: groupChatThread.sessionKey })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.id, threadId))
+    .limit(1)
+  if (!row) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  return getCompactStatusOnGraph(row.sessionKey)
 }
 
 /**

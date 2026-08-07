@@ -565,6 +565,45 @@ export interface CompactResult {
   instructionsRestored: boolean
 }
 
+// A source of standing context for sessions the graph cannot resolve at all —
+// a group-chat thread has no node/edge presence, but still holds an agent
+// worth restoring after compaction. Registered explicitly (see
+// server/startup.ts) rather than as an import-time side effect, and
+// deliberately without this module naming group chats or any other owner: it
+// only knows that *something* may claim a given session key prefix.
+export interface StandingContext {
+  jobContext: string
+  instructions: string[]
+}
+export type StandingContextResolver = (sessionKey: string) => Promise<StandingContext | null>
+
+const standingContextResolvers: StandingContextResolver[] = []
+
+export function registerStandingContextResolver(resolver: StandingContextResolver): void {
+  standingContextResolvers.push(resolver)
+}
+
+// The graph first — unchanged behaviour for every `agent:*` session — then
+// each registered resolver in turn. First match wins; a key nobody claims
+// resolves to null exactly as resolveSessionOnGraph alone did before this.
+async function resolveStandingContext(
+  sessionKey: string,
+  nodes: GraphNodeLike[],
+  edges: GraphEdgeLike[],
+): Promise<StandingContext | null> {
+  const graphCtx = resolveSessionOnGraph(sessionKey, nodes as unknown as SmNodeLike[], edges as unknown as SmEdgeLike[])
+  if (graphCtx) {
+    return { jobContext: graphCtx.jobContext, instructions: graphCtx.instructions }
+  }
+  for (const resolver of standingContextResolvers) {
+    const resolved = await resolver(sessionKey)
+    if (resolved) {
+      return resolved
+    }
+  }
+  return null
+}
+
 // The guard this replaced used to refuse a working/waiting session outright,
 // because a prompt sent into a busy session is QUEUED rather than delivered,
 // which made compaction unsafe there in a way that no amount of waiting
@@ -576,7 +615,11 @@ export interface CompactResult {
 // never happens. waitUntilIdle sidesteps this the same way the old guard did
 // — by never putting `/compact` in that queue at all — while still letting
 // the request wait instead of being refused.
-async function performCompact(sessionId: string, sessionKey: string, ctx: AgentContext): Promise<CompactResult> {
+async function performCompact(
+  sessionId: string,
+  sessionKey: string,
+  resolveContext: () => Promise<StandingContext | null>,
+): Promise<CompactResult> {
   const readUsage = (): ContextUsage | null =>
     toContextUsage(agentClient.listSessions().find((m) => m.sessionKey === sessionKey)?.usage)
 
@@ -595,16 +638,33 @@ async function performCompact(sessionId: string, sessionKey: string, ctx: AgentC
   const contextUsageAfter = compactOutcome === 'finished' ? readUsage() : null
   const compacted = compactionVerdict(contextUsageBefore, contextUsageAfter)
 
+  // Skip on false, the observed-failure case above — before even resolving
+  // what to restore, since there is nothing to do with it.
+  if (compacted === false) {
+    return { sessionKey, contextUsageBefore, contextUsageAfter, compacted, instructionsRestored: false }
+  }
+
+  // Resolved fresh HERE, not the snapshot requestCompactOnGraph saw when this
+  // job was queued: a group chat's topic/pins (or, for a graph session, wired
+  // instructions) can change while the job waits its turn, and what gets
+  // restored is what is true NOW — see groupChatStandingContext's header for
+  // why that is what makes pins survive compaction by construction rather
+  // than by luck. For a graph session this recomputes from the same node/edge
+  // snapshot requestCompactOnGraph already had, so nothing observable changes
+  // there. A session whose context resolves to nothing at restore time (its
+  // owner deleted meanwhile) safely skips the restore instead of sending
+  // stale or empty text.
+  const restoreCtx = await resolveContext()
   // Restore on true (it worked, and the instructions went with the dropped
   // messages) and on null (cannot tell — re-sending is the safe direction: a
   // redundant envelope costs tokens, a missing one costs the agent its
-  // instructions). Skip on false, which is the observed-failure case above.
-  const hasInstructions = Boolean(ctx.jobContext?.trim()) || (ctx.instructions ?? []).some((i) => i.trim())
-  if (compacted === false || !hasInstructions) {
+  // instructions).
+  const hasInstructions = Boolean(restoreCtx?.jobContext?.trim()) || (restoreCtx?.instructions ?? []).some((i) => i.trim())
+  if (!restoreCtx || !hasInstructions) {
     return { sessionKey, contextUsageBefore, contextUsageAfter, compacted, instructionsRestored: false }
   }
   const restore = composeEnvelope(REINSTRUCT_NOTE, {
-    sessionInit: { jobContext: ctx.jobContext, instructions: ctx.instructions },
+    sessionInit: { jobContext: restoreCtx.jobContext, instructions: restoreCtx.instructions },
     isNewSession: true,
   })
   // `front: true`: if anything auto-drained into a turn while /compact's own
@@ -699,12 +759,17 @@ async function waitUntilIdle(sessionId: string): Promise<void> {
   }
 }
 
-async function runCompactJob(sessionId: string, sessionKey: string, ctx: AgentContext, job: CompactJob): Promise<void> {
+async function runCompactJob(
+  sessionId: string,
+  sessionKey: string,
+  resolveContext: () => Promise<StandingContext | null>,
+  job: CompactJob,
+): Promise<void> {
   try {
     await waitUntilIdle(sessionId)
     job.state = 'running'
     job.startedAt = Date.now()
-    job.result = await performCompact(sessionId, sessionKey, ctx)
+    job.result = await performCompact(sessionId, sessionKey, resolveContext)
     job.state = 'done'
   } catch (err) {
     job.state = 'error'
@@ -720,12 +785,16 @@ async function runCompactJob(sessionId: string, sessionKey: string, ctx: AgentCo
 // performCompact above), so this can never be what interrupts one, which is
 // what makes "queue behind the turn" true here rather than just "queue the
 // timeout".
+//
+// `nodes`/`edges` may be empty — a session with no graph presence at all
+// (a group-chat thread) resolves purely through a registered
+// StandingContextResolver instead; see resolveStandingContext above.
 export async function requestCompactOnGraph(
   nodes: GraphNodeLike[],
   edges: GraphEdgeLike[],
   sessionKey: string,
 ): Promise<CompactAck> {
-  const ctx = resolveSessionOnGraph(sessionKey, nodes as unknown as SmNodeLike[], edges as unknown as SmEdgeLike[])
+  const ctx = await resolveStandingContext(sessionKey, nodes, edges)
   if (!ctx) {
     throw new Error(`No agent/job resolved for session: ${sessionKey}`)
   }
@@ -755,7 +824,7 @@ export async function requestCompactOnGraph(
   // Deliberately not awaited — the whole point is that the caller does not
   // wait for this. runCompactJob owns its own errors (see its try/catch), so
   // this can never surface as an unhandled rejection.
-  void runCompactJob(existing.sessionId, sessionKey, ctx, job)
+  void runCompactJob(existing.sessionId, sessionKey, () => resolveStandingContext(sessionKey, nodes, edges), job)
   return { sessionKey, accepted: true, coalesced: false, state: 'pending' }
 }
 

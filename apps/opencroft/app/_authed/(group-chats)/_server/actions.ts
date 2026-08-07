@@ -16,6 +16,7 @@ import type {
 import {
   addMember,
   addPin,
+  compactThread,
   createGroupChat,
   deleteThread,
   editPin,
@@ -31,7 +32,9 @@ import {
   sendMessageInThread,
   setGroupChatTopic,
   startThread,
+  threadCompactStatus,
 } from '@/app/_authed/(group-chats)/_server/model'
+import type { CompactAck, CompactStatus } from '@/app/_authed/(extension-runtime)/_server/stream'
 import type {
   AgentRef,
   GroupChatDetailView,
@@ -194,6 +197,18 @@ export const sendGroupChatThreadMessage = createServerFn({ method: 'POST', stric
     async ({ data }): Promise<SendThreadMessageResult> =>
       asWriteResult(() => sendMessageInThread(getRequest(), data.threadId, data.text, { front: data.front })),
   )
+
+// Not wrapped in `asWriteResult`: a membership/agent-removed refusal here has
+// no per-instance copy to build (unlike a send or a rename), so it crosses
+// the wire the same way `getGroupChatThread`/`startGroupChatThread` already
+// do for their own refusals — see model.ts's `compactThread` for the gate.
+export const compactGroupChatThread = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((threadId: string) => threadId)
+  .handler(async ({ data: threadId }): Promise<CompactAck> => compactThread(getRequest(), threadId))
+
+export const getGroupChatThreadCompactStatus = createServerFn({ method: 'GET', strict: { output: false } })
+  .inputValidator((threadId: string) => threadId)
+  .handler(async ({ data: threadId }): Promise<CompactStatus> => threadCompactStatus(getRequest(), threadId))
 
 // ── Pinned notes ─────────────────────────────────────────────────────────
 

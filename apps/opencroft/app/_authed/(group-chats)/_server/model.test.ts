@@ -48,6 +48,13 @@ const model = await import('./model')
 // it statically would touch the database before PGLITE_PATH is set above.
 const sessionStore = await import('@/app/_authed/(agent)/_server/acp-session-store')
 const { ensureAuth } = await import('@opencroft/auth/server')
+// The production wiring this test process never runs (it imports model.ts
+// directly, not through server.ts's ensureServerStarted) — see
+// server/startup.ts for the real registration. Without this, a group-chat
+// sessionKey resolves to nothing and every compactThread call below throws
+// "No agent/job resolved for session" before performCompact ever runs.
+const { registerStandingContextResolver } = await import('@/app/_authed/(extension-runtime)/_server/stream')
+registerStandingContextResolver(model.groupChatStandingContext)
 
 after(async () => {
   await rm(workdir, { recursive: true, force: true })
@@ -924,6 +931,167 @@ test('a changed pin set rides the next send the same way the topic does', async 
   await waitForPrompts(prompts, 3)
   assert.doesNotMatch(prompts[2] ?? '', /do not deploy on a Friday/, 'an unpinned note stops being delivered')
   assert.doesNotMatch(prompts[2] ?? '', /standing guidance/, 'and no empty reminder block is sent in its place')
+})
+
+// ---------------------------------------------------------------------------
+// COMPACTION. Before this, `group-chat:<chatId>:<agent>:<uuid>` session keys
+// could not be compacted at all: `requestCompactOnGraph` resolved sessions
+// via `parseSessionKey`'s `/^agent:.../` regex plus graph reachability, and a
+// group-chat key matches neither, so it threw "No agent/job resolved for
+// session" before `performCompact` ever ran.
+// ---------------------------------------------------------------------------
+
+test('a group-chat thread can be compacted at all', async () => {
+  const owner = await makeUser('compact-basic-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'compact basics', 'the starting topic')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const prompts: string[] = []
+  const connection = {
+    newSession: async () => ({ sessionId: `compact-basic-session-${crypto.randomUUID()}` }),
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      prompts.push(params.prompt.map((block) => block.text ?? '').join(''))
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+
+  const workspaceSlug = slug('Agent Session')
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store)
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message')
+  await waitForPrompts(prompts, 1)
+
+  const ack = await model.compactThread(reqAs(owner), started.thread.id)
+  assert.equal(ack.accepted, true, 'the group-chat: key must resolve instead of throwing before performCompact runs')
+
+  await waitForPrompts(prompts, 3) // opening, then '/compact', then the restore
+  assert.equal(prompts[1], '/compact')
+  assert.match(prompts[2] ?? '', /the starting topic/, 'the restore re-delivers the thread standing context')
+
+  const status = await model.threadCompactStatus(reqAs(owner), started.thread.id)
+  assert.equal(status.state, 'done')
+  assert.equal(status.result?.instructionsRestored, true)
+})
+
+// THE POINT OF THE POST-COMPACTION DELIVERY POINT IN THE STANDING-CONTEXT
+// ARCHITECTURE: the restore re-assembles standing context FROM CURRENT STATE
+// at restore time, not from whatever the thread was told when it opened — so
+// a topic/pin change the once-on-change path has not delivered yet still
+// survives a compaction that lands in between.
+test('compaction restores CURRENT topic and pins, not what the thread was told when it opened', async () => {
+  const owner = await makeUser('compact-current-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'compact current', 'topic one')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const prompts: string[] = []
+  const connection = {
+    newSession: async () => ({ sessionId: `compact-current-session-${crypto.randomUUID()}` }),
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      prompts.push(params.prompt.map((block) => block.text ?? '').join(''))
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+
+  const workspaceSlug = slug('Agent Session')
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store)
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message')
+  await waitForPrompts(prompts, 1)
+  assert.match(prompts[0] ?? '', /topic one/)
+
+  // Changed WITHOUT an intervening send, so the once-on-change path has not
+  // reached the thread yet — as far as it knows, the topic is still "topic
+  // one" and it has never heard of this pin.
+  await model.setGroupChatTopic(reqAs(owner), chat.id, 'topic two')
+  await model.addPin(reqAs(owner), chat.id, 'a note pinned after the thread opened')
+
+  const ack = await model.compactThread(reqAs(owner), started.thread.id)
+  assert.equal(ack.accepted, true)
+
+  await waitForPrompts(prompts, 3)
+  assert.equal(prompts[1], '/compact')
+  assert.match(prompts[2] ?? '', /topic two/, 'the restore reads current state, not what was true when the thread opened')
+  assert.match(prompts[2] ?? '', /a note pinned after the thread opened/)
+  assert.doesNotMatch(prompts[2] ?? '', /topic one/)
+})
+
+test('compactThread is refused for a non-member the same way sendMessageInThread is', async () => {
+  const owner = await makeUser('compact-nonmember-owner@example.test')
+  const outsider = await makeUser('compact-nonmember-outsider@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'compact non-member')
+  await db.insert(groupChatMember).values({ groupChatId: chat.id, principalType: 'agent', agentNodeId: 'agent-a' })
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: `group-chat:${chat.id}:agent-a:compact-nonmember-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  const refusal = await captureRefusal(() => model.compactThread(reqAs(outsider), thread.id))
+  assert.equal(refusal.code, 'not-found')
+})
+
+test('compactThread is refused once the thread\'s agent is no longer a member', async () => {
+  const owner = await makeUser('compact-agent-removed-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'compact agent removed')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: `group-chat:${chat.id}:agent-a:compact-agent-removed-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  await model.removeMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+
+  const refusal = await captureRefusal(() => model.compactThread(reqAs(owner), thread.id))
+  assert.equal(refusal.code, 'agent-not-a-member')
 })
 
 test('the name is never delivered to an agent', async () => {

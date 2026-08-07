@@ -1,5 +1,7 @@
 import { startDbBackupScheduler } from '@opencroft/db-backups'
 
+import { groupChatStandingContext } from '@/app/_authed/(group-chats)/_server/model'
+import { registerStandingContextResolver } from '@/app/_authed/(extension-runtime)/_server/stream'
 import { startDockerPsPoller } from '@/server/scheduler/docker-ps-poller'
 import { startEventScheduler } from '@/server/scheduler/event-scheduler'
 
@@ -19,6 +21,12 @@ export function ensureServerStarted(): void {
   startEventScheduler()
   startDockerPsPoller()
   startDbBackupScheduler()
+  // The session layer (extension-runtime/_server/stream.ts) knows nothing of
+  // group chats — this is the one place that names both, so compaction's
+  // restore step can reach a group-chat thread's current topic + pins
+  // without stream.ts importing group-chat code (see registerStandingContextResolver's
+  // own header for why that matters).
+  registerStandingContextResolver(groupChatStandingContext)
   void preload()
 }
 
