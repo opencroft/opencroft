@@ -181,7 +181,10 @@ async function buildToolset(
 ): Promise<{ toolset: ToolSet; close: () => Promise<void> }> {
   const toolset: ToolSet = {}
 
-  const localTools = typeof config.tools === 'function' ? await config.tools() : config.tools
+  // Same caller the MCP server path resolves from a session token — here the
+  // session's selection is already in hand, so it comes straight off it.
+  const localTools =
+    typeof config.tools === 'function' ? await config.tools({ mcpIdentity: selection.mcpIdentity }) : config.tools
   for (const local of localTools) {
     // Hidden tools never enter the session; AlwaysAllow tools skip the prompt.
     const access = accessFor(permissions, toolKey(local.name))

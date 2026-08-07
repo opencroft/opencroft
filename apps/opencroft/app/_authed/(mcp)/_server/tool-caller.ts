@@ -7,10 +7,11 @@
  * the other import back into it — a cycle to satisfy a type that carries no
  * behaviour at all.
  *
- * `agent` is the agent NAME behind the credential the HTTP MCP surface
- * resolved, or null when there is none: no credential presented, a personal
- * token, auth switched off, or the in-process bridge, which has no credential
- * because it never leaves the process.
+ * `agent` is the agent NAME the calling surface resolved — from the request's
+ * credential over HTTP, from the session's own bookkeeping in the in-process
+ * bridge — or null when it resolved none: no credential presented, a personal
+ * token, auth switched off, or a bridged session that could not be attributed
+ * to exactly one agent.
  *
  * NULL IS "UNKNOWN", NOT "TRUSTED". A tool that acts on behalf of a specific
  * agent refuses a null caller rather than falling back to a default — there is

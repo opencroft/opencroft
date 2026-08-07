@@ -714,6 +714,15 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       }
       return undefined
     },
+    // The identity is read off the session this token belongs to, never off
+    // the request. A token still awaiting its newSession, or one that maps to
+    // a session that has since gone, resolves to no identity — the caller is
+    // unknown, which is a different thing from unrestricted.
+    callerFor: (token) => {
+      const sessionId = store.acpTokenSession.get(token)
+      const session = sessionId ? store.sessions.get(sessionId) : undefined
+      return { mcpIdentity: session?.selection.mcpIdentity }
+    },
   })
 
   // The real MCP servers the native harness should attach in-process — the

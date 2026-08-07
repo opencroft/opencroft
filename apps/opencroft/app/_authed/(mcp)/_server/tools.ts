@@ -1212,11 +1212,14 @@ interface ParsedEndpoint {
  * a default would silently pick one.
  *
  * So a caller the surface could not identify is refused, whatever the reason —
- * no credential, a personal token, auth switched off, or the in-process bridge,
- * which cannot present one because it never leaves the process. That last case
- * means an agent running inside this app's own chat cannot use these tools yet;
- * closing it means carrying session identity into the bridge, which is separate
- * work rather than something to fake here.
+ * no credential, a personal token, auth switched off, or a bridged call whose
+ * session could not be attributed to exactly one agent.
+ *
+ * Each surface asserts the identity from what only it can know, and neither
+ * accepts one from the caller: the HTTP surface from the request's credential,
+ * the in-process bridge from the session's own bookkeeping. Being internal
+ * confers nothing on its own — an unattributable bridged call is refused here
+ * exactly like an anonymous HTTP one.
  */
 export function requireCallingAgent(caller: ToolCallerContext): string {
   if (!caller.agent) {

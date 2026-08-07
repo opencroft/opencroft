@@ -192,8 +192,9 @@ test('requireCallingAgent returns the agent behind the credential', () => {
 
 test('requireCallingAgent refuses a caller the surface could not identify', () => {
   // Covers every way `agent` ends up null: no credential presented, a personal
-  // token, auth switched off, and the in-process bridge — none of which say
-  // WHICH agent is asking, so all of them are the same answer here.
+  // token, auth switched off, and a bridged call whose session could not be
+  // attributed to one agent — none of which say WHICH agent is asking, so all
+  // of them are the same answer here.
   assert.throws(
     () => requireCallingAgent({ agent: null }),
     (e: unknown) => {

@@ -18,10 +18,27 @@ export interface LocalTool {
 
 export type SkillsInput = SkillDef[] | (() => Promise<SkillDef[]>)
 
+/**
+ * Who a tools factory is building for: the calling session's opaque
+ * `mcpIdentity` (see AgentSelection), and nothing else. The engine neither
+ * reads nor interprets the value — it only carries it, the same way it already
+ * hands it to `loadMcpServers` — so a host can scope or attribute its own tools
+ * to the caller.
+ *
+ * Absent when the request carried no session token, or one that resolves to no
+ * live session. A host must treat that as "unidentified", never as a default
+ * caller: this is the only thing standing between a tool that acts AS someone
+ * and a tool that acts as anyone.
+ */
+export interface ToolsCaller {
+  mcpIdentity?: string
+}
+
 // Mirrors SkillsInput: a static array, or a function re-evaluated per request
 // so a live source (e.g. dynamic agent-tool graph nodes) stays current without
-// a restart.
-export type ToolsInput = LocalTool[] | (() => Promise<LocalTool[]>)
+// a restart — and, given the request's caller, so a host can build a toolset
+// that knows whose session it is serving.
+export type ToolsInput = LocalTool[] | ((caller: ToolsCaller) => Promise<LocalTool[]>)
 
 export type SkillHandler = (name: string) => Promise<string>
 
@@ -33,6 +50,12 @@ export interface McpServerOptions {
   // Resolve per-session permissions for an incoming request token (the
   // 'x-agent-session' header). Absent/undefined => serve everything.
   permissionsFor?: (sessionToken: string) => ResolvedPermissions | undefined
+  // Resolve who is calling, from the same 'x-agent-session' token. Deliberately
+  // separate from permissionsFor: an unresolved token means "unrestricted"
+  // there and "unidentified" here, and folding two answers with opposite
+  // defaults into one resolver is how a missing session turns into a permitted
+  // identity. A token that maps to no session yields no identity.
+  callerFor?: (sessionToken: string) => ToolsCaller
 }
 
 export interface McpServerHandle {
@@ -81,8 +104,8 @@ async function resolveSkills(skills: SkillsInput): Promise<SkillDef[]> {
   return typeof skills === 'function' ? skills() : skills
 }
 
-async function resolveTools(tools: ToolsInput): Promise<LocalTool[]> {
-  return typeof tools === 'function' ? tools() : tools
+async function resolveTools(tools: ToolsInput, caller: ToolsCaller): Promise<LocalTool[]> {
+  return typeof tools === 'function' ? tools(caller) : tools
 }
 
 // Build a request-scoped server. When permissions are resolved for the request,
@@ -91,6 +114,7 @@ async function resolveTools(tools: ToolsInput): Promise<LocalTool[]> {
 async function buildServer(
   options: McpServerOptions,
   permissions: ResolvedPermissions | undefined,
+  caller: ToolsCaller,
 ): Promise<McpServer> {
   const server = new McpServer({
     name: `agent-client-${options.name}`,
@@ -116,7 +140,7 @@ async function buildServer(
       },
     )
   }
-  for (const tool of await resolveTools(options.tools)) {
+  for (const tool of await resolveTools(options.tools, caller)) {
     if (accessFor(permissions, toolKey(tool.name)) === null) {
       continue
     }
@@ -148,6 +172,16 @@ function permissionsForRequest(options: McpServerOptions, req: IncomingMessage):
   return options.permissionsFor(token)
 }
 
+// The caller comes from the request's own token and nowhere else — never from
+// the request body, and never defaulted when the token resolves to nothing.
+function callerForRequest(options: McpServerOptions, req: IncomingMessage): ToolsCaller {
+  const token = req.headers['x-agent-session']
+  if (typeof token !== 'string' || !options.callerFor) {
+    return {}
+  }
+  return options.callerFor(token)
+}
+
 function isLoopbackAddress(address: string | undefined): boolean {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
 }
@@ -170,7 +204,7 @@ async function handle(running: RunningServer, req: IncomingMessage, res: ServerR
     enableJsonResponse: true,
   })
   res.on('close', () => void transport.close())
-  const server = await buildServer(running.options, permissions)
+  const server = await buildServer(running.options, permissions, callerForRequest(running.options, req))
   await server.connect(transport)
   await transport.handleRequest(req, res, await readBody(req))
 }

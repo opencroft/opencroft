@@ -5,7 +5,7 @@ export { agentClient, createAgentClient, supportsMidTurnInput } from './agent-cl
 export type { ChatBlock, ChatMessage } from './fold'
 export { buildBlocks, foldEvents, isTerminalToolStatus } from './fold'
 // Tool / skill registration surface.
-export type { LocalTool, SkillHandler, SkillsInput, ToolsInput } from './mcp-server'
+export type { LocalTool, SkillHandler, SkillsInput, ToolsCaller, ToolsInput } from './mcp-server'
 export type { KeyValue, McpServerConfig, McpTransport } from './mcp-types'
 export type { EventsWindow } from './pagination'
 // Permission model (also importable via the subpath).
