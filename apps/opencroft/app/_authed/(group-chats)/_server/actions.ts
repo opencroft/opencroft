@@ -144,11 +144,17 @@ export const setMyGroupChatTopic = createServerFn({ method: 'POST', strict: { ou
 
 export const addGroupChatMember = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { groupChatId: string; principal: MemberPrincipal }) => data)
-  .handler(async ({ data }): Promise<void> => addMember(getRequest(), data.groupChatId, data.principal))
+  .handler(
+    async ({ data }): Promise<GroupChatWriteResult> =>
+      asWriteResult(() => addMember(getRequest(), data.groupChatId, data.principal)),
+  )
 
 export const removeGroupChatMember = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { groupChatId: string; principal: MemberPrincipal }) => data)
-  .handler(async ({ data }): Promise<void> => removeMember(getRequest(), data.groupChatId, data.principal))
+  .handler(
+    async ({ data }): Promise<GroupChatWriteResult> =>
+      asWriteResult(() => removeMember(getRequest(), data.groupChatId, data.principal)),
+  )
 
 export const listGroupChatMembers = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((groupChatId: string) => groupChatId)

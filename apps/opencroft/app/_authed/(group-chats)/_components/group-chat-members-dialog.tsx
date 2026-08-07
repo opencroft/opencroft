@@ -18,7 +18,8 @@ import { AddMemberPicker, type MemberCandidate } from 'ui/group-chat/add-member-
 import { MemberAvatarGroup } from 'ui/group-chat/member-avatar-group'
 
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
-import type { DirectoryUser, MemberRef } from '@/app/_authed/(group-chats)/_server/actions'
+import { memberActionRefusal } from '@/app/_authed/(group-chats)/_lib/member-action-refusal'
+import type { DirectoryUser, GroupChatWriteResult, MemberRef } from '@/app/_authed/(group-chats)/_server/actions'
 import { addGroupChatMember, removeGroupChatMember } from '@/app/_authed/(group-chats)/_server/actions'
 import type { AgentNodeRef } from '@/app/_authed/(space)/_server/agents'
 
@@ -62,11 +63,24 @@ export function GroupChatMembersDialog({ groupChatId, members, directory, agents
   // One pending flag for both, because the picker disables the whole list off
   // it: a second request while one is in flight would race the router
   // invalidation and could act on a membership list that has already moved.
-  const run = async (action: () => Promise<void>, fallback: string) => {
+  //
+  // A refusal (the last user member, a removed principal, ...) comes back as
+  // DATA — `{ ok: false, code }` — not as a throw. A thrown server-function
+  // error reaches the browser as `$TSR/Error` carrying only `message`, so the
+  // dialog previously could never recognise which refusal it was and always
+  // fell through to `fallback`. `memberActionRefusal` turns the code into the
+  // same mapped copy every other refusal surface shows. `catch` below still
+  // exists for genuine faults, which still throw.
+  const run = async (action: () => Promise<GroupChatWriteResult>, fallback: string) => {
     setError(undefined)
     setPending(true)
     try {
-      await action()
+      const result = await action()
+      const refusal = memberActionRefusal(result)
+      if (refusal) {
+        setError(refusal)
+        return
+      }
       // Stay open: managing several people in a row is the common case, and the
       // picker re-marks each one once the loader data refreshes.
       await router.invalidate()
