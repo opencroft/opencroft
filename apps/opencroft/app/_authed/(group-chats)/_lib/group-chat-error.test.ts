@@ -1,10 +1,20 @@
-// Proves the client-side error contract against the REAL wire format.
+// Proves the client-side error contract against a seroval round trip.
 //
-// The point of this file is that it does not hand-build a plausible-looking
-// error object and check the helper reads it. It puts a genuine
-// GroupChatAccessError through the same seroval round trip `createServerFn`
-// uses, and asserts against whatever comes out the other side — including the
-// part that is easy to get wrong, that `instanceof` no longer holds there.
+// READ THIS BEFORE RELYING ON IT FOR A SERVER FUNCTION. This file's header
+// used to claim it exercised "the same seroval round trip `createServerFn`
+// uses". That premise is wrong, and it caused a real bug: we captured the actual
+// network payload for a thrown server-function error and it is
+// `{"message":"…"},"c":"$TSR/Error"}` — a plain Error carrying its message and
+// NOTHING else. `name` and `code` are gone. Seroval preserves them, as the
+// tests below correctly show; the server-function error path does not put the
+// error through seroval intact, so what those tests prove is a property of
+// seroval, not of the boundary a browser actually sees.
+//
+// The helpers here are still right for errors that reach the client with
+// their fields (a rethrow inside the same process, an SSR loader), and the
+// `instanceof` finding below still holds. But a REFUSAL THAT HAS TO BE
+// IDENTIFIED IN THE BROWSER MUST BE RETURNED AS DATA, not thrown — see
+// `_server/actions.ts`'s SendThreadMessageResult and `_lib/send-failure.ts`.
 //
 // No database here, and that is now structurally true rather than a hope: the
 // error class lives in `_shared/access-error.ts`, which imports nothing, so
@@ -40,7 +50,9 @@ test('instanceof does NOT survive the RPC boundary — the whole reason this hel
   assert.ok(received instanceof Error, 'it does arrive as a plain Error')
 })
 
-test('name and code do survive, and the helper reads them', async () => {
+// Through SEROVAL specifically. This is not what a thrown server-function
+// error looks like in the browser — see the header.
+test('name and code survive a seroval round trip, and the helper reads them', async () => {
   for (const code of ['unauthenticated', 'not-found', 'agent-not-a-member'] as const) {
     const received = await overTheWire(new GroupChatAccessError(code, `message for ${code}`))
     assert.equal(groupChatAccessCode(received), code, `${code} must survive the round trip`)

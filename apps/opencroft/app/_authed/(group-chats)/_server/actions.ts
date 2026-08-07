@@ -40,6 +40,8 @@ import {
 } from '@/app/_authed/(group-chats)/_server/read-model'
 import type { DirectoryUser } from '@/app/_authed/(group-chats)/_server/user-directory'
 import { listDirectoryUsers } from '@/app/_authed/(group-chats)/_server/user-directory'
+import type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
+import { GroupChatAccessError } from '@/app/_authed/(group-chats)/_shared/access-error'
 
 // So no client file ever has a reason to name model.ts directly — the same
 // pattern agents.ts just adopted for agents-impl.ts. These are erased at
@@ -100,12 +102,43 @@ export const startGroupChatThread = createServerFn({ method: 'POST', strict: { o
       startThread(getRequest(), data.groupChatId, data.agentNodeId, data.firstMessage),
   )
 
+/**
+ * The outcome of a thread send: delivered, or refused with a code.
+ *
+ * A REFUSAL IS RETURNED, NOT THROWN, and that is the point. A thrown error
+ * does not survive this boundary intact — `createServerFn` serialises it to
+ * `$TSR/Error` carrying `message` and nothing else, so `name`, `code` and
+ * every other own property are gone by the time the browser sees it. Any
+ * client-side branch on those fields silently falls through to whatever its
+ * fallback is, which is exactly what happened here: the send was refused
+ * correctly and the reader was told "your message could not be sent" instead
+ * of why.
+ *
+ * Matching on the message text would work today and break on the next copy
+ * edit. A returned value crosses as data, so the code arrives intact and the
+ * wording stays a client-side concern.
+ *
+ * Faults still throw. Only a deliberate refusal — something the reader can act
+ * on — comes back this way.
+ */
+export type SendThreadMessageResult = { ok: true } | { ok: false; code: GroupChatAccessFailure }
+
 export const sendGroupChatThreadMessage = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { threadId: string; text: string; front?: boolean }) => data)
-  .handler(
-    async ({ data }): Promise<void> =>
-      sendMessageInThread(getRequest(), data.threadId, data.text, { front: data.front }),
-  )
+  .handler(async ({ data }): Promise<SendThreadMessageResult> => {
+    try {
+      await sendMessageInThread(getRequest(), data.threadId, data.text, { front: data.front })
+      return { ok: true }
+    } catch (error) {
+      // `instanceof` is reliable HERE and only here: this runs in the same
+      // process that threw, with the real class. It is the client side that
+      // cannot use it, which is why the code is put on the wire as data.
+      if (error instanceof GroupChatAccessError) {
+        return { ok: false, code: error.code }
+      }
+      throw error
+    }
+  })
 
 // ── The reading surface's view model (phase 2) ───────────────────────────
 //

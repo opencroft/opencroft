@@ -1,20 +1,25 @@
-// Turning a failed thread send into something the composer can say.
+// Turning a refused thread send into something the composer can say.
 //
-// A group-chat refusal is an answer, not a fault: the caller lost access, or
-// the thread's agent was removed and the conversation is readable but not
-// writable. Those carry copy the reader can act on, so they become a
-// SendRefusedError and the chat hook shows that copy verbatim.
+// The refusal arrives as DATA -- `{ ok: false, code }` -- not as a thrown
+// error, because a thrown error does not survive the server-function boundary
+// intact: it is serialised to `$TSR/Error` with `message` and nothing else, so
+// `name` and `code` are gone before any client code can read them. The earlier
+// version of this file branched on those fields and therefore never matched a
+// real refusal; every one fell through to generic wording.
 //
-// Anything else -- a network failure, a bug -- is passed through untouched and
-// reported as a generic send failure. Same rule the loaders follow, for the
-// same reason: a network failure dressed up as a permission decision sends
-// people to the wrong explanation.
+// So the code crosses as a value and the wording is decided here. Matching on
+// the message text instead would work until the first copy edit.
 
 import { SendRefusedError } from '@/app/_authed/(agent)/_shared/send-refused-error'
-import { groupChatAccessMessage } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
+import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
+import type { SendThreadMessageResult } from '@/app/_authed/(group-chats)/_server/actions'
 
-/** The error a failed thread send should actually throw. */
-export function threadSendFailure(error: unknown): unknown {
-  const refusal = groupChatAccessMessage(error)
-  return refusal ? new SendRefusedError(refusal) : error
+/**
+ * The error a refused send should throw, or null when it was delivered.
+ *
+ * The copy comes from the same table the read surfaces use, so someone who
+ * loses access mid-send reads the same sentence everywhere.
+ */
+export function threadSendRefusal(result: SendThreadMessageResult): SendRefusedError | null {
+  return result.ok ? null : new SendRefusedError(groupChatAccessMessageForCode(result.code))
 }

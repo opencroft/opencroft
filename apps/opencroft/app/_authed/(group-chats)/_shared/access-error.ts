@@ -64,9 +64,22 @@ export type GroupChatAccessFailure =
  *
  * So: client code must branch on `error.name === 'GroupChatAccessError'` and
  * then read `.code` — never on `instanceof`. `_lib/group-chat-error.ts` is the
- * helper that does this, and its test proves the round trip rather than
- * assuming it. `model.test.ts`'s `instanceof` checks remain correct as
- * written; they call the model directly and never cross the boundary.
+ * helper that does this. `model.test.ts`'s `instanceof` checks remain correct
+ * as written; they call the model directly and never cross the boundary.
+ *
+ * CORRECTED, and the correction is the important part: the paragraph above
+ * describes seroval, not the boundary. A thrown server-function error does NOT
+ * reach the browser with its properties — the real payload was captured as
+ * `{"message":"…"},"c":"$TSR/Error"}`, a plain Error with its message and
+ * nothing else. `name` and `code` are both gone, so the helper cannot identify
+ * a refusal that was thrown out of a `createServerFn`, and every one of them
+ * falls through to whatever the caller's fallback copy is. That shipped once.
+ *
+ * The rule that follows: **if the browser has to know WHICH refusal it was,
+ * return it as data** — a discriminated result carrying the code — and keep
+ * throwing for faults only. Matching on the message text is not a substitute;
+ * it works until the first copy edit. See `_server/actions.ts`'s
+ * `SendThreadMessageResult` for the shape.
  */
 export class GroupChatAccessError extends Error {
   constructor(

@@ -9,7 +9,7 @@ import type { LocalSource, SendTransport } from '@/app/_authed/(agent)/_componen
 import { useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
-import { threadSendFailure } from '@/app/_authed/(group-chats)/_lib/send-failure'
+import { threadSendRefusal } from '@/app/_authed/(group-chats)/_lib/send-failure'
 import type { GroupChatDetailView, GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import {
   getGroupChatThreadView,
@@ -91,18 +91,21 @@ function ThreadConversation({
   // message held while the session is still opening, the waiting state, and
   // `front` for the permission-correction flow.
   // A refusal here is an answer, not a fault: the agent was removed from the
-  // group chat and this thread can be read but not written to. Rethrown as a
-  // SendRefusedError so the hook shows this copy instead of its generic
-  // wording -- the hook has no way to know what this endpoint's refusals mean,
-  // and should not. Anything else propagates untouched and is reported as a
-  // failure, the same rule the loaders follow.
+  // group chat and this thread can be read but not written to. It comes back
+  // as data rather than as a throw -- a thrown error reaches the browser as
+  // `$TSR/Error` with only its message, so the code identifying WHICH refusal
+  // it was does not survive -- and is turned into a SendRefusedError here so
+  // the hook shows this copy instead of its generic wording. The hook has no
+  // way to know what this endpoint's refusals mean, and should not. A genuine
+  // fault still throws out of the call and is reported as a failure.
   const sendTransport = useMemo<SendTransport>(
     () =>
       async ({ text, front }) => {
-        try {
-          await sendGroupChatThreadMessage({ data: { threadId: thread.id, text, front } })
-        } catch (error) {
-          throw threadSendFailure(error)
+        const refusal = threadSendRefusal(
+          await sendGroupChatThreadMessage({ data: { threadId: thread.id, text, front } }),
+        )
+        if (refusal) {
+          throw refusal
         }
       },
     [thread.id],
