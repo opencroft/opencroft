@@ -154,7 +154,7 @@ export function TurnDetails({
     const marker = agentAvatar ? <AgentAvatar avatar={agentAvatar} name={botName} size='md' /> : <ChainDot />
     return (
       <Flex className='min-w-0 w-full'>
-        <Chained marker={marker} lineAbove={false} lineBelow={false} align={agentAvatar ? 'start' : 'center'}>
+        <Chained marker={marker} lineAbove={false} lineBelow={false} align={agentAvatar ? 'start' : 'first-line'}>
           <Flex className='min-w-0 w-full gap-1'>
             <TurnHeader botName={botName} toggle={toggle} />
             {lastText ? (
@@ -223,7 +223,7 @@ export function TurnDetails({
             marker={marker}
             lineAbove={!isFirst}
             lineBelow={!isLast}
-            align={hasAvatar ? 'start' : 'center'}
+            align={hasAvatar ? 'start' : 'first-line'}
           >
             <Flex className='min-w-0 w-full gap-1'>
               {isFirst ? <TurnHeader botName={botName} toggle={toggle} /> : null}
