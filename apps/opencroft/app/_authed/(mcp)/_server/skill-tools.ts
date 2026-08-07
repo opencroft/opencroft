@@ -1,7 +1,6 @@
 import { readSkills, type SkillConfig, writeSkills } from '@/app/_authed/(agent)/_server/skill-store'
 import { withApprovalRequired } from '@/app/_authed/(approvals)/_server/with-approval'
-
-type ToolHandler = (args: Record<string, unknown>) => Promise<Record<string, unknown>>
+import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 
 function textResult(text: string): Record<string, unknown> {
   return { content: [{ type: 'text' as const, text }] }

@@ -1,7 +1,6 @@
+import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { approvalStore } from '@/lib/approval-store'
 import type { PendingApproval } from '@/lib/sse-events'
-
-type ToolHandler = (args: Record<string, unknown>) => Promise<Record<string, unknown>>
 
 interface ApprovalMeta {
   view?: string
@@ -10,7 +9,9 @@ interface ApprovalMeta {
 const meta = new WeakMap<ToolHandler, ApprovalMeta>()
 
 export function withApprovalRequired(handler: ToolHandler, options: ApprovalMeta = {}): ToolHandler {
-  const wrapped: ToolHandler = (args) => handler(args)
+  // Forwards the caller context untouched: a wrapped handler must not lose
+  // track of who is calling just because it also needs approval.
+  const wrapped: ToolHandler = (args, caller) => handler(args, caller)
   meta.set(wrapped, options)
   return wrapped
 }

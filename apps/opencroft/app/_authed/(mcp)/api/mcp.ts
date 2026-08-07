@@ -30,7 +30,7 @@ function mcpErr(id: number | string | null, code: number, message: string): MCPR
 async function handleMethod(
   method: string,
   params: Record<string, unknown> | undefined,
-  opts: { signal?: AbortSignal; internal?: boolean },
+  opts: { signal?: AbortSignal; internal?: boolean; callerAgent?: string | null },
 ) {
   switch (method) {
     case 'initialize':
@@ -132,6 +132,13 @@ export const Route = createFileRoute('/_authed/(mcp)/api/mcp')({
           const result = await handleMethod(body.method, body.params as Record<string, unknown> | undefined, {
             signal: request.signal,
             internal: false,
+            // The agent behind the credential, when one resolved. This is the
+            // ONLY entry point that can know it — the in-process bridge has no
+            // credential to present — and it is passed as data rather than
+            // re-resolved downstream so there is exactly one place the identity
+            // is decided. A tool that acts on behalf of an agent refuses when
+            // this is null; see ToolCallerContext.
+            callerAgent: caller.agent,
           })
 
           // Notifications have no id and no response body

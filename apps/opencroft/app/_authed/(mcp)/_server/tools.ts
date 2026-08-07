@@ -50,9 +50,11 @@ import {
 import { localExtRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
 import { resolveExtensionRepo, searchRegistries } from '@/app/_authed/(extension-runtime)/_server/registry'
 import type { ExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
+import { listGroupChatsForAgentView, sendMessageInThreadAsAgent } from '@/app/_authed/(group-chats)/_server/model'
 import { recordAudit } from '@/app/_authed/(mcp)/_server/audit'
 import { executeExtensionTool, getExtensionToolDefinitions } from '@/app/_authed/(mcp)/_server/extension-tools'
 import { skillToolDefinitions, skillToolHandlers } from '@/app/_authed/(mcp)/_server/skill-tools'
+import type { ToolCallerContext, ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { isYoloMode } from '@/app/_authed/(mcp)/_server/yolo'
 // MCP tool calls carry no session cookie by design (bearer-token surface,
 // not cookies), so every space operation reached from here must be the
@@ -138,6 +140,40 @@ export const toolDefinitions = [
         ...SPACE_PARAM,
       },
       required: ['message'],
+    },
+  },
+
+  // ── Group chats ───────────────────────────────────────────────────
+  //
+  // The agent-facing half of group chats. Both tools act as the CALLING agent
+  // and are gated on that agent's own membership, so what they can reach is
+  // whatever a person put them in — there is no parameter for "act as someone
+  // else", and adding one would defeat the gate.
+  {
+    name: 'group_chat_list',
+    description:
+      'List the group chats you are a member of, with their topic and their threads. ' +
+      'Use the `ref` values from this result to address a thread in group_chat_send — ' +
+      'they are opaque handles, not a format to construct.',
+    inputSchema: { type: 'object' as const, properties: {} },
+  },
+  {
+    name: 'group_chat_send',
+    description:
+      'Send a message into a thread of a group chat you are a member of. The thread has one agent, ' +
+      'which receives your message in its own session and replies in the thread — the reply does NOT ' +
+      'come back to you, so read the thread later to see it. The thread agent may be you: that is how ' +
+      'you hand work to a fresh-context instance of yourself.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        thread: {
+          type: 'string',
+          description: 'A thread reference from group_chat_list. Opaque — pass it back unchanged.',
+        },
+        message: { type: 'string', description: 'The message to send into the thread.' },
+      },
+      required: ['thread', 'message'],
     },
   },
 
@@ -1065,6 +1101,13 @@ export interface ToolCallOptions {
   signal?: AbortSignal
   /** Call made by the internal agent: skip the MCP approval queue (the agent chat has its own permission flow). */
   internal?: boolean
+  /**
+   * The agent name behind the caller's credential, when the surface resolved
+   * one. Only the HTTP surface can: it is the only entry point that sees a
+   * token. Absent everywhere else, and tools that need it refuse rather than
+   * guess — see `ToolCallerContext`.
+   */
+  callerAgent?: string | null
 }
 
 export async function executeAgentTool(
@@ -1136,7 +1179,8 @@ export async function executeAgentTool(
 
 // ── Tool handler registry ──────────────────────────────────────────────
 
-type ToolHandler = (args: Record<string, unknown>) => Promise<Record<string, unknown>>
+// The handler contract and the caller context both live in tool-caller.ts —
+// see the note there for why they are not declared here.
 
 interface GraphNode {
   id: string
@@ -1156,6 +1200,33 @@ interface StoredEdge extends Record<string, unknown> {
 interface ParsedEndpoint {
   nodeId: string
   handle?: string
+}
+
+/**
+ * The agent a tool is acting as, or a refusal.
+ *
+ * THE WHOLE GATE RESTS ON THIS. A tool that acts on behalf of an agent needs to
+ * know which one, and the only honest source is the credential the request
+ * arrived with. There is deliberately no parameter for it and no fallback: an
+ * agent name taken from tool arguments would let any caller name any agent, and
+ * a default would silently pick one.
+ *
+ * So a caller the surface could not identify is refused, whatever the reason —
+ * no credential, a personal token, auth switched off, or the in-process bridge,
+ * which cannot present one because it never leaves the process. That last case
+ * means an agent running inside this app's own chat cannot use these tools yet;
+ * closing it means carrying session identity into the bridge, which is separate
+ * work rather than something to fake here.
+ */
+export function requireCallingAgent(caller: ToolCallerContext): string {
+  if (!caller.agent) {
+    fail(
+      -32603,
+      'This tool acts as the calling agent, and this request did not identify one. ' +
+        'It has to be called with an agent credential over the HTTP MCP surface.',
+    )
+  }
+  return caller.agent
 }
 
 function textResult(text: string): Record<string, unknown> {
@@ -1823,6 +1894,34 @@ function buildHandlers(): Record<string, ToolHandler> {
         ...(spaceId ? { spaceId } : {}),
       })
       return textResult(`Toast sent: [${type}] ${message}`)
+    },
+
+    // ── group_chat_list ─────────────────────────────────────────────
+    group_chat_list: async (_args, caller) => {
+      const agent = requireCallingAgent(caller)
+      return textResult(JSON.stringify(await listGroupChatsForAgentView(agent), null, 2))
+    },
+
+    // ── group_chat_send ─────────────────────────────────────────────
+    //
+    // No approval wrapper, deliberately. Approval exists for tools that change
+    // the workspace under a person who may not be watching; this posts a
+    // message into a conversation that is visible on a screen, in a chat
+    // somebody already put this agent into. The membership gate is the control,
+    // and an approval queue on every delegated message would make the feature
+    // unusable for the thing it was asked for.
+    group_chat_send: async (args, caller) => {
+      const agent = requireCallingAgent(caller)
+      const thread = args.thread as string | undefined
+      const message = args.message as string | undefined
+      if (!thread) {
+        fail(-32602, 'Missing required param: thread')
+      }
+      if (!message) {
+        fail(-32602, 'Missing required param: message')
+      }
+      await sendMessageInThreadAsAgent(agent, thread, message)
+      return textResult('Message sent into the thread. The reply lands in the thread, not here.')
     },
 
     // ── list_spaces ─────────────────────────────────────────────────
@@ -2846,7 +2945,7 @@ export async function handleToolCall(
       const spaceId = typeof args.space === 'string' ? await resolveSpace(args) : undefined
       await awaitApproval({ tool: name, args, view: meta?.view, signal: opts.signal, spaceId })
     }
-    const result = await handler(args)
+    const result = await handler(args, { agent: opts.callerAgent ?? null })
     await recordAudit({
       tool: name,
       args,

@@ -12,7 +12,7 @@
 
 import { getSessionUser } from '@opencroft/auth/server'
 import { db, groupChat, groupChatMember, groupChatPin, groupChatThread, user } from '@opencroft/db'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 
 import {
   ensureLocalSessionImpl,
@@ -795,12 +795,7 @@ export async function sendMessageInThread(
 ): Promise<void> {
   const sessionUser = await requireSignedInUser(request)
   const [row] = await db
-    .select({
-      groupChatId: groupChatThread.groupChatId,
-      agentNodeId: groupChatThread.agentNodeId,
-      sessionKey: groupChatThread.sessionKey,
-      deliveredContextSignature: groupChatThread.deliveredContextSignature,
-    })
+    .select(threadDeliveryColumns)
     .from(groupChatThread)
     .where(eq(groupChatThread.id, threadId))
     .limit(1)
@@ -810,13 +805,48 @@ export async function sendMessageInThread(
   if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
-  // The agent has to still be a member, not just the caller. Without this,
+  await deliverIntoThread(row, text, opts)
+}
+
+/** The columns every delivery path needs off a thread row. */
+interface ThreadDeliveryTarget {
+  id: string
+  groupChatId: string
+  agentNodeId: string
+  sessionKey: string
+  deliveredContextSignature: string | null
+}
+
+const threadDeliveryColumns = {
+  id: groupChatThread.id,
+  groupChatId: groupChatThread.groupChatId,
+  agentNodeId: groupChatThread.agentNodeId,
+  sessionKey: groupChatThread.sessionKey,
+  deliveredContextSignature: groupChatThread.deliveredContextSignature,
+}
+
+/**
+ * THE ONE DELIVERY PATH INTO A THREAD. Every caller — a person in the browser,
+ * an agent through the tool surface — reaches an agent through this function
+ * and nothing else.
+ *
+ * It deliberately performs NO authorization: each entry point above answers a
+ * different question ("is this user a member?", "is this agent a member?") and
+ * has already answered it. What is shared is delivery, and duplicating that is
+ * how one caller quietly stops carrying standing context, or stops respecting
+ * the agent-membership rule, without any test noticing.
+ *
+ * The one rule that IS here rather than in a caller: the thread's agent must
+ * still be a member. That is a property of the thread, not of who is asking.
+ */
+async function deliverIntoThread(row: ThreadDeliveryTarget, text: string, opts?: { front?: boolean }): Promise<void> {
+  // The agent has to still be a member, whoever is sending. Without this,
   // removing an agent is decoration: its threads survive by design, they carry
   // the sessionKey, and every send through them would keep reaching it. This
   // is the rule that makes removal mean something, and it is deliberately NOT
-  // collapsed into the not-found refusal above — reaching it requires being a
-  // member already, so it leaks nothing, and the caller needs to be told why a
-  // thread they can plainly see will not accept a message.
+  // collapsed into a not-found refusal — reaching it requires having passed a
+  // membership gate already, so it leaks nothing, and the caller needs to be
+  // told why a thread it can plainly see will not accept a message.
   if (!(await isAgentMember(row.groupChatId, row.agentNodeId))) {
     throw new GroupChatAccessError('agent-not-a-member', 'That agent is no longer a member of this group chat')
   }
@@ -863,7 +893,7 @@ export async function sendMessageInThread(
     await db
       .update(groupChatThread)
       .set({ deliveredContextSignature: standing.signature })
-      .where(eq(groupChatThread.id, threadId))
+      .where(eq(groupChatThread.id, row.id))
   }
 }
 
@@ -901,4 +931,167 @@ export async function deleteThread(request: Request, threadId: string): Promise<
   // that reopens onto a fresh session via `ensureLocalSessionImpl`.
   await forgetLocalSessionImpl(row.sessionKey)
   await db.delete(groupChatThread).where(eq(groupChatThread.id, threadId))
+}
+
+// ── The agent-facing surface ─────────────────────────────────────────────
+//
+// Everything below is reached by an AGENT through the tool surface rather than
+// by a person through a browser. Two things are different here and both are
+// deliberate:
+//
+//   - The gate is the CALLING AGENT's membership, not a user's. A person's
+//     session says nothing about which agent is asking.
+//   - The caller is identified by NAME, resolved to an agent node. Names are
+//     taken to be unique, which is the design decision recorded on
+//     `listGroupChatsForAgent` and not an assumption made here.
+//
+// THE ANTI-LOOP BOUNDARY, stated once, here, because it is the thing a reader
+// will want to check and it is easy to get wrong later:
+//
+// An agent may send into a thread whose agent is ITSELF. That is not an
+// oversight to be closed — it is the point. An agent cannot dispatch to itself
+// across `agent:*` sessions (that IS an anti-loop rule), so a group-chat thread
+// is the sanctioned way to hand work to a fresh-context instance of the same
+// agent, which is exactly what delegating a review needs.
+//
+// What makes that safe is the direction of travel, and it must stay true:
+// **a reply never comes back.** The thread's agent answers into the thread's
+// own session, and that transcript reaches a person on a screen. Nothing in
+// this file, and nothing in the delivery path it calls, routes a reply into the
+// sending agent's session. A future change that gives a thread reply a way to
+// wake its sender is not a feature addition — it closes the loop this design
+// leaves open on purpose, and it needs the anti-loop question reopened first.
+//
+// What is NOT prevented, and cannot be from here: two agents that both choose
+// to send into each other's threads will keep each other awake. That requires
+// both of them to act, every hop, so it is a behaviour to notice rather than a
+// hole to plug — but nothing here would stop it.
+
+/** One thread as an agent sees it. No session key: an agent never needs one. */
+export interface AgentThreadRef {
+  ref: string
+  title: string | null
+  /** The agent this thread talks to — which may be the caller itself. */
+  agentNodeId: string
+  createdAt: Date
+}
+
+export interface AgentGroupChatRef {
+  ref: string
+  name: string
+  topic: string
+  threads: AgentThreadRef[]
+}
+
+/**
+ * Resolve an agent name to its node id, or refuse the way every other lookup
+ * here does.
+ *
+ * A NAME THAT MATCHES NOTHING IS A REFUSAL, not an empty result: a tool caller
+ * who is not a recognised agent must be told so rather than handed a plausible
+ * "you are in no group chats", which reads as an answer and is not one.
+ */
+async function requireAgentNode(agentName: string): Promise<string> {
+  const trimmed = agentName.trim()
+  const nodes = await listAgentNodesImpl()
+  const match = nodes.find((n) => n.name === trimmed)
+  if (!match) {
+    throw new GroupChatAccessError('not-found', `No agent named "${trimmed}" was found`)
+  }
+  return match.nodeId
+}
+
+/**
+ * A THREAD REFERENCE IS OPAQUE TO THE CALLER, and resolved here.
+ *
+ * Today it is the thread's id, and this is a lookup by id. It is not typed or
+ * documented as an id, and no tool schema says "uuid", because a readable
+ * addressing scheme is under discussion — when one lands, it resolves here and
+ * every caller that stored a reference from the list tool keeps working. The
+ * moment a tool contract promises a uuid, that stops being true.
+ *
+ * Membership is checked against the resolved thread's own chat, so an
+ * unresolvable reference and a thread in someone else's chat are the same
+ * refusal — a reference must not be a way to learn which threads exist.
+ */
+async function resolveThreadForAgent(agentNodeId: string, threadRef: string): Promise<ThreadDeliveryTarget> {
+  const trimmed = threadRef.trim()
+  if (!trimmed) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  const [row] = await db
+    .select(threadDeliveryColumns)
+    .from(groupChatThread)
+    .where(eq(groupChatThread.id, trimmed))
+    .limit(1)
+  if (!row) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  if (!(await isAgentMember(row.groupChatId, agentNodeId))) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  return row
+}
+
+/**
+ * Every group chat this agent is a member of, with its threads.
+ *
+ * The membership gate is the query itself — chats are selected by this agent's
+ * own membership row — so nothing here can return a chat the agent is not in.
+ */
+export async function listGroupChatsForAgentView(agentName: string): Promise<AgentGroupChatRef[]> {
+  const agentNodeId = await requireAgentNode(agentName)
+  const chats = await db
+    .select({ id: groupChat.id, name: groupChat.name, topic: groupChat.topic })
+    .from(groupChat)
+    .innerJoin(groupChatMember, eq(groupChatMember.groupChatId, groupChat.id))
+    .where(eq(groupChatMember.agentNodeId, agentNodeId))
+  if (chats.length === 0) {
+    return []
+  }
+  const threads = await db
+    .select({
+      id: groupChatThread.id,
+      groupChatId: groupChatThread.groupChatId,
+      title: groupChatThread.title,
+      agentNodeId: groupChatThread.agentNodeId,
+      createdAt: groupChatThread.createdAt,
+    })
+    .from(groupChatThread)
+    .where(
+      inArray(
+        groupChatThread.groupChatId,
+        chats.map((c) => c.id),
+      ),
+    )
+  return chats.map((chat) => ({
+    ref: chat.id,
+    name: chat.name,
+    topic: chat.topic,
+    threads: threads
+      .filter((t) => t.groupChatId === chat.id)
+      .map((t) => ({ ref: t.id, title: t.title, agentNodeId: t.agentNodeId, createdAt: t.createdAt })),
+  }))
+}
+
+/**
+ * Send into a thread as an agent.
+ *
+ * Gated on the CALLING agent's membership in that thread's chat, then handed to
+ * the same `deliverIntoThread` a person's send goes through — so standing
+ * context, the once-on-change rule and the agent-membership check are the same
+ * code, not a second copy that drifts.
+ *
+ * No `front`: that flag exists for the permission flow's corrective guidance,
+ * where a person is interrupting a run they are watching. An agent writing to a
+ * thread-mate is an ordinary message and queues like one.
+ */
+export async function sendMessageInThreadAsAgent(agentName: string, threadRef: string, text: string): Promise<void> {
+  const agentNodeId = await requireAgentNode(agentName)
+  const trimmed = text.trim()
+  if (!trimmed) {
+    throw new Error('A message needs some text')
+  }
+  const row = await resolveThreadForAgent(agentNodeId, threadRef)
+  await deliverIntoThread(row, trimmed)
 }

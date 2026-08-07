@@ -10,6 +10,7 @@ import {
   insideExcludedDir,
   isValidLocalExtensionSlug,
   replaceExact,
+  requireCallingAgent,
   resolveRemoteFilePath,
   resolveTerminalContext,
 } from './tools'
@@ -159,10 +160,7 @@ test('replaceExact inserts $-substitution patterns literally (regression guard)'
 })
 
 test('replaceExact replaceAll keeps $ patterns literal in every occurrence', () => {
-  assert.equal(
-    replaceExact('a a', { oldString: 'a', newString: "$'", replaceAll: true }, 'file'),
-    "$' $'",
-  )
+  assert.equal(replaceExact('a a', { oldString: 'a', newString: "$'", replaceAll: true }, 'file'), "$' $'")
 })
 
 test('replaceExact fails when oldString is missing or ambiguous', () => {
@@ -180,4 +178,35 @@ test('replaceExact fails when oldString is missing or ambiguous', () => {
       return true
     },
   )
+})
+
+// ── requireCallingAgent ────────────────────────────────────────────────────
+//
+// The gate every agent-acting tool rests on. The property worth pinning is not
+// that it returns a name — it is that an unidentified caller is REFUSED rather
+// than defaulted, because there is no safe default for "which agent is this".
+
+test('requireCallingAgent returns the agent behind the credential', () => {
+  assert.equal(requireCallingAgent({ agent: 'Agent Solo' }), 'Agent Solo')
+})
+
+test('requireCallingAgent refuses a caller the surface could not identify', () => {
+  // Covers every way `agent` ends up null: no credential presented, a personal
+  // token, auth switched off, and the in-process bridge — none of which say
+  // WHICH agent is asking, so all of them are the same answer here.
+  assert.throws(
+    () => requireCallingAgent({ agent: null }),
+    (e: unknown) => {
+      const err = e as { message?: string }
+      assert.match(String(err.message), /did not identify one/)
+      return true
+    },
+  )
+})
+
+test('requireCallingAgent refuses an empty agent name as firmly as a missing one', () => {
+  // An empty string is not a name. Letting it through would resolve to "no
+  // agent node found" deeper in, which reads as a lookup failure rather than
+  // as the credential problem it actually is.
+  assert.throws(() => requireCallingAgent({ agent: '' }))
 })

@@ -1277,3 +1277,200 @@ test('a first prompt that fails leaves the context unrecorded, and a later send 
     'and now it is recorded, because this time it was accepted',
   )
 })
+
+// ---------------------------------------------------------------------------
+// THE AGENT-FACING SURFACE. Gated on the CALLING agent's membership rather
+// than a user's, and reaching the agent through the same delivery path a
+// person's send uses.
+// ---------------------------------------------------------------------------
+
+test('an agent sees the chats it is a member of, with their threads, and no others', async () => {
+  const owner = await makeUser('agent-view-owner@example.test')
+  const inChat = await model.createGroupChat(reqAs(owner), 'the one it is in', 'the purpose')
+  const notInChat = await model.createGroupChat(reqAs(owner), 'the one it is not in')
+  await model.addMember(reqAs(owner), inChat.id, { kind: 'agent', agentNodeId: 'agent-solo' })
+  await model.addMember(reqAs(owner), notInChat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: inChat.id,
+      agentNodeId: 'agent-solo',
+      sessionKey: `group-chat:${inChat.id}:agent-solo:view-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  const chats = await model.listGroupChatsForAgentView('Agent Solo')
+
+  // Scoped to this test's own fixtures: the file shares one database, so a
+  // total count would be asserting about every other test's chats as well.
+  const mine = chats.find((c) => c.ref === inChat.id)
+  assert.ok(mine, 'the chat this agent was added to must be listed')
+  assert.equal(mine.name, 'the one it is in')
+  assert.equal(mine.topic, 'the purpose')
+  assert.equal(mine.threads.length, 1)
+  assert.equal(mine.threads[0]?.ref, thread.id, 'the thread reference is what a send takes back')
+
+  assert.equal(
+    chats.find((c) => c.ref === notInChat.id),
+    undefined,
+    'a chat this agent is not a member of must not appear',
+  )
+})
+
+test('an unrecognised agent name is refused, not answered with an empty list', async () => {
+  // An empty list reads as "you are in no group chats", which is an answer.
+  // A caller who is not a recognised agent has not been given one.
+  const refusal = await captureRefusal(() => model.listGroupChatsForAgentView('No Such Agent'))
+  assert.equal(refusal.code, 'not-found')
+})
+
+test('an agent can send into a thread of a chat it is in, through the shared delivery path', async () => {
+  const owner = await makeUser('agent-send-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'delegation', 'the standing purpose')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-solo' })
+  await model.addPin(reqAs(owner), chat.id, 'the pin that rides along')
+
+  const prompts: string[] = []
+  const connection = {
+    newSession: async () => ({ sessionId: `agent-send-${crypto.randomUUID()}` }),
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      prompts.push(params.prompt.map((b) => b.text ?? '').join(''))
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+
+  const workspaceSlug = slug('Agent Session')
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store)
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  // A person starts the thread; the delivering agent is a DIFFERENT member.
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message')
+  await waitForPrompts(prompts, 1)
+
+  await model.sendMessageInThreadAsAgent('Agent Solo', started.thread.id, '  please review the change  ')
+  await waitForPrompts(prompts, 2)
+
+  assert.match(prompts[1] ?? '', /please review the change/, 'the message reaches the thread agent')
+  assert.doesNotMatch(prompts[1] ?? '', / {2}please/, 'and is trimmed')
+})
+
+test('an agent cannot send into a thread of a chat it is not in, and cannot tell that from a bad reference', async () => {
+  const owner = await makeUser('agent-gate-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'not for you')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: `group-chat:${chat.id}:agent-a:gate-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  // 'Agent Solo' is a real agent, and not a member of this chat.
+  const outsider = await captureRefusal(() => model.sendMessageInThreadAsAgent('Agent Solo', thread.id, 'hello'))
+  const fabricated = await captureRefusal(() =>
+    model.sendMessageInThreadAsAgent('Agent Solo', crypto.randomUUID(), 'hello'),
+  )
+
+  assert.equal(outsider.code, 'not-found')
+  // Identical, so a reference is not a way to learn which threads exist.
+  assert.equal(fabricated.code, outsider.code)
+  assert.equal(fabricated.message, outsider.message)
+})
+
+// THE DELEGATION CASE, and the reason the anti-loop rule is written the way it
+// is: an agent sending into a thread whose agent is ITSELF is allowed, because
+// that is how work reaches a fresh-context instance of the same agent.
+test('an agent may send into a thread whose agent is itself', async () => {
+  const owner = await makeUser('self-delegate-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'self delegation', 'review the queue')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const prompts: string[] = []
+  const connection = {
+    newSession: async () => ({ sessionId: `self-delegate-${crypto.randomUUID()}` }),
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      prompts.push(params.prompt.map((b) => b.text ?? '').join(''))
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+
+  const workspaceSlug = slug('Agent Session')
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store)
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message')
+  await waitForPrompts(prompts, 1)
+
+  // Same agent on both ends: the sender and the thread's agent.
+  await model.sendMessageInThreadAsAgent('Agent Session', started.thread.id, 'take the next review')
+  await waitForPrompts(prompts, 2)
+  assert.match(prompts[1] ?? '', /take the next review/)
+})
+
+test('a removed agent cannot be reached by an agent sender either', async () => {
+  const owner = await makeUser('agent-removed-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'removal holds both ways')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-solo' })
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: `group-chat:${chat.id}:agent-a:removed-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  await model.removeMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+
+  // The sender is still a member; the thread's agent is not. The rule lives in
+  // the shared delivery path, so it holds for whoever is sending.
+  const refusal = await captureRefusal(() => model.sendMessageInThreadAsAgent('Agent Solo', thread.id, 'still there?'))
+  assert.equal(refusal.code, 'agent-not-a-member')
+})
