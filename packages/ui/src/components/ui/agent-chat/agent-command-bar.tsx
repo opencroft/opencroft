@@ -101,9 +101,11 @@ export interface AgentCommandBarProps {
   // the row costs one control no matter how many settings there are.
   configs?: CommandBarConfig[]
   onConfigChange?: (id: string, value: string) => void
-  // Host slot: rendered inside that same settings menu, under the pickers.
-  // For readouts that belong with the settings but are not choices -- a usage
-  // meter, a context budget.
+  // Host slot: rendered in the action row beside the settings button, NOT
+  // inside the menu. For readouts that belong with the settings but are not
+  // choices -- a usage meter, a context budget. They sit in the row rather
+  // than behind the button because a readout you have to open a menu to see
+  // is a readout nobody reads.
   configExtra?: ReactNode
   queued?: QueuedMessage[]
   onRemoveQueued?: (id: string) => void
