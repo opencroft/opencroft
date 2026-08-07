@@ -40,7 +40,12 @@ let counter = 0
 
 async function setup(
   adapterId: 'openclaw' | 'claude' = 'openclaw',
-  options: { reasoningEffort?: string; configOptions?: unknown; sessionKey?: string } = {},
+  options: {
+    reasoningEffort?: string
+    configOptions?: unknown
+    sessionKey?: string
+    transformDeliveredPrompt?: (text: string) => string
+  } = {},
 ) {
   counter += 1
   const selection: AgentSelection = {
@@ -92,7 +97,9 @@ async function setup(
     loadSession: false,
     initialized: Promise.resolve(),
   })
-  const client = createAgentClient()
+  const client = createAgentClient(
+    options.transformDeliveredPrompt ? { transformDeliveredPrompt: options.transformDeliveredPrompt } : {},
+  )
   const meta = await client.createSession(selection)
   const events: ChatEvent[] = []
   client.subscribe(meta.id, (event) => events.push(event))
@@ -1005,6 +1012,66 @@ test('a flush does not change how later ordinary sends drain', async () => {
   h.endTurn()
   await settle()
   assert.equal(h.promptCalls.at(-1), 'later-b')
+  await h.client.deleteSession(h.sessionId)
+})
+
+// ── transformDeliveredPrompt (delivery-time text transform) ───────────────
+//
+// The hook is applied inside deliverPrompt, the one place text is actually
+// handed to the harness — never by prompt() itself, so a message that queues
+// behind a running turn must only be transformed once it actually drains.
+
+test('transformDeliveredPrompt is applied on an immediate, idle delivery', async () => {
+  const calls: string[] = []
+  const h = await setup('openclaw', {
+    transformDeliveredPrompt: (text) => {
+      calls.push(text)
+      return `[stamped] ${text}`
+    },
+  })
+  await h.client.prompt(h.sessionId, 'hello')
+  assert.deepEqual(calls, ['hello'])
+  assert.deepEqual(h.promptCalls, ['[stamped] hello'])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('transformDeliveredPrompt runs at drain time, not at the moment a message queues', async () => {
+  const calls: string[] = []
+  const h = await setup('openclaw', {
+    transformDeliveredPrompt: (text) => {
+      calls.push(text)
+      return `[stamped] ${text}`
+    },
+  })
+  await h.client.prompt(h.sessionId, 'first') // delivers immediately: session was idle
+  await h.client.prompt(h.sessionId, 'second') // queues: a turn is already active
+  assert.deepEqual(calls, ['first'], 'the still-queued message must not be transformed yet')
+
+  h.endTurn()
+  await settle()
+  assert.deepEqual(calls, ['first', 'second'])
+  assert.deepEqual(h.promptCalls, ['[stamped] first', '[stamped] second'])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a flush-joined batch is transformed once, as the joined delivery, not once per original message', async () => {
+  const calls: string[] = []
+  const h = await setup('openclaw', {
+    transformDeliveredPrompt: (text) => {
+      calls.push(text)
+      return `[stamped] ${text}`
+    },
+  })
+  await h.client.prompt(h.sessionId, 'first')
+  await h.client.prompt(h.sessionId, 'second')
+  await h.client.prompt(h.sessionId, 'forced', { flush: true })
+  assert.deepEqual(calls, ['first'], 'nothing held is transformed before the flush actually delivers')
+
+  h.endTurn()
+  await settle()
+  assert.equal(calls.length, 2, 'one call for the idle first delivery, one for the whole joined flush')
+  assert.equal(calls[1], '[message 1 of 2]\nsecond\n\n[message 2 of 2]\nforced')
+  assert.equal(h.promptCalls[1], '[stamped] [message 1 of 2]\nsecond\n\n[message 2 of 2]\nforced')
   await h.client.deleteSession(h.sessionId)
 })
 

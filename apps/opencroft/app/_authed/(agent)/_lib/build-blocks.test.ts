@@ -126,6 +126,15 @@ test('the header and the bubble strip identically — that is the whole bug', ()
   assert.equal(header?.text, bubble?.kind === 'user' ? bubble.text : undefined)
 })
 
+// The delivery-time stamp (message-envelope.ts's stampDeliveryTime) uses this
+// same generic tag family, so it strips through the identical path — both the
+// 1:1 chat bubble and, since group-chat threads render through this same
+// component, the group-chat surface too.
+test('a delivery-time stamp strips like any other opencroft tag', () => {
+  const raw = '<opencroft-time>07.08.2026 19:15:42</opencroft-time>\nwhat time is it?'
+  assert.equal(userText(raw), 'what time is it?')
+})
+
 test('a header keeps its index even when its text strips to nothing', () => {
   // The trap in this fix. The header carries two things and only one of them is
   // presentational: `index` names the enclosing turn, which is what stops the

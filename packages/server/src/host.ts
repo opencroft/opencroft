@@ -81,21 +81,48 @@ export interface HostCompactResult {
   instructionsRestored: boolean
 }
 
+/** Returned immediately by `compact` -- the compaction itself runs in the background; poll `compactStatus` for the outcome. */
+export interface HostCompactAck {
+  sessionKey: string
+  accepted: true
+  coalesced: boolean
+  state: 'pending' | 'running'
+}
+
+export interface HostCompactStatus {
+  sessionKey: string
+  state: 'never-requested' | 'pending' | 'running' | 'done' | 'error'
+  requestedAt?: number
+  startedAt?: number
+  finishedAt?: number
+  result?: HostCompactResult
+  error?: string
+}
+
 /** Deliver through a SendMessage node's own path (session reuse/create, envelope composition) -- the same mechanism its `text-in` wiring uses. */
 export interface HostSendMessageApi {
-  send(nodeId: string, payload: Record<string, unknown>): Promise<{ sessionKey: string; created: boolean; forced: boolean }>
+  send(
+    nodeId: string,
+    payload: Record<string, unknown>,
+  ): Promise<{ sessionKey: string; created: boolean; forced: boolean }>
   listAgents(nodeId: string): Promise<{ agent: string; jobs: string[] }[]>
   listSessions(nodeId: string, params: { agent?: string; job?: string }): Promise<HostSessionSummary[]>
   listTurns(
     nodeId: string,
     params: { sessionKey: string; turns?: number; beforeIndex?: number },
   ): Promise<HostTurnsPage>
-  compact(nodeId: string, params: { sessionKey: string }): Promise<HostCompactResult>
+  /** Returns immediately -- never blocks for the compaction itself. */
+  compact(nodeId: string, params: { sessionKey: string }): Promise<HostCompactAck>
+  compactStatus(nodeId: string, params: { sessionKey: string }): Promise<HostCompactStatus>
 }
 
 export interface HostExecContextApi {
   /** Dispatch an execution-context event to every target connected to `sourceHandleId` on `sourceNodeId` (broadcast). `primary`'s shape is caller-defined -- narrow it at the call site. */
-  dispatch(sourceNodeId: string, sourceHandleId: string, event: unknown): Promise<{ primary: unknown; results: unknown[] }>
+  dispatch(
+    sourceNodeId: string,
+    sourceHandleId: string,
+    event: unknown,
+  ): Promise<{ primary: unknown; results: unknown[] }>
 }
 
 /** A stored secret with its decrypted value. */

@@ -3,6 +3,7 @@ import { createAgentClient, type PermissionContext, type PermissionOutcome } fro
 import { readMcpServersForAgent } from '@/app/_authed/(agent)/_server/mcp-store'
 import { loadSkillDefs, skillBodyHandler } from '@/app/_authed/(agent)/_server/skill-store'
 import { opencroftLocalTools } from '@/app/_authed/(agent)/_server/tools-bridge'
+import { stampDeliveryTime } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { isYoloMode } from '@/app/_authed/(mcp)/_server/yolo'
 import { approvalStore } from '@/lib/approval-store'
 
@@ -45,4 +46,5 @@ export const agentClient = createAgentClient({
   skills: loadSkillDefs,
   skillHandler: skillBodyHandler,
   permissionHandler: resolvePermission,
+  transformDeliveredPrompt: (text) => stampDeliveryTime(text, new Date()),
 })

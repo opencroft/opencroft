@@ -63,3 +63,31 @@ export function composeEnvelope(message: string, opts: ComposeEnvelopeOptions): 
 
   return parts.length ? `${parts.join('\n')}\n${message}` : message
 }
+
+function pad(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
+// dd.mm.yyyy hh:mm:ss, UTC. The platform has no per-user timezone — agents
+// only ever see a server clock — so a bare UTC reading is the one that stays
+// correct regardless of which environment's clock produced it; there is
+// nothing for an explicit label to disambiguate.
+function formatOpencroftTime(date: Date): string {
+  return `${pad(date.getUTCDate())}.${pad(date.getUTCMonth() + 1)}.${date.getUTCFullYear()} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`
+}
+
+// Stamps a message with the moment it is actually delivered to the agent.
+// Wired into agent-client's delivery chokepoint (deliverPrompt) rather than
+// called at compose time, so a message held behind a running turn carries the
+// time the agent received it, not the time it was sent — and a batch a queue
+// flush joins into one turn carries a single stamp, matching the one moment
+// it was actually delivered. A leading slash marks a command (same rule as
+// composeEnvelope above) and is passed through unstamped for the same
+// reason: a `/compact` a flush joins into a batch must still start with a
+// slash for the harness to recognize it.
+export function stampDeliveryTime(text: string, now: Date): string {
+  if (text.trim().startsWith('/')) {
+    return text
+  }
+  return `<opencroft-time>${formatOpencroftTime(now)}</opencroft-time>\n${text}`
+}

@@ -13,9 +13,8 @@ import type { AgentConnection } from 'agent-client/connection'
 import { buildSpawnConfig } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
 
-import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { tabSessions } from '@/app/_authed/(agent)/_server/acp-impl'
-
+import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { buildSessionKey, type NodeLike } from './send-message-helpers'
 import { getCompactStatusOnGraph, requestCompactOnGraph } from './stream'
 
@@ -143,7 +142,11 @@ test('compact against a working session queues behind the turn without interrupt
 
   await agentClient.prompt(h.sessionId, 'ongoing work')
   await waitFor(() => h.promptCalls.length > 0)
-  assert.equal(h.promptCalls[0], 'ongoing work')
+  assert.match(
+    h.promptCalls[0] ?? '',
+    /ongoing work$/,
+    'delivered text carries the delivery-time stamp ahead of the message',
+  )
 
   const ack = await requestCompactOnGraph(h.nodes, h.edges, h.sessionKey)
   assert.deepEqual(ack, { sessionKey: h.sessionKey, accepted: true, coalesced: false, state: 'pending' })

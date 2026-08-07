@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { composeEnvelope } from './message-envelope'
+import { composeEnvelope, stampDeliveryTime } from './message-envelope'
 
 const SYSTEM = { spaceName: 'Agents', spaceSlug: 'agents', selectedNodeId: 'script-node_1' }
 const SESSION_INIT = { jobContext: 'Triage tracker notifications.', instructions: ['Reply in English.', 'Be terse.'] }
@@ -71,4 +71,24 @@ test('blank/whitespace-only jobContext and instructions are omitted', () => {
 test('no options at all leaves the message untouched', () => {
   assert.equal(composeEnvelope('hello', { isNewSession: false }), 'hello')
   assert.equal(composeEnvelope('hello', { isNewSession: true }), 'hello')
+})
+
+// ── stampDeliveryTime ─────────────────────────────────────────────────────
+
+test('stampDeliveryTime prefixes an opencroft-time tag in dd.mm.yyyy hh:mm:ss UTC', () => {
+  const now = new Date(Date.UTC(2026, 0, 5, 3, 4, 5))
+  const out = stampDeliveryTime('hello', now)
+  assert.equal(out, '<opencroft-time>05.01.2026 03:04:05</opencroft-time>\nhello')
+})
+
+test('stampDeliveryTime zero-pads single-digit fields', () => {
+  const now = new Date(Date.UTC(2026, 8, 7, 9, 2, 0))
+  const out = stampDeliveryTime('hello', now)
+  assert.match(out, /^<opencroft-time>07\.09\.2026 09:02:00<\/opencroft-time>\n/)
+})
+
+test('a leading-slash message is passed through unstamped', () => {
+  const now = new Date(Date.UTC(2026, 0, 5, 3, 4, 5))
+  assert.equal(stampDeliveryTime('/compact', now), '/compact')
+  assert.equal(stampDeliveryTime('  /reset', now), '  /reset')
 })

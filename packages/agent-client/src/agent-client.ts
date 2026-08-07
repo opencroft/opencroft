@@ -89,6 +89,15 @@ export interface AgentClientOptions {
   // (e.g. an auto-approve toggle) or bypass approvals entirely (e.g. a YOLO
   // mode). Defaults to prompting the user.
   permissionHandler?: PermissionHandler
+  // Applied to a prompt's text at the moment it is actually handed to the
+  // harness — inside deliverPrompt, the one place every delivery path (an
+  // idle direct send, a per-turn queue drain, a flush's joined batch) ends up.
+  // Never applied at prompt()'s enqueue time, so a message held behind a
+  // running turn is transformed with whatever is true when it is actually
+  // delivered, not when it was sent. Lets a host inject delivery-time
+  // metadata (e.g. a timestamp) without agent-client knowing anything
+  // host-specific. Defaults to delivering text unchanged.
+  transformDeliveredPrompt?: (text: string) => string
 }
 
 type Subscriber = (event: ChatEvent) => void
@@ -952,6 +961,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (!session) {
       return
     }
+    // The delivery-time transform, if the host supplied one — applied here,
+    // not by any caller of prompt(), so it sees the text at the one instant
+    // it is truly handed to the harness.
+    const deliveredText = options.transformDeliveredPrompt ? options.transformDeliveredPrompt(text) : text
     session.activeTurns += 1
     let connection: AgentConnection
     try {
@@ -968,8 +981,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (entry) {
       entry.lastSessionId = sessionId
     }
-    emit(sessionId, { kind: 'user', text })
-    void connection.prompt({ sessionId, prompt: [{ type: 'text', text }] }).then(
+    emit(sessionId, { kind: 'user', text: deliveredText })
+    void connection.prompt({ sessionId, prompt: [{ type: 'text', text: deliveredText }] }).then(
       (response) => settleTurn(sessionId, { stopReason: response.stopReason }),
       (error: unknown) => {
         // Failures surface immediately, even while other prompts are still in
