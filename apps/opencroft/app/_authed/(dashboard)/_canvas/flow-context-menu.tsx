@@ -1,6 +1,6 @@
 'use client'
 
-import { Plus } from 'lucide-react'
+import { ClipboardPaste, Plus } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import {
   Command,
@@ -22,6 +22,9 @@ interface FlowContextMenuProps {
   onSelect: (typeId: string) => void
   onNewExtension: () => void
   onClose: () => void
+  onPaste: () => void
+  /** Whether the clipboard holds anything pasteable right now. */
+  canPaste: boolean
 }
 
 function groupByCategory(nodes: ResolvedNode[]): Map<string, ResolvedNode[]> {
@@ -35,7 +38,15 @@ function groupByCategory(nodes: ResolvedNode[]): Map<string, ResolvedNode[]> {
   return map
 }
 
-export function FlowContextMenu({ position, extensions, onSelect, onNewExtension, onClose }: FlowContextMenuProps) {
+export function FlowContextMenu({
+  position,
+  extensions,
+  onSelect,
+  onNewExtension,
+  onClose,
+  onPaste,
+  canPaste,
+}: FlowContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
   const groups = groupByCategory(extensions)
   const clamped = clampPosition(position.x, position.y, 260, 360)
@@ -59,6 +70,24 @@ export function FlowContextMenu({ position, extensions, onSelect, onNewExtension
       className='fixed z-50 w-[260px] rounded-md border bg-popover shadow-md'
       style={{ left: clamped.x, top: clamped.y }}
     >
+      {/* Pinned above the searchable list, not inside it -- a cmdk CommandItem
+          disappears while its own list is filtered by a search term, and
+          Paste has to stay reachable regardless of what's typed. This is
+          also the only way to reach a copied node on a phone: there's no
+          Ctrl+V there. */}
+      <button
+        type='button'
+        disabled={!canPaste}
+        onClick={() => {
+          onClose()
+          onPaste()
+        }}
+        className='flex w-full items-center gap-2 px-3 py-1.5 text-sm transition-colors hover:bg-accent/50 disabled:pointer-events-none disabled:opacity-40'
+      >
+        <ClipboardPaste className='size-4' />
+        Paste
+      </button>
+      <div className='my-1 border-t' />
       <Command>
         <CommandInput placeholder='Add node...' autoFocus />
         <CommandList>

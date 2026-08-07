@@ -371,7 +371,11 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     })
   }, [setNodes])
 
-  const { copy: copySelectedNodes } = useClipboard({ nodes, edges, setNodes, setEdges, onChange: scheduleSave })
+  const {
+    copy: copySelectedNodes,
+    paste: pasteNodes,
+    hasCopiedNodes,
+  } = useClipboard({ nodes, edges, setNodes, setEdges, onChange: scheduleSave })
 
   const sectionDrag = useRef<{
     sectionId: string
@@ -810,6 +814,14 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     [menu, addNodeAt, addNodeWithConnection],
   )
 
+  const onPasteAtMenu = useCallback(() => {
+    if (!menu) {
+      return
+    }
+    pasteNodes(menu.flow)
+    setMenu(null)
+  }, [menu, pasteNodes])
+
   const menuExtensions = useMemo(() => {
     if (!menu?.pending) {
       return allNodes
@@ -1049,6 +1061,8 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
                 onSelect={onMenuSelect}
                 onNewExtension={() => openEditor(null)}
                 onClose={closeMenu}
+                onPaste={onPasteAtMenu}
+                canPaste={hasCopiedNodes}
               />
             )}
             <CanvasOverlay
