@@ -65,8 +65,10 @@ const DEFAULT_APPROVAL_TITLES: ApprovalTitles = {
 export interface AgentCommandBarProps {
   value: string
   onValueChange: (text: string) => void
-  // Called with the trimmed text. The value is cleared first, so a host that
-  // persists drafts can clear its stored draft in the same turn.
+  // Called with the trimmed text. **The value is cleared BEFORE this runs** --
+  // see the clear-on-send contract in this component's doc comment. A host that
+  // persists drafts can therefore clear its stored draft in the same turn, and
+  // a host whose send can fail is the one that puts the text back.
   onSend: (text: string) => void
   // Escape clears the composer. Given a handler, it is called instead of
   // `onValueChange('')` -- a host that persists drafts usually wants the clear
@@ -109,6 +111,30 @@ export interface AgentCommandBarProps {
   configExtra?: ReactNode
   queued?: QueuedMessage[]
   onRemoveQueued?: (id: string) => void
+  // Copy for a send that did not go through, rendered directly above the
+  // composer. One shape for every chat, so a refusal reads the same wherever
+  // the panel is mounted -- a host wrapping the panel in its own error layout
+  // is what made this differ per surface.
+  //
+  // The panel displays it and decides nothing: what failed, how it is worded
+  // and when it clears are the host's. See the clear-on-send contract on this
+  // component -- the host is also what puts the typed text back.
+  sendError?: string
+  // Delegation, not notification: the panel does not own `sendError`, so
+  // without this there is no way to clear it and no dismiss control is
+  // offered. (Contrast `onRemoveQueued`, which gates its own button for the
+  // same reason -- and `configs`, where the feature is gated on the data.)
+  onDismissSendError?: () => void
+  // Show the approval toggle at all. Default true; false removes it for a
+  // composer where there is nothing to approve -- starting a thread sends one
+  // message to an agent that has not been asked for a tool call yet, so a
+  // shield there describes a setting the press cannot be about.
+  //
+  // A switch rather than an inference from `onToggleAutoApprove`: that callback
+  // is deliberately optional while the button still SHOWS the state, which is
+  // what `yoloMode` needs -- so its absence cannot mean "no approval control".
+  // Same shape as `startIcon` above, and the same reason.
+  approval?: boolean
   // The approval toggle. Without `onToggleAutoApprove` the button still shows
   // the state but does nothing, which is what `yoloMode` wants.
   autoApprove?: boolean
@@ -143,6 +169,22 @@ export const commandBarControlClass = 'size-7 shrink-0'
 // approval state and no knowledge of where it is mounted -- a host that wants
 // this in a command bar, a sidebar or a dialog puts it there. That is the whole
 // reason the panel can be previewed at all: it needs nothing running behind it.
+//
+// **Clear-on-send: the composer clears immediately, and the host restores on
+// failure.** `onValueChange('')` runs before `onSend`, so the composer is empty
+// the instant the message is handed over. The alternative -- hold the text and
+// clear only once the host confirms -- was considered and rejected: a send is
+// asynchronous and hosts chain sends behind one another, so "confirmed" can be
+// several round trips away, and the composer would sit full and unusable
+// through all of it while the message it still shows has already gone. That
+// penalises every successful send to tidy up a rare failing one.
+//
+// So the failure path is the host's, and it has both halves: put the text back
+// (through `value`) and say what happened (through `sendError`). A host that
+// restores the ORIGINAL typed text rather than what it actually transmitted is
+// doing it right -- an outgoing transform is machinery the user never typed.
+// The visible cost of this choice is one frame of empty composer before the
+// text returns, which is the trade made deliberately.
 //
 // **The host owns the width.** Every element from a queued message's text up to
 // this root carries `min-w-0`, and the text truncates -- so a long message, or
@@ -185,6 +227,9 @@ export function AgentCommandBar({
   configExtra,
   queued,
   onRemoveQueued,
+  sendError,
+  onDismissSendError,
+  approval,
   autoApprove = false,
   onToggleAutoApprove,
   yoloMode = false,
@@ -259,6 +304,35 @@ export function AgentCommandBar({
               ) : null}
             </div>
           ))}
+        </div>
+      ) : null}
+
+      {/* A failed send, directly above the composer with the text that failed
+          already back in it. `role='alert'` so it is announced rather than
+          only seen -- the text reappearing under the cursor is not something a
+          screen reader reports.
+
+          Conditional in the same way the queued strip is: a slot that holds
+          its position whether or not it renders, so the textarea below keeps
+          its place among the children and is never remounted. See the
+          structural rule in this component's doc comment -- an element that
+          appears and disappears ABOVE the composer is exactly the shape that
+          would break it if it were spliced in instead. */}
+      {sendError ? (
+        <div role='alert' className='flex min-w-0 items-start gap-2 px-1 text-sm text-destructive'>
+          <span className='min-w-0 flex-1 wrap-break-word'>{sendError}</span>
+          {onDismissSendError ? (
+            <button
+              type='button'
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={onDismissSendError}
+              className='shrink-0 opacity-70 transition-opacity hover:opacity-100'
+              title='Dismiss'
+              aria-label='Dismiss error'
+            >
+              <X className='size-3.5' />
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -350,24 +424,26 @@ export function AgentCommandBar({
         </div>
 
         <div className='flex shrink-0 items-center gap-1'>
-          <Button
-            type='button'
-            size='icon'
-            variant='ghost'
-            className={commandBarControlClass}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={yoloMode ? undefined : onToggleAutoApprove}
-            disabled={yoloMode}
-            title={approvalTitle}
-          >
-            {yoloMode ? (
-              <ShieldAlert className='size-4 animate-pulse text-red-500' />
-            ) : autoApprove ? (
-              <ShieldCog className='size-4 text-amber-500' />
-            ) : (
-              <ShieldCheck className='size-4 text-primary' />
-            )}
-          </Button>
+          {approval === false ? null : (
+            <Button
+              type='button'
+              size='icon'
+              variant='ghost'
+              className={commandBarControlClass}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={yoloMode ? undefined : onToggleAutoApprove}
+              disabled={yoloMode}
+              title={approvalTitle}
+            >
+              {yoloMode ? (
+                <ShieldAlert className='size-4 animate-pulse text-red-500' />
+              ) : autoApprove ? (
+                <ShieldCog className='size-4 text-amber-500' />
+              ) : (
+                <ShieldCheck className='size-4 text-primary' />
+              )}
+            </Button>
+          )}
           {controls}
 
           {busy && onStop ? (

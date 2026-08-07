@@ -7,7 +7,7 @@
 // navigates into it.
 
 import { useRouter } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { StartThreadComposer } from 'ui/group-chat/start-thread-composer'
 
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
@@ -33,8 +33,16 @@ export function GroupChatStartThreadComposer({ groupChatId, members, onThreadSta
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string>()
 
+  // The composer clears itself (onValueChange('')) BEFORE onSubmit fires --
+  // the command bar's clear-on-send contract. `onSubmit` takes no text, so by
+  // the time it runs `value` may already read '' -- this mirrors it in a ref,
+  // skipping the clear itself, so submit always has the text that was actually
+  // typed to send and, on failure, to put back.
+  const lastTypedRef = useRef('')
+
   const submit = async () => {
-    if (!selectedAgent || !value.trim()) {
+    const text = lastTypedRef.current
+    if (!selectedAgent || !text.trim()) {
       setError('Choose an agent and write a message.')
       return
     }
@@ -42,13 +50,13 @@ export function GroupChatStartThreadComposer({ groupChatId, members, onThreadSta
     setSubmitting(true)
     try {
       const result = await startGroupChatThread({
-        data: { groupChatId, agentNodeId: selectedAgent, firstMessage: value.trim() },
+        data: { groupChatId, agentNodeId: selectedAgent, firstMessage: text.trim() },
       })
-      setValue('')
       setSelectedAgent(null)
       await router.invalidate()
       onThreadStarted(result.thread.id)
     } catch (e) {
+      setValue(text)
       setError(failureMessage(e, 'The thread could not be started.'))
     } finally {
       setSubmitting(false)
@@ -62,6 +70,9 @@ export function GroupChatStartThreadComposer({ groupChatId, members, onThreadSta
       onSelectAgent={setSelectedAgent}
       value={value}
       onValueChange={(next) => {
+        if (next !== '') {
+          lastTypedRef.current = next
+        }
         setValue(next)
         if (error) {
           setError(undefined)
@@ -70,6 +81,7 @@ export function GroupChatStartThreadComposer({ groupChatId, members, onThreadSta
       onSubmit={() => void submit()}
       submitting={submitting}
       error={error}
+      onDismissError={() => setError(undefined)}
     />
   )
 }

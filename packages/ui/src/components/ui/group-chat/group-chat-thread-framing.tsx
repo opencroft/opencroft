@@ -6,8 +6,8 @@ import { ChevronLeft } from 'lucide-react'
 import { MemberAvatarGroup, type MemberRef } from '@/components/ui/group-chat/member-avatar-group'
 import { cn } from '@/lib/utils'
 
+import { CommandBarFrame } from '@/components/ui/agent-chat/command-bar-frame'
 import { ScrollArea } from '@/components/ui/layout/scroll-area'
-import { NodeCard } from '@/components/ui/nodes/node-card'
 
 export interface GroupChatThreadFramingProps {
   /** The NAME of the group chat this thread belongs to -- not its topic. This
@@ -26,7 +26,9 @@ export interface GroupChatThreadFramingProps {
   children: ReactNode
   /** The composer, pinned beneath the conversation. Reused from the agent-chat
    * composer family, never redrawn here -- a group-chat thread is an ordinary
-   * agent session, so it gets the same composer a 1:1 chat uses. */
+   * agent session, so it gets the same composer a 1:1 chat uses, in the same
+   * CommandBarFrame. That the composer was already shared and the FRAME was not
+   * is exactly how this footer came to look unlike the 1:1 one. */
   composer?: ReactNode
   className?: string
 }
@@ -83,11 +85,7 @@ export function GroupChatThreadFraming({
         ) : null}
       </header>
       <ScrollArea className='min-h-0 flex-1'>{children}</ScrollArea>
-      {composer ? (
-        <NodeCard accent='var(--primary)' selected className='shrink-0'>
-          <div className='px-4 py-3'>{composer}</div>
-        </NodeCard>
-      ) : null}
+      {composer ? <CommandBarFrame className='shrink-0'>{composer}</CommandBarFrame> : null}
     </div>
   )
 }

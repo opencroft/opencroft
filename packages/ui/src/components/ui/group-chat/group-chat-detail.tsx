@@ -3,9 +3,9 @@
 import type { ReactNode } from 'react'
 import { Pencil } from 'lucide-react'
 
+import { CommandBarFrame } from '@/components/ui/agent-chat/command-bar-frame'
 import { MemberAvatarGroup, type MemberRef } from '@/components/ui/group-chat/member-avatar-group'
 import { cn } from '@/lib/utils'
-import { NodeCard } from '@/components/ui/nodes/node-card'
 
 export interface GroupChatDetailProps {
   /** What this chat is called. The title, and what every other surface shows.
@@ -47,7 +47,12 @@ export interface GroupChatDetailProps {
   actions?: ReactNode
   /** Pinned beneath the threads -- the new-thread composer. It stays put while
    * the thread list scrolls above it, the way a chat composer stays put while
-   * the conversation scrolls. */
+   * the conversation scrolls.
+   *
+   * Framed in the SAME CommandBarFrame the 1:1 chat's command bar sits in --
+   * not a card of this screen's own. This screen used to draw its own, with a
+   * panel's inset, and it read as a different kind of surface from the composer
+   * one screen away. */
   composer?: ReactNode
   className?: string
 }
@@ -195,11 +200,7 @@ export function GroupChatDetail({
             )}
         </div>
       </div>
-      {composer ? (
-        <NodeCard accent='var(--primary)' selected className='shrink-0'>
-          <div className='px-4 py-3'>{composer}</div>
-        </NodeCard>
-      ) : null}
+      {composer ? <CommandBarFrame className='shrink-0'>{composer}</CommandBarFrame> : null}
     </div>
   )
 }

@@ -1,18 +1,16 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { Check, ChevronDown, Send } from 'lucide-react'
+import { Check, ChevronDown } from 'lucide-react'
 
 import { AgentAvatar } from '@/components/ui/media/agent-avatar'
-import { Button } from '@/components/ui/button'
+import { AgentCommandBar } from '@/components/ui/agent-chat/agent-command-bar'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Textarea } from '@/components/ui/textarea'
-import { cn } from '@/lib/utils'
 
 // Declared here rather than imported from the thread list: it is three
 // structural fields, and a registry dependency taken on for a type alone would
@@ -30,13 +28,22 @@ export interface StartThreadComposerProps {
   selectedAgentNodeId: string | null
   onSelectAgent: (nodeId: string) => void
   // The first message, which is also the thread's opening turn. Controlled.
+  //
+  // NOTE the clear-on-send contract inherited from the command bar:
+  // `onValueChange('')` fires BEFORE `onSubmit`, so the composer is empty the
+  // instant the message is handed over, and a host whose start can fail is the
+  // one that puts the text back. See agent-command-bar for why that trade is
+  // made that way round.
   value: string
   onValueChange: (value: string) => void
   // Reports that the user asked to start the thread. Validates nothing.
   onSubmit: () => void
   submitting?: boolean
-  // A failure shown under the row. Displayed, not decided.
+  // A failure shown above the composer. Displayed, not decided.
   error?: string
+  // Clears `error`. Without it no dismiss control is offered -- the composer
+  // does not own the message, so it cannot clear what it did not set.
+  onDismissError?: () => void
   placeholder?: string
   // Shown when the group chat has no agent members yet.
   emptyState?: ReactNode
@@ -49,10 +56,21 @@ export interface StartThreadComposerProps {
 // step: there is no empty thread to create first, the way there is no empty
 // chat to open and then fill.
 //
-// The agent is chosen from a dropdown of member agents (avatar + name, the
-// chosen one checked), the textarea grows with what is typed, and Enter starts
-// the thread on a fine-pointer client (Shift+Enter, or any Enter on touch,
-// moves to a new line).
+// **It IS the agent command bar, not something that resembles one.** This used
+// to be its own row -- bordered textarea, filled send button, picker beside it
+// -- and it looked nothing like the composer directly below it in a 1:1 chat,
+// which made the mismatch obvious. Rebuilding it on the command bar
+// rather than restyling it to match means there is no second definition of what
+// a composer looks like, so the two cannot drift again.
+//
+// Two of the command bar's own switches carry the difference:
+//   startIcon={false}  -- the sparkles open a session picker, and there is no
+//                         session yet to pick.
+//   approval={false}   -- nothing has been asked for approval; a shield here
+//                         would describe a setting this press cannot be about.
+// The agent picker goes in `leading`, the command bar's slot at the start of
+// the action row, so it sits under the full-width message rather than stealing
+// width from it.
 export function StartThreadComposer({
   agents,
   selectedAgentNodeId,
@@ -62,6 +80,7 @@ export function StartThreadComposer({
   onSubmit,
   submitting,
   error,
+  onDismissError,
   placeholder,
   emptyState,
   className,
@@ -82,80 +101,59 @@ export function StartThreadComposer({
   }
 
   const selected = agents.find((a) => a.nodeId === selectedAgentNodeId)
-  const inert = submitting
+
+  // Sized to the action row's own controls (h-7) rather than to a form field,
+  // because that is the row it is standing in.
+  const picker = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type='button'
+          disabled={submitting}
+          className='inline-flex h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-md px-1.5 text-xs text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50'
+          title={selected ? `Thread with ${selected.name}` : 'Choose an agent'}
+        >
+          {selected ? (
+            <AgentAvatar avatar={selected.avatarUrl} name={selected.name} size='sm' />
+          ) : (
+            <span className='size-6' aria-hidden />
+          )}
+          <span className='max-w-32 truncate'>
+            {selected ? selected.name : <span className='text-muted-foreground'>Select agent</span>}
+          </span>
+          <ChevronDown className='size-3.5 shrink-0 text-muted-foreground' />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align='start' side='top' className='min-w-48'>
+        {agents.map((agent) => {
+          const isSelected = agent.nodeId === selectedAgentNodeId
+          return (
+            <DropdownMenuItem key={agent.nodeId} onSelect={() => onSelectAgent(agent.nodeId)} className='gap-2'>
+              <AgentAvatar avatar={agent.avatarUrl} name={agent.name} size='sm' />
+              <span className='min-w-0 flex-1 truncate'>{agent.name}</span>
+              {isSelected ? <Check className='size-3.5 shrink-0 text-primary' /> : null}
+            </DropdownMenuItem>
+          )
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
 
   return (
-    <form
-      method='post'
-      className={cn('flex flex-col gap-1.5', className)}
-      onSubmit={(event) => {
-        event.preventDefault()
-        onSubmit()
-      }}
-    >
-      <div className='flex items-end gap-2'>
-        {/* The agent picker. A dropdown rather than a radio column, because a
-            composer is one row and the list of member agents is not the thing
-            the writer's attention is on. */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type='button'
-              disabled={inert}
-              className='inline-flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-1.5 text-sm text-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50'
-            >
-              {selected ? (
-                <AgentAvatar avatar={selected.avatarUrl} name={selected.name} size='sm' />
-              ) : (
-                <span className='size-6' aria-hidden />
-              )}
-              <span className='max-w-40 truncate'>
-                {selected ? selected.name : <span className='text-muted-foreground'>Select agent</span>}
-              </span>
-              <ChevronDown className='size-3.5 shrink-0 text-muted-foreground' />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align='start' className='min-w-48'>
-            {agents.map((agent) => {
-              const isSelected = agent.nodeId === selectedAgentNodeId
-              return (
-                <DropdownMenuItem key={agent.nodeId} onSelect={() => onSelectAgent(agent.nodeId)} className='gap-2'>
-                  <AgentAvatar avatar={agent.avatarUrl} name={agent.name} size='sm' />
-                  <span className='min-w-0 flex-1 truncate'>{agent.name}</span>
-                  {isSelected ? <Check className='size-3.5 shrink-0 text-primary' /> : null}
-                </DropdownMenuItem>
-              )
-            })}
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <Textarea
-          value={value}
-          disabled={inert}
-          onChange={(event) => onValueChange(event.target.value)}
-          onKeyDown={(event) => {
-            // No Shift key on a phone soft keyboard, so Enter inserts a newline
-            // there (send with the button); only fine-pointer clients send on Enter.
-            const isCoarsePointer =
-              typeof window !== 'undefined' &&
-              window.matchMedia?.('(pointer: coarse)').matches
-            if (event.key === 'Enter' && !event.shiftKey && !isCoarsePointer) {
-              event.preventDefault()
-              onSubmit()
-            }
-          }}
-          placeholder={placeholder ?? 'Message…'}
-          aria-invalid={error ? true : undefined}
-          rows={1}
-          className='min-h-9 min-w-0 flex-1 resize-none'
-        />
-
-        <Button type='submit' size='icon' disabled={inert} className='shrink-0'>
-          <Send className='size-4' />
-          <span className='sr-only'>Start thread</span>
-        </Button>
-      </div>
-      {error ? <p className='px-1 text-xs text-destructive'>{error}</p> : null}
-    </form>
+    <AgentCommandBar
+      className={className}
+      value={value}
+      onValueChange={onValueChange}
+      // The command bar hands over the trimmed text; this component's contract
+      // is a bare report, and the host already holds the value it published.
+      onSend={() => onSubmit()}
+      placeholder={placeholder ?? 'Message…'}
+      sending={submitting}
+      startIcon={false}
+      approval={false}
+      leading={picker}
+      sendError={error}
+      onDismissSendError={onDismissError}
+    />
   )
 }
