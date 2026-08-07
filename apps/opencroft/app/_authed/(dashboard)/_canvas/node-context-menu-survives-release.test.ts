@@ -10,8 +10,19 @@
 // to wherever it started, so the release of the very gesture that opened
 // the menu is targeted at the node, never at the menu itself. The fix lives
 // in flow-editor.tsx's handleTouchEnd: when this touchend is the release of
-// a long-press that just opened a menu (tracked via the same longPressFired
-// ref the app already uses), stop it from ever reaching that listener.
+// a gesture that just opened a menu, stop it from ever reaching that
+// listener.
+//
+// Two independent gestures can open the menu on mobile: our own JS-timer
+// long-press (tracked via longPressFired), and the browser's native
+// long-press -> contextmenu gesture recognizer, which reaches openNodeMenu
+// entirely outside the touch pipeline (tracked via menuOpenedDuringTouch,
+// set by openNodeMenu itself whenever a touch is active). The first round of
+// this fix only covered the JS-timer path -- on a real phone, where the
+// history dig established the native path is what actually
+// fires, the release went unsuppressed and the menu still closed. Both
+// flags are exercised below, independently, against the real handleTouchEnd
+// logic.
 //
 // This exercises the real NodeContextMenu component and mirrors that exact
 // handleTouchEnd logic in a minimal harness (mounting the whole FlowEditor
@@ -46,24 +57,29 @@ interface Harness {
   dispatchTouchEnd: (target: HTMLElement) => Promise<void>
 }
 
-async function mountHarness(): Promise<Harness> {
+// Mirrors flow-editor.tsx's two independent "this menu was opened by the
+// touch currently ending" signals: longPressFired (our own JS timer) and
+// menuOpenedDuringTouch (set by openNodeMenu itself, so it also covers the
+// browser's native long-press -> contextmenu gesture, which calls
+// openNodeMenu straight from onNodeContextMenu, entirely outside the touch
+// pipeline). handleTouchEnd suppresses the release when EITHER is true --
+// 'openedVia' picks which one production would have set for a given gesture.
+async function mountHarness(openedVia: 'timer' | 'native' = 'timer'): Promise<Harness> {
   const stateRef = { menuOpen: true }
 
   function TouchEndHarness() {
     const [open, setOpen] = useState(true)
     stateRef.menuOpen = open
-    // Mirrors flow-editor.tsx's longPressFired ref: true for exactly the
-    // touchend that is the release of the long-press which opened this
-    // menu, reset immediately after -- a second touchend (a genuine outside
-    // tap) always finds it false, same as production.
-    const longPressFired = useRef(true)
+    const longPressFired = useRef(openedVia === 'timer')
+    const menuOpenedDuringTouch = useRef(openedVia === 'native')
 
     function handleTouchEnd(e: { preventDefault: () => void; stopPropagation: () => void }) {
-      if (longPressFired.current) {
+      if (longPressFired.current || menuOpenedDuringTouch.current) {
         e.preventDefault()
         e.stopPropagation()
       }
       longPressFired.current = false
+      menuOpenedDuringTouch.current = false
     }
 
     return createElement(
@@ -118,7 +134,7 @@ test('the menu opened by long-press survives the release of that same gesture', 
 })
 
 test('CONTROL: a genuine outside tap after the opening gesture still closes the menu', async () => {
-  const h = await mountHarness()
+  const h = await mountHarness('timer')
   assert.equal(h.menuPresent(), true)
 
   // First touchend: the opening gesture's own release (as above) -- resets
@@ -129,6 +145,34 @@ test('CONTROL: a genuine outside tap after the opening gesture still closes the 
   // A second, separate touchend on a different element is a real dismiss
   // tap and must still close the menu -- the fix must not disable outside-
   // close entirely, only the one event that belongs to the opening gesture.
+  await h.dispatchTouchEnd(h.outside())
+  assert.equal(h.menuPresent(), false, 'a genuine outside tap must still dismiss the menu')
+})
+
+// The gap the first fix left open: on a real phone, the menu opens via the
+// browser's native long-press -> contextmenu gesture recognizer, not our JS
+// timer -- so longPressFired alone never
+// gets set, and the very first fix left this release unsuppressed.
+test('the menu opened by the native contextmenu gesture (not the JS timer) survives the release of the same touch', async () => {
+  const h = await mountHarness('native')
+  assert.equal(h.menuPresent(), true, 'menu should be open at the start of the test')
+
+  await h.dispatchTouchEnd(h.node())
+
+  assert.equal(
+    h.menuPresent(),
+    true,
+    'the release of the touch that opened the menu via the native gesture must not close it -- longPressFired alone is not enough',
+  )
+})
+
+test('CONTROL: a genuine outside tap still closes a menu that was opened via the native gesture', async () => {
+  const h = await mountHarness('native')
+  assert.equal(h.menuPresent(), true)
+
+  await h.dispatchTouchEnd(h.node())
+  assert.equal(h.menuPresent(), true, 'sanity check: still open after the opening release')
+
   await h.dispatchTouchEnd(h.outside())
   assert.equal(h.menuPresent(), false, 'a genuine outside tap must still dismiss the menu')
 })
