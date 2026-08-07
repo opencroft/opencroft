@@ -443,7 +443,7 @@ export async function sendMessageInThread(
 }
 
 /**
- * Delete a thread: its durable row, and the session + process underneath it.
+ * Delete a thread: the session + process underneath it, then its durable row.
  *
  * Membership-gated like getThread -- found first, then the same single refusal
  * for a missing thread and a non-member, so the two stay indistinguishable. The
@@ -467,7 +467,13 @@ export async function deleteThread(request: Request, threadId: string): Promise<
   if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
-  await db.delete(groupChatThread).where(eq(groupChatThread.id, threadId))
-  // Tear down the session + its process via the shared path the sidebar uses.
+  // Tear down the session + its process via the shared path the sidebar uses,
+  // and do it BEFORE dropping the row. The row is the only handle anything has
+  // on this sessionKey, so deleting it first turns a failed teardown into a
+  // live session and agent subprocess that no screen lists and no retry can
+  // reach. This way round, a failed teardown leaves the thread intact and the
+  // delete retryable, and a failed row delete leaves only a torn-down thread
+  // that reopens onto a fresh session via `ensureLocalSessionImpl`.
   await forgetLocalSessionImpl(row.sessionKey)
+  await db.delete(groupChatThread).where(eq(groupChatThread.id, threadId))
 }

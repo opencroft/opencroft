@@ -12,6 +12,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test, { after } from 'node:test'
 
+// Safe to import statically, above the env setup below: none of these opens a
+// database connection (agent-client is host-agnostic, `slug` is dependency-free
+// and drizzle-orm's `eq` is a pure query builder), so hoisting them cannot make
+// `@opencroft/db` connect before PGLITE_PATH is in place.
+import type { AgentConnection } from 'agent-client/connection'
+import { buildSpawnConfig } from 'agent-client/resolve'
+import type { AgentSelection } from 'agent-client/types'
+import { eq } from 'drizzle-orm'
+
+import { slug } from '@/app/_authed/(server)/_server/types'
+
 const workdir = await mkdtemp(join(tmpdir(), 'opencroft-group-chats-test-'))
 process.env.PGLITE_PATH = join(workdir, 'pglite')
 process.env.DB_MIGRATIONS_DIR = join(
@@ -55,6 +66,15 @@ await db.insert(space).values({
       { id: 'agent-a', type: 'agent', data: { name: 'Agent A' } },
       { id: 'agent-b', type: 'agent', data: { name: 'Agent B' } },
       { id: 'agent-solo', type: 'agent', data: { name: 'Agent Solo' } },
+      // Carries a full provider/adapter/model triple, unlike the three above,
+      // so `ensureLocalSessionImpl` can build a real AgentSelection for it and
+      // the delete-ordering test below can open an actual session against a
+      // seeded mock connection.
+      {
+        id: 'agent-session',
+        type: 'agent',
+        data: { name: 'Agent Session', providerId: 'test-provider', adapterId: 'openclaw', model: 'test-model' },
+      },
     ],
     edges: [],
   }),
@@ -427,6 +447,80 @@ test('a non-member cannot send into a thread', async () => {
   )
   assert.equal(fabricated.code, refusal.code)
   assert.equal(fabricated.message, refusal.message)
+})
+
+// ---------------------------------------------------------------------------
+// DELETE ORDERING. The thread row is the only handle anything has on a
+// sessionKey, so if the row goes first and the teardown then fails, the ACP
+// session and its agent subprocess are left running with nothing pointing at
+// them: no screen lists them, and a retried delete finds no row to work from.
+//
+// The property is an ordering one, and ordering is only observable from inside
+// the teardown — so this asserts it there, from the mock connection's own
+// `closeSession`, which is the last thing `forgetLocalSessionImpl` drives
+// before it returns. If the row is still readable at that moment, teardown ran
+// first. Reverting model.ts to delete-then-teardown fails this on the
+// `rowVisibleDuringTeardown` assertion, not on a crash.
+// ---------------------------------------------------------------------------
+test('deleteThread tears the session down before dropping the row it is reachable through', async () => {
+  const owner = await makeUser('delete-order-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'delete ordering')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  // What the teardown saw. `closeSession` reads the thread table directly
+  // rather than going through the model, so the observation is of the row
+  // itself and not of a membership-gated view of it.
+  let closeSessionCalls = 0
+  let rowVisibleDuringTeardown: boolean | null = null
+  let threadId = ''
+
+  const connection = {
+    newSession: async () => ({ sessionId: `test-session-${crypto.randomUUID()}` }),
+    prompt: async () => ({ stopReason: 'end_turn' }),
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => {
+      closeSessionCalls += 1
+      const rows = await db.select().from(groupChatThread).where(eq(groupChatThread.id, threadId))
+      rowVisibleDuringTeardown = rows.length === 1
+      return {}
+    },
+  } as unknown as AgentConnection
+
+  // Same spawn-config key `ensureLocalSessionImpl` will derive for this node,
+  // so the client reuses this connection instead of spawning a real process.
+  const workspaceSlug = slug('Agent Session')
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store, 'agent-client global store must exist after import')
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first message')
+  threadId = started.thread.id
+
+  await model.deleteThread(reqAs(owner), threadId)
+
+  assert.equal(closeSessionCalls, 1, 'the delete must actually reach the live session, not skip teardown')
+  assert.equal(
+    rowVisibleDuringTeardown,
+    true,
+    'the thread row must still exist while the session is being torn down — otherwise a teardown failure strands a live agent process nothing can reach',
+  )
+  const remaining = await db.select().from(groupChatThread).where(eq(groupChatThread.id, threadId))
+  assert.equal(remaining.length, 0, 'and the row is gone once the delete completes')
 })
 
 test('an anonymous request cannot send into a thread', async () => {
