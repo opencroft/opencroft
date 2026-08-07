@@ -1,7 +1,7 @@
 'use client'
 
-import type { PointerEvent as ReactPointerEvent, ReactNode, TouchEvent as ReactTouchEvent } from 'react'
-import { GripVertical, Pencil, Square, Trash2, X } from 'lucide-react'
+import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
+import { Pencil, Square, Trash2, X } from 'lucide-react'
 
 import { AgentAvatar } from '@/components/ui/media/agent-avatar'
 import type { StatusVariant } from '@/components/ui/utils/status-indicator'
@@ -64,15 +64,6 @@ interface ChatListItemProps {
   // landed. Being a render rather than an event, it does not depend on which
   // listener the browser reaches first.
   menuDisabled?: boolean
-  // Renders the touch drag handle and starts a drag from it. Given by the
-  // surrounding list; a row used on its own shows no grip.
-  //
-  // The grip is the ONLY place a touch drag starts, which is what lets the row
-  // body keep all three of its own gestures: vertical swipe scrolls, long press
-  // opens the menu, tap selects. It is `touch-action: none` so the browser
-  // hands us the gesture immediately -- on a vertical list a vertical drag from
-  // a `pan-y` surface is not unreliable, it is impossible.
-  onGripTouchStart?: (event: ReactTouchEvent<HTMLSpanElement>) => void
   // Reports the menu opening or closing. The context-menu primitive owns that
   // state -- its root takes no controlled `open`, by design: it opens from a
   // `contextmenu` event and nothing else. So this is a notification, not a
@@ -106,29 +97,27 @@ const STATUS_DOT: Partial<Record<ChatStatus, StatusVariant>> = {
 // optional actions menu (Rename / Stop process / Close / Delete, plus any extra
 // `actions`) built on the shadcn context-menu primitive.
 //
-// Touch gestures: each one belongs to an element. The **grip** (rendered only
-// when the surrounding list passes `onGripTouchStart`, and only on a coarse
-// pointer) is where a drag starts -- it is `touch-action: none`, so the browser
-// hands it the gesture immediately, which is the only way a VERTICAL drag can
-// start from inside a vertically scrolling list. The **row body** keeps
-// everything else: `touch-action: pan-y` so a swipe scrolls, the primitive's
-// own long press for the menu, and a tap to select. Nothing competes, so
-// nothing has to be told apart after the fact.
-//
+// Touch gestures: the row carries NO grip -- one press serves
+// scroll, drag and menu, and movement is what tells them apart. The surrounding
+// `chat-list` runs the long-press pickup (a ~500ms still hold arms a drag; a
+// move before that is a scroll; a still hold long enough hands the press to this
+// row menu -- see below). The row body keeps
+// `touch-action: pan-y` (so vertical scroll works until the pickup commits) and
 // `-webkit-touch-callout`/`user-select` suppress the browser's native
-// long-press text behaviour on the body. Desktop is untouched: right-click
-// opens the menu, native HTML5 DnD drags the whole row, and no grip renders.
+// long-press text behaviour. Desktop is untouched: right-click opens the menu,
+// native HTML5 DnD drags the whole row.
 //
-// The menu's trigger stays enabled on every pointer type: the primitive anchors
-// the menu to the point it captures while handling the event, so disabling it
-// leaves nothing to anchor to and the menu lands at the viewport origin. The
-// grip cancels its own `pointerdown` so a press held still THERE cannot reach
-// the trigger -- a drag handle that opens a menu when you pause on it is the
-// defect that removed an earlier version of this grip.
+// The menu's own trigger stays enabled on every pointer type, including touch:
+// the primitive anchors the menu to the point it captures while handling the
+// event, so disabling it leaves nothing to anchor to and the menu lands at the
+// viewport origin instead of the row. Its built-in touch long-press rides along
+// with that and cannot be switched off separately -- a host that wants the menu
+// on a schedule of its own suppresses the long-press by cancelling the
+// `pointerdown` before the trigger sees it, which is what `chat-list` does.
 //
 // Title/description truncate; long content never grows the row. Self-contained,
 // works in any list.
-export function ChatListItem({ id, title, description, avatarUrl, active = false, disabled = false, status, hasDraft = false, onSelect, onRename, onStopProcess, onClose, onDelete, actions, onPointerDown, menuDisabled = false, onMenuOpenChange, onGripTouchStart }: ChatListItemProps) {
+export function ChatListItem({ id, title, description, avatarUrl, active = false, disabled = false, status, hasDraft = false, onSelect, onRename, onStopProcess, onClose, onDelete, actions, onPointerDown, menuDisabled = false, onMenuOpenChange }: ChatListItemProps) {
   const hasMenu = Boolean(onRename || onStopProcess || onClose || onDelete || actions?.length)
 
   // Derive the dot and the description's status word from the single `status`.
@@ -168,34 +157,6 @@ export function ChatListItem({ id, title, description, avatarUrl, active = false
         <span title='Unsent draft' className='ml-auto inline-flex items-center text-muted-foreground'>
           <Pencil className='size-3.5' aria-hidden />
           <span className='sr-only'>Unsent draft</span>
-        </span>
-      ) : null}
-      {onGripTouchStart ? (
-        <span
-          data-drag-handle
-          // Hidden on a fine pointer by the media rule the list emits -- the
-          // class is inert until that rule exists, so a row rendered outside
-          // `chat-list` shows no grip at all.
-          className='chat-row-grip ml-1 hidden shrink-0 items-center justify-center p-2 -m-1 text-muted-foreground'
-          // `none`, not `pan-y`: this element owns the whole gesture, in every
-          // direction. Filing a chat into a folder is a VERTICAL drag, and a
-          // vertical drag cannot start from a surface that has promised
-          // vertical scrolling to the browser.
-          style={{ touchAction: 'none', WebkitTouchCallout: 'none', userSelect: 'none' }}
-          onTouchStart={onGripTouchStart}
-          // The row's context-menu trigger sits above this element. A press
-          // held still on the grip would otherwise reach it and open the menu
-          // -- the exact defect that got the previous grip removed. Cancelling
-          // `pointerdown` here stops the trigger arming its long-press, so a
-          // still hold on the grip does nothing until it moves.
-          onPointerDown={(e) => e.preventDefault()}
-          // Decorative: the drag it starts is pointer-only and has no keyboard
-          // equivalent, so announcing a control that AT cannot operate would
-          // promise something untrue. The accessible route to moving a chat is
-          // the row menu (context-menu key / Shift+F10).
-          aria-hidden='true'
-        >
-          <GripVertical className='size-4' />
         </span>
       ) : null}
     </div>
