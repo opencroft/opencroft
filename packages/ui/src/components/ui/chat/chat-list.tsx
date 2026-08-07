@@ -357,16 +357,35 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
   // Mirror of `state` for the async touch handlers (they fire off-render).
   const stateRef = useRef(state)
   stateRef.current = state
-  // Resync bookkeeping -- see the effect further down. The signature is
-  // content-based, so an unmemoised `nodes` array does not read as a change.
+  // Resync bookkeeping. Three things, and the ORDER between them is the whole
+  // contract -- see `applyDropWithPending` and the effect further down.
+  //
+  // `pendingNodesRef` is the single park for a resync that arrived while a
+  // gesture was in flight. Exactly one of two places consumes it: the drop, or
+  // the effect once no gesture is live. Never both -- a drop empties it
+  // synchronously, before any effect can run.
   const nodesSig = nodesSignature(nodes)
   const lastNodesSigRef = useRef(nodesSig)
   const pendingNodesRef = useRef<ChatListNode[] | null>(null)
-  const dragging = drag !== null || touchDrag !== null
+  // What we last published through `onChange`. A host that stores it and hands
+  // it straight back is echoing our own commit, not reporting an external
+  // change -- and treating that echo as external overwrote a parked resync with
+  // a copy of our own state, losing the update outright.
+  const lastEmittedSigRef = useRef<string | null>(null)
+  // A gesture that could mutate the tree is in flight. Set synchronously when a
+  // press or a mouse drag starts, cleared when it ends.
+  //
+  // Deliberately NOT derived from `drag`/`touchDrag`: a touch press that has
+  // been picked up but not yet moved past the threshold has neither of those
+  // set, and that window is exactly where a resync used to land, rebuild the
+  // tree under a finger still holding a row, and leave the drop with an id it
+  // could no longer find.
+  const [gestureActive, setGestureActive] = useState(false)
 
   const reset = () => {
     setDrag(null)
     setOver(null)
+    setGestureActive(false)
   }
 
   // Tear down an in-flight touch press (timer + non-passive window listeners)
@@ -384,11 +403,38 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
     }
     pressRef.current = null
     setLifted(null)
+    setGestureActive(false)
   }
 
   const commit = (next: ListState) => {
     setState(next)
-    onChange?.(stateToNodes(next))
+    const emitted = stateToNodes(next)
+    // Remember what we published, so the same tree arriving back as `nodes` is
+    // recognised as our own echo rather than parked as an external change.
+    lastEmittedSigRef.current = nodesSignature(emitted)
+    onChange?.(emitted)
+  }
+
+  // The one place a drop becomes a new tree, and the one place a parked resync
+  // is applied alongside it.
+  //
+  // The order is explicit rather than emergent: the host's parked update lands
+  // FIRST, the drop is then replayed on top of the reconciled tree, and the
+  // result is published once. Running those as two independent state updates is
+  // what let the drag and the resync each win separately, and each throw the
+  // other's work away.
+  //
+  // The drop is replayed by id, so a chat removed upstream mid-drag simply does
+  // not move -- applyDrop returns the tree unchanged -- rather than
+  // resurrecting. The cost is that the insertion slot resolves against the
+  // reconciled order, so an upstream insert above the drop point can shift the
+  // landing by one. That is a rare race, and better than discarding either
+  // change wholesale.
+  const applyDropWithPending = (base: ListState, d: Drag, o: Over): ListState => {
+    const pending = pendingNodesRef.current
+    if (!pending) return applyDrop(base, d, o)
+    pendingNodesRef.current = null
+    return applyDrop(reconcile(base, pending, defaultFolderOpen), d, o)
   }
 
   const performDrop = (e: DragEvent) => {
@@ -398,7 +444,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
       reset()
       return
     }
-    const next = applyDrop(state, drag, over)
+    const next = applyDropWithPending(state, drag, over)
     if (next !== state) commit(next)
     reset()
   }
@@ -558,6 +604,10 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
   // browser's synthesised click.
   const startPress = (kind: 'item' | 'folder', id: string, list: string, e: ReactTouchEvent<HTMLDivElement>) => {
     if (pressRef.current) return
+    // The gesture owns the tree from here until `end`, including the armed
+    // window before any movement. A resync arriving in it is parked, never
+    // applied underneath the finger.
+    setGestureActive(true)
     const t0 = e.touches[0]
     const p: Press = { kind, id, list, startX: t0.clientX, startY: t0.clientY, startTime: Date.now(), committed: false, aborted: false, moved: false, menuOpened: false, pickupTimer: null, menuTimer: null }
     pressRef.current = p
@@ -609,7 +659,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
       if (p.committed && p.moved) {
         const target = overAtPoint(t.clientX, t.clientY, p.kind)
         if (target) {
-          const next = applyDrop(stateRef.current, dragPayload(p), target)
+          const next = applyDropWithPending(stateRef.current, dragPayload(p), target)
           if (next !== stateRef.current) commit(next)
         }
       }
@@ -620,6 +670,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
       setLifted(null)
       setDrag(null)
       setOver(null)
+      setGestureActive(false)
       pressRef.current = null
       window.removeEventListener('touchmove', move)
       window.removeEventListener('touchend', end)
@@ -679,14 +730,23 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
   useEffect(() => {
     if (nodesSig !== lastNodesSigRef.current) {
       lastNodesSigRef.current = nodesSig
-      pendingNodesRef.current = nodes
+      // Our own commit coming back is not an external change. Without this the
+      // echo overwrote a parked resync with a copy of our own state, and the
+      // update was gone for good -- the drag looked correct and the upstream
+      // change simply never appeared.
+      if (nodesSig !== lastEmittedSigRef.current) pendingNodesRef.current = nodes
     }
-    if (dragging) return
+    // HELD: a gesture owns the tree, so the park is left alone until it ends.
+    if (gestureActive) return
+    // APPLIED, second and only other consumer of the park: a gesture that ended
+    // without a drop -- a scroll, a tap, a drop on nothing -- plus the ordinary
+    // no-gesture case. A drop empties the park synchronously, so this cannot
+    // double-apply it.
     const pending = pendingNodesRef.current
     if (!pending) return
     pendingNodesRef.current = null
     setState((s) => reconcile(s, pending, defaultFolderOpen))
-  }, [nodesSig, nodes, dragging, defaultFolderOpen])
+  }, [nodesSig, nodes, gestureActive, defaultFolderOpen])
 
   // Drop any in-flight press if the list unmounts mid-gesture (no listener leak).
   useEffect(() => () => { cancelPress() }, [])
@@ -708,6 +768,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
           draggable={!touchInput}
           onTouchStart={(e) => startPress('item', id, list, e)}
           onDragStart={(e) => {
+            setGestureActive(true)
             setDrag({ kind: 'item', id, from: list })
             e.dataTransfer.effectAllowed = 'move'
             e.dataTransfer.setData('text/plain', id)
@@ -837,6 +898,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
               // reaches the field.
               onTouchStart={(e) => { if (editing !== fid) startPress('folder', fid, 'folders', e) }}
               onDragStart={(e) => {
+                setGestureActive(true)
                 setDrag({ kind: 'folder', id: fid })
                 e.dataTransfer.effectAllowed = 'move'
                 e.dataTransfer.setData('text/plain', fid)
