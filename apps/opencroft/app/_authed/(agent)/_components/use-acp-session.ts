@@ -19,6 +19,7 @@ import {
   respondLocal,
   setLocalConfigOption,
 } from '@/app/_authed/(agent)/_server/acp'
+import { sendFailureMessage } from '@/app/_authed/(agent)/_shared/send-refused-error'
 
 export interface LocalSource {
   agentNodeId: string
@@ -266,6 +267,7 @@ export function useAcpSession(
   const [canSteer, setCanSteer] = useState(false)
   const [draft, setDraft] = useState<{ text: string; key: number } | undefined>(undefined)
   const draftKey = useRef(0)
+  const [sendError, setSendError] = useState<string | undefined>(undefined)
   const [sending, startSending] = useTransition()
   // A message typed before the ACP session finished being created, queued so
   // the first message isn't dropped during the (slow first-spawn) handshake.
@@ -468,12 +470,27 @@ export function useAcpSession(
         titleRequestedRef.current = true
       }
       setLocalWaiting(true)
+      setSendError(undefined)
       const chained = sendChainRef.current.then(async () => {
         try {
           await (transportRef.current ?? promptLocalTransport)({ sessionId, text, front: opts?.front })
         } catch (error) {
           console.error('promptLocal failed', error)
           setLocalWaiting(false)
+          // A failed send used to end here, in the console. The composer had
+          // already cleared itself (the kit bar clears before calling onSend),
+          // so from the screen it was indistinguishable from a delivered
+          // message — the message simply vanished.
+          //
+          // Two things have to happen instead. The failure gets copy the host
+          // can render, and the text goes back into the composer so it is not
+          // lost. `value` is restored, not `text`: `text` has the outgoing
+          // transform applied (session-init envelope, canvas context), and
+          // putting that in front of the user would show them machinery they
+          // never typed.
+          setSendError(sendFailureMessage(error))
+          draftKey.current += 1
+          setDraft({ text: value, key: draftKey.current })
         }
       })
       sendChainRef.current = chained
@@ -604,6 +621,8 @@ export function useAcpSession(
     setHistoryHeader(headerFromWindow(page.header))
   }, [paginatedHistory.loadOlder])
 
+  const dismissSendError = useCallback(() => setSendError(undefined), [])
+
   const session = useMemo<AgentSession>(
     () => ({
       sessionKey: tabKey,
@@ -617,6 +636,8 @@ export function useAcpSession(
       canFork,
       editMessage,
       draft,
+      sendError,
+      dismissSendError,
       hasMoreHistory: paginatedHistory.hasMore,
       loadingMoreHistory: paginatedHistory.loadingMore,
       loadMoreHistory,
@@ -635,6 +656,8 @@ export function useAcpSession(
       canFork,
       editMessage,
       draft,
+      sendError,
+      dismissSendError,
       paginatedHistory.hasMore,
       paginatedHistory.loadingMore,
       loadMoreHistory,

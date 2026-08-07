@@ -9,6 +9,7 @@ import type { LocalSource, SendTransport } from '@/app/_authed/(agent)/_componen
 import { useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
+import { threadSendFailure } from '@/app/_authed/(group-chats)/_lib/send-failure'
 import type { GroupChatDetailView, GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import {
   getGroupChatThreadView,
@@ -89,10 +90,20 @@ function ThreadConversation({
   // composer means the send keeps all of its bookkeeping: ordering, the
   // message held while the session is still opening, the waiting state, and
   // `front` for the permission-correction flow.
+  // A refusal here is an answer, not a fault: the agent was removed from the
+  // group chat and this thread can be read but not written to. Rethrown as a
+  // SendRefusedError so the hook shows this copy instead of its generic
+  // wording -- the hook has no way to know what this endpoint's refusals mean,
+  // and should not. Anything else propagates untouched and is reported as a
+  // failure, the same rule the loaders follow.
   const sendTransport = useMemo<SendTransport>(
     () =>
       async ({ text, front }) => {
-        await sendGroupChatThreadMessage({ data: { threadId: thread.id, text, front } })
+        try {
+          await sendGroupChatThreadMessage({ data: { threadId: thread.id, text, front } })
+        } catch (error) {
+          throw threadSendFailure(error)
+        }
       },
     [thread.id],
   )
@@ -107,19 +118,32 @@ function ThreadConversation({
   // passed to useAcpSession: every message goes through
   // sendGroupChatThreadMessage and is membership-checked, while keeping the
   // hook's ordering, held-message and waiting behaviour.
+  // The refusal has to be visible, not just true. Sending into a removed
+  // agent's thread is refused server-side, and before this the only trace was a
+  // console error: the composer had already cleared itself, so the message
+  // simply appeared to vanish. The copy sits directly above the composer, the
+  // same place and shape the members dialog reports its own refusals, and the
+  // text is back in the composer to be copied or retried.
   const composer = (
-    <AgentCommandBarHost
-      inline
-      startIcon={false}
-      session={acp.session}
-      agentNodeId={thread.agent.nodeId}
-      queued={acp.queue}
-      onRemoveQueued={acp.removeQueued}
-      configOptions={acp.configOptions}
-      onSetConfigOption={acp.setConfigOption}
-      usage={acp.usage}
-      placeholder={`Message ${thread.agent.name}`}
-    />
+    <div className='flex min-w-0 flex-col gap-1'>
+      {acp.session.sendError ? (
+        <p role='alert' className='px-1 text-sm text-destructive'>
+          {acp.session.sendError}
+        </p>
+      ) : null}
+      <AgentCommandBarHost
+        inline
+        startIcon={false}
+        session={acp.session}
+        agentNodeId={thread.agent.nodeId}
+        queued={acp.queue}
+        onRemoveQueued={acp.removeQueued}
+        configOptions={acp.configOptions}
+        onSetConfigOption={acp.setConfigOption}
+        usage={acp.usage}
+        placeholder={`Message ${thread.agent.name}`}
+      />
+    </div>
   )
 
   return (

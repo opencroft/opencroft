@@ -65,6 +65,12 @@ export interface AgentSession {
   editMessage?: (turnIndex: number, text: string) => void
   // Composer draft staged by editMessage; the input syncs to it when it changes.
   draft?: { text: string; key: number }
+  // Copy for a send that did not go through, shown by the composer. Set
+  // together with the message being put back in the composer, so the reader is
+  // told what happened and still has what they typed. Cleared when the next
+  // send starts, or by `dismissSendError`.
+  sendError?: string
+  dismissSendError?: () => void
   // When set, the composer's send is disabled (e.g. no agent selected yet).
   disabled?: boolean
   // Whether the server has earlier history than what's currently in `messages`
