@@ -14,7 +14,12 @@ import { getSessionUser } from '@opencroft/auth/server'
 import { db, groupChat, groupChatMember, groupChatThread, user } from '@opencroft/db'
 import { and, eq } from 'drizzle-orm'
 
-import { ensureLocalSessionImpl, forgetLocalSessionImpl, promptLocalImpl } from '@/app/_authed/(agent)/_server/acp-impl'
+import {
+  ensureLocalSessionImpl,
+  forgetLocalSessionImpl,
+  promptLocalImpl,
+  stopLocalSessionProcessImpl,
+} from '@/app/_authed/(agent)/_server/acp-impl'
 import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { GroupChatAccessError } from '@/app/_authed/(group-chats)/_shared/access-error'
 
@@ -312,6 +317,82 @@ export async function addMember(request: Request, groupChatId: string, principal
     .onConflictDoNothing()
 }
 
+/**
+ * Remove a member. Mirrors `addMember`'s rule deliberately: any existing
+ * member may remove another, because a group chat where anyone may add but
+ * only some may remove needs a role system, and there is none. Removing
+ * yourself is how you leave.
+ *
+ * ONE RULE IS NOT SYMMETRIC — the last remaining user member cannot be
+ * removed. Visibility is derived from user membership (`listGroupChatsForUser`),
+ * so a chat whose last person left would not be gone, it would be unreachable:
+ * present in the database, absent from every list, with no member left who
+ * could add anyone back. Agents carry no such risk and may all be removed.
+ *
+ * Threads are NOT deleted. A removed agent's conversations stay readable; what
+ * they lose is the ability to be sent to, which `sendMessageInThread` enforces
+ * rather than this function.
+ */
+export async function removeMember(request: Request, groupChatId: string, principal: MemberPrincipal): Promise<void> {
+  await requireGroupChatMember(request, groupChatId)
+
+  if (principal.kind === 'user') {
+    const userMembers = await db
+      .select({ id: groupChatMember.id })
+      .from(groupChatMember)
+      .where(and(eq(groupChatMember.groupChatId, groupChatId), eq(groupChatMember.principalType, 'user')))
+    if (userMembers.length <= 1) {
+      throw new GroupChatAccessError(
+        'last-user-member',
+        'The last person in a group chat cannot be removed — the chat would become unreachable',
+      )
+    }
+    await db
+      .delete(groupChatMember)
+      .where(
+        and(
+          eq(groupChatMember.groupChatId, groupChatId),
+          eq(groupChatMember.principalType, 'user'),
+          eq(groupChatMember.userId, principal.userId),
+        ),
+      )
+    return
+  }
+
+  // Stop the agent's live sessions BEFORE dropping the membership row, for the
+  // same reason `deleteThread` tears down before deleting: while the row is
+  // still there the removal is retryable, and a teardown that throws leaves a
+  // member who is visibly still a member. Dropping the row first would leave a
+  // running agent process behind a member nobody can see to remove again.
+  //
+  // The product decision is that removal may interrupt a turn in progress
+  // rather than wait for it.
+  //
+  // `stopLocalSessionProcessImpl`, NOT `forgetLocalSessionImpl`. The threads
+  // are kept so their conversations stay readable, and forgetting would delete
+  // the durable tabKey->sessionId pointer they are read back through — the
+  // thread would reopen on a brand-new empty session and the history it was
+  // kept for would be gone. Stopping ends the process and leaves the pointer,
+  // so opening the thread later resumes the same session read-only, which is
+  // exactly the state "kept but not sendable" describes.
+  const threads = await db
+    .select({ sessionKey: groupChatThread.sessionKey })
+    .from(groupChatThread)
+    .where(and(eq(groupChatThread.groupChatId, groupChatId), eq(groupChatThread.agentNodeId, principal.agentNodeId)))
+  for (const thread of threads) {
+    await stopLocalSessionProcessImpl(thread.sessionKey)
+  }
+  await db
+    .delete(groupChatMember)
+    .where(
+      and(
+        eq(groupChatMember.groupChatId, groupChatId),
+        eq(groupChatMember.principalType, 'agent'),
+        eq(groupChatMember.agentNodeId, principal.agentNodeId),
+      ),
+    )
+}
+
 /** Members of a group chat, agents and users together. Membership-gated. */
 export async function listMembers(
   request: Request,
@@ -427,6 +508,16 @@ export async function sendMessageInThread(
   }
   if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  // The agent has to still be a member, not just the caller. Without this,
+  // removing an agent is decoration: its threads survive by design, they carry
+  // the sessionKey, and every send through them would keep reaching it. This
+  // is the rule that makes removal mean something, and it is deliberately NOT
+  // collapsed into the not-found refusal above — reaching it requires being a
+  // member already, so it leaks nothing, and the caller needs to be told why a
+  // thread they can plainly see will not accept a message.
+  if (!(await isAgentMember(row.groupChatId, row.agentNodeId))) {
+    throw new GroupChatAccessError('agent-not-a-member', 'That agent is no longer a member of this group chat')
   }
   const opened = await ensureLocalSessionImpl({
     agentNodeId: row.agentNodeId,

@@ -19,7 +19,7 @@ import test, { after } from 'node:test'
 import type { AgentConnection } from 'agent-client/connection'
 import { buildSpawnConfig } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 
 import { slug } from '@/app/_authed/(server)/_server/types'
 
@@ -44,6 +44,9 @@ process.env.NODE_ENV = 'development'
 
 const { db, space, groupChatMember, groupChatThread } = await import('@opencroft/db')
 const model = await import('./model')
+// Dynamic like the rest: it reads and writes the settings table, so importing
+// it statically would touch the database before PGLITE_PATH is set above.
+const sessionStore = await import('@/app/_authed/(agent)/_server/acp-session-store')
 const { ensureAuth } = await import('@opencroft/auth/server')
 
 after(async () => {
@@ -521,6 +524,191 @@ test('deleteThread tears the session down before dropping the row it is reachabl
   )
   const remaining = await db.select().from(groupChatThread).where(eq(groupChatThread.id, threadId))
   assert.equal(remaining.length, 0, 'and the row is gone once the delete completes')
+})
+
+// ---------------------------------------------------------------------------
+// REMOVING A MEMBER.
+//
+// The rule that makes removal mean anything is server-side: a removed agent's
+// threads are deliberately kept (they stay readable), and they carry the
+// sessionKey, so without a check every send through them would still reach the
+// agent. Removal that only dimmed a row in a list would be decoration.
+// ---------------------------------------------------------------------------
+
+test('removing an agent stops sends into its existing threads, which are kept, not deleted', async () => {
+  const owner = await makeUser('remove-agent-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'removing an agent')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: `group-chat:${chat.id}:agent-a:remove-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  await model.removeMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+
+  // The membership is gone.
+  const members = await model.listMembers(reqAs(owner), chat.id)
+  assert.equal(
+    members.some((m) => m.agentNodeId === 'agent-a'),
+    false,
+    'the agent must no longer be a member',
+  )
+
+  // The thread is NOT gone -- the conversation stays readable.
+  const kept = await db.select().from(groupChatThread).where(eq(groupChatThread.id, thread.id))
+  assert.equal(kept.length, 1, 'the thread must survive removal; only sending into it stops')
+
+  // And sending into it is refused, with a code distinct from the not-found
+  // collapse: the caller is a member and can see the thread, so telling them
+  // why is not a leak.
+  const refusal = await captureRefusal(() => model.sendMessageInThread(reqAs(owner), thread.id, 'still there?'))
+  assert.equal(refusal.code, 'agent-not-a-member')
+})
+
+// THE REASON THREADS ARE KEPT AT ALL.
+//
+// Removal stops the agent's process, and there are two ways to do that: one
+// keeps the durable tabKey->sessionId pointer, the other deletes it. They look
+// identical straight afterwards -- no live process either way -- and differ
+// only later, when the thread is reopened: with the pointer the session
+// resumes and the conversation is there, without it the thread comes back as a
+// brand-new empty session. Keeping a thread whose history is unreachable is
+// keeping nothing, so this asserts the pointer survives.
+test('removing an agent leaves its threads resumable — the persisted session pointer survives', async () => {
+  const owner = await makeUser('remove-history-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'history survives removal')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+
+  const sessionKey = `group-chat:${chat.id}:agent-a:history-fixture`
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({ groupChatId: chat.id, agentNodeId: 'agent-a', sessionKey, createdByUserId: owner.id })
+    .returning()
+  assert.ok(thread)
+
+  // The pointer a real session would have left behind. Written directly rather
+  // than by opening a session, so this test is about the pointer's survival and
+  // not about the session machinery.
+  await sessionStore.writePersistedSession(sessionKey, 'persisted-session-id')
+
+  await model.removeMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+
+  assert.equal(
+    await sessionStore.readPersistedSession(sessionKey),
+    'persisted-session-id',
+    'the durable session pointer must survive removal — without it the kept thread reopens empty and its history is unreachable',
+  )
+})
+
+test('a non-member cannot remove a member', async () => {
+  const owner = await makeUser('remove-guard-owner@example.test')
+  const outsider = await makeUser('remove-guard-outsider@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'guarded removal')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-b' })
+
+  const refusal = await captureRefusal(() =>
+    model.removeMember(reqAs(outsider), chat.id, { kind: 'agent', agentNodeId: 'agent-b' }),
+  )
+  assert.equal(refusal.code, 'not-found')
+
+  const members = await model.listMembers(reqAs(owner), chat.id)
+  assert.equal(
+    members.some((m) => m.agentNodeId === 'agent-b'),
+    true,
+    'the refused call must not have removed anything',
+  )
+})
+
+// Visibility is derived from user membership, so a chat whose last person left
+// would not be deleted -- it would be stranded: still in the database, in
+// nobody's list, with no member left who could add anyone back.
+test('the last user member cannot be removed, and a second one can', async () => {
+  const owner = await makeUser('last-member-owner@example.test')
+  const other = await makeUser('last-member-other@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'last one out')
+
+  const refusal = await captureRefusal(() =>
+    model.removeMember(reqAs(owner), chat.id, { kind: 'user', userId: owner.id }),
+  )
+  assert.equal(refusal.code, 'last-user-member')
+
+  // With a second person present, removing one is fine -- including removing
+  // yourself, which is how leaving works.
+  await model.addMember(reqAs(owner), chat.id, { kind: 'user', userId: other.id })
+  await model.removeMember(reqAs(owner), chat.id, { kind: 'user', userId: owner.id })
+
+  const members = await model.listMembers(reqAs(other), chat.id)
+  assert.equal(
+    members.some((m) => m.userId === owner.id),
+    false,
+    'the departing user must be gone',
+  )
+  // And having left, they can no longer reach it at all.
+  const afterLeaving = await captureRefusal(() => model.listMembers(reqAs(owner), chat.id))
+  assert.equal(afterLeaving.code, 'not-found')
+})
+
+// Same ordering property `deleteThread` has, and for the same reason: while the
+// membership row is still there the removal is visible and retryable. Asserted
+// from inside the teardown, which is the only place the order is observable.
+test('removing an agent tears its session down before dropping the membership row', async () => {
+  const owner = await makeUser('remove-order-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'removal ordering')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  let closeSessionCalls = 0
+  let stillMemberDuringTeardown: boolean | null = null
+
+  const connection = {
+    newSession: async () => ({ sessionId: `test-session-${crypto.randomUUID()}` }),
+    prompt: async () => ({ stopReason: 'end_turn' }),
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => {
+      closeSessionCalls += 1
+      const rows = await db
+        .select()
+        .from(groupChatMember)
+        .where(and(eq(groupChatMember.groupChatId, chat.id), eq(groupChatMember.agentNodeId, 'agent-session')))
+      stillMemberDuringTeardown = rows.length === 1
+      return {}
+    },
+  } as unknown as AgentConnection
+
+  const workspaceSlug = slug('Agent Session')
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store, 'agent-client global store must exist after import')
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first message')
+  await model.removeMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  assert.equal(closeSessionCalls, 1, 'removal must actually reach the live session, not just drop the row')
+  assert.equal(
+    stillMemberDuringTeardown,
+    true,
+    'the membership row must still exist while the session is torn down — otherwise a failed teardown leaves a running agent behind a member nobody can see to remove again',
+  )
 })
 
 test('an anonymous request cannot send into a thread', async () => {

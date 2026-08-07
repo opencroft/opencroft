@@ -21,6 +21,7 @@ import {
   listGroupChatsForUser,
   listMembers,
   listThreadsInGroupChat,
+  removeMember,
   sendMessageInThread,
   startThread,
 } from '@/app/_authed/(group-chats)/_server/model'
@@ -72,6 +73,10 @@ export const createMyGroupChat = createServerFn({ method: 'POST', strict: { outp
 export const addGroupChatMember = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { groupChatId: string; principal: MemberPrincipal }) => data)
   .handler(async ({ data }): Promise<void> => addMember(getRequest(), data.groupChatId, data.principal))
+
+export const removeGroupChatMember = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { groupChatId: string; principal: MemberPrincipal }) => data)
+  .handler(async ({ data }): Promise<void> => removeMember(getRequest(), data.groupChatId, data.principal))
 
 export const listGroupChatMembers = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((groupChatId: string) => groupChatId)

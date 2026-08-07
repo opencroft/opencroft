@@ -43,6 +43,15 @@ export type GroupChatAccessFailure =
    * cannot tell an outsider which ids are real.
    */
   | 'agent-not-a-member'
+  /**
+   * The request would remove the last person from a group chat.
+   *
+   * Also outside the collapse, and for the same reason: only a member can
+   * reach it, so it tells an outsider nothing. It is a refusal of a specific
+   * action rather than of access, and the caller needs to be able to say why
+   * the Remove they pressed did nothing.
+   */
+  | 'last-user-member'
 
 /**
  * PHASE 2 CONTRACT, verified against the actual wire format rather than

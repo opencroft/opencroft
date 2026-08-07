@@ -117,6 +117,35 @@ test('a thread carries its agent resolved, not a bare node id', async () => {
   assert.equal(threads[0].agent.avatarUrl, null, 'an agent with no avatar resolves to null, not undefined')
 })
 
+// The flag the thread list renders a removed agent's thread from. It is the
+// membership fact, not the presentation: the screen turns it into `disabled`.
+test('a thread reports whether its agent is still a member, before and after removal', async () => {
+  const owner = await makeUser('view-membership@example.test', 'Membership Owner')
+  const chat = await model.createGroupChat(reqAs(owner), 'membership on threads')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  await db.insert(groupChatThread).values({
+    groupChatId: chat.id,
+    agentNodeId: 'agent-a',
+    sessionKey: `group-chat:${chat.id}:agent-a:membership-fixture`,
+    createdByUserId: owner.id,
+  })
+
+  const before = await view.listThreadsInGroupChatView(reqAs(owner), chat.id)
+  assert.equal(before.length, 1)
+  assert.equal(before[0].agentIsMember, true, 'an ordinary thread reports its agent as a member')
+
+  await model.removeMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+
+  const after = await view.listThreadsInGroupChatView(reqAs(owner), chat.id)
+  assert.equal(after.length, 1, 'the thread is kept, so it can still be read')
+  assert.equal(after[0].agentIsMember, false, 'and it now reports the agent as no longer a member')
+
+  // The single-thread read has to agree with the list one — the thread screen
+  // reads through that path, not this one.
+  const single = await view.getThreadView(reqAs(owner), after[0].id)
+  assert.equal(single.agentIsMember, false, 'the single-thread view must not disagree with the list')
+})
+
 // The important robustness case: agentNodeId is deliberately NOT a foreign
 // key, because agent nodes live in space-graph JSON. So a membership row or a
 // thread can outlive the node it points at, and the view must survive that.

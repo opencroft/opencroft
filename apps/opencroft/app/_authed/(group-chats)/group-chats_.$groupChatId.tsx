@@ -7,11 +7,12 @@ import { GroupChatDetail } from 'ui/group-chat/group-chat-detail'
 import { GroupChatThreadList } from 'ui/group-chat/group-chat-thread-list'
 import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
 
-import { GroupChatDetailActions } from '@/app/_authed/(group-chats)/_components/group-chat-detail-actions'
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
+import { GroupChatMembersDialog } from '@/app/_authed/(group-chats)/_components/group-chat-members-dialog'
 import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
+import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import {
   deleteGroupChatThread,
   getMyGroupChatView,
@@ -88,8 +89,13 @@ function GroupChatDetailPage() {
         <GroupChatDetail
           topic={chat.topic}
           members={chat.members}
-          actions={
-            <GroupChatDetailActions
+          // The cluster replaces the old "Add member" button entirely: it is
+          // both who is taking part and the way to change it. `members` above
+          // is still passed because the kit falls back to a read-only cluster
+          // when no slot is given, and it should not need this page to know
+          // that to stay correct.
+          membersSlot={
+            <GroupChatMembersDialog
               groupChatId={groupChatId}
               members={chat.members}
               directory={directory}
@@ -99,7 +105,10 @@ function GroupChatDetailPage() {
           threads={
             threads.length > 0 ? (
               <GroupChatThreadList
-                threads={threads}
+                // `agentIsMember` is the server's fact; `disabled` is what this
+                // screen does with it. The mapping lives here rather than in
+                // the read model so a server type never carries a CSS state.
+                threads={threads.map((t: GroupChatThreadEntry) => ({ ...t, disabled: !t.agentIsMember }))}
                 onSelect={(threadId) => goToThread(threadId)}
                 onDelete={(threadId) => {
                   setDeleteError(undefined)

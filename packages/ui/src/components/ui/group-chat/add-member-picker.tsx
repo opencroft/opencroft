@@ -31,6 +31,11 @@ export interface AddMemberPickerProps {
   members?: Array<{ kind: 'user' | 'agent'; id: string }>
   onAdd: (principal: { kind: 'user' | 'agent'; id: string }) => void
   adding?: boolean
+  // When supplied, current members get a Remove control instead of the passive
+  // "Added" label, so the same list manages both adding and removing. Omit to
+  // keep the read-only "Added" state.
+  onRemove?: (principal: { kind: 'user' | 'agent'; id: string }) => void
+  removing?: boolean
   // A whole-picker failure -- a rejected add. Displayed, not decided.
   error?: string
   emptyState?: ReactNode
@@ -55,6 +60,8 @@ export function AddMemberPicker({
   members,
   onAdd,
   adding,
+  onRemove,
+  removing,
   error,
   emptyState,
   className,
@@ -112,7 +119,20 @@ export function AddMemberPicker({
                   <span className='truncate text-xs text-muted-foreground'>{candidate.kind}</span>
                 </span>
                 {added ? (
-                  <span className='shrink-0 text-xs text-muted-foreground'>Added</span>
+                  onRemove ? (
+                    <Button
+                      type='button'
+                      size='sm'
+                      variant='outline'
+                      className='shrink-0'
+                      disabled={removing}
+                      onClick={() => onRemove({ kind: candidate.kind, id: candidate.id })}
+                    >
+                      Remove
+                    </Button>
+                  ) : (
+                    <span className='shrink-0 text-xs text-muted-foreground'>Added</span>
+                  )
                 ) : (
                   <Button
                     type='button'

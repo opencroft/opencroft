@@ -60,6 +60,16 @@ export interface GroupChatThreadEntry {
   title: string | null
   agent: AgentRef
   createdAt: Date
+  /**
+   * False once this thread's agent has been removed from the group chat. The
+   * thread stays — it is still readable — but it can no longer be sent to,
+   * which `sendMessageInThread` enforces server-side.
+   *
+   * Named for the fact rather than for what a screen does with it: the kit's
+   * thread list takes a `disabled` flag, and the mapping from "no longer a
+   * member" to "renders dimmed" belongs to the page, not to a server read.
+   */
+  agentIsMember: boolean
 }
 
 // A reference that no longer resolves is shown, not hidden. `agentNodeId` is
@@ -86,6 +96,18 @@ function missingUser(userId: string): MemberRef {
 async function agentsByNodeId(): Promise<Map<string, AgentRef>> {
   const nodes = await listAgentNodesImpl()
   return new Map(nodes.map((n) => [n.nodeId, { nodeId: n.nodeId, name: n.name, avatarUrl: n.avatar ?? null }] as const))
+}
+
+/**
+ * The agent node ids currently in a group chat's membership.
+ *
+ * Goes through `listMembers` rather than querying the table directly so the
+ * membership gate is applied by the same function every other read here uses —
+ * a second, ungated path to the same rows is how the two drift apart.
+ */
+async function agentMemberIds(request: Request, groupChatId: string): Promise<Set<string>> {
+  const rows = await listMembers(request, groupChatId)
+  return new Set(rows.flatMap((r) => (r.principalType === 'agent' && r.agentNodeId ? [r.agentNodeId] : [])))
 }
 
 async function usersById(userIds: string[]): Promise<Map<string, MemberRef>> {
@@ -195,12 +217,14 @@ export async function listThreadsInGroupChatView(
     return []
   }
   const agents = await agentsByNodeId()
+  const agentMembers = await agentMemberIds(request, groupChatId)
   return threads.map((t) => ({
     id: t.id,
     groupChatId: t.groupChatId,
     title: t.title,
     agent: agents.get(t.agentNodeId) ?? missingAgent(t.agentNodeId),
     createdAt: t.createdAt,
+    agentIsMember: agentMembers.has(t.agentNodeId),
   }))
 }
 
@@ -221,12 +245,14 @@ export async function getThreadView(
 ): Promise<GroupChatThreadEntry & { sessionKey: string }> {
   const thread = await getThread(request, threadId)
   const agents = await agentsByNodeId()
+  const agentMembers = await agentMemberIds(request, thread.groupChatId)
   return {
     id: thread.id,
     groupChatId: thread.groupChatId,
     title: thread.title,
     agent: agents.get(thread.agentNodeId) ?? missingAgent(thread.agentNodeId),
     createdAt: thread.createdAt,
+    agentIsMember: agentMembers.has(thread.agentNodeId),
     sessionKey: thread.sessionKey,
   }
 }

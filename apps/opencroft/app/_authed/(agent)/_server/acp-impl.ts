@@ -319,11 +319,34 @@ export function hasActiveTurnImpl(sessionId: string): boolean {
   return agentClient.hasActiveTurn(sessionId)
 }
 
+// Stop a tab's agent process WITHOUT forgetting the tab: ends the live ACP
+// session (gracefully, or kills the subprocess if nothing else shares it) and
+// drops the in-memory pointer, but deliberately keeps the durable
+// tabKey->sessionId pointer and the config overrides. The next open falls
+// through to openLocalSession's cold-start resume and reattaches to the SAME
+// session, so the conversation is still there.
+//
+// The distinction from forgetLocalSessionImpl below is the whole point, and
+// picking the wrong one is silent: both leave no live process, and the loss
+// only shows up later as a chat that reopens empty. Use this one wherever the
+// history has to survive -- stopping a process, or removing an agent from a
+// group chat, whose threads are kept precisely so they stay readable.
+export async function stopLocalSessionProcessImpl(tabKey: string): Promise<void> {
+  const entry = tabSessions.get(tabKey)
+  if (entry) {
+    await agentClient.deleteSession(entry.id)
+    tabSessions.delete(tabKey)
+  }
+}
+
 // Drop a tab's session entirely: the live ACP session (and the agent process it
 // owns), the in-memory tab->session pointer, and the durable pointer + config
 // overrides a restart would otherwise resume from. Shared by the sidebar's chat
 // delete (acp.ts) and a group-chat thread delete -- a thread is an ordinary
 // session, so it goes away the same way.
+//
+// This one is for when the tab itself is going away. If the tab survives, you
+// want stopLocalSessionProcessImpl above.
 export async function forgetLocalSessionImpl(tabKey: string): Promise<void> {
   const entry = tabSessions.get(tabKey)
   if (entry) {

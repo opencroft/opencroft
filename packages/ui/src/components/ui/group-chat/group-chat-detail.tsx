@@ -9,6 +9,10 @@ import { NodeCard } from '@/components/ui/nodes/node-card'
 export interface GroupChatDetailProps {
   topic: string
   members: MemberRef[]
+  /** Replaces the read-only avatar cluster with a host-supplied control --
+   * typically the cluster made interactive, so tapping it opens member
+   * management (add / remove). Omit to render the cluster read-only. */
+  membersSlot?: ReactNode
   /** The thread list (or any content) for this group chat. Omit/leave null to
    * show `emptyState` instead -- the group chat itself holds no messages, so a
    * chat with no threads yet is an empty state, not a blank. */
@@ -36,6 +40,7 @@ export interface GroupChatDetailProps {
 export function GroupChatDetail({
   topic,
   members,
+  membersSlot,
   threads,
   emptyState,
   actions,
@@ -47,42 +52,20 @@ export function GroupChatDetail({
       <header className='flex shrink-0 flex-col gap-3 border-b border-border px-3 py-3'>
         <div className='flex min-w-0 items-center gap-3'>
           <h2 className='min-w-0 flex-1 truncate text-base font-semibold text-foreground'>{topic}</h2>
-          {/* Dropped below `sm`, and not because it does not matter: the same
-              people are listed by name directly underneath, so on a phone this
-              is the one thing in the header that is pure duplication. Six md
-              avatars hold ~142px the topic then cannot use, which at a 320px
-              width leaves the topic a few characters. Truncating a topic away
-              to nothing is not a narrow-width design; it is the desktop one
-              surviving. Above `sm` there is room for both and it comes back. */}
-          <span className='hidden shrink-0 sm:block'>
-            <MemberAvatarGroup members={members} max={6} size='md' />
-          </span>
+          {/* The avatar cluster is the single handle for who is taking part:
+              the participants at a glance, and -- when the host makes it
+              interactive -- the entry point for adding and removing members.
+              The host owns that interaction (it needs the directory and the
+              add/remove actions), so it can replace this with a clickable
+              cluster through `membersSlot`; left plain it is read-only. The
+              full member list lives behind it rather than as a row of names, so
+              the header is one line at any width. */}
+          {membersSlot ?? <MemberAvatarGroup members={members} max={6} size='md' />}
           {/* Kept out of the scroll region and never allowed to shrink: past
               the cluster, the topic gives up its space first, because a
               truncated topic is still readable and a squeezed control is not. */}
           {actions ? <div className='flex shrink-0 items-center gap-1'>{actions}</div> : null}
         </div>
-        {members.length > 0 ? (
-          <ul className='flex flex-wrap gap-x-3 gap-y-1'>
-            {members.map((m) => (
-              <li key={m.id} className='flex min-w-0 items-center gap-1.5 text-xs'>
-                <span
-                  className={cn(
-                    'size-1.5 shrink-0 rounded-full',
-                    m.kind === 'agent' ? 'bg-primary' : 'bg-muted-foreground/40',
-                  )}
-                />
-                {/* min-w-0 as well as truncate. This is a flex item, so its
-                    automatic minimum size is the whole name: without it the
-                    ellipsis never fires, the row grows to fit instead, and a
-                    long name pushes the wrapping list -- and the header with
-                    it -- wider than the pane. */}
-                <span className='min-w-0 truncate text-foreground'>{m.name}</span>
-                <span className='text-muted-foreground/70'>{m.kind}</span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
       </header>
       <div className='min-h-0 flex-1 overflow-y-auto'>
         {threads ??

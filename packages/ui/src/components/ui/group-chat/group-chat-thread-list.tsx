@@ -14,6 +14,10 @@ export interface GroupChatThreadListItem {
   title: string | null
   agent: AgentRef
   createdAt: Date
+  // True when the thread's agent is no longer a member of the group chat. The
+  // row stays (the conversation is still readable) but reads as inactive, and
+  // acting on it is gated by the host. Set by the host from membership.
+  disabled?: boolean
 }
 
 export interface GroupChatThreadListProps {
@@ -42,9 +46,14 @@ export function GroupChatThreadList({ threads, activeId, onSelect, onDelete, cla
           key={t.id}
           id={t.id}
           title={t.title ?? 'Untitled'}
-          description={`${t.agent.name} · created ${dateFormatter.format(t.createdAt)}`}
+          description={
+            t.disabled
+              ? `${t.agent.name} · agent removed`
+              : `${t.agent.name} · created ${dateFormatter.format(t.createdAt)}`
+          }
           avatarUrl={t.agent.avatarUrl}
           active={t.id === activeId}
+          disabled={t.disabled}
           onSelect={onSelect}
           onDelete={onDelete}
         />

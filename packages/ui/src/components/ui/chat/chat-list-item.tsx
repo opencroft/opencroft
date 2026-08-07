@@ -30,6 +30,11 @@ interface ChatListItemProps {
   description?: string
   avatarUrl?: string | null
   active?: boolean
+  // Dim the row without hiding it. Used for a group-chat thread whose agent
+  // has been removed: the conversation stays readable, the row just reads as
+  // inactive. Selection still fires -- the content is visible, only acting on
+  // it (sending) is gated elsewhere.
+  disabled?: boolean
   status?: ChatStatus
   hasDraft?: boolean
   onSelect?: (id: string) => void
@@ -112,7 +117,7 @@ const STATUS_DOT: Partial<Record<ChatStatus, StatusVariant>> = {
 //
 // Title/description truncate; long content never grows the row. Self-contained,
 // works in any list.
-export function ChatListItem({ id, title, description, avatarUrl, active = false, status, hasDraft = false, onSelect, onRename, onStopProcess, onClose, onDelete, actions, onPointerDown, menuDisabled = false, onMenuOpenChange }: ChatListItemProps) {
+export function ChatListItem({ id, title, description, avatarUrl, active = false, disabled = false, status, hasDraft = false, onSelect, onRename, onStopProcess, onClose, onDelete, actions, onPointerDown, menuDisabled = false, onMenuOpenChange }: ChatListItemProps) {
   const hasMenu = Boolean(onRename || onStopProcess || onClose || onDelete || actions?.length)
 
   // Derive the dot and the description's status word from the single `status`.
@@ -127,6 +132,7 @@ export function ChatListItem({ id, title, description, avatarUrl, active = false
       role='button'
       tabIndex={0}
       data-active={active}
+      aria-disabled={disabled}
       style={{ touchAction: 'pan-y', WebkitTouchCallout: 'none', userSelect: 'none' }}
       onPointerDown={onPointerDown}
       onClick={() => onSelect?.(id)}
@@ -139,6 +145,7 @@ export function ChatListItem({ id, title, description, avatarUrl, active = false
       className={cn(
         'relative flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-left outline-none transition-colors',
         'hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring data-[active=true]:bg-muted',
+        disabled && 'opacity-60',
       )}
     >
       <AgentAvatar avatar={avatarUrl} name={title} statusIndicator={dot} />

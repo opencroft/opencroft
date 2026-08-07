@@ -15,6 +15,7 @@ import {
   hasActiveTurnImpl,
   type OpenedSession,
   promptLocalImpl,
+  stopLocalSessionProcessImpl,
   tabSessions,
 } from '@/app/_authed/(agent)/_server/acp-impl'
 import { writePersistedConfigOption, writePersistedSession } from '@/app/_authed/(agent)/_server/acp-session-store'
@@ -130,13 +131,7 @@ export const listSessionActivity = createServerFn({ method: 'GET', strict: { out
 // session — the chat and its history are untouched.
 export const stopProcessLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((tabKey: string) => tabKey)
-  .handler(async ({ data: tabKey }): Promise<void> => {
-    const entry = tabSessions.get(tabKey)
-    if (entry) {
-      await agentClient.deleteSession(entry.id)
-      tabSessions.delete(tabKey)
-    }
-  })
+  .handler(async ({ data: tabKey }): Promise<void> => stopLocalSessionProcessImpl(tabKey))
 
 // How many agent records one press of "load older messages" fetches. Smaller
 // than the opening window (acp.stream.ts's INITIAL_HISTORY_RECORDS) because a
