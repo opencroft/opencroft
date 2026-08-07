@@ -7,6 +7,7 @@ import { toast } from 'sonner'
 
 import { clampPosition } from '@/app/_authed/(dashboard)/_canvas/clamp-position'
 import { useEscapeKey } from '@/app/_authed/(dashboard)/_canvas/use-escape-key'
+import { useOutsideDismiss } from '@/app/_authed/(dashboard)/_canvas/use-outside-dismiss'
 import { type ResolvedNode, resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
 
 interface NodeContextMenuProps {
@@ -42,20 +43,7 @@ export function NodeContextMenu({
   const clamped = clampPosition(position.x, position.y, MENU_WIDTH, MENU_MAX_HEIGHT)
 
   useEscapeKey(onClose)
-
-  useEffect(() => {
-    function handlePointer(e: MouseEvent | TouchEvent) {
-      if (ref.current && !ref.current.contains(e.target as HTMLElement)) {
-        onClose()
-      }
-    }
-    document.addEventListener('mousedown', handlePointer)
-    document.addEventListener('touchend', handlePointer)
-    return () => {
-      document.removeEventListener('mousedown', handlePointer)
-      document.removeEventListener('touchend', handlePointer)
-    }
-  }, [onClose])
+  useOutsideDismiss(ref, onClose)
 
   const nodeId = node.id
   const typeId = node.type

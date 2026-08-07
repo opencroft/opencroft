@@ -1,7 +1,7 @@
 'use client'
 
 import { ClipboardPaste, Plus } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { useRef } from 'react'
 import {
   Command,
   CommandEmpty,
@@ -14,6 +14,7 @@ import {
 
 import { clampPosition } from '@/app/_authed/(dashboard)/_canvas/clamp-position'
 import { useEscapeKey } from '@/app/_authed/(dashboard)/_canvas/use-escape-key'
+import { useOutsideDismiss } from '@/app/_authed/(dashboard)/_canvas/use-outside-dismiss'
 import type { ResolvedNode } from '@/app/_authed/(extension-runtime)/_client/registry'
 
 interface FlowContextMenuProps {
@@ -51,16 +52,7 @@ export function FlowContextMenu({
   const groups = groupByCategory(extensions)
   const clamped = clampPosition(position.x, position.y, 260, 360)
 
-  useEffect(() => {
-    const handle = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as HTMLElement)) {
-        onClose()
-      }
-    }
-    document.addEventListener('mousedown', handle)
-    return () => document.removeEventListener('mousedown', handle)
-  }, [onClose])
-
+  useOutsideDismiss(ref, onClose)
   useEscapeKey(onClose)
 
   return (

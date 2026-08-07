@@ -734,17 +734,15 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   // selection unless it's already part of a multi-selection, then open the
   // shared node context menu for it.
   //
-  // Two independent gestures can reach this on mobile: our own JS-timer
+  // Two independent gestures reach this on mobile: our own JS-timer
   // long-press (handleTouchStart) and the browser's native long-press ->
   // contextmenu gesture recognizer, which fires onNodeContextMenu below
-  // entirely outside the touch pipeline. touchActiveRef marks this call as
-  // belonging to the touch currently in progress regardless of which of the
-  // two woke it up -- see handleTouchEnd for why that matters.
+  // entirely outside the touch pipeline. Neither needs to coordinate with
+  // the menu's dismissal: the menu closes only on a pointerdown outside it
+  // (use-outside-dismiss.ts), which the opening gesture -- whichever one it
+  // was -- cannot produce.
   const openNodeMenu = useCallback(
     (nodeId: string, screen: { x: number; y: number }) => {
-      if (touchActiveRef.current) {
-        menuOpenedDuringTouch.current = true
-      }
       setNodes((nds) =>
         nds.find((n) => n.id === nodeId)?.selected ? nds : nds.map((n) => ({ ...n, selected: n.id === nodeId })),
       )
@@ -866,13 +864,6 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const longPressFired = useRef(false)
   const touchTargetRef = useRef<{ x: number; y: number; target: EventTarget | null } | null>(null)
-  // True for the span between touchstart and touchend/next-touchstart on the
-  // canvas -- lets openNodeMenu (above) record that it ran because of THIS
-  // touch, no matter which of the two gesture paths called it.
-  const touchActiveRef = useRef(false)
-  // Set by openNodeMenu when it runs during an active touch -- covers the
-  // native contextmenu path the same way longPressFired covers our own timer.
-  const menuOpenedDuringTouch = useRef(false)
 
   const cancelLongPress = useCallback(() => {
     if (longPressTimer.current) {
@@ -893,8 +884,6 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
         return
       }
       longPressFired.current = false
-      menuOpenedDuringTouch.current = false
-      touchActiveRef.current = true
       const touch = e.touches[0]
       touchTargetRef.current = { x: touch.clientX, y: touch.clientY, target: touch.target }
       cancelLongPress()
@@ -929,27 +918,18 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
         return
       }
       cancelLongPress()
-      if (longPressFired.current || menuOpenedDuringTouch.current) {
-        // This touchend is the release of the gesture that just opened a
-        // menu -- its target is locked to wherever the touch started (the
-        // node), never the menu itself, since the menu didn't exist yet when
-        // the touch began. Without stopping it here, it reaches the menu's
-        // own outside-close listener (document-level 'touchend') and reads
-        // as a dismiss, closing the menu before a separate tap can ever land
-        // on it. preventDefault additionally suppresses the browser's own
-        // trailing synthetic mousedown/click for this same touch (standard
-        // touch-event behavior), which would otherwise reach the same
-        // listener a second time.
-        //
-        // Checked as an "or", not just longPressFired, because a menu opened
-        // by our JS timer isn't the only way this touch can end with one
-        // open: the browser's own native long-press -> contextmenu gesture
-        // recognizer opens it too, entirely outside this touch pipeline (see
-        // openNodeMenu's comment), and on a real phone that's the path that
-        // actually fires -- longPressFired alone left that release
-        // unsuppressed.
+      if (longPressFired.current) {
+        // A menu just opened under the still-down finger (our JS timer knows
+        // no better than to open it mid-hold, and the menu is positioned at
+        // the touch point). The browser's trailing synthetic click for this
+        // touch would land on whatever menu item now sits at those
+        // coordinates and activate it -- preventDefault suppresses that
+        // ghost click. The browser's own native long-press -> contextmenu
+        // gesture needs no such help: it suppresses its trailing click
+        // itself. Menu dismissal needs nothing here either way -- the menus
+        // close only on a pointerdown outside them (use-outside-dismiss.ts),
+        // which no release event is.
         e.preventDefault()
-        e.stopPropagation()
       } else {
         // Short tap on empty space -> deselect and hide inspector
         const touch = e.changedTouches[0]
@@ -963,8 +943,6 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
         }
       }
       longPressFired.current = false
-      menuOpenedDuringTouch.current = false
-      touchActiveRef.current = false
     },
     [isMobile, cancelLongPress, deselect],
   )

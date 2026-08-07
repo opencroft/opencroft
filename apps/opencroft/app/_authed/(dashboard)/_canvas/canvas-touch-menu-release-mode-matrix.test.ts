@@ -21,15 +21,20 @@
 // document-level outside-close listener either -- entirely independent of
 // the release fix, or of anything in flow-editor.tsx.
 //
-// So the "mode-dependent" split has two different real causes, not one:
-// non-draggable relies on the release fix's explicit guard (menuOpenedDuringTouch);
-// draggable was never broken by the mechanism the release fix targets, because
-// XYDrag's own propagation-claiming already protects it, incidentally, the
-// same way. With the release fix, both modes should survive -- confirmed
-// directly below, against a real @xyflow/react + d3-drag/d3-zoom stack
-// (mirroring the logic in a fake harness, as the other regression tests do,
-// would not have caught this: it can't observe whether flow-editor's own
-// handlers even get a turn).
+// So the "mode-dependent" split had two different real causes, not one:
+// non-draggable relied on an explicit release-suppression guard; draggable
+// was never broken by that mechanism, because XYDrag's own
+// propagation-claiming already protected it, incidentally, the same way.
+//
+// SINCE SUPERSEDED: dismissal now keys on pointerdown-outside
+// (use-outside-dismiss.ts), so no release event can close a menu in ANY
+// mode, by construction -- the flag guard this file was written to exercise
+// is gone, and the harness below mirrors the current, simpler handlers
+// (ghost-click suppression only). The matrix keeps its value: it proves,
+// against a real @xyflow/react + d3-drag/d3-zoom stack, that the menu
+// survives its opening gesture's release in both draggable modes and both
+// open paths -- a fake-harness mirror cannot observe whether flow-editor's
+// own handlers even get a turn, which is exactly what differs by mode.
 import assert from 'node:assert/strict'
 import test, { after } from 'node:test'
 
@@ -118,26 +123,21 @@ interface Harness {
 }
 
 // Mirrors flow-editor.tsx's real touch + menu-opening wiring verbatim
-// (handleTouchStart, handleTouchEnd, openNodeMenu, onNodeContextMenu, and
-// the touchActiveRef/longPressFired/menuOpenedDuringTouch refs from the release fix) --
-// against a real ReactFlow instance and real touch/contextmenu dispatch,
-// not a stand-in div.
+// (handleTouchStart, handleTouchEnd with its ghost-click suppression,
+// openNodeMenu, onNodeContextMenu) -- against a real ReactFlow instance and
+// real touch/contextmenu dispatch, not a stand-in div. Dismissal comes from
+// the real NodeContextMenu's own pointerdown-outside listener.
 async function mountHarness(nodesDraggable: boolean): Promise<Harness> {
   let getMenuPresent = () => false
   let ourHandleTouchStartFired = false
 
   function Harness() {
     const [nodeMenu, setNodeMenu] = useState<{ screen: { x: number; y: number }; nodeId: string } | null>(null)
-    const touchActiveRef = useRef(false)
     const longPressFired = useRef(false)
-    const menuOpenedDuringTouch = useRef(false)
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
     const touchTargetRef = useRef<{ x: number; y: number; target: EventTarget | null } | null>(null)
 
     const openNodeMenu = useCallback((nodeId: string, screen: { x: number; y: number }) => {
-      if (touchActiveRef.current) {
-        menuOpenedDuringTouch.current = true
-      }
       setNodeMenu({ screen, nodeId })
     }, [])
 
@@ -160,8 +160,6 @@ async function mountHarness(nodesDraggable: boolean): Promise<Harness> {
       (e: React.TouchEvent) => {
         ourHandleTouchStartFired = true
         longPressFired.current = false
-        menuOpenedDuringTouch.current = false
-        touchActiveRef.current = true
         const touch = e.touches[0]
         touchTargetRef.current = { x: touch.clientX, y: touch.clientY, target: touch.target }
         cancelLongPress()
@@ -184,13 +182,12 @@ async function mountHarness(nodesDraggable: boolean): Promise<Harness> {
     const handleTouchEnd = useCallback(
       (e: React.TouchEvent) => {
         cancelLongPress()
-        if (longPressFired.current || menuOpenedDuringTouch.current) {
+        if (longPressFired.current) {
+          // Ghost-click suppression only -- dismissal needs no coordination
+          // here any more, the menu closes solely on pointerdown outside it.
           e.preventDefault()
-          e.stopPropagation()
         }
         longPressFired.current = false
-        menuOpenedDuringTouch.current = false
-        touchActiveRef.current = false
       },
       [cancelLongPress],
     )
@@ -301,11 +298,13 @@ test('draggable=true, opened via the native contextmenu gesture: release survive
   )
 })
 
-// A control on the test above: if a genuine outside tap ALSO fails to close
-// the menu, the previous test's "survives" result is a harness artifact
-// (the document-level outside-close listener never actually running against
-// these synthetic events), not a real finding about production behaviour.
-test('CONTROL: draggable=true, opened via native contextmenu -- a genuine outside touchend still closes it', async () => {
+// A control on the tests above: if a genuine NEW press outside ALSO fails to
+// close the menu, their "survives" results are a harness artifact (the
+// document-level dismiss listener never actually running against these
+// synthetic events), not a real finding about production behaviour. The
+// dismiss contract is pointerdown-outside (use-outside-dismiss.ts), so that
+// is what a genuine new press dispatches.
+test('CONTROL: draggable=true, opened via native contextmenu -- a new pointerdown outside still closes it', async () => {
   const h = await mountHarness(true)
   await h.dispatch('touchstart')
   await h.dispatchContextMenu()
@@ -313,17 +312,16 @@ test('CONTROL: draggable=true, opened via native contextmenu -- a genuine outsid
   const outside = dom.container.ownerDocument.createElement('div')
   dom.container.ownerDocument.body.appendChild(outside)
   await act(async () => {
-    const ev = new (globalThis.window as unknown as { Event: typeof Event }).Event('touchend', {
+    const ev = new (globalThis.window as unknown as { Event: typeof Event }).Event('pointerdown', {
       bubbles: true,
       cancelable: true,
     })
-    const touch = { clientX: 999, clientY: 999, target: outside }
-    Object.assign(ev, { touches: [], changedTouches: [touch] })
+    Object.assign(ev, { clientX: 999, clientY: 999, pointerId: 1 })
     outside.dispatchEvent(ev)
   })
   assert.equal(
     h.menuPresent(),
     false,
-    'if this is still true, the document-level outside-close listener is not actually firing in this harness -- the previous test is not trustworthy',
+    'if this is still true, the document-level dismiss listener is not actually firing in this harness -- the survive tests are not trustworthy',
   )
 })
