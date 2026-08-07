@@ -7,6 +7,10 @@ import { GroupChatDetail } from 'ui/group-chat/group-chat-detail'
 import { GroupChatThreadList } from 'ui/group-chat/group-chat-thread-list'
 import { ScrollPage } from 'ui/layout/scrollpage'
 
+import {
+  GroupChatRenameDialog,
+  GroupChatTopicDialog,
+} from '@/app/_authed/(group-chats)/_components/group-chat-edit-dialogs'
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { GroupChatMembersDialog } from '@/app/_authed/(group-chats)/_components/group-chat-members-dialog'
 import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
@@ -57,6 +61,8 @@ function GroupChatDetailPage() {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string>()
+  const [renaming, setRenaming] = useState(false)
+  const [editingTopic, setEditingTopic] = useState(false)
 
   const goToThread = (threadId: string) =>
     navigate({ to: '/group-chats/$groupChatId/$threadId', params: { groupChatId, threadId } })
@@ -99,6 +105,8 @@ function GroupChatDetailPage() {
         className='min-h-0 flex-1'
         name={chat.name}
         topic={chat.topic}
+        onEditName={() => setRenaming(true)}
+        onEditTopic={() => setEditingTopic(true)}
         members={chat.members}
         // The cluster replaces the old "Add member" button entirely: it is
         // both who is taking part and the way to change it. `members` above
@@ -141,6 +149,14 @@ function GroupChatDetailPage() {
         composer={
           <GroupChatStartThreadComposer groupChatId={groupChatId} members={chat.members} onThreadStarted={goToThread} />
         }
+      />
+
+      <GroupChatRenameDialog open={renaming} onOpenChange={setRenaming} groupChatId={groupChatId} name={chat.name} />
+      <GroupChatTopicDialog
+        open={editingTopic}
+        onOpenChange={setEditingTopic}
+        groupChatId={groupChatId}
+        topic={chat.topic}
       />
 
       <Dialog
