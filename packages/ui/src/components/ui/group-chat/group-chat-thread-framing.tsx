@@ -10,8 +10,12 @@ import { ScrollArea } from '@/components/ui/layout/scroll-area'
 import { NodeCard } from '@/components/ui/nodes/node-card'
 
 export interface GroupChatThreadFramingProps {
-  /** The topic of the group chat this thread belongs to (phase-1). */
-  groupChatTopic: string
+  /** The NAME of the group chat this thread belongs to -- not its topic. This
+   * line is a breadcrumb: it says where the reader is, and what a place is
+   * called is what locates it. The topic is a statement of purpose written for
+   * the chat's agents and can run to a sentence, which is not what a one-line
+   * breadcrumb above a conversation is for. */
+  groupChatName: string
   /** The thread's own title; null until something names it. */
   threadTitle?: string | null
   /** Optional participants, shown compactly on the trailing side. */
@@ -30,7 +34,7 @@ export interface GroupChatThreadFramingProps {
 // The framing for a thread's conversation inside a group chat. The conversation
 // surface itself is reused unchanged (a group-chat thread is an ordinary agent
 // session -- see agent-chat/chat-conversation); what is worth designing is the
-// context above it: the group chat a thread belongs to and its topic, with the
+// context above it: the group chat a thread belongs to, by name, with the
 // thread's own title, and a back affordance that matters most on minimal widths
 // where the conversation is a leaf view. No status, no locks -- this only
 // states where the reader is.
@@ -42,7 +46,7 @@ export interface GroupChatThreadFramingProps {
 // around this one would have to re-derive it -- which is exactly the layout
 // this already exists to keep right at a phone width.
 export function GroupChatThreadFraming({
-  groupChatTopic,
+  groupChatName,
   threadTitle,
   members,
   onBack,
@@ -52,7 +56,12 @@ export function GroupChatThreadFraming({
 }: GroupChatThreadFramingProps) {
   return (
     <div className={cn('flex h-full min-h-0 flex-col', className)}>
-      <header className='flex shrink-0 items-center gap-2 border-b border-border px-2 py-2'>
+      {/* px-4, the same horizontal rhythm as the group-chat detail screen and
+          the 1:1 conversation beneath -- the back arrow, the chat name and the
+          first message all start on one left edge. The scroll area itself gets
+          no padding: the conversation inside it carries its own px-4 py-4, and
+          adding more here would double it. */}
+      <header className='flex shrink-0 items-center gap-2 border-b border-border px-4 py-2'>
         {onBack ? (
           <button
             type='button'
@@ -64,7 +73,7 @@ export function GroupChatThreadFraming({
           </button>
         ) : null}
         <div className='flex min-w-0 flex-1 flex-col overflow-hidden leading-tight'>
-          <span className='truncate text-xs text-muted-foreground'>{groupChatTopic}</span>
+          <span className='truncate text-xs text-muted-foreground'>{groupChatName}</span>
           <span className='truncate text-sm font-medium text-foreground'>
             {threadTitle || 'Thread'}
           </span>
@@ -76,7 +85,7 @@ export function GroupChatThreadFraming({
       <ScrollArea className='min-h-0 flex-1'>{children}</ScrollArea>
       {composer ? (
         <NodeCard accent='var(--primary)' selected className='shrink-0'>
-          <div className='px-2 py-2'>{composer}</div>
+          <div className='px-4 py-3'>{composer}</div>
         </NodeCard>
       ) : null}
     </div>

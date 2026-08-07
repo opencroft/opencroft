@@ -7,14 +7,17 @@ import { cn } from '@/lib/utils'
 
 export interface GroupChatListItem {
   id: string
-  topic: string
+  /** What the chat is called. NOT its topic -- a group chat has both, and the
+   * topic is the statement of purpose its agents are given, which is not a
+   * list subtitle. See group-chat-detail. */
+  name: string
   members: MemberRef[]
   threadCount: number
 }
 
 export interface GroupChatListRowProps {
   id: string
-  topic: string
+  name: string
   members: MemberRef[]
   threadCount: number
   active?: boolean
@@ -30,10 +33,11 @@ function threadLabel(n: number) {
 // members, so the leading element is a cluster of participant avatars rather
 // than a single one, and there is deliberately NO process status -- offline /
 // idle / working describe an agent process and mean nothing for a container.
-// Topic is the title; threadCount is the secondary line.
+// Name is the title; threadCount is the secondary line -- the topic is not
+// shown here at all, see the note in the docs.
 export function GroupChatListRow({
   id,
-  topic,
+  name,
   members,
   threadCount,
   active = false,
@@ -58,7 +62,7 @@ export function GroupChatListRow({
     >
       <MemberAvatarGroup members={members} max={3} size='sm' />
       <span className='flex min-w-0 flex-1 flex-col overflow-hidden leading-tight'>
-        <span className='truncate text-xs font-medium text-foreground'>{topic}</span>
+        <span className='truncate text-xs font-medium text-foreground'>{name}</span>
         <span className='truncate text-xs text-muted-foreground'>{threadLabel(threadCount)}</span>
       </span>
     </div>
@@ -109,7 +113,7 @@ export function GroupChatList({
             <GroupChatListRow
               key={chat.id}
               id={chat.id}
-              topic={chat.topic}
+              name={chat.name}
               members={chat.members}
               threadCount={chat.threadCount}
               active={chat.id === activeId}

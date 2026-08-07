@@ -152,7 +152,7 @@ function ThreadConversation({
   return (
     <ScrollPage>
       <GroupChatThreadFraming
-        groupChatTopic={chat.topic}
+        groupChatName={chat.name}
         threadTitle={thread.title}
         members={chat.members}
         onBack={onBack}

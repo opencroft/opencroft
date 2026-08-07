@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
 import { GroupChatDetail } from 'ui/group-chat/group-chat-detail'
 import { GroupChatThreadList } from 'ui/group-chat/group-chat-thread-list'
-import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
+import { ScrollPage } from 'ui/layout/scrollpage'
 
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { GroupChatMembersDialog } from '@/app/_authed/(group-chats)/_components/group-chat-members-dialog'
@@ -85,57 +85,63 @@ function GroupChatDetailPage() {
 
   return (
     <ScrollPage>
-      <ScrollContent className='p-4'>
-        <GroupChatDetail
-          topic={chat.topic}
-          members={chat.members}
-          // The cluster replaces the old "Add member" button entirely: it is
-          // both who is taking part and the way to change it. `members` above
-          // is still passed because the kit falls back to a read-only cluster
-          // when no slot is given, and it should not need this page to know
-          // that to stay correct.
-          membersSlot={
-            <GroupChatMembersDialog
-              groupChatId={groupChatId}
-              members={chat.members}
-              directory={directory}
-              agents={agents}
+      {/* GroupChatDetail is its own full-height column -- header, a scrolling
+          thread area, and a composer pinned under it -- so it goes straight
+          into the page frame. It must NOT be wrapped in a scroll container:
+          inside one, its height resolves against content rather than the
+          viewport, the thread area stops being the thing that scrolls, and the
+          composer rides up to sit under the last thread instead of staying at
+          the bottom. That is the defect this fixes, and the thread screen next
+          door has always done it this way. Its own padding comes from the kit
+          component, which is why the wrapper's `p-4` is gone rather than moved
+          here. */}
+      <GroupChatDetail
+        className='min-h-0 flex-1'
+        name={chat.name}
+        topic={chat.topic}
+        members={chat.members}
+        // The cluster replaces the old "Add member" button entirely: it is
+        // both who is taking part and the way to change it. `members` above
+        // is still passed because the kit falls back to a read-only cluster
+        // when no slot is given, and it should not need this page to know
+        // that to stay correct.
+        membersSlot={
+          <GroupChatMembersDialog
+            groupChatId={groupChatId}
+            members={chat.members}
+            directory={directory}
+            agents={agents}
+          />
+        }
+        threads={
+          threads.length > 0 ? (
+            <GroupChatThreadList
+              // `agentIsMember` is the server's fact; `disabled` is what this
+              // screen does with it. The mapping lives here rather than in
+              // the read model so a server type never carries a CSS state.
+              threads={threads.map((t: GroupChatThreadEntry) => ({ ...t, disabled: !t.agentIsMember }))}
+              onSelect={(threadId) => goToThread(threadId)}
+              onDelete={(threadId) => {
+                setDeleteError(undefined)
+                setDeleteTarget(threadId)
+              }}
             />
-          }
-          threads={
-            threads.length > 0 ? (
-              <GroupChatThreadList
-                // `agentIsMember` is the server's fact; `disabled` is what this
-                // screen does with it. The mapping lives here rather than in
-                // the read model so a server type never carries a CSS state.
-                threads={threads.map((t: GroupChatThreadEntry) => ({ ...t, disabled: !t.agentIsMember }))}
-                onSelect={(threadId) => goToThread(threadId)}
-                onDelete={(threadId) => {
-                  setDeleteError(undefined)
-                  setDeleteTarget(threadId)
-                }}
-              />
-            ) : undefined
-          }
-          emptyState={
-            <Empty className='py-8'>
-              <EmptyHeader>
-                <EmptyTitle>No threads yet</EmptyTitle>
-                <EmptyDescription>
-                  A group chat holds no messages of its own. Each thread inside it is a conversation with one agent.
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          }
-          composer={
-            <GroupChatStartThreadComposer
-              groupChatId={groupChatId}
-              members={chat.members}
-              onThreadStarted={goToThread}
-            />
-          }
-        />
-      </ScrollContent>
+          ) : undefined
+        }
+        emptyState={
+          <Empty className='py-8'>
+            <EmptyHeader>
+              <EmptyTitle>No threads yet</EmptyTitle>
+              <EmptyDescription>
+                A group chat holds no messages of its own. Each thread inside it is a conversation with one agent.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        }
+        composer={
+          <GroupChatStartThreadComposer groupChatId={groupChatId} members={chat.members} onThreadStarted={goToThread} />
+        }
+      />
 
       <Dialog
         open={deleteTarget !== null}

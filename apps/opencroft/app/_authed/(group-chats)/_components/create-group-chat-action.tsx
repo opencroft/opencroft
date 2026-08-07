@@ -20,16 +20,16 @@ export function CreateGroupChatAction() {
   const navigate = useNavigate()
   const router = useRouter()
   const [open, setOpen] = useState(false)
-  const [topic, setTopic] = useState('')
+  const [name, setName] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string>()
 
   const submit = async () => {
-    const trimmed = topic.trim()
+    const trimmed = name.trim()
     if (!trimmed) {
-      // The server refuses an empty topic too; catching it here keeps the
+      // The server refuses an empty name too; catching it here keeps the
       // round trip out of an obviously-invalid submit.
-      setError('A group chat needs a topic.')
+      setError('A group chat needs a name.')
       return
     }
     setError(undefined)
@@ -37,7 +37,7 @@ export function CreateGroupChatAction() {
     try {
       const chat = await createMyGroupChat({ data: trimmed })
       setOpen(false)
-      setTopic('')
+      setName('')
       // The list this action sits on is loader-driven, so it has to be told
       // the data changed — otherwise going back would show a stale list
       // without the new chat.
@@ -71,9 +71,9 @@ export function CreateGroupChatAction() {
           <DialogTitle>New group chat</DialogTitle>
         </DialogHeader>
         <CreateGroupChatForm
-          topic={topic}
-          onTopicChange={(value) => {
-            setTopic(value)
+          name={name}
+          onNameChange={(value: string) => {
+            setName(value)
             if (error) {
               setError(undefined)
             }
