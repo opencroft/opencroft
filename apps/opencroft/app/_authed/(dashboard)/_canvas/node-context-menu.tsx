@@ -100,6 +100,7 @@ export function NodeContextMenu({
   return (
     <div
       ref={ref}
+      data-canvas-menu
       className='fixed z-50 min-w-[180px] rounded-md border bg-popover py-1 shadow-lg'
       style={{ left: clamped.x, top: clamped.y }}
     >

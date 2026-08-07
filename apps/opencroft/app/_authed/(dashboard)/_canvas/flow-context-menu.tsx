@@ -55,6 +55,7 @@ export function FlowContextMenu({ position, extensions, onSelect, onNewExtension
   return (
     <div
       ref={ref}
+      data-canvas-menu
       className='fixed z-50 w-[260px] rounded-md border bg-popover shadow-md'
       style={{ left: clamped.x, top: clamped.y }}
     >

@@ -28,6 +28,7 @@ import { useSeedPendingRequests } from '@/app/_authed/(approvals)/_components/mc
 import { McpRequestNotifications } from '@/app/_authed/(approvals)/_components/mcp-request-notifications'
 import type { CommandNodeEntry } from '@/app/_authed/(dashboard)/_canvas/canvas-command-bar'
 import { CanvasOverlay } from '@/app/_authed/(dashboard)/_canvas/canvas-overlay'
+import { isCanvasMenuTouchTarget } from '@/app/_authed/(dashboard)/_canvas/canvas-touch-guard'
 import { CommentNode } from '@/app/_authed/(dashboard)/_canvas/comment-node'
 import { FlowContextMenu } from '@/app/_authed/(dashboard)/_canvas/flow-context-menu'
 import '@/app/_authed/(dashboard)/_canvas/flow-editor.css'
@@ -52,6 +53,7 @@ import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/reg
 import { findExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
 import { fetchSpaceGraph, saveSpaceGraph } from '@/app/_authed/(space)/_components/space-client'
 import { useSSEEvents, useSSEEventsDispatch } from '@/app/_authed/(sse)/_lib/sse-events-store'
+import { cn } from '@/lib/utils'
 
 installExtensionApi()
 
@@ -216,6 +218,22 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
         comment: CommentNode,
       }) as unknown as NodeTypes,
     [graphTypesKey],
+  )
+  // On mobile, xyflow's own pane-pan gesture (d3-zoom, driven by
+  // panOnDrag={true} below) claims a touchstart the instant it lands --
+  // including one that starts on a node -- via event.stopImmediatePropagation()
+  // in its touchstarted handler (d3-zoom's own touchstarted, before any
+  // movement is known, so a stationary tap or hold is claimed exactly the
+  // same as an actual pan). xyflow's own escape hatch for this is the 'nopan'
+  // class, which it only applies itself to a node when that node is
+  // draggable (nodesDraggable / nodesMovable is off by default on mobile --
+  // "Pan canvas" mode). Without it, our own long-press handling below
+  // (handleTouchStart) never even sees the touchstart, because propagation
+  // never reaches the wrapper div it's attached to -- which is the actual
+  // mechanism behind the context menu never opening on a phone.
+  const nodesForFlow = useMemo(
+    () => (isMobile ? nodes.map((n) => ({ ...n, className: cn(n.className, 'nopan') })) : nodes),
+    [nodes, isMobile],
   )
   const selected = nodes.find((n) => n.selected && n.type !== 'comment') ?? null
   // The MCP Requests browser tab is visible only when no node is selected and
@@ -825,6 +843,12 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       if (!isMobile) {
         return
       }
+      // A tap that lands on an open canvas menu (NodeContextMenu,
+      // FlowContextMenu) must not be treated as a canvas-surface gesture --
+      // see canvas-touch-guard.ts.
+      if (isCanvasMenuTouchTarget(e.target)) {
+        return
+      }
       longPressFired.current = false
       const touch = e.touches[0]
       touchTargetRef.current = { x: touch.clientX, y: touch.clientY, target: touch.target }
@@ -856,6 +880,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       if (!isMobile) {
         return
       }
+      if (isCanvasMenuTouchTarget(e.target)) {
+        return
+      }
       cancelLongPress()
       if (!longPressFired.current) {
         // Short tap on empty space -> deselect and hide inspector
@@ -877,6 +904,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const handleTouchMove = useCallback(
     (e: React.TouchEvent) => {
       if (!isMobile) {
+        return
+      }
+      if (isCanvasMenuTouchTarget(e.target)) {
         return
       }
       // Cancel long press if finger moved too far
@@ -928,7 +958,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
               onTouchMove={handleTouchMove}
             >
               <ReactFlow
-                nodes={nodes}
+                nodes={nodesForFlow}
                 edges={styledEdges}
                 nodeTypes={nodeTypes}
                 onNodesChange={handleNodesChange}
