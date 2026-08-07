@@ -298,16 +298,37 @@ function sendMessageListTurnsAction(ctx: ActionCtx): Promise<{
 
 function sendMessageCompactAction(ctx: ActionCtx): Promise<{
   sessionKey: string
-  contextUsageBefore: ContextUsage | null
-  contextUsageAfter: ContextUsage | null
-  compacted: boolean | null
-  instructionsRestored: boolean
+  accepted: true
+  coalesced: boolean
+  state: 'pending' | 'running'
 }> {
   const sessionKey = typeof ctx.params.sessionKey === 'string' ? ctx.params.sessionKey.trim() : ''
   if (!sessionKey) {
     throw new Error('"sessionKey" is required and must be a non-empty string')
   }
   return host.sendMessage.compact(ctx.nodeId, { sessionKey })
+}
+
+function sendMessageCompactStatusAction(ctx: ActionCtx): Promise<{
+  sessionKey: string
+  state: 'never-requested' | 'pending' | 'running' | 'done' | 'error'
+  requestedAt?: number
+  startedAt?: number
+  finishedAt?: number
+  result?: {
+    sessionKey: string
+    contextUsageBefore: ContextUsage | null
+    contextUsageAfter: ContextUsage | null
+    compacted: boolean | null
+    instructionsRestored: boolean
+  }
+  error?: string
+}> {
+  const sessionKey = typeof ctx.params.sessionKey === 'string' ? ctx.params.sessionKey.trim() : ''
+  if (!sessionKey) {
+    throw new Error('"sessionKey" is required and must be a non-empty string')
+  }
+  return host.sendMessage.compactStatus(ctx.nodeId, { sessionKey })
 }
 
 // ── Server node actions ───────────────────────────────────────────────────
@@ -366,6 +387,7 @@ export const nodeActions = {
     listSessions: sendMessageListSessionsAction,
     listTurns: sendMessageListTurnsAction,
     compact: sendMessageCompactAction,
+    compactStatus: sendMessageCompactStatusAction,
   },
   server: {
     setKey: serverSetKey,

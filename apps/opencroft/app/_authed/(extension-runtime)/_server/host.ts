@@ -35,10 +35,13 @@ import {
 import { parseSessionKey } from '@/app/_authed/(extension-runtime)/_server/send-message-helpers'
 import { type ContextUsage, toContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import {
-  compactSessionOnGraph,
+  type CompactAck,
+  type CompactStatus,
   deliverToSendMessageNode,
+  getCompactStatusOnGraph,
   type GraphEdgeLike as SendMessageEdgeLike,
   type GraphNodeLike as SendMessageNodeLike,
+  requestCompactOnGraph,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSetting, setSetting } from '@/app/_authed/(settings)/_server/actions'
@@ -557,28 +560,6 @@ export function splitIntoTurns(events: ChatEvent[], startIndex: number): { index
   return groups
 }
 
-export interface CompactResult {
-  sessionKey: string
-  // Usage bracketing the compaction alone — both read before the instruction
-  // restore, so the restore's own tokens are never scored against it. Same
-  // null-means-unknown rule as SessionSummary.contextUsage.
-  contextUsageBefore: ContextUsage | null
-  contextUsageAfter: ContextUsage | null
-  // Whether the held context actually shrank; null when it cannot be told.
-  // Never inferred from the command having been delivered without an error —
-  // see compactionVerdict.
-  compacted: boolean | null
-  // Whether the session actually finished reading the re-sent instructions —
-  // not merely whether they were handed to the connection (those
-  // are different moments, and conflating them is how a caller ends up
-  // believing a session is primed when it silently is not). False when there
-  // were none to re-send, when `compacted` is false — a harness that answered
-  // `/compact` as an ordinary message did not drop them, so appending them
-  // again would only grow the context this action exists to shrink — and when
-  // the restore was sent but its own turn was interrupted or never settled.
-  instructionsRestored: boolean
-}
-
 export interface HostSendMessageApi {
   send(
     nodeId: string,
@@ -587,7 +568,8 @@ export interface HostSendMessageApi {
   listAgents(nodeId: string): Promise<{ agent: string; jobs: string[] }[]>
   listSessions(nodeId: string, params: { agent?: string; job?: string }): Promise<SessionSummary[]>
   listTurns(nodeId: string, params: { sessionKey: string; turns?: number; beforeIndex?: number }): Promise<TurnsPage>
-  compact(nodeId: string, params: { sessionKey: string }): Promise<CompactResult>
+  compact(nodeId: string, params: { sessionKey: string }): Promise<CompactAck>
+  compactStatus(nodeId: string, params: { sessionKey: string }): Promise<CompactStatus>
 }
 
 const sendMessageApi: HostSendMessageApi = {
@@ -730,11 +712,24 @@ const sendMessageApi: HostSendMessageApi = {
       throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
     }
 
-    // Everything about the compaction itself — both usage reads, the verdict,
-    // and whether the restore runs — lives in compactSessionOnGraph, because
-    // their ORDER is what makes them correct (see it for why). This end owns
-    // only the node lookup and the reachability check.
-    return { sessionKey, ...(await compactSessionOnGraph(found.nodes, found.edges, sessionKey)) }
+    // Accepts and returns immediately; the compaction itself — waiting out the
+    // in-flight turn, both usage reads, the verdict, the conditional restore —
+    // runs in the background and is queryable via compactStatus below. This
+    // end owns only the node lookup and the reachability check.
+    return requestCompactOnGraph(found.nodes, found.edges, sessionKey)
+  },
+
+  async compactStatus(nodeId, params) {
+    const found = await findSendMessageNode(nodeId)
+    if (!found) {
+      throw new Error(`Node not found: ${nodeId}`)
+    }
+    const sessionKey = params.sessionKey.trim()
+    const parts = sessionKey ? parseSessionKey(sessionKey) : null
+    if (!parts || !reachablePairs(found.nodes, found.edges).has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
+      throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
+    }
+    return getCompactStatusOnGraph(sessionKey)
   },
 }
 

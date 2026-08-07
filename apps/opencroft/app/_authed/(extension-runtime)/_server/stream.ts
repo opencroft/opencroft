@@ -509,7 +509,7 @@ export async function awaitDispatchedTurn(
   }
 }
 
-// Appended after the re-delivered session-init block (see compactSessionOnGraph).
+// Appended after the re-delivered session-init block (see performCompact).
 // Written to read as a trailing line under the instructions themselves, because
 // composeEnvelope puts the session-init parts ahead of the message.
 const REINSTRUCT_NOTE =
@@ -539,73 +539,51 @@ const REINSTRUCT_NOTE =
 // `/compact` answers it as an ordinary message: appending a full instruction
 // envelope on top of that would leave an action whose job is to shrink a
 // context having grown it on its own failure path.
-export async function compactSessionOnGraph(
-  nodes: GraphNodeLike[],
-  edges: GraphEdgeLike[],
-  sessionKey: string,
-): Promise<{
+// Assumes the session is ALREADY idle — the caller (runCompactJob, below) is
+// what guarantees that; this function never checks or waits, so it must never
+// be called against a session that might still be running a turn.
+//
+export interface CompactResult {
+  sessionKey: string
+  // Usage bracketing the compaction alone — both read before the instruction
+  // restore, so the restore's own tokens are never scored against it. Same
+  // null-means-unknown rule as SessionSummary.contextUsage.
   contextUsageBefore: ContextUsage | null
   contextUsageAfter: ContextUsage | null
+  // Whether the held context actually shrank; null when it cannot be told.
+  // Never inferred from the command having been delivered without an error —
+  // see compactionVerdict.
   compacted: boolean | null
+  // Whether the session actually finished reading the re-sent instructions —
+  // not merely whether they were handed to the connection (those are
+  // different moments, and conflating them is how a caller ends up
+  // believing a session is primed when it silently is not). False when there
+  // were none to re-send, when `compacted` is false — a harness that answered
+  // `/compact` as an ordinary message did not drop them, so appending them
+  // again would only grow the context this action exists to shrink — and when
+  // the restore was sent but its own turn was interrupted or never settled.
   instructionsRestored: boolean
-}> {
-  const ctx = resolveSessionOnGraph(sessionKey, nodes as unknown as SmNodeLike[], edges as unknown as SmEdgeLike[])
-  if (!ctx) {
-    throw new Error(`No agent/job resolved for session: ${sessionKey}`)
-  }
-  // Only a session with a live process holds context to compact. An offline one
-  // has nothing in memory — say so rather than silently starting a new session
-  // and "compacting" that.
-  const existing = findTargetSessionImpl({ baseKey: sessionKey })
-  if (!existing) {
-    throw new Error(`Session has no live process, so there is no context to compact: ${sessionKey}`)
-  }
-  // A prompt sent into a busy session is QUEUED rather than delivered, which
-  // makes compaction unsafe there in two ways that no amount of waiting fixes.
-  //
-  //  1. The result stops describing what happened. A `waiting` session may sit
-  //     on an unresolved permission request indefinitely, so the wait below hits
-  //     its bound and this returns `compacted: null` with figures that mean
-  //     nothing — while the queued `/compact`, and the restore that would follow
-  //     it, are still waiting to execute later with nobody watching. An action
-  //     that returns before its own effects have happened has no trustworthy
-  //     result to give.
-  //  2. A concurrent flush corrupts the command. A `force` send interrupting the
-  //     in-flight turn drains the whole queue as one prompt (see agent-client's
-  //     settleTurn), and joinPrompts prefixes each entry with `[message N of M]`.
-  //     A queued `/compact` no longer begins with a slash, so the harness reads
-  //     it as conversational text instead of a command: the compaction silently
-  //     does not happen, and the agent answers a message about it instead.
-  //
-  // So refuse, matching the offline refusal above — a session this cannot
-  // compact correctly is an error rather than a quiet half-measure, and
-  // "compacts now or errors" is a contract a caller can act on. Callers already
-  // hold `status` from listSessions, which distinguishes idle from working and
-  // waiting.
-  //
-  // This check narrows the window rather than closing it: a turn can still start
-  // between the check and the prompt landing. The measurement survives that —
-  // awaitDispatchedTurn below reads `hasActiveTurnImpl` again, immediately
-  // before it dispatches `/compact`, so a turn that snuck in during this gap is
-  // still counted and skipped there, and the read afterwards still lands on
-  // `/compact`'s own settlement rather than the intruder's. What stays exposed
-  // in that rare window is only the two cases above. Closing it properly needs
-  // `prompt()` to report queued-versus-delivered, which is an agent-client
-  // change and its own work.
-  if (hasActiveTurnImpl(existing.sessionId)) {
-    throw new Error(
-      `Session has a turn in flight, so /compact would be queued behind it rather than run now: ${sessionKey}. Compact it once it is idle.`,
-    )
-  }
+}
+
+// The guard this replaced used to refuse a working/waiting session outright,
+// because a prompt sent into a busy session is QUEUED rather than delivered,
+// which made compaction unsafe there in a way that no amount of waiting
+// fixed: a concurrent `force` send interrupting the in-flight turn drains the
+// whole queue as one prompt (see agent-client's settleTurn), joining each
+// entry with a `[message N of M]` prefix — a queued `/compact` no longer
+// begins with a slash once joined like that, so the harness reads it as
+// conversational text instead of a command, and the compaction silently
+// never happens. waitUntilIdle sidesteps this the same way the old guard did
+// — by never putting `/compact` in that queue at all — while still letting
+// the request wait instead of being refused.
+async function performCompact(sessionId: string, sessionKey: string, ctx: AgentContext): Promise<CompactResult> {
   const readUsage = (): ContextUsage | null =>
     toContextUsage(agentClient.listSessions().find((m) => m.sessionKey === sessionKey)?.usage)
 
   const contextUsageBefore = readUsage()
   // Sent raw: a leading slash marks a command, and composeEnvelope passes those
   // through unwrapped anyway.
-  const compactOutcome = await awaitDispatchedTurn(existing.sessionId, () =>
-    promptLocalImpl({ sessionId: existing.sessionId, text: '/compact' }),
-  )
+  const compactOutcome = await awaitDispatchedTurn(sessionId, () => promptLocalImpl({ sessionId, text: '/compact' }))
   // Read only once /compact's OWN turn has actually finished. 'interrupted'
   // (cancelled, the connection dying mid-turn, or a plain error) and 'timeout'
   // both leave usage unknown rather than reporting a stale or partial figure as
@@ -623,7 +601,7 @@ export async function compactSessionOnGraph(
   // instructions). Skip on false, which is the observed-failure case above.
   const hasInstructions = Boolean(ctx.jobContext?.trim()) || (ctx.instructions ?? []).some((i) => i.trim())
   if (compacted === false || !hasInstructions) {
-    return { contextUsageBefore, contextUsageAfter, compacted, instructionsRestored: false }
+    return { sessionKey, contextUsageBefore, contextUsageAfter, compacted, instructionsRestored: false }
   }
   const restore = composeEnvelope(REINSTRUCT_NOTE, {
     sessionInit: { jobContext: ctx.jobContext, instructions: ctx.instructions },
@@ -636,14 +614,168 @@ export async function compactSessionOnGraph(
   // arbitrarily long to even start; `front` guarantees it is the very next
   // thing delivered once the current turn ends, which is also the assumption
   // awaitDispatchedTurn's turn-counting relies on.
-  const restoreOutcome = await awaitDispatchedTurn(existing.sessionId, () =>
-    promptLocalImpl({ sessionId: existing.sessionId, text: restore, front: true }),
+  const restoreOutcome = await awaitDispatchedTurn(sessionId, () =>
+    promptLocalImpl({ sessionId, text: restore, front: true }),
   )
   // Honestly reflects whether the agent actually finished reading the restore,
   // not merely whether it was handed to the connection — see this function's
-  // header comment for why dispatch and delivery are not the same moment, and
-  // what silently conflating them costs.
-  return { contextUsageBefore, contextUsageAfter, compacted, instructionsRestored: restoreOutcome === 'finished' }
+  // header comment for why dispatch and delivery are not the same moment and
+  // why silently conflating them is worth avoiding.
+  return {
+    sessionKey,
+    contextUsageBefore,
+    contextUsageAfter,
+    compacted,
+    instructionsRestored: restoreOutcome === 'finished',
+  }
+}
+
+// One compact job per session at a time — see requestCompactOnGraph. In-memory
+// only, same as every other live-session fact in this codebase (agent-client's
+// own sessions included): a restart drops it, and there is nothing to resume,
+// because a pending job that has not dispatched anything yet has no side
+// effect to pick back up.
+interface CompactJob {
+  state: 'pending' | 'running' | 'done' | 'error'
+  requestedAt: number
+  startedAt: number | null
+  finishedAt: number | null
+  result: CompactResult | null
+  error: string | null
+}
+
+export interface CompactAck {
+  sessionKey: string
+  accepted: true
+  // True when this call joined an already-pending/running job instead of
+  // starting a new one — the duplicate-protection signal: a caller that
+  // re-fires after a timeout learns it did not start a second compaction.
+  coalesced: boolean
+  state: 'pending' | 'running'
+}
+
+export interface CompactStatus {
+  sessionKey: string
+  state: 'never-requested' | CompactJob['state']
+  requestedAt?: number
+  startedAt?: number
+  finishedAt?: number
+  result?: CompactResult
+  error?: string
+}
+
+const globalForCompact = globalThis as unknown as { __COMPACT_JOBS__?: Map<string, CompactJob> }
+if (!globalForCompact.__COMPACT_JOBS__) {
+  globalForCompact.__COMPACT_JOBS__ = new Map()
+}
+const compactJobs = globalForCompact.__COMPACT_JOBS__
+
+// Resolves once the session has no turn in flight right now — never sends
+// anything, so it can never be what interrupts a turn. Loops rather than
+// resolving on the first turn_end/error: agent-client drains its own queue
+// SYNCHRONOUSLY, in the same tick a turn settles (see awaitDispatchedTurn's
+// header for the full race), so a turn already queued ahead of this request
+// can be running again before this function's subscriber even gets to react
+// to the event that just fired. Re-checking hasActiveTurnImpl after every
+// settle, and re-subscribing from a fresh tail if it is still true, is what
+// makes this converge on a genuinely idle moment instead of a stale one.
+async function waitUntilIdle(sessionId: string): Promise<void> {
+  while (hasActiveTurnImpl(sessionId)) {
+    await new Promise<void>((resolve) => {
+      const tail = agentClient.getEventsWindow(sessionId, { turns: 1 })
+      const fromIndex = tail ? tail.startIndex + tail.events.length : 0
+      const unsubscribe = agentClient.subscribe(
+        sessionId,
+        (event) => {
+          if (event.kind !== 'turn_end' && event.kind !== 'error') {
+            return
+          }
+          unsubscribe()
+          resolve()
+        },
+        { fromIndex },
+      )
+    })
+  }
+}
+
+async function runCompactJob(sessionId: string, sessionKey: string, ctx: AgentContext, job: CompactJob): Promise<void> {
+  try {
+    await waitUntilIdle(sessionId)
+    job.state = 'running'
+    job.startedAt = Date.now()
+    job.result = await performCompact(sessionId, sessionKey, ctx)
+    job.state = 'done'
+  } catch (err) {
+    job.state = 'error'
+    job.error = err instanceof Error ? err.message : String(err)
+  } finally {
+    job.finishedAt = Date.now()
+  }
+}
+
+// Entry point for the `compact` action: accepts the request and returns
+// immediately, never holding the caller for the compaction itself. Nothing is
+// sent into the session while a turn is running (see waitUntilIdle/
+// performCompact above), so this can never be what interrupts one, which is
+// what makes "queue behind the turn" true here rather than just "queue the
+// timeout".
+export async function requestCompactOnGraph(
+  nodes: GraphNodeLike[],
+  edges: GraphEdgeLike[],
+  sessionKey: string,
+): Promise<CompactAck> {
+  const ctx = resolveSessionOnGraph(sessionKey, nodes as unknown as SmNodeLike[], edges as unknown as SmEdgeLike[])
+  if (!ctx) {
+    throw new Error(`No agent/job resolved for session: ${sessionKey}`)
+  }
+  // Only a session with a live process holds context to compact. An offline
+  // one has nothing in memory — say so rather than silently starting a new
+  // session and "compacting" that. Nothing to wait for either, so this stays
+  // a synchronous error rather than a queued job.
+  const existing = findTargetSessionImpl({ baseKey: sessionKey })
+  if (!existing) {
+    throw new Error(`Session has no live process, so there is no context to compact: ${sessionKey}`)
+  }
+
+  const current = compactJobs.get(sessionKey)
+  if (current && (current.state === 'pending' || current.state === 'running')) {
+    return { sessionKey, accepted: true, coalesced: true, state: current.state }
+  }
+
+  const job: CompactJob = {
+    state: 'pending',
+    requestedAt: Date.now(),
+    startedAt: null,
+    finishedAt: null,
+    result: null,
+    error: null,
+  }
+  compactJobs.set(sessionKey, job)
+  // Deliberately not awaited — the whole point is that the caller does not
+  // wait for this. runCompactJob owns its own errors (see its try/catch), so
+  // this can never surface as an unhandled rejection.
+  void runCompactJob(existing.sessionId, sessionKey, ctx, job)
+  return { sessionKey, accepted: true, coalesced: false, state: 'pending' }
+}
+
+// Entry point for the `compactStatus` action — the queryable signal that a
+// compact actually ran, since the caller no longer gets the result back from
+// the call that requested it.
+export function getCompactStatusOnGraph(sessionKey: string): CompactStatus {
+  const job = compactJobs.get(sessionKey)
+  if (!job) {
+    return { sessionKey, state: 'never-requested' }
+  }
+  return {
+    sessionKey,
+    state: job.state,
+    requestedAt: job.requestedAt,
+    startedAt: job.startedAt ?? undefined,
+    finishedAt: job.finishedAt ?? undefined,
+    result: job.result ?? undefined,
+    error: job.error ?? undefined,
+  }
 }
 
 interface SendMessageNodeData {

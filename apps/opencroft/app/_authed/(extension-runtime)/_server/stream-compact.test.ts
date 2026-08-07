@@ -1,11 +1,11 @@
-// Regression coverage: the compact action's restore step
-// must report the RESTORE turn's real outcome, even when a message queued
+// Regression coverage for the compact action's restore step, which must
+// report the RESTORE turn's real outcome, even when a message queued
 // during /compact auto-drains into its own turn immediately after /compact
 // settles. See awaitDispatchedTurn's header comment in stream.ts for the
-// mechanism this proves, and compactSessionOnGraph for why the restore is
-// always dispatched with `front: true` — that ordering guarantee is what
-// makes this helper's turn-counting correct; these tests exercise it exactly
-// as it is actually used, not as a general-purpose queue-position tracker.
+// mechanism this proves, and performCompact for why the restore is always
+// dispatched with `front: true` — that ordering guarantee is what makes
+// this helper's turn-counting correct; these tests exercise it exactly as
+// it is actually used, not as a general-purpose queue-position tracker.
 //
 // Needs a live PGlite data dir (agent-client-instance.ts's transitive
 // imports touch the DB at module load) — run with:
@@ -93,14 +93,14 @@ async function setupSession() {
 test('awaitDispatchedTurn resolves on the RESTORE turn, not a message that auto-drained ahead of it', async () => {
   const h = await setupSession()
 
-  // The precondition: something else is queued while our tracked
+  // The precondition this guards: something else is queued while our tracked
   // turn ('/compact', here just 'tracked turn') is running, so it auto-starts
-  // the instant that turn settles — before compactSessionOnGraph ever gets to
+  // the instant that turn settles — before performCompact ever gets to
   // dispatch the restore.
   await agentClient.prompt(h.sessionId, 'tracked turn')
   await agentClient.prompt(h.sessionId, 'auto-drained ping') // queues behind the tracked turn
 
-  // front: true, matching compactSessionOnGraph's actual restore dispatch —
+  // front: true, matching performCompact's actual restore dispatch —
   // this is what guarantees the restore becomes the very next thing delivered
   // once the currently active turn ends, ahead of the ping still queued.
   const waitForRestore = awaitDispatchedTurn(h.sessionId, () =>

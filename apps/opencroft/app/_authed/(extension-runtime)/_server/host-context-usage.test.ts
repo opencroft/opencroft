@@ -66,7 +66,7 @@ test('unknown usage on either side is unknown, not false', () => {
 })
 
 test('only growth suppresses the restore; every other verdict allows it', () => {
-  // The gate compactSessionOnGraph applies (`compacted === false` skips).
+  // The gate performCompact applies (`compacted === false` skips).
   // Spelled out here because getting it wrong is silent in both directions:
   // too eager grows the context on the failure path, too shy leaves an agent
   // without its instructions.
