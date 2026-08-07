@@ -43,6 +43,7 @@ export interface AgentRef {
 
 export interface GroupChatListEntry {
   id: string
+  name: string
   topic: string
   members: MemberRef[]
   threadCount: number
@@ -50,6 +51,9 @@ export interface GroupChatListEntry {
 
 export interface GroupChatDetailView {
   id: string
+  /** What the header shows. Presentation only — never sent to an agent. */
+  name: string
+  /** What agents are told this chat is for. Shown too, as the secondary line. */
   topic: string
   members: MemberRef[]
 }
@@ -188,13 +192,14 @@ export async function listGroupChatsForUserView(request: Request): Promise<Group
 
   return chats.map((chat) => ({
     id: chat.id,
+    name: chat.name,
     topic: chat.topic,
     members: toMemberRefs(membersByChat.get(chat.id) ?? [], agents, users),
     threadCount: threadCounts.get(chat.id) ?? 0,
   }))
 }
 
-/** One group chat's header data: its topic and who is taking part. */
+/** One group chat's header data: its name and topic, and who is taking part. */
 export async function getGroupChatDetailView(request: Request, groupChatId: string): Promise<GroupChatDetailView> {
   const chat = await getGroupChat(request, groupChatId)
   const memberRows = await listMembers(request, groupChatId)
@@ -202,6 +207,7 @@ export async function getGroupChatDetailView(request: Request, groupChatId: stri
   const users = await usersById(memberRows.flatMap((r) => (r.userId ? [r.userId] : [])))
   return {
     id: chat.id,
+    name: chat.name,
     topic: chat.topic,
     members: toMemberRefs(memberRows, agents, users),
   }

@@ -46,6 +46,13 @@ export { GroupChatAccessError } from '@/app/_authed/(group-chats)/_shared/access
 
 export interface GroupChatSummary {
   id: string
+  /** What people read. Presentation only — no agent is ever told it. */
+  name: string
+  /**
+   * What agents read: composed into a thread's session-init context when the
+   * thread is created. Editing it therefore reaches the next thread and no
+   * session already open.
+   */
   topic: string
   createdAt: Date
   updatedAt: Date
@@ -126,6 +133,7 @@ export async function listGroupChatsForUser(request: Request): Promise<GroupChat
   return db
     .select({
       id: groupChat.id,
+      name: groupChat.name,
       topic: groupChat.topic,
       createdAt: groupChat.createdAt,
       updatedAt: groupChat.updatedAt,
@@ -163,6 +171,7 @@ export async function listGroupChatsForAgent(agentName: string): Promise<GroupCh
   return db
     .select({
       id: groupChat.id,
+      name: groupChat.name,
       topic: groupChat.topic,
       createdAt: groupChat.createdAt,
       updatedAt: groupChat.updatedAt,
@@ -178,6 +187,7 @@ export async function getGroupChat(request: Request, groupChatId: string): Promi
   const [row] = await db
     .select({
       id: groupChat.id,
+      name: groupChat.name,
       topic: groupChat.topic,
       createdAt: groupChat.createdAt,
       updatedAt: groupChat.updatedAt,
@@ -253,15 +263,27 @@ export async function getThread(request: Request, threadId: string): Promise<Gro
 
 // ── Writing ─────────────────────────────────────────────────────────────
 
-/** A new group chat, with its creator as the first (user) member. */
-export async function createGroupChat(request: Request, topic: string): Promise<GroupChatSummary> {
+/**
+ * A new group chat, with its creator as the first (user) member.
+ *
+ * ONE FIELD AT CREATION, TWO AFTERWARDS. The caller gives a name; the topic
+ * defaults to it unless one is supplied. Asking for both up front would demand
+ * a statement of purpose at the moment the person knows least about the chat
+ * they are opening, and the honest default for "what is this chat about" is
+ * what they just called it. Editing either one afterwards is what splits them.
+ */
+export async function createGroupChat(request: Request, name: string, topic?: string): Promise<GroupChatSummary> {
   const sessionUser = await requireSignedInUser(request)
-  const trimmed = topic.trim()
-  if (!trimmed) {
-    throw new Error('A group chat needs a topic')
+  const trimmedName = name.trim()
+  if (!trimmedName) {
+    throw new Error('A group chat needs a name')
   }
+  const trimmedTopic = topic?.trim() || trimmedName
   return db.transaction(async (tx) => {
-    const [chat] = await tx.insert(groupChat).values({ topic: trimmed, createdByUserId: sessionUser.id }).returning()
+    const [chat] = await tx
+      .insert(groupChat)
+      .values({ name: trimmedName, topic: trimmedTopic, createdByUserId: sessionUser.id })
+      .returning()
     if (!chat) {
       throw new Error('The group chat could not be created')
     }
@@ -272,6 +294,44 @@ export async function createGroupChat(request: Request, topic: string): Promise<
     })
     return chat
   })
+}
+
+/**
+ * Rename a group chat. Membership-gated like every other write here.
+ *
+ * Presentation only, and that is the whole contract: no session is touched, no
+ * agent is told, nothing is re-delivered. Every screen reads the new name on
+ * its next load because every read goes through the same row.
+ */
+export async function renameGroupChat(request: Request, groupChatId: string, name: string): Promise<void> {
+  await requireGroupChatMember(request, groupChatId)
+  const trimmed = name.trim()
+  if (!trimmed) {
+    throw new Error('A group chat needs a name')
+  }
+  await db.update(groupChat).set({ name: trimmed }).where(eq(groupChat.id, groupChatId))
+}
+
+/**
+ * Change what agents are told this chat is for.
+ *
+ * REACHES NEW THREADS ONLY, and not by omission — `startThread` reads the
+ * topic at the moment it opens a session, so a thread started after this call
+ * carries the new text and one started before carries what it was opened with.
+ * Re-delivering into a running session would mean interrupting a turn to
+ * restate context nobody asked for; the pinned-notes mechanism is the place
+ * that problem is solved deliberately, with per-thread delivery tracking.
+ *
+ * Worth saying plainly because it is the surprising half: editing the topic
+ * does NOT correct an agent that is already working from the old one.
+ */
+export async function setGroupChatTopic(request: Request, groupChatId: string, topic: string): Promise<void> {
+  await requireGroupChatMember(request, groupChatId)
+  const trimmed = topic.trim()
+  if (!trimmed) {
+    throw new Error('A group chat needs a topic')
+  }
+  await db.update(groupChat).set({ topic: trimmed }).where(eq(groupChat.id, groupChatId))
 }
 
 export type MemberPrincipal = { kind: 'user'; userId: string } | { kind: 'agent'; agentNodeId: string }

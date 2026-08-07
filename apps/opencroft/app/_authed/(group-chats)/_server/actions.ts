@@ -22,7 +22,9 @@ import {
   listMembers,
   listThreadsInGroupChat,
   removeMember,
+  renameGroupChat,
   sendMessageInThread,
+  setGroupChatTopic,
   startThread,
 } from '@/app/_authed/(group-chats)/_server/model'
 import type {
@@ -60,6 +62,47 @@ export type {
   StartThreadResult,
 }
 
+/**
+ * The outcome of a group-chat write: done, or refused with a code.
+ *
+ * A REFUSAL IS RETURNED, NOT THROWN, and that is the point. A thrown error
+ * does not survive this boundary intact — `createServerFn` serialises it to
+ * `$TSR/Error` carrying `message` and nothing else, so `name`, `code` and
+ * every other own property are gone by the time the browser sees it. Any
+ * client-side branch on those fields silently falls through to whatever its
+ * fallback is: the write is refused correctly and the reader is told "that
+ * didn't work" instead of why.
+ *
+ * Matching on the message text would work today and break on the next copy
+ * edit. A returned value crosses as data, so the code arrives intact and the
+ * wording stays a client-side concern.
+ *
+ * Faults still throw. Only a deliberate refusal — something the reader can act
+ * on — comes back this way. An empty name is a fault, not a refusal: every
+ * surface that can send one disables its own submit first, so reaching it
+ * means a direct call, and there is nothing for a reader to act on.
+ */
+export type GroupChatWriteResult = { ok: true } | { ok: false; code: GroupChatAccessFailure }
+
+/**
+ * Turn a model refusal into the result above, leaving faults to throw.
+ *
+ * `instanceof` is reliable HERE and only here: this runs in the same process
+ * that threw, with the real class. It is the client side that cannot use it,
+ * which is why the code is put on the wire as data.
+ */
+async function asWriteResult(run: () => Promise<void>): Promise<GroupChatWriteResult> {
+  try {
+    await run()
+    return { ok: true }
+  } catch (error) {
+    if (error instanceof GroupChatAccessError) {
+      return { ok: false, code: error.code }
+    }
+    throw error
+  }
+}
+
 export const listMyGroupChats = createServerFn({ method: 'GET', strict: { output: false } }).handler(
   async (): Promise<GroupChatSummary[]> => listGroupChatsForUser(getRequest()),
 )
@@ -68,9 +111,30 @@ export const getMyGroupChat = createServerFn({ method: 'GET', strict: { output: 
   .inputValidator((groupChatId: string) => groupChatId)
   .handler(async ({ data: groupChatId }): Promise<GroupChatSummary> => getGroupChat(getRequest(), groupChatId))
 
+// The topic is optional and falls back to the name — see `createGroupChat`.
+// Accepts a bare string too, which is what creation sent before a chat had a
+// name at all: the same call now names the chat and seeds its topic from it,
+// which is exactly what those callers meant.
 export const createMyGroupChat = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((topic: string) => topic)
-  .handler(async ({ data: topic }): Promise<GroupChatSummary> => createGroupChat(getRequest(), topic))
+  .inputValidator((data: string | { name: string; topic?: string }) => data)
+  .handler(async ({ data }): Promise<GroupChatSummary> => {
+    const input = typeof data === 'string' ? { name: data } : data
+    return createGroupChat(getRequest(), input.name, input.topic)
+  })
+
+export const renameMyGroupChat = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { groupChatId: string; name: string }) => data)
+  .handler(
+    async ({ data }): Promise<GroupChatWriteResult> =>
+      asWriteResult(() => renameGroupChat(getRequest(), data.groupChatId, data.name)),
+  )
+
+export const setMyGroupChatTopic = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { groupChatId: string; topic: string }) => data)
+  .handler(
+    async ({ data }): Promise<GroupChatWriteResult> =>
+      asWriteResult(() => setGroupChatTopic(getRequest(), data.groupChatId, data.topic)),
+  )
 
 export const addGroupChatMember = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { groupChatId: string; principal: MemberPrincipal }) => data)
@@ -105,40 +169,19 @@ export const startGroupChatThread = createServerFn({ method: 'POST', strict: { o
 /**
  * The outcome of a thread send: delivered, or refused with a code.
  *
- * A REFUSAL IS RETURNED, NOT THROWN, and that is the point. A thrown error
- * does not survive this boundary intact — `createServerFn` serialises it to
- * `$TSR/Error` carrying `message` and nothing else, so `name`, `code` and
- * every other own property are gone by the time the browser sees it. Any
- * client-side branch on those fields silently falls through to whatever its
- * fallback is, which is exactly what happened here: the send was refused
- * correctly and the reader was told "your message could not be sent" instead
- * of why.
- *
- * Matching on the message text would work today and break on the next copy
- * edit. A returned value crosses as data, so the code arrives intact and the
- * wording stays a client-side concern.
- *
- * Faults still throw. Only a deliberate refusal — something the reader can act
- * on — comes back this way.
+ * The same shape as every other write here, kept under its own name because
+ * the send path names it in three places and a rename would churn code that
+ * carries no new risk. Why a refusal is returned rather than thrown is on
+ * `GroupChatWriteResult` above.
  */
-export type SendThreadMessageResult = { ok: true } | { ok: false; code: GroupChatAccessFailure }
+export type SendThreadMessageResult = GroupChatWriteResult
 
 export const sendGroupChatThreadMessage = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { threadId: string; text: string; front?: boolean }) => data)
-  .handler(async ({ data }): Promise<SendThreadMessageResult> => {
-    try {
-      await sendMessageInThread(getRequest(), data.threadId, data.text, { front: data.front })
-      return { ok: true }
-    } catch (error) {
-      // `instanceof` is reliable HERE and only here: this runs in the same
-      // process that threw, with the real class. It is the client side that
-      // cannot use it, which is why the code is put on the wire as data.
-      if (error instanceof GroupChatAccessError) {
-        return { ok: false, code: error.code }
-      }
-      throw error
-    }
-  })
+  .handler(
+    async ({ data }): Promise<SendThreadMessageResult> =>
+      asWriteResult(() => sendMessageInThread(getRequest(), data.threadId, data.text, { front: data.front })),
+  )
 
 // ── The reading surface's view model (phase 2) ───────────────────────────
 //

@@ -203,8 +203,24 @@ export const mcpCaller = pgTable(
 // 'cascade' — that column genuinely means "this person is no longer a
 // member"), not to whoever happened to create it. Deleting the creator
 // must not delete a chat every other member still uses.
+// `name` and `topic` are two different audiences, which is why they are two
+// columns and not one.
+//
+//   name   what PEOPLE read — lists, headers, the sidebar. Pure presentation:
+//          renaming reaches every screen at once and no agent ever sees it.
+//   topic  what AGENTS read — it is composed into a thread's session-init
+//          context when that thread is created (see the model module). So
+//          editing it changes what the NEXT thread is told, and changes
+//          nothing for sessions already open, which keep the context they
+//          were opened with.
+//
+// They start out equal (creation asks for one string and seeds both) and
+// diverge only when someone edits one of them. Both are notNull: a chat with
+// no name has nothing to render, and a chat with no topic would hand an agent
+// an empty statement of purpose, which reads worse than a redundant one.
 export const groupChat = pgTable('GroupChat', {
   id: text().primaryKey().notNull().$defaultFn(uuid),
+  name: text().notNull(),
   topic: text().notNull(),
   createdByUserId: text().references(() => user.id, { onDelete: 'set null' }),
   createdAt: createdAt(),

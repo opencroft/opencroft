@@ -229,3 +229,30 @@ test('the view layer refuses a non-member exactly as the model does', async () =
     "a non-member's list must not include the chat",
   )
 })
+
+test('both the list and the detail view carry the name and the topic, kept apart', async () => {
+  const owner = await makeUser('view-naming@example.test', 'Naming Owner')
+  const chat = await model.createGroupChat(reqAs(owner), 'Release train', 'Ship without regressions')
+
+  const entry = (await view.listGroupChatsForUserView(reqAs(owner))).find((c) => c.id === chat.id)
+  assert.ok(entry)
+  assert.equal(entry.name, 'Release train')
+  assert.equal(entry.topic, 'Ship without regressions')
+
+  const detail = await view.getGroupChatDetailView(reqAs(owner), chat.id)
+  assert.equal(detail.name, 'Release train')
+  assert.equal(detail.topic, 'Ship without regressions')
+
+  // A rename must reach both surfaces without touching the topic on either --
+  // the two travel together through every read, so one going stale would show
+  // up here first.
+  await model.renameGroupChat(reqAs(owner), chat.id, 'Release train 2')
+
+  const renamedEntry = (await view.listGroupChatsForUserView(reqAs(owner))).find((c) => c.id === chat.id)
+  assert.equal(renamedEntry?.name, 'Release train 2')
+  assert.equal(renamedEntry?.topic, 'Ship without regressions')
+
+  const renamedDetail = await view.getGroupChatDetailView(reqAs(owner), chat.id)
+  assert.equal(renamedDetail.name, 'Release train 2')
+  assert.equal(renamedDetail.topic, 'Ship without regressions')
+})

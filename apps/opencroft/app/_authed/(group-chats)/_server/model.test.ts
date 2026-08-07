@@ -728,3 +728,182 @@ test('an anonymous request cannot send into a thread', async () => {
   const refusal = await captureRefusal(() => model.sendMessageInThread(reqAnonymous(), thread.id, 'hello'))
   assert.equal(refusal.code, 'unauthenticated')
 })
+
+// `promptLocalImpl` hands the message to the client's queue and returns; the
+// queue then dispatches to the connection without the caller awaiting it (see
+// agent-client's `void connection.prompt(...)`). So a test that inspects what
+// the agent received has to wait for the dispatch rather than assume it has
+// already happened -- asserting straight after the call is a race that passes
+// on a fast machine.
+async function waitForPrompts(prompts: string[], count: number): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (prompts.length >= count) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(`expected ${count} prompt(s) to reach the agent, saw ${prompts.length}`)
+}
+
+// ---------------------------------------------------------------------------
+// NAME AND TOPIC. Two fields for two audiences: the name is what people read
+// and no agent is ever told it; the topic is what an agent is told a chat is
+// for, and it is read at the moment a thread opens its session.
+// ---------------------------------------------------------------------------
+
+test('creation names the chat and seeds the topic from that name', async () => {
+  const owner = await makeUser('naming-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), '  Release train  ')
+
+  assert.equal(chat.name, 'Release train', 'the name is trimmed')
+  assert.equal(chat.topic, 'Release train', 'with no topic given, the name is the honest default')
+})
+
+test('creation keeps an explicit topic separate from the name', async () => {
+  const owner = await makeUser('naming-owner2@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Release train', 'Ship the June release without regressions')
+
+  assert.equal(chat.name, 'Release train')
+  assert.equal(chat.topic, 'Ship the June release without regressions')
+})
+
+test('renaming changes the name and leaves the topic untouched, and vice versa', async () => {
+  const owner = await makeUser('rename-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'first name', 'the original purpose')
+
+  await model.renameGroupChat(reqAs(owner), chat.id, '  second name  ')
+  let after = await model.getGroupChat(reqAs(owner), chat.id)
+  assert.equal(after.name, 'second name')
+  assert.equal(after.topic, 'the original purpose', 'a rename must not touch what agents are told')
+
+  await model.setGroupChatTopic(reqAs(owner), chat.id, 'a revised purpose')
+  after = await model.getGroupChat(reqAs(owner), chat.id)
+  assert.equal(after.name, 'second name', 'editing the topic must not touch what people read')
+  assert.equal(after.topic, 'a revised purpose')
+})
+
+test('a non-member can neither rename a chat nor change its topic', async () => {
+  const owner = await makeUser('edit-owner@example.test')
+  const outsider = await makeUser('edit-outsider@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'not yours')
+
+  const rename = await captureRefusal(() => model.renameGroupChat(reqAs(outsider), chat.id, 'mine now'))
+  const retopic = await captureRefusal(() => model.setGroupChatTopic(reqAs(outsider), chat.id, 'mine now'))
+
+  // The same refusal every other non-member path gives, so a write is not a way
+  // to learn which chat ids are real either.
+  assert.equal(rename.code, 'not-found')
+  assert.equal(retopic.code, 'not-found')
+  assert.equal(rename.message, retopic.message)
+
+  const untouched = await model.getGroupChat(reqAs(owner), chat.id)
+  assert.equal(untouched.name, 'not yours', 'the refusal must also mean nothing was written')
+  assert.equal(untouched.topic, 'not yours')
+})
+
+// THE DELIVERY BOUNDARY, and the surprising half of this feature: editing the
+// topic reaches the NEXT thread and nothing already open. Asserted from the
+// mock connection's own `prompt`, so what is checked is the text an agent
+// actually receives, not the arguments the model was called with.
+test('a changed topic reaches the next thread and not a session already open', async () => {
+  const owner = await makeUser('topic-delivery-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'delivery', 'the first purpose')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const prompts: string[] = []
+  const connection = {
+    newSession: async () => ({ sessionId: `topic-session-${crypto.randomUUID()}` }),
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      prompts.push(params.prompt.map((block) => block.text ?? '').join(''))
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+
+  const workspaceSlug = slug('Agent Session')
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store, 'agent-client global store must exist after import')
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  const first = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message')
+  await waitForPrompts(prompts, 1)
+  assert.match(prompts[0] ?? '', /the first purpose/, 'a new thread is told the topic as it stands')
+
+  await model.setGroupChatTopic(reqAs(owner), chat.id, 'the second purpose')
+
+  await model.sendMessageInThread(reqAs(owner), first.thread.id, 'a later message')
+  await waitForPrompts(prompts, 2)
+  assert.doesNotMatch(
+    prompts[1] ?? '',
+    /the second purpose/,
+    'an open session keeps the context it was opened with — restating it would mean interrupting a turn to repeat something nobody asked for',
+  )
+
+  await model.startThread(reqAs(owner), chat.id, 'agent-session', 'a fresh thread')
+  await waitForPrompts(prompts, 3)
+  assert.match(prompts[2] ?? '', /the second purpose/, 'the next thread is told the edited topic')
+  assert.doesNotMatch(prompts[2] ?? '', /the first purpose/)
+})
+
+test('the name is never delivered to an agent', async () => {
+  const owner = await makeUser('name-privacy-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'A name no agent should see', 'the stated purpose')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const prompts: string[] = []
+  const connection = {
+    newSession: async () => ({ sessionId: `name-session-${crypto.randomUUID()}` }),
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      prompts.push(params.prompt.map((block) => block.text ?? '').join(''))
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+
+  const workspaceSlug = slug('Agent Session')
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store)
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  await model.startThread(reqAs(owner), chat.id, 'agent-session', 'hello')
+
+  await waitForPrompts(prompts, 1)
+  assert.match(prompts[0] ?? '', /the stated purpose/)
+  assert.doesNotMatch(
+    prompts[0] ?? '',
+    /A name no agent should see/,
+    'the name is presentation — a rename must never be able to change what an agent was told',
+  )
+})
