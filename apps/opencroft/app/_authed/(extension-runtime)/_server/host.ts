@@ -19,6 +19,7 @@ import {
 import { foldEvents, isSnapshotEvent } from 'agent-client/fold'
 import type { ChatEvent } from 'agent-client/types'
 
+import { stopLocalSessionProcessImpl } from '@/app/_authed/(agent)/_server/acp-impl'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { readSessions } from '@/app/_authed/(agent)/_server/agent-sessions-store'
 import {
@@ -39,9 +40,9 @@ import {
   type CompactStatus,
   deliverToSendMessageNode,
   getCompactStatusOnGraph,
+  requestCompactOnGraph,
   type GraphEdgeLike as SendMessageEdgeLike,
   type GraphNodeLike as SendMessageNodeLike,
-  requestCompactOnGraph,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSetting, setSetting } from '@/app/_authed/(settings)/_server/actions'
@@ -571,6 +572,8 @@ export interface HostSendMessageApi {
   listTurns(nodeId: string, params: { sessionKey: string; turns?: number; beforeIndex?: number }): Promise<TurnsPage>
   compact(nodeId: string, params: { sessionKey: string }): Promise<CompactAck>
   compactStatus(nodeId: string, params: { sessionKey: string }): Promise<CompactStatus>
+  /** Terminates an idle session's process; the transcript and durable session pointer are kept, so the next message reloads it transparently (same cold-start resume an offline session already uses). */
+  unload(nodeId: string, params: { sessionKey: string }): Promise<{ sessionKey: string; unloaded: true }>
 }
 
 const sendMessageApi: HostSendMessageApi = {
@@ -731,6 +734,33 @@ const sendMessageApi: HostSendMessageApi = {
       throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
     }
     return getCompactStatusOnGraph(sessionKey)
+  },
+
+  async unload(nodeId, params) {
+    const found = await findSendMessageNode(nodeId)
+    if (!found) {
+      throw new Error(`Node not found: ${nodeId}`)
+    }
+    const sessionKey = params.sessionKey.trim()
+    const parts = sessionKey ? parseSessionKey(sessionKey) : null
+    if (!parts || !reachablePairs(found.nodes, found.edges).has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
+      throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
+    }
+    const status = deriveSessionStatus(sessionKey, {
+      pending: new Set(agentClient.pendingPermissionSessionKeys()),
+      active: new Set(agentClient.activeSessionKeys()),
+      alive: new Set(agentClient.aliveSessionKeys()),
+    })
+    // Only an idle process is safe to unload: offline already has nothing
+    // running, and working/waiting means the session's own harness may own
+    // background work that a kill would silently drop with no way to resume it.
+    if (status !== 'idle') {
+      throw new Error(
+        `Session is ${status}, not idle — unload only applies to an idle session (offline: no process to unload; working/waiting: unloading would kill in-flight work)`,
+      )
+    }
+    await stopLocalSessionProcessImpl(sessionKey)
+    return { sessionKey, unloaded: true }
   },
 }
 

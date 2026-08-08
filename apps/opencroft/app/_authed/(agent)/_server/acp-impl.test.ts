@@ -33,7 +33,13 @@ import type { AgentSelection } from 'agent-client/types'
 
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
-import { ensureLocalSessionImpl, findTargetSessionImpl, promptLocalImpl, tabSessions } from './acp-impl'
+import {
+  ensureLocalSessionImpl,
+  findTargetSessionImpl,
+  promptLocalImpl,
+  stopLocalSessionProcessImpl,
+  tabSessions,
+} from './acp-impl'
 import { readPersistedSession } from './acp-session-store'
 
 interface AcpStoreShape {
@@ -253,4 +259,48 @@ test('the durable pointer is only offered as a target while its session is live'
   // A pointer to a session that no longer exists is not a target — prompting
   // it would send the message into nothing.
   assert.equal(await findTargetSessionImpl({ baseKey: `agent:agent:test:${crypto.randomUUID()}` }), null)
+})
+
+// ── unload-session primitive ──────────────────────────────────────────────
+//
+// stopLocalSessionProcessImpl is the mechanism the new "unload" send-message
+// action delegates to. Unlike forgetInMemorySession (a test-only stand-in for
+// a server restart, which never touches agent-client at all), this function
+// actually calls agentClient.deleteSession -- the real kill/close path -- so
+// these tests are the only place that mechanism itself is exercised, not just
+// the in-memory bookkeeping around it.
+
+test('stopLocalSessionProcessImpl drops the in-memory pointer but keeps the durable one', async () => {
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection, { canLoad: true })
+  const tabKey = `agent:resume:test:${crypto.randomUUID()}`
+
+  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  await stopLocalSessionProcessImpl(tabKey)
+
+  assert.equal(tabSessions.has(tabKey), false, 'the live pointer is gone -- nothing to route a message to yet')
+  assert.deepEqual(
+    await readPersistedSession(tabKey),
+    { id: opened.sessionId, prompted: false },
+    'unload must not touch the durable pointer -- that is the whole difference from forgetLocalSessionImpl',
+  )
+})
+
+test('a message after unload reattaches to the SAME session instead of starting a new one', async () => {
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection, { canLoad: true })
+  const tabKey = `agent:resume:test:${crypto.randomUUID()}`
+
+  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix' })
+  await stopLocalSessionProcessImpl(tabKey)
+
+  const afterUnload = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+
+  assert.equal(
+    afterUnload.sessionId,
+    first.sessionId,
+    'a queued message must reload the unloaded session, not spawn a rival for the same tab',
+  )
+  assert.equal(afterUnload.created, false, 'the reattached session already has its history -- it is not new')
 })

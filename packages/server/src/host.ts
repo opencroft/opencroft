@@ -114,6 +114,8 @@ export interface HostSendMessageApi {
   /** Returns immediately -- never blocks for the compaction itself. */
   compact(nodeId: string, params: { sessionKey: string }): Promise<HostCompactAck>
   compactStatus(nodeId: string, params: { sessionKey: string }): Promise<HostCompactStatus>
+  /** Terminates an idle session's process; the transcript and durable session pointer are kept, so the next message reloads it transparently (same cold-start resume an offline session already uses). */
+  unload(nodeId: string, params: { sessionKey: string }): Promise<{ sessionKey: string; unloaded: true }>
 }
 
 export interface HostExecContextApi {

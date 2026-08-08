@@ -296,6 +296,19 @@
             },
             "required": ["sessionKey"]
           }
+        },
+        {
+          "id": "unload",
+          "label": "Unload Session",
+          "icon": "Power",
+          "description": "Terminate an idle session's process to free the RAM it holds while it isn't doing anything. The session's transcript and its durable session pointer are left untouched — the next message sent to this sessionKey reloads it transparently (the same cold-start resume an `offline` session already uses), so nothing about the conversation is lost. Only applies to a session whose `status` (see `listSessions`) is `idle`: `offline` has no process to unload and errors synchronously, and `working`/`waiting` also error rather than unload, since that session's own harness may own background work a kill would silently drop with no way to resume it.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "sessionKey": { "type": "string", "description": "Session key, as returned by listSessions" }
+            },
+            "required": ["sessionKey"]
+          }
         }
       ]
     },

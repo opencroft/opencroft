@@ -331,6 +331,14 @@ function sendMessageCompactStatusAction(ctx: ActionCtx): Promise<{
   return host.sendMessage.compactStatus(ctx.nodeId, { sessionKey })
 }
 
+function sendMessageUnloadAction(ctx: ActionCtx): Promise<{ sessionKey: string; unloaded: true }> {
+  const sessionKey = typeof ctx.params.sessionKey === 'string' ? ctx.params.sessionKey.trim() : ''
+  if (!sessionKey) {
+    throw new Error('"sessionKey" is required and must be a non-empty string')
+  }
+  return host.sendMessage.unload(ctx.nodeId, { sessionKey })
+}
+
 // ── Server node actions ───────────────────────────────────────────────────
 
 function serverConfigFromData(data: Record<string, unknown>): ServerConfig {
@@ -388,6 +396,7 @@ export const nodeActions = {
     listTurns: sendMessageListTurnsAction,
     compact: sendMessageCompactAction,
     compactStatus: sendMessageCompactStatusAction,
+    unload: sendMessageUnloadAction,
   },
   server: {
     setKey: serverSetKey,
