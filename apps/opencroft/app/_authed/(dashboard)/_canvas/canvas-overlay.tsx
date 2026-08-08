@@ -18,6 +18,7 @@ import {
   useOverlayBackIntercept,
   useOverlaySlotValues,
 } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
+import { recordBubbled, recordCaptured } from '@/app/_authed/(dashboard)/_canvas/ctrlg-debug'
 import { SearchFindBar } from '@/app/_authed/(dashboard)/_canvas/search-find-bar'
 import type { CommandModeDefinition, CommandModeShortcut } from '@/app/_authed/(extension-runtime)/_client/host'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
@@ -124,6 +125,19 @@ export function CanvasOverlay({
   // `key`-based match silently never fires. `code` is layout-independent by
   // construction: `KeyF` is `KeyF` everywhere. Same reasoning for extension
   // shortcuts below — see CommandModeShortcut's `code` field.
+  // TEMPORARY: capture-phase probe registered once, independent
+  // of onKey's own bubble-phase listener -- proves whether a keydown reaches
+  // window at all and via what DOM path, regardless of what onKey does with it.
+  useEffect(() => {
+    function onCapture(event: globalThis.KeyboardEvent) {
+      if (event.ctrlKey || event.metaKey) {
+        recordCaptured(event)
+      }
+    }
+    window.addEventListener('keydown', onCapture, true)
+    return () => window.removeEventListener('keydown', onCapture, true)
+  }, [])
+
   useEffect(() => {
     function onKey(event: globalThis.KeyboardEvent) {
       if (!(event.ctrlKey || event.metaKey)) {
@@ -135,6 +149,7 @@ export function CanvasOverlay({
         activateMode(code === 'KeyF' ? 'search' : code === 'KeyP' ? 'find' : 'ai')
         return
       }
+      let matched: string | null = null
       for (const ext of extensionModes) {
         const sc = ext.shortcut
         if (!sc || resolveShortcutCode(sc) !== code) {
@@ -146,9 +161,21 @@ export function CanvasOverlay({
         if (Boolean(sc.alt) !== event.altKey) {
           continue
         }
+        matched = ext.id
+        break
+      }
+      // TEMPORARY: record every attempt, matched or not --
+      // an unmatched attempt with extensionModes already containing the
+      // expected id would point at the shift/alt guards or resolveShortcutCode
+      // itself rather than a registration-timing race.
+      recordBubbled(
+        code,
+        extensionModes.map((m) => m.id),
+        matched,
+      )
+      if (matched) {
         event.preventDefault()
-        activateMode(ext.id)
-        return
+        activateMode(matched)
       }
     }
     window.addEventListener('keydown', onKey)

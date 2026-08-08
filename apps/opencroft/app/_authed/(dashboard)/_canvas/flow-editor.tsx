@@ -28,6 +28,7 @@ import { useSeedPendingRequests } from '@/app/_authed/(approvals)/_components/mc
 import { McpRequestNotifications } from '@/app/_authed/(approvals)/_components/mcp-request-notifications'
 import type { CommandNodeEntry } from '@/app/_authed/(dashboard)/_canvas/canvas-command-bar'
 import { CanvasOverlay } from '@/app/_authed/(dashboard)/_canvas/canvas-overlay'
+import { recordReloadClear, recordReloadSettled } from '@/app/_authed/(dashboard)/_canvas/ctrlg-debug'
 import { isCanvasMenuTouchTarget } from '@/app/_authed/(dashboard)/_canvas/canvas-touch-guard'
 import { CommentNode } from '@/app/_authed/(dashboard)/_canvas/comment-node'
 import { FlowContextMenu } from '@/app/_authed/(dashboard)/_canvas/flow-context-menu'
@@ -383,9 +384,13 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     // another space's slug.
     let current = true
     void coalesceReload(extensionsReloadRef.current, async () => {
+      recordReloadClear() // TEMPORARY diagnostic
       extensionRegistry.clear()
       await loadLocalExtensions()
-      setExtensionsVersion((v) => v + 1)
+      setExtensionsVersion((v) => {
+        recordReloadSettled(v + 1) // TEMPORARY diagnostic
+        return v + 1
+      })
       const { graph, updatedAt } = await fetchSpaceGraph(slug)
       if (!current) {
         return
