@@ -8,6 +8,7 @@ import { GroupChatThreadList } from 'ui/group-chat/group-chat-thread-list'
 import { ScrollPage } from 'ui/layout/scrollpage'
 
 import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
+import { stopProcessLocal } from '@/app/_authed/(agent)/_server/acp'
 import { deriveSessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import {
   GroupChatRenameDialog,
@@ -19,6 +20,7 @@ import { GroupChatPinsPanel } from '@/app/_authed/(group-chats)/_components/grou
 import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
+import { threadSessionKey } from '@/app/_authed/(group-chats)/_lib/thread-session-key'
 import { useSafeBack } from '@/app/_authed/(group-chats)/_lib/use-safe-back'
 import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import {
@@ -163,6 +165,24 @@ function GroupChatDetailPage() {
                 status: threadStatusById.get(t.id),
               }))}
               onSelect={(threadId) => goToThread(threadId)}
+              // The kit hands back the row id -- the THREAD id, not the session
+              // key this has to act on. That split is deliberate on its side
+              // (the kit knows nothing about session keys) and the mapping is
+              // already here: `sessionKey` rides on every list entry.
+              //
+              // Same server fn the sidebar chat list's own Stop process calls,
+              // so there is one way to stop a process, not two. Nothing is
+              // invalidated afterwards: the row's state comes from the shared
+              // activity poll, which reports the process gone on its next tick.
+              onStopProcess={(threadId) => {
+                const sessionKey = threadSessionKey(threads, threadId)
+                if (!sessionKey) {
+                  return
+                }
+                stopProcessLocal({ data: sessionKey }).catch((err) => {
+                  console.error('Failed to stop thread process', threadId, err)
+                })
+              }}
               onDelete={(threadId) => {
                 setDeleteError(undefined)
                 setDeleteTarget(threadId)
