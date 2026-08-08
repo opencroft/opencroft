@@ -32,6 +32,11 @@ interface CanvasOverlayProps {
   mcpRequestsActive: boolean
   onFocusNode: (nodeId: string) => void
   onActiveChange?: (active: boolean) => void
+  // Bumped once extension loading settles (see flow-editor.tsx) — commandModes
+  // below is a copy taken from the registry, which itself does not trigger a
+  // re-render when an extension registers into it after this component's
+  // first render, so its memo has to depend on something that does.
+  extensionsVersion: number
 }
 
 /**
@@ -71,6 +76,7 @@ export function CanvasOverlay({
   mcpRequestsActive,
   onFocusNode,
   onActiveChange,
+  extensionsVersion,
 }: CanvasOverlayProps) {
   const {
     mode,
@@ -90,7 +96,10 @@ export function CanvasOverlay({
   const chatParam = searchParams.get('chat') ?? null
   const chatTabs = useChatTabsMaybe()
 
-  const extensionModes = useMemo(() => extensionRegistry.allCommandModes(), [])
+  const extensionModes = useMemo(() => {
+    void extensionsVersion
+    return extensionRegistry.allCommandModes()
+  }, [extensionsVersion])
 
   useEffect(() => {
     if (!chatParam) {

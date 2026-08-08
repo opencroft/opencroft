@@ -1107,6 +1107,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
               mcpRequestsActive={mcpRequestsActive}
               onFocusNode={focusNode}
               onActiveChange={isMobile ? setOverlayActive : undefined}
+              extensionsVersion={extensionsVersion}
             />
             <McpRequestNotifications onOpen={openMcpRequests} />
           </div>
