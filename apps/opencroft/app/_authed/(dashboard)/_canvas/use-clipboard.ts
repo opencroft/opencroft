@@ -191,6 +191,12 @@ export function useClipboard({ nodes, edges, setNodes, setEdges, onChange }: Opt
   // so copying selected text anywhere else, e.g. a log viewer, still got
   // overwritten with node JSON). Copy is now only reachable from the node
   // context menu. Cut/paste keep their hotkeys — not implicated in that bug.
+  //
+  // Matched on `event.code` (the physical key), not `event.key` (the
+  // character it produces): on a non-QWERTY layout the X/V keys are in the
+  // same place but produce a different character, so a `key`-based match
+  // silently never fires. `code` is layout-independent by construction —
+  // `KeyX` is `KeyX` everywhere.
   useEffect(() => {
     function handler(e: KeyboardEvent) {
       if (!(e.ctrlKey || e.metaKey)) {
@@ -199,13 +205,12 @@ export function useClipboard({ nodes, edges, setNodes, setEdges, onChange }: Opt
       if (isEditing()) {
         return
       }
-      const key = e.key.toLowerCase()
-      if (key === 'x') {
+      if (e.code === 'KeyX') {
         e.preventDefault()
         cut()
         return
       }
-      if (key === 'v') {
+      if (e.code === 'KeyV') {
         e.preventDefault()
         paste()
       }

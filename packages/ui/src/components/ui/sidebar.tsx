@@ -68,8 +68,11 @@ type SidebarStateProps = {
    */
   storageKey?: string
   /**
-   * Key that toggles this sidebar when held with meta or control. Defaults to
-   * the shared one; pass `null` to give it no shortcut at all, so a second
+   * Letter that toggles this sidebar when held with meta or control (e.g.
+   * `"b"`). Matched against the PHYSICAL key (`KeyboardEvent.code`), not the
+   * character a keypress produces, so it still fires on a non-English
+   * layout where that key produces a different character. Defaults to the
+   * shared one; pass `null` to give it no shortcut at all, so a second
    * sidebar does not answer the same keystroke as the first.
    */
   keyboardShortcut?: string | null
@@ -125,14 +128,18 @@ function SidebarStateProvider({
     return isMobile ? setOpenMobile((open) => !open) : setOpen((open) => !open)
   }, [isMobile, setOpen, setOpenMobile])
 
-  // Adds a keyboard shortcut to toggle the sidebar.
+  // Adds a keyboard shortcut to toggle the sidebar. `code`, not `key`: `key`
+  // is the character a keypress produces, which changes with the layout, so
+  // matching on it silently stops working the moment someone switches off a
+  // US layout. `code` names the physical key ("KeyB" is "KeyB" everywhere).
   React.useEffect(() => {
     if (!keyboardShortcut) {
       return
     }
+    const code = `Key${keyboardShortcut.toUpperCase()}`
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === keyboardShortcut && (event.metaKey || event.ctrlKey)) {
+      if (event.code === code && (event.metaKey || event.ctrlKey)) {
         event.preventDefault()
         toggleSidebar()
       }

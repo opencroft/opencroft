@@ -84,10 +84,14 @@ async function mountBoth(rightProps: Record<string, unknown>): Promise<Mounted> 
   return mounted
 }
 
-async function pressShortcut(key: string): Promise<void> {
+// `code` defaults to the physical key `key` names on a US layout — the shape
+// every real dispatch has when the test isn't specifically simulating a
+// mismatch between the two (see the layout tests below, which is the whole
+// point of matching on `code` rather than `key`).
+async function pressShortcut(key: string, code = `Key${key.toUpperCase()}`): Promise<void> {
   const { KeyboardEvent: Ctor, dispatchEvent } = globalThis.window
   await act(async () => {
-    dispatchEvent.call(globalThis.window, new Ctor('keydown', { key, ctrlKey: true }))
+    dispatchEvent.call(globalThis.window, new Ctor('keydown', { key, code, ctrlKey: true }))
   })
 }
 
@@ -129,6 +133,32 @@ test('two sidebars can hold different shortcuts without answering each other', a
 
   await pressShortcut('b')
   assert.equal(mounted.open.left, false, 'the left sidebar still answers its own key')
+})
+
+// THE REGRESSION THIS FILE EXISTS TO PIN (non-English keyboard layouts): a
+// keypress is matched on `code` (the physical key), not `key` (the character
+// it produces) -- so switching layout, which changes `key` but never `code`,
+// must not turn the shortcut off, and a genuinely different physical key must
+// not be mistaken for it just because the layout happens to produce the same
+// character.
+test('the shortcut still fires when the layout changes the character but not the physical key', async () => {
+  const mounted = await mountBoth({ storageKey: 'right_sidebar_state', keyboardShortcut: null })
+
+  // A Cyrillic layout's physical B key: `code` is still "KeyB", `key` is not
+  // "b" at all -- this is the exact shape a real non-English keypress has.
+  await pressShortcut('и', 'KeyB')
+
+  assert.equal(mounted.open.left, false, 'the physical key still toggles the sidebar, regardless of what it types')
+})
+
+test('a different physical key does not trigger the shortcut just because it happens to type the same character', async () => {
+  const mounted = await mountBoth({ storageKey: 'right_sidebar_state', keyboardShortcut: null })
+
+  // `key: 'b'` but a different physical key -- proves the match is on `code`
+  // and not merely on `key` still happening to pass alongside it.
+  await pressShortcut('b', 'KeyN')
+
+  assert.equal(mounted.open.left, true, 'the wrong physical key must not toggle the sidebar')
 })
 
 test('a lone sidebar is unchanged: the shared key and the shared shortcut still apply', async () => {

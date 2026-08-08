@@ -143,7 +143,16 @@ export interface CommandModeProps {
 }
 
 export interface CommandModeShortcut {
-  key: string
+  /**
+   * A `KeyboardEvent.code` value — the physical key, not the character it
+   * produces, so the shortcut fires the same way on every keyboard layout.
+   * Held with Ctrl (or Cmd on macOS) plus whichever of `shift`/`alt` below are
+   * set. Letters: `'KeyF'`. Digits: `'Digit1'`. Punctuation has its own names
+   * (`'Comma'`, `'Period'`, `'Slash'`, `'Minus'`, ...) — never the character
+   * itself, since on some layouts a digit or punctuation key needs a modifier
+   * to type the character it is labelled with on a US keyboard.
+   */
+  code: string
   shift?: boolean
   alt?: boolean
 }

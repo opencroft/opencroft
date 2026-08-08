@@ -19,7 +19,7 @@ import {
   useOverlaySlotValues,
 } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 import { SearchFindBar } from '@/app/_authed/(dashboard)/_canvas/search-find-bar'
-import type { CommandModeDefinition } from '@/app/_authed/(extension-runtime)/_client/host'
+import type { CommandModeDefinition, CommandModeShortcut } from '@/app/_authed/(extension-runtime)/_client/host'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { ChatArea, ChatBar, ChatContent, ChatHeader } from '@/components/experimental/chat'
 import { cn } from '@/lib/utils'
@@ -32,6 +32,35 @@ interface CanvasOverlayProps {
   mcpRequestsActive: boolean
   onFocusNode: (nodeId: string) => void
   onActiveChange?: (active: boolean) => void
+}
+
+/**
+ * The `KeyboardEvent.code` a declared shortcut resolves to, or undefined if
+ * it names nothing usable.
+ *
+ * A compiled extension bundle built before shortcuts moved to `code` (see
+ * CommandModeShortcut's own doc comment) declares the old `{ key: 'g' }`
+ * shape — a character, not a physical key. Installed bundles keep running
+ * exactly as compiled and are not touched by an app deploy, so `sc.code` is
+ * undefined for one of those until it is reinstalled from a source that
+ * declares the new field (a separate migration, tracked apart from this).
+ * Falling back to the legacy field here, converted to the code it always
+ * meant, is what keeps that extension's shortcut alive in the meantime
+ * instead of it going silently dead — exactly the failure this file exists
+ * to fix.
+ *
+ * Read via an explicitly-typed legacy shape rather than widening
+ * CommandModeShortcut itself, so every NEW declaration is still forced onto
+ * the code-only contract. Letters only: the old field was never used for
+ * anything else, so a legacy digit or punctuation shortcut (never actually
+ * declared by anything) is left unresolved rather than guessed at.
+ */
+export function resolveShortcutCode(sc: CommandModeShortcut): string | undefined {
+  if (sc.code) {
+    return sc.code
+  }
+  const legacyKey = (sc as unknown as { key?: unknown }).key
+  return typeof legacyKey === 'string' && /^[a-zA-Z]$/.test(legacyKey) ? `Key${legacyKey.toUpperCase()}` : undefined
 }
 
 export function CanvasOverlay({
@@ -80,20 +109,26 @@ export function CanvasOverlay({
     activateMode('ai')
   }, [listRequest, activateMode])
 
+  // Matched on `event.code` (the physical key), not `event.key` (the
+  // character it produces) — on a non-QWERTY layout the same physical F/P/I
+  // keys sit in the same place but produce a different character, so a
+  // `key`-based match silently never fires. `code` is layout-independent by
+  // construction: `KeyF` is `KeyF` everywhere. Same reasoning for extension
+  // shortcuts below — see CommandModeShortcut's `code` field.
   useEffect(() => {
     function onKey(event: globalThis.KeyboardEvent) {
       if (!(event.ctrlKey || event.metaKey)) {
         return
       }
-      const key = event.key.toLowerCase()
-      if (key === 'f' || key === 'p' || key === 'i') {
+      const code = event.code
+      if (code === 'KeyF' || code === 'KeyP' || code === 'KeyI') {
         event.preventDefault()
-        activateMode(key === 'f' ? 'search' : key === 'p' ? 'find' : 'ai')
+        activateMode(code === 'KeyF' ? 'search' : code === 'KeyP' ? 'find' : 'ai')
         return
       }
       for (const ext of extensionModes) {
         const sc = ext.shortcut
-        if (!sc || sc.key.toLowerCase() !== key) {
+        if (!sc || resolveShortcutCode(sc) !== code) {
           continue
         }
         if (Boolean(sc.shift) !== event.shiftKey) {

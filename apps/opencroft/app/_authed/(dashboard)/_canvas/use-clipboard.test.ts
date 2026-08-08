@@ -185,3 +185,39 @@ test('a clipboard read rejection on paste does not throw and pastes nothing', as
   })
   assert.equal(h.nodes().length, before, 'a failed read must not add any node')
 })
+
+// THE REGRESSION THESE TWO PIN (non-English keyboard layouts): the Ctrl+X /
+// Ctrl+V hotkeys are matched on `event.code` (the physical key), not
+// `event.key` (the character it produces) -- so a layout switch, which
+// changes `key` but never `code`, must not turn them off.
+test('Ctrl+V pastes on the physical V key even when the layout types a different character', async () => {
+  installFakeClipboard()
+  const h = await mountHarness([makeNode('a', 10, 10, true)])
+  await act(async () => {
+    await h.copy()
+  })
+  const before = h.nodes().length
+  await act(async () => {
+    // A Cyrillic layout's physical V key: `code` is still "KeyV", `key` is
+    // "м" -- the exact shape a real non-English keypress has.
+    const { KeyboardEvent: Ctor, dispatchEvent } = globalThis.window
+    dispatchEvent.call(globalThis.window, new Ctor('keydown', { code: 'KeyV', key: 'м', ctrlKey: true }))
+  })
+  assert.equal(h.nodes().length, before + 1, 'the physical key still pastes, regardless of what it types')
+})
+
+test('a different physical key does not paste just because it happens to type "v"', async () => {
+  installFakeClipboard()
+  const h = await mountHarness([makeNode('a', 10, 10, true)])
+  await act(async () => {
+    await h.copy()
+  })
+  const before = h.nodes().length
+  await act(async () => {
+    // `key: 'v'` but a different physical key -- proves the match is on
+    // `code`, not merely on `key` still happening to pass alongside it.
+    const { KeyboardEvent: Ctor, dispatchEvent } = globalThis.window
+    dispatchEvent.call(globalThis.window, new Ctor('keydown', { code: 'KeyN', key: 'v', ctrlKey: true }))
+  })
+  assert.equal(h.nodes().length, before, 'the wrong physical key must not paste')
+})
