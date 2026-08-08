@@ -1,6 +1,6 @@
 'use client'
 
-import type { ChatMessage } from 'agent-client/fold'
+import { type ChatMessage, isTerminalToolStatus } from 'agent-client/fold'
 import { Maximize2, Minimize2 } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 import { ChainDot, type ChainDotVariant, Chained } from 'ui/agent-chat/chain'
@@ -43,7 +43,7 @@ function withHeader(items: ChatMessage[]): Entry[] {
 
 function dotVariant(message: ChatMessage): ChainDotVariant {
   if (message.kind === 'tool') {
-    const settled = message.status === 'completed' || message.status === 'failed'
+    const settled = isTerminalToolStatus(message.status)
     if (!settled && message.output === undefined) return 'default'
     return message.status === 'failed' ? 'destructive' : 'success'
   }

@@ -1,6 +1,6 @@
 'use client'
 
-import type { ChatMessage } from 'agent-client/fold'
+import { type ChatMessage, isTerminalToolStatus } from 'agent-client/fold'
 import { Check, CheckCheck, X } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
@@ -28,9 +28,8 @@ export interface MessageHandlers {
 }
 
 export function statusVariant(status: string): 'secondary' | 'destructive' | 'outline' {
-  if (status === 'completed') return 'secondary'
-  if (status === 'failed') return 'destructive'
-  return 'outline'
+  if (!isTerminalToolStatus(status)) return 'outline'
+  return status === 'failed' ? 'destructive' : 'secondary'
 }
 
 // A permission/ask request can arrive while the user is mid-tap on something

@@ -2,6 +2,7 @@
 
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { usePaginatedHistory } from 'agent-chat/use-paginated-history'
+import { isTerminalToolStatus } from 'agent-client/fold'
 import type { ChatEvent, PermissionOpt, QueuedPrompt } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 
@@ -182,7 +183,7 @@ export function fold(events: ChatEvent[], baseIndex: number): Folded {
           if (event.input !== undefined) {
             part.args = event.input
           }
-          if (event.output !== undefined || event.status === 'completed' || event.status === 'failed') {
+          if (event.output !== undefined || isTerminalToolStatus(event.status)) {
             part.result = { text: toolText(event.output), isError: event.status === 'failed' }
           }
         }

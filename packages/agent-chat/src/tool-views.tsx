@@ -1,4 +1,4 @@
-import type { ChatMessage } from 'agent-client/fold'
+import { type ChatMessage, isTerminalToolStatus } from 'agent-client/fold'
 import type { ComponentType, ReactNode } from 'react'
 
 export type ToolMessage = Extract<ChatMessage, { kind: 'tool' }>
@@ -76,7 +76,7 @@ export function lookupToolView(registry: ToolViewRegistry, toolId: string): Tool
 // a standalone approval list, which never gets a ChatMessage) can still reuse
 // the same prop shape by constructing it from whatever data they have.
 export function toolViewProps(message: ToolMessage, mode: ToolViewMode): ToolViewProps {
-  const settled = message.status === 'completed' || message.status === 'failed'
+  const settled = isTerminalToolStatus(message.status)
   const result: ToolViewResult | undefined =
     settled || message.output !== undefined
       ? { output: message.output, text: formatToolValue(message.output), isError: message.status === 'failed' }
