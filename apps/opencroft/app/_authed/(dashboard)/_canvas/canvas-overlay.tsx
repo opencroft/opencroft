@@ -19,6 +19,7 @@ import {
   useOverlaySlotValues,
 } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 import { SearchFindBar } from '@/app/_authed/(dashboard)/_canvas/search-find-bar'
+import { recordKeydown, recordOverlayRender } from '@/app/_authed/(extension-runtime)/_client/debug-probe'
 import type { CommandModeDefinition, CommandModeShortcut } from '@/app/_authed/(extension-runtime)/_client/host'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { ChatArea, ChatBar, ChatContent, ChatHeader } from '@/components/experimental/chat'
@@ -97,8 +98,12 @@ export function CanvasOverlay({
   const chatTabs = useChatTabsMaybe()
 
   const extensionModes = useMemo(() => {
-    void extensionsVersion
-    return extensionRegistry.allCommandModes()
+    const modes = extensionRegistry.allCommandModes()
+    recordOverlayRender(
+      extensionsVersion,
+      modes.map((m) => m.id),
+    )
+    return modes
   }, [extensionsVersion])
 
   useEffect(() => {
@@ -132,6 +137,11 @@ export function CanvasOverlay({
       const code = event.code
       if (code === 'KeyF' || code === 'KeyP' || code === 'KeyI') {
         event.preventDefault()
+        recordKeydown(
+          code,
+          extensionModes.map((m) => m.id),
+          `builtin:${code}`,
+        )
         activateMode(code === 'KeyF' ? 'search' : code === 'KeyP' ? 'find' : 'ai')
         return
       }
@@ -147,9 +157,19 @@ export function CanvasOverlay({
           continue
         }
         event.preventDefault()
+        recordKeydown(
+          code,
+          extensionModes.map((m) => m.id),
+          ext.id,
+        )
         activateMode(ext.id)
         return
       }
+      recordKeydown(
+        code,
+        extensionModes.map((m) => m.id),
+        null,
+      )
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
