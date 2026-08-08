@@ -9,11 +9,13 @@ import { MemberAvatarGroup, type MemberRef } from '@/components/ui/group-chat/me
 import { cn } from '@/lib/utils'
 
 import { CommandBarFrame } from '@/components/ui/agent-chat/command-bar-frame'
+import { Flex } from '@/components/ui/layout/flex'
 // The flat shadcn path, not `ui/layout/scroll-area`. The kit stores component
 // files flat and the export composes the category folder on install, so a
 // nested path resolves in a consumer and NOT here -- which is why this screen's
 // preview rendered as an invalid element rather than as itself.
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { StickySection } from '@/components/ui/layouts/sticky-section'
 
 export interface GroupChatThreadFramingProps {
   /** The NAME of the group chat this thread belongs to -- not its topic. This
@@ -110,28 +112,29 @@ export function GroupChatThreadFraming({
           <MemberAvatarGroup members={members} max={4} size='sm' className='shrink-0' />
         ) : null}
       </header>
-      <ScrollArea className='min-h-0 flex-1'>{children}</ScrollArea>
-      {/* Between the transcript and the composer, and pinned. A reader scrolled
-          up the conversation is exactly the reader who cannot tell whether
-          their message landed, so a marker appended to the scrolling list would
-          be invisible to them; and it belongs where the message just went
-          rather than in the header, where nothing else about this turn is.
+      <ScrollArea className='min-h-0 flex-1'>
+        {children}
+        {/* The footer dock: the SAME StickySection + padded Flex the 1:1
+            chat's ChatBar wraps its own composer in (see command-bar-frame's
+            own note that the two used to drift). Placed INSIDE the scroll
+            area, not below it, so it overlays the transcript as the reader
+            scrolls -- a layout block here is exactly the bug this replaces.
 
-          Rendered UNCONDITIONALLY, even with no activity to report. It is the
-          screen's live region, and a role='status' element spliced into the DOM
-          at the same moment its text appears is announced unreliably or not at
-          all -- so it has to already be there. With nothing to say it holds no
-          padding and no children, and costs no height. */}
-      <AgentActivityLine status={status} agentName={agentName} className='shrink-0' />
-      {/* The same p-2 inset the 1:1 chat's footer gets from its own host
-          (a Flex with `--flex-padding: 0.5rem`) -- without it the card touches
-          the screen edges directly, which is the one thing CommandBarFrame's
-          own tight px-2 py-1.5 was never meant to stand in for. */}
-      {composer ? (
-        <div className='shrink-0 p-2'>
-          <CommandBarFrame>{composer}</CommandBarFrame>
-        </div>
-      ) : null}
+            The activity line sits inside the same sticky dock, not the
+            padded inner Flex, so its own `px-4` keeps the header's left
+            edge; `-mx-2` cancels the dock's own left/right inset (also
+            `--flex-padding`, 0.5rem) so the two don't stack. Rendered
+            UNCONDITIONALLY even with nothing to say -- see its own doc
+            comment on why a live region has to already be in the DOM. */}
+        <StickySection side='bottom' fade>
+          <AgentActivityLine status={status} agentName={agentName} className='shrink-0 -mx-2' />
+          {composer ? (
+            <Flex withGaps withPadding>
+              <CommandBarFrame>{composer}</CommandBarFrame>
+            </Flex>
+          ) : null}
+        </StickySection>
+      </ScrollArea>
     </div>
   )
 }

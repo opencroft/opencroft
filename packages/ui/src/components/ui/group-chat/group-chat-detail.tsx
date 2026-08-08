@@ -4,7 +4,9 @@ import type { ReactNode } from 'react'
 import { ChevronLeft, Pencil } from 'lucide-react'
 
 import { CommandBarFrame } from '@/components/ui/agent-chat/command-bar-frame'
+import { Flex } from '@/components/ui/layout/flex'
 import { MemberAvatarGroup, type MemberRef } from '@/components/ui/group-chat/member-avatar-group'
+import { StickySection } from '@/components/ui/layouts/sticky-section'
 import { cn } from '@/lib/utils'
 
 export interface GroupChatDetailProps {
@@ -214,8 +216,19 @@ export function GroupChatDetail({
               <p className='py-6 text-center text-sm text-muted-foreground'>No threads yet.</p>
             )}
         </div>
+        {/* Inside the scroll region, not below it -- a sticky dock so the
+            composer overlays the thread list as it scrolls, the same shape
+            the 1:1 chat's ChatBar and the thread screen's own footer use
+            (see group-chat-thread-framing). A layout block here, reserving
+            its own row beneath the list, was the bug this replaces. */}
+        {composer ? (
+          <StickySection side='bottom' fade>
+            <Flex withGaps withPadding>
+              <CommandBarFrame>{composer}</CommandBarFrame>
+            </Flex>
+          </StickySection>
+        ) : null}
       </div>
-      {composer ? <CommandBarFrame className='shrink-0'>{composer}</CommandBarFrame> : null}
     </div>
   )
 }
