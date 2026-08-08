@@ -45,7 +45,8 @@ import {
 } from '@/app/_authed/(extension-runtime)/_server/stream'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSetting, setSetting } from '@/app/_authed/(settings)/_server/actions'
-import { getSettingImpl, setSettingImplCas } from '@/app/_authed/(settings)/_server/settings-impl'
+import { mutateSettingData, withSettingLock } from '@/app/_authed/(settings)/_server/settings-cas'
+import { getSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
 import { toastStore } from '@/lib/toast-store'
@@ -790,53 +791,9 @@ const STORAGE_SETTING_ID = 'extension-storage'
 // storageApi below. A plain read-then-write against that row loses whichever
 // write lands second when two calls interleave: both read the same snapshot,
 // and the second write silently discards the first's key.
-// `delete`/`clear` have the identical shape and hazard.
-//
-// Two layers close this:
-//   - an in-process mutex per settings id, serializing every mutation
-//     against that row within this one process -- the case that actually
-//     matters, since we run a single Node process;
-//   - a version-CAS retry underneath, so a writer that somehow still lands
-//     concurrently (a second process, a bug in the mutex) can't silently
-//     win -- its CAS fails and it re-reads and retries instead of
-//     overwriting a write it never saw.
-const settingLocks = new Map<string, Promise<void>>()
-
-function withSettingLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
-  const prior = settingLocks.get(id) ?? Promise.resolve()
-  const result = prior.then(fn, fn)
-  settingLocks.set(
-    id,
-    result.then(
-      () => undefined,
-      () => undefined,
-    ),
-  )
-  return result
-}
-
-const MAX_CAS_ATTEMPTS = 5
-
-// Read-modify-write a settings row's JSON blob under CAS. `mutate` receives
-// the row's current data (or {} for one that doesn't exist yet) and returns
-// the next data to persist.
-async function mutateSettingData(
-  id: string,
-  mutate: (data: Record<string, unknown>) => Record<string, unknown>,
-): Promise<void> {
-  for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
-    const row = await getSettingImpl(id)
-    const nextData = mutate(row?.data ?? {})
-    const result = await setSettingImplCas({ id, data: nextData, expectedVersion: row?.version ?? 0 })
-    if (result) {
-      return
-    }
-    // Lost the CAS race to a concurrent writer -- loop to re-read a fresh
-    // snapshot and retry, rather than overwriting what it wrote.
-  }
-  throw new Error(`Extension storage write to '${id}' lost the update race ${MAX_CAS_ATTEMPTS} times in a row`)
-}
-
+// `delete`/`clear` have the identical shape and hazard. Closed via the shared
+// mutex + version-CAS mechanism in settings-cas.ts (generalised to the
+// session store too).
 function storageApi(extensionId: string): ExtensionStorageApi {
   const prefix = `${extensionId}::`
   return {

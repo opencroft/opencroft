@@ -1,4 +1,5 @@
-import { getSetting, upsertSetting } from '@/server/data'
+import { mutateSettingData, withSettingLock } from '@/app/_authed/(settings)/_server/settings-cas'
+import { getSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
 
 // Durable map of chat tab → the agent's ACP session id, stored in the settings
 // table (the data volume) — like the global MCP server list in mcp-store.ts —
@@ -32,47 +33,55 @@ function normalize(value: StoredValue | undefined): PersistedSession | null {
   return value ? { id: value.id, prompted: value.prompted } : null
 }
 
-async function readStore(): Promise<Store> {
-  const row = await getSetting(SETTING_ID)
-  if (!row) {
-    return {}
-  }
-  return (JSON.parse(row.data) as { sessions?: Store }).sessions ?? {}
-}
-
-async function writeStore(store: Store): Promise<void> {
-  await upsertSetting(SETTING_ID, JSON.stringify({ sessions: store }))
+function storeFromRaw(raw: Record<string, unknown>): Store {
+  return (raw as { sessions?: Store }).sessions ?? {}
 }
 
 export async function readPersistedSession(tabKey: string): Promise<PersistedSession | null> {
-  return normalize((await readStore())[tabKey])
+  const row = await getSettingImpl(SETTING_ID)
+  const store = row ? storeFromRaw(row.data) : {}
+  return normalize(store[tabKey])
 }
 
 /**
  * `prompted` only ever moves false → true: a session that has been given its
  * context does not lose it because something later re-registered the pointer.
+ *
+ * Read-modify-write against the shared `agent-tab-sessions` row, so this goes
+ * through the mutex + version-CAS mechanism (settings-cas.ts) rather than a
+ * plain read-then-write — two tab keys writing concurrently share that one
+ * row, and a plain write here has the identical lost-update shape already
+ * closed for extension storage.
  */
 export async function writePersistedSession(tabKey: string, sessionId: string, prompted: boolean): Promise<void> {
-  const store = await readStore()
-  const current = normalize(store[tabKey])
-  const next: PersistedSession = {
-    id: sessionId,
-    prompted: current?.id === sessionId ? current.prompted || prompted : prompted,
-  }
-  if (current && current.id === next.id && current.prompted === next.prompted) {
-    return
-  }
-  store[tabKey] = next
-  await writeStore(store)
+  await withSettingLock(SETTING_ID, () =>
+    mutateSettingData(SETTING_ID, (raw) => {
+      const store = storeFromRaw(raw)
+      const current = normalize(store[tabKey])
+      const next: PersistedSession = {
+        id: sessionId,
+        prompted: current?.id === sessionId ? current.prompted || prompted : prompted,
+      }
+      if (current && current.id === next.id && current.prompted === next.prompted) {
+        return raw
+      }
+      return { sessions: { ...store, [tabKey]: next } }
+    }),
+  )
 }
 
 export async function deletePersistedSession(tabKey: string): Promise<void> {
-  const store = await readStore()
-  if (!(tabKey in store)) {
-    return
-  }
-  delete store[tabKey]
-  await writeStore(store)
+  await withSettingLock(SETTING_ID, () =>
+    mutateSettingData(SETTING_ID, (raw) => {
+      const store = storeFromRaw(raw)
+      if (!(tabKey in store)) {
+        return raw
+      }
+      const next = { ...store }
+      delete next[tabKey]
+      return { sessions: next }
+    }),
+  )
 }
 
 // Durable map of chat tab -> config-option overrides the user set on that
@@ -86,20 +95,14 @@ const CONFIG_OPTIONS_SETTING_ID = 'agent-tab-config-options'
 
 type ConfigOptionsStore = Record<string, Record<string, string | boolean>>
 
-async function readConfigOptionsStore(): Promise<ConfigOptionsStore> {
-  const row = await getSetting(CONFIG_OPTIONS_SETTING_ID)
-  if (!row) {
-    return {}
-  }
-  return (JSON.parse(row.data) as { options?: ConfigOptionsStore }).options ?? {}
-}
-
-async function writeConfigOptionsStore(store: ConfigOptionsStore): Promise<void> {
-  await upsertSetting(CONFIG_OPTIONS_SETTING_ID, JSON.stringify({ options: store }))
+function configOptionsStoreFromRaw(raw: Record<string, unknown>): ConfigOptionsStore {
+  return (raw as { options?: ConfigOptionsStore }).options ?? {}
 }
 
 export async function readPersistedConfigOptions(tabKey: string): Promise<Record<string, string | boolean>> {
-  return (await readConfigOptionsStore())[tabKey] ?? {}
+  const row = await getSettingImpl(CONFIG_OPTIONS_SETTING_ID)
+  const store = row ? configOptionsStoreFromRaw(row.data) : {}
+  return store[tabKey] ?? {}
 }
 
 export async function writePersistedConfigOption(
@@ -107,16 +110,25 @@ export async function writePersistedConfigOption(
   configId: string,
   value: string | boolean,
 ): Promise<void> {
-  const store = await readConfigOptionsStore()
-  store[tabKey] = { ...(store[tabKey] ?? {}), [configId]: value }
-  await writeConfigOptionsStore(store)
+  await withSettingLock(CONFIG_OPTIONS_SETTING_ID, () =>
+    mutateSettingData(CONFIG_OPTIONS_SETTING_ID, (raw) => {
+      const store = configOptionsStoreFromRaw(raw)
+      const nextTab = { ...(store[tabKey] ?? {}), [configId]: value }
+      return { options: { ...store, [tabKey]: nextTab } }
+    }),
+  )
 }
 
 export async function deletePersistedConfigOptions(tabKey: string): Promise<void> {
-  const store = await readConfigOptionsStore()
-  if (!(tabKey in store)) {
-    return
-  }
-  delete store[tabKey]
-  await writeConfigOptionsStore(store)
+  await withSettingLock(CONFIG_OPTIONS_SETTING_ID, () =>
+    mutateSettingData(CONFIG_OPTIONS_SETTING_ID, (raw) => {
+      const store = configOptionsStoreFromRaw(raw)
+      if (!(tabKey in store)) {
+        return raw
+      }
+      const next = { ...store }
+      delete next[tabKey]
+      return { options: next }
+    }),
+  )
 }
