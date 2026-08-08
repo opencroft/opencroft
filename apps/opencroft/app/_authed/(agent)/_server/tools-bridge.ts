@@ -103,7 +103,10 @@ function getStaticTools(): ConvertedTool[] {
 // on every call (see getExtensionToolDefinitions()/getAgentToolDefinitions())
 // so a tool installed, edited, or created on the canvas appears without an
 // app restart.
-export async function opencroftLocalTools(caller: ToolsCaller = {}): Promise<LocalTool[]> {
+// `caller` is required rather than defaulted: a default would silently stand in
+// for a call site that forgot to say who is asking, which is the one thing this
+// argument exists to make explicit. Callers with nobody to name pass `{}`.
+export async function opencroftLocalTools(caller: ToolsCaller): Promise<LocalTool[]> {
   const callerAgent = await callingAgentName(caller)
   const staticNames = new Set(toolDefinitions.map((t) => t.name))
   const extensionDefs = await getExtensionToolDefinitions(staticNames)

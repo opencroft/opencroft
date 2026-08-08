@@ -267,6 +267,33 @@ test('loadSession seeds configOptions from the response when nothing was replaye
   await client.deleteSession(sessionId)
 })
 
+// listTools feeds the editors that decide what a ROLE may reach, so it asks a
+// dynamic tools source for the whole registry with no caller. Both halves of
+// that matter: a factory that is handed nothing at all breaks on a host whose
+// factory reads the caller, and one told to build for a specific caller could
+// hide an identity-gated tool from the screen that governs it.
+test('listTools resolves a dynamic tools source for no particular caller', async () => {
+  const seen: unknown[] = []
+  const client = createAgentClient({
+    tools: async (caller) => {
+      seen.push(caller)
+      return [
+        { name: 'acts-as-caller', description: 'gated on who is calling', inputSchema: {}, handler: async () => ({}) },
+        { name: 'plain', description: 'gated on nothing', inputSchema: {}, handler: async () => ({}) },
+      ]
+    },
+  })
+
+  const listed = await client.listTools()
+
+  assert.deepEqual(seen, [{}], 'the factory is called with an empty caller, not with undefined')
+  assert.deepEqual(
+    listed.map((tool) => tool.name),
+    ['acts-as-caller', 'plain'],
+    'the whole registry is listed — identity decides what a tool does, not whether it can be granted',
+  )
+})
+
 // A session/load replay streams history with no turn boundaries of its own, so
 // every replayed turn but the last used to contain no terminal event and read
 // as cut off. loadSession now reconstructs a boundary at the start of each

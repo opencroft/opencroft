@@ -29,6 +29,13 @@ export type SkillsInput = SkillDef[] | (() => Promise<SkillDef[]>)
  * live session. A host must treat that as "unidentified", never as a default
  * caller: this is the only thing standing between a tool that acts AS someone
  * and a tool that acts as anyone.
+ *
+ * A FACTORY STILL RETURNS ITS WHOLE TOOLSET FOR AN EMPTY CALLER. Identity
+ * belongs in what a tool does when invoked — refusing, or acting as that agent
+ * — not in whether the tool exists. The listing is also read with no caller at
+ * all (see listTools, which feeds the editors that decide what a role may
+ * reach), so a factory that withheld tools from an unidentified caller would
+ * hide them from the screen that governs them.
  */
 export interface ToolsCaller {
   mcpIdentity?: string

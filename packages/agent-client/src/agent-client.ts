@@ -1140,9 +1140,17 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // The host's registered LocalTools (for role-permission editors). Resolves
     // a dynamic tools source (e.g. live agent-tool graph nodes) same as a turn
     // would. Per-session MCP and skill tools are separate and not listed here.
+    //
+    // No caller, deliberately: this lists the registry for an editor deciding
+    // what a ROLE may reach, which is a question about the tools, not about
+    // anyone calling them. A caller's identity changes what a tool does when
+    // invoked; it must not change whether the tool can be granted, or an
+    // identity-gated tool would be missing from the very screen that governs
+    // it (see ToolsCaller — a factory returns its full toolset for an empty
+    // caller).
     async listTools(): Promise<{ name: string; description: string }[]> {
       const tools = options.tools ?? []
-      const resolved = typeof tools === 'function' ? await tools() : tools
+      const resolved = typeof tools === 'function' ? await tools({}) : tools
       return resolved.map((tool) => ({ name: tool.name, description: tool.description }))
     },
 
