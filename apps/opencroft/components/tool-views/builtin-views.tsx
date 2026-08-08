@@ -680,8 +680,10 @@ function UpdateNodesView({ args, requestId, mode }: ToolViewProps) {
                 onClick={() => setOpenId(active ? null : update.nodeId)}
               >
                 <GitCompare />
-                <span className='truncate flex-1 text-left'>{name}</span>
-                <span className='text-[10px] text-muted-foreground truncate'>{changeSummary(update)}</span>
+                <span className='min-w-0 flex-1 truncate text-left'>{name}</span>
+                <span className='min-w-0 shrink truncate text-[10px] text-muted-foreground'>
+                  {changeSummary(update)}
+                </span>
               </Button>
               {mode === 'history' && active && <NodeDiff mode={mode} update={update} />}
             </div>
