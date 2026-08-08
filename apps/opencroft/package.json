@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite dev",
     "test": "node ../../scripts/run-tests.mjs app server components scripts",
-    "pretypecheck": "node scripts/check-workspace-deps.mjs",
+    "pretypecheck": "node scripts/check-workspace-deps.mjs && node scripts/generate-route-tree.mjs",
     "smoke": "node scripts/smoke-check.mjs",
     "typecheck": "node ../../scripts/run-typecheck.mjs app server",
     "dev:ext": "npx tsx scripts/watch-extensions.ts",
