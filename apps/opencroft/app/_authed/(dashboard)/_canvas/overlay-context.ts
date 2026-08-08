@@ -15,7 +15,6 @@ import {
 } from 'react'
 
 import type { CommandMode } from '@/app/_authed/(dashboard)/_canvas/canvas-command-bar'
-import { recordActivate, recordDismiss, recordSlotWrite } from '@/app/_authed/(extension-runtime)/_client/debug-probe'
 
 type Slot = 'header' | 'content' | 'menu' | 'bar'
 
@@ -87,7 +86,6 @@ function useOverlayState(): { controls: OverlaySlotControls; values: OverlaySlot
   const containerRef = useRef<HTMLElement | null>(null)
 
   const setSlot = useCallback((slot: Slot, node: ReactNode | null) => {
-    recordSlotWrite(slot, node !== null)
     if (slot === 'header') {
       setHeader(node)
       return
@@ -117,7 +115,6 @@ export function OverlayProvider({ children }: { children: ReactNode }) {
   const [commandFocused, setCommandFocused] = useState(false)
 
   const activate = useCallback((next: CommandMode, nextParams?: unknown) => {
-    recordActivate(next, nextParams !== undefined)
     setMode(next)
     setParams(nextParams ?? null)
     setCommandFocused(true)
@@ -125,7 +122,6 @@ export function OverlayProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const dismiss = useCallback(() => {
-    recordDismiss()
     setCommandFocused(false)
     slots.setSlot('content', null)
     slots.setSlot('menu', null)

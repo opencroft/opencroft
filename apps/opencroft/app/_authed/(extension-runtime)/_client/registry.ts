@@ -3,7 +3,6 @@
 import * as lucideIcons from 'lucide-react'
 import type { ComponentType } from 'react'
 
-import { recordRegisterCall, setSnapshotFn } from '@/app/_authed/(extension-runtime)/_client/debug-probe'
 import type {
   CommandModeDefinition,
   ExtensionDeclaration,
@@ -78,7 +77,6 @@ class ExtensionRegistry {
       this.commandModes.set(mode.id, mode)
     }
     providerRegistry.register(decl.manifest.id, decl.provides ?? {})
-    recordRegisterCall(decl.manifest.id, [...this.commandModes.keys()])
   }
 
   allCommandModes(): CommandModeDefinition[] {
@@ -172,8 +170,3 @@ class ExtensionRegistry {
 }
 
 export const extensionRegistry = new ExtensionRegistry()
-
-setSnapshotFn(() => ({
-  commandModeIds: extensionRegistry.allCommandModes().map((m) => m.id),
-  extensionIds: extensionRegistry.all().map((d) => d.manifest.id),
-}))
