@@ -103,9 +103,28 @@ interface AgentChatProps {
   // When true, chains render expanded (full detail) by default instead of the
   // collapsed last-message-only view.
   defaultExpanded?: boolean
+  // The typing indicator shown at the foot of the message list while a turn
+  // runs. On by default, because a conversation with no other activity
+  // affordance needs it.
+  //
+  // A host that pins its own activity indication OUTSIDE the scroll region
+  // turns this off, and should: the two say the same thing, so leaving both on
+  // shows a reader at the bottom of the transcript the same fact twice. The
+  // pinned kind is the more capable of the two — it survives scrolling, and it
+  // can distinguish a turn stalled on a permission request from one that is
+  // running, which a turn-is-running flag alone cannot — so it takes over
+  // rather than sitting alongside.
+  showThinkingIndicator?: boolean
 }
 
-export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultExpanded }: AgentChatProps) {
+export function AgentChat({
+  session,
+  emptyText,
+  agentAvatar,
+  agentName,
+  defaultExpanded,
+  showThinkingIndicator = true,
+}: AgentChatProps) {
   const displayName = agentName ?? session.botName
   // Computed over the FULL message list, not the visible window: turn indices
   // (for edit/fork) must stay correct regardless of how much is rendered, and
@@ -167,7 +186,7 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
       renderTool={renderToolCall}
       footer={
         <>
-          {session.waiting && <ThinkingIndicator />}
+          {showThinkingIndicator && session.waiting && <ThinkingIndicator />}
           <AgentChatStatusIndicators />
         </>
       }
