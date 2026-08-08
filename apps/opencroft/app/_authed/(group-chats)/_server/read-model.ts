@@ -83,6 +83,13 @@ export interface GroupChatThreadEntry {
    * member" to "renders dimmed" belongs to the page, not to a server read.
    */
   agentIsMember: boolean
+  /**
+   * Whether this thread has unsent composer text. The draft's own text is not
+   * exposed on list rows — a list of twenty threads has no use for twenty
+   * drafts, same reasoning as this doc comment gives for `sessionKey` above
+   * having been kept off list rows before it was needed for live status.
+   */
+  hasDraft: boolean
 }
 
 // A reference that no longer resolves is shown, not hidden. `agentNodeId` is
@@ -241,11 +248,19 @@ export async function listThreadsInGroupChatView(
     createdAt: t.createdAt,
     agentIsMember: agentMembers.has(t.agentNodeId),
     sessionKey: t.sessionKey,
+    hasDraft: Boolean(t.draft?.trim()),
   }))
 }
 
-/** One thread, with its agent resolved. Same shape the list entries carry — see `GroupChatThreadEntry.sessionKey`. */
-export async function getThreadView(request: Request, threadId: string): Promise<GroupChatThreadEntry> {
+/**
+ * One thread, with its agent resolved. Same shape the list entries carry,
+ * plus the draft's own text — which list rows still don't get, for the same
+ * reason `hasDraft`'s doc comment on `GroupChatThreadEntry` gives.
+ */
+export async function getThreadView(
+  request: Request,
+  threadId: string,
+): Promise<GroupChatThreadEntry & { draft: string | null }> {
   const thread = await getThread(request, threadId)
   const agents = await agentsByNodeId()
   const agentMembers = await agentMemberIds(request, thread.groupChatId)
@@ -256,6 +271,8 @@ export async function getThreadView(request: Request, threadId: string): Promise
     agent: agents.get(thread.agentNodeId) ?? missingAgent(thread.agentNodeId),
     createdAt: thread.createdAt,
     agentIsMember: agentMembers.has(thread.agentNodeId),
+    hasDraft: Boolean(thread.draft?.trim()),
     sessionKey: thread.sessionKey,
+    draft: thread.draft,
   }
 }

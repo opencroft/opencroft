@@ -17,6 +17,7 @@ import {
   getGroupChatThreadView,
   getMyGroupChatView,
   sendGroupChatThreadMessage,
+  setGroupChatThreadDraft,
 } from '@/app/_authed/(group-chats)/_server/actions'
 
 // Reading one thread inside a group chat.
@@ -68,7 +69,7 @@ function ThreadConversation({
   chat,
   onBack,
 }: {
-  thread: GroupChatThreadEntry
+  thread: GroupChatThreadEntry & { draft: string | null }
   chat: GroupChatDetailView
   onBack: () => void
 }) {
@@ -119,6 +120,20 @@ function ThreadConversation({
   // overlay slot on every unrelated re-render (session streaming, etc.).
   const compactControl = useMemo(() => <ThreadCompactControl threadId={thread.id} />, [thread.id])
 
+  // AgentCommandBarHost hands back the sessionKey it was given as `key` (it
+  // is `thread.sessionKey`, the same value passed as `source.tabKey` above),
+  // but the draft belongs to the thread ROW, not a settings-list entry keyed
+  // by that string -- unlike the 1:1 chat's SessionEntry.draft, so this closes
+  // over thread.id instead of using the callback's own key argument.
+  const onDraftChange = useCallback(
+    (_key: string, draft: string) => {
+      setGroupChatThreadDraft({ data: { threadId: thread.id, draft } }).catch((err) => {
+        console.error('Failed to save thread draft', thread.id, err)
+      })
+    },
+    [thread.id],
+  )
+
   // The composer reuses AgentCommandBarHost (the same component the 1:1 chat
   // uses) with `inline` -- it renders the bar here instead of publishing to the
   // dashboard overlay, which a standalone route has no provider for. startIcon
@@ -149,6 +164,8 @@ function ThreadConversation({
       placeholder={`Message ${thread.agent.name}`}
       sendError={acp.session.sendError}
       onDismissSendError={acp.session.dismissSendError}
+      savedDraft={thread.draft ?? undefined}
+      onDraftChange={onDraftChange}
     />
   )
 

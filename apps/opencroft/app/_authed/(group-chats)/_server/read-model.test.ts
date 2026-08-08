@@ -122,6 +122,44 @@ test('a thread carries its agent resolved, not a bare node id', async () => {
   )
 })
 
+// The list gets only the boolean, the single-thread view gets the text itself
+// -- same reasoning as sessionKey's own doc comment: twenty rows have no use
+// for twenty drafts.
+test('hasDraft reflects an unsent draft on both the list and the single-thread view, cleared by an empty string', async () => {
+  const owner = await makeUser('view-draft@example.test', 'Draft Owner')
+  const chat = await model.createGroupChat(reqAs(owner), 'drafts')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: `group-chat:${chat.id}:agent-a:draft-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  const beforeList = await view.listThreadsInGroupChatView(reqAs(owner), chat.id)
+  assert.equal(beforeList[0]?.hasDraft, false, 'no draft yet')
+  const beforeSingle = await view.getThreadView(reqAs(owner), thread.id)
+  assert.equal(beforeSingle.hasDraft, false)
+  assert.equal(beforeSingle.draft, null)
+
+  await model.setThreadDraft(reqAs(owner), thread.id, 'unsent text')
+
+  const afterList = await view.listThreadsInGroupChatView(reqAs(owner), chat.id)
+  assert.equal(afterList[0]?.hasDraft, true, 'the list must reflect the saved draft')
+  const afterSingle = await view.getThreadView(reqAs(owner), thread.id)
+  assert.equal(afterSingle.hasDraft, true)
+  assert.equal(afterSingle.draft, 'unsent text', 'the single-thread view carries the text itself, unlike the list')
+
+  await model.setThreadDraft(reqAs(owner), thread.id, '')
+
+  const cleared = await view.getThreadView(reqAs(owner), thread.id)
+  assert.equal(cleared.hasDraft, false, 'an empty string clears the draft, the same as the 1:1 chat')
+})
+
 // The flag the thread list renders a removed agent's thread from. It is the
 // membership fact, not the presentation: the screen turns it into `disabled`.
 test('a thread reports whether its agent is still a member, before and after removal', async () => {

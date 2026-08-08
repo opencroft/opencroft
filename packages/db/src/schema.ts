@@ -366,6 +366,12 @@ export const groupChatThread = pgTable(
     // agent holds still current?" -- and a table would store one row per
     // thread to answer it.
     deliveredContextSignature: text(),
+    // Unsent composer text for this thread, persisted so it survives
+    // navigating away, switching threads, and a page reload — the same
+    // draft mechanism SessionEntry.draft gives the 1:1 chat, kept per-thread
+    // here rather than in that settings-row list, since a thread is not a
+    // chat tab and does not belong in that registry.
+    draft: text(),
     // Provenance, not ownership — same reasoning as GroupChat.createdByUserId
     // above. Deleting the user who started a thread must not delete the
     // binding row while the ACP session it points at keeps existing.

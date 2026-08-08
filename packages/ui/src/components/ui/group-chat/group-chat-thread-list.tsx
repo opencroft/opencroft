@@ -1,6 +1,6 @@
 'use client'
 
-import { ChatListItem } from '@/components/ui/chat/chat-list-item'
+import { ChatListItem, type ChatStatus } from '@/components/ui/chat/chat-list-item'
 import { cn } from '@/lib/utils'
 
 export interface AgentRef {
@@ -13,11 +13,33 @@ export interface GroupChatThreadListItem {
   id: string
   title: string | null
   agent: AgentRef
+  // No longer displayed -- the second line carries the agent's live state
+  // instead. Kept on the contract because every host already supplies it and it
+  // is the list's natural ordering key; removing it would be churn with nothing
+  // on the other side of it.
   createdAt: Date
   // True when the thread's agent is no longer a member of the group chat. The
   // row stays (the conversation is still readable) but reads as inactive, and
   // acting on it is gated by the host. Set by the host from membership.
   disabled?: boolean
+  // What the thread's agent is doing right now. Same four values, same meanings
+  // and the same type as an ordinary chat row -- a thread IS a session, so it
+  // gets the session vocabulary rather than one of its own:
+  //
+  //   waiting  blocked on an unresolved permission request -- needs a person
+  //   working  a turn is actively running
+  //   idle     the agent process is alive but not busy
+  //   offline  no process
+  //
+  // Domain truth: this list has nothing to derive it from and never guesses.
+  // Where several could apply the host resolves it, waiting > working > idle >
+  // offline. `offline` is a real state that is shown, not the absence of one --
+  // absence is `undefined`, which shows nothing.
+  status?: ChatStatus
+  // Unsent composer text exists for this thread. Forwarded to ChatListItem's
+  // own pencil indicator unchanged -- this list has no draft storage of its
+  // own, the host does.
+  hasDraft?: boolean
 }
 
 export interface GroupChatThreadListProps {
@@ -30,14 +52,24 @@ export interface GroupChatThreadListProps {
   className?: string
 }
 
-const dateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
-
 // The threads inside one group chat. A thread is a session with exactly one
 // agent, so a row is agent-shaped — which is why the existing ChatListItem fits
-// and is reused rather than duplicated. No status, typing or unread is passed:
-// that data does not exist in phase 1. `createdAt` is shown labelled "created"
-// so it can never read as activity (GroupChat.updatedAt is not bumped by thread
-// activity, so a bare timestamp would be quietly misleading).
+// and is reused rather than duplicated.
+//
+// **The second line is the agent and what it is doing.** ChatListItem already
+// owns that composition: give it a `description` and a `status` and it renders
+// "Carol · Working", with the matching dot on the avatar. So this forwards the
+// state and passes the bare agent name, and the row reads exactly like the
+// sidebar's row for the same session -- which is the point. A thread list and a
+// chat list answer the same question about the same kind of thing, and the two
+// surfaces agreeing is worth more than either one being separately clever.
+//
+// **The creation date is gone.** It was only ever there because no activity
+// existed to show: a bare timestamp would have read as activity (GroupChat's
+// own updatedAt is not bumped by thread activity), so it was labelled "created"
+// to stop it lying. Now that the real thing is available the label has nothing
+// to do, and there is no room to keep both -- ChatListItem composes exactly
+// `description · statusWord`, with no third segment, and the line truncates.
 export function GroupChatThreadList({ threads, activeId, onSelect, onDelete, className }: GroupChatThreadListProps) {
   return (
     <div className={cn('flex w-full min-w-0 flex-col gap-0.5', className)}>
@@ -46,11 +78,14 @@ export function GroupChatThreadList({ threads, activeId, onSelect, onDelete, cla
           key={t.id}
           id={t.id}
           title={t.title ?? 'Untitled'}
-          description={
-            t.disabled
-              ? `${t.agent.name} · agent removed`
-              : `${t.agent.name} · created ${dateFormatter.format(t.createdAt)}`
-          }
+          description={t.disabled ? `${t.agent.name} · agent removed` : t.agent.name}
+          // A removed agent's thread is never given a state, whatever its
+          // session is doing. The row is dimmed already, sending is blocked
+          // regardless of what a dot would say, and "agent removed" is the fact
+          // that governs what the reader can do next -- a second state beside
+          // it would only make the row argue with itself.
+          status={t.disabled ? undefined : t.status}
+          hasDraft={t.hasDraft}
           avatarUrl={t.agent.avatarUrl}
           active={t.id === activeId}
           disabled={t.disabled}

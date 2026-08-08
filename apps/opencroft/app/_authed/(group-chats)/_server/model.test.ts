@@ -540,6 +540,36 @@ test('deleteThread tears the session down before dropping the row it is reachabl
   assert.equal(remaining.length, 0, 'and the row is gone once the delete completes')
 })
 
+test('a member can save and clear a thread draft; a non-member is refused and changes nothing', async () => {
+  const owner = await makeUser('draft-owner@example.test')
+  const outsider = await makeUser('draft-outsider@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'draft guard')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: `group-chat:${chat.id}:agent-a:draft-guard-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  const refusal = await captureRefusal(() => model.setThreadDraft(reqAs(outsider), thread.id, 'sneaked in'))
+  assert.equal(refusal.code, 'not-found')
+  const untouched = await model.getThread(reqAs(owner), thread.id)
+  assert.equal(untouched.draft, null, 'a refused write must not have reached the row')
+
+  await model.setThreadDraft(reqAs(owner), thread.id, 'work in progress')
+  const saved = await model.getThread(reqAs(owner), thread.id)
+  assert.equal(saved.draft, 'work in progress')
+
+  await model.setThreadDraft(reqAs(owner), thread.id, '')
+  const cleared = await model.getThread(reqAs(owner), thread.id)
+  assert.equal(cleared.draft, '', 'an empty string clears it, the same as the 1:1 chat')
+})
+
 // ---------------------------------------------------------------------------
 // REMOVING A MEMBER.
 //

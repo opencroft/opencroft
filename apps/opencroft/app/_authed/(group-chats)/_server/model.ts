@@ -75,6 +75,8 @@ export interface GroupChatThreadSummary {
   sessionKey: string
   title: string | null
   createdAt: Date
+  /** Unsent composer text for this thread, or null when there is none. */
+  draft: string | null
 }
 
 /**
@@ -227,6 +229,7 @@ export async function listThreadsInGroupChat(request: Request, groupChatId: stri
       sessionKey: groupChatThread.sessionKey,
       title: groupChatThread.title,
       createdAt: groupChatThread.createdAt,
+      draft: groupChatThread.draft,
     })
     .from(groupChatThread)
     .where(eq(groupChatThread.groupChatId, groupChatId))
@@ -256,6 +259,7 @@ export async function getThread(request: Request, threadId: string): Promise<Gro
       sessionKey: groupChatThread.sessionKey,
       title: groupChatThread.title,
       createdAt: groupChatThread.createdAt,
+      draft: groupChatThread.draft,
     })
     .from(groupChatThread)
     .where(eq(groupChatThread.id, threadId))
@@ -858,6 +862,7 @@ export async function startThread(
       sessionKey: groupChatThread.sessionKey,
       title: groupChatThread.title,
       createdAt: groupChatThread.createdAt,
+      draft: groupChatThread.draft,
     })
   if (!thread) {
     throw new Error('The thread could not be created')
@@ -1113,6 +1118,31 @@ export async function deleteThread(request: Request, threadId: string): Promise<
   // that reopens onto a fresh session via `ensureLocalSessionImpl`.
   await forgetLocalSessionImpl(row.sessionKey)
   await db.delete(groupChatThread).where(eq(groupChatThread.id, threadId))
+}
+
+/**
+ * Save (or clear, with an empty string) a thread's unsent composer draft --
+ * the same mechanism SessionEntry.draft gives the 1:1 chat, kept per-thread
+ * on the thread's own row rather than in that settings-row list, since a
+ * thread is not a chat tab and does not belong in that registry.
+ *
+ * Membership-gated like getThread/deleteThread -- same single refusal for a
+ * missing thread and a non-member.
+ */
+export async function setThreadDraft(request: Request, threadId: string, draft: string): Promise<void> {
+  const sessionUser = await requireSignedInUser(request)
+  const [row] = await db
+    .select({ groupChatId: groupChatThread.groupChatId })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.id, threadId))
+    .limit(1)
+  if (!row) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  await db.update(groupChatThread).set({ draft }).where(eq(groupChatThread.id, threadId))
 }
 
 // ── The agent-facing surface ─────────────────────────────────────────────

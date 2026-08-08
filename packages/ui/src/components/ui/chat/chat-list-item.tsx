@@ -69,7 +69,7 @@ interface ChatListItemProps {
   // `contextmenu` event and nothing else. So this is a notification, not a
   // handle. A host that needs the menu at a moment of its own choosing
   // dispatches that event; the surrounding list also uses this to drop an
-  // in-flight touch press when a menu appears mid-gesture.
+  // in-flight touch press when a menu appears.
   onMenuOpenChange?: (open: boolean) => void
 }
 

@@ -32,6 +32,7 @@ import {
   renameGroupChat,
   sendMessageInThread,
   setGroupChatTopic,
+  setThreadDraft,
   startThread,
   threadCompactStatus,
 } from '@/app/_authed/(group-chats)/_server/model'
@@ -312,7 +313,17 @@ export const listDirectoryUsersForPicker = createServerFn({ method: 'GET', stric
 
 export const getGroupChatThreadView = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((threadId: string) => threadId)
-  .handler(async ({ data: threadId }): Promise<GroupChatThreadEntry> => getThreadView(getRequest(), threadId))
+  .handler(
+    async ({ data: threadId }): Promise<GroupChatThreadEntry & { draft: string | null }> =>
+      getThreadView(getRequest(), threadId),
+  )
+
+// Save (or clear, with an empty string) a thread's composer draft. Fired on
+// the same debounce/flush schedule AgentCommandBarHost already drives for the
+// 1:1 chat -- see setDraft in use-agent-sessions.ts for the sibling call.
+export const setGroupChatThreadDraft = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { threadId: string; draft: string }) => data)
+  .handler(async ({ data }): Promise<void> => setThreadDraft(getRequest(), data.threadId, data.draft))
 
 export const deleteGroupChatThread = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((threadId: string) => threadId)
