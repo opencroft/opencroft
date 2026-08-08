@@ -218,19 +218,35 @@
           "id": "send",
           "label": "Send",
           "icon": "Send",
-          "description": "Deliver a message to an agent through this node — same routing as a wired text-in delivery (session reuse/create, envelope composition, hidden-by-default registration). agent/job fall back to this node's configured defaults when omitted. Returns the target session key, whether a new session was created, and whether force actually interrupted a running turn — never the message content.",
+          "description": "Deliver a message to an agent through this node — same routing as a wired text-in delivery (session reuse/create, envelope composition, hidden-by-default registration). agent/job fall back to this node's configured defaults when omitted. Pass `thread` instead to deliver into a group-chat thread this node's own wiring can reach — mutually exclusive with agent/job/key/session. Returns, for an agent:job send, the target session key, whether a new session was created and whether force actually interrupted a running turn; for a thread send, the thread reference and whether it queued behind a running turn or was delivered immediately. Never the message content.",
           "inputSchema": {
             "type": "object",
             "properties": {
               "message": { "type": "string", "description": "The message text to deliver" },
-              "agent": { "type": "string", "description": "Target agent slug; falls back to this node's default agent" },
+              "agent": {
+                "type": "string",
+                "description": "Target agent slug; falls back to this node's default agent"
+              },
               "job": { "type": "string", "description": "Target job slug; falls back to this node's default job" },
-              "key": { "type": "string", "description": "Optional session discriminator — same agent+job with a different key is a distinct, stable session" },
-              "title": { "type": "string", "description": "Optional session title, applied only when the session is first created" },
-              "session": { "type": "string", "description": "Legacy combined \"agent:<agent>:<job>\" key, honored when agent/job are omitted" },
+              "key": {
+                "type": "string",
+                "description": "Optional session discriminator — same agent+job with a different key is a distinct, stable session"
+              },
+              "title": {
+                "type": "string",
+                "description": "Optional session title, applied only when the session is first created"
+              },
+              "session": {
+                "type": "string",
+                "description": "Legacy combined \"agent:<agent>:<job>\" key, honored when agent/job are omitted"
+              },
               "force": {
                 "type": "boolean",
                 "description": "Cancel the agent's in-flight turn (if any) and enqueue this message after whatever's already queued, instead of waiting behind it. This interrupts the agent mid-work — use for urgent/corrective messages, not routine sends. No effect if the session isn't currently running a turn."
+              },
+              "thread": {
+                "type": "string",
+                "description": "A group-chat thread reference (\"<group-slug>:<agent-slug>:<thread-slug>\", a whole session key, or a thread id) to deliver into, instead of an agent:job session. Mutually exclusive with agent/job/key/session — carrying both is refused. Delivered only when the thread's own agent is one this node's wiring could otherwise reach; refused, clearly, for an unknown or unreachable thread."
               }
             },
             "required": ["message"]
@@ -266,7 +282,10 @@
             "properties": {
               "sessionKey": { "type": "string", "description": "Session key, as returned by listSessions" },
               "turns": { "type": "number", "description": "Number of turns to return (default 10, capped at 50)" },
-              "beforeIndex": { "type": "number", "description": "Cursor from a previous page's nextBeforeIndex — fetches the turns immediately before it" }
+              "beforeIndex": {
+                "type": "number",
+                "description": "Cursor from a previous page's nextBeforeIndex — fetches the turns immediately before it"
+              }
             },
             "required": ["sessionKey"]
           }

@@ -1654,6 +1654,151 @@ test('a removed agent cannot be reached by an agent sender either', async () => 
   assert.equal(refusal.code, 'agent-not-a-member')
 })
 
+// ---------------------------------------------------------------------------
+// deliverThreadFromNode — the entry point a send-message node's `thread`
+// envelope goes through, pinned directly here
+// rather than only through stream.ts's own integration test: this is its
+// contract in isolation, decoupled from any particular graph.
+// ---------------------------------------------------------------------------
+
+test('deliverThreadFromNode resolves the same forms sendMessageInThreadAsAgent does — readable ref, whole key, and id', async () => {
+  const owner = await makeUser('node-forms-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'node delivery forms')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message', {
+    title: 'Standup',
+  })
+  await waitForPrompts(prompts, 1)
+
+  const alwaysReachable = () => true
+
+  await model.deliverThreadFromNode('node-delivery-forms:agent-session:standup', 'by path', alwaysReachable)
+  await waitForPrompts(prompts, 2)
+  assert.match(prompts[1] ?? '', /by path/)
+
+  await model.deliverThreadFromNode(started.thread.sessionKey, 'by key', alwaysReachable)
+  await waitForPrompts(prompts, 3)
+  assert.match(prompts[2] ?? '', /by key/)
+
+  await model.deliverThreadFromNode(started.thread.id, 'by id', alwaysReachable)
+  await waitForPrompts(prompts, 4)
+  assert.match(prompts[3] ?? '', /by id/)
+})
+
+test('deliverThreadFromNode reports not-found for an unresolvable reference without calling isReachable', async () => {
+  let called = false
+  const outcome = await model.deliverThreadFromNode('nothing:here:at-all', 'hello', () => {
+    called = true
+    return true
+  })
+  assert.deepEqual(outcome, { status: 'not-found' })
+  assert.equal(called, false, 'a reference that resolves to nothing has no agent to check reachability for')
+})
+
+// THE CONVERGENCE ITSELF: deliverIntoThread
+// now opens its session through the SAME
+// resolveOrCreateSession/withSessionKeyLock the agent:job path uses, instead
+// of a second, unguarded call to ensureLocalSessionImpl. Two concurrent
+// deliveries into a thread whose session has never been opened must still
+// produce exactly one session and drop neither message — true both before and
+// after this change, since ensureLocalSessionImpl's own in-flight dedup
+// already coalesces calls that overlap this tightly (checked directly:
+// reverting resolveOrCreateSession to a bare ensureLocalSessionImpl call still
+// passes this test). What this convergence provably buys is ONE
+// serialization primitive instead of two that could drift apart — see
+// resolveOrCreateSession's own header in stream.ts for the narrower race that
+// difference closes.
+test('two concurrent deliveries into a brand-new thread session produce exactly one session, not two', async () => {
+  const owner = await makeUser('thread-race-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'thread race')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  // Inserted directly, NOT via startThread: the point is a thread whose
+  // session has never been opened, so both deliveries below race to open it.
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-session',
+      sessionKey: `group-chat:${chat.id}:agent-session:race-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  const prompts: string[] = []
+  let newSessionCalls = 0
+  const connection = {
+    newSession: async () => {
+      newSessionCalls += 1
+      // Widens the race window: without the lock, both callers would already
+      // have read "no session" before either finishes creating one.
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      return { sessionId: `race-${crypto.randomUUID()}` }
+    },
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      prompts.push(params.prompt.map((b) => b.text ?? '').join(''))
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', slug('Agent Session')),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store)
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  const alwaysReachable = () => true
+  await Promise.all([
+    model.deliverThreadFromNode(thread.sessionKey, 'first', alwaysReachable),
+    model.deliverThreadFromNode(thread.sessionKey, 'second', alwaysReachable),
+  ])
+
+  assert.equal(
+    newSessionCalls,
+    1,
+    'two concurrent deliveries into one new thread session must open exactly one session',
+  )
+  assert.equal(prompts.length, 2, 'and neither message may be dropped')
+})
+
+test('deliverThreadFromNode reports not-reachable and delivers nothing when the caller-supplied check says no', async () => {
+  const owner = await makeUser('node-unreachable-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'node unreachable')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: `group-chat:${chat.id}:agent-a:node-unreachable-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  // The predicate is authoritative and caller-supplied — this proves the seam
+  // itself, independent of any real graph or reachablePairs computation.
+  const outcome = await model.deliverThreadFromNode(thread.sessionKey, 'should not land', () => false)
+  assert.deepEqual(outcome, { status: 'not-reachable' })
+})
+
 /** Seeds the agent-client store so 'Agent Session' resolves without spawning. */
 // `agentName` selects WHICH agent this connection stands in for: the spawn
 // config is derived from the agent's own workspace, so seeding two of these

@@ -22,18 +22,17 @@ import type { ChatEvent } from 'agent-client/types'
 import { stopLocalSessionProcessImpl } from '@/app/_authed/(agent)/_server/acp-impl'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { readSessions } from '@/app/_authed/(agent)/_server/agent-sessions-store'
-import {
-  agentJobName,
-  agentNodeName,
-  isAgentJobNode,
-  isAgentNode,
-} from '@/app/_authed/(agent)/_shared/agent-node-shape'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import {
   dispatchExecutionContext,
   type ExecDispatchSummary,
 } from '@/app/_authed/(extension-runtime)/_server/exec-dispatch'
-import { parseSessionKey } from '@/app/_authed/(extension-runtime)/_server/send-message-helpers'
+import {
+  parseSessionKey,
+  reachableAgentJobs,
+  reachablePairKey,
+  reachablePairs,
+} from '@/app/_authed/(extension-runtime)/_server/send-message-helpers'
 import { type ContextUsage, toContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import {
   type CompactAck,
@@ -41,10 +40,10 @@ import {
   deliverToSendMessageNode,
   getCompactStatusOnGraph,
   requestCompactOnGraph,
+  type SendMessageDeliveryResult,
   type GraphEdgeLike as SendMessageEdgeLike,
   type GraphNodeLike as SendMessageNodeLike,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
-import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSetting, setSetting } from '@/app/_authed/(settings)/_server/actions'
 import { mutateSettingData, withSettingLock } from '@/app/_authed/(settings)/_server/settings-cas'
 import { getSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
@@ -346,46 +345,11 @@ async function findSendMessageNode(
   }
 }
 
-// The agent/job slug pairs a send-message node can route to — same edge-walk
-// listAgents has always used, factored out so listSessions/listTurns can
-// filter the (node-independent) persisted session registry down to only the
-// sessions THIS node could actually reach, matching listAgents' own scoping.
-function reachableAgentJobs(
-  nodes: SendMessageNodeLike[],
-  edges: SendMessageEdgeLike[],
-): { agent: string; jobs: string[] }[] {
-  const jobsByAgentId = new Map<string, string[]>()
-  for (const edge of edges) {
-    const job = nodes.find((n) => n.id === edge.source && isAgentJobNode(n))
-    const jobName = job ? agentJobName(job) : ''
-    if (!job || !jobName) {
-      continue
-    }
-    const list = jobsByAgentId.get(edge.target) ?? []
-    list.push(slug(jobName))
-    jobsByAgentId.set(edge.target, list)
-  }
-  const out: { agent: string; jobs: string[] }[] = []
-  for (const node of nodes) {
-    if (!isAgentNode(node)) {
-      continue
-    }
-    const name = agentNodeName(node)
-    if (!name) {
-      continue
-    }
-    out.push({ agent: slug(name), jobs: jobsByAgentId.get(node.id) ?? [] })
-  }
-  return out
-}
-
-function reachablePairKey(agent: string, job: string): string {
-  return `${agent}::${job}`
-}
-
-function reachablePairs(nodes: SendMessageNodeLike[], edges: SendMessageEdgeLike[]): Set<string> {
-  return new Set(reachableAgentJobs(nodes, edges).flatMap((a) => a.jobs.map((j) => reachablePairKey(a.agent, j))))
-}
+// The agent/job slug pairs a send-message node can route to, and the graph
+// wiring behind group-chat thread reachability, live in
+// send-message-helpers.ts — imported above — so listSessions/listTurns
+// filtering the (node-independent) persisted session registry, and a thread
+// send's reachability check, both read the SAME authority, not a copy of it.
 
 export interface SessionSummary {
   sessionKey: string
@@ -563,10 +527,7 @@ export function splitIntoTurns(events: ChatEvent[], startIndex: number): { index
 }
 
 export interface HostSendMessageApi {
-  send(
-    nodeId: string,
-    payload: Record<string, unknown>,
-  ): Promise<{ sessionKey: string; created: boolean; forced: boolean }>
+  send(nodeId: string, payload: Record<string, unknown>): Promise<SendMessageDeliveryResult>
   listAgents(nodeId: string): Promise<{ agent: string; jobs: string[] }[]>
   listSessions(nodeId: string, params: { agent?: string; job?: string }): Promise<SessionSummary[]>
   listTurns(nodeId: string, params: { sessionKey: string; turns?: number; beforeIndex?: number }): Promise<TurnsPage>

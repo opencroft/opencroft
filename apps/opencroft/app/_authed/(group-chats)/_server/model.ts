@@ -17,12 +17,17 @@ import { and, asc, eq, inArray } from 'drizzle-orm'
 import {
   ensureLocalSessionImpl,
   forgetLocalSessionImpl,
+  hasActiveTurnImpl,
   promptLocalImpl,
   stopLocalSessionProcessImpl,
 } from '@/app/_authed/(agent)/_server/acp-impl'
 import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
-import type { CompactAck, CompactStatus } from '@/app/_authed/(extension-runtime)/_server/stream'
-import { getCompactStatusOnGraph, requestCompactOnGraph } from '@/app/_authed/(extension-runtime)/_server/stream'
+import type { CompactAck, CompactStatus, ThreadDeliveryOutcome } from '@/app/_authed/(extension-runtime)/_server/stream'
+import {
+  getCompactStatusOnGraph,
+  requestCompactOnGraph,
+  resolveOrCreateSession,
+} from '@/app/_authed/(extension-runtime)/_server/stream'
 import { GroupChatAccessError } from '@/app/_authed/(group-chats)/_shared/access-error'
 import { slug as slugify } from '@/app/_authed/(server)/_server/types'
 
@@ -902,7 +907,7 @@ export async function sendMessageInThread(
 }
 
 /** The columns every delivery path needs off a thread row. */
-interface ThreadDeliveryTarget {
+export interface ThreadDeliveryTarget {
   id: string
   groupChatId: string
   agentNodeId: string
@@ -920,19 +925,31 @@ const threadDeliveryColumns = {
 
 /**
  * THE ONE DELIVERY PATH INTO A THREAD. Every caller — a person in the browser,
- * an agent through the tool surface — reaches an agent through this function
- * and nothing else.
+ * an agent through the tool surface, a send-message node's graph-driven send
+ * (via deliverThreadFromNode) — reaches an agent through this function and
+ * nothing else.
  *
  * It deliberately performs NO authorization: each entry point above answers a
- * different question ("is this user a member?", "is this agent a member?") and
- * has already answered it. What is shared is delivery, and duplicating that is
+ * different question ("is this user a member?", "is this agent a member?",
+ * "is this thread's agent reachable from this send-message node?") and has
+ * already answered it. What is shared is delivery, and duplicating that is
  * how one caller quietly stops carrying standing context, or stops respecting
  * the agent-membership rule, without any test noticing.
  *
  * The one rule that IS here rather than in a caller: the thread's agent must
  * still be a member. That is a property of the thread, not of who is asking.
+ *
+ * Returns whether the message queued behind a turn already running or was
+ * dispatched immediately — read right after the session opens and before the
+ * prompt below, the same point `deliverToSendMessageNode`'s own `force`
+ * handling reads it at, for the same reason: once `promptLocalImpl` is called
+ * activeTurns no longer reflects what was true when THIS message arrived.
  */
-async function deliverIntoThread(row: ThreadDeliveryTarget, text: string, opts?: { front?: boolean }): Promise<void> {
+async function deliverIntoThread(
+  row: ThreadDeliveryTarget,
+  text: string,
+  opts?: { front?: boolean },
+): Promise<{ queued: boolean }> {
   // The agent has to still be a member, whoever is sending. Without this,
   // removing an agent is decoration: its threads survive by design, they carry
   // the sessionKey, and every send through them would keep reaching it. This
@@ -943,11 +960,22 @@ async function deliverIntoThread(row: ThreadDeliveryTarget, text: string, opts?:
   if (!(await isAgentMember(row.groupChatId, row.agentNodeId))) {
     throw new GroupChatAccessError('agent-not-a-member', 'That agent is no longer a member of this group chat')
   }
-  const opened = await ensureLocalSessionImpl({
+  // The same resolve-or-create the agent:job path uses,
+  // not a second copy of it: until this converged on resolveOrCreateSession, a
+  // thread's session-open here was ensureLocalSessionImpl called directly,
+  // unguarded by the check-then-act lock the agent:job path already had.
+  // ensureLocalSessionImpl's own in-flight dedup already coalesces two calls
+  // that overlap in time, which is why a from-scratch concurrency test here
+  // still passes even with that lock removed (checked directly) — so the
+  // provable gain of this change is ONE delivery-serialization primitive
+  // instead of two that could drift apart, not a newly-closed race with a
+  // test that discriminates it from ensureInFlight's own protection.
+  const opened = await resolveOrCreateSession(row.sessionKey, {
     agentNodeId: row.agentNodeId,
     jobNodeId: '',
     tabKey: row.sessionKey,
   })
+  const queued = hasActiveTurnImpl(opened.sessionId)
 
   // ONCE ON CHANGE. If the chat's standing context has moved on since this
   // thread was last told about it, this message carries the new one; otherwise
@@ -988,6 +1016,7 @@ async function deliverIntoThread(row: ThreadDeliveryTarget, text: string, opts?:
       .set({ deliveredContextSignature: standing.signature })
       .where(eq(groupChatThread.id, row.id))
   }
+  return { queued }
 }
 
 /**
@@ -1295,4 +1324,43 @@ export async function sendMessageInThreadAsAgent(agentName: string, threadRef: s
   }
   const row = await resolveThreadForAgent(agentNodeId, threadRef)
   await deliverIntoThread(row, trimmed)
+}
+
+/**
+ * Send into a thread from a send-message node's graph-driven envelope — the
+ * third caller of the shared delivery path, distinct from both the ones
+ * above. Neither a user session nor a calling agent's own membership is the
+ * right gate here: a scheduled pipeline is asking on behalf of nobody in
+ * particular, so what stands in for authorization is the send-message node's
+ * OWN graph wiring — the same authority `reachablePairs` already grants the
+ * agent:job routing path.
+ *
+ * `isReachable` is that check, handed in by the caller rather than read here:
+ * the graph belongs to the node doing the sending, and this module has no
+ * business holding a copy of it. This function only resolves WHICH agent a
+ * thread belongs to and asks; it does not decide the answer.
+ *
+ * Registered with stream.ts's thread-delivery registry at server startup
+ * (registerThreadDeliveryResolver) rather than imported there directly — see
+ * that registry's own header for why stream.ts must not import group-chat
+ * code.
+ */
+export async function deliverThreadFromNode(
+  threadRef: string,
+  text: string,
+  isReachable: (agentNodeId: string) => boolean,
+): Promise<ThreadDeliveryOutcome> {
+  const trimmed = threadRef.trim()
+  if (!trimmed) {
+    return { status: 'not-found' }
+  }
+  const row = (await resolveByKey(trimmed)) ?? (await resolveById(trimmed))
+  if (!row) {
+    return { status: 'not-found' }
+  }
+  if (!isReachable(row.agentNodeId)) {
+    return { status: 'not-reachable' }
+  }
+  const { queued } = await deliverIntoThread(row, text)
+  return { status: queued ? 'queued' : 'delivered' }
 }

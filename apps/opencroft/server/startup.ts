@@ -1,7 +1,10 @@
 import { startDbBackupScheduler } from '@opencroft/db-backups'
 
-import { groupChatStandingContext } from '@/app/_authed/(group-chats)/_server/model'
-import { registerStandingContextResolver } from '@/app/_authed/(extension-runtime)/_server/stream'
+import {
+  registerStandingContextResolver,
+  registerThreadDeliveryResolver,
+} from '@/app/_authed/(extension-runtime)/_server/stream'
+import { deliverThreadFromNode, groupChatStandingContext } from '@/app/_authed/(group-chats)/_server/model'
 import { startDockerPsPoller } from '@/server/scheduler/docker-ps-poller'
 import { startEventScheduler } from '@/server/scheduler/event-scheduler'
 
@@ -27,6 +30,10 @@ export function ensureServerStarted(): void {
   // without stream.ts importing group-chat code (see registerStandingContextResolver's
   // own header for why that matters).
   registerStandingContextResolver(groupChatStandingContext)
+  // Same reasoning, for send-message's `thread` envelope field: a
+  // graph-driven send can target a group-chat thread without stream.ts ever
+  // importing group-chat code.
+  registerThreadDeliveryResolver(deliverThreadFromNode)
   void preload()
 }
 

@@ -99,12 +99,14 @@ export interface HostCompactStatus {
   error?: string
 }
 
+/** What a SendMessage node's `send` actually delivered to -- an agent:job session (unchanged) or a group-chat thread (mutually exclusive `thread` field in the payload). */
+export type HostSendMessageResult =
+  | { kind: 'agent'; sessionKey: string; created: boolean; forced: boolean }
+  | { kind: 'thread'; threadRef: string; status: 'queued' | 'delivered' }
+
 /** Deliver through a SendMessage node's own path (session reuse/create, envelope composition) -- the same mechanism its `text-in` wiring uses. */
 export interface HostSendMessageApi {
-  send(
-    nodeId: string,
-    payload: Record<string, unknown>,
-  ): Promise<{ sessionKey: string; created: boolean; forced: boolean }>
+  send(nodeId: string, payload: Record<string, unknown>): Promise<HostSendMessageResult>
   listAgents(nodeId: string): Promise<{ agent: string; jobs: string[] }[]>
   listSessions(nodeId: string, params: { agent?: string; job?: string }): Promise<HostSessionSummary[]>
   listTurns(

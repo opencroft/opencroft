@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { buildSessionKey, parseSessionKey, resolveSessionOnGraph, tryParseJsonMessage } from './send-message-helpers'
+import {
+  buildSessionKey,
+  isAgentNodeReachable,
+  parseSessionKey,
+  reachableAgentJobs,
+  reachablePairKey,
+  reachablePairs,
+  resolveSessionOnGraph,
+  tryParseJsonMessage,
+} from './send-message-helpers'
 
 test('buildSessionKey slugifies and omits the discriminator when absent', () => {
   assert.equal(buildSessionKey('Alice', 'Task'), 'agent:alice:task')
@@ -25,6 +34,20 @@ test('tryParseJsonMessage requires a string message and coerces the rest', () =>
     title: undefined,
     session: undefined,
     force: true,
+    thread: undefined,
+  })
+})
+
+test('tryParseJsonMessage coerces a thread reference the same way as the other optional fields', () => {
+  assert.deepEqual(tryParseJsonMessage('{"message":"hi","thread":"dev:alice:standup"}'), {
+    message: 'hi',
+    agent: undefined,
+    job: undefined,
+    key: undefined,
+    title: undefined,
+    session: undefined,
+    force: false,
+    thread: 'dev:alice:standup',
   })
 })
 
@@ -64,4 +87,44 @@ test('resolveSessionOnGraph returns null for an unresolvable agent or job slug',
   assert.equal(resolveSessionOnGraph('agent:nobody:task', nodes, edges), null)
   assert.equal(resolveSessionOnGraph('agent:alice:nojob', nodes, edges), null)
   assert.equal(resolveSessionOnGraph('not-a-session-key', nodes, edges), null)
+})
+
+// A send-message node's reachability graph: the job -> agent edge that
+// listAgents/listSessions/reachablePairs actually key on, which the
+// resolveSessionOnGraph fixture above deliberately has none of (routing a
+// session never required one). 'Idle Agent' is present in the space but wired
+// to no job at all — an agent that exists without being a send target.
+const reachabilityGraph = () => ({
+  nodes: [
+    { id: 'a1', type: 'agent', data: { name: 'Alice' } },
+    { id: 'a2', type: 'agent', data: { name: 'Idle Agent' } },
+    { id: 'j1', type: 'agent-job', data: { name: 'Task' } },
+    { id: 'j2', type: 'agent-job', data: { name: 'Review' } },
+  ],
+  edges: [
+    { source: 'j1', target: 'a1' },
+    { source: 'j2', target: 'a1' },
+  ],
+})
+
+test('reachableAgentJobs lists every agent in the space, with the jobs wired to it', () => {
+  const { nodes, edges } = reachabilityGraph()
+  const result = reachableAgentJobs(nodes, edges)
+  assert.deepEqual(result.find((a) => a.agent === 'alice')?.jobs.sort(), ['review', 'task'])
+  assert.deepEqual(result.find((a) => a.agent === 'idle-agent')?.jobs, [], 'present in the space, wired to nothing')
+})
+
+test('reachablePairs is exactly the flattened agent::job set', () => {
+  const { nodes, edges } = reachabilityGraph()
+  const pairs = reachablePairs(nodes, edges)
+  assert.ok(pairs.has(reachablePairKey('alice', 'task')))
+  assert.ok(pairs.has(reachablePairKey('alice', 'review')))
+  assert.equal(pairs.size, 2, 'an agent with no job edge contributes no pairs')
+})
+
+test('isAgentNodeReachable is true only for an agent with at least one job wired to it, checked by id', () => {
+  const { nodes, edges } = reachabilityGraph()
+  assert.equal(isAgentNodeReachable(nodes, edges, 'a1'), true)
+  assert.equal(isAgentNodeReachable(nodes, edges, 'a2'), false, 'present in the space but no job routes to it')
+  assert.equal(isAgentNodeReachable(nodes, edges, 'not-a-node-id'), false)
 })

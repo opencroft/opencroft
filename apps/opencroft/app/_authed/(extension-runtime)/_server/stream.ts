@@ -33,6 +33,7 @@ import { updateNodeData } from '@/app/_authed/(extension-runtime)/_server/node-d
 import {
   type AgentContext,
   buildSessionKey,
+  isAgentNodeReachable,
   parseSessionKey,
   resolveSessionOnGraph,
   type EdgeLike as SmEdgeLike,
@@ -344,6 +345,85 @@ export async function withSessionKeyLock<T>(key: string, run: () => Promise<T>):
   }
 }
 
+// Reuse an existing live session for this key (the node's own remembered
+// session, a chat tab the user has open, or the durable pointer) so messages
+// land in one stable conversation; only create a fresh session when none
+// exists. Shared by the agent:job path below AND group-chat thread delivery
+// (via deliverIntoThread) — both need the identical check-then-act, and
+// before this converged on it a thread's own open was
+// ensureLocalSessionImpl called directly, a second, unguarded copy of the
+// same logic.
+//
+// Serialised per session key: resolving and creating is a check-then-act, and
+// two deliveries for one key arriving together would otherwise both find
+// nothing and both create. Only this part is serialised — a caller's own
+// prompt call stays outside, because it is in flight for the whole turn and
+// holding the lock across it would make a second delivery wait out the
+// agent's work instead of queueing behind it.
+//
+// ensureLocalSessionImpl has its OWN in-flight dedup for calls that overlap
+// in time, so two truly-simultaneous callers were already coalesced below
+// that layer before this existed — checked directly, a concurrency test
+// against the real session-opening code cannot tell "guarded here" from
+// "only guarded one layer down" apart. What this lock adds beyond that is
+// closing the narrower window BETWEEN resolving ("does one already exist?")
+// and creating, across two calls that do not overlap tightly enough for the
+// lower guard to catch — the same reasoning already applied to the agent:job
+// path. The provable, demonstrated gain either way: one delivery-
+// serialization primitive instead of two copies that could drift apart.
+export async function resolveOrCreateSession(
+  sessionKey: string,
+  open: { agentNodeId: string; jobNodeId: string; tabKey: string },
+): Promise<{ sessionId: string; created: boolean }> {
+  return withSessionKeyLock(sessionKey, async () => {
+    const existing = await findTargetSessionImpl({ baseKey: sessionKey })
+    if (existing?.sessionId) {
+      return { sessionId: existing.sessionId, created: false }
+    }
+    const opened = await ensureLocalSessionImpl(open)
+    return { sessionId: opened.sessionId, created: opened.created }
+  })
+}
+
+/** What `deliverToSendMessageNode` actually delivered to — an agent:job
+ *  session or a group-chat thread. A caller
+ *  that only cares whether delivery happened can ignore `kind`; one that logs
+ *  or reports outcomes reads it to know which fields apply. */
+export type SendMessageDeliveryResult =
+  | { kind: 'agent'; sessionKey: string; created: boolean; forced: boolean }
+  | { kind: 'thread'; threadRef: string; status: 'queued' | 'delivered' }
+
+/**
+ * Resolve a thread reference against a running turn and this send-message
+ * node's own graph wiring, and either deliver or refuse — the group-chat
+ * counterpart to the agent:job path below. Registered by group-chats' own
+ * server startup (registerThreadDeliveryResolver), NOT imported here: this
+ * module knows nothing about group chats specifically, the same reason
+ * StandingContextResolver exists rather than an import of group-chat code
+ * (see registerStandingContextResolver above).
+ *
+ * The reachability predicate is passed IN rather than the resolver reading
+ * the graph itself, because the graph belongs to the caller (this node's own
+ * space) — a thread's target agent must be checked against the SAME
+ * authority reachablePairs grants the agent:job path, and that authority is
+ * a property of the node doing the sending, not of the thread being sent to.
+ */
+export type ThreadDeliveryOutcome =
+  | { status: 'queued' | 'delivered' }
+  | { status: 'not-found' }
+  | { status: 'not-reachable' }
+export type ThreadDeliveryResolver = (
+  threadRef: string,
+  text: string,
+  isReachable: (agentNodeId: string) => boolean,
+) => Promise<ThreadDeliveryOutcome>
+
+const threadDeliveryResolvers: ThreadDeliveryResolver[] = []
+
+export function registerThreadDeliveryResolver(resolver: ThreadDeliveryResolver): void {
+  threadDeliveryResolvers.push(resolver)
+}
+
 // The one delivery mechanism behind every path that hands a message to a
 // SendMessage node — the `text-in` stream wiring above, and
 // the node's own `send` action via `host.sendMessage.send`. Resolves the
@@ -353,44 +433,51 @@ export async function withSessionKeyLock<T>(key: string, run: () => Promise<T>):
 // envelope with instructions/task context gated on that same `created` flag
 // too — so every caller gets identical session and envelope
 // semantics, not a re-implementation of them. `force` is part of the
-// same shared payload schema, so either entry point can carry it.
+// same shared payload schema, so either entry point can carry it, and so
+// is `thread` — mutually exclusive with agent/job/key/session, checked
+// before either branch runs so a caller naming both gets a clear refusal
+// instead of one silently winning.
 export async function deliverToSendMessageNode(
   target: GraphNodeLike,
   nodes: GraphNodeLike[],
   edges: GraphEdgeLike[],
   text: string,
-): Promise<{ sessionKey: string; created: boolean; forced: boolean } | null> {
+): Promise<SendMessageDeliveryResult | null> {
+  const parsed = tryParseJsonMessage(text)
+  if (parsed?.thread) {
+    if (parsed.agent || parsed.job || parsed.key || parsed.session) {
+      throw new Error('A message may target a thread or an agent/job session, not both')
+    }
+    const threadRef = parsed.thread.trim()
+    const isReachable = (agentNodeId: string) =>
+      isAgentNodeReachable(nodes as unknown as SmNodeLike[], edges as unknown as SmEdgeLike[], agentNodeId)
+    let outcome: ThreadDeliveryOutcome = { status: 'not-found' }
+    for (const resolver of threadDeliveryResolvers) {
+      outcome = await resolver(threadRef, parsed.message, isReachable)
+      if (outcome.status !== 'not-found') {
+        break
+      }
+    }
+    if (outcome.status === 'not-found' || outcome.status === 'not-reachable') {
+      throw new Error(`Thread not reachable from this node: ${threadRef || '(empty)'}`)
+    }
+    return { kind: 'thread', threadRef, status: outcome.status }
+  }
+
   const route = resolveRoute(text, target, nodes, edges)
   if (!route) {
     return null
   }
 
-  // Reuse an existing live session for this agent+job (the node's own
-  // remembered session, a chat tab the user has open, or the durable pointer)
-  // so messages land in one stable conversation. Only create a fresh session
-  // when none exists.
-  //
-  // Serialised per session key: resolving and creating is a check-then-act, and
-  // two deliveries for one key arriving together would otherwise both find
-  // nothing and both create. Only this part is serialised — the prompt below
-  // stays outside, because it is in flight for the whole turn and holding the
-  // lock across it would make the second delivery wait out the agent's work
-  // instead of queueing behind it.
-  const { sessionId, created } = await withSessionKeyLock(route.sessionKey, async () => {
-    const existing = await findTargetSessionImpl({ baseKey: route.sessionKey })
-    if (existing?.sessionId) {
-      return { sessionId: existing.sessionId, created: false }
-    }
-    const opened = await ensureLocalSessionImpl({
-      agentNodeId: route.ctx.agentNodeId,
-      jobNodeId: route.ctx.jobNodeId,
-      tabKey: route.sessionKey,
-    })
+  const { sessionId, created } = await resolveOrCreateSession(route.sessionKey, {
+    agentNodeId: route.ctx.agentNodeId,
+    jobNodeId: route.ctx.jobNodeId,
+    tabKey: route.sessionKey,
+  })
+  if (created) {
     // Register in the shared registry (keyed by the node's base session key)
     // so the node-driven conversation shows up in the chat list and is
-    // resumable on every device, like a UI-started chat. Idempotent, so it's
-    // safe to call even when `opened` resumed a persisted session rather than
-    // creating a fresh one.
+    // resumable on every device, like a UI-started chat.
     await upsertSession({
       key: route.sessionKey,
       agentNodeId: route.ctx.agentNodeId,
@@ -402,14 +489,9 @@ export async function deliverToSendMessageNode(
     }).catch(() => {})
     // A dispatch-created session is registered but never activated by the
     // user — the sidebar shows active chats, not existing ones, so
-    // it starts hidden. `created` (not just "no live session found") keeps
-    // this from re-hiding a session the user has already interacted with,
-    // e.g. one they closed and dispatch happens to reuse the key for later.
-    if (opened.created) {
-      await hideSessionByDefault(route.sessionKey).catch(() => {})
-    }
-    return { sessionId: opened.sessionId, created: opened.created }
-  })
+    // it starts hidden.
+    await hideSessionByDefault(route.sessionKey).catch(() => {})
+  }
 
   // `force`: interrupt an in-flight turn instead of waiting behind it.
   // cancelLocal only signals the agent to stop — it doesn't touch activeTurns
@@ -442,7 +524,7 @@ export async function deliverToSendMessageNode(
   // draining one at a time would have the agent act on each stale message
   // before it ever reached this one.
   await promptLocalImpl({ sessionId, text: message, flush: route.force })
-  return { sessionKey: route.sessionKey, created, forced }
+  return { kind: 'agent', sessionKey: route.sessionKey, created, forced }
 }
 
 // Nothing guarantees the compaction is observable when the prompt call returns,
