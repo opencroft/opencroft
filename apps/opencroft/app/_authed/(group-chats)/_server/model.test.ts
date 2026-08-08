@@ -609,13 +609,13 @@ test('removing an agent leaves its threads resumable — the persisted session p
   // The pointer a real session would have left behind. Written directly rather
   // than by opening a session, so this test is about the pointer's survival and
   // not about the session machinery.
-  await sessionStore.writePersistedSession(sessionKey, 'persisted-session-id')
+  await sessionStore.writePersistedSession(sessionKey, 'persisted-session-id', true)
 
   await model.removeMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
 
-  assert.equal(
+  assert.deepEqual(
     await sessionStore.readPersistedSession(sessionKey),
-    'persisted-session-id',
+    { id: 'persisted-session-id', prompted: true },
     'the durable session pointer must survive removal — without it the kept thread reopens empty and its history is unreachable',
   )
 })

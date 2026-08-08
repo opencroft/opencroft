@@ -214,17 +214,26 @@ async function openLocalSession(data: {
 
   // Cold start (the in-memory tab→session map is lost on a server restart): if
   // this tab's ACP session id was persisted, resume it by replaying history
-  // (session/load) so the conversation comes back. We only persist a session
-  // after its first prompt (so a transcript exists), but still fall through to a
-  // fresh session if the agent can't load it.
-  const persistedId = await readPersistedSession(data.tabKey)
-  if (persistedId) {
-    const resumed = await agentClient.loadSession(persistedId, selection).catch(() => null)
+  // (session/load) so the conversation comes back, and fall through to a fresh
+  // session if the agent can't load it.
+  //
+  // The pointer is written the moment a session is created, not after its first
+  // prompt. Waiting meant that for the whole of a session's first turn — which
+  // for a dispatched task is the entire time the agent is working — the only
+  // record it existed was this process's memory. Losing that (any restart) sent
+  // the next delivery for the same key off to create a SECOND session, with no
+  // way to know the first was already on the job.
+  const persisted = await readPersistedSession(data.tabKey)
+  if (persisted) {
+    const resumed = await agentClient.loadSession(persisted.id, selection).catch(() => null)
     if (resumed) {
       const canFork = resumed.canFork ?? false
-      // Persistence only happens after a session's first prompt (see
-      // promptLocalImpl), so a resumed session has necessarily been prompted.
-      tabSessions.set(data.tabKey, { id: resumed.id, canFork, canSteer, everPrompted: true })
+      // A resumed session counts as new only if it was never actually spoken
+      // to. Since creation now persists the pointer, "resumed" no longer
+      // implies "has history" — a session created and then orphaned before its
+      // first prompt must still receive its opening context, or the agent
+      // wakes up in a conversation with no idea what it is for.
+      tabSessions.set(data.tabKey, { id: resumed.id, canFork, canSteer, everPrompted: persisted.prompted })
       // Re-apply any per-session config overrides (e.g. reasoning effort) the
       // user set before this tab's in-memory session was lost — loadSession
       // only reflects the agent's own resumed state, which has no way to know
@@ -233,8 +242,13 @@ async function openLocalSession(data: {
       for (const [configId, value] of Object.entries(overrides)) {
         await agentClient.setConfigOption(resumed.id, configId, value).catch(() => {})
       }
-      return { sessionId: resumed.id, canFork, canSteer, created: false }
+      return { sessionId: resumed.id, canFork, canSteer, created: !persisted.prompted }
     }
+    // The pointer resolved but the session is gone — the agent can no longer
+    // load it. Falling through to a fresh session is the only option, and that
+    // session has none of the dead one's history, so it is `created` and gets
+    // the full opening context. A dispatch must never land in a context-less
+    // void because a pointer went stale.
   }
 
   const meta = await agentClient.createSession(selection, agent.defaultModeId)
@@ -242,6 +256,9 @@ async function openLocalSession(data: {
   // (native) harness owns — external ACP agents can't truncate it.
   const canFork = meta.canFork ?? false
   tabSessions.set(data.tabKey, { id: meta.id, canFork, canSteer, everPrompted: false })
+  // Durable before the caller can prompt it, so a restart mid-first-turn finds
+  // this session instead of creating a rival for the same key.
+  await writePersistedSession(data.tabKey, meta.id, false)
   return { sessionId: meta.id, canFork, canSteer, created: true }
 }
 
@@ -267,13 +284,15 @@ export async function promptLocalImpl(data: {
       break
     }
   }
-  await agentClient.prompt(data.sessionId, data.text, { front: data.front, flush: data.flush })
-  // Persist the tab→session pointer now that the session has real history, so a
-  // later restart can resume it via session/load. We never persist — and so
-  // never try to load — an empty, never-prompted session.
+  // Record that this session has been spoken to BEFORE the prompt, not after.
+  // `prompt` stays in flight for the whole turn, so persisting afterwards left
+  // the durable record saying "never prompted" for exactly as long as the agent
+  // was working — and a resume in that window would have re-stated a task the
+  // agent was already doing.
   if (tabKey) {
-    await writePersistedSession(tabKey, data.sessionId)
+    await writePersistedSession(tabKey, data.sessionId, true)
   }
+  await agentClient.prompt(data.sessionId, data.text, { front: data.front, flush: data.flush })
 }
 
 // Resolve the live ACP session a Send Message node should target for a base
@@ -284,9 +303,14 @@ export async function promptLocalImpl(data: {
 //      so repeated sends reuse the same session instead of spawning duplicates.
 //   2. Otherwise adopt the user's most recently created live chat for this
 //      agent+job (a suffixed variant), so the message lands in a chat they can see.
-//   3. Return null when nothing live exists yet — the caller then creates a fresh
-//      session (and remembers it via promptLocal's persisted pointer).
-export function findTargetSessionImpl(data: { baseKey: string }): { sessionId: string } | null {
+//   3. Otherwise the durable pointer for this key, if the session it names is
+//      still live — memory is per-process and empties on every restart, so it
+//      cannot be the only place a session is looked for.
+//   4. Return null when nothing live exists — the caller then resumes the
+//      durable pointer, or creates a fresh session if it can no longer load.
+//
+// Async because step 3 reads the settings-backed store; every caller awaits it.
+export async function findTargetSessionImpl(data: { baseKey: string }): Promise<{ sessionId: string } | null> {
   const createdById = new Map(agentClient.listSessions().map((s) => [s.id, s.createdAt]))
   // 1. The node's own remembered session, if still live.
   const exact = tabSessions.get(data.baseKey)
@@ -308,7 +332,18 @@ export function findTargetSessionImpl(data: { baseKey: string }): { sessionId: s
       best = { id: entry.id, createdAt }
     }
   }
-  return best ? { sessionId: best.id } : null
+  if (best) {
+    return { sessionId: best.id }
+  }
+  // 3. The durable pointer, but only if that session is still live. A pointer
+  // to a session the agent can no longer serve is not a target: returning it
+  // would prompt into nothing. Reporting no target instead sends the caller
+  // through the resume path, which either loads it or replaces it honestly.
+  const persisted = await readPersistedSession(data.baseKey)
+  if (persisted && createdById.has(persisted.id)) {
+    return { sessionId: persisted.id }
+  }
+  return null
 }
 
 export async function cancelLocalImpl(sessionId: string): Promise<void> {

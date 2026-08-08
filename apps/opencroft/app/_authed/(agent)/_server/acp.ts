@@ -35,7 +35,7 @@ export const promptLocal = createServerFn({ method: 'POST', strict: { output: fa
 
 export const findTargetSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { baseKey: string }) => data)
-  .handler(async ({ data }): Promise<{ sessionId: string } | null> => findTargetSessionImpl(data))
+  .handler(async ({ data }): Promise<{ sessionId: string } | null> => await findTargetSessionImpl(data))
 
 // Drop a message from the session's server-side queue before it's delivered.
 // Clients observe the result via the 'queue' snapshot event on the stream.
@@ -103,7 +103,8 @@ export const forkLocal = createServerFn({ method: 'POST', strict: { output: fals
       everPrompted: true,
     })
     // Re-point the durable pointer at the fork so a restart resumes the branch.
-    await writePersistedSession(data.tabKey, meta.id)
+    // A fork rewinds an already-prompted conversation, so it carries history.
+    await writePersistedSession(data.tabKey, meta.id, true)
     return { sessionId: meta.id }
   })
 

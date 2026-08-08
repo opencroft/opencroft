@@ -315,6 +315,35 @@ async function persistToDownstreamSendMessages(
   }
 }
 
+// Serialises work per session key. Deliveries for DIFFERENT keys still run
+// concurrently; only same-key callers queue, and each sees the state the
+// previous one left behind rather than a snapshot taken before it ran.
+//
+// A promise chain rather than a "first caller wins" guard: both deliveries
+// carry different messages and both have to arrive, so the second must wait
+// for the first, not be dropped as a duplicate of it.
+const sessionKeyLocks = new Map<string, Promise<unknown>>()
+
+// Exported so the ordering it guarantees can be checked directly, rather than
+// only through a full delivery that needs a registered space and a live agent.
+export async function withSessionKeyLock<T>(key: string, run: () => Promise<T>): Promise<T> {
+  const previous = sessionKeyLocks.get(key) ?? Promise.resolve()
+  // `run` on both settlements: one delivery failing must not poison the queue
+  // for everyone behind it, and it must not skip them either.
+  const mine = previous.then(run, run)
+  const tail = mine.catch(() => {})
+  sessionKeyLocks.set(key, tail)
+  try {
+    return await mine
+  } finally {
+    // Clear the slot only when nobody queued behind us, so the map doesn't
+    // grow an entry per delivery for the lifetime of the process.
+    if (sessionKeyLocks.get(key) === tail) {
+      sessionKeyLocks.delete(key)
+    }
+  }
+}
+
 // The one delivery mechanism behind every path that hands a message to a
 // SendMessage node — the `text-in` stream wiring above, and
 // the node's own `send` action via `host.sendMessage.send`. Resolves the
@@ -337,23 +366,26 @@ export async function deliverToSendMessageNode(
   }
 
   // Reuse an existing live session for this agent+job (the node's own
-  // remembered session, or a chat tab the user has open) so messages land in
-  // one stable conversation. Only create a fresh session when none exists;
-  // promptLocal then persists the pointer so it's remembered and reused next time.
-  const existing = findTargetSessionImpl({ baseKey: route.sessionKey })
-  let sessionId: string
-  let created: boolean
-  if (existing?.sessionId) {
-    sessionId = existing.sessionId
-    created = false
-  } else {
+  // remembered session, a chat tab the user has open, or the durable pointer)
+  // so messages land in one stable conversation. Only create a fresh session
+  // when none exists.
+  //
+  // Serialised per session key: resolving and creating is a check-then-act, and
+  // two deliveries for one key arriving together would otherwise both find
+  // nothing and both create. Only this part is serialised — the prompt below
+  // stays outside, because it is in flight for the whole turn and holding the
+  // lock across it would make the second delivery wait out the agent's work
+  // instead of queueing behind it.
+  const { sessionId, created } = await withSessionKeyLock(route.sessionKey, async () => {
+    const existing = await findTargetSessionImpl({ baseKey: route.sessionKey })
+    if (existing?.sessionId) {
+      return { sessionId: existing.sessionId, created: false }
+    }
     const opened = await ensureLocalSessionImpl({
       agentNodeId: route.ctx.agentNodeId,
       jobNodeId: route.ctx.jobNodeId,
       tabKey: route.sessionKey,
     })
-    sessionId = opened.sessionId
-    created = opened.created
     // Register in the shared registry (keyed by the node's base session key)
     // so the node-driven conversation shows up in the chat list and is
     // resumable on every device, like a UI-started chat. Idempotent, so it's
@@ -373,10 +405,11 @@ export async function deliverToSendMessageNode(
     // it starts hidden. `created` (not just "no live session found") keeps
     // this from re-hiding a session the user has already interacted with,
     // e.g. one they closed and dispatch happens to reuse the key for later.
-    if (created) {
+    if (opened.created) {
       await hideSessionByDefault(route.sessionKey).catch(() => {})
     }
-  }
+    return { sessionId: opened.sessionId, created: opened.created }
+  })
 
   // `force`: interrupt an in-flight turn instead of waiting behind it.
   // cancelLocal only signals the agent to stop — it doesn't touch activeTurns
@@ -659,7 +692,8 @@ async function performCompact(
   // messages) and on null (cannot tell — re-sending is the safe direction: a
   // redundant envelope costs tokens, a missing one costs the agent its
   // instructions).
-  const hasInstructions = Boolean(restoreCtx?.jobContext?.trim()) || (restoreCtx?.instructions ?? []).some((i) => i.trim())
+  const hasInstructions =
+    Boolean(restoreCtx?.jobContext?.trim()) || (restoreCtx?.instructions ?? []).some((i) => i.trim())
   if (!restoreCtx || !hasInstructions) {
     return { sessionKey, contextUsageBefore, contextUsageAfter, compacted, instructionsRestored: false }
   }
@@ -802,7 +836,7 @@ export async function requestCompactOnGraph(
   // one has nothing in memory — say so rather than silently starting a new
   // session and "compacting" that. Nothing to wait for either, so this stays
   // a synchronous error rather than a queued job.
-  const existing = findTargetSessionImpl({ baseKey: sessionKey })
+  const existing = await findTargetSessionImpl({ baseKey: sessionKey })
   if (!existing) {
     throw new Error(`Session has no live process, so there is no context to compact: ${sessionKey}`)
   }

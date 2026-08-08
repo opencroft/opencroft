@@ -6,7 +6,31 @@ import { getSetting, upsertSetting } from '@/server/data'
 // update. A cwd JSON sidecar would be wiped on deploy.
 const SETTING_ID = 'agent-tab-sessions'
 
-type Store = Record<string, string>
+/**
+ * What a tab's pointer records. `prompted` is the difference between a session
+ * that has been given its opening context and one that exists but has never
+ * been spoken to — a session is now written here the moment it is created, so
+ * the two are no longer the same thing and a resume has to be able to tell
+ * them apart. Getting it wrong in one direction re-states a task the agent
+ * already has; in the other it drops the agent into a conversation with no
+ * idea what it is for.
+ */
+export interface PersistedSession {
+  id: string
+  prompted: boolean
+}
+
+// An entry written before `prompted` existed is a bare session id. Those were
+// only ever written AFTER a first prompt, so `true` is what they meant.
+type StoredValue = string | PersistedSession
+type Store = Record<string, StoredValue>
+
+function normalize(value: StoredValue | undefined): PersistedSession | null {
+  if (typeof value === 'string') {
+    return { id: value, prompted: true }
+  }
+  return value ? { id: value.id, prompted: value.prompted } : null
+}
 
 async function readStore(): Promise<Store> {
   const row = await getSetting(SETTING_ID)
@@ -20,16 +44,25 @@ async function writeStore(store: Store): Promise<void> {
   await upsertSetting(SETTING_ID, JSON.stringify({ sessions: store }))
 }
 
-export async function readPersistedSession(tabKey: string): Promise<string | null> {
-  return (await readStore())[tabKey] ?? null
+export async function readPersistedSession(tabKey: string): Promise<PersistedSession | null> {
+  return normalize((await readStore())[tabKey])
 }
 
-export async function writePersistedSession(tabKey: string, sessionId: string): Promise<void> {
+/**
+ * `prompted` only ever moves false → true: a session that has been given its
+ * context does not lose it because something later re-registered the pointer.
+ */
+export async function writePersistedSession(tabKey: string, sessionId: string, prompted: boolean): Promise<void> {
   const store = await readStore()
-  if (store[tabKey] === sessionId) {
+  const current = normalize(store[tabKey])
+  const next: PersistedSession = {
+    id: sessionId,
+    prompted: current?.id === sessionId ? current.prompted || prompted : prompted,
+  }
+  if (current && current.id === next.id && current.prompted === next.prompted) {
     return
   }
-  store[tabKey] = sessionId
+  store[tabKey] = next
   await writeStore(store)
 }
 
