@@ -45,6 +45,7 @@ import { type BrowserTab, NodeInspector } from '@/app/_authed/(dashboard)/_canva
 import { graphNodeTypes, nodeTypesKey, typesFromKey } from '@/app/_authed/(dashboard)/_canvas/node-type-keys'
 import { buildNodeTypes } from '@/app/_authed/(dashboard)/_canvas/node-wrapper'
 import { useBackIntercept, useOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
+import { coalesceReload } from '@/app/_authed/(dashboard)/_canvas/reload-coalesce'
 import { useClipboard } from '@/app/_authed/(dashboard)/_canvas/use-clipboard'
 import { useGraphEvents } from '@/app/_authed/(dashboard)/_canvas/use-graph-events'
 import { installExtensionApi } from '@/app/_authed/(dashboard)/_extension-system/extension-api'
@@ -162,6 +163,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   // saves can assert they're not overwriting a newer write from another tab
   // or an MCP tool call (see GraphConflictError in _server/store.ts).
   const graphVersionRef = useRef<string | null>(null)
+  // Single-flight guard for the SSE-triggered extension reload effect below --
+  // see its own comment for why concurrent reloads can't just run independently.
+  const extensionsReloadRef = useRef({ inFlight: false, pending: false })
   const handleSaveConflict = useCallback(() => {
     toast.warning('This space changed elsewhere — refreshed to the latest version. Redo your last change if needed.')
     fetchSpaceGraph(slug).then(({ graph, updatedAt }) => {
@@ -358,7 +362,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     if (!graphReady || sse.extensionsVersion === 0) {
       return
     }
-    async function reload() {
+    void coalesceReload(extensionsReloadRef.current, async () => {
       extensionRegistry.clear()
       await loadLocalExtensions()
       setExtensionsVersion((v) => v + 1)
@@ -366,8 +370,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       setNodes(graph.nodes as Node[])
       setEdges(graph.edges as Edge[])
       graphVersionRef.current = updatedAt
-    }
-    reload()
+    })
   }, [slug, sse.extensionsVersion, graphReady, setNodes, setEdges])
 
   const scheduleSave = useCallback(
