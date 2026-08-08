@@ -118,6 +118,24 @@ export interface HostSendMessageApi {
   compactStatus(nodeId: string, params: { sessionKey: string }): Promise<HostCompactStatus>
   /** Terminates an idle session's process; the transcript and durable session pointer are kept, so the next message reloads it transparently (same cold-start resume an offline session already uses). */
   unload(nodeId: string, params: { sessionKey: string }): Promise<{ sessionKey: string; unloaded: true }>
+  /**
+   * Removes a session for good: drops its durable session pointer (and any
+   * config overrides) AND its chat-list entry, so it no longer resumes and no
+   * longer appears in the sidebar. Default requires `status` (see
+   * listSessions) to be `offline` -- deleting a live session would silently
+   * drop whatever it's doing, so `idle`/`working`/`waiting` are refused unless
+   * `force: true`, which first ends the live process (same teardown as a live
+   * chat delete) and then proceeds. The underlying harness's on-disk
+   * transcript is deliberately left alone and NOT located or deleted -- this
+   * stays harness-agnostic, the same boundary agentClient.loadSession
+   * observes, and the harness may be running on a different terminal context
+   * (local/WSL/SSH) than this server; the transcript is orphaned, not lost
+   * track of.
+   */
+  delete(
+    nodeId: string,
+    params: { sessionKey: string; force?: boolean },
+  ): Promise<{ sessionKey: string; deleted: true }>
 }
 
 export interface HostExecContextApi {

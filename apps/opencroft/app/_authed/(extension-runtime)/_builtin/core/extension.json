@@ -328,6 +328,23 @@
             },
             "required": ["sessionKey"]
           }
+        },
+        {
+          "id": "delete",
+          "label": "Delete Session",
+          "icon": "Trash2",
+          "description": "Remove a session for good: drops its durable session pointer (so it can never cold-start resume, unlike `unload`) and its chat-list entry (so it also stops appearing in the sidebar). By default this only works on a session whose `status` (see `listSessions`) is `offline` — the normal case, e.g. clearing out stale sessions nobody is using — and errors synchronously for `idle`/`working`/`waiting`, since deleting a live session also ends its process and would silently drop whatever it's doing. Pass `force: true` to override: it ends the live process first (same teardown a live chat delete already uses) and then deletes. Unlike deleting a chat in the UI, this does not touch the underlying harness's on-disk transcript — that stays intentionally out of reach, the same harness-agnostic boundary session loading already observes (the harness may even be running on a different terminal context — local/WSL/SSH — than this server), so the transcript file is orphaned on disk, not deleted, and not tracked by anything afterward.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "sessionKey": { "type": "string", "description": "Session key, as returned by listSessions" },
+              "force": {
+                "type": "boolean",
+                "description": "Delete even if the session is idle/working/waiting, ending its live process first. Without this, a non-offline session is refused rather than silently interrupted."
+              }
+            },
+            "required": ["sessionKey"]
+          }
         }
       ]
     },

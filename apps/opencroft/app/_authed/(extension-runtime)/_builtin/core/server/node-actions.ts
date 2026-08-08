@@ -339,6 +339,15 @@ function sendMessageUnloadAction(ctx: ActionCtx): Promise<{ sessionKey: string; 
   return host.sendMessage.unload(ctx.nodeId, { sessionKey })
 }
 
+function sendMessageDeleteAction(ctx: ActionCtx): Promise<{ sessionKey: string; deleted: true }> {
+  const sessionKey = typeof ctx.params.sessionKey === 'string' ? ctx.params.sessionKey.trim() : ''
+  if (!sessionKey) {
+    throw new Error('"sessionKey" is required and must be a non-empty string')
+  }
+  const force = ctx.params.force === true
+  return host.sendMessage.delete(ctx.nodeId, { sessionKey, force })
+}
+
 // ── Server node actions ───────────────────────────────────────────────────
 
 function serverConfigFromData(data: Record<string, unknown>): ServerConfig {
@@ -397,6 +406,7 @@ export const nodeActions = {
     compact: sendMessageCompactAction,
     compactStatus: sendMessageCompactStatusAction,
     unload: sendMessageUnloadAction,
+    delete: sendMessageDeleteAction,
   },
   server: {
     setKey: serverSetKey,
