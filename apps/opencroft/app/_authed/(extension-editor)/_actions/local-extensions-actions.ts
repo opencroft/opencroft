@@ -35,6 +35,14 @@ export const deleteLocalExtension = createServerFn({ method: 'POST', strict: { o
   .inputValidator((extensionId: string) => extensionId)
   .handler(async ({ data: extensionId }): Promise<void> => deleteLocalExtensionImpl(extensionId))
 
+// A bare id still means "compile it", so existing callers keep working; the
+// object form is how a caller opts into building a checkout the guard would
+// otherwise decline.
 export const compileLocalExtension = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((extensionId: string) => extensionId)
-  .handler(async ({ data: extensionId }): Promise<BuildResult> => compileLocalExtensionImpl(extensionId))
+  .inputValidator((data: string | { extensionId: string; allowUnclean?: boolean }) => data)
+  .handler(
+    async ({ data }): Promise<BuildResult> =>
+      typeof data === 'string'
+        ? compileLocalExtensionImpl(data)
+        : compileLocalExtensionImpl(data.extensionId, { allowUnclean: data.allowUnclean }),
+  )

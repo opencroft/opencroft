@@ -9,14 +9,16 @@ import { MANIFEST_FILE, rewriteManifestId } from '@/app/_authed/(extension-edito
 import { buildExtension } from '@/app/_authed/(extension-runtime)/_server/compiler'
 import { runGit, withGitAuth } from '@/app/_authed/(extension-runtime)/_server/git-exec'
 import { flushCache } from '@/app/_authed/(extension-runtime)/_server/loader'
-import { extDir, installedExtRoot, localExtRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
+// SIDECAR_FILE is named alongside the other generated files, so the check that
+// discounts them from "someone is working here" cannot drift from the code that
+// writes them.
+import { extDir, installedExtRoot, localExtRoot, SIDECAR_FILE } from '@/app/_authed/(extension-runtime)/_server/paths'
 import type { ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
 import { getSecretValue } from '@/app/_authed/(secrets-store)/_server/actions'
 import { toastStore } from '@/lib/toast-store'
 
 const execFile = promisify(execFileCb)
 
-const SIDECAR_FILE = 'installed.json'
 const GIT_BUFFER = 64 * 1024 * 1024
 
 export interface InstalledSource {

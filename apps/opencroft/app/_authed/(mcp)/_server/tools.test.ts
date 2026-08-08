@@ -6,14 +6,47 @@ import {
   buildBase64WriteCommands,
   buildLocalExtensionCtx,
   capColumns,
+  extensionSlugFromTarget,
   globPatternToEre,
   insideExcludedDir,
   isValidLocalExtensionSlug,
+  localSlugFromExtensionId,
   replaceExact,
   requireCallingAgent,
   resolveRemoteFilePath,
   resolveTerminalContext,
 } from './tools'
+
+// ── extensionSlugFromTarget / localSlugFromExtensionId ─────────────────────
+//
+// Which folder a call is about, decided before any lookup or filesystem access.
+// Both answer null for anything that is not a local extension, so a guard built
+// on them can never attach itself to an unrelated target.
+
+test('extensionSlugFromTarget recognises the extension handle', () => {
+  assert.equal(extensionSlugFromTarget('extensions/my-ext'), 'my-ext')
+})
+
+test('extensionSlugFromTarget ignores ordinary node targets', () => {
+  for (const target of ['mynode_abc/terminal', 'extensions', '', undefined, null, 42]) {
+    assert.equal(extensionSlugFromTarget(target), null, `expected ${String(target)} to be ignored`)
+  }
+})
+
+test('extensionSlugFromTarget refuses a slug it would not accept as a path segment', () => {
+  // The guard must not be reachable with a handle the path validation rejects.
+  for (const target of ['extensions/../secrets', 'extensions/a b', 'extensions/.hidden']) {
+    assert.equal(extensionSlugFromTarget(target), null, `expected "${target}" to be refused`)
+  }
+})
+
+test('localSlugFromExtensionId accepts only the local scope', () => {
+  assert.equal(localSlugFromExtensionId('local/my-ext'), 'my-ext')
+  assert.equal(localSlugFromExtensionId('installed/my-ext'), null)
+  assert.equal(localSlugFromExtensionId('builtin/core'), null)
+  assert.equal(localSlugFromExtensionId('my-ext'), null)
+  assert.equal(localSlugFromExtensionId(undefined), null)
+})
 
 // ── isValidLocalExtensionSlug ──────────────────────────────────────────────
 

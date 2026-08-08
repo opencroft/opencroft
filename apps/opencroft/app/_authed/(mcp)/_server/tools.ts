@@ -36,7 +36,14 @@ import {
   getLocalExtensionImpl,
   listLocalExtensionsImpl,
 } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions-impl'
+import { COMPILE_OVERRIDE_PARAM } from '@/app/_authed/(extension-runtime)/_server/checkout-state'
 import { dispatchExecutionContext, NoExecTargetError } from '@/app/_authed/(extension-runtime)/_server/exec-dispatch'
+import {
+  claimExtensionLease,
+  leaseRefusalMessage,
+  readActiveLeases,
+  releaseExtensionLease,
+} from '@/app/_authed/(extension-runtime)/_server/extension-lease'
 import { getExtensionModule, loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
 import {
   dispatchNodeActionImpl,
@@ -98,6 +105,9 @@ const POSITION_SCHEMA = {
 }
 
 const EDGE_ENDPOINT_DESCRIPTION = 'Node ID, optionally with handle after a slash (e.g. "node-id/out").'
+
+/** Named once so a refusal's copy and the tool it points at cannot drift apart. */
+const LEASE_TOOL_NAME = 'extension_lease'
 
 /**
  * Directory names remote_glob/remote_grep skip by default (dependency, VCS and build output
@@ -528,13 +538,34 @@ export const toolDefinitions = [
   {
     name: 'compile_extension',
     description:
-      'Manually trigger compilation (esbuild) of a local extension. Returns build result with errors and warnings. Useful after direct file edits (e.g. docker cp) that bypass the normal update flow.',
+      'Manually trigger compilation (esbuild) of a local extension. Returns build result with errors and warnings. Useful after direct file edits (e.g. docker cp) that bypass the normal update flow. Compiling publishes the folder to THIS running instance as it stands, so it is declined when the checkout has uncommitted changes or sits on a branch other than its default — pass allowUnclean to do it anyway.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         extensionId: { type: 'string', description: 'The local extension id (must start with "local/")' },
+        [COMPILE_OVERRIDE_PARAM]: {
+          type: 'boolean',
+          description:
+            'Compile the folder in whatever state it is in, including uncommitted changes or a non-default branch. Use deliberately: whatever is on disk becomes what this instance runs.',
+        },
       },
       required: ['extensionId'],
+    },
+  },
+  {
+    name: LEASE_TOOL_NAME,
+    description:
+      'See or change who is currently working in a local extension folder. Those folders are shared — every session editing one extension edits the same files — so a write claims the folder for its caller and other callers are told rather than silently writing over it. Call with no arguments to list active claims; with extensionId to take one over or release your own. Claims lapse on their own after a period with no writes.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        extensionId: { type: 'string', description: 'The local extension id (must start with "local/")' },
+        takeover: {
+          type: 'boolean',
+          description: 'Take the folder even though someone else holds it. Always permitted — this is advisory.',
+        },
+        release: { type: 'boolean', description: 'Give up a claim you hold, so nobody has to wait for it to lapse.' },
+      },
     },
   },
   {
@@ -1621,6 +1652,69 @@ async function resolveLocalExtensionContext(ep: ParsedEndpoint): Promise<Record<
   )
 }
 
+/**
+ * The local extension a terminal target addresses, or null when it addresses an
+ * ordinary graph node.
+ *
+ * Pure string work on the caller's own `target` argument, so a guard can decide
+ * whether it applies before any lookup, filesystem access or approval happens.
+ */
+export function extensionSlugFromTarget(target: unknown): string | null {
+  if (typeof target !== 'string' || target.length === 0) {
+    return null
+  }
+  const ep = parseEndpoint(target)
+  if (ep.nodeId !== LOCAL_EXTENSION_HANDLE_NODE_ID || !ep.handle) {
+    return null
+  }
+  return isValidLocalExtensionSlug(ep.handle) ? ep.handle : null
+}
+
+/**
+ * Refuse a write into an extension directory somebody else is working in.
+ *
+ * These directories are shared: unlike a per-task checkout, every session
+ * working on one extension edits the same tree, and two writers there produce
+ * no conflict and no error — just a commit containing changes its author never
+ * made. Claiming the directory turns that into a message at the moment it
+ * happens.
+ *
+ * ADVISORY BY CONSTRUCTION. A caller can run an arbitrary command in that same
+ * directory, so nothing at this layer can prevent a write — only surface it.
+ * Two consequences are deliberate: an unidentified caller is let through rather
+ * than refused (there is no honest way to name it as a holder, and refusing
+ * every anonymous write would break surfaces that never had an identity), and
+ * a held directory is always available to whoever explicitly takes it over.
+ */
+async function claimSlugForWrite(slug: string, caller: ToolCallerContext): Promise<void> {
+  if (!caller.agent) {
+    return
+  }
+  const decision = await claimExtensionLease(slug, caller.agent)
+  if (decision.outcome === 'refused') {
+    fail(-32000, leaseRefusalMessage(slug, decision.lease, Date.now(), `call ${LEASE_TOOL_NAME} with takeover: true`))
+  }
+}
+
+async function claimForWrite(args: Record<string, unknown>, caller: ToolCallerContext): Promise<void> {
+  const slug = extensionSlugFromTarget(args.target)
+  if (slug) {
+    await claimSlugForWrite(slug, caller)
+  }
+}
+
+/** The slug in a local extension id, or null for any other scope or a malformed one. */
+export function localSlugFromExtensionId(extensionId: unknown): string | null {
+  if (typeof extensionId !== 'string') {
+    return null
+  }
+  const [scope, slug] = extensionId.split('/')
+  if (scope !== 'local' || !slug || !isValidLocalExtensionSlug(slug)) {
+    return null
+  }
+  return slug
+}
+
 export async function resolveTerminalContext(
   args: Record<string, unknown>,
 ): Promise<{ ctx: Record<string, unknown>; slug: string }> {
@@ -2479,13 +2573,24 @@ function buildHandlers(): Record<string, ToolHandler> {
     }),
 
     // ── compile_extension ────────────────────────────────────────────
-    compile_extension: withApprovalRequired(async (args) => {
+    compile_extension: withApprovalRequired(async (args, caller) => {
       const extensionId = args.extensionId as string | undefined
       if (!extensionId) {
         fail(-32602, 'Missing required param: extensionId')
       }
+      // Compiling publishes the folder to this instance, so it is a write to
+      // the shared thing even when no file changes.
+      const compileSlug = localSlugFromExtensionId(extensionId)
+      if (compileSlug) {
+        await claimSlugForWrite(compileSlug, caller)
+      }
       try {
-        const result = await compileLocalExtensionImpl(extensionId)
+        const result = await compileLocalExtensionImpl(extensionId, {
+          allowUnclean: args[COMPILE_OVERRIDE_PARAM] === true,
+        })
+        if (result.refusal) {
+          return textResult(result.refusal.message)
+        }
         const parts: string[] = []
         parts.push(`Build ${result.success ? '✅ succeeded' : '❌ failed'}`)
         if (result.errors.length > 0) {
@@ -2510,6 +2615,39 @@ function buildHandlers(): Record<string, ToolHandler> {
         return textResult(`Compilation error: ${String(err)}`)
       }
     }),
+
+    // ── extension_lease ──────────────────────────────────────────────
+    [LEASE_TOOL_NAME]: async (args, caller) => {
+      const extensionId = args.extensionId as string | undefined
+      if (!extensionId) {
+        const active = await readActiveLeases()
+        const lines = Object.entries(active).map(
+          ([slug, lease]) =>
+            `local/${slug} — held by ${lease.agent}, last write ${Math.max(0, Math.round((Date.now() - lease.lastTouched) / 60_000))} min ago`,
+        )
+        return textResult(lines.length > 0 ? lines.join('\n') : 'No extension folders are currently claimed.')
+      }
+      const slug = localSlugFromExtensionId(extensionId)
+      if (!slug) {
+        fail(-32602, `Expected a local extension id ("local/<slug>"), got "${extensionId}"`)
+      }
+      // Taking or releasing a folder is done AS someone: an unattributable
+      // claim would name a holder nobody can be asked about.
+      const agent = requireCallingAgent(caller)
+      if (args.release === true) {
+        const released = await releaseExtensionLease(slug, agent)
+        return textResult(
+          released ? `Released local/${slug}.` : `local/${slug} was not held by you — nothing to release.`,
+        )
+      }
+      const decision = await claimExtensionLease(slug, agent, { takeover: args.takeover === true })
+      if (decision.outcome === 'refused') {
+        return textResult(
+          leaseRefusalMessage(slug, decision.lease, Date.now(), `call ${LEASE_TOOL_NAME} with takeover: true`),
+        )
+      }
+      return textResult(`local/${slug} is yours (${decision.outcome}).`)
+    },
 
     // ── registry_list ────────────────────────────────────────────────
     registry_list: async (args) => {
@@ -2641,12 +2779,13 @@ function buildHandlers(): Record<string, ToolHandler> {
 
     // ── write (remote) ───────────────────────────────────────────────
     remote_write: withApprovalRequired(
-      async (args) => {
+      async (args, caller) => {
         const filePath = args.path as string | undefined
         const content = args.content as string | undefined
         if (!filePath || content === undefined) {
           fail(-32602, 'Missing required params: path, content')
         }
+        await claimForWrite(args, caller)
         const { ctx } = await resolveTerminalContext(args)
         const resolvedPath = resolveRemoteFilePath(filePath, ctx.cwd as string | undefined)
         await writeRemoteFileExact(ctx, resolvedPath, content)
@@ -2657,7 +2796,7 @@ function buildHandlers(): Record<string, ToolHandler> {
 
     // ── edit (remote) ────────────────────────────────────────────────
     remote_edit: withApprovalRequired(
-      async (args) => {
+      async (args, caller) => {
         const filePath = args.path as string | undefined
         const oldString = args.oldString as string | undefined
         const newString = args.newString as string | undefined
@@ -2668,6 +2807,7 @@ function buildHandlers(): Record<string, ToolHandler> {
           fail(-32602, 'oldString and newString must differ')
         }
         const replaceAll = Boolean(args.replaceAll)
+        await claimForWrite(args, caller)
         const { ctx } = await resolveTerminalContext(args)
         const resolvedPath = resolveRemoteFilePath(filePath, ctx.cwd as string | undefined)
 
@@ -2682,12 +2822,15 @@ function buildHandlers(): Record<string, ToolHandler> {
 
     // ── exec (remote) ────────────────────────────────────────────────
     remote_exec: withApprovalRequired(
-      async (args) => {
+      async (args, caller) => {
         const command = args.command as string | undefined
         if (!command) {
           fail(-32602, 'Missing required param: command')
         }
         const cwd = args.cwd as string | undefined
+        // A command is opaque, so it counts as a write: there is no way to tell
+        // an inspection from an edit without interpreting a shell.
+        await claimForWrite(args, caller)
         const { ctx } = await resolveTerminalContext(args)
         const effectiveCwd = cwd
           ? resolveRemoteFilePath(cwd, ctx.cwd as string | undefined)
@@ -2701,13 +2844,14 @@ function buildHandlers(): Record<string, ToolHandler> {
 
     // ── script (remote) ──────────────────────────────────────────────
     remote_script: withApprovalRequired(
-      async (args) => {
+      async (args, caller) => {
         const script = args.script as string | undefined
         if (!script) {
           fail(-32602, 'Missing required param: script')
         }
         const scriptArgs = (args.args as string[] | undefined) ?? []
         const cwd = args.cwd as string | undefined
+        await claimForWrite(args, caller)
         const { ctx } = await resolveTerminalContext(args)
         const effectiveCwd = cwd
           ? resolveRemoteFilePath(cwd, ctx.cwd as string | undefined)

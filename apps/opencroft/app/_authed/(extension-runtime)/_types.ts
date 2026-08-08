@@ -201,10 +201,30 @@ export interface CompileError {
   message: string
 }
 
+export type CompileRefusalReason = 'unclean' | 'off-branch'
+
+/** Why a build was declined before it started, rather than attempted and failed. */
+export interface CompileRefusal {
+  /** Every condition that applies, not just the first one found. */
+  reasons: CompileRefusalReason[]
+  branch: string | null
+  defaultBranch: string | null
+  dirtyPaths: string[]
+  /** Ready to show a caller: what was refused, why, and how to proceed anyway. */
+  message: string
+}
+
 export interface BuildResult {
   success: boolean
   errors: CompileError[]
   warnings: CompileError[]
   clientHash: string
   serverHash: string
+  /**
+   * Set when nothing was compiled because the checkout was not in a state worth
+   * publishing. Distinguishes "declined" from "tried and failed" for a caller
+   * that cares; a caller that doesn't still sees `success: false` and the same
+   * explanation in `errors`.
+   */
+  refusal?: CompileRefusal
 }

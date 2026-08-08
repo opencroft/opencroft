@@ -1,48 +1,29 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 
+import {
+  type CheckoutState,
+  readCheckoutState,
+  refuseCompile,
+} from '@/app/_authed/(extension-runtime)/_server/checkout-state'
 import { buildExtension } from '@/app/_authed/(extension-runtime)/_server/compiler'
-import { runGit } from '@/app/_authed/(extension-runtime)/_server/git-exec'
 import { flushCache } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { localExtRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
 import type { BuildResult, ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
 
 const MANIFEST_FILE = 'extension.json'
 
-export interface LocalExtensionRecord {
+// The checkout state is spread in rather than restated: the durable half of
+// "is this instance running that change?" is what the directory itself says,
+// and a manifest version is hand-maintained while a directory mtime (see
+// dirMtime below) moves on anything that touches an entry in it, not
+// specifically on a deploy.
+export interface LocalExtensionRecord extends CheckoutState {
   id: string
   slug: string
   manifest: ExtensionManifest
   files: Record<string, string>
   updatedAt: number
-  // What commit this checkout is actually on, read directly
-  // from the checkout rather than tracked by the app -- so it stays true
-  // through anything that changes the directory's HEAD (a plain `git
-  // checkout`, not just this app's own install/update actions), which is
-  // exactly how a local extension's source normally gets updated. `null`
-  // when the directory isn't a git checkout at all (or `git` fails) --
-  // degrades to "unknown", not a build error, since a local extension has
-  // never been required to be one.
-  sourceCommit: string | null
-  // True when the checkout has uncommitted changes -- a commit hash alone
-  // reads as authoritative even when the tree has drifted from it, and that
-  // is precisely the state a dev/test compile leaves a checkout in.
-  sourceDirty: boolean | null
-}
-
-// The durable half of "is this instance running that
-// change?" -- a manifest version is hand-maintained and a directory mtime
-// (see dirMtime below) moves on anything that touches an entry in it, not
-// specifically on a deploy. A commit read straight from the checkout is
-// neither: it is exactly what the repository would call this code.
-export async function readGitState(dir: string): Promise<{ sourceCommit: string | null; sourceDirty: boolean | null }> {
-  try {
-    const { stdout: head } = await runGit(['-C', dir, 'rev-parse', 'HEAD'])
-    const { stdout: status } = await runGit(['-C', dir, 'status', '--porcelain'])
-    return { sourceCommit: head.trim(), sourceDirty: status.trim().length > 0 }
-  } catch {
-    return { sourceCommit: null, sourceDirty: null }
-  }
 }
 
 function slugFromId(extensionId: string): string {
@@ -112,14 +93,13 @@ async function loadExtension(slug: string): Promise<LocalExtensionRecord | null>
   }
   const manifest = JSON.parse(manifestRaw) as ExtensionManifest
   const files = await listFilesRecursive(dir)
-  const gitState = await readGitState(dir)
   return {
     id: `local/${slug}`,
     slug,
     manifest,
     files,
     updatedAt: await dirMtime(dir),
-    ...gitState,
+    ...(await readCheckoutState(dir)),
   }
 }
 
@@ -215,11 +195,39 @@ export async function deleteLocalExtensionImpl(extensionId: string): Promise<voi
   flushCache(extensionId)
 }
 
-export async function compileLocalExtensionImpl(extensionId: string): Promise<BuildResult> {
+export interface CompileOptions {
+  /**
+   * Build the checkout as it stands, whatever state it is in. Deliberately
+   * available with no conditions: building a branch on a throwaway instance is
+   * legitimate, and a guard nobody can get past is a guard people route around.
+   */
+  allowUnclean?: boolean
+}
+
+export async function compileLocalExtensionImpl(
+  extensionId: string,
+  options: CompileOptions = {},
+): Promise<BuildResult> {
   const slug = slugFromId(extensionId)
   const record = await loadExtension(slug)
   if (!record) {
     throw new Error(`Extension ${extensionId} does not exist`)
+  }
+  // Checked before anything is flushed or built: a compile replaces what this
+  // instance is running, so the state of the directory has to be acceptable
+  // BEFORE the running bundle is disturbed, not after the build reports on it.
+  const refusal = refuseCompile(record, options.allowUnclean === true)
+  if (refusal) {
+    return {
+      success: false,
+      // Repeated as an error so a caller that only renders errors still shows
+      // the reason, instead of an empty failure it cannot explain.
+      errors: [{ file: extensionId, message: refusal.message }],
+      warnings: [],
+      clientHash: '',
+      serverHash: '',
+      refusal,
+    }
   }
   flushCache(extensionId)
   return buildExtension(extensionId, record.manifest)
