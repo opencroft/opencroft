@@ -4,7 +4,7 @@ import { useLocation } from '@tanstack/react-router'
 import * as lucideIcons from 'lucide-react'
 import { type LucideIcon, X } from 'lucide-react'
 import type * as React from 'react'
-import { useCallback, useContext, useEffect, useMemo, useRef } from 'react'
+import { Component, useCallback, useContext, useEffect, useMemo, useRef } from 'react'
 import { Flex } from 'ui/layout/flex'
 import { ScrollArea } from 'ui/scroll-area'
 
@@ -20,14 +20,40 @@ import {
 } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 import { SearchFindBar } from '@/app/_authed/(dashboard)/_canvas/search-find-bar'
 import {
+  recordContentRenderError,
   recordKeydown,
   recordOverlayContentSeen,
   recordOverlayRender,
+  setOverlayContainerHtmlFn,
 } from '@/app/_authed/(extension-runtime)/_client/debug-probe'
 import type { CommandModeDefinition, CommandModeShortcut } from '@/app/_authed/(extension-runtime)/_client/host'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { ChatArea, ChatBar, ChatContent, ChatHeader } from '@/components/experimental/chat'
 import { cn } from '@/lib/utils'
+
+// Temporary diagnostic: catches a render error thrown by whatever is
+// published into the overlay's content slot, which a plain `useState`-backed
+// slot value cannot otherwise reveal (the reference stays non-null even if
+// rendering it throws). Records to window.__extDebug instead of console, and
+// renders nothing on error rather than crashing the whole overlay tree.
+class ContentSlotProbeBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props)
+    this.state = { hasError: false }
+  }
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true }
+  }
+
+  componentDidCatch(error: Error, info: { componentStack?: string | null }): void {
+    recordContentRenderError(error.message, info.componentStack ?? null)
+  }
+
+  render(): React.ReactNode {
+    return this.state.hasError ? null : this.props.children
+  }
+}
 
 interface CanvasOverlayProps {
   nodes: CommandNodeEntry[]
@@ -97,6 +123,9 @@ export function CanvasOverlay({
   // This is the surface that paints the slots, so it is the one place that
   // subscribes to their values — see useOverlaySlotValues.
   const slotValues = useOverlaySlotValues()
+  useEffect(() => {
+    setOverlayContainerHtmlFn(() => slots.containerRef.current?.outerHTML?.slice(0, 2000) ?? null)
+  }, [slots.containerRef])
   const searchParams = new URLSearchParams(useLocation({ select: (l) => l.searchStr }))
   const chatParam = searchParams.get('chat') ?? null
   const chatTabs = useChatTabsMaybe()
@@ -353,7 +382,7 @@ export function CanvasOverlay({
             )}
             onMouseDown={stopOverlayClose}
           >
-            {aiChatActive ? null : slotValues.content}
+            <ContentSlotProbeBoundary>{aiChatActive ? null : slotValues.content}</ContentSlotProbeBoundary>
           </ChatContent>
           <ChatBar compact fade={!!slotValues.content} onMouseDown={stopOverlayClose}>
             {slotValues.menu && <CommandBarMenu>{slotValues.menu}</CommandBarMenu>}

@@ -19,7 +19,9 @@ export interface DebugProbeState {
   dismissCalls: Array<{ at: number }>
   slotWrites: Array<{ slot: string; hasNode: boolean; at: number }>
   overlayContentSeen: Array<{ mode: string; hasContent: boolean; aiChatActive: boolean; at: number }>
+  contentRenderErrors: Array<{ message: string; componentStack: string | null; at: number }>
   snapshot: () => { commandModeIds: string[]; extensionIds: string[] }
+  overlayContainerHtml: () => string | null
 }
 
 function state(): DebugProbeState | undefined {
@@ -35,7 +37,9 @@ function state(): DebugProbeState | undefined {
     dismissCalls: [],
     slotWrites: [],
     overlayContentSeen: [],
+    contentRenderErrors: [],
     snapshot: () => ({ commandModeIds: [], extensionIds: [] }),
+    overlayContainerHtml: () => null,
   }
   return w.__extDebug
 }
@@ -47,6 +51,16 @@ export function setSnapshotFn(fn: () => { commandModeIds: string[]; extensionIds
   const s = state()
   if (s) {
     s.snapshot = fn
+  }
+}
+
+// Wired up by canvas-overlay.tsx from the overlay's own container ref, so a
+// probe can read the ACTUAL painted markup on demand rather than guessing a
+// CSS selector from outside.
+export function setOverlayContainerHtmlFn(fn: () => string | null): void {
+  const s = state()
+  if (s) {
+    s.overlayContainerHtml = fn
   }
 }
 
@@ -76,4 +90,8 @@ export function recordSlotWrite(slot: string, hasNode: boolean): void {
 
 export function recordOverlayContentSeen(mode: string, hasContent: boolean, aiChatActive: boolean): void {
   state()?.overlayContentSeen.push({ mode, hasContent, aiChatActive, at: Date.now() })
+}
+
+export function recordContentRenderError(message: string, componentStack: string | null): void {
+  state()?.contentRenderErrors.push({ message, componentStack, at: Date.now() })
 }
