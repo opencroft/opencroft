@@ -79,8 +79,15 @@ export interface AgentCommandBarProps {
   autoFocus?: boolean
   onFocus?: () => void
   onBlur?: () => void
-  // A turn is running: the send button becomes a stop button when `onStop` is
-  // also given.
+  // A turn is running. With `onStop` given, Stop takes the trailing slot for
+  // the whole turn -- and Send joins it, to its LEFT, as soon as there is text
+  // to submit. An empty composer shows Stop alone.
+  //
+  // Send is deliberately NOT gated on `busy`. Submitting during a turn is how a
+  // follow-up message gets queued (see `queued`), and `send()` never had a busy
+  // gate -- only the button was taken away, which left a coarse pointer with no
+  // way to submit during a turn at all: Enter inserts a newline there by design,
+  // so the button is the only other route.
   busy?: boolean
   onStop?: () => void
   // A send is in flight, or the agent cannot accept one. Both only gate
@@ -199,6 +206,18 @@ export const commandBarControlClass = 'size-7 shrink-0'
 // Enter sends on a fine-pointer client (Shift+Enter inserts a newline; on touch
 // there is no Shift key, so the button sends); Escape clears.
 //
+// **Send and Stop coexist while a turn runs, and Stop is the one that never
+// moves.** Stop holds the trailing slot from the moment `busy` goes true until
+// it goes false; Send appears to its LEFT once there is text, and goes when the
+// text does. The order is the whole of the decision. Were Send trailing, the
+// rightmost button would change meaning under a reaching finger the moment a
+// character was typed -- and the two are not equally recoverable: a mis-pressed
+// Send queues a message the host can remove, a mis-pressed Stop kills a running
+// turn. So the costly one is the one that stays put.
+//
+// Both sit in the `shrink-0` cluster, so the second button takes its width from
+// the host's own controls, never from Send or Stop.
+//
 // One structural rule matters more than it looks: **the wrapper column, the
 // composer and the action row are rendered unconditionally**, even with nothing
 // queued. If the element structure changed when messages queue or drain, the
@@ -237,8 +256,15 @@ export function AgentCommandBar({
   textareaRef,
   className,
 }: AgentCommandBarProps) {
-  const canSend = Boolean(value.trim()) && !sending && !disabled
+  const hasText = Boolean(value.trim())
+  const canSend = hasText && !sending && !disabled
   const hasConfigs = Boolean(configs && configs.length > 0)
+
+  // Stop is present for the whole turn; Send is only withheld from a turn with
+  // nothing to queue. Without `onStop` there is no stop button to make room for,
+  // so `busy` alone changes nothing -- the row stays the resting one.
+  const showStop = busy && Boolean(onStop)
+  const showSend = !showStop || hasText
 
   // The button carries an icon and no text, so its current values have to live
   // somewhere reachable -- otherwise the only way to read the model you are on
@@ -446,19 +472,12 @@ export function AgentCommandBar({
           )}
           {controls}
 
-          {busy && onStop ? (
-            <Button
-              type='button'
-              size='icon'
-              variant='ghost'
-              className={commandBarControlClass}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={onStop}
-              title='Stop'
-            >
-              <Square className='size-4' />
-            </Button>
-          ) : (
+          {/* Send BEFORE Stop, so Stop is the trailing control from the moment
+              the turn starts until it ends -- see the ordering note in this
+              component's doc comment. Two separate conditional slots rather
+              than one ternary: each button keeps its own position among the
+              children, so neither is remounted when the other appears. */}
+          {showSend ? (
             <Button
               type='button'
               size='icon'
@@ -467,11 +486,31 @@ export function AgentCommandBar({
               onMouseDown={(e) => e.preventDefault()}
               onClick={send}
               disabled={!canSend}
+              // Both carry an explicit name as well as a title. `title` alone
+              // does name a button with no text, but weakly -- and these two
+              // are now adjacent icons a press apart, one of which ends the
+              // turn. Same shape as the settings button above.
               title='Send'
+              aria-label='Send'
             >
               <Send className='size-4' />
             </Button>
-          )}
+          ) : null}
+
+          {showStop ? (
+            <Button
+              type='button'
+              size='icon'
+              variant='ghost'
+              className={commandBarControlClass}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={onStop}
+              title='Stop'
+              aria-label='Stop'
+            >
+              <Square className='size-4' />
+            </Button>
+          ) : null}
         </div>
       </div>
     </div>
