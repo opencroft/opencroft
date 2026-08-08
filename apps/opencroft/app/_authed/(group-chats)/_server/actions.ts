@@ -224,13 +224,26 @@ export const sendGroupChatThreadMessage = createServerFn({ method: 'POST', stric
       asWriteResult(() => sendMessageInThread(getRequest(), data.threadId, data.text, { front: data.front })),
   )
 
-// Not wrapped in `asWriteResult`: a membership/agent-removed refusal here has
-// no per-instance copy to build (unlike a send or a rename), so it crosses
-// the wire the same way `getGroupChatThread`/`startGroupChatThread` already
-// do for their own refusals — see model.ts's `compactThread` for the gate.
+/** Compaction started, or refused with a code — same shape as `StartThreadOutcome`. */
+export type CompactThreadOutcome = { ok: true; ack: CompactAck } | { ok: false; code: GroupChatAccessFailure }
+
+// Not wrapped in `asWriteResult`: that helper discards the success payload
+// (`{ ok: true }` with nothing else), but the caller needs the CompactAck back
+// to start polling. Same try/catch `asWriteResult` does internally, kept
+// inline for the payload — see model.ts's `compactThread` for the gate.
 export const compactGroupChatThread = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((threadId: string) => threadId)
-  .handler(async ({ data: threadId }): Promise<CompactAck> => compactThread(getRequest(), threadId))
+  .handler(async ({ data: threadId }): Promise<CompactThreadOutcome> => {
+    try {
+      const ack = await compactThread(getRequest(), threadId)
+      return { ok: true, ack }
+    } catch (error) {
+      if (error instanceof GroupChatAccessError) {
+        return { ok: false, code: error.code }
+      }
+      throw error
+    }
+  })
 
 export const getGroupChatThreadCompactStatus = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((threadId: string) => threadId)

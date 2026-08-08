@@ -18,7 +18,7 @@ import { Button } from 'ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/popover'
 
 import type { CompactStatus } from '@/app/_authed/(extension-runtime)/_server/stream'
-import { groupChatAccessMessage } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
+import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { compactGroupChatThread, getGroupChatThreadCompactStatus } from '@/app/_authed/(group-chats)/_server/actions'
 
 const POLL_INTERVAL_MS = 2000
@@ -67,11 +67,16 @@ export function ThreadCompactControl({ threadId }: { threadId: string }) {
   // running from this one's point of view too.
   useEffect(() => {
     let current = true
-    getGroupChatThreadCompactStatus({ data: threadId }).then((s) => {
-      if (current) {
-        setStatus(s)
-      }
-    })
+    // A refusal reading status (thread deleted, membership lost) is not fatal
+    // to mount -- leave status at its idle default rather than surface an
+    // error for a passive check nobody asked for.
+    getGroupChatThreadCompactStatus({ data: threadId })
+      .then((s) => {
+        if (current) {
+          setStatus(s)
+        }
+      })
+      .catch(() => {})
     return () => {
       current = false
     }
@@ -82,7 +87,9 @@ export function ThreadCompactControl({ threadId }: { threadId: string }) {
       return
     }
     const timer = setInterval(() => {
-      getGroupChatThreadCompactStatus({ data: threadIdRef.current }).then(setStatus)
+      getGroupChatThreadCompactStatus({ data: threadIdRef.current })
+        .then(setStatus)
+        .catch(() => {})
     }, POLL_INTERVAL_MS)
     return () => clearInterval(timer)
   }, [status?.state])
@@ -91,14 +98,17 @@ export function ThreadCompactControl({ threadId }: { threadId: string }) {
     setRefusal(null)
     setRequesting(true)
     try {
-      const ack = await compactGroupChatThread({ data: threadId })
-      setStatus({ sessionKey: ack.sessionKey, state: ack.state })
-    } catch (err) {
-      // A membership/agent-removed refusal crosses as a thrown error rather
-      // than data (see compactGroupChatThread's own comment) -- read it the
-      // same way the rest of group-chats does: name+code survive seroval,
-      // instanceof does not.
-      setRefusal(groupChatAccessMessage(err) ?? 'That thread could not be compacted.')
+      const result = await compactGroupChatThread({ data: threadId })
+      if (result.ok) {
+        setStatus({ sessionKey: result.ack.sessionKey, state: result.ack.state })
+      } else {
+        // A refusal crosses as DATA, not a thrown error -- a thrown
+        // createServerFn error reaches the browser as a plain Error with only
+        // its message, so name/code never survive to read here.
+        setRefusal(groupChatAccessMessageForCode(result.code))
+      }
+    } catch {
+      setRefusal('That thread could not be compacted.')
     } finally {
       setRequesting(false)
     }
