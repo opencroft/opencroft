@@ -7,6 +7,7 @@ import { type LanguageModel, type ModelMessage, stepCountIs, streamText, type To
 import { z } from 'zod'
 
 import type { AgentConnection } from './connection'
+import { reportedContextWindow } from './context-window'
 import { errorMessage } from './errors'
 import { connectMcpToolset } from './mcp-client'
 import {
@@ -65,20 +66,6 @@ function resolveModel(selection: AgentSelection): LanguageModel {
     apiKey: selection.apiKey,
   })
   return provider(selection.model)
-}
-
-// Best-effort context window per model family — the AI SDK doesn't expose it.
-// Returns 0 when unknown, which the engine surfaces as an undefined max.
-function contextWindow(model: string): number {
-  const m = model.toLowerCase()
-  if (m.includes('claude')) return 200_000
-  if (m.includes('gpt-5') || m.includes('o3') || m.includes('o4')) return 400_000
-  if (m.includes('gpt-4')) return 128_000
-  if (m.includes('gemini')) return 1_000_000
-  if (m.includes('glm')) return 200_000
-  if (m.includes('qwen')) return 256_000
-  if (m.includes('deepseek')) return 128_000
-  return 0
 }
 
 // FinishReason (AI SDK) -> StopReason (ACP).
@@ -499,7 +486,10 @@ export function createNativeHarness(
           update: {
             sessionUpdate: 'usage_update',
             used,
-            size: contextWindow(selection.model),
+            // Not `contextWindow` directly: a guessed window this conversation
+            // has already outgrown is withheld rather than reported, so the
+            // pair can never say the session holds more than fits.
+            size: reportedContextWindow(selection.model, used),
           },
         })
       }
