@@ -19,7 +19,11 @@ import {
   useOverlaySlotValues,
 } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 import { SearchFindBar } from '@/app/_authed/(dashboard)/_canvas/search-find-bar'
-import { recordKeydown, recordOverlayRender } from '@/app/_authed/(extension-runtime)/_client/debug-probe'
+import {
+  recordKeydown,
+  recordOverlayContentSeen,
+  recordOverlayRender,
+} from '@/app/_authed/(extension-runtime)/_client/debug-probe'
 import type { CommandModeDefinition, CommandModeShortcut } from '@/app/_authed/(extension-runtime)/_client/host'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { ChatArea, ChatBar, ChatContent, ChatHeader } from '@/components/experimental/chat'
@@ -186,6 +190,10 @@ export function CanvasOverlay({
   // (e.g. diffs), so the chat must not claim it. In 'focused' chat mode the chat
   // is also kept out of the inspector and rendered as the floating overlay.
   const aiChatActive = chatTabs?.chatMode !== 'focused' && !mcpRequestsActive && mode === 'ai'
+
+  useEffect(() => {
+    recordOverlayContentSeen(mode, slotValues.content !== null, aiChatActive)
+  }, [mode, slotValues.content, aiChatActive])
 
   // Notify parent when overlay content or header is active
   const prevActive = useRef(false)

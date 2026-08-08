@@ -15,6 +15,10 @@ export interface DebugProbeState {
     matchedModeId: string | null
     at: number
   }>
+  activateCalls: Array<{ mode: string; hasParams: boolean; at: number }>
+  dismissCalls: Array<{ at: number }>
+  slotWrites: Array<{ slot: string; hasNode: boolean; at: number }>
+  overlayContentSeen: Array<{ mode: string; hasContent: boolean; aiChatActive: boolean; at: number }>
   snapshot: () => { commandModeIds: string[]; extensionIds: string[] }
 }
 
@@ -27,6 +31,10 @@ function state(): DebugProbeState | undefined {
     registerCalls: [],
     overlayRenders: [],
     keydowns: [],
+    activateCalls: [],
+    dismissCalls: [],
+    slotWrites: [],
+    overlayContentSeen: [],
     snapshot: () => ({ commandModeIds: [], extensionIds: [] }),
   }
   return w.__extDebug
@@ -52,4 +60,20 @@ export function recordOverlayRender(extensionsVersion: number, commandModeIds: s
 
 export function recordKeydown(code: string, commandModeIdsAtKeydown: string[], matchedModeId: string | null): void {
   state()?.keydowns.push({ code, commandModeIdsAtKeydown, matchedModeId, at: Date.now() })
+}
+
+export function recordActivate(mode: string, hasParams: boolean): void {
+  state()?.activateCalls.push({ mode, hasParams, at: Date.now() })
+}
+
+export function recordDismiss(): void {
+  state()?.dismissCalls.push({ at: Date.now() })
+}
+
+export function recordSlotWrite(slot: string, hasNode: boolean): void {
+  state()?.slotWrites.push({ slot, hasNode, at: Date.now() })
+}
+
+export function recordOverlayContentSeen(mode: string, hasContent: boolean, aiChatActive: boolean): void {
+  state()?.overlayContentSeen.push({ mode, hasContent, aiChatActive, at: Date.now() })
 }
