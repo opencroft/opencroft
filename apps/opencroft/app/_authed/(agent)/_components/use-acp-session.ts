@@ -13,6 +13,7 @@ import type { ChatMessage, ChatPart } from '@/app/_authed/(agent)/_lib/messages'
 import {
   cancelLocal,
   ensureLocalSession,
+  forgetLocalSession,
   forkLocal,
   getSessionHistoryPageLocal,
   promptLocal,
@@ -270,6 +271,10 @@ export function useAcpSession(
   const draftKey = useRef(0)
   const [sendError, setSendError] = useState<string | undefined>(undefined)
   const [sending, startSending] = useTransition()
+  // Bumped by clearSession to force the resolve-session effect below to run
+  // again for the SAME tab -- agentNodeId/jobNodeId/tabKey don't change on a
+  // clear, so nothing else would re-trigger it.
+  const [generation, setGeneration] = useState(0)
   // A message typed before the ACP session finished being created, queued so
   // the first message isn't dropped during the (slow first-spawn) handshake.
   // This is the only client-held queue: the server can't hold a message for a
@@ -347,6 +352,7 @@ export function useAcpSession(
   const [historyHeader, setHistoryHeader] = useState<{ index: number; text: UserText | null } | null>(null)
 
   // Resolve (or lazily create) the live ACP session for this tab.
+  // biome-ignore lint/correctness/useExhaustiveDependencies(generation): not read in the body -- it exists purely to force this effect to re-run for the SAME tab after clearSession, which agentNodeId/jobNodeId/tabKey alone would not trigger
   useEffect(() => {
     let cancelled = false
     setSessionId(null)
@@ -375,7 +381,7 @@ export function useAcpSession(
     return () => {
       cancelled = true
     }
-  }, [agentNodeId, jobNodeId, tabKey])
+  }, [agentNodeId, jobNodeId, tabKey, generation])
 
   // Stream events once the session id is known.
   useEffect(() => {
@@ -624,6 +630,32 @@ export function useAcpSession(
 
   const dismissSendError = useCallback(() => setSendError(undefined), [])
 
+  // Discards this tab's session entirely (transcript, durable pointer, live
+  // process) and bumps `generation` so the resolve-session effect opens a
+  // fresh one in its place -- same tab, same chat-list entry, empty history.
+  //
+  // State semantics on Clear:
+  // - Pending permission requests and the server-side prompt queue die with
+  //   the session -- they belong to the deleted session's live process, which
+  //   is gone, so there is nothing left to resume either into.
+  // - The composer draft SURVIVES: both the in-memory text and the persisted
+  //   per-tab entry live in use-agent-sessions.ts's own store, keyed by
+  //   tabKey and never touched here -- the draft belongs to the composer, not
+  //   to the session identity Clear is replacing.
+  //
+  // Returns the promise (rather than firing it and forgetting) so a caller's
+  // in-flight guard -- see agent-chat's useClearControl -- can actually wait
+  // for it, and catches its own failure rather than leaving a rejection
+  // unhandled: a destructive control that fails silently is worse than one
+  // that logs and lets the caller's guard release normally either way.
+  const clearSession = useCallback(() => {
+    return forgetLocalSession({ data: tabKey })
+      .then(() => setGeneration((g) => g + 1))
+      .catch((err) => {
+        console.error('Failed to clear session', tabKey, err)
+      })
+  }, [tabKey])
+
   const session = useMemo<AgentSession>(
     () => ({
       sessionKey: tabKey,
@@ -639,6 +671,7 @@ export function useAcpSession(
       draft,
       sendError,
       dismissSendError,
+      clearSession,
       hasMoreHistory: paginatedHistory.hasMore,
       loadingMoreHistory: paginatedHistory.loadingMore,
       loadMoreHistory,
@@ -659,6 +692,7 @@ export function useAcpSession(
       draft,
       sendError,
       dismissSendError,
+      clearSession,
       paginatedHistory.hasMore,
       paginatedHistory.loadingMore,
       loadMoreHistory,

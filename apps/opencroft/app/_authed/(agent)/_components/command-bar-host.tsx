@@ -2,6 +2,7 @@
 
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { ConfigOptionsBar } from 'agent-chat/config-options-bar'
+import type { CompactRenderState } from 'agent-chat/use-compact-control'
 import type { QueuedPrompt } from 'agent-client/types'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AgentCommandBar, type CommandBarConfig } from 'ui/agent-chat/agent-command-bar'
@@ -41,6 +42,13 @@ interface AgentCommandBarHostProps {
   onSetConfigOption?: (configId: string, value: string | boolean) => void
   /** Context usage meter (tokens used / window), shown alongside the selectors. */
   usage?: { used: number; size?: number }
+  /** Compact lifecycle for the ring's popover -- the trigger plus what to show
+   *  while/after it runs. Omit to render the ring with no Compact button at
+   *  all (ContextRing offers one only when it's given a handler). */
+  compact?: CompactRenderState
+  /** Discards the session and starts a fresh one, offered from the ring's
+   *  popover. Omit to render the ring with no Clear button. */
+  onClear?: () => void
   /** This session's persisted composer draft, loaded once when the session
    * (identified by `session.sessionKey`) opens. Distinct from `session.draft`
    * (edit-message staging). */
@@ -97,6 +105,8 @@ export function AgentCommandBarHost({
   configOptions,
   onSetConfigOption,
   usage,
+  compact,
+  onClear,
   savedDraft,
   onDraftChange,
   inline = false,
@@ -309,7 +319,17 @@ export function AgentCommandBarHost({
     }
     return (
       <>
-        {usage ? <ContextRing used={usage.used} size={usage.size ?? 0} /> : null}
+        {usage ? (
+          <ContextRing
+            usedTokens={usage.used}
+            contextLimit={usage.size ?? 0}
+            onCompact={compact?.onCompact}
+            compacting={compact?.compacting}
+            statusMessage={compact?.statusMessage}
+            statusTone={compact?.statusTone}
+            onClear={onClear}
+          />
+        ) : null}
         {booleanOptions.length > 0 ? (
           <ConfigOptionsBar
             options={booleanOptions}
@@ -318,7 +338,7 @@ export function AgentCommandBarHost({
         ) : null}
       </>
     )
-  }, [configOptions, usage])
+  }, [configOptions, usage, compact, onClear])
 
   // Memoized for element identity, not for render cost: recreating this node
   // would give the textarea a new identity, React would remount it, and focus

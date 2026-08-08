@@ -70,6 +70,14 @@ export interface AgentSession {
   // send starts, or by `dismissSendError`.
   sendError?: string
   dismissSendError?: () => void
+  // Discards this session (transcript, durable pointer, live process) and
+  // opens a fresh one in its place -- same tab, same chat-list entry. Pending
+  // permission requests and the queue die with the old session; the composer
+  // draft survives (owned separately -- see use-acp-session.ts's clearSession
+  // for the full statement). Returns its promise so a caller can await/guard
+  // it. Unset for a session that has nothing to clear yet (the dashboard
+  // placeholder).
+  clearSession?: () => Promise<void>
   // When set, the composer's send is disabled (e.g. no agent selected yet).
   disabled?: boolean
   // Whether the server has earlier history than what's currently in `messages`

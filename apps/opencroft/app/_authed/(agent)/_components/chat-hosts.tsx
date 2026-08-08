@@ -1,8 +1,11 @@
 'use client'
 
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
+import { useClearControl } from 'agent-chat/use-clear-control'
+import type { CompactStatus } from 'agent-chat/use-compact-control'
+import { useCompactControl } from 'agent-chat/use-compact-control'
 import { ArrowLeft, Pencil } from 'lucide-react'
-import { type ReactNode, useEffect, useMemo, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Input } from 'ui/input'
@@ -11,6 +14,7 @@ import { AgentChat, type AgentSession } from '@/app/_authed/(agent)/_components/
 import { Approvals } from '@/app/_authed/(agent)/_components/approvals'
 import { AgentCommandBarHost } from '@/app/_authed/(agent)/_components/command-bar-host'
 import { type LocalSource, type QueuedMessage, useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
+import { compactLocal, getLocalCompactStatus } from '@/app/_authed/(agent)/_server/acp'
 import { useOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 
 interface AgentMeta {
@@ -110,6 +114,36 @@ function ChatHost({
 }) {
   const showChat = focused
 
+  // Compacts THIS session directly (no send-message node, no reachability
+  // check) -- see compactLocal's own comment. Fed a no-op pair when there's no
+  // agent yet (DashboardHost's placeholder session): the ring itself doesn't
+  // render there either, since `usage` is never set for it, but a hook can't
+  // be called conditionally, so the inertness lives inside the callbacks.
+  const fetchCompactStatus = useCallback(
+    (sessionKey: string): Promise<CompactStatus> =>
+      agentNodeId
+        ? getLocalCompactStatus({ data: sessionKey })
+        : Promise.resolve({ state: 'never-requested' as const }),
+    [agentNodeId],
+  )
+  const requestCompact = useCallback(
+    async (sessionKey: string): Promise<{ ok: true } | { ok: false; message: string }> => {
+      if (!agentNodeId) {
+        return { ok: false, message: 'No agent selected.' }
+      }
+      try {
+        await compactLocal({ data: { agentNodeId, sessionKey } })
+        return { ok: true }
+      } catch {
+        return { ok: false, message: 'This session could not be compacted.' }
+      }
+    },
+    [agentNodeId],
+  )
+  const compactState = useCompactControl(session.sessionKey, fetchCompactStatus, requestCompact)
+  const compact = agentNodeId ? compactState : undefined
+  const clear = useClearControl(session.clearSession)
+
   const contentNode = useMemo(() => {
     if (!showChat || inspectorPage === 'none') {
       // 'none' → nothing docked; the focus menu (below) offers the list instead.
@@ -166,6 +200,8 @@ function ChatHost({
       configOptions={configOptions}
       onSetConfigOption={onSetConfigOption}
       usage={usage}
+      compact={compact}
+      onClear={clear.onClear}
       savedDraft={savedDraft}
       onDraftChange={onDraftChange}
       sendError={session.sendError}
