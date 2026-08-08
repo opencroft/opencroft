@@ -175,6 +175,8 @@ function ChatHost({
       usage={usage}
       savedDraft={savedDraft}
       onDraftChange={onDraftChange}
+      sendError={session.sendError}
+      onDismissSendError={session.dismissSendError}
     />
   )
 }

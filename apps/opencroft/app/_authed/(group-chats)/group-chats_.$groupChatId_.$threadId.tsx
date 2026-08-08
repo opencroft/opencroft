@@ -124,29 +124,24 @@ function ThreadConversation({
   // The refusal has to be visible, not just true. Sending into a removed
   // agent's thread is refused server-side, and before this the only trace was a
   // console error: the composer had already cleared itself, so the message
-  // simply appeared to vanish. The copy sits directly above the composer, the
-  // same place and shape the members dialog reports its own refusals, and the
-  // text is back in the composer to be copied or retried.
+  // simply appeared to vanish. The kit's error slot renders it directly above
+  // the composer, the same place and shape the members dialog reports its own
+  // refusals, and the text is back in the composer to be copied or retried.
   const composer = (
-    <div className='flex min-w-0 flex-col gap-1'>
-      {acp.session.sendError ? (
-        <p role='alert' className='px-1 text-sm text-destructive'>
-          {acp.session.sendError}
-        </p>
-      ) : null}
-      <AgentCommandBarHost
-        inline
-        startIcon={false}
-        session={acp.session}
-        agentNodeId={thread.agent.nodeId}
-        queued={acp.queue}
-        onRemoveQueued={acp.removeQueued}
-        configOptions={acp.configOptions}
-        onSetConfigOption={acp.setConfigOption}
-        usage={acp.usage}
-        placeholder={`Message ${thread.agent.name}`}
-      />
-    </div>
+    <AgentCommandBarHost
+      inline
+      startIcon={false}
+      session={acp.session}
+      agentNodeId={thread.agent.nodeId}
+      queued={acp.queue}
+      onRemoveQueued={acp.removeQueued}
+      configOptions={acp.configOptions}
+      onSetConfigOption={acp.setConfigOption}
+      usage={acp.usage}
+      placeholder={`Message ${thread.agent.name}`}
+      sendError={acp.session.sendError}
+      onDismissSendError={acp.session.dismissSendError}
+    />
   )
 
   return (

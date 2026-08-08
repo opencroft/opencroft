@@ -56,6 +56,11 @@ interface AgentCommandBarHostProps {
   /** Show the sparkles start icon. Default true; false hides it where the agent
    *  is fixed (a group-chat thread) and there is no session picker. */
   startIcon?: boolean
+  /** Copy for a send that did not go through, and how to dismiss it. Both come
+   *  from the session (see AgentSession.sendError) — this host only forwards
+   *  them to the kit's error slot. */
+  sendError?: string
+  onDismissSendError?: () => void
 }
 
 // Debounce composer draft saves so normal typing doesn't POST every keystroke.
@@ -96,6 +101,8 @@ export function AgentCommandBarHost({
   onDraftChange,
   inline = false,
   startIcon = true,
+  sendError,
+  onDismissSendError,
 }: AgentCommandBarHostProps) {
   // Lazy init so a session opened with an existing draft paints with it already
   // in place — no separate fetch-then-fill flicker.
@@ -351,6 +358,8 @@ export function AgentCommandBarHost({
         configExtra={configExtra}
         queued={queuedItems}
         onRemoveQueued={onRemoveQueued}
+        sendError={sendError}
+        onDismissSendError={onDismissSendError}
         autoApprove={autoApprove}
         onToggleAutoApprove={toggleAutoApprove}
         yoloMode={yoloMode}
@@ -379,6 +388,8 @@ export function AgentCommandBarHost({
       configExtra,
       queuedItems,
       onRemoveQueued,
+      sendError,
+      onDismissSendError,
       autoApprove,
       toggleAutoApprove,
       yoloMode,
