@@ -1,12 +1,11 @@
 'use client'
 
-import { type ComponentType, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ThinkingIndicator } from 'agent-chat/thinking-indicator'
+import { type ComponentType, useCallback, useMemo, useRef } from 'react'
 import { ChainDot, Chained } from 'ui/agent-chat/chain'
 import { type Block, ChatConversation, type ChatConversationHandle } from 'ui/agent-chat/chat-conversation'
 import type { ChatTurnRenderers, DetailItem as KitDetailItem } from 'ui/agent-chat/chat-turn'
 import { ThinkingBlock } from 'ui/agent-chat/thinking-block'
-import { TypingDots } from 'ui/chat/typing-dots'
-import { Flex } from 'ui/layout/flex'
 
 import { buildBlocks, type UserText } from '@/app/_authed/(agent)/_lib/build-blocks'
 import type { ChatMessage } from '@/app/_authed/(agent)/_lib/messages'
@@ -176,88 +175,6 @@ export function AgentChat({ session, emptyText, agentAvatar, agentName, defaultE
   )
 }
 
-const THINKING_PHRASES = [
-  'Analyzing...',
-  'Architecting...',
-  'Brewing...',
-  'Casting...',
-  'Consulting...',
-  'Cooking...',
-  'Crunching...',
-  'Doing the THING...',
-  'Figuring...',
-  'Masterminding...',
-  'Orchestrating...',
-  'Pondering...',
-  'Processing...',
-  'Slacking...',
-  'Snoozing...',
-  'Sorcering...',
-  'Thinking...',
-  'Vibing...',
-  'Witching...',
-  'Working...',
-] as const
-
-export function ThinkingIndicator() {
-  const [phrase, setPhrase] = useState<string>(
-    () => THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)],
-  )
-  const prevPhrase = useRef(phrase)
-  const [visible, setVisible] = useState(0)
-
-  // Cycle phrases
-  useEffect(() => {
-    const interval = setInterval(() => {
-      let next: string
-      do {
-        next = THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)]
-      } while (next === phrase && next.length === phrase.length && THINKING_PHRASES.length > 1)
-      prevPhrase.current = phrase
-      setPhrase(next)
-      setVisible(0)
-    }, 3000)
-    return () => clearInterval(interval)
-  }, [phrase])
-
-  const maxLen = Math.max(phrase.length, prevPhrase.current.length)
-
-  // Typewriter effect
-  useEffect(() => {
-    let i = 0
-    let cancelled = false
-    const tick = () => {
-      if (cancelled) {
-        return
-      }
-      i++
-      if (i <= maxLen) {
-        setVisible(i)
-        setTimeout(tick, 20 + Math.random() * 60)
-      }
-    }
-    setTimeout(tick, 300)
-    return () => {
-      cancelled = true
-    }
-  }, [phrase])
-
-  // Compose display: new text overwrites old character by character
-  const paddedNew = phrase.padEnd(maxLen)
-  const paddedOld = prevPhrase.current.padEnd(maxLen)
-  const display = paddedNew.slice(0, visible) + paddedOld.slice(visible)
-
-  return (
-    <Flex row align='center' className='gap-2 text-xs text-muted-foreground font-mono'>
-      <TypingDots variant='primary' size='sm' />
-      <span>{display.trimEnd()}</span>
-    </Flex>
-  )
-}
-
-// Messages held in the session's server-side queue (typed while a turn was
-// running, delivered in order as turns end). Rendered inside the command bar so
-// the feedback sits directly above the composer that produced the messages.
 // ── Extension-provided chat-input controls (e.g. voice) ──────────────────────
 // Core owns only the injection point and this contract. The actual controls
 // (mic capture, TTS playback) live in an extension that declares

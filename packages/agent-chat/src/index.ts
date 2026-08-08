@@ -10,6 +10,7 @@ export {
   type McpServerFormProps,
 } from './mcp-form'
 export {
+  AppearGuard,
   AskPrompt,
   type MessageHandlers,
   MessageView,

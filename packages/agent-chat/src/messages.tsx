@@ -39,7 +39,18 @@ export function statusVariant(status: string): 'secondary' | 'destructive' | 'ou
 // request.
 const APPEAR_LOCKOUT_MS = 550
 
-function AppearGuard({ children }: { children: ReactNode }) {
+/**
+ * Wraps a prompt that can appear while the reader is mid-tap on something else
+ * (expanding a tool call, say): it animates in and ignores pointer input until
+ * the entrance settles, so a tap meant for the transcript cannot land on a
+ * request that arrived under the finger.
+ *
+ * Exported because a host that places permission and ask prompts somewhere of
+ * its own — a docked tray rather than inline in the transcript — needs the same
+ * guard; without it, that host writes a second copy of this, which is how the
+ * lockout duration drifts between the two places a prompt can appear.
+ */
+export function AppearGuard({ children }: { children: ReactNode }) {
   const [locked, setLocked] = useState(true)
   useEffect(() => {
     const timer = setTimeout(() => setLocked(false), APPEAR_LOCKOUT_MS)
