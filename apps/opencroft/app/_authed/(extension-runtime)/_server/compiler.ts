@@ -257,10 +257,22 @@ export const Fragment = React.Fragment;
     }
   }
   if (specifier === 'react-dom') {
+    // createPortal is real (globalThis.__extHost.host.createPortal, wired to the
+    // host app's own react-dom the same way the 'react' shim above wires up
+    // host.React) -- not stubbed to a no-op. A bare react-dom stub silently broke
+    // any extension-bundled library whose components portal internally (radix-ui's
+    // Portal, used by ContextMenu/DropdownMenu/etc.): the trigger's own state still
+    // flipped, since that's plain React state, but nothing ever mounted, with no
+    // error, because createPortal's return value was thrown away by design.
+    // flushSync stays a synchronous call-through -- forwarding it would need
+    // exposing react-dom's real flushSync too, and unlike createPortal a fallback
+    // that just runs the callback immediately is a reasonable degradation, not a
+    // silent no-op.
     return {
       contents: `
-export default {};
-export const createPortal = () => null;
+const createPortal = globalThis.__extHost.host.createPortal;
+export default { createPortal };
+export { createPortal };
 export const flushSync = (fn) => fn();
 `,
       loader: 'js',
