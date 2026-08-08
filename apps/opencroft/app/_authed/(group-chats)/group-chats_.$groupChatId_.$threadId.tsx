@@ -8,8 +8,6 @@ import { Approvals } from '@/app/_authed/(agent)/_components/approvals'
 import { AgentCommandBarHost } from '@/app/_authed/(agent)/_components/command-bar-host'
 import type { LocalSource, SendTransport } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
-import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
-import { deriveOpenSessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { ThreadCompactControl } from '@/app/_authed/(group-chats)/_components/thread-compact-control'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
@@ -117,40 +115,6 @@ function ThreadConversation({
   )
   const acp = useAcpSession(source, undefined, thread.agent.name, undefined, sendTransport)
 
-  // What this thread's agent is doing, from two sources because no single one
-  // carries both halves.
-  //
-  // The busy half comes from this session's own event stream, which reports a
-  // turn beginning and ending and a permission request being raised as they
-  // happen — so this screen shows it immediately rather than up to a poll
-  // interval later, which is the whole reason an open conversation can do
-  // better than a list.
-  //
-  // Liveness cannot come from there: the stream carries conversation events
-  // only, with nothing emitted when a session's process goes away underneath
-  // an open screen. So it comes from the shared activity poll — the same one
-  // the thread list and the chat list already read, retained here rather than
-  // started fresh. Without it a session reaped for idleness would keep
-  // reading as idle for as long as the screen stayed open.
-  //
-  // The busy flags are taken from the stream ALONE, not or-ed with the poll's
-  // equivalent sets. The poll lags a turn ending as much as it lags one
-  // starting, so folding it in would keep the line reading "working" for up to
-  // an interval after the finished reply is already on screen — contradicting
-  // the transcript directly above it. The stream's own replay covers the case
-  // that or-ing would have been for: a turn already running when this screen
-  // opens arrives in the history it folds.
-  //
-  // NOTE the deliberate mapping of `session.waiting`. In the session object it
-  // means a turn is running; in this vocabulary `waiting` means a PERSON is
-  // the blocker. They are opposites, and mapping one to the other would put
-  // the heaviest state on the screen during every ordinary turn.
-  const { aliveKeys } = useSessionActivityKeys(true)
-  const activity = deriveOpenSessionStatus(
-    { turnActive: acp.session.waiting, permissionPending: acp.permissions.length > 0 },
-    aliveKeys.has(thread.sessionKey),
-  )
-
   // Stable identity across re-renders (thread.id does not change without a
   // route change) -- AgentCommandBarHost's own memo depends on this prop, and
   // a fresh element every render would rebuild it and republish into the
@@ -212,24 +176,14 @@ function ThreadConversation({
         groupChatName={chat.name}
         threadTitle={thread.title}
         members={chat.members}
-        status={activity}
-        agentName={thread.agent.name}
         onBack={onBack}
         composer={composer}
       >
-        {/* The framing pins its own activity line between the transcript and
-            the composer, so the conversation's in-scroll typing indicator is
-            turned off here: both report the same turn, and a reader at the
-            bottom would otherwise be told twice. The pinned one is kept
-            because it is the more capable — it stays visible to a reader who
-            has scrolled up, and it distinguishes a turn stalled on a
-            permission request from one that is running. */}
         <AgentChat
           session={acp.session}
           agentAvatar={thread.agent.avatarUrl ?? undefined}
           agentName={thread.agent.name}
           defaultExpanded
-          showThinkingIndicator={false}
         />
         {/* A thread's agent asks for approval exactly as a 1:1 chat's does, and
             without this there is nowhere to answer: the request renders in the
