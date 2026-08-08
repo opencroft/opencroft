@@ -39,9 +39,34 @@ interface ReloadEntry {
   version?: number
 }
 
+// Round 2: bubbled/captured/reloads came back identical on pass vs fail, which
+// eliminates event-delivery and the SSE-reload race -- the match happens every
+// time. So the remaining question is what happens to `mode` state AFTER the
+// match, between activateMode(matched) being called and the overlay actually
+// painting. `managerCalls` records every mode transition regardless of which
+// caller triggered it (activate/dismiss/a bare setMode all funnel through one
+// wrapped setter in overlay-context.ts), so an unexplained transition back
+// off 'git-client' shows up here even if its caller isn't one we guessed at.
+// `renders` records CanvasOverlay's own mode/overlayActive on every render, to
+// see whether mode ever reverts before the content slot is ever painted.
+interface ManagerCallEntry {
+  at: number
+  prevMode: string
+  nextMode: string
+}
+
+interface RenderEntry {
+  at: number
+  mode: string
+  hasActiveExtMode: boolean
+  overlayActive: boolean
+}
+
 const captured: CapturedEntry[] = []
 const bubbled: BubbledEntry[] = []
 const reloads: ReloadEntry[] = []
+const managerCalls: ManagerCallEntry[] = []
+const renders: RenderEntry[] = []
 
 export function recordCaptured(e: KeyboardEvent): void {
   captured.push({
@@ -65,9 +90,25 @@ export function recordReloadSettled(version: number): void {
   reloads.push({ at: Date.now(), phase: 'settled', version })
 }
 
+export function recordManagerCall(prevMode: string, nextMode: string): void {
+  managerCalls.push({ at: Date.now(), prevMode, nextMode })
+}
+
+export function recordRender(mode: string, hasActiveExtMode: boolean, overlayActive: boolean): void {
+  renders.push({ at: Date.now(), mode, hasActiveExtMode, overlayActive })
+}
+
 ;(globalThis as Record<string, unknown>).__ctrlGDebug = {
   captured,
   bubbled,
   reloads,
-  snapshot: () => ({ captured: [...captured], bubbled: [...bubbled], reloads: [...reloads] }),
+  managerCalls,
+  renders,
+  snapshot: () => ({
+    captured: [...captured],
+    bubbled: [...bubbled],
+    reloads: [...reloads],
+    managerCalls: [...managerCalls],
+    renders: [...renders],
+  }),
 }

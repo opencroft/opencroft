@@ -15,6 +15,7 @@ import {
 } from 'react'
 
 import type { CommandMode } from '@/app/_authed/(dashboard)/_canvas/canvas-command-bar'
+import { recordManagerCall } from '@/app/_authed/(dashboard)/_canvas/ctrlg-debug'
 
 type Slot = 'header' | 'content' | 'menu' | 'bar'
 
@@ -109,17 +110,32 @@ function useOverlayState(): { controls: OverlaySlotControls; values: OverlaySlot
 /** Owns the overlay's mode and slot state; useOverlay() works below this provider. */
 export function OverlayProvider({ children }: { children: ReactNode }) {
   const { controls: slots, values } = useOverlayState()
-  const [mode, setMode] = useState<CommandMode>('ai')
+  const [mode, setModeState] = useState<CommandMode>('ai')
   const [params, setParams] = useState<unknown>(null)
   const [focusTick, setFocusTick] = useState(0)
   const [commandFocused, setCommandFocused] = useState(false)
 
-  const activate = useCallback((next: CommandMode, nextParams?: unknown) => {
-    setMode(next)
-    setParams(nextParams ?? null)
-    setCommandFocused(true)
-    setFocusTick((t) => t + 1)
+  // TEMPORARY: every mode transition funnels through this one
+  // wrapped setter, regardless of caller (activate, dismiss, or a bare
+  // setMode from a consumer like resetToAI) -- so an unexplained transition
+  // shows up in the log even from a caller nobody suspected yet.
+  const setMode = useCallback((next: CommandMode | ((prev: CommandMode) => CommandMode)) => {
+    setModeState((prev) => {
+      const resolved = typeof next === 'function' ? (next as (p: CommandMode) => CommandMode)(prev) : next
+      recordManagerCall(prev, resolved)
+      return resolved
+    })
   }, [])
+
+  const activate = useCallback(
+    (next: CommandMode, nextParams?: unknown) => {
+      setMode(next)
+      setParams(nextParams ?? null)
+      setCommandFocused(true)
+      setFocusTick((t) => t + 1)
+    },
+    [setMode],
+  )
 
   const dismiss = useCallback(() => {
     setCommandFocused(false)
@@ -134,13 +150,13 @@ export function OverlayProvider({ children }: { children: ReactNode }) {
     if (focused instanceof HTMLElement) {
       focused.blur()
     }
-  }, [slots.setSlot])
+  }, [slots.setSlot, setMode])
 
   // Memoised WITHOUT the slot values: publishing changes `values`, leaves this
   // identity alone, and so leaves every publisher un-rendered.
   const manager: OverlayManager = useMemo(
     () => ({ mode, params, focusTick, commandFocused, slots, activate, dismiss, setMode, setCommandFocused }),
-    [mode, params, focusTick, commandFocused, slots, activate, dismiss],
+    [mode, params, focusTick, commandFocused, slots, activate, dismiss, setMode],
   )
 
   return createElement(

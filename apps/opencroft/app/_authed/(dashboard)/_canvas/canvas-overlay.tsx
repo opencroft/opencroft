@@ -12,13 +12,13 @@ import { useChatTabsMaybe } from '@/app/_authed/(agent)/_lib/chat-tabs-context'
 import { AiPanel } from '@/app/_authed/(dashboard)/_canvas/ai-panel'
 import type { CommandNodeEntry } from '@/app/_authed/(dashboard)/_canvas/canvas-command-bar'
 import { CommandBar, CommandBarMenu } from '@/app/_authed/(dashboard)/_canvas/command-bar'
+import { recordBubbled, recordCaptured, recordRender } from '@/app/_authed/(dashboard)/_canvas/ctrlg-debug'
 import { InspectorContext } from '@/app/_authed/(dashboard)/_canvas/inspector-context'
 import {
   useOverlay,
   useOverlayBackIntercept,
   useOverlaySlotValues,
 } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
-import { recordBubbled, recordCaptured } from '@/app/_authed/(dashboard)/_canvas/ctrlg-debug'
 import { SearchFindBar } from '@/app/_authed/(dashboard)/_canvas/search-find-bar'
 import type { CommandModeDefinition, CommandModeShortcut } from '@/app/_authed/(extension-runtime)/_client/host'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
@@ -246,6 +246,11 @@ export function CanvasOverlay({
   }, [])
 
   const activeExtMode = useMemo(() => extensionModes.find((m) => m.id === mode), [extensionModes, mode])
+
+  // TEMPORARY: every render's mode/overlayActive, unconditionally
+  // (not in an effect) -- so a mode that flips back before the content slot is
+  // ever painted shows up here, correlated against managerCalls's transition log.
+  recordRender(mode, !!activeExtMode, overlayActive)
 
   const activeMode = (() => {
     if (mode === 'ai') {
