@@ -31,6 +31,7 @@ export function GroupChatStartThreadComposer({ groupChatId, members, onThreadSta
 
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
   const [value, setValue] = useState('')
+  const [title, setTitle] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string>()
 
@@ -51,19 +52,26 @@ export function GroupChatStartThreadComposer({ groupChatId, members, onThreadSta
     setSubmitting(true)
     try {
       const result = await startGroupChatThread({
-        data: { groupChatId, agentNodeId: selectedAgent, firstMessage: text.trim() },
+        data: {
+          groupChatId,
+          agentNodeId: selectedAgent,
+          firstMessage: text.trim(),
+          title: title.trim() || undefined,
+        },
       })
       if (!result.ok) {
-        // Only reachable for a named thread today: a title whose slug this
-        // agent already uses here. The field was cleared before submit ran
+        // Reachable for a named thread whose slug is already taken or
+        // unusable. The message field was cleared before submit ran
         // (clear-on-send), so keeping what was typed means putting it back
-        // explicitly — same as the thrown-failure path below. Without this the
-        // person loses their message to a refusal they are expected to correct.
+        // explicitly — same as the thrown-failure path below. The title field
+        // is untouched by clear-on-send, so it's already still there to
+        // retitle; this just leaves it alone rather than clearing it.
         setValue(text)
         setError(groupChatAccessMessageForCode(result.code))
         return
       }
       setSelectedAgent(null)
+      setTitle('')
       await router.invalidate()
       onThreadStarted(result.started.thread.id)
     } catch (e) {
@@ -89,6 +97,8 @@ export function GroupChatStartThreadComposer({ groupChatId, members, onThreadSta
           setError(undefined)
         }
       }}
+      title={title}
+      onTitleChange={setTitle}
       onSubmit={() => void submit()}
       submitting={submitting}
       error={error}
