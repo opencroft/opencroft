@@ -43,6 +43,20 @@ export function agentNodeAvatar(node: AgentGraphNode): string | undefined {
   return typeof value === 'string' ? value : undefined
 }
 
+// Opt-in for the idle-session reaper (default OFF): unloading can kill
+// background work an idle session still owns, so this must be a deliberate
+// per-agent choice, never a global default.
+export function agentAutoUnloadIdleEnabled(node: AgentGraphNode): boolean {
+  return node.data?.['autoUnloadIdle'] === true
+}
+
+// Idle threshold in minutes for that opt-in; undefined means "use the
+// reaper's own default" rather than 0 (which would mean "immediately").
+export function agentAutoUnloadIdleMinutes(node: AgentGraphNode): number | undefined {
+  const value = node.data?.['autoUnloadIdleMinutes']
+  return typeof value === 'number' && value > 0 ? value : undefined
+}
+
 /** An Agent Job node's display name — also used, slugified, as its session-routing identity. */
 export function agentJobName(node: AgentGraphNode): string {
   return str(node.data?.['name']).trim()

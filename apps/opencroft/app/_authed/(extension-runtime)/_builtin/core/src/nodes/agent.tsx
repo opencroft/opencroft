@@ -26,6 +26,12 @@ export interface AgentData {
   /** When set, the harness runs inside this Docker container via `docker exec`,
    * with its workspace at /agents/<agent-slug>. Empty = run on the host. */
   containerName?: string
+  /** Opt-in (default off) for the idle-session reaper to unload this agent's
+   * sessions once idle longer than autoUnloadIdleMinutes. Off by default
+   * because unloading kills any background work an idle session still owns. */
+  autoUnloadIdle?: boolean
+  /** Idle threshold in minutes for autoUnloadIdle; unset uses the reaper's own default. */
+  autoUnloadIdleMinutes?: number
   /** Speech profile (Speech tab): OpenAI-compatible speech endpoint and
    * output-format knobs, read from the node's data by speech consumers. */
   ttsApiBase?: string
@@ -364,6 +370,44 @@ function LocalProfileFields({
         <p className='text-[10px] text-muted-foreground'>
           Optional. Runs the harness inside this container via <code>docker exec</code>.
         </p>
+      </div>
+      <div className='flex flex-col gap-1'>
+        <div className='flex items-center gap-2'>
+          <input
+            type='checkbox'
+            checked={data.autoUnloadIdle ?? false}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ autoUnloadIdle: e.target.checked })}
+            className='rounded border-input'
+          />
+          <Label
+            className='text-xs cursor-pointer'
+            onClick={() => updateData({ autoUnloadIdle: !data.autoUnloadIdle })}
+          >
+            Auto-unload idle sessions
+          </Label>
+        </div>
+        <p className='text-[10px] text-muted-foreground'>
+          Frees the process of this agent's sessions once idle past the threshold below. Off by default — unloading
+          kills any background work an idle session still owns.
+        </p>
+        {data.autoUnloadIdle ? (
+          <div className='flex flex-col gap-1 pl-6'>
+            <Label className='text-xs'>Idle threshold (minutes)</Label>
+            <Input
+              className='h-8 text-xs'
+              type='number'
+              min={1}
+              step={1}
+              value={data.autoUnloadIdleMinutes ?? ''}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                updateData({
+                  autoUnloadIdleMinutes: e.target.value === '' ? undefined : Number(e.target.value),
+                })
+              }
+              placeholder='45'
+            />
+          </div>
+        ) : null}
       </div>
       {isNative ? <NativeProfileFields data={data} updateData={updateData} /> : null}
       {data.containerName ? (
