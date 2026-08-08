@@ -4,6 +4,7 @@ import { GroupChatThreadFraming } from 'ui/group-chat/group-chat-thread-framing'
 import { ScrollPage } from 'ui/layout/scrollpage'
 
 import { AgentChat } from '@/app/_authed/(agent)/_components/agent-chat'
+import { Approvals } from '@/app/_authed/(agent)/_components/approvals'
 import { AgentCommandBarHost } from '@/app/_authed/(agent)/_components/command-bar-host'
 import type { LocalSource, SendTransport } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
@@ -184,6 +185,13 @@ function ThreadConversation({
           agentName={thread.agent.name}
           defaultExpanded
         />
+        {/* A thread's agent asks for approval exactly as a 1:1 chat's does, and
+            without this there is nowhere to answer: the request renders in the
+            transcript with no controls, and the turn's only exit is being
+            killed — which reaches the agent as a refusal nobody meant. Same
+            component and the same position relative to the conversation the
+            1:1 host uses, so the two surfaces cannot drift. */}
+        <Approvals acp={acp} />
       </GroupChatThreadFraming>
     </ScrollPage>
   )

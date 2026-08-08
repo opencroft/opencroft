@@ -1,7 +1,6 @@
 'use client'
 
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
-import { AppearGuard, AskPrompt, PermissionRequest } from 'agent-chat/messages'
 import { ArrowLeft, Pencil } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
@@ -9,13 +8,9 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Input } from 'ui/input'
 
 import { AgentChat, type AgentSession } from '@/app/_authed/(agent)/_components/agent-chat'
+import { Approvals } from '@/app/_authed/(agent)/_components/approvals'
 import { AgentCommandBarHost } from '@/app/_authed/(agent)/_components/command-bar-host'
-import {
-  type AcpSession,
-  type LocalSource,
-  type QueuedMessage,
-  useAcpSession,
-} from '@/app/_authed/(agent)/_components/use-acp-session'
+import { type LocalSource, type QueuedMessage, useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { useOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 
 interface AgentMeta {
@@ -372,42 +367,5 @@ export function LocalAgentHost({
       savedDraft={savedDraft}
       onDraftChange={onDraftChange}
     />
-  )
-}
-
-function Approvals({ acp }: { acp: AcpSession }) {
-  if (acp.permissions.length === 0 && acp.asks.length === 0) {
-    return null
-  }
-  return (
-    <div className='flex flex-col gap-2 px-4 pb-2'>
-      {acp.permissions.map((p) => (
-        <AppearGuard key={p.requestId}>
-          <PermissionRequest
-            message={{
-              id: p.requestId,
-              kind: 'permission',
-              requestId: p.requestId,
-              title: p.title,
-              options: p.options,
-              resolved: false,
-            }}
-            onRespond={acp.resolvePermission}
-            onRespondText={acp.respondPermissionText}
-          />
-        </AppearGuard>
-      ))}
-      {acp.asks.map((a) => (
-        <AppearGuard key={a.requestId}>
-          {/* Same shape-mapping the permission request above uses: this tray
-              holds live requests, which are unresolved by construction — a
-              resolved one leaves the list rather than staying to say so. */}
-          <AskPrompt
-            message={{ id: a.requestId, kind: 'ask', requestId: a.requestId, message: a.message, resolved: false }}
-            onRespond={acp.resolveAsk}
-          />
-        </AppearGuard>
-      ))}
-    </div>
   )
 }
