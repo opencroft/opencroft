@@ -36,6 +36,7 @@ import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import {
   ensureLocalSessionImpl,
   findTargetSessionImpl,
+  forgetLocalSessionImpl,
   promptLocalImpl,
   stopLocalSessionProcessImpl,
   tabSessions,
@@ -303,4 +304,27 @@ test('a message after unload reattaches to the SAME session instead of starting 
     'a queued message must reload the unloaded session, not spawn a rival for the same tab',
   )
   assert.equal(afterUnload.created, false, 'the reattached session already has its history -- it is not new')
+})
+
+// ── forget-session primitive ──────────────────────────────────────────────
+//
+// forgetLocalSessionImpl is the mechanism the new "delete" send-message action
+// delegates to for tearing down the live process and the
+// durable pointer. This is its opposite twin to stopLocalSessionProcessImpl
+// above: same live-process teardown, but the durable pointer must NOT survive.
+
+test('forgetLocalSessionImpl drops the durable pointer too -- unlike stopLocalSessionProcessImpl', async () => {
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection, { canLoad: true })
+  const tabKey = `agent:close:test:${crypto.randomUUID()}`
+
+  await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  await forgetLocalSessionImpl(tabKey)
+
+  assert.equal(tabSessions.has(tabKey), false, 'the live pointer is gone')
+  assert.equal(
+    await readPersistedSession(tabKey),
+    null,
+    'delete must drop the durable pointer -- a later restart must not resurrect this session',
+  )
 })

@@ -19,9 +19,9 @@ import {
 import { foldEvents, isSnapshotEvent } from 'agent-client/fold'
 import type { ChatEvent } from 'agent-client/types'
 
-import { stopLocalSessionProcessImpl } from '@/app/_authed/(agent)/_server/acp-impl'
+import { forgetLocalSessionImpl, stopLocalSessionProcessImpl } from '@/app/_authed/(agent)/_server/acp-impl'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
-import { readSessions } from '@/app/_authed/(agent)/_server/agent-sessions-store'
+import { deleteSession as deleteSessionEntry, readSessions } from '@/app/_authed/(agent)/_server/agent-sessions-store'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import {
   dispatchExecutionContext,
@@ -535,6 +535,24 @@ export interface HostSendMessageApi {
   compactStatus(nodeId: string, params: { sessionKey: string }): Promise<CompactStatus>
   /** Terminates an idle session's process; the transcript and durable session pointer are kept, so the next message reloads it transparently (same cold-start resume an offline session already uses). */
   unload(nodeId: string, params: { sessionKey: string }): Promise<{ sessionKey: string; unloaded: true }>
+  /**
+   * Removes a session for good: drops its durable session pointer (and any
+   * config overrides) AND its chat-list entry, so it no longer resumes and no
+   * longer appears in the sidebar. Default requires `status` (see
+   * listSessions) to be `offline` -- deleting a live session would silently
+   * drop whatever it's doing, so `idle`/`working`/`waiting` are refused unless
+   * `force: true`, which first ends the live process (same teardown as a live
+   * chat delete) and then proceeds. The underlying harness's on-disk
+   * transcript is deliberately left alone and NOT located or deleted -- this
+   * stays harness-agnostic, the same boundary agentClient.loadSession
+   * observes, and the harness may be running on a different terminal context
+   * (local/WSL/SSH) than this server; the transcript is orphaned, not lost
+   * track of.
+   */
+  delete(
+    nodeId: string,
+    params: { sessionKey: string; force?: boolean },
+  ): Promise<{ sessionKey: string; deleted: true }>
 }
 
 const sendMessageApi: HostSendMessageApi = {
@@ -722,6 +740,43 @@ const sendMessageApi: HostSendMessageApi = {
     }
     await stopLocalSessionProcessImpl(sessionKey)
     return { sessionKey, unloaded: true }
+  },
+
+  async delete(nodeId, params) {
+    const found = await findSendMessageNode(nodeId)
+    if (!found) {
+      throw new Error(`Node not found: ${nodeId}`)
+    }
+    const sessionKey = params.sessionKey.trim()
+    const parts = sessionKey ? parseSessionKey(sessionKey) : null
+    if (!parts || !reachablePairs(found.nodes, found.edges).has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
+      throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
+    }
+    const force = params.force === true
+    if (!force) {
+      const status = deriveSessionStatus(sessionKey, {
+        pending: new Set(agentClient.pendingPermissionSessionKeys()),
+        active: new Set(agentClient.activeSessionKeys()),
+        alive: new Set(agentClient.aliveSessionKeys()),
+      })
+      // The normal case is deleting an offline (stale) session. A live one
+      // (idle/working/waiting) is refused by default since deleting it also
+      // ends its process — pass force: true to end it and delete anyway.
+      if (status !== 'offline') {
+        throw new Error(
+          `Session is ${status}, not offline — delete only applies to an offline session by default (pass force: true to end a live session and delete it anyway)`,
+        )
+      }
+    }
+    // Ends any live process, and drops the durable session pointer + config
+    // overrides — safe to call unconditionally whether or not a process is
+    // actually running (same call group-chat thread deletion already reuses).
+    await forgetLocalSessionImpl(sessionKey)
+    // forgetLocalSessionImpl only drops the durable session pointer, not the
+    // human-facing chat-list entry — remove that separately so the session
+    // also stops appearing in the sidebar.
+    await deleteSessionEntry(sessionKey)
+    return { sessionKey, deleted: true }
   },
 }
 
