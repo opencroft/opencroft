@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 import { GroupChatThreadFraming } from 'ui/group-chat/group-chat-thread-framing'
 import { ScrollPage } from 'ui/layout/scrollpage'
 
@@ -11,6 +11,7 @@ import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chat
 import { ThreadCompactControl } from '@/app/_authed/(group-chats)/_components/thread-compact-control'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
 import { threadSendRefusal } from '@/app/_authed/(group-chats)/_lib/send-failure'
+import { useSafeBack } from '@/app/_authed/(group-chats)/_lib/use-safe-back'
 import type { GroupChatDetailView, GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import {
   getGroupChatThreadView,
@@ -47,6 +48,11 @@ function GroupChatThreadPage() {
   const data = Route.useLoaderData()
   const { groupChatId } = Route.useParams()
   const navigate = useNavigate()
+  const goToChat = useCallback(
+    () => navigate({ to: '/group-chats/$groupChatId', params: { groupChatId } }),
+    [navigate, groupChatId],
+  )
+  const onBack = useSafeBack(goToChat)
 
   if (data.refused) {
     return <GroupChatRefusal code={data.code} />
@@ -54,13 +60,7 @@ function GroupChatThreadPage() {
   // The session lives in its own component so its hooks are never behind the
   // refusal branch above — a hook after an early return is a different hook
   // order between renders, which React does not allow.
-  return (
-    <ThreadConversation
-      thread={data.thread}
-      chat={data.chat}
-      onBack={() => navigate({ to: '/group-chats/$groupChatId', params: { groupChatId } })}
-    />
-  )
+  return <ThreadConversation thread={data.thread} chat={data.chat} onBack={onBack} />
 }
 
 function ThreadConversation({

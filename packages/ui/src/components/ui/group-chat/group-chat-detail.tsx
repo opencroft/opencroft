@@ -1,13 +1,17 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { Pencil } from 'lucide-react'
+import { ChevronLeft, Pencil } from 'lucide-react'
 
 import { CommandBarFrame } from '@/components/ui/agent-chat/command-bar-frame'
 import { MemberAvatarGroup, type MemberRef } from '@/components/ui/group-chat/member-avatar-group'
 import { cn } from '@/lib/utils'
 
 export interface GroupChatDetailProps {
+  /** Back out of this group chat -- to the group-chat list. Omit on a surface
+   * that has no "out" (there is none today, but the header should not assume
+   * one exists). Same affordance as GroupChatThreadFraming's, one level up. */
+  onBack?: () => void
   /** What this chat is called. The title, and what every other surface shows.
    * Renaming is pure presentation -- it reaches no agent. */
   name: string
@@ -110,6 +114,7 @@ function HeaderLine({
 // the design and worth seeing. No locks, no "members only" copy -- the member
 // list is who is taking part, not who is permitted.
 export function GroupChatDetail({
+  onBack,
   name,
   topic,
   onEditName,
@@ -142,6 +147,16 @@ export function GroupChatDetail({
           rather than each having its own. */}
       <header className='flex shrink-0 flex-col gap-3 border-b border-border px-4 py-3'>
         <div className='flex min-w-0 items-center gap-3'>
+          {onBack ? (
+            <button
+              type='button'
+              onClick={onBack}
+              aria-label='Back'
+              className='inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring'
+            >
+              <ChevronLeft className='size-4' />
+            </button>
+          ) : null}
           <div className='flex min-w-0 flex-1 flex-col items-start'>
             <h2 className='flex min-w-0 max-w-full text-base font-semibold text-foreground'>
               <HeaderLine onEdit={onEditName} label={`Rename group chat: ${name}`}>

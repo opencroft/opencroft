@@ -1,6 +1,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
+import { ChevronLeft } from 'lucide-react'
 
 import { MemberAvatarGroup, type MemberRef } from '@/components/ui/group-chat/member-avatar-group'
 import { cn } from '@/lib/utils'
@@ -73,6 +74,10 @@ export interface GroupChatListProps {
   chats: GroupChatListItem[]
   activeId?: string
   onSelect?: (id: string) => void
+  /** Back out of the group-chat section entirely -- to whatever surface it
+   * was opened from. Same affordance as GroupChatDetail's and
+   * GroupChatThreadFraming's, one level up from either. */
+  onBack?: () => void
   // Where creating a group chat is reached from. Rendered above the rows and
   // kept whether the list has any or not -- see the note below.
   action?: ReactNode
@@ -93,14 +98,27 @@ export function GroupChatList({
   chats,
   activeId,
   onSelect,
+  onBack,
   action,
   emptyState,
   className,
 }: GroupChatListProps) {
   return (
     <div className={cn('flex w-full min-w-0 flex-col', className)}>
-      {action ? (
-        <div className='flex min-w-0 shrink-0 items-center justify-end px-2 pb-1'>{action}</div>
+      {onBack || action ? (
+        <div className='flex min-w-0 shrink-0 items-center gap-2 px-2 pb-1'>
+          {onBack ? (
+            <button
+              type='button'
+              onClick={onBack}
+              aria-label='Back'
+              className='inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring'
+            >
+              <ChevronLeft className='size-4' />
+            </button>
+          ) : null}
+          <div className='flex min-w-0 flex-1 items-center justify-end'>{action}</div>
+        </div>
       ) : null}
 
       {chats.length === 0 ? (

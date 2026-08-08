@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useCallback } from 'react'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
 import { GroupChatList } from 'ui/group-chat/group-chat-list'
 import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
@@ -6,6 +7,7 @@ import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
 import { CreateGroupChatAction } from '@/app/_authed/(group-chats)/_components/create-group-chat-action'
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
+import { useSafeBack } from '@/app/_authed/(group-chats)/_lib/use-safe-back'
 import { listMyGroupChatsView } from '@/app/_authed/(group-chats)/_server/actions'
 
 // The group-chat section index. Rendering only — the
@@ -21,6 +23,8 @@ export const Route = createFileRoute('/_authed/(group-chats)/group-chats')({
 function GroupChatsPage() {
   const data = Route.useLoaderData()
   const navigate = useNavigate()
+  const goHome = useCallback(() => navigate({ to: '/' }), [navigate])
+  const onBack = useSafeBack(goHome)
 
   if (data.refused) {
     return <GroupChatRefusal code={data.code} />
@@ -32,6 +36,7 @@ function GroupChatsPage() {
       <ScrollContent className='p-4'>
         <GroupChatList
           chats={chats}
+          onBack={onBack}
           onSelect={(id) => navigate({ to: '/group-chats/$groupChatId', params: { groupChatId: id } })}
           action={<CreateGroupChatAction />}
           emptyState={

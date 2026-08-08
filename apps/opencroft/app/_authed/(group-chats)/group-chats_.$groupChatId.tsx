@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
@@ -19,6 +19,7 @@ import { GroupChatPinsPanel } from '@/app/_authed/(group-chats)/_components/grou
 import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
+import { useSafeBack } from '@/app/_authed/(group-chats)/_lib/use-safe-back'
 import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import {
   deleteGroupChatThread,
@@ -63,6 +64,8 @@ function GroupChatDetailPage() {
   const { groupChatId } = Route.useParams()
   const navigate = useNavigate()
   const router = useRouter()
+  const goToList = useCallback(() => navigate({ to: '/group-chats' }), [navigate])
+  const onBack = useSafeBack(goToList)
   // Delete confirm. The kit's ChatListItem calls onDelete immediately; the
   // confirm lives here rather than in the kit because whether to confirm (and
   // with what copy) is a product call, and the kit is agnostic to it.
@@ -126,6 +129,7 @@ function GroupChatDetailPage() {
           here. */}
       <GroupChatDetail
         className='min-h-0 flex-1'
+        onBack={onBack}
         name={chat.name}
         topic={chat.topic}
         onEditName={() => setRenaming(true)}
