@@ -15,7 +15,7 @@ function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
 }
 
 test('a second call while one is in flight does not run concurrently', async () => {
-  const state: ReloadCoalesceState = { inFlight: false, pending: false }
+  const state: ReloadCoalesceState = { inFlight: false, pending: false, nextRun: null }
   const active: number[] = []
   let maxConcurrent = 0
   let runCount = 0
@@ -50,7 +50,7 @@ test('a second call while one is in flight does not run concurrently', async () 
 })
 
 test('a burst of calls during one run collapses into a single trailing run', async () => {
-  const state: ReloadCoalesceState = { inFlight: false, pending: false }
+  const state: ReloadCoalesceState = { inFlight: false, pending: false, nextRun: null }
   let runCount = 0
   const gate = deferred<void>()
 
@@ -70,8 +70,37 @@ test('a burst of calls during one run collapses into a single trailing run', asy
   assert.equal(runCount, 2, 'three overlapping calls collapse to one run plus one trailing run, not three')
 })
 
+test('a burst of calls during one run executes the LATEST closure, not the first', async () => {
+  // Each call's closure stands in for flow-editor.tsx's per-effect-run reload
+  // closure, which captures that run's own `slug` -- re-running the FIRST
+  // queued closure after several have arrived would apply a since-superseded
+  // caller's state (e.g. a space navigated away from), not what the most
+  // recent caller actually wants.
+  const state: ReloadCoalesceState = { inFlight: false, pending: false, nextRun: null }
+  const gate = deferred<void>()
+  const ran: string[] = []
+
+  const first = coalesceReload(state, async () => {
+    ran.push('first')
+    await gate.promise
+  })
+  assert.equal(state.inFlight, true)
+
+  const second = coalesceReload(state, async () => {
+    ran.push('second')
+  })
+  const third = coalesceReload(state, async () => {
+    ran.push('third')
+  })
+
+  gate.resolve()
+  await Promise.all([first, second, third])
+
+  assert.deepEqual(ran, ['first', 'third'], 'the trailing run must be the LATEST queued closure, never the middle one')
+})
+
 test('calls that do not overlap each run independently', async () => {
-  const state: ReloadCoalesceState = { inFlight: false, pending: false }
+  const state: ReloadCoalesceState = { inFlight: false, pending: false, nextRun: null }
   let runCount = 0
   await coalesceReload(state, async () => {
     runCount += 1

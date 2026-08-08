@@ -45,7 +45,7 @@ import { type BrowserTab, NodeInspector } from '@/app/_authed/(dashboard)/_canva
 import { graphNodeTypes, nodeTypesKey, typesFromKey } from '@/app/_authed/(dashboard)/_canvas/node-type-keys'
 import { buildNodeTypes } from '@/app/_authed/(dashboard)/_canvas/node-wrapper'
 import { useBackIntercept, useOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
-import { coalesceReload } from '@/app/_authed/(dashboard)/_canvas/reload-coalesce'
+import { coalesceReload, type ReloadCoalesceState } from '@/app/_authed/(dashboard)/_canvas/reload-coalesce'
 import { useClipboard } from '@/app/_authed/(dashboard)/_canvas/use-clipboard'
 import { useGraphEvents } from '@/app/_authed/(dashboard)/_canvas/use-graph-events'
 import { installExtensionApi } from '@/app/_authed/(dashboard)/_extension-system/extension-api'
@@ -165,7 +165,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const graphVersionRef = useRef<string | null>(null)
   // Single-flight guard for the SSE-triggered extension reload effect below --
   // see its own comment for why concurrent reloads can't just run independently.
-  const extensionsReloadRef = useRef({ inFlight: false, pending: false })
+  const extensionsReloadRef = useRef<ReloadCoalesceState>({ inFlight: false, pending: false, nextRun: null })
   const handleSaveConflict = useCallback(() => {
     toast.warning('This space changed elsewhere — refreshed to the latest version. Redo your last change if needed.')
     fetchSpaceGraph(slug).then(({ graph, updatedAt }) => {
@@ -343,7 +343,14 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     if (!graphReady || sse.graphVersion === 0) {
       return
     }
+    // Same stale-slug hazard as the extension-reload effect below: navigating
+    // away before this resolves must not apply a since-abandoned space's graph
+    // onto the canvas now showing a different one.
+    let current = true
     fetchSpaceGraph(slug).then(({ graph, updatedAt }) => {
+      if (!current) {
+        return
+      }
       // graph_updated now also fires from this tab's own saves, so this resync
       // fetch is frequently a self-echo. Skip applying it when we already have
       // this exact version — otherwise it clobbers anything typed in the
@@ -356,21 +363,40 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       setEdges(graph.edges as Edge[])
       graphVersionRef.current = updatedAt
     })
+    return () => {
+      current = false
+    }
   }, [slug, sse.graphVersion, graphReady, setNodes, setEdges])
 
   useEffect(() => {
     if (!graphReady || sse.extensionsVersion === 0) {
       return
     }
+    // `current` guards only the space-graph portion below, not the extension
+    // reload above it: extensions are global, not scoped to this space, so a
+    // stale effect run still owes the app a fresh registry. Only applying a
+    // FETCHED GRAPH under a slug this effect run no longer owns is the actual
+    // cross-space bleed -- the late completion would otherwise
+    // paint the old space's nodes, and stamp its `updatedAt` into
+    // `graphVersionRef`, onto the canvas now showing the space navigated to,
+    // and a subsequent save could then persist one space's content under
+    // another space's slug.
+    let current = true
     void coalesceReload(extensionsReloadRef.current, async () => {
       extensionRegistry.clear()
       await loadLocalExtensions()
       setExtensionsVersion((v) => v + 1)
       const { graph, updatedAt } = await fetchSpaceGraph(slug)
+      if (!current) {
+        return
+      }
       setNodes(graph.nodes as Node[])
       setEdges(graph.edges as Edge[])
       graphVersionRef.current = updatedAt
     })
+    return () => {
+      current = false
+    }
   }, [slug, sse.extensionsVersion, graphReady, setNodes, setEdges])
 
   const scheduleSave = useCallback(
