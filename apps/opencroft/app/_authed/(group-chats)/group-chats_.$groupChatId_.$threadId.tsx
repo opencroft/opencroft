@@ -8,6 +8,7 @@ import { AgentCommandBarHost } from '@/app/_authed/(agent)/_components/command-b
 import type { LocalSource, SendTransport } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
+import { ThreadCompactControl } from '@/app/_authed/(group-chats)/_components/thread-compact-control'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
 import { threadSendRefusal } from '@/app/_authed/(group-chats)/_lib/send-failure'
 import type { GroupChatDetailView, GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
@@ -112,6 +113,12 @@ function ThreadConversation({
   )
   const acp = useAcpSession(source, undefined, thread.agent.name, undefined, sendTransport)
 
+  // Stable identity across re-renders (thread.id does not change without a
+  // route change) -- AgentCommandBarHost's own memo depends on this prop, and
+  // a fresh element every render would rebuild it and republish into the
+  // overlay slot on every unrelated re-render (session streaming, etc.).
+  const compactControl = useMemo(() => <ThreadCompactControl threadId={thread.id} />, [thread.id])
+
   // The composer reuses AgentCommandBarHost (the same component the 1:1 chat
   // uses) with `inline` -- it renders the bar here instead of publishing to the
   // dashboard overlay, which a standalone route has no provider for. startIcon
@@ -131,6 +138,7 @@ function ThreadConversation({
     <AgentCommandBarHost
       inline
       startIcon={false}
+      leadingBarContent={compactControl}
       session={acp.session}
       agentNodeId={thread.agent.nodeId}
       queued={acp.queue}
