@@ -281,7 +281,35 @@ async function activate(extensionId: string): Promise<CachedModule> {
   return mod
 }
 
-export async function getExtensionModule(extensionId: string): Promise<CachedModule> {
+// Two callers racing the staleness check below (`await sourceMtime`) can each
+// independently decide reactivation is needed and each call `activate()` --
+// reproduced live (two requests 5ms apart after one solitary compile were
+// enough) and root-caused as the mechanism behind the bug: two module
+// instances both `load()`, one is discarded, and whichever request lands
+// against the loser sees whatever it managed to initialize before losing.
+//
+// Single-flight per extensionId closes it: the whole check-then-act body
+// below runs under one lock, so a second caller waits on the SAME promise
+// instead of starting its own. The lock is taken synchronously (no `await`
+// between the map lookup and the map set), so two calls that race at the
+// JS level can never both see "no lock" -- one of them always wins first.
+const getModuleLocks = new Map<string, Promise<CachedModule>>()
+
+export function getExtensionModule(extensionId: string): Promise<CachedModule> {
+  const inFlight = getModuleLocks.get(extensionId)
+  if (inFlight) {
+    return inFlight
+  }
+  const promise = getExtensionModuleExclusive(extensionId).finally(() => {
+    if (getModuleLocks.get(extensionId) === promise) {
+      getModuleLocks.delete(extensionId)
+    }
+  })
+  getModuleLocks.set(extensionId, promise)
+  return promise
+}
+
+async function getExtensionModuleExclusive(extensionId: string): Promise<CachedModule> {
   const cached = moduleCache().get(extensionId)
   if (cached) {
     const srcMtime = await sourceMtime(extensionId)
