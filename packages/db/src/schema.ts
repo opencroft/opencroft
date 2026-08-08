@@ -23,6 +23,12 @@ const uuid = () => crypto.randomUUID()
 export const setting = pgTable('Setting', {
   id: text().primaryKey().notNull(),
   data: text().default('{}').notNull(),
+  // Bumped on every successful write, and the compare-and-swap token a
+  // read-modify-write cycle checks against before committing -- see
+  // upsertSettingCas. A plain read-then-write over this row (as extension
+  // storage used to do) loses whichever write lands second when two calls
+  // interleave.
+  version: integer().default(0).notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 })

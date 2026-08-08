@@ -27,3 +27,18 @@ export async function setSettingImpl(data: {
   const row = await db.upsertSetting(id, JSON.stringify(data.data))
   return { ...row, data: data.data }
 }
+
+// CAS-aware counterpart for a caller doing its own read-modify-write cycle
+// that must detect a concurrent writer rather than silently overwrite it
+// (null means the write lost the race).
+export async function setSettingImplCas(data: {
+  id: string
+  data: Record<string, unknown>
+  expectedVersion: number
+}): Promise<Setting<Record<string, unknown>> | null> {
+  const row = await db.upsertSettingCas(data.id, JSON.stringify(data.data), data.expectedVersion)
+  if (!row) {
+    return null
+  }
+  return { ...row, data: data.data }
+}
