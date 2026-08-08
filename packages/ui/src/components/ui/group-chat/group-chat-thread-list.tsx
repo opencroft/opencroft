@@ -46,6 +46,14 @@ export interface GroupChatThreadListProps {
   threads: GroupChatThreadListItem[]
   activeId?: string
   onSelect?: (id: string) => void
+  /** Per-row "stop the agent process". Forwards to ChatListItem's own
+     context-menu item -- same icon, same wording, same position as an ordinary
+     chat row's; the host decides what stopping means.
+
+     Called with the THREAD id, which is not the session key the host acts on.
+     That is deliberate: the kit does not know session keys, and the host
+     already holds the thread -> session mapping. Map before acting. */
+  onStopProcess?: (id: string) => void
   /** Per-row delete. Forwards to ChatListItem's context-menu Delete; the host
      decides whether to confirm before acting (the kit does not). */
   onDelete?: (id: string) => void
@@ -70,7 +78,7 @@ export interface GroupChatThreadListProps {
 // to stop it lying. Now that the real thing is available the label has nothing
 // to do, and there is no room to keep both -- ChatListItem composes exactly
 // `description · statusWord`, with no third segment, and the line truncates.
-export function GroupChatThreadList({ threads, activeId, onSelect, onDelete, className }: GroupChatThreadListProps) {
+export function GroupChatThreadList({ threads, activeId, onSelect, onStopProcess, onDelete, className }: GroupChatThreadListProps) {
   return (
     <div className={cn('flex w-full min-w-0 flex-col gap-0.5', className)}>
       {threads.map((t) => (
@@ -90,6 +98,15 @@ export function GroupChatThreadList({ threads, activeId, onSelect, onDelete, cla
           active={t.id === activeId}
           disabled={t.disabled}
           onSelect={onSelect}
+          // Offered on a removed-agent row too, unlike `status` just above --
+          // the two are not the same kind of thing. A state describes the
+          // thread, and a dimmed row already carries the one fact worth
+          // reading; stopping acts on the *process*, which can still be running
+          // after its agent left the chat. Withholding it here would make the
+          // one row where a stray process is most likely the only row that
+          // cannot stop one. A host for which stopping is meaningless withholds
+          // the handler and the item never appears.
+          onStopProcess={onStopProcess}
           onDelete={onDelete}
         />
       ))}
