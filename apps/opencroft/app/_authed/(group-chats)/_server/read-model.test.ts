@@ -115,6 +115,11 @@ test('a thread carries its agent resolved, not a bare node id', async () => {
   assert.equal(threads[0].agent.nodeId, 'agent-b')
   assert.equal(threads[0].agent.name, 'Agent B')
   assert.equal(threads[0].agent.avatarUrl, null, 'an agent with no avatar resolves to null, not undefined')
+  assert.equal(
+    threads[0].sessionKey,
+    `group-chat:${chat.id}:agent-b:fixture-2`,
+    'the list now carries the session key a row needs to ask the activity poll for its live status',
+  )
 })
 
 // The flag the thread list renders a removed agent's thread from. It is the

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
@@ -7,6 +7,8 @@ import { GroupChatDetail } from 'ui/group-chat/group-chat-detail'
 import { GroupChatThreadList } from 'ui/group-chat/group-chat-thread-list'
 import { ScrollPage } from 'ui/layout/scrollpage'
 
+import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
+import { deriveSessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import {
   GroupChatRenameDialog,
   GroupChatTopicDialog,
@@ -70,6 +72,21 @@ function GroupChatDetailPage() {
   const [renaming, setRenaming] = useState(false)
   const [editingTopic, setEditingTopic] = useState(false)
 
+  // Same shared poll and derivation the sidebar chat list uses (see
+  // use-chat-list-nodes.ts's toLeaf) — one status vocabulary, one source,
+  // rather than a second mechanism invented for this screen. A thread's
+  // sessionKey is exactly the tab key that poll already reports on; nothing
+  // about it is group-chat-specific.
+  const threads = data.refused ? [] : data.threads
+  const { pendingKeys, activeKeys, aliveKeys } = useSessionActivityKeys(threads.length > 0)
+  const threadStatusById = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof deriveSessionStatus>>()
+    for (const t of threads) {
+      map.set(t.id, deriveSessionStatus(t.sessionKey, { pending: pendingKeys, active: activeKeys, alive: aliveKeys }))
+    }
+    return map
+  }, [threads, pendingKeys, activeKeys, aliveKeys])
+
   const goToThread = (threadId: string) =>
     navigate({ to: '/group-chats/$groupChatId/$threadId', params: { groupChatId, threadId } })
 
@@ -93,7 +110,7 @@ function GroupChatDetailPage() {
   if (data.refused) {
     return <GroupChatRefusal code={data.code} />
   }
-  const { chat, threads, directory, agents, pins } = data
+  const { chat, directory, agents, pins } = data
 
   return (
     <ScrollPage>
@@ -134,7 +151,13 @@ function GroupChatDetailPage() {
               // `agentIsMember` is the server's fact; `disabled` is what this
               // screen does with it. The mapping lives here rather than in
               // the read model so a server type never carries a CSS state.
-              threads={threads.map((t: GroupChatThreadEntry) => ({ ...t, disabled: !t.agentIsMember }))}
+              // `status` comes from the same shared activity poll the sidebar
+              // chat list reads, keyed on each thread's own session key.
+              threads={threads.map((t: GroupChatThreadEntry) => ({
+                ...t,
+                disabled: !t.agentIsMember,
+                status: threadStatusById.get(t.id),
+              }))}
               onSelect={(threadId) => goToThread(threadId)}
               onDelete={(threadId) => {
                 setDeleteError(undefined)

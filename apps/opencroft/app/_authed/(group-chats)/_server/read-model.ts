@@ -65,6 +65,15 @@ export interface GroupChatThreadEntry {
   agent: AgentRef
   createdAt: Date
   /**
+   * The tab key this thread's agent session was created under. A session key
+   * is bearer-equivalent inside the ACP layer (phase 1's note on `getThread`),
+   * but any member is already entitled to it, so handing it to a list is not
+   * a new exposure — it is what lets a row ask the shared session-activity
+   * poll for this thread's live status, the same way a chat-list row already
+   * does with its own session key.
+   */
+  sessionKey: string
+  /**
    * False once this thread's agent has been removed from the group chat. The
    * thread stays — it is still readable — but it can no longer be sent to,
    * which `sendMessageInThread` enforces server-side.
@@ -231,24 +240,12 @@ export async function listThreadsInGroupChatView(
     agent: agents.get(t.agentNodeId) ?? missingAgent(t.agentNodeId),
     createdAt: t.createdAt,
     agentIsMember: agentMembers.has(t.agentNodeId),
+    sessionKey: t.sessionKey,
   }))
 }
 
-/**
- * One thread, with its agent resolved and its session key.
- *
- * `sessionKey` is here and NOT on the list entries on purpose. Opening a
- * thread's conversation needs it — it is the tab key the agent session was
- * created under, so it is what reattaches to that same session — but a list
- * of twenty threads has no use for twenty session keys, and a session key is
- * bearer-equivalent inside the ACP layer (phase 1's note on `getThread`). Any
- * member is entitled to it, so this is not a new exposure; it is simply not
- * handed out where nothing reads it.
- */
-export async function getThreadView(
-  request: Request,
-  threadId: string,
-): Promise<GroupChatThreadEntry & { sessionKey: string }> {
+/** One thread, with its agent resolved. Same shape the list entries carry — see `GroupChatThreadEntry.sessionKey`. */
+export async function getThreadView(request: Request, threadId: string): Promise<GroupChatThreadEntry> {
   const thread = await getThread(request, threadId)
   const agents = await agentsByNodeId()
   const agentMembers = await agentMemberIds(request, thread.groupChatId)

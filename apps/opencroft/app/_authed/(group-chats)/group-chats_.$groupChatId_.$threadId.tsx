@@ -68,7 +68,7 @@ function ThreadConversation({
   chat,
   onBack,
 }: {
-  thread: GroupChatThreadEntry & { sessionKey: string }
+  thread: GroupChatThreadEntry
   chat: GroupChatDetailView
   onBack: () => void
 }) {
