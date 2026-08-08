@@ -13,6 +13,7 @@ import {
 } from '@/app/_authed/(group-chats)/_components/group-chat-edit-dialogs'
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { GroupChatMembersDialog } from '@/app/_authed/(group-chats)/_components/group-chat-members-dialog'
+import { GroupChatPinsPanel } from '@/app/_authed/(group-chats)/_components/group-chat-pins-panel'
 import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
@@ -22,6 +23,7 @@ import {
   getMyGroupChatView,
   listDirectoryUsersForPicker,
   listGroupChatThreadsView,
+  listMyGroupChatPins,
 } from '@/app/_authed/(group-chats)/_server/actions'
 import { listAgentNodes } from '@/app/_authed/(space)/_server/agents'
 
@@ -39,12 +41,16 @@ export const Route = createFileRoute('/_authed/(group-chats)/group-chats_/$group
       // reconcile instead of one to report.
       const chat = await getMyGroupChatView({ data: params.groupChatId })
       const threads = await listGroupChatThreadsView({ data: params.groupChatId })
-      // The picker's candidates. Loaded here rather than on opening the dialog
-      // so the actions are usable the moment the screen is: both are small,
-      // membership-independent lists, and neither can refuse once the two
-      // reads above have already passed.
-      const [directory, agents] = await Promise.all([listDirectoryUsersForPicker(), listAgentNodes()])
-      return { chat, threads, directory, agents }
+      // The picker's candidates, and the chat's pins. Loaded here rather than
+      // on opening anything so the panel and the actions are usable the
+      // moment the screen is: all three are membership-independent once the
+      // two reads above have already passed, so none of them can refuse.
+      const [directory, agents, pins] = await Promise.all([
+        listDirectoryUsersForPicker(),
+        listAgentNodes(),
+        listMyGroupChatPins({ data: params.groupChatId }),
+      ])
+      return { chat, threads, directory, agents, pins }
     }),
   component: GroupChatDetailPage,
   errorComponent: GroupChatErrorState,
@@ -87,7 +93,7 @@ function GroupChatDetailPage() {
   if (data.refused) {
     return <GroupChatRefusal code={data.code} />
   }
-  const { chat, threads, directory, agents } = data
+  const { chat, threads, directory, agents, pins } = data
 
   return (
     <ScrollPage>
@@ -121,6 +127,7 @@ function GroupChatDetailPage() {
             agents={agents}
           />
         }
+        pins={<GroupChatPinsPanel groupChatId={groupChatId} pins={pins} />}
         threads={
           threads.length > 0 ? (
             <GroupChatThreadList
