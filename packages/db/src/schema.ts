@@ -218,14 +218,26 @@ export const mcpCaller = pgTable(
 // diverge only when someone edits one of them. Both are notNull: a chat with
 // no name has nothing to render, and a chat with no topic would hand an agent
 // an empty statement of purpose, which reads worse than a redundant one.
-export const groupChat = pgTable('GroupChat', {
-  id: text().primaryKey().notNull().$defaultFn(uuid),
-  name: text().notNull(),
-  topic: text().notNull(),
-  createdByUserId: text().references(() => user.id, { onDelete: 'set null' }),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-})
+export const groupChat = pgTable(
+  'GroupChat',
+  {
+    id: text().primaryKey().notNull().$defaultFn(uuid),
+    // The readable half of every session key this chat's threads are opened
+    // under, derived from `name` when the chat is created.
+    //
+    // IMMUTABLE once set, and that is the point rather than a limitation: the
+    // slug is embedded in session keys, and a key that changes is a key that
+    // stops finding the session it named. Renaming a chat changes `name`, which
+    // is what people read, and leaves this alone.
+    slug: text().notNull(),
+    name: text().notNull(),
+    topic: text().notNull(),
+    createdByUserId: text().references(() => user.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex('GroupChat_slug_key').on(t.slug)],
+)
 
 // One row per member, agent or user. ONE TABLE, TWO KINDS OF PRINCIPAL,
 // DISCRIMINATED BY `principalType` — the same shape `ApiToken` already uses
@@ -323,6 +335,15 @@ export const groupChatThread = pgTable(
       .references(() => groupChat.id, { onDelete: 'cascade' }),
     agentNodeId: text().notNull(),
     sessionKey: text().notNull(),
+    // The readable last segment of this thread's session key: a short hash for
+    // an ad-hoc thread, or the slugified title when one was given.
+    //
+    // NULLABLE because threads created before slugs existed have none, and
+    // their uuid keys keep resolving — nothing has ever parsed a group-chat
+    // key, so an old key works for the same reason it always did. The unique
+    // index below relies on Postgres treating NULLs as distinct, so any number
+    // of legacy rows coexist without colliding.
+    slug: text(),
     title: text(),
     // A signature of the STANDING CONTEXT this thread's agent was last told --
     // the chat's topic and its pins together, because they are one block from
@@ -347,6 +368,9 @@ export const groupChatThread = pgTable(
   },
   (t) => [
     uniqueIndex('GroupChatThread_sessionKey_key').on(t.sessionKey),
+    // Scoped to (chat, agent) because that is the key path: two threads with
+    // the same agent in the same chat would mint the same session key.
+    uniqueIndex('GroupChatThread_groupChatId_agentNodeId_slug_key').on(t.groupChatId, t.agentNodeId, t.slug),
     index('GroupChatThread_groupChatId_idx').on(t.groupChatId),
     index('GroupChatThread_agentNodeId_idx').on(t.agentNodeId),
   ],

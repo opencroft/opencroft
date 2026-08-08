@@ -11,6 +11,7 @@ import { useRef, useState } from 'react'
 import { StartThreadComposer } from 'ui/group-chat/start-thread-composer'
 
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
+import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { type MemberRef, startGroupChatThread } from '@/app/_authed/(group-chats)/_server/actions'
 
 interface Props {
@@ -52,9 +53,19 @@ export function GroupChatStartThreadComposer({ groupChatId, members, onThreadSta
       const result = await startGroupChatThread({
         data: { groupChatId, agentNodeId: selectedAgent, firstMessage: text.trim() },
       })
+      if (!result.ok) {
+        // Only reachable for a named thread today: a title whose slug this
+        // agent already uses here. The field was cleared before submit ran
+        // (clear-on-send), so keeping what was typed means putting it back
+        // explicitly — same as the thrown-failure path below. Without this the
+        // person loses their message to a refusal they are expected to correct.
+        setValue(text)
+        setError(groupChatAccessMessageForCode(result.code))
+        return
+      }
       setSelectedAgent(null)
       await router.invalidate()
-      onThreadStarted(result.thread.id)
+      onThreadStarted(result.started.thread.id)
     } catch (e) {
       setValue(text)
       setError(failureMessage(e, 'The thread could not be started.'))

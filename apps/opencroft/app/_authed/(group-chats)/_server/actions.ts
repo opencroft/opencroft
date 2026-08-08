@@ -6,6 +6,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 
+import type { CompactAck, CompactStatus } from '@/app/_authed/(extension-runtime)/_server/stream'
 import type {
   GroupChatPinSummary,
   GroupChatSummary,
@@ -34,7 +35,6 @@ import {
   startThread,
   threadCompactStatus,
 } from '@/app/_authed/(group-chats)/_server/model'
-import type { CompactAck, CompactStatus } from '@/app/_authed/(extension-runtime)/_server/stream'
 import type {
   AgentRef,
   GroupChatDetailView,
@@ -124,11 +124,25 @@ export const getMyGroupChat = createServerFn({ method: 'GET', strict: { output: 
 // Accepts a bare string too, which is what creation sent before a chat had a
 // name at all: the same call now names the chat and seeds its topic from it,
 // which is exactly what those callers meant.
+/**
+ * Created, or refused with a code — the name's slug being taken is something
+ * the person can act on, so it crosses as data rather than as a thrown error
+ * whose code would not survive the boundary.
+ */
+export type CreateGroupChatResult = { ok: true; chat: GroupChatSummary } | { ok: false; code: GroupChatAccessFailure }
+
 export const createMyGroupChat = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: string | { name: string; topic?: string }) => data)
-  .handler(async ({ data }): Promise<GroupChatSummary> => {
+  .handler(async ({ data }): Promise<CreateGroupChatResult> => {
     const input = typeof data === 'string' ? { name: data } : data
-    return createGroupChat(getRequest(), input.name, input.topic)
+    try {
+      return { ok: true, chat: await createGroupChat(getRequest(), input.name, input.topic) }
+    } catch (error) {
+      if (error instanceof GroupChatAccessError) {
+        return { ok: false, code: error.code }
+      }
+      throw error
+    }
   })
 
 export const renameMyGroupChat = createServerFn({ method: 'POST', strict: { output: false } })
@@ -174,12 +188,24 @@ export const getGroupChatThread = createServerFn({ method: 'GET', strict: { outp
   .inputValidator((threadId: string) => threadId)
   .handler(async ({ data: threadId }): Promise<GroupChatThreadSummary> => getThread(getRequest(), threadId))
 
+/** Started, or refused with a code — a taken thread title is actionable too. */
+export type StartThreadOutcome = { ok: true; started: StartThreadResult } | { ok: false; code: GroupChatAccessFailure }
+
 export const startGroupChatThread = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { groupChatId: string; agentNodeId: string; firstMessage: string }) => data)
-  .handler(
-    async ({ data }): Promise<StartThreadResult> =>
-      startThread(getRequest(), data.groupChatId, data.agentNodeId, data.firstMessage),
-  )
+  .inputValidator((data: { groupChatId: string; agentNodeId: string; firstMessage: string; title?: string }) => data)
+  .handler(async ({ data }): Promise<StartThreadOutcome> => {
+    try {
+      const started = await startThread(getRequest(), data.groupChatId, data.agentNodeId, data.firstMessage, {
+        title: data.title,
+      })
+      return { ok: true, started }
+    } catch (error) {
+      if (error instanceof GroupChatAccessError) {
+        return { ok: false, code: error.code }
+      }
+      throw error
+    }
+  })
 
 /**
  * The outcome of a thread send: delivered, or refused with a code.

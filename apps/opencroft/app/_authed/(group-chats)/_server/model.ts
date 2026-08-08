@@ -24,6 +24,7 @@ import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
 import type { CompactAck, CompactStatus } from '@/app/_authed/(extension-runtime)/_server/stream'
 import { getCompactStatusOnGraph, requestCompactOnGraph } from '@/app/_authed/(extension-runtime)/_server/stream'
 import { GroupChatAccessError } from '@/app/_authed/(group-chats)/_shared/access-error'
+import { slug as slugify } from '@/app/_authed/(server)/_server/types'
 
 // THE ONE MESSAGE every "you cannot have this" refusal carries.
 //
@@ -48,6 +49,8 @@ export { GroupChatAccessError } from '@/app/_authed/(group-chats)/_shared/access
 
 export interface GroupChatSummary {
   id: string
+  /** The readable, immutable half of this chat's session keys. */
+  slug: string
   /** What people read. Presentation only — no agent is ever told it. */
   name: string
   /**
@@ -135,6 +138,7 @@ export async function listGroupChatsForUser(request: Request): Promise<GroupChat
   return db
     .select({
       id: groupChat.id,
+      slug: groupChat.slug,
       name: groupChat.name,
       topic: groupChat.topic,
       createdAt: groupChat.createdAt,
@@ -173,6 +177,7 @@ export async function listGroupChatsForAgent(agentName: string): Promise<GroupCh
   return db
     .select({
       id: groupChat.id,
+      slug: groupChat.slug,
       name: groupChat.name,
       topic: groupChat.topic,
       createdAt: groupChat.createdAt,
@@ -189,6 +194,7 @@ export async function getGroupChat(request: Request, groupChatId: string): Promi
   const [row] = await db
     .select({
       id: groupChat.id,
+      slug: groupChat.slug,
       name: groupChat.name,
       topic: groupChat.topic,
       createdAt: groupChat.createdAt,
@@ -281,10 +287,26 @@ export async function createGroupChat(request: Request, name: string, topic?: st
     throw new Error('A group chat needs a name')
   }
   const trimmedTopic = topic?.trim() || trimmedName
+  // The slug comes from the name and is fixed from here: it goes into every
+  // session key this chat's threads are opened under, and a key that moves is
+  // a key that stops finding its session.
+  const chatSlug = slugify(trimmedName)
+  if (!chatSlug) {
+    throw new GroupChatAccessError('slug-unusable', 'That name has no letters or numbers to build a name from')
+  }
+  const [taken] = await db.select({ id: groupChat.id }).from(groupChat).where(eq(groupChat.slug, chatSlug)).limit(1)
+  if (taken) {
+    // Checked before the insert so the refusal carries a code the form can
+    // show. The unique index is still the thing that decides — two creates in
+    // the same instant both pass this and one loses at the constraint, which
+    // surfaces as a fault rather than this refusal. Rare, and honest: a fault
+    // is what an unexpected loss is.
+    throw new GroupChatAccessError('slug-taken', `A group chat named "${trimmedName}" already exists`)
+  }
   return db.transaction(async (tx) => {
     const [chat] = await tx
       .insert(groupChat)
-      .values({ name: trimmedName, topic: trimmedTopic, createdByUserId: sessionUser.id })
+      .values({ slug: chatSlug, name: trimmedName, topic: trimmedTopic, createdByUserId: sessionUser.id })
       .returning()
     if (!chat) {
       throw new Error('The group chat could not be created')
@@ -706,8 +728,40 @@ export async function groupChatStandingContext(sessionKey: string): Promise<Stan
 // even by coincidence, and a reader who sees this prefix knows immediately
 // which registry a session belongs to without having to cross-reference
 // either table.
-function mintSessionKey(groupChatId: string, agentNodeId: string): string {
-  return `group-chat:${groupChatId}:${agentNodeId}:${crypto.randomUUID()}`
+function mintSessionKey(groupSlug: string, agentSlug: string, threadSlug: string): string {
+  return `group-chat:${groupSlug}:${agentSlug}:${threadSlug}`
+}
+
+/**
+ * A thread slug when the creator did not name the thread.
+ *
+ * A SHORT HASH RATHER THAN A NUMBER, because most threads are ad-hoc and a
+ * number would imply an order that means nothing. Short enough to read back
+ * over a key, random enough that two threads opened in the same second do not
+ * race for it — and the (chat, agent, slug) unique index is what actually
+ * decides, so a collision is refused rather than silently merged.
+ */
+function mintThreadSlug(): string {
+  return crypto.randomUUID().replace(/-/g, '').slice(0, 8)
+}
+
+/**
+ * The slug a title turns into, or a refusal.
+ *
+ * A title that slugifies to nothing — punctuation, an emoji, a stray dash — is
+ * refused rather than silently replaced by a hash. The person typed something
+ * they meant to see in the key, and quietly ignoring it is worse than saying
+ * it cannot be used.
+ */
+function threadSlugFromTitle(title: string): string {
+  const candidate = slugify(title)
+  if (!candidate) {
+    throw new GroupChatAccessError(
+      'slug-unusable',
+      'That title has no letters or numbers to build a name from — try another',
+    )
+  }
+  return candidate
 }
 
 export interface StartThreadResult {
@@ -733,6 +787,7 @@ export async function startThread(
   groupChatId: string,
   agentNodeId: string,
   firstMessage: string,
+  opts?: { title?: string },
 ): Promise<StartThreadResult> {
   const { userId } = await requireGroupChatMember(request, groupChatId)
   if (!(await isAgentMember(groupChatId, agentNodeId))) {
@@ -743,7 +798,43 @@ export async function startThread(
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
 
-  const sessionKey = mintSessionKey(groupChatId, agentNodeId)
+  // A NAMED thread takes its slug from the title; an ad-hoc one gets a short
+  // hash. Most threads are ad-hoc, so the hash is the default rather than a
+  // fallback for a missing title.
+  const title = opts?.title?.trim() || undefined
+  const threadSlug = title ? threadSlugFromTitle(title) : mintThreadSlug()
+  const [slugTaken] = await db
+    .select({ id: groupChatThread.id })
+    .from(groupChatThread)
+    .where(
+      and(
+        eq(groupChatThread.groupChatId, groupChatId),
+        eq(groupChatThread.agentNodeId, agentNodeId),
+        eq(groupChatThread.slug, threadSlug),
+      ),
+    )
+    .limit(1)
+  if (slugTaken) {
+    // Scoped to (chat, agent) because that is what the key path is. Only a
+    // named thread can reach this in practice — two hashes colliding is not
+    // something to write copy for, and it refuses identically if it happens.
+    throw new GroupChatAccessError('slug-taken', `This agent already has a thread named "${threadSlug}" here`)
+  }
+
+  const [chatRow] = await db
+    .select({ slug: groupChat.slug })
+    .from(groupChat)
+    .where(eq(groupChat.id, groupChatId))
+    .limit(1)
+  if (!chatRow) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  // The agent's slug comes from its NAME, so a key reads as a channel path.
+  // Resolved once, at creation: an agent renamed later does not move a key
+  // that already exists, and must not.
+  const agentNodes = await listAgentNodesImpl()
+  const agentName = agentNodes.find((n) => n.nodeId === agentNodeId)?.name ?? agentNodeId
+  const sessionKey = mintSessionKey(chatRow.slug, slugify(agentName) || agentNodeId, threadSlug)
   const [thread] = await db
     .insert(groupChatThread)
     // `deliveredContextSignature` is deliberately left NULL here and written
@@ -754,7 +845,7 @@ export async function startThread(
     // never told its topic or pins and will not be told until something else
     // changes. Left NULL, a retry re-delivers through the once-on-change path
     // without needing a second mechanism.
-    .values({ groupChatId, agentNodeId, sessionKey, createdByUserId: userId })
+    .values({ groupChatId, agentNodeId, sessionKey, slug: threadSlug, title, createdByUserId: userId })
     .returning({
       id: groupChatThread.id,
       groupChatId: groupChatThread.groupChatId,
@@ -1031,6 +1122,11 @@ export async function deleteThread(request: Request, threadId: string): Promise<
 
 /** One thread as an agent sees it. No session key: an agent never needs one. */
 export interface AgentThreadRef {
+  /**
+   * How to address this thread in a send. Readable where the thread has a slug
+   * (`<group-slug>:<agent-slug>:<thread-slug>`), and the thread's id for one
+   * created before slugs existed. Either way, passed back unchanged.
+   */
   ref: string
   title: string | null
   /** The agent this thread talks to — which may be the caller itself. */
@@ -1064,13 +1160,53 @@ async function requireAgentNode(agentName: string): Promise<string> {
 }
 
 /**
+ * A readable thread address: `<group-slug>:<agent-slug>:<thread-slug>` — the
+ * part of a session key a person or an agent can read off a screen. A whole
+ * key works too, prefix included, so one pasted back is a valid address.
+ *
+ * MATCHED AGAINST THE STORED KEY EXACTLY, on that column's own unique index.
+ * Matching the (group slug, thread slug) pair instead — dropping the agent
+ * segment — is ambiguous: thread-slug uniqueness is scoped to (chat, agent),
+ * so two threads with the same slug and different agents in one chat are
+ * legal, and an address naming one of them could deliver to the other. That is
+ * the one wrong-recipient failure a membership gate cannot catch, because a
+ * sender able to write the address is a member of both.
+ *
+ * A stored key never changes, so exact matching is also immune to an agent
+ * rename: the key keeps the agent segment it was minted with, and every
+ * reference the list surface hands out IS that stored key's readable part, so
+ * a reference passed back always matches itself. What it does not accept is a
+ * hand-written address using an agent's CURRENT name after a rename — and an
+ * unambiguous address is worth more than that convenience.
+ *
+ * Returns null rather than refusing when nothing matches, so the caller falls
+ * through to an id: the forms are alternatives, and an agent that stored an id
+ * before slugs existed keeps working.
+ */
+async function resolveByKey(ref: string): Promise<ThreadDeliveryTarget | null> {
+  const key = ref.startsWith('group-chat:') ? ref : `group-chat:${ref}`
+  const [row] = await db
+    .select(threadDeliveryColumns)
+    .from(groupChatThread)
+    .where(eq(groupChatThread.sessionKey, key))
+    .limit(1)
+  return row ?? null
+}
+
+async function resolveById(ref: string): Promise<ThreadDeliveryTarget | null> {
+  const [row] = await db.select(threadDeliveryColumns).from(groupChatThread).where(eq(groupChatThread.id, ref)).limit(1)
+  return row ?? null
+}
+
+/**
  * A THREAD REFERENCE IS OPAQUE TO THE CALLER, and resolved here.
  *
- * Today it is the thread's id, and this is a lookup by id. It is not typed or
- * documented as an id, and no tool schema says "uuid", because a readable
- * addressing scheme is under discussion — when one lands, it resolves here and
- * every caller that stored a reference from the list tool keeps working. The
- * moment a tool contract promises a uuid, that stops being true.
+ * It is a readable address, a whole session key, or a thread id — resolved
+ * here and nowhere else. No tool schema names any of those forms: the moment a
+ * contract promises one, every caller that stored a reference is bound to it.
+ * That is what let the readable form arrive as a second branch rather than a
+ * breaking change, and it is why the id branch can stay for callers that
+ * stored one before readable keys existed.
  *
  * Membership is checked against the resolved thread's own chat, so an
  * unresolvable reference and a thread in someone else's chat are the same
@@ -1081,11 +1217,7 @@ async function resolveThreadForAgent(agentNodeId: string, threadRef: string): Pr
   if (!trimmed) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
-  const [row] = await db
-    .select(threadDeliveryColumns)
-    .from(groupChatThread)
-    .where(eq(groupChatThread.id, trimmed))
-    .limit(1)
+  const row = (await resolveByKey(trimmed)) ?? (await resolveById(trimmed))
   if (!row) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
@@ -1117,6 +1249,8 @@ export async function listGroupChatsForAgentView(agentName: string): Promise<Age
       groupChatId: groupChatThread.groupChatId,
       title: groupChatThread.title,
       agentNodeId: groupChatThread.agentNodeId,
+      sessionKey: groupChatThread.sessionKey,
+      slug: groupChatThread.slug,
       createdAt: groupChatThread.createdAt,
     })
     .from(groupChatThread)
@@ -1132,7 +1266,12 @@ export async function listGroupChatsForAgentView(agentName: string): Promise<Age
     topic: chat.topic,
     threads: threads
       .filter((t) => t.groupChatId === chat.id)
-      .map((t) => ({ ref: t.id, title: t.title, agentNodeId: t.agentNodeId, createdAt: t.createdAt })),
+      .map((t) => ({
+        ref: t.slug && t.sessionKey.startsWith('group-chat:') ? t.sessionKey.slice('group-chat:'.length) : t.id,
+        title: t.title,
+        agentNodeId: t.agentNodeId,
+        createdAt: t.createdAt,
+      })),
   }))
 }
 

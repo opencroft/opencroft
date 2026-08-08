@@ -61,6 +61,21 @@ export type GroupChatAccessFailure =
    * looking for a fault that is not there.
    */
   | 'pin-limit'
+  /**
+   * The slug this name or title would take is already in use.
+   *
+   * A refusal rather than a silent rename: the slug is the readable half of a
+   * session key, the person chose the words it comes from, and quietly handing
+   * them `-2` would mean the key no longer says what they typed. They can pick
+   * again.
+   */
+  | 'slug-taken'
+  /**
+   * There is nothing in this name or title to build a slug from — it is all
+   * punctuation, or emoji. Distinct from `slug-taken`: the answer is different
+   * words, not different from someone else's.
+   */
+  | 'slug-unusable'
 
 /**
  * PHASE 2 CONTRACT, verified against the actual wire format rather than

@@ -76,14 +76,21 @@ await db.insert(space).values({
       { id: 'agent-a', type: 'agent', data: { name: 'Agent A' } },
       { id: 'agent-b', type: 'agent', data: { name: 'Agent B' } },
       { id: 'agent-solo', type: 'agent', data: { name: 'Agent Solo' } },
-      // Carries a full provider/adapter/model triple, unlike the three above,
-      // so `ensureLocalSessionImpl` can build a real AgentSelection for it and
-      // the delete-ordering test below can open an actual session against a
-      // seeded mock connection.
+      // These two carry a full provider/adapter/model triple, unlike the three
+      // above, so `ensureLocalSessionImpl` can build a real AgentSelection for
+      // them and the tests below can open actual sessions against seeded mock
+      // connections. Two of them, because a mock connection is keyed on the
+      // agent's own spawn config: telling "the addressed agent received it"
+      // apart from "an agent received it" needs two separate inboxes.
       {
         id: 'agent-session',
         type: 'agent',
         data: { name: 'Agent Session', providerId: 'test-provider', adapterId: 'openclaw', model: 'test-model' },
+      },
+      {
+        id: 'agent-session-2',
+        type: 'agent',
+        data: { name: 'Agent Session Two', providerId: 'test-provider', adapterId: 'openclaw', model: 'test-model' },
       },
     ],
     edges: [],
@@ -768,10 +775,10 @@ test('creation names the chat and seeds the topic from that name', async () => {
 
 test('creation keeps an explicit topic separate from the name', async () => {
   const owner = await makeUser('naming-owner2@example.test')
-  const chat = await model.createGroupChat(reqAs(owner), 'Release train', 'Ship the June release without regressions')
+  const chat = await model.createGroupChat(reqAs(owner), 'Release train explicit topic', 'Ship it without regressions')
 
-  assert.equal(chat.name, 'Release train')
-  assert.equal(chat.topic, 'Ship the June release without regressions')
+  assert.equal(chat.name, 'Release train explicit topic')
+  assert.equal(chat.topic, 'Ship it without regressions')
 })
 
 test('renaming changes the name and leaves the topic untouched, and vice versa', async () => {
@@ -1048,7 +1055,11 @@ test('compaction restores CURRENT topic and pins, not what the thread was told w
 
   await waitForPrompts(prompts, 3)
   assert.equal(prompts[1], '/compact')
-  assert.match(prompts[2] ?? '', /topic two/, 'the restore reads current state, not what was true when the thread opened')
+  assert.match(
+    prompts[2] ?? '',
+    /topic two/,
+    'the restore reads current state, not what was true when the thread opened',
+  )
   assert.match(prompts[2] ?? '', /a note pinned after the thread opened/)
   assert.doesNotMatch(prompts[2] ?? '', /topic one/)
 })
@@ -1073,7 +1084,7 @@ test('compactThread is refused for a non-member the same way sendMessageInThread
   assert.equal(refusal.code, 'not-found')
 })
 
-test('compactThread is refused once the thread\'s agent is no longer a member', async () => {
+test("compactThread is refused once the thread's agent is no longer a member", async () => {
   const owner = await makeUser('compact-agent-removed-owner@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'compact agent removed')
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
@@ -1641,4 +1652,206 @@ test('a removed agent cannot be reached by an agent sender either', async () => 
   // the shared delivery path, so it holds for whoever is sending.
   const refusal = await captureRefusal(() => model.sendMessageInThreadAsAgent('Agent Solo', thread.id, 'still there?'))
   assert.equal(refusal.code, 'agent-not-a-member')
+})
+
+/** Seeds the agent-client store so 'Agent Session' resolves without spawning. */
+// `agentName` selects WHICH agent this connection stands in for: the spawn
+// config is derived from the agent's own workspace, so seeding two of these
+// gives two separately observable inboxes — which is how a test can tell that a
+// message reached the agent it was addressed to and not merely some agent.
+function seedMockConnection(prompts: string[], agentName = 'Agent Session'): void {
+  const connection = {
+    newSession: async () => ({ sessionId: `mock-${crypto.randomUUID()}` }),
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      prompts.push(params.prompt.map((b) => b.text ?? '').join(''))
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', slug(agentName)),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  if (!store) {
+    throw new Error('agent-client global store must exist after import')
+  }
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// READABLE SESSION KEYS. A thread's key reads as a channel path rather than a
+// pair of uuids, and the slugs inside it are what a caller addresses it by.
+// ---------------------------------------------------------------------------
+
+test('a chat takes an immutable slug from its name, and renaming does not move it', async () => {
+  const owner = await makeUser('slug-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), '  OpenCroft Development!  ')
+
+  assert.equal(chat.slug, 'opencroft-development', 'punctuation and spacing collapse to one readable token')
+
+  await model.renameGroupChat(reqAs(owner), chat.id, 'Something Else Entirely')
+  const after = await model.getGroupChat(reqAs(owner), chat.id)
+  assert.equal(after.name, 'Something Else Entirely')
+  assert.equal(after.slug, 'opencroft-development', 'the slug is in session keys, so a rename must not move it')
+})
+
+test('a name whose slug is taken is refused, with a code the form can show', async () => {
+  const owner = await makeUser('slug-clash-owner@example.test')
+  await model.createGroupChat(reqAs(owner), 'Duplicate Name')
+
+  const refusal = await captureRefusal(() => model.createGroupChat(reqAs(owner), 'duplicate   name'))
+  assert.equal(refusal.code, 'slug-taken', 'different words, same slug — still a clash')
+})
+
+test('a name with nothing to slugify is refused as its own thing', async () => {
+  const owner = await makeUser('slug-empty-owner@example.test')
+  // The answer here is different words, not somebody else's words — so this is
+  // deliberately not the same refusal as a clash.
+  const refusal = await captureRefusal(() => model.createGroupChat(reqAs(owner), '!!! ---'))
+  assert.equal(refusal.code, 'slug-unusable')
+})
+
+test('a thread key reads as a channel path, and a named thread carries its title in it', async () => {
+  const owner = await makeUser('thread-slug-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Key Shapes')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+
+  const named = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Code Review' })
+  await waitForPrompts(prompts, 1)
+  assert.equal(named.thread.sessionKey, 'group-chat:key-shapes:agent-session:code-review')
+
+  const adhoc = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'second')
+  await waitForPrompts(prompts, 2)
+  // Ad-hoc threads get a short hash: most threads mean nothing, and a number
+  // would imply an order that means even less.
+  assert.match(adhoc.thread.sessionKey, /^group-chat:key-shapes:agent-session:[0-9a-f]{8}$/)
+})
+
+test('a thread title whose slug is already taken for that agent is refused', async () => {
+  const owner = await makeUser('thread-clash-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Thread Clashes')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+
+  await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Code Review' })
+  await waitForPrompts(prompts, 1)
+
+  const refusal = await captureRefusal(() =>
+    model.startThread(reqAs(owner), chat.id, 'agent-session', 'again', { title: 'code review' }),
+  )
+  assert.equal(refusal.code, 'slug-taken')
+})
+
+test('an agent can address a thread by its readable path, by a whole key, or by id', async () => {
+  const owner = await makeUser('addressing-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Addressing')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-solo' })
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Standup' })
+  await waitForPrompts(prompts, 1)
+
+  // The readable path, as it appears in the key.
+  await model.sendMessageInThreadAsAgent('Agent Solo', 'addressing:agent-session:standup', 'by path')
+  await waitForPrompts(prompts, 2)
+  assert.match(prompts[1] ?? '', /by path/)
+
+  // The whole key, prefix included — what someone pastes off a screen.
+  await model.sendMessageInThreadAsAgent('Agent Solo', started.thread.sessionKey, 'by key')
+  await waitForPrompts(prompts, 3)
+  assert.match(prompts[2] ?? '', /by key/)
+
+  // And the id, which is what a caller stored before slugs existed.
+  await model.sendMessageInThreadAsAgent('Agent Solo', started.thread.id, 'by id')
+  await waitForPrompts(prompts, 4)
+  assert.match(prompts[3] ?? '', /by id/)
+})
+
+test('two threads sharing a slug in one chat are addressed apart by the agent in the key', async () => {
+  // Thread-slug uniqueness is scoped to (chat, agent), so this state is legal:
+  // two threads called the same thing in one chat, held by different agents.
+  // Resolving on the slug PAIR would drop the only segment that tells them
+  // apart and hand back whichever row came first — delivering a message to an
+  // agent it was not addressed to. A membership gate cannot catch that: the
+  // sender is a member of both.
+  const owner = await makeUser('same-slug-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Ambiguous')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session-2' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-solo' })
+
+  const promptsFirst: string[] = []
+  const promptsSecond: string[] = []
+  seedMockConnection(promptsFirst, 'Agent Session')
+  seedMockConnection(promptsSecond, 'Agent Session Two')
+
+  const first = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Code Review' })
+  const second = await model.startThread(reqAs(owner), chat.id, 'agent-session-2', 'first', { title: 'Code Review' })
+  await waitForPrompts(promptsFirst, 1)
+  await waitForPrompts(promptsSecond, 1)
+
+  assert.equal(first.thread.sessionKey, 'group-chat:ambiguous:agent-session:code-review')
+  assert.equal(
+    second.thread.sessionKey,
+    'group-chat:ambiguous:agent-session-two:code-review',
+    'the same thread slug under a different agent is legal — the agent segment is what separates them',
+  )
+
+  await model.sendMessageInThreadAsAgent(
+    'Agent Solo',
+    'ambiguous:agent-session-two:code-review',
+    'meant for the second',
+  )
+  await waitForPrompts(promptsSecond, 2)
+  assert.match(promptsSecond[1] ?? '', /meant for the second/)
+  assert.equal(promptsFirst.length, 1, 'the agent named in the address receives it, and the other hears nothing')
+
+  await model.sendMessageInThreadAsAgent('Agent Solo', 'ambiguous:agent-session:code-review', 'meant for the first')
+  await waitForPrompts(promptsFirst, 2)
+  assert.match(promptsFirst[1] ?? '', /meant for the first/)
+  assert.equal(promptsSecond.length, 2, 'and the same holds in the other direction')
+})
+
+test('a legacy uuid-keyed thread still resolves and still lists', async () => {
+  const owner = await makeUser('legacy-key-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Legacy Keys')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-solo' })
+
+  // Exactly the shape threads were minted with before this change: uuids, and
+  // no slug at all.
+  const [legacy] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: `group-chat:${chat.id}:agent-a:${crypto.randomUUID()}`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(legacy)
+
+  const chats = await model.listGroupChatsForAgentView('Agent Solo')
+  const mine = chats.find((c) => c.ref === chat.id)
+  assert.ok(mine)
+  assert.equal(mine.threads[0]?.ref, legacy.id, 'a thread with no slug is addressed by its id, as it always was')
 })

@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { CreateGroupChatForm } from 'ui/group-chat/create-group-chat-form'
 
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
+import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { createMyGroupChat } from '@/app/_authed/(group-chats)/_server/actions'
 
 export function CreateGroupChatAction() {
@@ -35,7 +36,15 @@ export function CreateGroupChatAction() {
     setError(undefined)
     setSubmitting(true)
     try {
-      const chat = await createMyGroupChat({ data: trimmed })
+      const result = await createMyGroupChat({ data: trimmed })
+      if (!result.ok) {
+        // A refusal the person can act on — a name already taken, or one with
+        // nothing to build a slug from. Its own copy, not the generic failure:
+        // the point of returning the code is that they are told which.
+        setError(groupChatAccessMessageForCode(result.code))
+        return
+      }
+      const chat = result.chat
       setOpen(false)
       setName('')
       // The list this action sits on is loader-driven, so it has to be told

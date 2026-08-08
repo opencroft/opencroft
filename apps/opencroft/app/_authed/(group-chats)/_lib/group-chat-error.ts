@@ -19,7 +19,15 @@ import type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared
 
 export type { GroupChatAccessFailure }
 
-const FAILURES = ['unauthenticated', 'not-found', 'agent-not-a-member', 'last-user-member', 'pin-limit'] as const
+const FAILURES = [
+  'unauthenticated',
+  'not-found',
+  'agent-not-a-member',
+  'last-user-member',
+  'pin-limit',
+  'slug-taken',
+  'slug-unusable',
+] as const
 
 // Compile-time proof that the list above still matches the server's union. If
 // a fifth code is added to model.ts and not here, this stops compiling rather
@@ -71,6 +79,8 @@ const MESSAGES: Record<GroupChatAccessFailure, string> = {
   'agent-not-a-member': 'That agent is not part of this group chat.',
   'last-user-member': 'The last person in a group chat cannot be removed.',
   'pin-limit': 'This group chat already holds the maximum number of pins. Unpin one to add another.',
+  'slug-taken': 'That name is already taken — please choose another.',
+  'slug-unusable': 'That name needs at least one letter or number.',
 }
 
 /**
