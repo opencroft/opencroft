@@ -13,6 +13,7 @@ import { StartThreadComposer } from 'ui/group-chat/start-thread-composer'
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { type MemberRef, startGroupChatThread } from '@/app/_authed/(group-chats)/_server/actions'
+import { useLocalStorage } from '@/hooks/utils/use-local-storage'
 
 interface Props {
   groupChatId: string
@@ -29,7 +30,19 @@ export function GroupChatStartThreadComposer({ groupChatId, members, onThreadSta
     .filter((m) => m.kind === 'agent')
     .map((m) => ({ nodeId: m.id, name: m.name, avatarUrl: m.avatarUrl }))
 
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
+  // Remembered per group chat -- who you usually address in one chat says
+  // nothing about another. Falls back to the first member whenever the
+  // remembered id is unset, or names an agent that isn't (or is no longer) a
+  // member here.
+  const [rememberedAgent, setRememberedAgent] = useLocalStorage<string | null>(
+    `opencroft.groupChat.${groupChatId}.lastAgent`,
+    null,
+  )
+  const selectedAgent =
+    rememberedAgent && memberAgents.some((a) => a.nodeId === rememberedAgent)
+      ? rememberedAgent
+      : (memberAgents[0]?.nodeId ?? null)
+
   const [value, setValue] = useState('')
   const [title, setTitle] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -70,7 +83,6 @@ export function GroupChatStartThreadComposer({ groupChatId, members, onThreadSta
         setError(groupChatAccessMessageForCode(result.code))
         return
       }
-      setSelectedAgent(null)
       setTitle('')
       await router.invalidate()
       onThreadStarted(result.started.thread.id)
@@ -86,7 +98,7 @@ export function GroupChatStartThreadComposer({ groupChatId, members, onThreadSta
     <StartThreadComposer
       agents={memberAgents}
       selectedAgentNodeId={selectedAgent}
-      onSelectAgent={setSelectedAgent}
+      onSelectAgent={setRememberedAgent}
       value={value}
       onValueChange={(next) => {
         if (next !== '') {
