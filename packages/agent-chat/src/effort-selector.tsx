@@ -2,6 +2,7 @@
 
 import { CANONICAL_EFFORTS, type CanonicalEffortId, canonicalEffortId } from 'agent-client/session-effort'
 import { Lightbulb } from 'lucide-react'
+import { commandBarControlClass } from 'ui/components/ui/agent-chat/agent-command-bar'
 import { Button } from 'ui/components/ui/button'
 import {
   DropdownMenu,
@@ -74,7 +75,7 @@ export function EffortSelector({ options, current, onSelect, adapterId, lockedRe
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild disabled={Boolean(lockedReason)}>
-        <Button variant='ghost' size='icon' className='size-7' title={title} aria-label={title}>
+        <Button variant='ghost' size='icon' className={commandBarControlClass} title={title} aria-label={title}>
           <Lightbulb className={`size-4 ${colour}`} />
         </Button>
       </DropdownMenuTrigger>

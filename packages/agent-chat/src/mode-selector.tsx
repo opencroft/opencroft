@@ -1,6 +1,7 @@
 'use client'
 
 import { CANONICAL_MODES, canonicalModeId } from 'agent-client/session-modes'
+import { commandBarControlClass } from 'ui/components/ui/agent-chat/agent-command-bar'
 import { Button } from 'ui/components/ui/button'
 import {
   DropdownMenu,
@@ -77,7 +78,7 @@ export function ModeSelector({ options, current, onSelect, adapterId, lockedReas
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild disabled={Boolean(lockedReason)}>
-        <Button variant='ghost' size='icon' className='size-7' title={title} aria-label={title}>
+        <Button variant='ghost' size='icon' className={commandBarControlClass} title={title} aria-label={title}>
           {CurrentIcon ? (
             <CurrentIcon className={`size-4 ${currentPresentation.className}`} />
           ) : (

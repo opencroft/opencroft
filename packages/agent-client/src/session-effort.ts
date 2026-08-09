@@ -18,17 +18,18 @@ export interface CanonicalEffortInfo {
   id: CanonicalEffortId
   /** Display label, replacing whatever the agent called it. */
   label: string
-  /** Menu order, ascending — here this IS the effort ramp. */
+  /** Menu order. Strongest first, so the heavier grades are the short reach
+   *  from the top of the menu rather than the far end of it. */
   order: number
 }
 
 export const CANONICAL_EFFORTS: Record<CanonicalEffortId, CanonicalEffortInfo> = {
-  default: { id: 'default', label: 'Default', order: 0 },
-  low: { id: 'low', label: 'Low', order: 1 },
-  medium: { id: 'medium', label: 'Medium', order: 2 },
-  high: { id: 'high', label: 'High', order: 3 },
-  extra: { id: 'extra', label: 'Extra', order: 4 },
-  max: { id: 'max', label: 'Max', order: 5 },
+  max: { id: 'max', label: 'Max', order: 0 },
+  extra: { id: 'extra', label: 'Extra', order: 1 },
+  high: { id: 'high', label: 'High', order: 2 },
+  medium: { id: 'medium', label: 'Medium', order: 3 },
+  low: { id: 'low', label: 'Low', order: 4 },
+  default: { id: 'default', label: 'Default', order: 5 },
 }
 
 const EFFORT_IDS = Object.keys(CANONICAL_EFFORTS) as CanonicalEffortId[]
