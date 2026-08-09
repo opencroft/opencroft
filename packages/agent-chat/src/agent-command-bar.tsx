@@ -109,6 +109,10 @@ export interface UseAgentCommandBarOptions {
    *  route, anything else host-specific) is copy the host supplies through
    *  `approvalTitles`, never named here. */
   autoApproveLocked?: boolean
+  /** Show the approval toggle at all. Default true. A host whose approval state
+   *  is not per-session — so a per-session control would misrepresent its
+   *  reach — passes false and surfaces it wherever its real scope lives. */
+  approval?: boolean
   /** Adapter the session runs, so its modes can be classified for icons. */
   adapterId?: string
   /** Config-option ids the host has pinned, mapped to the reason why. */
@@ -164,6 +168,7 @@ export function useAgentCommandBar({
   autoApprove,
   onToggleAutoApprove,
   autoApproveLocked = false,
+  approval = true,
   adapterId,
   lockedConfigOptions,
   approvalTitles,
@@ -451,6 +456,7 @@ export function useAgentCommandBar({
         onRemoveQueued={onRemoveQueued}
         sendError={sendError}
         onDismissSendError={onDismissSendError}
+        approval={approval}
         autoApprove={autoApprove}
         onToggleAutoApprove={handleToggleAutoApprove}
         yoloMode={autoApproveLocked}

@@ -198,6 +198,13 @@ export function AgentCommandBarHost({
     autoApprove,
     onToggleAutoApprove: toggleAutoApprove,
     autoApproveLocked: yoloMode,
+    // Auto-approve is a single process-wide flag (see approval-store), so a
+    // control sitting in one session's composer misrepresented its reach:
+    // flipping it there silently changed approvals for every chat, group and
+    // space. Hidden until it has a home that matches its actual scope —
+    // not yet built. The per-session permission mode and the YOLO indicator now
+    // occupy this row, and both are honest about what they govern.
+    approval: false,
     adapterId: session.adapterId,
     lockedConfigOptions: lockedConfigOptions,
     approvalTitles: APPROVAL_TITLES,
