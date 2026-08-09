@@ -17,13 +17,12 @@
 import type { SessionMode } from './types'
 
 /**
- * The canonical modes. Ordered loosely from most-supervised to least, which is
- * also `permissiveness` order below.
+ * The canonical modes, listed in the menu order defined below.
  *
- * - `manual` — the agent asks before anything consequential. The usual default.
- * - `plan` — the agent may think and read but executes nothing.
- * - `accept-edits` — file edits go through unattended; other operations still ask.
  * - `auto` — a classifier decides each request instead of the user.
+ * - `plan` — the agent may think and read but executes nothing.
+ * - `manual` — the agent asks before anything consequential. The usual default.
+ * - `accept-edits` — file edits go through unattended; other operations still ask.
  * - `dont-ask` — nothing is asked; anything not pre-approved is DENIED.
  * - `bypass` — nothing is asked; everything is ALLOWED.
  *
@@ -39,51 +38,53 @@ export interface CanonicalModeInfo {
   /** What the mode does, in host-agnostic terms. */
   description: string
   /**
-   * How much the mode proceeds without asking, 0 (asks about everything) to 5
-   * (asks about nothing and permits everything). Lets a surface order modes and
-   * pick a severity colour from one number rather than a switch per mode id —
-   * and keeps that judgement here, next to the semantics it comes from, instead
-   * of duplicated in every renderer.
+   * Position in the canonical menu order, ascending. Presentation order is a
+   * product decision rather than something derivable — it is NOT a severity
+   * ramp (`auto` leads while being far from the least permissive) — so it is
+   * stated once here instead of re-derived, differently, by each surface.
+   *
+   * A surface sorts by this rather than by the agent's advertised order, so the
+   * same mode sits in the same place whichever agent is behind the chat.
    */
-  permissiveness: number
+  order: number
 }
 
 export const CANONICAL_MODES: Record<CanonicalModeId, CanonicalModeInfo> = {
+  auto: {
+    id: 'auto',
+    label: 'Auto',
+    description: 'A classifier approves or denies each request instead of the user.',
+    order: 0,
+  },
   plan: {
     id: 'plan',
     label: 'Plan',
     description: 'Plans and reads only — executes nothing.',
-    permissiveness: 0,
+    order: 1,
   },
   manual: {
     id: 'manual',
-    label: 'Manual',
+    label: 'Manual Edits',
     description: 'Asks before any consequential operation.',
-    permissiveness: 1,
+    order: 2,
   },
   'accept-edits': {
     id: 'accept-edits',
     label: 'Accept Edits',
     description: 'Applies file edits without asking; still asks about everything else.',
-    permissiveness: 2,
-  },
-  auto: {
-    id: 'auto',
-    label: 'Auto',
-    description: 'A classifier approves or denies each request instead of the user.',
-    permissiveness: 3,
+    order: 3,
   },
   'dont-ask': {
     id: 'dont-ask',
-    label: "Don't Ask",
+    label: 'Reject Edits',
     description: 'Never asks; denies anything not already permitted.',
-    permissiveness: 4,
+    order: 4,
   },
   bypass: {
     id: 'bypass',
     label: 'Bypass Permissions',
     description: 'Never asks; permits everything. No approval gate remains.',
-    permissiveness: 5,
+    order: 5,
   },
 }
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { CANONICAL_MODES, type CanonicalModeId, canonicalModeId, classifyModes } from './session-modes'
+import { CANONICAL_MODES, type CanonicalModeInfo, canonicalModeId, classifyModes } from './session-modes'
 import type { SessionMode } from './types'
 
 // The exact list @agentclientprotocol/claude-agent-acp 0.66.0 builds in
@@ -79,17 +79,22 @@ test('dont-ask and bypass never collapse into each other', () => {
   // Both stop asking; they are opposites in what the silence means. Treating
   // them as one would turn "deny everything unapproved" into "allow anything".
   assert.notEqual(canonicalModeId('claude', 'dontAsk'), canonicalModeId('claude', 'bypassPermissions'))
-  assert.ok(CANONICAL_MODES.bypass.permissiveness > CANONICAL_MODES['dont-ask'].permissiveness)
+  assert.notEqual(CANONICAL_MODES['dont-ask'].label, CANONICAL_MODES.bypass.label)
 })
 
-test('permissiveness strictly increases and every canonical mode is self-consistent', () => {
-  const ordered: CanonicalModeId[] = ['plan', 'manual', 'accept-edits', 'auto', 'dont-ask', 'bypass']
-  const ranks = ordered.map((id) => CANONICAL_MODES[id].permissiveness)
-  assert.deepEqual(
-    ranks,
-    [...ranks].sort((a, b) => a - b),
-  )
-  assert.equal(new Set(ranks).size, ranks.length, 'two modes share a permissiveness rank')
+test('the canonical menu order is the product-specified one', () => {
+  // Pinned because it is a product decision, not something derivable — it is
+  // deliberately NOT a severity ramp (`auto` leads), so nothing but this test
+  // would catch a well-meaning "fix" that re-sorted it into one.
+  const byOrder = (Object.values(CANONICAL_MODES) as CanonicalModeInfo[])
+    .sort((a, b) => a.order - b.order)
+    .map((mode) => mode.label)
+  assert.deepEqual(byOrder, ['Auto', 'Plan', 'Manual Edits', 'Accept Edits', 'Reject Edits', 'Bypass Permissions'])
+})
+
+test('every canonical mode carries its own id and a unique order', () => {
+  const orders = (Object.values(CANONICAL_MODES) as CanonicalModeInfo[]).map((mode) => mode.order)
+  assert.equal(new Set(orders).size, orders.length, 'two modes share an order')
   for (const [key, info] of Object.entries(CANONICAL_MODES)) {
     assert.equal(info.id, key, `${key} does not carry its own id`)
   }

@@ -1,6 +1,6 @@
 'use client'
 
-import { canonicalModeId } from 'agent-client/session-modes'
+import { CANONICAL_MODES, canonicalModeId } from 'agent-client/session-modes'
 import { Button } from 'ui/components/ui/button'
 import {
   DropdownMenu,
@@ -9,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from 'ui/components/ui/dropdown-menu'
 
-import { modePresentation } from './mode-icons'
+import { BYPASS_FORCED_PRESENTATION, modePresentation } from './mode-icons'
 
 export interface ModeSelectorOption {
   /** The agent's own wire id for the mode. */
@@ -51,11 +51,28 @@ export function ModeSelector({ options, current, onSelect, adapterId, lockedReas
     return null
   }
   const canonicalFor = (value: string) => (adapterId ? canonicalModeId(adapterId, value) : undefined)
+  const currentCanonical = canonicalFor(current)
   const currentOption = options.find((option) => option.value === current)
-  const currentPresentation = modePresentation(canonicalFor(current))
+  // Canonical label when we recognise the mode, so the same behaviour reads the
+  // same whichever agent is behind the chat; the agent's own wording otherwise.
+  const currentLabel = (currentCanonical && CANONICAL_MODES[currentCanonical].label) ?? currentOption?.label ?? current
+  // A pinned bypass is not this session's choice, so it alerts rather than
+  // sitting there looking like a setting someone picked.
+  const forcedBypass = Boolean(lockedReason) && currentCanonical === 'bypass'
+  const currentPresentation = forcedBypass ? BYPASS_FORCED_PRESENTATION : modePresentation(currentCanonical)
   const CurrentIcon = currentPresentation?.icon
-  const currentLabel = currentOption?.label ?? current
   const title = lockedReason ?? `Permission mode: ${currentLabel}`
+  // Our order, not the agent's: the same mode should sit in the same place
+  // whichever agent is behind the chat. Anything unclassified keeps its
+  // relative order and lands after everything we recognise.
+  const ordered = [...options].sort((a, b) => {
+    const ac = canonicalFor(a.value)
+    const bc = canonicalFor(b.value)
+    return (
+      (ac ? CANONICAL_MODES[ac].order : Number.MAX_SAFE_INTEGER) -
+      (bc ? CANONICAL_MODES[bc].order : Number.MAX_SAFE_INTEGER)
+    )
+  })
 
   return (
     <DropdownMenu>
@@ -72,8 +89,9 @@ export function ModeSelector({ options, current, onSelect, adapterId, lockedReas
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end'>
-        {options.map((option) => {
-          const presentation = modePresentation(canonicalFor(option.value))
+        {ordered.map((option) => {
+          const canonical = canonicalFor(option.value)
+          const presentation = modePresentation(canonical)
           const Icon = presentation?.icon
           return (
             <DropdownMenuItem
@@ -82,7 +100,7 @@ export function ModeSelector({ options, current, onSelect, adapterId, lockedReas
               className={option.value === current ? 'font-medium' : undefined}
             >
               {Icon ? <Icon className={`size-4 ${presentation.className}`} /> : <span className='size-4' />}
-              {option.label}
+              {(canonical && CANONICAL_MODES[canonical].label) ?? option.label}
             </DropdownMenuItem>
           )
         })}
