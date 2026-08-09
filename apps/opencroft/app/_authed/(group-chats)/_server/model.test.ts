@@ -92,8 +92,16 @@ await db.insert(space).values({
         type: 'agent',
         data: { name: 'Agent Session Two', providerId: 'test-provider', adapterId: 'openclaw', model: 'test-model' },
       },
+      // Wired into `agent-a` below. A thread's standing context has to carry
+      // the agent's OWN instruction nodes, not just the chat's topic and
+      // pins — that is the whole point of the edge existing.
+      { id: 'instr-a', type: 'agent-instruction', data: { name: 'Tone', instruction: 'Answer in English.' } },
+      { id: 'instr-blank', type: 'agent-instruction', data: { name: 'Blank', instruction: '   ' } },
     ],
-    edges: [],
+    edges: [
+      { id: 'e-instr-a', source: 'instr-a', target: 'agent-a', targetHandle: 'instructions-in' },
+      { id: 'e-instr-blank', source: 'instr-blank', target: 'agent-a', targetHandle: 'instructions-in' },
+    ],
   }),
 })
 
@@ -247,6 +255,67 @@ test('a nonexistent group chat and one the caller is not a member of are indisti
   const realThread = await captureRefusal(() => model.getThread(reqAs(outsider), thread.id))
   assert.equal(fakeThread.code, realThread.code)
   assert.equal(fakeThread.message, realThread.message)
+})
+
+// A group-chat thread is an ordinary session with its agent, so it must carry
+// that agent's own instruction nodes — the same blocks a 1:1 chat and a
+// send-message node both deliver. This was the ONE surface that dropped them:
+// standing context was assembled from the chat alone, so an agent whose
+// identity lives on instruction nodes woke up in a thread without any of it,
+// silently. Pinned here because nothing else fails when it regresses.
+test("a thread's standing context carries the agent's own instruction nodes", async () => {
+  const owner = await makeUser('instr-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'instruction delivery')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: `group-chat:${chat.id}:agent-a:instructions`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  const standing = await model.groupChatStandingContext(thread.sessionKey)
+  assert.ok(standing, 'a real thread key must resolve to standing context')
+  assert.ok(
+    standing.instructions.includes('Answer in English.'),
+    `the agent's wired instruction must be delivered, got: ${JSON.stringify(standing.instructions)}`,
+  )
+  // Whitespace-only instruction nodes contribute nothing rather than an empty
+  // block, matching how the envelope already treats a blank instruction.
+  assert.equal(
+    standing.instructions.some((text) => text.trim().length === 0),
+    false,
+    'a blank instruction node must not become an empty block',
+  )
+  // In the signature too, so editing an instruction node re-delivers on the
+  // next message exactly as editing a pin does.
+  assert.ok(standing.signature.includes('Answer in English.'), 'the instruction must take part in the signature')
+})
+
+test("an agent's instructions are absent from a thread whose agent has none wired", async () => {
+  const owner = await makeUser('instr-owner2@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'no instruction delivery')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-b' })
+
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-b',
+      sessionKey: `group-chat:${chat.id}:agent-b:no-instructions`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  const standing = await model.groupChatStandingContext(thread.sessionKey)
+  assert.ok(standing)
+  assert.deepEqual(standing.instructions, [], 'an agent with nothing wired contributes nothing')
 })
 
 test("one user's group chat does not appear in another's list", async () => {

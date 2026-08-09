@@ -633,8 +633,9 @@ async function pinTextsFor(groupChatId: string): Promise<string[]> {
 }
 
 /**
- * STANDING CONTEXT: everything a thread's agent should be holding about the
- * group chat it is in — the topic it exists for, and the notes pinned to it.
+ * STANDING CONTEXT: everything a thread's agent should be holding — the
+ * agent's own instruction nodes, plus the group chat it is in: the topic it
+ * exists for, and the notes pinned to it.
  *
  * One assembler, three delivery points, and that is the point of it being one
  * function rather than three call sites that each remember to include pins:
@@ -671,8 +672,8 @@ export interface StandingContext {
  * "nothing pinned" is a state that can be recorded as delivered and told apart
  * from the NULL that means nothing has ever been delivered.
  */
-export function standingSignature(topic: string, pinTexts: string[]): string {
-  const parts = [topic, ...pinTexts]
+export function standingSignature(topic: string, pinTexts: string[], instructionTexts: string[] = []): string {
+  const parts = [topic, ...pinTexts, ...instructionTexts]
   return `v1:${parts.length}:${parts.map((t) => `${t.length}:${t}`).join('|')}`
 }
 
@@ -689,8 +690,42 @@ export function composePinReminder(texts: string[]): string {
   return `Pinned notes for this group chat — standing guidance, not a new request:\n${lines}`
 }
 
-/** Assemble one group chat's standing context from its current row and pins. */
-async function standingContextForChat(groupChatId: string): Promise<StandingContext | null> {
+/**
+ * The agent's OWN standing instructions — the `agent-instruction` nodes wired
+ * into its `instructions-in` handle, the same ones a 1:1 chat delivers
+ * (ai-panel.tsx) and a send-message node delivers (send-message-helpers.ts).
+ *
+ * A thread is an ordinary session with that agent, so it gets them too. Until
+ * this existed, a group-chat thread was the ONE surface that dropped them:
+ * standing context here was assembled from the chat alone, so an agent whose
+ * whole identity is configured on instruction nodes woke up in a thread
+ * without any of it, and the more work moved into threads the more often that
+ * happened.
+ *
+ * Read from the same `listAgentNodesImpl()` the callers around here already
+ * use to validate and name an agent — `AgentNodeRef` has carried
+ * `.instructions` all along; nothing here reaches for anything new.
+ */
+async function agentInstructionsFor(agentNodeId: string): Promise<string[]> {
+  const nodes = await listAgentNodesImpl()
+  const agent = nodes.find((n) => n.nodeId === agentNodeId)
+  return (agent?.instructions ?? []).map((i) => i.instruction.trim()).filter((text) => text.length > 0)
+}
+
+/**
+ * Assemble one THREAD's standing context: the chat's topic and pins, plus the
+ * thread agent's own instruction nodes.
+ *
+ * Thread-scoped rather than chat-scoped, because the agent is a property of
+ * the thread — two threads in one chat with different agents hold different
+ * standing context, and assembling it per chat is what made that impossible
+ * to express.
+ *
+ * The agent's instructions lead and the pins follow: the agent's own standing
+ * guidance is what it is, and the chat's pins are the narrower thing layered
+ * on top of it.
+ */
+async function standingContextForThread(groupChatId: string, agentNodeId: string): Promise<StandingContext | null> {
   const [chat] = await db
     .select({ topic: groupChat.topic })
     .from(groupChat)
@@ -701,13 +736,20 @@ async function standingContextForChat(groupChatId: string): Promise<StandingCont
   }
   const pins = await pinTextsFor(groupChatId)
   const reminder = composePinReminder(pins)
+  const agentInstructions = await agentInstructionsFor(agentNodeId)
   return {
     jobContext: `Group chat topic: ${chat.topic}`,
     // Pins ride the envelope's existing instruction axis rather than a new
     // one: that axis already means standing guidance rather than a request,
-    // which is what a pin is.
-    instructions: reminder ? [reminder] : [],
-    signature: standingSignature(chat.topic, pins),
+    // which is what a pin is. The agent's own instructions ride the same axis
+    // for the same reason, and are the same blocks a 1:1 chat sends.
+    instructions: [...agentInstructions, ...(reminder ? [reminder] : [])],
+    // The agent's instructions are IN the signature, so editing an
+    // instruction node re-delivers on this thread's next message exactly as
+    // editing a pin does. That also means every existing thread's recorded
+    // signature no longer matches, which is correct: none of them were ever
+    // told the instructions, and one re-delivery is how they find out.
+    signature: standingSignature(chat.topic, pins, agentInstructions),
   }
 }
 
@@ -725,11 +767,11 @@ async function standingContextForChat(groupChatId: string): Promise<StandingCont
  */
 export async function groupChatStandingContext(sessionKey: string): Promise<StandingContext | null> {
   const [row] = await db
-    .select({ groupChatId: groupChatThread.groupChatId })
+    .select({ groupChatId: groupChatThread.groupChatId, agentNodeId: groupChatThread.agentNodeId })
     .from(groupChatThread)
     .where(eq(groupChatThread.sessionKey, sessionKey))
     .limit(1)
-  return row ? standingContextForChat(row.groupChatId) : null
+  return row ? standingContextForThread(row.groupChatId, row.agentNodeId) : null
 }
 
 // A thread's session key is namespaced away from the 1:1 chat registry's
@@ -802,7 +844,7 @@ export async function startThread(
   if (!(await isAgentMember(groupChatId, agentNodeId))) {
     throw new GroupChatAccessError('agent-not-a-member', 'That agent is not a member of this group chat')
   }
-  const standing = await standingContextForChat(groupChatId)
+  const standing = await standingContextForThread(groupChatId, agentNodeId)
   if (!standing) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
@@ -996,7 +1038,7 @@ async function deliverIntoThread(
   // ordinary message the same way. The flag decides whether the session-init
   // parts are attached to THIS message, which is exactly what is wanted here;
   // its name describes only the first of its two uses.
-  const standing = await standingContextForChat(row.groupChatId)
+  const standing = await standingContextForThread(row.groupChatId, row.agentNodeId)
   const changed = standing && standing.signature !== row.deliveredContextSignature
   const payload =
     changed && standing
