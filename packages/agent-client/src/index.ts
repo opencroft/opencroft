@@ -11,6 +11,9 @@ export type { EventsWindow } from './pagination'
 // Permission model (also importable via the subpath).
 export type { AgentRole, DefaultAccess, PermissionValue, ResolvedPermissions } from './permissions'
 export { accessFor, resolveSessionPermissions, skillKey, toolKey } from './permissions'
+// Canonical reasoning-effort vocabulary (also importable via the subpath).
+export type { CanonicalEffortId, CanonicalEffortInfo } from './session-effort'
+export { CANONICAL_EFFORTS, canonicalEffortId } from './session-effort'
 // Canonical permission-mode vocabulary (also importable via the subpath).
 export type { CanonicalModeId, CanonicalModeInfo, ClassifiedMode } from './session-modes'
 export { CANONICAL_MODES, canonicalModeId, classifyModes, modeIdForCanonical } from './session-modes'

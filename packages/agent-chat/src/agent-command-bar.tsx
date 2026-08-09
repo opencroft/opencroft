@@ -20,6 +20,7 @@ import {
 import { ContextRing } from 'ui/agent-chat/context-ring'
 
 import { ConfigOptionsBar } from './config-options-bar'
+import { EffortSelector } from './effort-selector'
 import { ModeSelector } from './mode-selector'
 
 // The config-option id agents use for the permission mode. ACP delivers modes
@@ -27,6 +28,11 @@ import { ModeSelector } from './mode-selector'
 // this surface drives the option, so the id is the handle for both pulling it
 // out of the generic row and locking it.
 const MODE_CONFIG_ID = 'mode'
+// Likewise for reasoning effort: rendered as its own icon button rather than a
+// labelled dropdown. Unlike `mode`, the values behind this vary per model — the
+// agent decides what it advertises, and it may advertise none.
+const EFFORT_CONFIG_ID = 'effort'
+
 import type { AgentChatSession } from './session'
 import type { CompactRenderState } from './use-compact-control'
 
@@ -342,9 +348,9 @@ export function useAgentCommandBar({
         // array to the select variants, which the `.options` read below needs.
         // Folding a second condition into it silently loses that inference.
         .filter((option) => option.type !== 'boolean')
-        // `mode` is deliberately absent: it is rendered as its own icon button
-        // (see MODE_CONFIG_ID above), not as one more labelled dropdown.
-        .filter((option) => option.id !== MODE_CONFIG_ID)
+        // `mode` and `effort` are deliberately absent: each is rendered as its
+        // own icon button above, not as one more labelled dropdown.
+        .filter((option) => option.id !== MODE_CONFIG_ID && option.id !== EFFORT_CONFIG_ID)
         .map((option) => ({
           id: option.id,
           label: option.name,
@@ -363,7 +369,11 @@ export function useAgentCommandBar({
       | { currentValue?: unknown; options?: unknown }
       | undefined
     const modeOptions = flattenOptions(modeOption?.options)
-    if (!usage && booleanOptions.length === 0 && modeOptions.length === 0) {
+    const effortOption = (configOptions ?? []).find((option) => option.id === EFFORT_CONFIG_ID) as
+      | { currentValue?: unknown; options?: unknown }
+      | undefined
+    const effortOptions = flattenOptions(effortOption?.options)
+    if (!usage && booleanOptions.length === 0 && modeOptions.length === 0 && effortOptions.length === 0) {
       return null
     }
     return (
@@ -375,6 +385,15 @@ export function useAgentCommandBar({
             onSelect={(value) => onSetConfigOptionRef.current?.(MODE_CONFIG_ID, value)}
             adapterId={adapterId}
             lockedReason={lockedConfigOptions?.[MODE_CONFIG_ID]}
+          />
+        ) : null}
+        {effortOptions.length > 0 ? (
+          <EffortSelector
+            options={effortOptions}
+            current={String(effortOption?.currentValue ?? '')}
+            onSelect={(value) => onSetConfigOptionRef.current?.(EFFORT_CONFIG_ID, value)}
+            adapterId={adapterId}
+            lockedReason={lockedConfigOptions?.[EFFORT_CONFIG_ID]}
           />
         ) : null}
         {usage ? (

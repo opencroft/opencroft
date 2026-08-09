@@ -2,7 +2,9 @@
 // registration, server functions, SSE handler) is exported from `agent-chat/server`.
 
 export { ConfigOptionsBar, type ConfigOptionsBarProps } from './config-options-bar'
-export { MODE_PRESENTATION, type ModePresentation, modePresentation } from './mode-icons'
+export { EffortSelector, type EffortSelectorProps } from './effort-selector'
+export { BYPASS_FORCED_PRESENTATION, MODE_PRESENTATION, type ModePresentation, modePresentation } from './mode-icons'
+export { ModeSelector, type ModeSelectorProps } from './mode-selector'
 export { markdownLinkComponents } from './markdown-link'
 export {
   McpServerDialog,
