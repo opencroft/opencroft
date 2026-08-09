@@ -22,7 +22,15 @@ export function useClearControl(clearSession?: () => void | Promise<void>): Clea
       return
     }
     setClearing(true)
-    Promise.resolve(clearSession()).finally(() => setClearing(false))
+    // Catches its own failure rather than leaving a rejection unhandled -- a
+    // refusal (a host that rejects a clear it cannot honour) is still an
+    // outcome the in-flight guard below needs to release from, and a
+    // destructive control that fails silently is worse than one that logs.
+    Promise.resolve(clearSession())
+      .catch((err) => {
+        console.error('Failed to clear session', err)
+      })
+      .finally(() => setClearing(false))
   }, [clearSession, clearing])
 
   // Same identity-stability contract as useAsyncActionStatus, even though

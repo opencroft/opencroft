@@ -540,6 +540,55 @@ test('deleteThread tears the session down before dropping the row it is reachabl
   assert.equal(remaining.length, 0, 'and the row is gone once the delete completes')
 })
 
+// ---------------------------------------------------------------------------
+// CLEAR. Same membership gate as delete (found first, then the same single
+// refusal for a missing thread and a non-member), but the row survives --
+// that's the one thing worth pinning here beyond "the gate works", since
+// forgetLocalSessionImpl's own teardown correctness is already covered by
+// the delete-ordering test above (same primitive, both call it the same way).
+// No mock ACP connection needed: a thread with no live session started for
+// it (inserted directly, the same fixture pattern the draft/removal tests
+// below use) exercises forgetLocalSessionImpl's own no-entry guard, which is
+// exactly what a thread that was never opened, or was already idle, hits in
+// practice -- clearSession has to be safe to call in that state, not only
+// when there happens to be a live process to tear down.
+// ---------------------------------------------------------------------------
+test('a member can clear a thread and the row survives; a non-member is refused and nothing is torn down', async () => {
+  const owner = await makeUser('clear-owner@example.test')
+  const outsider = await makeUser('clear-outsider@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'clear guard')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: `group-chat:${chat.id}:agent-a:clear-guard-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  const refusal = await captureRefusal(() => model.clearThread(reqAs(outsider), thread.id))
+  assert.equal(refusal.code, 'not-found')
+  const untouched = await db.select().from(groupChatThread).where(eq(groupChatThread.id, thread.id))
+  assert.equal(untouched.length, 1, 'a refused clear must not touch the row')
+
+  await model.clearThread(reqAs(owner), thread.id)
+  const survives = await db.select().from(groupChatThread).where(eq(groupChatThread.id, thread.id))
+  assert.equal(
+    survives.length,
+    1,
+    'unlike deleteThread, the row survives -- the thread reopens onto a fresh session next access, it does not disappear',
+  )
+
+  // A fabricated thread id refuses identically, so clearing is not a way to
+  // probe which threads exist either -- same property sendMessageInThread's
+  // own test asserts for sends.
+  const fabricated = await captureRefusal(() => model.clearThread(reqAs(outsider), crypto.randomUUID()))
+  assert.equal(fabricated.code, refusal.code)
+})
+
 test('a member can save and clear a thread draft; a non-member is refused and changes nothing', async () => {
   const owner = await makeUser('draft-owner@example.test')
   const outsider = await makeUser('draft-outsider@example.test')

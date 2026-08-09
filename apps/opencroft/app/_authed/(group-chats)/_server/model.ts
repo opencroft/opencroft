@@ -1121,6 +1121,38 @@ export async function deleteThread(request: Request, threadId: string): Promise<
 }
 
 /**
+ * Discard a thread's session and open a fresh one in its place -- same
+ * thread, same row, empty history. Membership-gated exactly like
+ * `deleteThread` (found first, then the same single refusal for a missing
+ * thread and a non-member) -- the one difference from `deleteThread` is that
+ * the `groupChatThread` row survives, so the thread reopens onto a fresh
+ * session via `ensureLocalSessionImpl` the next time it's read, instead of
+ * disappearing from the list. `session.clearSession` (use-acp-session.ts)
+ * calls the SAME forgetLocalSessionImpl with no check of any kind -- correct
+ * there, since a 1:1 chat has no membership concept, but wrong here, where
+ * every other mutation on this surface (send, compact, delete) is
+ * membership-gated. This is the gate that path was missing.
+ */
+export async function clearThread(request: Request, threadId: string): Promise<void> {
+  const sessionUser = await requireSignedInUser(request)
+  const [row] = await db
+    .select({
+      groupChatId: groupChatThread.groupChatId,
+      sessionKey: groupChatThread.sessionKey,
+    })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.id, threadId))
+    .limit(1)
+  if (!row) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  await forgetLocalSessionImpl(row.sessionKey)
+}
+
+/**
  * Save (or clear, with an empty string) a thread's unsent composer draft --
  * the same mechanism SessionEntry.draft gives the 1:1 chat, kept per-thread
  * on the thread's own row rather than in that settings-row list, since a

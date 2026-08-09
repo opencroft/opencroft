@@ -1,6 +1,9 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { AgentChat } from 'agent-chat/agent-chat'
 import { Approvals } from 'agent-chat/approvals'
+import { useClearControl } from 'agent-chat/use-clear-control'
+import type { CompactStatus } from 'agent-chat/use-compact-control'
+import { useCompactControl } from 'agent-chat/use-compact-control'
 import { useCallback, useMemo } from 'react'
 import { GroupChatThreadFraming } from 'ui/group-chat/group-chat-thread-framing'
 import { ScrollPage } from 'ui/layout/scrollpage'
@@ -11,12 +14,15 @@ import type { LocalSource, SendTransport } from '@/app/_authed/(agent)/_componen
 import { useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { buildBlocks } from '@/app/_authed/(agent)/_lib/build-blocks'
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
-import { ThreadCompactControl } from '@/app/_authed/(group-chats)/_components/thread-compact-control'
+import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
 import { threadSendRefusal } from '@/app/_authed/(group-chats)/_lib/send-failure'
 import { useSafeBack } from '@/app/_authed/(group-chats)/_lib/use-safe-back'
 import type { GroupChatDetailView, GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import {
+  clearGroupChatThread,
+  compactGroupChatThread,
+  getGroupChatThreadCompactStatus,
   getGroupChatThreadView,
   getMyGroupChatView,
   sendGroupChatThreadMessage,
@@ -125,11 +131,36 @@ function ThreadConversation({
     [acp.session.messages, acp.session.historyHeader?.index],
   )
 
-  // Stable identity across re-renders (thread.id does not change without a
-  // route change) -- AgentCommandBarHost's own memo depends on this prop, and
-  // a fresh element every render would rebuild it and republish into the
-  // overlay slot on every unrelated re-render (session streaming, etc.).
-  const compactControl = useMemo(() => <ThreadCompactControl threadId={thread.id} />, [thread.id])
+  // Compacts and clears THIS thread, membership-checked (see clearThread's
+  // own comment in model.ts for why clearSession -- generic across both
+  // surfaces, no check of any kind -- isn't used here directly). Keyed on
+  // thread.id, not the session key: that's what the underlying server calls
+  // actually key on, and useCompactControl/useClearControl's key parameter
+  // is opaque (see their own comments) -- it only has to match what the
+  // callbacks below expect.
+  const fetchCompactStatus = useCallback(
+    (threadId: string): Promise<CompactStatus> => getGroupChatThreadCompactStatus({ data: threadId }),
+    [],
+  )
+  const requestCompact = useCallback(
+    async (threadId: string): Promise<{ ok: true } | { ok: false; message: string }> => {
+      const result = await compactGroupChatThread({ data: threadId })
+      if (result.ok) {
+        return { ok: true }
+      }
+      return { ok: false, message: groupChatAccessMessageForCode(result.code) }
+    },
+    [],
+  )
+  const compact = useCompactControl(thread.id, fetchCompactStatus, requestCompact)
+  const clearSession = useCallback(
+    () =>
+      clearGroupChatThread({ data: thread.id }).catch((err) => {
+        console.error('Failed to clear thread', thread.id, err)
+      }),
+    [thread.id],
+  )
+  const clear = useClearControl(clearSession)
 
   // AgentCommandBarHost hands back the sessionKey it was given as `key` (it
   // is `thread.sessionKey`, the same value passed as `source.tabKey` above),
@@ -164,7 +195,6 @@ function ThreadConversation({
     <AgentCommandBarHost
       inline
       startIcon={false}
-      leadingBarContent={compactControl}
       session={acp.session}
       agentNodeId={thread.agent.nodeId}
       queued={acp.queue}
@@ -172,6 +202,8 @@ function ThreadConversation({
       configOptions={acp.configOptions}
       onSetConfigOption={acp.setConfigOption}
       usage={acp.usage}
+      compact={compact}
+      onClear={clear.onClear}
       placeholder={`Message ${thread.agent.name}`}
       sendError={acp.session.sendError}
       onDismissSendError={acp.session.dismissSendError}

@@ -17,6 +17,7 @@ import type {
 import {
   addMember,
   addPin,
+  clearThread,
   compactThread,
   createGroupChat,
   deleteThread,
@@ -328,3 +329,12 @@ export const setGroupChatThreadDraft = createServerFn({ method: 'POST', strict: 
 export const deleteGroupChatThread = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((threadId: string) => threadId)
   .handler(async ({ data: threadId }): Promise<void> => deleteThread(getRequest(), threadId))
+
+// Same shape as deleteGroupChatThread (throws a GroupChatAccessError on
+// refusal rather than returning one as data) -- useClearControl's contract
+// has no slot to display a refusal message differently than any other
+// failure, so there is nothing for a refusal-as-data shape to buy here that
+// deleteGroupChatThread's own precedent doesn't already cover identically.
+export const clearGroupChatThread = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((threadId: string) => threadId)
+  .handler(async ({ data: threadId }): Promise<void> => clearThread(getRequest(), threadId))
