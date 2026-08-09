@@ -142,24 +142,52 @@ function ThreadConversation({
     (threadId: string): Promise<CompactStatus> => getGroupChatThreadCompactStatus({ data: threadId }),
     [],
   )
+  // Mirrors the 1:1 chat's own requestCompact (chat-hosts.tsx): a genuine,
+  // non-access failure -- compactGroupChatThread only catches
+  // GroupChatAccessError itself, so requestCompactOnGraph's own throws (no
+  // live process for this session, or no standing-context resolver claimed
+  // it) come through as an ordinary thrown error, not a `{ok:false, code}`
+  // result. Without this try/catch that rejection fell through uncaught to
+  // useAsyncActionStatus's generic `.catch(() => setRefusal('That could not
+  // be completed.'))` -- indistinguishable on screen from a membership
+  // refusal, and not even the same copy as one. Catching it here and giving
+  // it its OWN message (not routed through groupChatAccessMessageForCode,
+  // which is for access refusals only) is "surfacing as itself".
   const requestCompact = useCallback(
     async (threadId: string): Promise<{ ok: true } | { ok: false; message: string }> => {
-      const result = await compactGroupChatThread({ data: threadId })
-      if (result.ok) {
-        return { ok: true }
+      try {
+        const result = await compactGroupChatThread({ data: threadId })
+        if (result.ok) {
+          return { ok: true }
+        }
+        return { ok: false, message: groupChatAccessMessageForCode(result.code) }
+      } catch {
+        return { ok: false, message: 'This session could not be compacted.' }
       }
-      return { ok: false, message: groupChatAccessMessageForCode(result.code) }
     },
     [],
   )
   const compact = useCompactControl(thread.id, fetchCompactStatus, requestCompact)
-  const clearSession = useCallback(
-    () =>
-      clearGroupChatThread({ data: thread.id }).catch((err) => {
-        console.error('Failed to clear thread', thread.id, err)
-      }),
-    [thread.id],
-  )
+  // The membership-checked server call above tears the session down, but
+  // useAcpSession -- still holding the old sessionId, EventSource and
+  // rendered messages -- is never told: without the second step below, the
+  // transcript only reflects the clear after the tab is torn down and
+  // rebuilt some other way (leaving the thread and reopening it). Driving
+  // acp.session.clearSession() is the SAME reset the 1:1 surface gets from
+  // its own Clear button -- its own forgetLocalSession call lands on an
+  // already-gone tabKey and is a no-op (see forgetLocalSessionImpl), so what
+  // it actually contributes here is the generation bump that makes
+  // useAcpSession's resolve-session effect re-run and reattach to a fresh
+  // session in place, rather than a second, competing teardown path.
+  const clearSession = useCallback(async () => {
+    try {
+      await clearGroupChatThread({ data: thread.id })
+    } catch (err) {
+      console.error('Failed to clear thread', thread.id, err)
+      return
+    }
+    await acp.session.clearSession?.()
+  }, [thread.id, acp.session.clearSession])
   const clear = useClearControl(clearSession)
 
   // AgentCommandBarHost hands back the sessionKey it was given as `key` (it
