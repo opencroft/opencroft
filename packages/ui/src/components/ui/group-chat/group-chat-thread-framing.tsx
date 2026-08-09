@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react'
 import { ChevronLeft } from 'lucide-react'
 
-import { MemberAvatarGroup, type MemberRef } from '@/components/ui/group-chat/member-avatar-group'
+import { AgentAvatar } from '@/components/ui/media/agent-avatar'
 import { cn } from '@/lib/utils'
 
 import { CommandBarFrame } from '@/components/ui/agent-chat/command-bar-frame'
@@ -24,8 +24,10 @@ export interface GroupChatThreadFramingProps {
   groupChatName: string
   /** The thread's own title; null until something names it. */
   threadTitle?: string | null
-  /** Optional participants, shown compactly on the trailing side. */
-  members?: MemberRef[]
+  /** The fixed agent this thread is with, shown compactly on the trailing
+   * side. A thread has exactly one agent -- unlike the group chat itself,
+   * which can have several -- so this shows who, not how many. */
+  agent?: { name: string; avatarUrl?: string | null }
   /** Back out of the conversation -- to the thread list / group chat. */
   onBack?: () => void
   /** The conversation itself -- agent-chat/chat-conversation, reused not redrawn. */
@@ -43,7 +45,7 @@ export interface GroupChatThreadFramingProps {
 // surface itself is reused unchanged (a group-chat thread is an ordinary agent
 // session -- see agent-chat/chat-conversation); what is worth designing is the
 // context above it: the group chat a thread belongs to, by name, with the
-// thread's own title, and a back affordance that matters most on minimal widths
+// thread's own title, who it's with, and a back affordance that matters most on minimal widths
 // where the conversation is a leaf view. No locks -- this states where the
 // reader is, and whether the agent is doing anything about it.
 //
@@ -56,7 +58,7 @@ export interface GroupChatThreadFramingProps {
 export function GroupChatThreadFraming({
   groupChatName,
   threadTitle,
-  members,
+  agent,
   onBack,
   children,
   composer,
@@ -86,8 +88,11 @@ export function GroupChatThreadFraming({
             {threadTitle || 'Thread'}
           </span>
         </div>
-        {members && members.length > 0 ? (
-          <MemberAvatarGroup members={members} max={4} size='sm' className='shrink-0' />
+        {agent ? (
+          <span className='flex min-w-0 shrink-0 items-center gap-1.5' title={agent.name}>
+            <AgentAvatar avatar={agent.avatarUrl} name={agent.name} size='sm' />
+            <span className='max-w-24 truncate text-sm text-foreground'>{agent.name}</span>
+          </span>
         ) : null}
       </header>
       {/* Forces Radix's own internal viewport wrapper (a div ScrollArea

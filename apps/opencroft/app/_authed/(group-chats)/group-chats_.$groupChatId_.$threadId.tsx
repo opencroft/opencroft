@@ -45,8 +45,8 @@ export const Route = createFileRoute('/_authed/(group-chats)/group-chats_/$group
   loader: async ({ params }) =>
     loadOrRefusal(async () => {
       const thread = await getGroupChatThreadView({ data: params.threadId })
-      // The framing shows the topic and who is taking part, which live on the
-      // group chat rather than the thread.
+      // The framing shows the group chat's name as a breadcrumb, which lives
+      // on the group chat rather than the thread.
       const chat = await getMyGroupChatView({ data: params.groupChatId })
       return { thread, chat }
     }),
@@ -245,7 +245,7 @@ function ThreadConversation({
       <GroupChatThreadFraming
         groupChatName={chat.name}
         threadTitle={thread.title}
-        members={chat.members}
+        agent={{ name: thread.agent.name, avatarUrl: thread.agent.avatarUrl }}
         onBack={onBack}
         composer={composer}
       >
