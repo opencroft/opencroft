@@ -1,50 +1,53 @@
-// A fixed vocabulary for the permission modes agents run in.
+// Our vocabulary for the permission modes agents run in.
 //
 // ACP session modes are free-form: an agent advertises whatever `{id, name,
-// description}` triples it likes (see SessionMode), and two agents that behave
-// identically can spell the same mode differently — `acceptEdits` vs
-// `accept_edits`, `default` vs `manual`. That is right for the protocol and
-// wrong for a UI, which needs a stable handle to hang an icon, a colour and an
-// ordering off. Everything a session ADVERTISES still comes from the session
-// (see ConfigOptionsBar, which builds its selectors from the live list and
-// never a hardcoded one); this module only adds a recognised-mode label on top,
-// and says nothing at all about modes it does not recognise.
+// description}` triples it likes, and two agents that behave identically can
+// spell the same mode differently — `acceptEdits` vs `accept_edits`, `default`
+// vs `manual`. That is right for the protocol and wrong for a UI, which needs a
+// stable handle to hang an icon, a colour and an ordering off.
 //
-// Deliberately carries no icons or colours: those are presentation, and belong
-// to whichever surface renders the mode. What lives here is the classification
-// and the semantics behind it.
+// So the ids below are OURS, not any agent's, and what agents call things is
+// registered as synonyms (see synonyms.ts). `reject-edits` is the clearest
+// case: Claude Code calls it `dontAsk`, which describes the prompt rather than
+// the outcome, and echoing that would have put its vocabulary at the centre of
+// ours. Everything downstream operates on our values only.
+//
+// This classifies, it does not replace: what a session ADVERTISES still comes
+// from the session, and an unrecognised mode passes through with the agent's
+// own name rather than being hidden.
+//
+// Carries no icons or colours — those are presentation, and belong to whichever
+// surface renders the mode.
 
+import { createSynonymResolver } from './synonyms'
 import type { SessionMode } from './types'
 
 /**
- * The canonical modes, listed in the menu order defined below.
+ * Our modes, in menu order.
  *
  * - `auto` — a classifier decides each request instead of the user.
  * - `plan` — the agent may think and read but executes nothing.
- * - `manual` — the agent asks before anything consequential. The usual default.
+ * - `manual-edits` — the agent asks before anything consequential. The usual default.
  * - `accept-edits` — file edits go through unattended; other operations still ask.
- * - `dont-ask` — nothing is asked; anything not pre-approved is DENIED.
+ * - `reject-edits` — nothing is asked; anything not pre-approved is DENIED.
  * - `bypass` — nothing is asked; everything is ALLOWED.
  *
- * `dont-ask` and `bypass` are both "stops asking" and are opposites in what
+ * `reject-edits` and `bypass` are both "stops asking" and are opposites in what
  * that silence means, so they must never collapse into one another.
  */
-export type CanonicalModeId = 'manual' | 'plan' | 'accept-edits' | 'auto' | 'dont-ask' | 'bypass'
+export type CanonicalModeId = 'auto' | 'plan' | 'manual-edits' | 'accept-edits' | 'reject-edits' | 'bypass'
 
 export interface CanonicalModeInfo {
   id: CanonicalModeId
-  /** Display label for surfaces that would rather not echo the agent's wording. */
+  /** Display label, replacing whatever the agent called it. */
   label: string
   /** What the mode does, in host-agnostic terms. */
   description: string
   /**
-   * Position in the canonical menu order, ascending. Presentation order is a
-   * product decision rather than something derivable — it is NOT a severity
-   * ramp (`auto` leads while being far from the least permissive) — so it is
-   * stated once here instead of re-derived, differently, by each surface.
-   *
-   * A surface sorts by this rather than by the agent's advertised order, so the
-   * same mode sits in the same place whichever agent is behind the chat.
+   * Position in the menu, ascending. Presentation order is a product decision
+   * rather than something derivable — it is NOT a severity ramp (`auto` leads
+   * while being far from the least permissive) — so it is stated once here
+   * instead of re-derived, differently, by each surface.
    */
   order: number
 }
@@ -62,8 +65,8 @@ export const CANONICAL_MODES: Record<CanonicalModeId, CanonicalModeInfo> = {
     description: 'Plans and reads only — executes nothing.',
     order: 1,
   },
-  manual: {
-    id: 'manual',
+  'manual-edits': {
+    id: 'manual-edits',
     label: 'Manual Edits',
     description: 'Asks before any consequential operation.',
     order: 2,
@@ -74,8 +77,8 @@ export const CANONICAL_MODES: Record<CanonicalModeId, CanonicalModeInfo> = {
     description: 'Applies file edits without asking; still asks about everything else.',
     order: 3,
   },
-  'dont-ask': {
-    id: 'dont-ask',
+  'reject-edits': {
+    id: 'reject-edits',
     label: 'Reject Edits',
     description: 'Never asks; denies anything not already permitted.',
     order: 4,
@@ -88,65 +91,48 @@ export const CANONICAL_MODES: Record<CanonicalModeId, CanonicalModeInfo> = {
   },
 }
 
+const MODE_IDS = Object.keys(CANONICAL_MODES) as CanonicalModeId[]
+
 /**
- * Per-adapter overrides, keyed by adapter id (see harness-adapters.ts) then by
- * the mode id the agent puts on the wire.
- *
- * Only spellings the generic normaliser below cannot reach need an entry —
- * Claude Code's `default` (advertised as "Manual", so the wire id says nothing
- * about the behaviour) and `bypassPermissions` (which normalises to
- * `bypasspermissions`, not `bypass`). The rest are here anyway, so this table
- * doubles as the readable record of what one agent actually offers.
- *
- * Verified against @agentclientprotocol/claude-agent-acp 0.66.0's
- * buildAvailableModes(). Two of those six are conditional: `auto` appears only
- * when the SDK reports the model supports it, and `bypassPermissions` only when
- * the bridge's ALLOW_BYPASS holds — so a session legitimately advertising four
- * modes is not a missing mapping.
+ * Spellings that mean one of ours, for any agent. Punctuation and case are
+ * already ignored, so only genuinely different WORDS need registering.
  */
-const ADAPTER_MODE_IDS: Record<string, Record<string, CanonicalModeId>> = {
-  claude: {
-    auto: 'auto',
-    default: 'manual',
-    acceptEdits: 'accept-edits',
-    plan: 'plan',
-    dontAsk: 'dont-ask',
-    bypassPermissions: 'bypass',
-  },
-}
-// Both Claude adapters drive the same bridge binary and therefore advertise the
-// same modes — they differ only in how the request is billed.
-ADAPTER_MODE_IDS['claude-subscription'] = ADAPTER_MODE_IDS.claude as Record<string, CanonicalModeId>
-
-// Wire spellings that map to a canonical id for ANY adapter, so an agent that
-// names its modes the obvious way is classified without a table entry. Keys are
-// already normalised (lowercased, separators stripped).
-const GENERIC_MODE_IDS: Record<string, CanonicalModeId> = {
-  manual: 'manual',
-  plan: 'plan',
-  planning: 'plan',
-  acceptedits: 'accept-edits',
-  auto: 'auto',
-  dontask: 'dont-ask',
-  bypass: 'bypass',
-  bypasspermissions: 'bypass',
-}
-
-function normalizeModeId(modeId: string): string {
-  return modeId.toLowerCase().replace(/[-_\s]/g, '')
+const SHARED_MODE_SYNONYMS = {
+  plan: ['planning'],
+  'manual-edits': ['manual'],
+  'reject-edits': ['dontAsk', 'deny', 'rejectEdits'],
+  bypass: ['bypassPermissions'],
 }
 
 /**
- * Classify one agent-advertised mode id, or undefined when nothing recognises
- * it. Undefined is a normal answer, not a failure: an unknown mode is still a
- * real mode the session offers, and a caller should render it from the agent's
- * own `name`/`description` rather than hide it.
+ * Per-adapter registrations, for spellings that are ambiguous across agents and
+ * can only be read safely against one.
  *
- * The adapter table wins over the generic spellings so an agent that reuses a
- * common word for an uncommon behaviour can be corrected in one place.
+ * `default` is the whole reason this layer exists separately from the shared
+ * one. Claude Code kept that wire id after renaming the mode to "Manual", so
+ * for Claude it means manual-edits — but "default" says nothing about
+ * behaviour in general, and another agent could reasonably use it for anything.
+ * Registering it here rather than above keeps the guess scoped to the agent it
+ * was verified against (bridge 0.66.0's buildAvailableModes()).
+ *
+ * Both Claude adapters drive the same bridge binary and differ only in billing.
+ */
+const CLAUDE_MODE_SYNONYMS = { 'manual-edits': ['default'] }
+const ADAPTER_MODE_SYNONYMS: Record<string, typeof CLAUDE_MODE_SYNONYMS> = {
+  claude: CLAUDE_MODE_SYNONYMS,
+  'claude-subscription': CLAUDE_MODE_SYNONYMS,
+}
+
+const resolver = createSynonymResolver<CanonicalModeId>(MODE_IDS, SHARED_MODE_SYNONYMS, ADAPTER_MODE_SYNONYMS)
+
+/**
+ * Our id for an agent-advertised mode id, or undefined when nothing recognises
+ * it. Undefined is a normal answer: an unknown mode is still a real mode the
+ * session offers, and a caller should render it from the agent's own
+ * `name`/`description` rather than hide it.
  */
 export function canonicalModeId(adapterId: string, modeId: string): CanonicalModeId | undefined {
-  return ADAPTER_MODE_IDS[adapterId]?.[modeId] ?? GENERIC_MODE_IDS[normalizeModeId(modeId)]
+  return resolver.resolve(adapterId, modeId)
 }
 
 /** A session mode paired with its classification, if it has one. */
@@ -155,9 +141,10 @@ export interface ClassifiedMode extends SessionMode {
 }
 
 /**
- * Pair each of a session's advertised modes with its canonical classification.
- * Order and membership are the agent's — this never adds a mode the session did
- * not offer, and never drops one it did.
+ * Pair each of a session's advertised modes with its classification. Order and
+ * membership are the agent's — this never adds a mode the session did not
+ * offer, and never drops one it did. Surfaces that want our menu order sort by
+ * `CanonicalModeInfo.order` themselves.
  */
 export function classifyModes(adapterId: string, modes: SessionMode[]): ClassifiedMode[] {
   return modes.map((mode) => {
@@ -167,9 +154,9 @@ export function classifyModes(adapterId: string, modes: SessionMode[]): Classifi
 }
 
 /**
- * The wire id this session would use for a canonical mode, or undefined when it
- * does not offer one — the reverse of `canonicalModeId`, resolved against what
- * the session actually advertised rather than against the adapter table.
+ * The wire id this session would use for one of ours, or undefined when it does
+ * not offer one — resolved against what the session actually advertised rather
+ * than against the synonym tables.
  *
  * Resolving against the live list matters for exactly the case that motivates
  * this: several modes are conditional (Claude Code offers `bypassPermissions`

@@ -31,9 +31,9 @@ export interface ModePresentation {
 export const MODE_PRESENTATION: Record<CanonicalModeId, ModePresentation> = {
   auto: { icon: ShieldEllipsis, className: 'text-violet-500' },
   plan: { icon: ShieldQuestion, className: 'text-green-500' },
-  manual: { icon: ShieldCheck, className: 'text-primary' },
+  'manual-edits': { icon: ShieldCheck, className: 'text-primary' },
   'accept-edits': { icon: ShieldCog, className: 'text-amber-500' },
-  'dont-ask': { icon: ShieldMinus, className: 'text-orange-500' },
+  'reject-edits': { icon: ShieldMinus, className: 'text-orange-500' },
   bypass: { icon: ShieldBan, className: 'text-destructive' },
 }
 

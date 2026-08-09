@@ -22,7 +22,7 @@ test('every mode Claude Code advertises is classified', () => {
   const classified = classifyModes('claude-subscription', CLAUDE_CODE_MODES)
   assert.deepEqual(
     classified.map((mode) => mode.canonical?.id),
-    ['auto', 'manual', 'accept-edits', 'plan', 'dont-ask', 'bypass'],
+    ['auto', 'manual-edits', 'accept-edits', 'plan', 'reject-edits', 'bypass'],
   )
 })
 
@@ -41,7 +41,7 @@ test("Claude Code's `default` classifies as manual, not as a fallback", () => {
   // The wire id stayed `default` when Claude Code renamed the mode to "Manual",
   // so nothing about the id itself says what it does — it can only come from
   // the adapter table.
-  assert.equal(canonicalModeId('claude', 'default'), 'manual')
+  assert.equal(canonicalModeId('claude', 'default'), 'manual-edits')
   assert.equal(canonicalModeId('some-other-agent', 'default'), undefined)
 })
 
@@ -51,7 +51,7 @@ test('an agent with no table entry is still classified by common spellings', () 
   assert.equal(canonicalModeId('brand-new-agent', 'plan'), 'plan')
   assert.equal(canonicalModeId('brand-new-agent', 'accept_edits'), 'accept-edits')
   assert.equal(canonicalModeId('brand-new-agent', 'accept-edits'), 'accept-edits')
-  assert.equal(canonicalModeId('brand-new-agent', 'DontAsk'), 'dont-ask')
+  assert.equal(canonicalModeId('brand-new-agent', 'DontAsk'), 'reject-edits')
 })
 
 test('an unrecognised mode is left unclassified rather than guessed at', () => {
@@ -75,11 +75,11 @@ test("classifyModes preserves the agent's own order and membership", () => {
   )
 })
 
-test('dont-ask and bypass never collapse into each other', () => {
+test('reject-edits and bypass never collapse into each other', () => {
   // Both stop asking; they are opposites in what the silence means. Treating
   // them as one would turn "deny everything unapproved" into "allow anything".
   assert.notEqual(canonicalModeId('claude', 'dontAsk'), canonicalModeId('claude', 'bypassPermissions'))
-  assert.notEqual(CANONICAL_MODES['dont-ask'].label, CANONICAL_MODES.bypass.label)
+  assert.notEqual(CANONICAL_MODES['reject-edits'].label, CANONICAL_MODES.bypass.label)
 })
 
 test('the canonical menu order is the product-specified one', () => {

@@ -18,6 +18,9 @@ export { CANONICAL_EFFORTS, canonicalEffortId } from './session-effort'
 export type { CanonicalModeId, CanonicalModeInfo, ClassifiedMode } from './session-modes'
 export { CANONICAL_MODES, canonicalModeId, classifyModes, modeIdForCanonical } from './session-modes'
 export type { SkillDef } from './skills'
+// The synonym registry both vocabularies are built on.
+export type { SynonymRegistration, SynonymResolver } from './synonyms'
+export { createSynonymResolver, normalizeSynonym } from './synonyms'
 export type { ToolResult } from './tool-result'
 // Shared client-safe types & helpers (also importable via subpaths).
 export type {

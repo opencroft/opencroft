@@ -70,7 +70,7 @@ async function restoreMode(sessionId: string): Promise<void> {
   // Still advertised? A session that resumed against a different model may no
   // longer offer the mode it was in, in which case leaving it in bypass would
   // be the worst answer — fall back to the most supervised mode it does offer.
-  const supervised = modeIdForCanonical(modes.adapterId, modes.available, 'manual')
+  const supervised = modeIdForCanonical(modes.adapterId, modes.available, 'manual-edits')
   const target = modes.available.some((mode) => mode.id === previous) ? previous : supervised
   if (!target) {
     return
