@@ -11,27 +11,25 @@
 // — because that is the direction the knowledge actually runs: you know what
 // you mean, and you are listing what an agent might call it. The reverse lookup
 // is derived here so the two can never disagree.
+//
+// Matching is EXACT: no case folding, no separator stripping, no guessing.
+// The vocabulary is filled by hand as agents are encountered, and a spelling
+// nobody has looked at should surface as unrecognised rather than be quietly
+// absorbed by a rule that happened to fit. `acceptEdits` and `accept_edits`
+// are two registrations if two agents genuinely use them — cheap to add, and
+// the alternative is a normaliser silently deciding that two things it has
+// never seen are the same thing.
 
 /** Wire spellings that mean one canonical value, keyed by that value. */
 export type SynonymRegistration<T extends string> = Partial<Record<T, string[]>>
 
-/**
- * Comparison form for a wire value: case and separators carry no meaning across
- * agents (`acceptEdits`, `accept_edits` and `accept-edits` are one thing), so
- * they are stripped before matching. A registration therefore only needs the
- * spellings that differ in LETTERS, not in punctuation.
- */
-export function normalizeSynonym(value: string): string {
-  return value.toLowerCase().replace(/[-_\s]/g, '')
-}
-
 export interface SynonymResolver<T extends string> {
   /**
-   * Our value for a wire value, or undefined when nothing recognises it.
+   * Our value for a wire value, or undefined when nothing is registered for it.
    *
    * Undefined is a normal answer, never a failure: an unrecognised value is
-   * still real and still selectable, and a caller should fall back to the
-   * agent's own wording rather than hide it or guess. Guessing is the one
+   * still real and still selectable, and a caller renders it with the agent's
+   * own wording, no icon, after everything recognised. Guessing is the one
    * outcome worth avoiding — a wrong icon asserts a behaviour nobody verified.
    *
    * `adapterId` is consulted first, so an agent that reuses a common word for
@@ -55,11 +53,11 @@ export function createSynonymResolver<T extends string>(
   const flatten = (registration: SynonymRegistration<T>, seed: readonly T[] = []): Map<string, T> => {
     const lookup = new Map<string, T>()
     for (const value of seed) {
-      lookup.set(normalizeSynonym(value), value)
+      lookup.set(value, value)
     }
     for (const [value, spellings] of Object.entries(registration) as [T, string[]][]) {
       for (const spelling of spellings) {
-        lookup.set(normalizeSynonym(spelling), value)
+        lookup.set(spelling, value)
       }
     }
     return lookup
@@ -73,8 +71,7 @@ export function createSynonymResolver<T extends string>(
 
   return {
     resolve(adapterId: string, value: string): T | undefined {
-      const key = normalizeSynonym(value)
-      return adapterLookups.get(adapterId)?.get(key) ?? sharedLookup.get(key)
+      return adapterLookups.get(adapterId)?.get(value) ?? sharedLookup.get(value)
     },
   }
 }

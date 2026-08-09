@@ -45,15 +45,17 @@ test("Claude Code's `default` classifies as manual, not as a fallback", () => {
   assert.equal(canonicalModeId('some-other-agent', 'default'), undefined)
 })
 
-test('an agent with no table entry is still classified by common spellings', () => {
-  // The point of the generic fallback: supporting the next ACP agent should
-  // usually cost nothing.
+test('a new agent gets our own values for free, and nothing else unregistered', () => {
+  // Self-synonyms: an agent already speaking our language needs no entry.
   assert.equal(canonicalModeId('brand-new-agent', 'plan'), 'plan')
-  assert.equal(canonicalModeId('brand-new-agent', 'accept_edits'), 'accept-edits')
   assert.equal(canonicalModeId('brand-new-agent', 'accept-edits'), 'accept-edits')
-  assert.equal(canonicalModeId('brand-new-agent', 'DontAsk'), 'reject-edits')
+  // Shared registrations apply to every agent, not just the one they came from.
+  assert.equal(canonicalModeId('brand-new-agent', 'acceptEdits'), 'accept-edits')
+  // Anything else waits for a hand-written entry rather than being guessed at.
+  // These would all have resolved under the old normalising match.
+  assert.equal(canonicalModeId('brand-new-agent', 'accept_edits'), undefined)
+  assert.equal(canonicalModeId('brand-new-agent', 'DontAsk'), undefined)
 })
-
 test('an unrecognised mode is left unclassified rather than guessed at', () => {
   assert.equal(canonicalModeId('claude', 'yolo-supreme'), undefined)
   const classified = classifyModes('claude', [{ id: 'yolo-supreme', name: 'Yolo Supreme' }])

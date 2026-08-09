@@ -94,13 +94,15 @@ export const CANONICAL_MODES: Record<CanonicalModeId, CanonicalModeInfo> = {
 const MODE_IDS = Object.keys(CANONICAL_MODES) as CanonicalModeId[]
 
 /**
- * Spellings that mean one of ours, for any agent. Punctuation and case are
- * already ignored, so only genuinely different WORDS need registering.
+ * Spellings that mean one of ours, for any agent. Matched exactly, and filled
+ * by hand as agents are encountered — a spelling nobody has looked at should
+ * show up as unrecognised rather than be absorbed by a rule that happened to
+ * fit. `auto` and `plan` need no entry: agents already spell those as we do.
  */
 const SHARED_MODE_SYNONYMS = {
-  plan: ['planning'],
   'manual-edits': ['manual'],
-  'reject-edits': ['dontAsk', 'deny', 'rejectEdits'],
+  'accept-edits': ['acceptEdits'],
+  'reject-edits': ['dontAsk'],
   bypass: ['bypassPermissions'],
 }
 

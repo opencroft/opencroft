@@ -44,9 +44,7 @@ const EFFORT_IDS = Object.keys(CANONICAL_EFFORTS) as CanonicalEffortId[]
  */
 const SHARED_EFFORT_SYNONYMS = {
   default: ['none', 'off'],
-  medium: ['med'],
-  extra: ['xhigh', 'extraHigh'],
-  max: ['maximum'],
+  extra: ['xhigh'],
 }
 
 const resolver = createSynonymResolver<CanonicalEffortId>(EFFORT_IDS, SHARED_EFFORT_SYNONYMS)

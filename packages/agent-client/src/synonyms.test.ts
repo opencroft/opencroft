@@ -3,7 +3,7 @@ import test from 'node:test'
 
 import { CANONICAL_EFFORTS, canonicalEffortId } from './session-effort'
 import { CANONICAL_MODES, canonicalModeId } from './session-modes'
-import { createSynonymResolver, normalizeSynonym } from './synonyms'
+import { createSynonymResolver } from './synonyms'
 
 type Grade = 'low' | 'high'
 
@@ -14,11 +14,14 @@ test('a canonical value is always its own synonym', () => {
   assert.equal(resolver.resolve('any-agent', 'high'), 'high')
 })
 
-test('case and separators are not meaningful', () => {
-  // So a registration only needs spellings that differ in letters.
+test('matching is exact — a near-miss is not absorbed', () => {
+  // The vocabulary is filled by hand, so a spelling nobody has looked at
+  // surfaces as unrecognised instead of being quietly claimed by a rule that
+  // happened to fit. Registering the variant is cheap; guessing is not.
   const resolver = createSynonymResolver<Grade>(['low', 'high'], { high: ['extraHigh'] })
-  for (const spelling of ['extraHigh', 'extra_high', 'extra-high', 'EXTRAHIGH', 'Extra High']) {
-    assert.equal(resolver.resolve('any-agent', spelling), 'high', spelling)
+  assert.equal(resolver.resolve('any-agent', 'extraHigh'), 'high')
+  for (const nearMiss of ['extrahigh', 'extra_high', 'extra-high', 'EXTRAHIGH']) {
+    assert.equal(resolver.resolve('any-agent', nearMiss), undefined, nearMiss)
   }
 })
 
@@ -39,10 +42,13 @@ test('an adapter registration wins over the shared one, and stays scoped to it',
   assert.equal(resolver.resolve('other', 'baseline'), 'low')
 })
 
-test('normalizeSynonym strips only case and separators', () => {
-  assert.equal(normalizeSynonym('Accept_Edits'), 'acceptedits')
-  assert.equal(normalizeSynonym('accept-edits'), 'acceptedits')
-  assert.equal(normalizeSynonym('acceptEdits'), 'acceptedits')
+test('every spelling Claude Code actually sends is registered', () => {
+  // With exact matching there is no normaliser to catch an unregistered
+  // variant, so the wire ids the bridge really emits have to be listed. This
+  // is the test that fails if someone adds a canonical value and forgets it.
+  for (const wire of ['auto', 'plan', 'default', 'acceptEdits', 'dontAsk', 'bypassPermissions']) {
+    assert.ok(canonicalModeId('claude-subscription', wire), `${wire} is unregistered`)
+  }
 })
 
 // ── the two real vocabularies ──────────────────────────────────────────────
