@@ -77,6 +77,11 @@ export interface AgentSession {
   // dashboard placeholder session leaves these unset.
   stop?: () => void
   canFork?: boolean
+  // The adapter this session runs, resolved server-side. Only used to classify
+  // the session's permission modes for display — a mode id means nothing
+  // without knowing who advertised it. Unset for the dashboard placeholder
+  // session, which has no agent behind it yet.
+  adapterId?: string
   // Rewind history to a user turn (0-based) and prefill its text for re-sending.
   editMessage?: (turnIndex: number, text: string) => void
   // Composer draft staged by editMessage; the input syncs to it when it changes.

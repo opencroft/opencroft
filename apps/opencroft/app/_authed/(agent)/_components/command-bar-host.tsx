@@ -125,6 +125,15 @@ export function AgentCommandBarHost({
       .catch(() => {})
   }, [])
 
+  // YOLO pins every session to its bypass permission mode and refuses changes
+  // server-side, so the mode control has to say so rather than look live and
+  // silently do nothing. The wording is this app's: agent-chat only carries the
+  // reason through to a tooltip, it has no idea what YOLO is.
+  const lockedConfigOptions = useMemo(
+    () => (yoloMode ? { mode: 'YOLO mode is on — every session is pinned to Bypass Permissions.' } : undefined),
+    [yoloMode],
+  )
+
   const autoApproveRef = useRef(autoApprove)
   autoApproveRef.current = autoApprove
   const toggleAutoApprove = useCallback(async () => {
@@ -189,6 +198,8 @@ export function AgentCommandBarHost({
     autoApprove,
     onToggleAutoApprove: toggleAutoApprove,
     autoApproveLocked: yoloMode,
+    adapterId: session.adapterId,
+    lockedConfigOptions: lockedConfigOptions,
     approvalTitles: APPROVAL_TITLES,
   })
 

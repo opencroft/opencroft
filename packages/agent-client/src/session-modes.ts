@@ -164,3 +164,22 @@ export function classifyModes(adapterId: string, modes: SessionMode[]): Classifi
     return id ? { ...mode, canonical: CANONICAL_MODES[id] } : { ...mode }
   })
 }
+
+/**
+ * The wire id this session would use for a canonical mode, or undefined when it
+ * does not offer one — the reverse of `canonicalModeId`, resolved against what
+ * the session actually advertised rather than against the adapter table.
+ *
+ * Resolving against the live list matters for exactly the case that motivates
+ * this: several modes are conditional (Claude Code offers `bypassPermissions`
+ * only when its own ALLOW_BYPASS holds), so a table lookup would happily return
+ * an id the agent will reject. Undefined means "this session cannot go there",
+ * which a caller has to handle rather than force.
+ */
+export function modeIdForCanonical(
+  adapterId: string,
+  modes: SessionMode[],
+  canonical: CanonicalModeId,
+): string | undefined {
+  return modes.find((mode) => canonicalModeId(adapterId, mode.id) === canonical)?.id
+}

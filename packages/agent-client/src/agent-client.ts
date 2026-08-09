@@ -1431,6 +1431,24 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       }
     },
 
+    // Read side of setMode: what this session offers, what it is on, and which
+    // adapter it runs — the three things needed to reason about a mode without
+    // reaching into session state. `adapterId` is included because a mode id is
+    // only meaningful against the adapter that advertised it (see
+    // session-modes.ts). Null for an unknown session, or one whose agent
+    // advertises no modes at all.
+    sessionModes(sessionId: string): { adapterId: string; available: SessionMode[]; current: string } | null {
+      const session = store.sessions.get(sessionId)
+      if (!session?.modes) {
+        return null
+      }
+      return {
+        adapterId: session.selection.adapterId,
+        available: session.modes.available,
+        current: session.modes.current,
+      }
+    },
+
     async setMode(sessionId: string, modeId: string): Promise<void> {
       const connection = await connectionForSession(sessionId)
       await connection.setSessionMode({ sessionId, modeId })

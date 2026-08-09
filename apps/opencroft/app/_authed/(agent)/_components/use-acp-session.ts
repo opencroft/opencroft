@@ -267,6 +267,10 @@ export function useAcpSession(
   // flow below; plain sends need no gating — the server already delivers
   // instead of queueing for such agents.
   const [canSteer, setCanSteer] = useState(false)
+  // The adapter this session runs, resolved server-side. Only used to classify
+  // the session's permission modes for display — a mode id means nothing
+  // without knowing who advertised it. Empty until the session resolves.
+  const [adapterId, setAdapterId] = useState('')
   const [draft, setDraft] = useState<{ text: string; key: number } | undefined>(undefined)
   const draftKey = useRef(0)
   const [sendError, setSendError] = useState<string | undefined>(undefined)
@@ -369,6 +373,7 @@ export function useAcpSession(
           setSessionId(result.sessionId)
           setCanFork(result.canFork)
           setCanSteer(result.canSteer)
+          setAdapterId(result.adapterId)
           createdRef.current = result.created
         }
       })
@@ -667,6 +672,7 @@ export function useAcpSession(
       send,
       stop,
       canFork,
+      adapterId,
       editMessage,
       draft,
       sendError,
@@ -688,6 +694,7 @@ export function useAcpSession(
       send,
       stop,
       canFork,
+      adapterId,
       editMessage,
       draft,
       sendError,

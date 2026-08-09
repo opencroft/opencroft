@@ -20,6 +20,13 @@ import {
 import { ContextRing } from 'ui/agent-chat/context-ring'
 
 import { ConfigOptionsBar } from './config-options-bar'
+import { ModeSelector } from './mode-selector'
+
+// The config-option id agents use for the permission mode. ACP delivers modes
+// twice -- as session modes AND as this option, built from the same list -- and
+// this surface drives the option, so the id is the handle for both pulling it
+// out of the generic row and locking it.
+const MODE_CONFIG_ID = 'mode'
 import type { AgentChatSession } from './session'
 import type { CompactRenderState } from './use-compact-control'
 
@@ -96,6 +103,10 @@ export interface UseAgentCommandBarOptions {
    *  route, anything else host-specific) is copy the host supplies through
    *  `approvalTitles`, never named here. */
   autoApproveLocked?: boolean
+  /** Adapter the session runs, so its modes can be classified for icons. */
+  adapterId?: string
+  /** Config-option ids the host has pinned, mapped to the reason why. */
+  lockedConfigOptions?: Record<string, string>
   /** Copy for the approval toggle in each state — see the kit's own
    *  ApprovalTitles. The host names its own setting/route in here; this hook
    *  and the kit component both stay silent on what auto-approve even means
@@ -147,6 +158,8 @@ export function useAgentCommandBar({
   autoApprove,
   onToggleAutoApprove,
   autoApproveLocked = false,
+  adapterId,
+  lockedConfigOptions,
   approvalTitles,
   compact,
   onClear,
@@ -324,7 +337,14 @@ export function useAgentCommandBar({
   const configs = useMemo<CommandBarConfig[]>(
     () =>
       (configOptions ?? [])
+        // Two filters rather than one condition: TypeScript infers a type
+        // predicate from the bare `type !== 'boolean'` test and narrows the
+        // array to the select variants, which the `.options` read below needs.
+        // Folding a second condition into it silently loses that inference.
         .filter((option) => option.type !== 'boolean')
+        // `mode` is deliberately absent: it is rendered as its own icon button
+        // (see MODE_CONFIG_ID above), not as one more labelled dropdown.
+        .filter((option) => option.id !== MODE_CONFIG_ID)
         .map((option) => ({
           id: option.id,
           label: option.name,
@@ -336,11 +356,27 @@ export function useAgentCommandBar({
 
   const configExtra = useMemo(() => {
     const booleanOptions = (configOptions ?? []).filter((option) => option.type === 'boolean')
-    if (!usage && booleanOptions.length === 0) {
+    // Read through a structural type rather than narrowing the union: `find`
+    // does not narrow by its predicate, and flattenOptions already takes unknown
+    // and returns [] for anything that is not a value list.
+    const modeOption = (configOptions ?? []).find((option) => option.id === MODE_CONFIG_ID) as
+      | { currentValue?: unknown; options?: unknown }
+      | undefined
+    const modeOptions = flattenOptions(modeOption?.options)
+    if (!usage && booleanOptions.length === 0 && modeOptions.length === 0) {
       return null
     }
     return (
       <>
+        {modeOptions.length > 0 ? (
+          <ModeSelector
+            options={modeOptions}
+            current={String(modeOption?.currentValue ?? '')}
+            onSelect={(value) => onSetConfigOptionRef.current?.(MODE_CONFIG_ID, value)}
+            adapterId={adapterId}
+            lockedReason={lockedConfigOptions?.[MODE_CONFIG_ID]}
+          />
+        ) : null}
         {usage ? (
           <ContextRing
             usedTokens={usage.used}
@@ -360,7 +396,7 @@ export function useAgentCommandBar({
         ) : null}
       </>
     )
-  }, [configOptions, usage, compact, onClear])
+  }, [configOptions, usage, compact, onClear, adapterId, lockedConfigOptions])
 
   // Memoized for element identity, not for render cost -- see this hook's own
   // doc comment on why identity stability is the whole point. Every entry

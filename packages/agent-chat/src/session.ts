@@ -51,6 +51,12 @@ export interface AgentChatSession {
   // cannot fork/rewind leaves both this and `editMessage` unset rather than
   // supplying a no-op.
   canFork?: boolean
+  // The adapter this session runs (see agent-client's harness adapters). Only
+  // needed to classify the session's permission modes for display: a mode id
+  // means nothing without knowing who advertised it, since agents spell the
+  // same mode differently. Unset leaves modes classified by their id alone,
+  // which is correct but less legible.
+  adapterId?: string
   // Rewind history to a user turn (0-based) and prefill its text for
   // re-sending.
   editMessage?: (turnIndex: number, text: string) => void

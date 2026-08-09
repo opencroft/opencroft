@@ -37,6 +37,11 @@ import {
   writePersistedSession,
 } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import {
+  forceBypassMode,
+  installYoloModeEnforcement,
+  modeLockedByYolo,
+} from '@/app/_authed/(agent)/_server/yolo-mode-enforcement'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import { secrets } from '@/server/secrets'
@@ -59,6 +64,11 @@ export interface OpenedSession {
   sessionId: string
   canFork: boolean
   canSteer: boolean
+  // The adapter this session runs. Carried to the client because a session mode
+  // id only means something against the adapter that advertised it — the client
+  // needs it to classify modes (see agent-client's session-modes), and has no
+  // other route to it.
+  adapterId: string
   // Whether this session has never had a prompt delivered into it yet — the
   // one authoritative signal for whether the caller's next message is the
   // session's first. NOT "did this call just create the session object":
@@ -86,6 +96,9 @@ export interface TabSession {
   // below is derived from this instead of "did this particular call just spin
   // the session up". See OpenedSession.created's doc comment.
   everPrompted: boolean
+  // Recorded so the reuse path below can answer with it without rebuilding the
+  // agent's selection (which costs a node lookup and a secret resolve).
+  adapterId?: string
 }
 
 // ACP sessions live only in agentClient's memory, so they don't survive a dev
@@ -167,6 +180,10 @@ async function openLocalSession(data: {
       sessionId: known.id,
       canFork: known.canFork,
       canSteer: known.canSteer ?? false,
+      // Entries recorded before adapterId existed fall back to the live
+      // session's own, and to '' only if the agent advertises no modes at all —
+      // in which case there is nothing to classify anyway.
+      adapterId: known.adapterId ?? agentClient.sessionModes(known.id)?.adapterId ?? '',
       created: !(known.everPrompted ?? true),
     }
   }
@@ -234,7 +251,13 @@ async function openLocalSession(data: {
       // implies "has history" — a session created and then orphaned before its
       // first prompt must still receive its opening context, or the agent
       // wakes up in a conversation with no idea what it is for.
-      tabSessions.set(data.tabKey, { id: resumed.id, canFork, canSteer, everPrompted: persisted.prompted })
+      tabSessions.set(data.tabKey, {
+        id: resumed.id,
+        canFork,
+        canSteer,
+        everPrompted: persisted.prompted,
+        adapterId,
+      })
       // Re-apply any per-session config overrides (e.g. reasoning effort) the
       // user set before this tab's in-memory session was lost — loadSession
       // only reflects the agent's own resumed state, which has no way to know
@@ -252,7 +275,8 @@ async function openLocalSession(data: {
       if (usage) {
         agentClient.restoreUsage(resumed.id, { used: usage.used, size: usage.size })
       }
-      return { sessionId: resumed.id, canFork, canSteer, created: !persisted.prompted }
+      await pinModeIfYolo(resumed.id)
+      return { sessionId: resumed.id, canFork, canSteer, adapterId, created: !persisted.prompted }
     }
     // The pointer resolved but the session is gone — the agent can no longer
     // load it. Falling through to a fresh session is the only option, and that
@@ -265,11 +289,27 @@ async function openLocalSession(data: {
   // Forking rewinds an agent's own message history, which only the in-process
   // (native) harness owns — external ACP agents can't truncate it.
   const canFork = meta.canFork ?? false
-  tabSessions.set(data.tabKey, { id: meta.id, canFork, canSteer, everPrompted: false })
+  tabSessions.set(data.tabKey, { id: meta.id, canFork, canSteer, everPrompted: false, adapterId })
   // Durable before the caller can prompt it, so a restart mid-first-turn finds
   // this session instead of creating a rival for the same key.
   await writePersistedSession(data.tabKey, meta.id, false)
-  return { sessionId: meta.id, canFork, canSteer, created: true }
+  await pinModeIfYolo(meta.id)
+  return { sessionId: meta.id, canFork, canSteer, adapterId, created: true }
+}
+
+// A session opened while YOLO is on starts pinned to bypass, and the toggle
+// listener is installed here rather than at import time so nothing subscribes in
+// a process that never opens a session. Failures are logged, not thrown: the
+// session itself opened fine, and an agent that will not take the mode (mid-turn,
+// or not offering bypass at all) must not turn that into a failed open.
+async function pinModeIfYolo(sessionId: string): Promise<void> {
+  installYoloModeEnforcement()
+  if (!modeLockedByYolo()) {
+    return
+  }
+  await forceBypassMode(sessionId).catch((error: unknown) => {
+    console.error('Failed to pin session to bypass mode under YOLO', sessionId, error)
+  })
 }
 
 // `front` queues the message ahead of anything already held for the session

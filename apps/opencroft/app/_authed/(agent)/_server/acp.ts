@@ -28,6 +28,7 @@ import {
   getCompactStatusOnGraph,
   requestCompactOnGraph,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
+import { modeLockedByYolo } from '@/app/_authed/(agent)/_server/yolo-mode-enforcement'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 
 export const ensureLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
@@ -93,10 +94,19 @@ export const removeQueuedLocal = createServerFn({ method: 'POST', strict: { outp
     agentClient.removeQueued(data.sessionId, data.id)
   })
 
+// While YOLO is on, every session is pinned to bypass and mode changes are
+// refused here rather than applied and then quietly undone by the enforcement
+// pass. Returns the refusal as DATA, not a thrown error: a thrown createServerFn
+// error reaches the browser with only its message, leaving the client unable to
+// tell a refusal from a transport failure.
 export const setLocalMode = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { sessionId: string; modeId: string }) => data)
-  .handler(async ({ data }): Promise<void> => {
+  .handler(async ({ data }): Promise<{ ok: true } | { ok: false; reason: 'yolo-locked' }> => {
+    if (modeLockedByYolo()) {
+      return { ok: false, reason: 'yolo-locked' }
+    }
     await agentClient.setMode(data.sessionId, data.modeId)
+    return { ok: true }
   })
 
 // Change one of the session's agent-advertised config options (model/effort/
@@ -104,7 +114,16 @@ export const setLocalMode = createServerFn({ method: 'POST', strict: { output: f
 // profile the session was started from.
 export const setLocalConfigOption = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { sessionId: string; configId: string; value: string | boolean }) => data)
-  .handler(async ({ data }): Promise<void> => {
+  .handler(async ({ data }): Promise<{ ok: true } | { ok: false; reason: 'yolo-locked' }> => {
+    // Modes reach the client twice — as session modes AND as a `mode` config
+    // option built from the same list — so the YOLO lock has to hold on both
+    // paths, or the selector becomes a way around it. This is the path the UI
+    // actually takes (setLocalMode has no callers), which is why the refusal is
+    // returned as data rather than swallowed: a caller that cannot tell refused
+    // from applied can only present the change as having worked.
+    if (data.configId === 'mode' && modeLockedByYolo()) {
+      return { ok: false, reason: 'yolo-locked' }
+    }
     await agentClient.setConfigOption(data.sessionId, data.configId, data.value)
     // Also persist it per-tab so a later cold-start resume (openLocalSession's
     // session/load path) can replay it — see the comment there. Assumes the
@@ -117,6 +136,7 @@ export const setLocalConfigOption = createServerFn({ method: 'POST', strict: { o
         break
       }
     }
+    return { ok: true }
   })
 
 export const cancelLocal = createServerFn({ method: 'POST', strict: { output: false } })

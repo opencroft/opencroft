@@ -14,6 +14,13 @@ export interface ConfigOptionsBarProps {
   // Context usage meter (tokens used / window). Omit, or omit `size` (or set
   // it <= 0), to hide the "/ window" portion — some adapters don't report one.
   usage?: { used: number; size?: number }
+  // Option ids the host has pinned, mapped to the reason why — rendered inert
+  // with the reason as its tooltip. A host locks an option when something
+  // outside this session is holding it (e.g. a global switch that forces one
+  // value); the wording is the host's, since only it knows what is doing the
+  // holding. Refusing the interaction here is kinder than accepting it and
+  // letting the value snap back a moment later.
+  lockedOptions?: Record<string, string>
   className?: string
 }
 
@@ -46,7 +53,7 @@ function flattenSelectOptions(options: unknown): Array<{ name: string; value: st
 // built entirely from what this session advertises, never a hardcoded list:
 // different adapters expose different options (and different value sets for
 // the same option, e.g. an 'xhigh' effort some agents don't have).
-export function ConfigOptionsBar({ options, onSetOption, usage, className }: ConfigOptionsBarProps) {
+export function ConfigOptionsBar({ options, onSetOption, usage, lockedOptions, className }: ConfigOptionsBarProps) {
   if (options.length === 0 && !usage) {
     return null
   }
@@ -54,18 +61,28 @@ export function ConfigOptionsBar({ options, onSetOption, usage, className }: Con
     <Flex row align='center' className={className ?? 'flex-wrap gap-2 text-xs text-muted-foreground'}>
       {options.map((option) =>
         option.type === 'boolean' ? (
-          <label key={option.id} htmlFor={`config-option-${option.id}`} className='flex items-center gap-1.5 cursor-pointer'>
+          <label
+            key={option.id}
+            htmlFor={`config-option-${option.id}`}
+            className='flex items-center gap-1.5 cursor-pointer'
+          >
             <Switch
               id={`config-option-${option.id}`}
               size='sm'
               checked={option.currentValue}
+              disabled={Boolean(lockedOptions?.[option.id])}
               onCheckedChange={(checked) => onSetOption(option.id, checked)}
             />
             {option.name}
           </label>
         ) : (
-          <Select key={option.id} value={option.currentValue} onValueChange={(value) => onSetOption(option.id, value)}>
-            <SelectTrigger size='sm' title={option.description ?? option.name}>
+          <Select
+            key={option.id}
+            value={option.currentValue}
+            disabled={Boolean(lockedOptions?.[option.id])}
+            onValueChange={(value) => onSetOption(option.id, value)}
+          >
+            <SelectTrigger size='sm' title={lockedOptions?.[option.id] ?? option.description ?? option.name}>
               <SelectValue placeholder={option.name} />
             </SelectTrigger>
             <SelectContent>
