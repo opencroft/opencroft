@@ -98,6 +98,14 @@ export interface AgentClientOptions {
   // metadata (e.g. a timestamp) without agent-client knowing anything
   // host-specific. Defaults to delivering text unchanged.
   transformDeliveredPrompt?: (text: string) => string
+  // Notified for every event on every session, after it has been recorded and
+  // fanned out to that session's subscribers. A read-only observation hook for
+  // host state that has to outlive the in-memory session — e.g. persisting the
+  // last reported context usage, which ACP offers no way to ask for and which
+  // is otherwise lost when a session is unloaded. Never drives the engine: it
+  // is called inside a try/catch so a throwing host observer cannot break the
+  // emit, and its return value is ignored.
+  onEvent?: (sessionId: string, event: ChatEvent) => void
 }
 
 type Subscriber = (event: ChatEvent) => void
@@ -322,6 +330,11 @@ function endsOnSettledWork(tail: ChatEvent | undefined): boolean {
   return false
 }
 
+// The host's optional observation hook (AgentClientOptions.onEvent), installed
+// by createAgentClient. Module-level, like `store`, because emit() is
+// module-level and fires for every session rather than per client instance.
+let onEventHook: ((sessionId: string, event: ChatEvent) => void) | undefined
+
 function emit(sessionId: string, event: ChatEvent): void {
   const session = store.sessions.get(sessionId)
   if (!session) {
@@ -331,6 +344,13 @@ function emit(sessionId: string, event: ChatEvent): void {
   session.meta.lastActivityAt = Date.now()
   for (const subscriber of session.subscribers) {
     subscriber(event)
+  }
+  // After the subscribers, so a slow or throwing host observer can never delay
+  // or break delivery to the actual clients of the stream.
+  if (onEventHook) {
+    try {
+      onEventHook(sessionId, event)
+    } catch {}
   }
 }
 
@@ -697,6 +717,7 @@ const STDERR_TAIL = 20
 const EXIT_GRACE_MS = 200
 
 export function createAgentClient(options: AgentClientOptions = {}) {
+  onEventHook = options.onEvent
   const mcpServerName = options.mcpServerName ?? 'local'
   const clientInfo = options.clientInfo ?? { name: 'agent-client', version: '0.1.0' }
   const mcp = createMcpServer({
@@ -1079,6 +1100,29 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return [...store.sessions.values()]
         .map((session) => ({ ...session.meta, usage: session.usage }))
         .sort((a, b) => a.createdAt - b.createdAt)
+    },
+
+    // Seed a session's context usage from a value the host kept for it, for the
+    // case a resume cannot recover on its own: ACP has no request that returns
+    // a session's used/window figures (they arrive only as agent-pushed
+    // `usage_update` notifications), so a session/load resume starts with none
+    // and reports nothing until its next turn ends.
+    //
+    // Deliberately does NOT emit a `usage` event: on resume there is no
+    // subscriber yet, and setting the mirrored value is enough for
+    // withSnapshotPrefix to hand it to the first one that connects — the same
+    // path a live reading takes. A real `usage_update` overwrites this the
+    // moment the agent reports one, so a restored value can only ever be the
+    // opening estimate, never sticky.
+    //
+    // No-ops for an unknown session rather than throwing: the caller is a
+    // best-effort restore alongside a resume that may itself have failed.
+    restoreUsage(sessionId: string, usage: { used: number; size?: number }): void {
+      const session = store.sessions.get(sessionId)
+      if (!session || session.usage) {
+        return
+      }
+      session.usage = { used: usage.used, size: usage.size }
     },
 
     // Session keys (selection.sessionKey) of every session currently blocked on

@@ -33,6 +33,7 @@ import {
   deletePersistedSession,
   readPersistedConfigOptions,
   readPersistedSession,
+  readPersistedUsage,
   writePersistedSession,
 } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
@@ -241,6 +242,15 @@ async function openLocalSession(data: {
       const overrides = await readPersistedConfigOptions(data.tabKey)
       for (const [configId, value] of Object.entries(overrides)) {
         await agentClient.setConfigOption(resumed.id, configId, value).catch(() => {})
+      }
+      // Same shape of problem as the config overrides above, for context usage:
+      // a resumed session reports none until its next turn ends, because ACP
+      // has no request that returns it. Seed the last figure this session
+      // reported so the chat opens with a populated context ring instead of a
+      // blank one — the agent's next `usage_update` replaces it.
+      const usage = await readPersistedUsage(resumed.id)
+      if (usage) {
+        agentClient.restoreUsage(resumed.id, { used: usage.used, size: usage.size })
       }
       return { sessionId: resumed.id, canFork, canSteer, created: !persisted.prompted }
     }

@@ -1,5 +1,7 @@
 import { createAgentClient, type PermissionContext, type PermissionOutcome } from 'agent-client/agent-client'
+import type { ChatEvent } from 'agent-client/types'
 
+import { writePersistedUsage } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { readMcpServersForAgent } from '@/app/_authed/(agent)/_server/mcp-store'
 import { loadSkillDefs, skillBodyHandler } from '@/app/_authed/(agent)/_server/skill-store'
 import { opencroftLocalTools } from '@/app/_authed/(agent)/_server/tools-bridge'
@@ -38,6 +40,31 @@ function resolvePermission({ toolKind }: PermissionContext): PermissionOutcome {
   return toolKind && READONLY_KINDS.has(toolKind) ? 'allow' : 'prompt'
 }
 
+// Last context usage seen per session, snapshotted when a turn ends so a
+// resumed session can be seeded with it (see readPersistedUsage's note on why
+// ACP gives no way to ask an agent for this).
+//
+// Written on `turn_end` rather than on every `usage` event: an agent reports
+// usage repeatedly while a turn streams, and each write is a read-modify-write
+// against one shared settings row. Once per turn is one write per exchange and
+// records the figure that actually matters — what the session holds now that
+// the turn is over. A session unloaded or a process killed mid-turn simply
+// keeps the previous turn's value, which is the correct conservative answer.
+function persistUsageOnTurnEnd(sessionId: string, event: ChatEvent): void {
+  if (event.kind !== 'turn_end') {
+    return
+  }
+  const usage = agentClient.listSessions().find((s) => s.id === sessionId)?.usage
+  if (!usage) {
+    return
+  }
+  // Fire-and-forget: an event observer must not hold up the emit, and a failed
+  // write only costs a blank ring on the next cold open.
+  void writePersistedUsage(sessionId, usage).catch((error) => {
+    console.error('Failed to persist context usage for session', sessionId, error)
+  })
+}
+
 export const agentClient = createAgentClient({
   tools: opencroftLocalTools,
   loadMcpServers: readMcpServersForAgent,
@@ -47,4 +74,5 @@ export const agentClient = createAgentClient({
   skillHandler: skillBodyHandler,
   permissionHandler: resolvePermission,
   transformDeliveredPrompt: (text) => stampDeliveryTime(text, new Date()),
+  onEvent: persistUsageOnTurnEnd,
 })

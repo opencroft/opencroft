@@ -11,6 +11,9 @@ export type { EventsWindow } from './pagination'
 // Permission model (also importable via the subpath).
 export type { AgentRole, DefaultAccess, PermissionValue, ResolvedPermissions } from './permissions'
 export { accessFor, resolveSessionPermissions, skillKey, toolKey } from './permissions'
+// Canonical permission-mode vocabulary (also importable via the subpath).
+export type { CanonicalModeId, CanonicalModeInfo, ClassifiedMode } from './session-modes'
+export { CANONICAL_MODES, canonicalModeId, classifyModes } from './session-modes'
 export type { SkillDef } from './skills'
 export type { ToolResult } from './tool-result'
 // Shared client-safe types & helpers (also importable via subpaths).

@@ -895,6 +895,58 @@ test('a harness that cannot name the context window reports usage with no size',
   await h.client.deleteSession(h.sessionId)
 })
 
+test('restoreUsage seeds a session that has reported none', async () => {
+  // The resume case: ACP offers no way to ask an agent what a loaded session
+  // holds, so a host that kept the last figure hands it back this way.
+  const h = await setup('openclaw')
+  h.client.restoreUsage(h.sessionId, { used: 8_000, size: 200_000 })
+  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
+    used: 8_000,
+    size: 200_000,
+  })
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a restored usage figure reaches a subscriber that connects afterwards', async () => {
+  // The whole point of restoring it: the chat opens with a populated context
+  // ring instead of a blank one, via the same snapshot-prefix path a live
+  // reading takes.
+  const h = await setup('openclaw')
+  h.client.restoreUsage(h.sessionId, { used: 8_000, size: 200_000 })
+  const seen: ChatEvent[] = []
+  const unsubscribe = h.client.subscribe(h.sessionId, (event) => seen.push(event))
+  assert.deepEqual(
+    seen.filter((e) => e.kind === 'usage'),
+    [{ kind: 'usage', used: 8_000, size: 200_000 }],
+  )
+  unsubscribe()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('restoreUsage never overwrites a figure the agent actually reported', async () => {
+  // A restored value is last-turn's estimate. Once the agent has spoken for
+  // itself, the stored guess must not be able to clobber it — otherwise a
+  // late-arriving restore would walk a live session's ring backwards.
+  const h = await setup('openclaw')
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 12_000, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  h.client.restoreUsage(h.sessionId, { used: 999, size: 1_000 })
+  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
+    used: 12_000,
+    size: 200_000,
+  })
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('restoreUsage on an unknown session is a no-op', async () => {
+  // It rides alongside a resume that may itself have failed.
+  const h = await setup('openclaw')
+  assert.doesNotThrow(() => h.client.restoreUsage('no-such-session', { used: 1, size: 2 }))
+  await h.client.deleteSession(h.sessionId)
+})
+
 // ── hasActiveTurn ────────────────────────────────────────────────────────
 //
 // Same underlying read as activeSessionKeys, by raw session id — the check a

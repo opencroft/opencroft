@@ -132,3 +132,78 @@ export async function deletePersistedConfigOptions(tabKey: string): Promise<void
     }),
   )
 }
+
+// Durable last-known context usage per ACP session id. ACP has no way to ASK an
+// agent how much context a session holds: `size`/`used` arrive only as
+// `usage_update` notifications the agent pushes, and in practice only during a
+// turn (checked against @agentclientprotocol/sdk 1.3.0 — UsageUpdate is the
+// only type in the schema carrying a window size, and neither
+// NewSessionResponse, LoadSessionResponse nor session/list's SessionInfo
+// repeats it). agentClient mirrors the last one in memory, which covers
+// reopening a chat while the session object is still alive — but an idle
+// unload (agent nodes opting into autoUnloadIdle) or a process restart drops
+// it, and the reopened chat then shows no context ring until the next turn
+// ends. Persisting it here lets openLocalSession seed the resumed session so
+// the ring is populated on open.
+//
+// Keyed by ACP session id rather than tab key: the write happens on turn end,
+// where only the session id is in hand, and a reverse lookup per turn would
+// cost a read of the tab-pointer row. The trade is that entries are not
+// deleted with their tab, so the row is capped (see USAGE_CAP).
+const USAGE_SETTING_ID = 'agent-session-usage'
+
+/**
+ * `used` is the token count the agent last reported, `at` the wall-clock time
+ * it was recorded — kept so the cap below can evict oldest-first, and so a
+ * consumer can tell a fresh reading from a stale one.
+ *
+ * A restored `used` is by construction the value at the END of the last turn:
+ * if the agent compacted on its own or rebuilt context differently on resume,
+ * it is an estimate until the next real `usage_update` overwrites it. `size`
+ * does not have that problem — a model's context window does not drift.
+ */
+export interface PersistedUsage {
+  used: number
+  size?: number
+  at: number
+}
+
+// Sessions are never explicitly unregistered from this row, so cap it and drop
+// oldest-first. Well above any plausible number of live chats, small enough
+// that the row stays a few KB.
+const USAGE_CAP = 200
+
+type UsageStore = Record<string, PersistedUsage>
+
+function usageStoreFromRaw(raw: Record<string, unknown>): UsageStore {
+  return (raw as { usage?: UsageStore }).usage ?? {}
+}
+
+export async function readPersistedUsage(sessionId: string): Promise<PersistedUsage | null> {
+  const row = await getSettingImpl(USAGE_SETTING_ID)
+  const store = row ? usageStoreFromRaw(row.data) : {}
+  return store[sessionId] ?? null
+}
+
+export async function writePersistedUsage(sessionId: string, usage: { used: number; size?: number }): Promise<void> {
+  await withSettingLock(USAGE_SETTING_ID, () =>
+    mutateSettingData(USAGE_SETTING_ID, (raw) => {
+      const store = usageStoreFromRaw(raw)
+      const current = store[sessionId]
+      if (current && current.used === usage.used && current.size === usage.size) {
+        return raw
+      }
+      const next: UsageStore = { ...store, [sessionId]: { used: usage.used, size: usage.size, at: Date.now() } }
+      const ids = Object.keys(next)
+      if (ids.length > USAGE_CAP) {
+        // Oldest-first eviction. The session being written is always the newest,
+        // so it can never evict itself.
+        const evict = ids.sort((a, b) => (next[a]?.at ?? 0) - (next[b]?.at ?? 0)).slice(0, ids.length - USAGE_CAP)
+        for (const id of evict) {
+          delete next[id]
+        }
+      }
+      return { usage: next }
+    }),
+  )
+}
