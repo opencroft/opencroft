@@ -1,0 +1,21 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
+  "extends": "//",
+  "linter": {
+    "rules": {
+      "style": {
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "ui/agent-chat/chat-conversation": {
+                "importNames": ["ChatConversation", "ChatConversationHandle"],
+                "message": "The composed chat surface lives in packages/agent-chat now — use AgentChat from 'agent-chat/agent-chat' instead of re-composing ChatConversation directly. Pure data types re-exported from that module (Block, DetailItem, UserText) stay unrestricted."
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

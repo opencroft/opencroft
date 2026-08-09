@@ -3,8 +3,6 @@
 import type { ReactNode } from 'react'
 import { ChevronLeft } from 'lucide-react'
 
-import { AgentActivityLine } from '@/components/ui/agent-chat/agent-activity'
-import type { ChatStatus } from '@/components/ui/chat/chat-list-item'
 import { MemberAvatarGroup, type MemberRef } from '@/components/ui/group-chat/member-avatar-group'
 import { cn } from '@/lib/utils'
 
@@ -28,24 +26,6 @@ export interface GroupChatThreadFramingProps {
   threadTitle?: string | null
   /** Optional participants, shown compactly on the trailing side. */
   members?: MemberRef[]
-  /** What this thread's agent is doing right now -- the SAME `ChatStatus` a
-   * chat row takes, so the thread list and the thread screen speak with one
-   * vocabulary and the host maps its session status once.
-   *
-   * Domain truth: this screen has nothing to derive it from and never guesses.
-   * `idle`, or nothing at all, says nothing and costs no height, so a host with
-   * no state to give renders exactly what it rendered before this existed.
-   *
-   * `waiting` means a PERSON is the blocker -- an unresolved permission request
-   * -- not "a turn is running". Some session objects spell their
-   * turn-is-running flag with the same word; mapping that one here puts the
-   * heaviest mark on the screen on every running turn. */
-  status?: ChatStatus
-  /** The thread's agent, by name, used to word the activity line -- a thread is
-   * a session with exactly one agent, so there is one to name. Without it the
-   * line still reads, as "The agent": a screen that knows a turn is running
-   * should say so even if the name has not loaded. */
-  agentName?: string
   /** Back out of the conversation -- to the thread list / group chat. */
   onBack?: () => void
   /** The conversation itself -- agent-chat/chat-conversation, reused not redrawn. */
@@ -77,8 +57,6 @@ export function GroupChatThreadFraming({
   groupChatName,
   threadTitle,
   members,
-  status,
-  agentName,
   onBack,
   children,
   composer,
@@ -145,12 +123,8 @@ export function GroupChatThreadFraming({
             width, so the same value read as too much here -- the product
             call was to halve it, and the nearest preset step below one
             `--flex-padding` layer is zero extra layers, not a smaller
-            constant. `-mx-2` on the activity line cancels this same single
-            layer so its own `px-4` still keeps the header's left edge.
-            Rendered UNCONDITIONALLY even with nothing to say -- see its own
-            doc comment on why a live region has to already be in the DOM. */}
+            constant. */}
         <StickySection side='bottom' fade>
-          <AgentActivityLine status={status} agentName={agentName} className='shrink-0 -mx-2' />
           {composer ? <CommandBarFrame>{composer}</CommandBarFrame> : null}
         </StickySection>
       </ScrollArea>

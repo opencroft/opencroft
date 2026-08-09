@@ -1,0 +1,105 @@
+import type { PermissionOpt } from 'agent-client/types'
+
+export interface PendingPermission {
+  requestId: string
+  title: string
+  options: PermissionOpt[]
+}
+
+export interface PendingAsk {
+  requestId: string
+  message: string
+}
+
+// THE named session-shape contract for packages/agent-chat's composed
+// surface — every field a host's live session controller may be asked for by
+// any component in this package, documented once, here, rather than redrawn
+// per component with its own copy of the same semantics. A component that
+// only needs part of this Picks its own narrower prop type from it (see
+// e.g. approvals.tsx's ApprovalsSession, agent-chat.tsx's
+// AgentChatProps['session']) — narrower is the honest signature for what
+// that component actually reads, but the FIELD SEMANTICS live in exactly one
+// place, so two components can never quietly drift into describing the same
+// field differently.
+//
+// A host's own session type is checked against this (and against any Pick of
+// it a component asks for) with a `satisfies` pin at the binding site, where
+// the host constructs or returns its concrete session object — see this
+// app's own pin, kept beside wherever that type is defined, so a field
+// renamed or dropped on either side fails to typecheck immediately rather
+// than surfacing as a runtime prop-shape mismatch three call sites away.
+export interface AgentChatSession {
+  // Identifies the session for keying (React keys, host-side lookups) and
+  // composer placeholder copy.
+  sessionKey: string
+  // True until the initial history/config load resolves.
+  loading: boolean
+  // True while a message is in flight to the host but not yet acknowledged
+  // (distinct from `waiting`, which covers the whole turn).
+  sending: boolean
+  // True while a turn is running — drives the thinking indicator and the
+  // composer's busy/stop affordance.
+  waiting: boolean
+  // Display name shown as the conversation's speaker when the host does not
+  // override it with its own `agentName` prop.
+  botName: string
+  send: (text: string) => void
+  // Cancels the in-flight turn. Absent on a session with no live process to
+  // cancel (e.g. a placeholder session with nothing selected yet).
+  stop?: () => void
+  // Whether `editMessage` is meaningful for this session — a session that
+  // cannot fork/rewind leaves both this and `editMessage` unset rather than
+  // supplying a no-op.
+  canFork?: boolean
+  // Rewind history to a user turn (0-based) and prefill its text for
+  // re-sending.
+  editMessage?: (turnIndex: number, text: string) => void
+  // Composer draft staged by `editMessage`; the composer's own text syncs to
+  // it when it changes. Distinct from a host's own persisted composer draft
+  // (loaded once when the session opens) — this one stages an in-progress
+  // edit, not the session's resting unsent text.
+  draft?: { text: string; key: number }
+  // Copy for a send that did not go through, shown by the composer. Set
+  // together with the message being put back in the composer, so the reader
+  // is told what happened and still has what they typed. Cleared when the
+  // next send starts, or by `dismissSendError`.
+  sendError?: string
+  dismissSendError?: () => void
+  // When set, the composer's send is disabled (e.g. no agent selected yet).
+  disabled?: boolean
+  // Whether the host has earlier history than what it has currently loaded
+  // — a cold-opened chat starts from a bounded tail window, not the full
+  // transcript, so a long conversation needs "load older" to see further
+  // back.
+  hasMoreHistory?: boolean
+  loadingMoreHistory?: boolean
+  // Fetches and prepends the next page of older history, resolving once the
+  // host's own transcript state reflects it (or immediately, as a no-op,
+  // while a fetch is already in flight or once `hasMoreHistory` is false).
+  loadMoreHistory?: () => Promise<void>
+  // Every unresolved permission request for this session — see approvals.tsx.
+  permissions: PendingPermission[]
+  // Every unresolved free-text elicitation ("ask") for this session.
+  asks: PendingAsk[]
+  // Answers a pending permission request. Omitting `optionId` (or passing an
+  // empty string) is not "no-op" — it resolves the request as *cancelled*
+  // rather than selected, i.e. the agent is told the request was dismissed
+  // with no option chosen. That is how a plain rejection is expressed, and
+  // what `respondPermissionText` issues before sending its guidance.
+  resolvePermission: (requestId: string, optionId?: string) => void
+  // Deny the pending permission and tell the agent what to do differently,
+  // in the same turn — not every host offers this (a session with no way to
+  // steer a denial leaves it unset).
+  respondPermissionText: (requestId: string, text: string) => void
+  // Answers a pending ask. Omitting `answer` (or passing an empty string)
+  // declines it: the elicitation resolves as cancelled, so the agent receives
+  // no content at all rather than an empty answer.
+  resolveAsk: (requestId: string, answer?: string) => void
+  // Discards this session and opens a fresh one under the same tab/entry.
+  // Pending permission requests and the queue die with the old session; the
+  // composer draft survives (it's owned separately, not part of session
+  // identity). Returns its promise so a caller can await/guard it — e.g. to
+  // disable the trigger for the duration, or to sequence a UI transition with
+  // the new session actually being ready rather than racing it.
+  clearSession?: () => Promise<void>
+}

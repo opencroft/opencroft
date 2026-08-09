@@ -1,6 +1,8 @@
 'use client'
 
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
+import { AgentChat } from 'agent-chat/agent-chat'
+import { Approvals } from 'agent-chat/approvals'
 import { useClearControl } from 'agent-chat/use-clear-control'
 import type { CompactStatus } from 'agent-chat/use-compact-control'
 import { useCompactControl } from 'agent-chat/use-compact-control'
@@ -10,10 +12,15 @@ import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Input } from 'ui/input'
 
-import { AgentChat, type AgentSession } from '@/app/_authed/(agent)/_components/agent-chat'
-import { Approvals } from '@/app/_authed/(agent)/_components/approvals'
+import {
+  AgentChatStatusIndicators,
+  type AgentSession,
+  CHAT_RENDERERS,
+  renderToolCall,
+} from '@/app/_authed/(agent)/_components/agent-chat'
 import { AgentCommandBarHost } from '@/app/_authed/(agent)/_components/command-bar-host'
 import { type LocalSource, type QueuedMessage, useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
+import { buildBlocks } from '@/app/_authed/(agent)/_lib/build-blocks'
 import { compactLocal, getLocalCompactStatus } from '@/app/_authed/(agent)/_server/acp'
 import { useOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 
@@ -144,6 +151,14 @@ function ChatHost({
   const compact = agentNodeId ? compactState : undefined
   const clear = useClearControl(session.clearSession)
 
+  // Computed over the FULL message list, not the visible window: turn indices
+  // (for edit/fork) must stay correct regardless of how much is rendered, and
+  // folding/building is cheap next to the cost of actually rendering blocks.
+  const blocks = useMemo(
+    () => buildBlocks(session.messages, session.historyHeader?.index),
+    [session.messages, session.historyHeader?.index],
+  )
+
   const contentNode = useMemo(() => {
     if (!showChat || inspectorPage === 'none') {
       // 'none' → nothing docked; the focus menu (below) offers the list instead.
@@ -156,14 +171,20 @@ function ChatHost({
       <>
         <AgentChat
           session={session}
+          blocks={blocks}
+          hasMessages={session.messages.length > 0}
+          historyHeaderText={session.historyHeader?.text}
           agentAvatar={activeAgent?.avatar}
           agentName={activeAgent?.name}
           defaultExpanded={defaultExpanded}
+          renderTool={renderToolCall}
+          renderers={CHAT_RENDERERS}
+          footerExtra={<AgentChatStatusIndicators />}
         />
         {approvals}
       </>
     )
-  }, [showChat, inspectorPage, listView, session, activeAgent, approvals, defaultExpanded])
+  }, [showChat, inspectorPage, listView, session, blocks, activeAgent, approvals, defaultExpanded])
 
   // On the conversation page, dock a back + rename control into the inspector header.
   const headerNode = useMemo(() => {
@@ -376,7 +397,7 @@ export function LocalAgentHost({
   const acp = useAcpSession(source, transformOutgoing, activeAgent?.name, onAutoTitle)
   // Stable element identity so ChatHost's memoized content (and the published
   // overlay slot) don't re-fire every render — that would be an infinite update loop.
-  const approvals = useMemo(() => <Approvals acp={acp} />, [acp])
+  const approvals = useMemo(() => <Approvals session={acp} />, [acp])
   return (
     <ChatHost
       session={acp.session}

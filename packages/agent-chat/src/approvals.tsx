@@ -1,8 +1,18 @@
 'use client'
 
-import { AppearGuard, AskPrompt, PermissionRequest } from 'agent-chat/messages'
+import { AppearGuard, AskPrompt, PermissionRequest } from './messages'
+import type { AgentChatSession, PendingAsk, PendingPermission } from './session'
 
-import type { AcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
+export type { PendingAsk, PendingPermission }
+
+// The minimal Pick of the named session-shape contract (session.ts)
+// `Approvals` needs — not the host's full session controller. A host's own
+// richer session type structurally satisfies this without a wrapper, since
+// it already carries every field the full contract documents.
+export type ApprovalsSession = Pick<
+  AgentChatSession,
+  'permissions' | 'asks' | 'resolvePermission' | 'respondPermissionText' | 'resolveAsk'
+>
 
 // Every unresolved permission request and elicitation for one session, with the
 // controls that answer them.
@@ -12,19 +22,19 @@ import type { AcpSession } from '@/app/_authed/(agent)/_components/use-acp-sessi
 // not a missing decoration: a turn blocked on an approval that has nowhere to
 // be granted cannot proceed at all, and the only way out is to kill the turn --
 // which reaches the agent as a refusal it never earned. A second host quietly
-// omitting it is exactly how that happens, so there is one copy and both hosts
-// import it.
+// omitting it is exactly how that happens, so there is one copy and every host
+// imports it.
 //
 // Requests here are unresolved by construction: the session drops one from
 // these lists the moment it is answered, rather than keeping it around to say
 // so. Hence `resolved: false` in the shapes below.
-export function Approvals({ acp }: { acp: AcpSession }) {
-  if (acp.permissions.length === 0 && acp.asks.length === 0) {
+export function Approvals({ session }: { session: ApprovalsSession }) {
+  if (session.permissions.length === 0 && session.asks.length === 0) {
     return null
   }
   return (
     <div className='flex flex-col gap-2 px-4 pb-2'>
-      {acp.permissions.map((p) => (
+      {session.permissions.map((p) => (
         <AppearGuard key={p.requestId}>
           <PermissionRequest
             message={{
@@ -35,16 +45,16 @@ export function Approvals({ acp }: { acp: AcpSession }) {
               options: p.options,
               resolved: false,
             }}
-            onRespond={acp.resolvePermission}
-            onRespondText={acp.respondPermissionText}
+            onRespond={session.resolvePermission}
+            onRespondText={session.respondPermissionText}
           />
         </AppearGuard>
       ))}
-      {acp.asks.map((a) => (
+      {session.asks.map((a) => (
         <AppearGuard key={a.requestId}>
           <AskPrompt
             message={{ id: a.requestId, kind: 'ask', requestId: a.requestId, message: a.message, resolved: false }}
-            onRespond={acp.resolveAsk}
+            onRespond={session.resolveAsk}
           />
         </AppearGuard>
       ))}

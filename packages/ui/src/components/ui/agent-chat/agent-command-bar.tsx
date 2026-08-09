@@ -1,7 +1,7 @@
 'use client'
 
 import { Send, ShieldAlert, ShieldCheck, ShieldCog, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react'
-import { Fragment } from 'react'
+import { Fragment, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode, Ref } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -162,6 +162,29 @@ export interface AgentCommandBarProps {
 // can match it without copying four class names and drifting from them.
 export const commandBarControlClass = 'size-7 shrink-0'
 
+// The reset-contract decision behind the buffered `value` (see this
+// component's own doc comment): true when the `value` PROP has changed since
+// the render before this one -- `prevValue` is that prop as of the previous
+// render, tracked unconditionally, never touched by this component's own
+// `onValueChange` calls.
+//
+// That last part is the whole trick, and worth spelling out because the
+// obvious-looking alternative is wrong: comparing against "what this
+// component itself last reported" instead of "the prop last render" looks
+// equivalent and is not. A host that does NOT echo every keystroke back
+// through `value` (the entire point of the buffer) leaves `value` sitting at
+// its pre-keystroke content across the next render -- if the comparison
+// baseline were "last self-reported", that stale, unchanged `value` would
+// read as differing from what was JUST reported and the buffer would resync
+// BACKWARDS, erasing the keystroke that triggered the render in the first
+// place. Comparing against last render's PROP instead of last SELF-REPORT
+// means an unchanged `value` reads as unchanged, however many renders pass
+// and however many self-reports happened, and only a prop the HOST actually
+// moved reads as new.
+export function shouldResyncBuffer(value: string, prevValue: string): boolean {
+  return value !== prevValue
+}
+
 // The bottom panel of an agent chat: a strip of queued messages, the composer,
 // and an action row underneath carrying every control and every host slot.
 //
@@ -172,10 +195,37 @@ export const commandBarControlClass = 'size-7 shrink-0'
 // the panel hold together at a phone width instead of squeezing the textarea to
 // nothing.
 //
-// **Fully controlled, and it returns its own markup.** It holds no draft, no
-// approval state and no knowledge of where it is mounted -- a host that wants
-// this in a command bar, a sidebar or a dialog puts it there. That is the whole
-// reason the panel can be previewed at all: it needs nothing running behind it.
+// **Controlled, and it returns its own markup.** It holds no draft (nothing
+// survives a remount), no approval state and no knowledge of where it is
+// mounted -- a host that wants this in a command bar, a sidebar or a dialog
+// puts it there. That is the whole reason the panel can be previewed at all:
+// a no-op `onValueChange` previews it correctly, nothing needs to run behind
+// it.
+//
+// The one exception, and it is a rendering optimisation rather than a change
+// to that contract: keystrokes update an internal buffer (seeded from
+// `value`, reported out through `onValueChange` on every change) rather than
+// requiring the host to round-trip `value` back down before a character
+// appears. A host publishing this element into a slot elsewhere in the tree
+// (an overlay, a portal) would otherwise rebuild and republish that slot on
+// every keystroke -- this component is exactly what is published in that
+// case, so it is the only layer that can absorb the fix. `value` remains the
+// single source of truth for anything EXTERNALLY driven -- a session switch,
+// clear-on-send, Escape -- which the buffer re-syncs from immediately; see
+// the reset contract below. A host that only ever sets `value` in response to
+// this component's own `onValueChange` (the ordinary case) never notices the
+// buffer exists.
+//
+// **Reset contract:** the buffer re-syncs from `value` whenever `value`
+// differs from what it was on the PREVIOUS render -- so an external `value`
+// change (host clears the draft, loads a different session's saved text,
+// `onEscape` resets it) always lands immediately, while a host that leaves
+// `value` alone during ordinary typing (the whole point of the buffer) never
+// sees it fight back mid-keystroke. See `shouldResyncBuffer`'s own comment
+// for why the comparison has to be against last render's prop and not
+// against what this component last reported outward -- those are not the
+// same thing, and the difference is exactly the bug this contract exists to
+// avoid.
 //
 // **Clear-on-send: the composer clears immediately, and the host restores on
 // failure.** `onValueChange('')` runs before `onSend`, so the composer is empty
@@ -256,7 +306,26 @@ export function AgentCommandBar({
   textareaRef,
   className,
 }: AgentCommandBarProps) {
-  const hasText = Boolean(value.trim())
+  // Buffered value -- see this component's own doc comment for why and the
+  // reset contract, and `shouldResyncBuffer`'s own comment (exported and
+  // tested on its own above -- no React rendering harness in this package to
+  // exercise the component end-to-end, but the one piece of this worth
+  // getting wrong in isolation is which of "value" and "buffered" wins, and
+  // that reduces to a pure function). `prevValueRef` tracks the PROP as of
+  // the previous render, unconditionally -- `setValue` below never touches
+  // it; only the render-time check does.
+  const [buffered, setBuffered] = useState(value)
+  const prevValueRef = useRef(value)
+  if (shouldResyncBuffer(value, prevValueRef.current)) {
+    prevValueRef.current = value
+    setBuffered(value)
+  }
+  const setValue = (next: string) => {
+    setBuffered(next)
+    onValueChange(next)
+  }
+
+  const hasText = Boolean(buffered.trim())
   const canSend = hasText && !sending && !disabled
   const hasConfigs = Boolean(configs && configs.length > 0)
 
@@ -280,11 +349,11 @@ export function AgentCommandBar({
       : 'Settings'
 
   const send = () => {
-    const text = value.trim()
+    const text = buffered.trim()
     if (!text || sending || disabled) return
     // Cleared before the send so a host persisting drafts sees the empty value
     // and the send in the same turn, rather than racing its own save.
-    onValueChange('')
+    setValue('')
     onSend(text)
   }
 
@@ -304,7 +373,7 @@ export function AgentCommandBar({
     if (event.key === 'Escape') {
       event.preventDefault()
       if (onEscape) onEscape()
-      else onValueChange('')
+      else setValue('')
     }
   }
 
@@ -364,8 +433,8 @@ export function AgentCommandBar({
 
       <Textarea
         ref={textareaRef}
-        value={value}
-        onChange={(e) => onValueChange(e.target.value)}
+        value={buffered}
+        onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
         onFocus={onFocus}
         onBlur={onBlur}

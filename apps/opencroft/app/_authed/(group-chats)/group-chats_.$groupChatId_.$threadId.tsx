@@ -1,13 +1,15 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { AgentChat } from 'agent-chat/agent-chat'
+import { Approvals } from 'agent-chat/approvals'
 import { useCallback, useMemo } from 'react'
 import { GroupChatThreadFraming } from 'ui/group-chat/group-chat-thread-framing'
 import { ScrollPage } from 'ui/layout/scrollpage'
 
-import { AgentChat } from '@/app/_authed/(agent)/_components/agent-chat'
-import { Approvals } from '@/app/_authed/(agent)/_components/approvals'
+import { AgentChatStatusIndicators, CHAT_RENDERERS, renderToolCall } from '@/app/_authed/(agent)/_components/agent-chat'
 import { AgentCommandBarHost } from '@/app/_authed/(agent)/_components/command-bar-host'
 import type { LocalSource, SendTransport } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
+import { buildBlocks } from '@/app/_authed/(agent)/_lib/build-blocks'
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { ThreadCompactControl } from '@/app/_authed/(group-chats)/_components/thread-compact-control'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
@@ -115,6 +117,14 @@ function ThreadConversation({
   )
   const acp = useAcpSession(source, undefined, thread.agent.name, undefined, sendTransport)
 
+  // Computed over the FULL message list, not the visible window: turn indices
+  // (for edit/fork) must stay correct regardless of how much is rendered, and
+  // folding/building is cheap next to the cost of actually rendering blocks.
+  const blocks = useMemo(
+    () => buildBlocks(acp.session.messages, acp.session.historyHeader?.index),
+    [acp.session.messages, acp.session.historyHeader?.index],
+  )
+
   // Stable identity across re-renders (thread.id does not change without a
   // route change) -- AgentCommandBarHost's own memo depends on this prop, and
   // a fresh element every render would rebuild it and republish into the
@@ -181,9 +191,15 @@ function ThreadConversation({
       >
         <AgentChat
           session={acp.session}
+          blocks={blocks}
+          hasMessages={acp.session.messages.length > 0}
+          historyHeaderText={acp.session.historyHeader?.text}
           agentAvatar={thread.agent.avatarUrl ?? undefined}
           agentName={thread.agent.name}
           defaultExpanded
+          renderTool={renderToolCall}
+          renderers={CHAT_RENDERERS}
+          footerExtra={<AgentChatStatusIndicators />}
         />
         {/* A thread's agent asks for approval exactly as a 1:1 chat's does, and
             without this there is nowhere to answer: the request renders in the
@@ -191,7 +207,7 @@ function ThreadConversation({
             killed — which reaches the agent as a refusal nobody meant. Same
             component and the same position relative to the conversation the
             1:1 host uses, so the two surfaces cannot drift. */}
-        <Approvals acp={acp} />
+        <Approvals session={acp} />
       </GroupChatThreadFraming>
     </ScrollPage>
   )
