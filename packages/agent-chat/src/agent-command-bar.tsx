@@ -488,6 +488,7 @@ export function useAgentCommandBar({
       onRemoveQueued,
       sendError,
       onDismissSendError,
+      approval,
       autoApprove,
       handleToggleAutoApprove,
       autoApproveLocked,
