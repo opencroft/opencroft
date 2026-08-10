@@ -305,9 +305,57 @@ export function useAgentCommandBar({
     [onChangeText],
   )
   const sendMessage = useCallback((text: string) => sendRef.current(text), [])
-  const controlsNode = useMemo(
+  // Read through a structural type rather than narrowing the union: `find` does
+  // not narrow by its predicate, and flattenOptions already takes unknown and
+  // returns [] for anything that is not a value list.
+  const dial = useMemo(() => {
+    const pick = (id: string) =>
+      (configOptions ?? []).find((option) => option.id === id) as
+        | { currentValue?: unknown; options?: unknown }
+        | undefined
+    const modeOption = pick(MODE_CONFIG_ID)
+    const effortOption = pick(EFFORT_CONFIG_ID)
+    return {
+      modeOption,
+      effortOption,
+      modeOptions: flattenOptions(modeOption?.options),
+      effortOptions: flattenOptions(effortOption?.options),
+    }
+  }, [configOptions])
+
+  const hostControls = useMemo(
     () => controls?.({ insertText, sendMessage, streaming: session.waiting }),
     [controls, insertText, sendMessage, session.waiting],
+  )
+
+  // The bar's trailing control group, where the approval toggle used to sit.
+  // Effort before mode: effort is the lighter, more often nudged dial, and mode
+  // stays nearest the host's own controls and the send button.
+  const controlsNode = useMemo(
+    () => (
+      <>
+        {dial.effortOptions.length > 0 ? (
+          <EffortSelector
+            options={dial.effortOptions}
+            current={String(dial.effortOption?.currentValue ?? '')}
+            onSelect={(value) => onSetConfigOptionRef.current?.(EFFORT_CONFIG_ID, value)}
+            adapterId={adapterId}
+            lockedReason={lockedConfigOptions?.[EFFORT_CONFIG_ID]}
+          />
+        ) : null}
+        {dial.modeOptions.length > 0 ? (
+          <ModeSelector
+            options={dial.modeOptions}
+            current={String(dial.modeOption?.currentValue ?? '')}
+            onSelect={(value) => onSetConfigOptionRef.current?.(MODE_CONFIG_ID, value)}
+            adapterId={adapterId}
+            lockedReason={lockedConfigOptions?.[MODE_CONFIG_ID]}
+          />
+        ) : null}
+        {hostControls}
+      </>
+    ),
+    [dial, adapterId, lockedConfigOptions, hostControls],
   )
 
   const autoApproveRef = useRef(onToggleAutoApprove)
@@ -367,40 +415,11 @@ export function useAgentCommandBar({
 
   const configExtra = useMemo(() => {
     const booleanOptions = (configOptions ?? []).filter((option) => option.type === 'boolean')
-    // Read through a structural type rather than narrowing the union: `find`
-    // does not narrow by its predicate, and flattenOptions already takes unknown
-    // and returns [] for anything that is not a value list.
-    const modeOption = (configOptions ?? []).find((option) => option.id === MODE_CONFIG_ID) as
-      | { currentValue?: unknown; options?: unknown }
-      | undefined
-    const modeOptions = flattenOptions(modeOption?.options)
-    const effortOption = (configOptions ?? []).find((option) => option.id === EFFORT_CONFIG_ID) as
-      | { currentValue?: unknown; options?: unknown }
-      | undefined
-    const effortOptions = flattenOptions(effortOption?.options)
-    if (!usage && booleanOptions.length === 0 && modeOptions.length === 0 && effortOptions.length === 0) {
+    if (!usage && booleanOptions.length === 0) {
       return null
     }
     return (
       <>
-        {modeOptions.length > 0 ? (
-          <ModeSelector
-            options={modeOptions}
-            current={String(modeOption?.currentValue ?? '')}
-            onSelect={(value) => onSetConfigOptionRef.current?.(MODE_CONFIG_ID, value)}
-            adapterId={adapterId}
-            lockedReason={lockedConfigOptions?.[MODE_CONFIG_ID]}
-          />
-        ) : null}
-        {effortOptions.length > 0 ? (
-          <EffortSelector
-            options={effortOptions}
-            current={String(effortOption?.currentValue ?? '')}
-            onSelect={(value) => onSetConfigOptionRef.current?.(EFFORT_CONFIG_ID, value)}
-            adapterId={adapterId}
-            lockedReason={lockedConfigOptions?.[EFFORT_CONFIG_ID]}
-          />
-        ) : null}
         {usage ? (
           <ContextRing
             usedTokens={usage.used}
@@ -420,7 +439,7 @@ export function useAgentCommandBar({
         ) : null}
       </>
     )
-  }, [configOptions, usage, compact, onClear, adapterId, lockedConfigOptions])
+  }, [configOptions, usage, compact, onClear])
 
   // Memoized for element identity, not for render cost -- see this hook's own
   // doc comment on why identity stability is the whole point. Every entry
