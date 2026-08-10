@@ -204,31 +204,51 @@ export function GroupChatDetail({
           stops standing. It is also why the panel collapses itself rather than
           growing -- see group-chat-pins. */}
       {pins ? <div className='shrink-0 border-b border-border px-4 py-2'>{pins}</div> : null}
-      {/* The padding sits on the inner wrapper, not on the scroll container:
-          that way the scrollbar rides the pane's edge while the content keeps
-          its margin, which is how the 1:1 conversation is built (its content
-          column carries px-4 py-4 inside the scroll area, not on it). */}
       <div className='min-h-0 flex-1 overflow-y-auto'>
-        <div className='px-4 py-4'>
-          {threads ??
-            emptyState ?? (
-              <p className='py-6 text-center text-sm text-muted-foreground'>No threads yet.</p>
-            )}
+        {/* A full-height flex column INSIDE the scroll region, and the reason
+            the composer below sits on the bottom edge rather than under the
+            last row. `position: sticky` never moves a box below its own static
+            position, so with a short thread list and nothing spending the
+            leftover space the composer renders directly beneath the list --
+            floating mid-pane, in a pane that is itself full height.
+            `min-h-full` makes this wrapper at least the scrollport's height
+            (and taller as the list grows), and the `flex-1` below spends what
+            is left over.
+
+            The thread screen fixes the same thing the same way -- see
+            group-chat-thread-framing, which forces its scroll viewport into
+            exactly this shape. That one needs a selector to reach a wrapper it
+            does not own; this screen scrolls a plain div, so it can say it
+            directly. Top-anchored here and bottom-anchored there, which is the
+            one deliberate difference: a list reads from its first row down, a
+            conversation from its last message up. */}
+        <div className='flex min-h-full flex-col'>
+          {/* The padding sits on this inner wrapper, not on the scroll
+              container: that way the scrollbar rides the pane's edge while the
+              content keeps its margin, which is how the 1:1 conversation is
+              built (its content column carries px-4 py-4 inside the scroll
+              area, not on it). */}
+          <div className='flex-1 px-4 py-4'>
+            {threads ??
+              emptyState ?? (
+                <p className='py-6 text-center text-sm text-muted-foreground'>No threads yet.</p>
+              )}
+          </div>
+          {/* Inside the scroll region, not below it -- a sticky dock so the
+              composer overlays the thread list as it scrolls, the same shape
+              the 1:1 chat's ChatBar and the thread screen's own footer use
+              (see group-chat-thread-framing, including the same reasoning for
+              one `--flex-padding` inset layer rather than two -- this screen
+              runs full pane width with no centering cap, and the halved value
+              is the nearest preset step, not a new constant). A layout block
+              here, reserving its own row beneath the list, was the bug this
+              replaces. */}
+          {composer ? (
+            <StickySection side='bottom' fade>
+              <CommandBarFrame>{composer}</CommandBarFrame>
+            </StickySection>
+          ) : null}
         </div>
-        {/* Inside the scroll region, not below it -- a sticky dock so the
-            composer overlays the thread list as it scrolls, the same shape
-            the 1:1 chat's ChatBar and the thread screen's own footer use
-            (see group-chat-thread-framing, including the same reasoning for
-            one `--flex-padding` inset layer rather than two -- this screen
-            runs full pane width with no centering cap, and the halved value
-            is the nearest preset step, not a new constant). A layout block
-            here, reserving its own row beneath the list, was the bug this
-            replaces. */}
-        {composer ? (
-          <StickySection side='bottom' fade>
-            <CommandBarFrame>{composer}</CommandBarFrame>
-          </StickySection>
-        ) : null}
       </div>
     </div>
   )
