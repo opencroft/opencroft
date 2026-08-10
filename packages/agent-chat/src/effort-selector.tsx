@@ -75,11 +75,21 @@ export function EffortSelector({ options, current, onSelect, adapterId, lockedRe
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild disabled={Boolean(lockedReason)}>
-        <Button variant='ghost' size='icon' className={commandBarControlClass} title={title} aria-label={title}>
+        <Button
+          type='button'
+          size='icon'
+          variant='ghost'
+          className={commandBarControlClass}
+          // Without this the composer loses focus the moment the control is
+          // clicked — same reason the bar's own settings button does it.
+          onMouseDown={(e) => e.preventDefault()}
+          title={title}
+          aria-label={title}
+        >
           <Lightbulb className={`size-4 ${colour}`} />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align='end'>
+      <DropdownMenuContent align='start' side='top'>
         {ordered.map((option) => {
           const canonical = canonicalFor(option.value)
           return (
