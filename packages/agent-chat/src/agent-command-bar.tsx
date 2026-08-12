@@ -1,6 +1,8 @@
 'use client'
 
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
+import { canonicalEffortId } from 'agent-client/session-effort'
+import { canonicalModeId } from 'agent-client/session-modes'
 import {
   type ReactElement,
   type ReactNode,
@@ -18,10 +20,10 @@ import {
   type CommandBarConfigOption,
 } from 'ui/agent-chat/agent-command-bar'
 import { ContextRing } from 'ui/agent-chat/context-ring'
+import { EffortSelector } from 'ui/components/ui/agent-chat/effort-selector'
+import { ModeSelector } from 'ui/components/ui/agent-chat/mode-selector'
 
 import { ConfigOptionsBar } from './config-options-bar'
-import { EffortSelector } from './effort-selector'
-import { ModeSelector } from './mode-selector'
 
 // The config-option id agents use for the permission mode. ACP delivers modes
 // twice -- as session modes AND as this option, built from the same list -- and
@@ -308,6 +310,9 @@ export function useAgentCommandBar({
   // Read through a structural type rather than narrowing the union: `find` does
   // not narrow by its predicate, and flattenOptions already takes unknown and
   // returns [] for anything that is not a value list.
+  // The kit selectors take our own values and nothing else, so wire ids are
+  // resolved here and mapped back on select. That keeps the synonym registry --
+  // which is logic, not presentation -- on this side of the boundary.
   const dial = useMemo(() => {
     const pick = (id: string) =>
       (configOptions ?? []).find((option) => option.id === id) as
@@ -315,13 +320,25 @@ export function useAgentCommandBar({
         | undefined
     const modeOption = pick(MODE_CONFIG_ID)
     const effortOption = pick(EFFORT_CONFIG_ID)
+    const modeWire = flattenOptions(modeOption?.options)
+    const effortWire = flattenOptions(effortOption?.options)
+    // A wire value nothing recognises passes through as itself: the kit renders
+    // it with its own label and no grade colour, which is the honest answer.
+    const modeOf = (value: string) => (adapterId ? canonicalModeId(adapterId, value) : undefined) ?? value
+    const effortOf = (value: string) => (adapterId ? canonicalEffortId(adapterId, value) : undefined) ?? value
+    const modeBack = new Map(modeWire.map((entry) => [modeOf(entry.value), entry.value]))
+    const effortBack = new Map(effortWire.map((entry) => [effortOf(entry.value), entry.value]))
     return {
       modeOption,
       effortOption,
-      modeOptions: flattenOptions(modeOption?.options),
-      effortOptions: flattenOptions(effortOption?.options),
+      modeValues: modeWire.map((entry) => modeOf(entry.value)),
+      effortValues: effortWire.map((entry) => effortOf(entry.value)),
+      modeCurrent: modeOf(String(modeOption?.currentValue ?? '')),
+      effortCurrent: effortOf(String(effortOption?.currentValue ?? '')),
+      modeBack,
+      effortBack,
     }
-  }, [configOptions])
+  }, [configOptions, adapterId])
 
   const hostControls = useMemo(
     () => controls?.({ insertText, sendMessage, streaming: session.waiting }),
@@ -334,21 +351,19 @@ export function useAgentCommandBar({
   const controlsNode = useMemo(
     () => (
       <>
-        {dial.effortOptions.length > 0 ? (
+        {dial.effortValues.length > 0 ? (
           <EffortSelector
-            options={dial.effortOptions}
-            current={String(dial.effortOption?.currentValue ?? '')}
-            onSelect={(value) => onSetConfigOptionRef.current?.(EFFORT_CONFIG_ID, value)}
-            adapterId={adapterId}
+            options={dial.effortValues}
+            current={dial.effortCurrent}
+            onSelect={(value) => onSetConfigOptionRef.current?.(EFFORT_CONFIG_ID, dial.effortBack.get(value) ?? value)}
             lockedReason={lockedConfigOptions?.[EFFORT_CONFIG_ID]}
           />
         ) : null}
-        {dial.modeOptions.length > 0 ? (
+        {dial.modeValues.length > 0 ? (
           <ModeSelector
-            options={dial.modeOptions}
-            current={String(dial.modeOption?.currentValue ?? '')}
-            onSelect={(value) => onSetConfigOptionRef.current?.(MODE_CONFIG_ID, value)}
-            adapterId={adapterId}
+            options={dial.modeValues}
+            current={dial.modeCurrent}
+            onSelect={(value) => onSetConfigOptionRef.current?.(MODE_CONFIG_ID, dial.modeBack.get(value) ?? value)}
             lockedReason={lockedConfigOptions?.[MODE_CONFIG_ID]}
           />
         ) : null}
