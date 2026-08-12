@@ -370,7 +370,7 @@ export function useAgentCommandBar({
         {hostControls}
       </>
     ),
-    [dial, adapterId, lockedConfigOptions, hostControls],
+    [dial, lockedConfigOptions, hostControls],
   )
 
   const autoApproveRef = useRef(onToggleAutoApprove)
