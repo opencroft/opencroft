@@ -14,6 +14,7 @@ import { Flex } from '@/components/ui/layout/flex'
 // preview rendered as an invalid element rather than as itself.
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { StickySection } from '@/components/ui/layouts/sticky-section'
+import { type Artifact, ArtifactPanel, ArtifactStrip } from '@/components/ui/agent-chat/thread-artifacts'
 
 export interface GroupChatThreadFramingProps {
   /** The NAME of the group chat this thread belongs to -- not its topic. This
@@ -38,6 +39,14 @@ export interface GroupChatThreadFramingProps {
    * CommandBarFrame. That the composer was already shared and the FRAME was not
    * is exactly how this footer came to look unlike the 1:1 one. */
   composer?: ReactNode
+  /** The notes the thread's agent has left. Absent or empty renders nothing --
+   * a thread earns artifacts by having work done in it. */
+  artifacts?: Artifact[]
+  /** Which artifact is open, if any. Controlled: this screen owns the
+   * arrangement, the host owns the selection. */
+  openArtifactId?: string
+  onOpenArtifact?: (id: string) => void
+  onCloseArtifact?: () => void
   className?: string
 }
 
@@ -62,8 +71,19 @@ export function GroupChatThreadFraming({
   onBack,
   children,
   composer,
+  artifacts,
+  openArtifactId,
+  onOpenArtifact,
+  onCloseArtifact,
   className,
 }: GroupChatThreadFramingProps) {
+  const openArtifact = artifacts?.find((artifact) => artifact.id === openArtifactId)
+  // Below md the panel takes the pane instead of squeezing in beside the
+  // conversation: at a phone width a transcript and a note side by side leaves
+  // neither readable, and this screen's whole job is holding up at that width.
+  // Closing it brings the conversation back, which is why the panel always
+  // keeps its close affordance here.
+  const conversationClass = openArtifact ? 'hidden min-w-0 flex-1 flex-col md:flex' : 'flex min-w-0 flex-1 flex-col'
   return (
     <div className={cn('flex h-full min-h-0 flex-col', className)}>
       {/* px-4, the same horizontal rhythm as the group-chat detail screen and
@@ -95,6 +115,19 @@ export function GroupChatThreadFraming({
           </span>
         ) : null}
       </header>
+      {/* Artifacts get their own row rather than a place in the line above.
+          That line is already carrying a breadcrumb, a title and an agent, and
+          on a phone there is nothing left to give -- while the strip is the one
+          part that grows with use. It exists only when there is something in
+          it, so a thread that has never produced a note is framed exactly as
+          before. */}
+      {artifacts && artifacts.length > 0 ? (
+        <div className='shrink-0 border-b border-border px-4 py-1'>
+          <ArtifactStrip artifacts={artifacts} openId={openArtifactId} onOpen={(id) => onOpenArtifact?.(id)} />
+        </div>
+      ) : null}
+      <div className='flex min-h-0 flex-1'>
+      <div className={conversationClass}>
       {/* Forces Radix's own internal viewport wrapper (a div ScrollArea
           inserts, not one in this file's own JSX) into a flex column filling
           the full available height -- without it `Flex expanded justify='end'`
@@ -133,6 +166,13 @@ export function GroupChatThreadFraming({
           {composer ? <CommandBarFrame>{composer}</CommandBarFrame> : null}
         </StickySection>
       </ScrollArea>
+      </div>
+        {openArtifact ? (
+          <div className='flex w-full min-w-0 shrink-0 flex-col border-l border-border md:w-80'>
+            <ArtifactPanel artifact={openArtifact} onClose={onCloseArtifact} />
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }

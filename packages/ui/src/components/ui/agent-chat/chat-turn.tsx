@@ -3,9 +3,7 @@
 import { Maximize2, Minimize2, Pencil } from 'lucide-react'
 import type { ComponentProps, ComponentType, ReactNode } from 'react'
 import { useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import type { Components, ExtraProps } from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { Markdown } from '@/components/ui/agent-chat/markdown'
 
 import { AgentAvatar } from '@/components/ui/media/agent-avatar'
 import { Button } from '@/components/ui/button'
@@ -83,23 +81,15 @@ export interface ChatTurnRenderers {
 // a host prop: as a slot, every consumer would have to re-establish it, and a
 // consumer that passed a bare renderer would silently lose it. Owning the
 // renderer here is what makes the guarantee a property of the component.
-function MarkdownLink({ node: _node, ...props }: ComponentProps<'a'> & ExtraProps) {
-  return <a {...props} target='_blank' rel='noopener noreferrer' />
-}
 
-const markdownLinkComponents: Components = { a: MarkdownLink }
+
+
 
 // Chat content is markdown, and rendering it is this component's own
 // presentation rather than something a host supplies: a message component that
 // cannot render its own message is not a component, and pushing the renderer
 // out as a slot would make every consumer re-wire a rendering concern.
-function Markdown({ text }: { text: string }) {
-  return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownLinkComponents}>
-      {text}
-    </ReactMarkdown>
-  )
-}
+
 
 // The one way older history is loaded. A click cannot fire at the wrong moment
 // or fail to fire at all, which is what four rebuilds of an automatic trigger
@@ -245,9 +235,7 @@ export function ChatUserMessage({ blockId, text, editDisabled, onEdit, sticky, r
                 Where scroll-state queries are unsupported the query never
                 matches and a stuck header is not clamped at all. Those are the
                 same browsers that already render no stuck shadow. */}
-            <div className='prose-chat [@container_scroll-state(stuck:top)]:line-clamp-3'>
-              <Markdown text={text} />
-            </div>
+            <Markdown text={text} className='[@container_scroll-state(stuck:top)]:line-clamp-3' />
           </div>
           {onEdit && (
             <Button
@@ -303,9 +291,7 @@ export function ChatAssistantText({
         {toggle}
       </div>
       {text ? (
-        <div className='prose-chat'>
-          <Markdown text={text} />
-        </div>
+        <Markdown text={text} />
       ) : null}
     </div>
   )
@@ -426,9 +412,7 @@ export function ChatTurnDetails({
               lastTextEntry.kind === 'item' &&
               lastTextEntry.item.kind === 'assistant-text' &&
               lastTextEntry.item.text.trim() && (
-                <div className='prose-chat'>
-                  <Markdown text={lastTextEntry.item.text} />
-                </div>
+                <Markdown text={lastTextEntry.item.text} />
               )}
             {/* Tool call — animate on changes */}
             {lastToolAfterText && lastToolAfterText.kind === 'tool' && (
@@ -444,9 +428,7 @@ export function ChatTurnDetails({
                   }
                   if (last.item.kind === 'assistant-text') {
                     return last.item.text.trim() ? (
-                      <div className='prose-chat'>
-                        <Markdown text={last.item.text} />
-                      </div>
+                      <Markdown text={last.item.text} />
                     ) : null
                   }
                 }
