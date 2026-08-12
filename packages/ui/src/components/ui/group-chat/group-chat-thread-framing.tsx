@@ -1,6 +1,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
+import { useState } from 'react'
 import { ChevronLeft } from 'lucide-react'
 
 import { AgentAvatar } from '@/components/ui/media/agent-avatar'
@@ -12,6 +13,7 @@ import { Flex } from '@/components/ui/layout/flex'
 // files flat and the export composes the category folder on install, so a
 // nested path resolves in a consumer and NOT here -- which is why this screen's
 // preview rendered as an invalid element rather than as itself.
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { StickySection } from '@/components/ui/layouts/sticky-section'
 import { type Artifact, ArtifactPanel, ArtifactStrip } from '@/components/ui/agent-chat/thread-artifacts'
@@ -78,12 +80,15 @@ export function GroupChatThreadFraming({
   className,
 }: GroupChatThreadFramingProps) {
   const openArtifact = artifacts?.find((artifact) => artifact.id === openArtifactId)
-  // Below md the panel takes the pane instead of squeezing in beside the
-  // conversation: at a phone width a transcript and a note side by side leaves
-  // neither readable, and this screen's whole job is holding up at that width.
-  // Closing it brings the conversation back, which is why the panel always
-  // keeps its close affordance here.
-  const conversationClass = openArtifact ? 'hidden min-w-0 flex-1 flex-col md:flex' : 'flex min-w-0 flex-1 flex-col'
+  // How much of the pane the note takes when it opens. Read once, at mount,
+  // rather than tracked: at a phone width a transcript and a note side by side
+  // leaves neither readable, so the note arrives holding the whole pane and the
+  // reader closes it to get back -- while on a wide screen it opens beside the
+  // conversation. After that it is theirs to drag either way, which is why this
+  // is an opening position and not a rule that keeps reasserting itself.
+  const [initialArtifactSize] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches ? 32 : 100,
+  )
   return (
     <div className={cn('flex h-full min-h-0 flex-col', className)}>
       {/* px-4, the same horizontal rhythm as the group-chat detail screen and
@@ -126,8 +131,11 @@ export function GroupChatThreadFraming({
           <ArtifactStrip artifacts={artifacts} openId={openArtifactId} onOpen={(id) => onOpenArtifact?.(id)} />
         </div>
       ) : null}
-      <div className='flex min-h-0 flex-1'>
-      <div className={conversationClass}>
+      {/* No direction prop: the group is a flex row by default and turns
+          vertical from its aria-orientation, so horizontal is simply the
+          default. */}
+      <ResizablePanelGroup className='min-h-0 flex-1'>
+      <ResizablePanel defaultSize={100 - initialArtifactSize} minSize={0} className='flex min-w-0 flex-col'>
       {/* Forces Radix's own internal viewport wrapper (a div ScrollArea
           inserts, not one in this file's own JSX) into a flex column filling
           the full available height -- without it `Flex expanded justify='end'`
@@ -166,13 +174,25 @@ export function GroupChatThreadFraming({
           {composer ? <CommandBarFrame>{composer}</CommandBarFrame> : null}
         </StickySection>
       </ScrollArea>
-      </div>
+      </ResizablePanel>
         {openArtifact ? (
-          <div className='flex w-full min-w-0 shrink-0 flex-col border-l border-border md:w-80'>
-            <ArtifactPanel artifact={openArtifact} onClose={onCloseArtifact} />
-          </div>
+          <>
+            {/* `withHandle` so the grip is visible rather than a hit area the
+                reader has to discover. Dragging is the only way to resize, and
+                that is acceptable here where it would not be for an action: a
+                width is an adjustment to a layout that already works, not a
+                route to something otherwise unreachable. */}
+            <ResizableHandle withHandle />
+            <ResizablePanel
+              defaultSize={initialArtifactSize}
+              minSize={15}
+              className='flex min-w-0 flex-col border-l border-border'
+            >
+              <ArtifactPanel artifact={openArtifact} onClose={onCloseArtifact} />
+            </ResizablePanel>
+          </>
         ) : null}
-      </div>
+      </ResizablePanelGroup>
     </div>
   )
 }
