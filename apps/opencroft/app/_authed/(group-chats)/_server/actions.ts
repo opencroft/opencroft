@@ -7,6 +7,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 
 import type { CompactAck, CompactStatus } from '@/app/_authed/(extension-runtime)/_server/stream'
+import { listArtifactsForThread, type ThreadArtifact } from '@/app/_authed/(group-chats)/_server/artifacts'
 import type {
   GroupChatPinSummary,
   GroupChatSummary,
@@ -318,6 +319,14 @@ export const getGroupChatThreadView = createServerFn({ method: 'GET', strict: { 
     async ({ data: threadId }): Promise<GroupChatThreadEntry & { draft: string | null }> =>
       getThreadView(getRequest(), threadId),
   )
+
+// A thread's artifacts, for the reader. Gated on the caller's own membership,
+// exactly as the thread's messages are — the agent-facing write path is a
+// separate function with a separate check (see artifacts.ts on why one function
+// taking either identity would be a mistake).
+export const listThreadArtifacts = createServerFn({ method: 'GET', strict: { output: false } })
+  .inputValidator((threadId: string) => threadId)
+  .handler(async ({ data: threadId }): Promise<ThreadArtifact[]> => listArtifactsForThread(getRequest(), threadId))
 
 // Save (or clear, with an empty string) a thread's composer draft. Fired on
 // the same debounce/flush schedule AgentCommandBarHost already drives for the

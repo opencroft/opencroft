@@ -4,7 +4,7 @@ import { Approvals } from 'agent-chat/approvals'
 import { useClearControl } from 'agent-chat/use-clear-control'
 import type { CompactStatus } from 'agent-chat/use-compact-control'
 import { useCompactControl } from 'agent-chat/use-compact-control'
-import { useCallback, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { GroupChatThreadFraming } from 'ui/group-chat/group-chat-thread-framing'
 import { ScrollPage } from 'ui/layout/scrollpage'
 
@@ -25,9 +25,11 @@ import {
   getGroupChatThreadCompactStatus,
   getGroupChatThreadView,
   getMyGroupChatView,
+  listThreadArtifacts,
   sendGroupChatThreadMessage,
   setGroupChatThreadDraft,
 } from '@/app/_authed/(group-chats)/_server/actions'
+import type { ThreadArtifact } from '@/app/_authed/(group-chats)/_server/artifacts'
 
 // Reading one thread inside a group chat.
 //
@@ -48,7 +50,8 @@ export const Route = createFileRoute('/_authed/(group-chats)/group-chats_/$group
       // The framing shows the group chat's name as a breadcrumb, which lives
       // on the group chat rather than the thread.
       const chat = await getMyGroupChatView({ data: params.groupChatId })
-      return { thread, chat }
+      const artifacts = await listThreadArtifacts({ data: params.threadId })
+      return { thread, chat, artifacts }
     }),
   component: GroupChatThreadPage,
   errorComponent: GroupChatErrorState,
@@ -70,14 +73,16 @@ function GroupChatThreadPage() {
   // The session lives in its own component so its hooks are never behind the
   // refusal branch above — a hook after an early return is a different hook
   // order between renders, which React does not allow.
-  return <ThreadConversation thread={data.thread} chat={data.chat} onBack={onBack} />
+  return <ThreadConversation thread={data.thread} chat={data.chat} artifacts={data.artifacts} onBack={onBack} />
 }
 
 function ThreadConversation({
   thread,
   chat,
+  artifacts: initialArtifacts,
   onBack,
 }: {
+  artifacts: ThreadArtifact[]
   thread: GroupChatThreadEntry & { draft: string | null }
   chat: GroupChatDetailView
   onBack: () => void
@@ -240,12 +245,48 @@ function ThreadConversation({
     />
   )
 
+  const [artifacts, setArtifacts] = useState(initialArtifacts)
+  const [openArtifactId, setOpenArtifactId] = useState<string | undefined>(undefined)
+  // An agent writes its notes DURING a turn, so the loader's copy is stale the
+  // moment one lands. Refetching when a turn finishes is the cheapest signal
+  // that something might have changed -- there is no push for artifacts, and
+  // polling would cost a request a second to catch a write that happens a few
+  // times an hour.
+  const wasWaiting = useRef(false)
+  useEffect(() => {
+    const waiting = acp.session.waiting
+    const justFinished = wasWaiting.current && !waiting
+    wasWaiting.current = waiting
+    if (!justFinished) {
+      return
+    }
+    let cancelled = false
+    listThreadArtifacts({ data: thread.id })
+      .then((next) => {
+        if (!cancelled) {
+          setArtifacts(next)
+        }
+      })
+      .catch((error) => {
+        // A failed refresh leaves the last known list on screen, which is
+        // better than emptying a strip the reader was using.
+        console.error('Failed to refresh thread artifacts', thread.id, error)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [acp.session.waiting, thread.id])
+
   return (
     <ScrollPage>
       <GroupChatThreadFraming
         groupChatName={chat.name}
         threadTitle={thread.title}
         agent={{ name: thread.agent.name, avatarUrl: thread.agent.avatarUrl }}
+        artifacts={artifacts}
+        openArtifactId={openArtifactId}
+        onOpenArtifact={setOpenArtifactId}
+        onCloseArtifact={() => setOpenArtifactId(undefined)}
         onBack={onBack}
         composer={composer}
       >
