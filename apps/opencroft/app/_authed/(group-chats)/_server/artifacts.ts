@@ -1,7 +1,7 @@
 import { db, groupChatThread, groupChatThreadArtifact } from '@opencroft/db'
 import { and, asc, eq } from 'drizzle-orm'
 
-import { GroupChatAccessError, requireGroupChatMember, resolveThreadForAgent } from './model'
+import { GroupChatAccessError, requireAgentNode, requireGroupChatMember, resolveThreadForAgent } from './model'
 
 /**
  * Artifacts: the notes an agent leaves on a thread after doing work, and
@@ -13,6 +13,11 @@ import { GroupChatAccessError, requireGroupChatMember, resolveThreadForAgent } f
  * unresolvable reference is indistinguishable from a thread in someone else's
  * chat. There is no parameter for acting as another agent, which is what keeps
  * the membership gate meaningful.
+ *
+ * Each takes the agent NAME, which is what the tool surface asserts, and turns
+ * it into a node id before anything is checked: membership is recorded against
+ * the node, so passing the name through would compare a name to an id and
+ * refuse every call as though the thread did not exist.
  *
  * These are deliberately NOT request-gated like pins are. A pin is written by a
  * person through a screen; an artifact is written by an agent mid-turn, with no
@@ -50,8 +55,8 @@ function listForThread(threadId: string): Promise<ThreadArtifact[]> {
 }
 
 /** The thread's artifacts, for the calling agent. */
-export async function listArtifactsAsAgent(agentNodeId: string, threadRef: string): Promise<ThreadArtifact[]> {
-  const thread = await resolveThreadForAgent(agentNodeId, threadRef)
+export async function listArtifactsAsAgent(agentName: string, threadRef: string): Promise<ThreadArtifact[]> {
+  const thread = await resolveThreadForAgent(await requireAgentNode(agentName), threadRef)
   return listForThread(thread.id)
 }
 
@@ -68,11 +73,11 @@ export async function listArtifactsAsAgent(agentNodeId: string, threadRef: strin
  * moved, so a reference cannot be used to write into a chat the agent is not in.
  */
 export async function writeArtifactAsAgent(
-  agentNodeId: string,
+  agentName: string,
   threadRef: string,
   input: { id?: string; title: string; content: string },
 ): Promise<ThreadArtifact> {
-  const thread = await resolveThreadForAgent(agentNodeId, threadRef)
+  const thread = await resolveThreadForAgent(await requireAgentNode(agentName), threadRef)
   const title = input.title.trim()
   const content = input.content.trim()
   if (!title) {
@@ -108,8 +113,8 @@ export async function writeArtifactAsAgent(
 }
 
 /** Remove a note. Scoped to the resolved thread, for the same reason writes are. */
-export async function deleteArtifactAsAgent(agentNodeId: string, threadRef: string, id: string): Promise<void> {
-  const thread = await resolveThreadForAgent(agentNodeId, threadRef)
+export async function deleteArtifactAsAgent(agentName: string, threadRef: string, id: string): Promise<void> {
+  const thread = await resolveThreadForAgent(await requireAgentNode(agentName), threadRef)
   const deleted = await db
     .delete(groupChatThreadArtifact)
     .where(and(eq(groupChatThreadArtifact.id, id), eq(groupChatThreadArtifact.threadId, thread.id)))

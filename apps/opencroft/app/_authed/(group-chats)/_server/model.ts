@@ -1282,7 +1282,7 @@ export interface AgentGroupChatRef {
  * who is not a recognised agent must be told so rather than handed a plausible
  * "you are in no group chats", which reads as an answer and is not one.
  */
-async function requireAgentNode(agentName: string): Promise<string> {
+export async function requireAgentNode(agentName: string): Promise<string> {
   const trimmed = agentName.trim()
   const nodes = await listAgentNodesImpl()
   const match = nodes.find((n) => n.name === trimmed)
