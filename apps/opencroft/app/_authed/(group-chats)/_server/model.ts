@@ -125,7 +125,7 @@ async function isAgentMember(groupChatId: string, agentNodeId: string): Promise<
  * only on screen while the wire still distinguishes them is the bug found
  * on phase 2.
  */
-async function requireGroupChatMember(request: Request, groupChatId: string): Promise<{ userId: string }> {
+export async function requireGroupChatMember(request: Request, groupChatId: string): Promise<{ userId: string }> {
   const sessionUser = await requireSignedInUser(request)
   const [chat] = await db.select({ id: groupChat.id }).from(groupChat).where(eq(groupChat.id, groupChatId)).limit(1)
   if (!chat) {
@@ -1345,7 +1345,7 @@ async function resolveById(ref: string): Promise<ThreadDeliveryTarget | null> {
  * unresolvable reference and a thread in someone else's chat are the same
  * refusal — a reference must not be a way to learn which threads exist.
  */
-async function resolveThreadForAgent(agentNodeId: string, threadRef: string): Promise<ThreadDeliveryTarget> {
+export async function resolveThreadForAgent(agentNodeId: string, threadRef: string): Promise<ThreadDeliveryTarget> {
   const trimmed = threadRef.trim()
   if (!trimmed) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)

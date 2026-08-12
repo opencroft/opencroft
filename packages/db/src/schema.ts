@@ -388,6 +388,40 @@ export const groupChatThread = pgTable(
   ],
 )
 
+// A note an agent leaves on a thread after doing work, and revises on a later
+// iteration. Markdown, rendered the same way the conversation's own messages
+// are — an artifact is the agent still talking about work it just did.
+//
+// Thread-scoped rather than chat-scoped, and that is the distinction from
+// GroupChatPin above: a pin is standing guidance a PERSON writes and every
+// thread's agent is told, delivered into context. An artifact is output an
+// AGENT writes about one thread's work, and is never delivered anywhere — it is
+// read by whoever opens it. The two look alike (both are notes on a group chat)
+// and behave oppositely, which is why they are separate tables rather than one
+// with a `kind`.
+//
+// No author column: a thread has exactly one agent, fixed at creation, so the
+// author is already recorded by the thread this row belongs to. Storing it
+// again would be a second answer to the same question, free to disagree.
+//
+// `updatedAt` is the whole point of the edit path — an artifact revised on a
+// later iteration is the same note, not a new one, and the reader is shown when
+// it last changed.
+export const groupChatThreadArtifact = pgTable(
+  'GroupChatThreadArtifact',
+  {
+    id: text().primaryKey().notNull().$defaultFn(uuid),
+    threadId: text()
+      .notNull()
+      .references(() => groupChatThread.id, { onDelete: 'cascade' }),
+    title: text().notNull(),
+    content: text().notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('GroupChatThreadArtifact_threadId_idx').on(t.threadId)],
+)
+
 export const schema = {
   setting,
   secret,
@@ -399,6 +433,7 @@ export const schema = {
   groupChatMember,
   groupChatPin,
   groupChatThread,
+  groupChatThreadArtifact,
   ...authSchema,
 }
 

@@ -57,6 +57,11 @@ import {
 import { localExtRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
 import { resolveExtensionRepo, searchRegistries } from '@/app/_authed/(extension-runtime)/_server/registry'
 import type { ExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
+import {
+  deleteArtifactAsAgent,
+  listArtifactsAsAgent,
+  writeArtifactAsAgent,
+} from '@/app/_authed/(group-chats)/_server/artifacts'
 import { listGroupChatsForAgentView, sendMessageInThreadAsAgent } from '@/app/_authed/(group-chats)/_server/model'
 import { recordAudit } from '@/app/_authed/(mcp)/_server/audit'
 import { executeExtensionTool, getExtensionToolDefinitions } from '@/app/_authed/(mcp)/_server/extension-tools'
@@ -166,6 +171,67 @@ export const toolDefinitions = [
       'Use the `ref` values from this result to address a thread in group_chat_send — ' +
       'they are opaque handles, not a format to construct.',
     inputSchema: { type: 'object' as const, properties: {} },
+  },
+  {
+    name: 'artifact_list',
+    description:
+      'List the notes (artifacts) left on a thread of a group chat you are a member of. ' +
+      'Use the `ref` values from group_chat_list to address a thread. Returns each artifact with ' +
+      'its id, title and markdown content — pass an id back to artifact_write to revise that note ' +
+      'rather than adding a second one saying the same thing.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        thread: {
+          type: 'string',
+          description: 'A thread reference from group_chat_list. Opaque — pass it back unchanged.',
+        },
+      },
+      required: ['thread'],
+    },
+  },
+  {
+    name: 'artifact_write',
+    description:
+      'Write a note (artifact) onto a thread of a group chat you are a member of: a short markdown ' +
+      'document recording what you worked out, shown in the thread header and opened beside the ' +
+      'conversation. Omit `id` to add one; pass the `id` of an existing artifact to revise it in ' +
+      'place, which is what to do when a later iteration changes the answer. Notes are for durable ' +
+      'findings, plans and results — not for progress chatter, which belongs in the conversation.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        thread: {
+          type: 'string',
+          description: 'A thread reference from group_chat_list. Opaque — pass it back unchanged.',
+        },
+        title: { type: 'string', description: 'Short name, shown in the thread header.' },
+        content: { type: 'string', description: 'The note itself, as markdown.' },
+        id: {
+          type: 'string',
+          description: 'An existing artifact id from artifact_list. Omit to create a new note.',
+        },
+      },
+      required: ['thread', 'title', 'content'],
+    },
+  },
+  {
+    name: 'artifact_delete',
+    description:
+      'Remove a note (artifact) from a thread of a group chat you are a member of. Deleting is for a ' +
+      'note that should never have been written; a note whose content has changed is revised with ' +
+      'artifact_write instead, so its place in the thread is kept.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        thread: {
+          type: 'string',
+          description: 'A thread reference from group_chat_list. Opaque — pass it back unchanged.',
+        },
+        id: { type: 'string', description: 'The artifact id, from artifact_list.' },
+      },
+      required: ['thread', 'id'],
+    },
   },
   {
     name: 'group_chat_send',
@@ -1997,6 +2063,56 @@ function buildHandlers(): Record<string, ToolHandler> {
     group_chat_list: async (_args, caller) => {
       const agent = requireCallingAgent(caller)
       return textResult(JSON.stringify(await listGroupChatsForAgentView(agent), null, 2))
+    },
+
+    // ── artifact_list / artifact_write / artifact_delete ────────────
+    //
+    // No approval wrapper, for the same reason group_chat_send has none: these
+    // write into a thread somebody already put this agent into, onto a surface
+    // that is visible on a screen. The membership gate is the control.
+    artifact_list: async (args, caller) => {
+      const agent = requireCallingAgent(caller)
+      const thread = args.thread as string | undefined
+      if (!thread) {
+        fail(-32602, 'Missing required param: thread')
+      }
+      return textResult(JSON.stringify(await listArtifactsAsAgent(agent, thread), null, 2))
+    },
+
+    artifact_write: async (args, caller) => {
+      const agent = requireCallingAgent(caller)
+      const thread = args.thread as string | undefined
+      const title = args.title as string | undefined
+      const content = args.content as string | undefined
+      if (!thread) {
+        fail(-32602, 'Missing required param: thread')
+      }
+      if (!title) {
+        fail(-32602, 'Missing required param: title')
+      }
+      if (!content) {
+        fail(-32602, 'Missing required param: content')
+      }
+      const written = await writeArtifactAsAgent(agent, thread, {
+        id: args.id as string | undefined,
+        title,
+        content,
+      })
+      return textResult(JSON.stringify(written, null, 2))
+    },
+
+    artifact_delete: async (args, caller) => {
+      const agent = requireCallingAgent(caller)
+      const thread = args.thread as string | undefined
+      const id = args.id as string | undefined
+      if (!thread) {
+        fail(-32602, 'Missing required param: thread')
+      }
+      if (!id) {
+        fail(-32602, 'Missing required param: id')
+      }
+      await deleteArtifactAsAgent(agent, thread, id)
+      return textResult('Artifact removed.')
     },
 
     // ── group_chat_send ─────────────────────────────────────────────
