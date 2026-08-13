@@ -112,6 +112,80 @@ export async function writeArtifactAsAgent(
   return created
 }
 
+/**
+ * The replacement rule itself, kept separate from the row it will be written to
+ * so it can be exercised without a database. Everything interesting about this
+ * operation is here: what counts as a match, and when a caller is told no.
+ *
+ * Throws rather than returning a result union because every caller is a tool
+ * handler whose job is to turn a thrown message into a refusal the agent reads.
+ */
+export function applyExactReplacement(
+  content: string,
+  oldString: string,
+  newString: string,
+  replaceAll: boolean,
+): string {
+  const occurrences = content.split(oldString).length - 1
+  if (occurrences === 0) {
+    throw new Error('oldString was not found in the artifact')
+  }
+  if (occurrences > 1 && !replaceAll) {
+    throw new Error(
+      `oldString appears ${occurrences} times — pass replaceAll, or extend it with surrounding text until it is unique`,
+    )
+  }
+  // split/join for replaceAll rather than a RegExp: the fragment is arbitrary
+  // markdown, and building a pattern from it would give characters like * and (
+  // a meaning the caller never asked for.
+  return replaceAll ? content.split(oldString).join(newString) : content.replace(oldString, newString)
+}
+
+/**
+ * Replace an exact fragment of a note, leaving the rest untouched.
+ *
+ * The reason this exists beside `writeArtifactAsAgent`: revising one paragraph
+ * of a long note by rewriting the whole thing costs the entire document twice —
+ * once to read it back, once to send it — and every one of those round trips is
+ * a chance to drop a section nobody noticed was missing. An exact replacement
+ * touches what it names and can lose nothing else.
+ *
+ * REFUSES ON AN AMBIGUOUS MATCH, and that is the point of the operation rather
+ * than a safety rail bolted on. A fragment appearing twice means the caller does
+ * not know which one it is editing, so acting on the first would be a guess made
+ * silently. `replaceAll` is how a caller says it meant every occurrence.
+ */
+export async function editArtifactAsAgent(
+  agentName: string,
+  threadRef: string,
+  input: { id: string; oldString: string; newString: string; replaceAll?: boolean },
+): Promise<ThreadArtifact> {
+  const thread = await resolveThreadForAgent(await requireAgentNode(agentName), threadRef)
+  if (!input.oldString) {
+    throw new Error('oldString cannot be empty — use artifact_write to replace a note wholesale')
+  }
+  const [existing] = await db
+    .select({ id: groupChatThreadArtifact.id, content: groupChatThreadArtifact.content })
+    .from(groupChatThreadArtifact)
+    .where(and(eq(groupChatThreadArtifact.id, input.id), eq(groupChatThreadArtifact.threadId, thread.id)))
+    .limit(1)
+  if (!existing) {
+    throw new GroupChatAccessError('not-found', 'That artifact is not available.')
+  }
+
+  const content = applyExactReplacement(existing.content, input.oldString, input.newString, input.replaceAll === true)
+  if (!content.trim()) {
+    throw new Error('That edit would leave the artifact empty — delete it instead if it should not exist')
+  }
+
+  const [updated] = await db
+    .update(groupChatThreadArtifact)
+    .set({ content })
+    .where(eq(groupChatThreadArtifact.id, input.id))
+    .returning(artifactColumns)
+  return updated
+}
+
 /** Remove a note. Scoped to the resolved thread, for the same reason writes are. */
 export async function deleteArtifactAsAgent(agentName: string, threadRef: string, id: string): Promise<void> {
   const thread = await resolveThreadForAgent(await requireAgentNode(agentName), threadRef)

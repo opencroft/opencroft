@@ -59,6 +59,7 @@ import { resolveExtensionRepo, searchRegistries } from '@/app/_authed/(extension
 import type { ExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
 import {
   deleteArtifactAsAgent,
+  editArtifactAsAgent,
   listArtifactsAsAgent,
   writeArtifactAsAgent,
 } from '@/app/_authed/(group-chats)/_server/artifacts'
@@ -213,6 +214,28 @@ export const toolDefinitions = [
         },
       },
       required: ['thread', 'title', 'content'],
+    },
+  },
+  {
+    name: 'artifact_edit',
+    description:
+      'Replace an exact string inside a note (artifact), leaving the rest untouched. Prefer this ' +
+      'over artifact_write when revising part of a long note: it sends only what changes, and ' +
+      'cannot drop a section you forgot to include. Fails if `oldString` is not found, or appears ' +
+      'more than once without `replaceAll` — extend it with surrounding text until it is unique.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        thread: {
+          type: 'string',
+          description: 'A thread reference from group_chat_list. Opaque — pass it back unchanged.',
+        },
+        id: { type: 'string', description: 'The artifact id, from artifact_list.' },
+        oldString: { type: 'string', description: 'The exact text to replace.' },
+        newString: { type: 'string', description: 'The text to replace it with. Empty removes the fragment.' },
+        replaceAll: { type: 'boolean', description: 'Replace every occurrence (default false).' },
+      },
+      required: ['thread', 'id', 'oldString', 'newString'],
     },
   },
   {
@@ -2099,6 +2122,35 @@ function buildHandlers(): Record<string, ToolHandler> {
         content,
       })
       return textResult(JSON.stringify(written, null, 2))
+    },
+
+    artifact_edit: async (args, caller) => {
+      const agent = requireCallingAgent(caller)
+      const thread = args.thread as string | undefined
+      const id = args.id as string | undefined
+      const oldString = args.oldString as string | undefined
+      const newString = args.newString as string | undefined
+      if (!thread) {
+        fail(-32602, 'Missing required param: thread')
+      }
+      if (!id) {
+        fail(-32602, 'Missing required param: id')
+      }
+      // Checked against undefined, not falsiness: an empty newString is a
+      // deletion of the fragment and a legitimate edit.
+      if (oldString === undefined) {
+        fail(-32602, 'Missing required param: oldString')
+      }
+      if (newString === undefined) {
+        fail(-32602, 'Missing required param: newString')
+      }
+      const edited = await editArtifactAsAgent(agent, thread, {
+        id,
+        oldString,
+        newString,
+        replaceAll: args.replaceAll === true,
+      })
+      return textResult(JSON.stringify(edited, null, 2))
     },
 
     artifact_delete: async (args, caller) => {
