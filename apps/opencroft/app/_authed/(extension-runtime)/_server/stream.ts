@@ -418,10 +418,42 @@ export type ThreadDeliveryResolver = (
   isReachable: (agentNodeId: string) => boolean,
 ) => Promise<ThreadDeliveryOutcome>
 
-const threadDeliveryResolvers: ThreadDeliveryResolver[] = []
+// globalThis-backed like compactJobs further down (and every other
+// server-lifetime singleton in this app — see globalForSpaces,
+// globalForReaper, globalForScheduler, globalForStartup): a plain
+// module-scoped array here silently resets to empty whenever Vite's dev SSR
+// gives this module a fresh instance because some other file that imports it
+// changed, while this registry's only writer (server/startup.ts's
+// once-per-process ensureServerStarted) never runs a second time to
+// repopulate it. Confirmed as the cause of a real failure: the
+// group_chat_compact MCP path resolved through a post-hot-reload instance of
+// this module with an empty resolvers array ("No agent/job resolved for
+// session"), while the UI ring's Compact button kept using the instance from
+// server boot. Applying the same fix here since the mechanism is identical.
+// globalThis-backed like compactJobs further down (and every other
+// server-lifetime singleton in this app — see globalForSpaces,
+// globalForReaper, globalForScheduler, globalForStartup): a plain
+// module-scoped array here silently resets to empty whenever Vite's dev SSR
+// gives this module a fresh instance because some other file that imports it
+// changed, while this registry's only writer (server/startup.ts's
+// once-per-process ensureServerStarted) never runs a second time to
+// repopulate it. Confirmed as the cause of a real failure: the
+// group_chat_compact MCP path resolved through a post-hot-reload instance of
+// this module with an empty resolvers array ("No agent/job resolved for
+// session"), while the UI ring's Compact button kept using the instance from
+// server boot. Applying the same fix here since the mechanism is identical.
+const globalForThreadDelivery = globalThis as unknown as {
+  __THREAD_DELIVERY_RESOLVERS__?: ThreadDeliveryResolver[]
+}
+if (!globalForThreadDelivery.__THREAD_DELIVERY_RESOLVERS__) {
+  globalForThreadDelivery.__THREAD_DELIVERY_RESOLVERS__ = []
+}
+const threadDeliveryResolvers = globalForThreadDelivery.__THREAD_DELIVERY_RESOLVERS__
 
 export function registerThreadDeliveryResolver(resolver: ThreadDeliveryResolver): void {
-  threadDeliveryResolvers.push(resolver)
+  if (!threadDeliveryResolvers.includes(resolver)) {
+    threadDeliveryResolvers.push(resolver)
+  }
 }
 
 // The one delivery mechanism behind every path that hands a message to a
@@ -692,10 +724,26 @@ export interface StandingContext {
 }
 export type StandingContextResolver = (sessionKey: string) => Promise<StandingContext | null>
 
-const standingContextResolvers: StandingContextResolver[] = []
+// globalThis-backed — see registerThreadDeliveryResolver's header just above
+// for why (same registration mechanism, same startup.ts writer, same
+// Vite-dev-SSR module-reinstantiation hazard). This is the registry whose
+// empty-after-reload state actually produced the group_chat_compact failure.
+// globalThis-backed — see registerThreadDeliveryResolver's header just above
+// for why (same registration mechanism, same startup.ts writer, same
+// Vite-dev-SSR module-reinstantiation hazard). This is the registry whose
+// empty-after-reload state actually produced the group_chat_compact failure.
+const globalForStandingContext = globalThis as unknown as {
+  __STANDING_CONTEXT_RESOLVERS__?: StandingContextResolver[]
+}
+if (!globalForStandingContext.__STANDING_CONTEXT_RESOLVERS__) {
+  globalForStandingContext.__STANDING_CONTEXT_RESOLVERS__ = []
+}
+const standingContextResolvers = globalForStandingContext.__STANDING_CONTEXT_RESOLVERS__
 
 export function registerStandingContextResolver(resolver: StandingContextResolver): void {
-  standingContextResolvers.push(resolver)
+  if (!standingContextResolvers.includes(resolver)) {
+    standingContextResolvers.push(resolver)
+  }
 }
 
 // The graph first — unchanged behaviour for every `agent:*` session — then
