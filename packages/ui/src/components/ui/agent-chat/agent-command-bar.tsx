@@ -468,6 +468,38 @@ export function AgentCommandBar({
             </span>
           )}
 
+          {configExtra ? <div className='shrink-0 px-1 text-xs text-muted-foreground'>{configExtra}</div> : null}
+        </div>
+
+        <div className='flex shrink-0 items-center gap-1'>
+          {approval === false ? null : (
+            <Button
+              type='button'
+              size='icon'
+              variant='ghost'
+              className={commandBarControlClass}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={yoloMode ? undefined : onToggleAutoApprove}
+              disabled={yoloMode}
+              title={approvalTitle}
+            >
+              {yoloMode ? (
+                <ShieldAlert className='size-4 animate-pulse text-red-500' />
+              ) : autoApprove ? (
+                <ShieldCog className='size-4 text-amber-500' />
+              ) : (
+                <ShieldCheck className='size-4 text-primary' />
+              )}
+            </Button>
+          )}
+          {controls}
+
+          {/* The leftover-settings button: whatever config options are not
+              broken out into their own buttons (model, effort, permission -- see
+              `controls` above). Placed after those rather than beside the
+              sparkles/start icon, so a picker earns its own button by being
+              extracted from here, not by sitting apart from it. Gated on
+              `hasConfigs` so it disappears entirely once nothing is left. */}
           {hasConfigs ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -514,32 +546,6 @@ export function AgentCommandBar({
               </DropdownMenuContent>
             </DropdownMenu>
           ) : null}
-
-          {configExtra ? <div className='shrink-0 px-1 text-xs text-muted-foreground'>{configExtra}</div> : null}
-        </div>
-
-        <div className='flex shrink-0 items-center gap-1'>
-          {approval === false ? null : (
-            <Button
-              type='button'
-              size='icon'
-              variant='ghost'
-              className={commandBarControlClass}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={yoloMode ? undefined : onToggleAutoApprove}
-              disabled={yoloMode}
-              title={approvalTitle}
-            >
-              {yoloMode ? (
-                <ShieldAlert className='size-4 animate-pulse text-red-500' />
-              ) : autoApprove ? (
-                <ShieldCog className='size-4 text-amber-500' />
-              ) : (
-                <ShieldCheck className='size-4 text-primary' />
-              )}
-            </Button>
-          )}
-          {controls}
 
           {/* Send BEFORE Stop, so Stop is the trailing control from the moment
               the turn starts until it ends -- see the ordering note in this

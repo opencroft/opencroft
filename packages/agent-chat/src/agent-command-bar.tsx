@@ -22,6 +22,7 @@ import {
 import { ContextRing } from 'ui/agent-chat/context-ring'
 import { EffortSelector } from 'ui/components/ui/agent-chat/effort-selector'
 import { ModeSelector } from 'ui/components/ui/agent-chat/mode-selector'
+import { ModelSelector } from 'ui/components/ui/agent-chat/model-selector'
 
 import { ConfigOptionsBar } from './config-options-bar'
 
@@ -34,6 +35,9 @@ const MODE_CONFIG_ID = 'mode'
 // labelled dropdown. Unlike `mode`, the values behind this vary per model — the
 // agent decides what it advertises, and it may advertise none.
 const EFFORT_CONFIG_ID = 'effort'
+// Likewise for the model itself. Unlike mode/effort, a model's values have no
+// small closed vocabulary to canonicalize -- the wire label is shown as-is.
+const MODEL_CONFIG_ID = 'model'
 
 import type { AgentChatSession } from './session'
 import type { CompactRenderState } from './use-compact-control'
@@ -320,6 +324,7 @@ export function useAgentCommandBar({
         | undefined
     const modeOption = pick(MODE_CONFIG_ID)
     const effortOption = pick(EFFORT_CONFIG_ID)
+    const modelOption = pick(MODEL_CONFIG_ID)
     const modeWire = flattenOptions(modeOption?.options)
     const effortWire = flattenOptions(effortOption?.options)
     // A wire value nothing recognises passes through as itself: the kit renders
@@ -337,6 +342,10 @@ export function useAgentCommandBar({
       effortCurrent: effortOf(String(effortOption?.currentValue ?? '')),
       modeBack,
       effortBack,
+      // No canonical id/label table for models -- the wire's own {value, label}
+      // pairs are shown as-is, unlike mode/effort's synonym-normalized values.
+      modelOptions: flattenOptions(modelOption?.options),
+      modelCurrent: String(modelOption?.currentValue ?? ''),
     }
   }, [configOptions, adapterId])
 
@@ -346,11 +355,21 @@ export function useAgentCommandBar({
   )
 
   // The bar's trailing control group, where the approval toggle used to sit.
-  // Effort before mode: effort is the lighter, more often nudged dial, and mode
-  // stays nearest the host's own controls and the send button.
+  // Model leads: it is the least often changed of the three but the one whose
+  // current value most changes what the others even mean. Effort before mode:
+  // effort is the lighter, more often nudged dial, and mode stays nearest the
+  // host's own controls and the send button.
   const controlsNode = useMemo(
     () => (
       <>
+        {dial.modelOptions.length > 0 ? (
+          <ModelSelector
+            options={dial.modelOptions}
+            current={dial.modelCurrent}
+            onSelect={(value) => onSetConfigOptionRef.current?.(MODEL_CONFIG_ID, value)}
+            lockedReason={lockedConfigOptions?.[MODEL_CONFIG_ID]}
+          />
+        ) : null}
         {dial.effortValues.length > 0 ? (
           <EffortSelector
             options={dial.effortValues}
@@ -416,9 +435,11 @@ export function useAgentCommandBar({
         // array to the select variants, which the `.options` read below needs.
         // Folding a second condition into it silently loses that inference.
         .filter((option) => option.type !== 'boolean')
-        // `mode` and `effort` are deliberately absent: each is rendered as its
-        // own icon button above, not as one more labelled dropdown.
-        .filter((option) => option.id !== MODE_CONFIG_ID && option.id !== EFFORT_CONFIG_ID)
+        // `mode`, `effort` and `model` are deliberately absent: each is rendered
+        // as its own icon button above, not as one more labelled dropdown.
+        .filter(
+          (option) => option.id !== MODE_CONFIG_ID && option.id !== EFFORT_CONFIG_ID && option.id !== MODEL_CONFIG_ID,
+        )
         .map((option) => ({
           id: option.id,
           label: option.name,
