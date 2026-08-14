@@ -374,6 +374,10 @@ export interface SessionSummary {
   // cannot say what the model's window is; a caller wanting a ratio needs both
   // and should treat a null limit as "cannot compute one".
   contextUsage: ContextUsage | null
+  // Server-held prompts waiting for the session's current turn to end. Unlike
+  // `contextUsage`, 0 is a fact, not unknown — an offline/unloaded session
+  // cannot hold server-side prompts.
+  queuedMessages: number
 }
 
 export interface TurnSummary {
@@ -675,6 +679,7 @@ const sendMessageApi: HostSendMessageApi = {
         lastActivityAt: metaByKey.get(entry.key)?.lastActivityAt ?? entry.createdAt,
         status: deriveSessionStatus(entry.key, sessionKeys),
         contextUsage: toContextUsage(metaByKey.get(entry.key)?.usage),
+        queuedMessages: metaByKey.get(entry.key)?.queuedMessages ?? 0,
       })
     }
     out.sort((a, b) => b.lastActivityAt - a.lastActivityAt)
