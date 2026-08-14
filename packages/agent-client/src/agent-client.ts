@@ -512,8 +512,19 @@ export function handleUpdate(notification: SessionNotification): void {
       // a stale-but-higher number, never an incorrect drop, and self-corrects
       // at the boundary. Telling the two apart would need an upstream
       // protocol marker, not a guess made in this shared layer.
+      //
+      // The hold only makes sense comparing readings of the SAME window: a
+      // `size` change — a restored session whose persisted pair predates a
+      // window change, or a mid-session model switch — means the two numbers
+      // describe different windows, not that context shrank. Observed live: a
+      // restart restored a stale pair saved under an old (smaller) window,
+      // and the first fresh reading under the current (larger) window had a
+      // lower `used` — the hold read that as an undercount and sat on the
+      // stale pair for the whole turn. A `size` change is a new-window signal
+      // and always applies immediately, whichever way `used` moves; only a
+      // same-size reading is a candidate for the hold above.
       session.pendingUsage = { used: update.used, size }
-      if (session.activeTurns > 0 && session.usage && update.used < session.usage.used) {
+      if (session.activeTurns > 0 && session.usage && size === session.usage.size && update.used < session.usage.used) {
         break
       }
       session.usage = { used: update.used, size }

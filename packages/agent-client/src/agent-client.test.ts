@@ -1060,6 +1060,45 @@ test('a genuine decrease outside of an active turn still applies immediately', a
   await h.client.deleteSession(h.sessionId)
 })
 
+test('a size change mid-turn applies immediately, even as a decrease (a restart-restored stale pair under an old window)', async () => {
+  // Observed live: after a restart, a session woke with its persisted
+  // pre-restart pair, saved under a smaller window. The first fresh reading
+  // under the CURRENT (larger) window can have a lower `used` than that
+  // stale pair — that is a new window, not an undercount, and must not be
+  // held the way a same-size drop is.
+  const h = await setup('openclaw')
+  h.client.restoreUsage(h.sessionId, { used: 609_000, size: 200_000 })
+  await h.client.prompt(h.sessionId, 'hello')
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 5_000, size: 1_000_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  assert.deepEqual(
+    h.client.listSessions().find((s) => s.id === h.sessionId)?.usage,
+    { used: 5_000, size: 1_000_000 },
+    'a different size applies immediately, even though used dropped',
+  )
+  h.endTurn()
+  await settle()
+})
+
+test('a same-size lower reading mid-turn is still held (the shipped monotonic behaviour, unchanged)', async () => {
+  const h = await setup('openclaw')
+  h.client.restoreUsage(h.sessionId, { used: 609_000, size: 200_000 })
+  await h.client.prompt(h.sessionId, 'hello')
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 5_000, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  assert.deepEqual(
+    h.client.listSessions().find((s) => s.id === h.sessionId)?.usage,
+    { used: 609_000, size: 200_000 },
+    'same size, so the lower reading is held exactly as before this fix',
+  )
+  h.endTurn()
+  await settle()
+})
+
 // ── hasActiveTurn ────────────────────────────────────────────────────────
 //
 // Same underlying read as activeSessionKeys, by raw session id — the check a
