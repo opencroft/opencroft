@@ -1,4 +1,5 @@
 import host from '@opencroft/server'
+import { derivePublicKey, generateSshKey, inspectSshKey, type SshKeyType } from '@opencroft/terminal/server'
 
 // ═══════════════════════════════════════════════════════════════════
 // Key Store
@@ -48,20 +49,6 @@ async function isKeyInWsl(name: string): Promise<boolean> {
   }
 }
 
-// Run ssh-keygen, turning "binary not installed" into an actionable message
-// instead of a cryptic ENOENT (openssh-client must be present on the host).
-async function runSshKeygen(args: string[]): Promise<string> {
-  try {
-    return await host.execFile('ssh-keygen', args)
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    if (/enoent|not found|no such file/i.test(msg)) {
-      throw new Error('ssh-keygen is not available — install openssh-client on the host running OpenCroft.')
-    }
-    throw err
-  }
-}
-
 export async function keyStoreListKeys(storeId: string): Promise<KeyEntry[]> {
   const dir = keyStoreDir(storeId)
   let entries: string[]
@@ -82,15 +69,11 @@ export async function keyStoreListKeys(storeId: string): Promise<KeyEntry[]> {
     }
     let type = 'unknown'
     let fingerprint = ''
-    try {
-      const info = await host.execFile('ssh-keygen', ['-l', '-f', filePath])
-      const match = info.match(/^\d+\s+(\S+)\s+.*\((\w+)\)/)
-      if (match) {
-        fingerprint = match[1]
-        type = match[2]
-      }
-    } catch {
-      /* best effort */
+    // Best effort: one unreadable key costs its own metadata, not the list.
+    const info = inspectSshKey(await host.fs.readFile(filePath, 'utf-8').catch(() => ''))
+    if (info) {
+      fingerprint = info.fingerprint
+      type = info.type
     }
     let hasPublicKey = false
     try {
@@ -108,7 +91,11 @@ export async function keyStoreListKeys(storeId: string): Promise<KeyEntry[]> {
 export async function keyStoreCreateKey(storeId: string, name: string, keyType: string): Promise<void> {
   const dir = keyStoreDir(storeId)
   await host.fs.mkdir(dir, { recursive: true })
-  await runSshKeygen(['-t', keyType, '-f', host.path.join(dir, name), '-N', '', '-q'])
+  const keyPath = host.path.join(dir, name)
+  const key = generateSshKey(keyType as SshKeyType, name)
+  await host.fs.writeFile(keyPath, key.privateKey)
+  await host.fs.writeFile(`${keyPath}.pub`, key.publicKey)
+  await setKeyPermissions(keyPath)
 }
 
 export async function keyStoreImportKey(storeId: string, name: string, content: string): Promise<void> {
@@ -131,7 +118,7 @@ export async function keyStoreReadPublicKey(storeId: string, name: string): Prom
   try {
     return await host.fs.readFile(`${keyPath}.pub`, 'utf-8')
   } catch {
-    return runSshKeygen(['-y', '-f', keyPath])
+    return derivePublicKey(await host.fs.readFile(keyPath, 'utf-8'))
   }
 }
 

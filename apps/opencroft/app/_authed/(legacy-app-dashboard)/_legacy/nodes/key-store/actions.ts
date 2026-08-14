@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { exec } from '@opencroft/terminal/server'
+import { derivePublicKey, exec, generateSshKey, inspectSshKey, type SshKeyType } from '@opencroft/terminal/server'
 import { createServerFn } from '@tanstack/react-start'
 
 import { cacheDir } from '@/server/cache'
@@ -20,18 +20,6 @@ const isWindows = os.platform() === 'win32'
 
 function storeDir(storeId: string): string {
   return cacheDir('ssh-keys', storeId)
-}
-
-function run(cmd: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, { windowsHide: true }, (err, stdout, stderr) => {
-      if (err) {
-        reject(new Error(stderr || err.message))
-        return
-      }
-      resolve(stdout)
-    })
-  })
 }
 
 async function isPrivateKey(filePath: string): Promise<boolean> {
@@ -95,11 +83,10 @@ export const listKeys = createServerFn({ method: 'POST' })
       let type = 'unknown'
       let fingerprint = ''
       try {
-        const info = await run('ssh-keygen', ['-l', '-f', filePath])
-        const match = info.match(/^\d+\s+(\S+)\s+.*\((\w+)\)/)
-        if (match) {
-          fingerprint = match[1]
-          type = match[2]
+        const info = inspectSshKey(await fs.readFile(filePath, 'utf-8').catch(() => ''))
+        if (info) {
+          fingerprint = info.fingerprint
+          type = info.type
         }
       } catch {
         // not parseable
@@ -125,7 +112,11 @@ export const createKey = createServerFn({ method: 'POST' })
     const { storeId, name, keyType } = data
     const dir = storeDir(storeId)
     await fs.mkdir(dir, { recursive: true })
-    await run('ssh-keygen', ['-t', keyType, '-f', path.join(dir, name), '-N', '', '-q'])
+    const keyPath = path.join(dir, name)
+    const key = generateSshKey(keyType as SshKeyType, name)
+    await fs.writeFile(keyPath, key.privateKey, { mode: 0o600 })
+    await fs.writeFile(`${keyPath}.pub`, key.publicKey)
+    await fs.chmod(keyPath, 0o600)
   })
 
 export const importKey = createServerFn({ method: 'POST' })
@@ -157,7 +148,7 @@ export const readPublicKey = createServerFn({ method: 'POST' })
     try {
       return await fs.readFile(`${keyPath}.pub`, 'utf-8')
     } catch {
-      return await run('ssh-keygen', ['-y', '-f', keyPath])
+      return derivePublicKey(await fs.readFile(keyPath, 'utf-8'))
     }
   })
 

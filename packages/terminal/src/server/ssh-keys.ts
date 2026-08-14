@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { exec } from './shell'
+import { derivePublicKey, generateSshKey, inspectSshKey, type SshKeyType } from './ssh-key-format'
 
 export interface SshKey {
   name: string
@@ -34,18 +35,6 @@ export function setPermissions(filePath: string): Promise<void> {
 }
 
 // --- Helpers ---
-
-function run(cmd: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, { windowsHide: true }, (err, stdout, stderr) => {
-      if (err) {
-        reject(new Error(stderr || err.message))
-        return
-      }
-      resolve(stdout)
-    })
-  })
-}
 
 async function isPrivateKey(filePath: string): Promise<boolean> {
   const content = await fs.readFile(filePath, 'utf-8')
@@ -78,14 +67,21 @@ export const sshKeys = {
     try {
       return await fs.readFile(`${keyPath}.pub`, 'utf-8')
     } catch {
-      return await run('ssh-keygen', ['-y', '-f', keyPath])
+      // Derived from the private key rather than shelled out to
+      // `ssh-keygen -y`, so a host without openssh-client can still answer.
+      return derivePublicKey(await fs.readFile(keyPath, 'utf-8'))
     }
   },
 
   async create(name: string, keyType: string): Promise<void> {
     await fs.mkdir(keysDir, { recursive: true })
     const keyPath = path.join(keysDir, name)
-    await run('ssh-keygen', ['-t', keyType, '-f', keyPath, '-N', '', '-q'])
+    const key = generateSshKey(keyType as SshKeyType, name)
+    await fs.writeFile(keyPath, key.privateKey, { mode: 0o600 })
+    await fs.writeFile(`${keyPath}.pub`, key.publicKey)
+    // Explicit, because writeFile's mode is only applied when it creates the
+    // file -- overwriting an existing key would keep the old permissions.
+    await setPermissions(keyPath)
   },
 
   async import(name: string, content: string): Promise<void> {
@@ -140,15 +136,12 @@ export const sshKeys = {
 
         let type = 'unknown'
         let fingerprint = ''
-        try {
-          const info = await run('ssh-keygen', ['-l', '-f', filePath])
-          const match = info.match(/^\d+\s+(\S+)\s+.*\((\w+)\)/)
-          if (match) {
-            fingerprint = match[1]
-            type = match[2]
-          }
-        } catch {
-          // key may not be parseable
+        // Best effort by design: one unreadable key costs its own metadata,
+        // not the listing.
+        const info = inspectSshKey(await fs.readFile(filePath, 'utf-8').catch(() => ''))
+        if (info) {
+          fingerprint = info.fingerprint
+          type = info.type
         }
 
         let hasPublicKey = false
