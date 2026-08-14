@@ -409,6 +409,46 @@ const DEFAULT_TURNS = 10
 // each turn's text truncated.
 const MAX_TURNS = 50
 
+// The turn-paging core shared by every surface that lists a session's turns:
+// the send-message node's listTurns action below, and the group-chat
+// group_chat_turns tool (model.ts) — same window, same summaries, same paging,
+// so a turn reads identically wherever it is inspected from. Callers own their
+// authorization (graph reachability there, thread membership here); this
+// function only answers for a session key it is already allowed to see.
+export function turnsPageForSessionKey(
+  sessionKey: string,
+  params: { turns?: number; beforeIndex?: number },
+): TurnsPage {
+  const turns = params.turns && params.turns > 0 ? Math.min(Math.floor(params.turns), MAX_TURNS) : DEFAULT_TURNS
+  const sessionStatus = deriveSessionStatus(sessionKey, {
+    pending: new Set(agentClient.pendingPermissionSessionKeys()),
+    active: new Set(agentClient.activeSessionKeys()),
+    alive: new Set(agentClient.aliveSessionKeys()),
+  })
+  const meta = agentClient.listSessions().find((m) => m.sessionKey === sessionKey)
+  if (!meta) {
+    // No live process for this session (dead, or never started) — nothing
+    // in memory to page through.
+    return { turns: [], hasMore: false, nextBeforeIndex: null, sessionStatus }
+  }
+  const window = agentClient.getEventsWindow(meta.id, { turns, beforeIndex: params.beforeIndex })
+  if (!window) {
+    return { turns: [], hasMore: false, nextBeforeIndex: null, sessionStatus }
+  }
+  // Only the tail window (no beforeIndex) can end on the session's current,
+  // still-running turn — any older page is by definition already over.
+  const tailInProgress = params.beforeIndex === undefined && agentClient.hasActiveTurn(meta.id)
+  const groups = splitIntoTurns(window.events, window.startIndex)
+  return {
+    turns: groups.map((group, i) =>
+      buildTurnSummary(group.index, group.events, tailInProgress && i === groups.length - 1),
+    ),
+    hasMore: window.hasMore,
+    nextBeforeIndex: window.hasMore ? window.startIndex : null,
+    sessionStatus,
+  }
+}
+
 export function truncateText(text: string, max = TURN_TEXT_MAX_CHARS): { text: string; length: number } {
   const length = text.length
   return length <= max ? { text, length } : { text: `${text.slice(0, max)}… [truncated]`, length }
@@ -651,35 +691,7 @@ const sendMessageApi: HostSendMessageApi = {
     if (!parts || !reachablePairs(found.nodes, found.edges).has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
       throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
     }
-    const turns = params.turns && params.turns > 0 ? Math.min(Math.floor(params.turns), MAX_TURNS) : DEFAULT_TURNS
-    const sessionStatus = deriveSessionStatus(sessionKey, {
-      pending: new Set(agentClient.pendingPermissionSessionKeys()),
-      active: new Set(agentClient.activeSessionKeys()),
-      alive: new Set(agentClient.aliveSessionKeys()),
-    })
-
-    const meta = agentClient.listSessions().find((m) => m.sessionKey === sessionKey)
-    if (!meta) {
-      // No live process for this session (dead, or never started) — nothing
-      // in memory to page through.
-      return { turns: [], hasMore: false, nextBeforeIndex: null, sessionStatus }
-    }
-    const window = agentClient.getEventsWindow(meta.id, { turns, beforeIndex: params.beforeIndex })
-    if (!window) {
-      return { turns: [], hasMore: false, nextBeforeIndex: null, sessionStatus }
-    }
-    // Only the tail window (no beforeIndex) can end on the session's current,
-    // still-running turn — any older page is by definition already over.
-    const tailInProgress = params.beforeIndex === undefined && agentClient.hasActiveTurn(meta.id)
-    const groups = splitIntoTurns(window.events, window.startIndex)
-    return {
-      turns: groups.map((group, i) =>
-        buildTurnSummary(group.index, group.events, tailInProgress && i === groups.length - 1),
-      ),
-      hasMore: window.hasMore,
-      nextBeforeIndex: window.hasMore ? window.startIndex : null,
-      sessionStatus,
-    }
+    return turnsPageForSessionKey(sessionKey, { turns: params.turns, beforeIndex: params.beforeIndex })
   },
 
   async compact(nodeId, params) {

@@ -1682,6 +1682,54 @@ test("a thread's contextUsage mirrors its session's own usage, the same source t
     { usedTokens: 12_345, contextLimit: 200_000 },
     "the exact figure the thread's own session reported, via the same mechanism ordinary sessions use",
   )
+  assert.equal(after?.queuedMessages, 0, 'an idle thread holds no server-side prompts — 0 is a fact, not unknown')
+})
+
+test("a thread's recent turns are readable by a member agent, via the same core the send-message listTurns uses", async () => {
+  const owner = await makeUser('thread-turns-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'watched for turns', 'stay observable')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message for turns')
+  await waitForPrompts(prompts, 1)
+
+  const ref = started.thread.sessionKey.slice('group-chat:'.length)
+  const page = await model.listThreadTurnsAsAgent('Agent Session', ref)
+  assert.ok(page.turns.length >= 1, 'the opening delivery is a visible turn')
+  const first = page.turns[0]
+  assert.ok(
+    first.prompt.includes('opening message for turns'),
+    `the turn summary carries the delivered prompt (got: ${first.prompt.slice(0, 120)})`,
+  )
+  assert.ok(
+    ['finished', 'in-progress', 'interrupted', 'unknown'].includes(first.status),
+    'status is one of the listTurns statuses',
+  )
+  assert.equal(typeof page.hasMore, 'boolean')
+})
+
+test('thread turns are refused for a non-member agent and for a fabricated ref, indistinguishably', async () => {
+  const owner = await makeUser('thread-turns-refusal@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'private turns', 'keep out')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'members only')
+  await waitForPrompts(prompts, 1)
+  const ref = started.thread.sessionKey.slice('group-chat:'.length)
+
+  await assert.rejects(
+    () => model.listThreadTurnsAsAgent('Outsider Agent', ref),
+    /./,
+    'a non-member (or unknown) agent is refused',
+  )
+  await assert.rejects(
+    () => model.listThreadTurnsAsAgent('Agent Session', 'bogus:fake:thread'),
+    /not.found|not available/i,
+    'a fabricated ref is refused the same way',
+  )
 })
 
 test('an unrecognised agent name is refused, not answered with an empty list', async () => {

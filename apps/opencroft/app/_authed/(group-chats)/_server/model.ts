@@ -23,6 +23,7 @@ import {
 } from '@/app/_authed/(agent)/_server/acp-impl'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
+import { type TurnsPage, turnsPageForSessionKey } from '@/app/_authed/(extension-runtime)/_server/host'
 import { type ContextUsage, toContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import type { CompactAck, CompactStatus, ThreadDeliveryOutcome } from '@/app/_authed/(extension-runtime)/_server/stream'
 import {
@@ -1276,6 +1277,12 @@ export interface AgentThreadRef {
    * never zero-for-unknown.
    */
   contextUsage: ContextUsage | null
+  /**
+   * Server-held prompts waiting behind this thread's current turn — the same
+   * live queue the 'queue' event publishes, via `listSessions`. 0 is a fact
+   * (an unloaded session holds nothing), unlike `contextUsage`'s null.
+   */
+  queuedMessages: number
 }
 
 export interface AgentGroupChatRef {
@@ -1407,7 +1414,7 @@ export async function listGroupChatsForAgentView(agentName: string): Promise<Age
   // Same lookup host.ts's ordinary-session listSessions does: agent-client
   // only holds live (loaded-since-restart) sessions in memory, so a thread
   // whose session isn't in this map reports UNKNOWN, not zero.
-  const usageBySessionKey = new Map(agentClient.listSessions().map((meta) => [meta.sessionKey, meta.usage] as const))
+  const metaBySessionKey = new Map(agentClient.listSessions().map((meta) => [meta.sessionKey, meta] as const))
   return chats.map((chat) => ({
     ref: chat.id,
     name: chat.name,
@@ -1419,7 +1426,8 @@ export async function listGroupChatsForAgentView(agentName: string): Promise<Age
         title: t.title,
         agentNodeId: t.agentNodeId,
         createdAt: t.createdAt,
-        contextUsage: toContextUsage(usageBySessionKey.get(t.sessionKey)),
+        contextUsage: toContextUsage(metaBySessionKey.get(t.sessionKey)?.usage),
+        queuedMessages: metaBySessionKey.get(t.sessionKey)?.queuedMessages ?? 0,
       })),
   }))
 }
@@ -1480,6 +1488,26 @@ export async function threadCompactStatusAsAgent(agentName: string, threadRef: s
   const agentNodeId = await requireAgentNode(agentName)
   const row = await resolveThreadForAgent(agentNodeId, threadRef)
   return getCompactStatusOnGraph(row.sessionKey)
+}
+
+/**
+ * A thread's recent turns, as an agent — the tool-surface counterpart to the
+ * send-message node's `listTurns` action, built on the same shared core
+ * (`turnsPageForSessionKey`), so a turn reads identically wherever it is
+ * inspected from: same summaries, same truncation, same paging, same
+ * in-progress marking. Gate matches `threadCompactStatusAsAgent`: the CALLER's
+ * membership (via `resolveThreadForAgent`) and nothing else — reading turn
+ * summaries of a thread the caller was put into is the same class of read as
+ * the thread's transcript on screen.
+ */
+export async function listThreadTurnsAsAgent(
+  agentName: string,
+  threadRef: string,
+  params?: { turns?: number; beforeIndex?: number },
+): Promise<TurnsPage> {
+  const agentNodeId = await requireAgentNode(agentName)
+  const row = await resolveThreadForAgent(agentNodeId, threadRef)
+  return turnsPageForSessionKey(row.sessionKey, { turns: params?.turns, beforeIndex: params?.beforeIndex })
 }
 
 /**

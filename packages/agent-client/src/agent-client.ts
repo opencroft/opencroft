@@ -1147,7 +1147,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // session state stays the single source of truth for it.
     listSessions(): SessionMeta[] {
       return [...store.sessions.values()]
-        .map((session) => ({ ...session.meta, usage: session.usage }))
+        .map((session) => ({ ...session.meta, usage: session.usage, queuedMessages: session.queue.length }))
         .sort((a, b) => a.createdAt - b.createdAt)
     },
 

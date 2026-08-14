@@ -66,6 +66,7 @@ import {
 import {
   compactThreadAsAgent,
   listGroupChatsForAgentView,
+  listThreadTurnsAsAgent,
   sendMessageInThreadAsAgent,
   threadCompactStatusAsAgent,
 } from '@/app/_authed/(group-chats)/_server/model'
@@ -317,6 +318,34 @@ export const toolDefinitions = [
         thread: {
           type: 'string',
           description: 'A thread reference from group_chat_list. Opaque — pass it back unchanged.',
+        },
+      },
+      required: ['thread'],
+    },
+  },
+  {
+    name: 'group_chat_turns',
+    description:
+      "List a thread's recent turns, newest last — the same summaries the send-message node's " +
+      'listTurns action returns: each turn carries a truncated opening prompt, its status ' +
+      '(finished / in-progress / interrupted / unknown), and the truncated final message when one ' +
+      'exists. Use it to see what a thread agent is doing and whether turns run long or end ' +
+      'interrupted, without pulling the transcript into your context. Pages backwards via ' +
+      '`beforeIndex` from the previous result.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        thread: {
+          type: 'string',
+          description: 'A thread reference from group_chat_list. Opaque — pass it back unchanged.',
+        },
+        turns: {
+          type: 'number',
+          description: 'How many turns to return (default 10, max 50).',
+        },
+        beforeIndex: {
+          type: 'number',
+          description: "Page older history: pass the previous result's nextBeforeIndex.",
         },
       },
       required: ['thread'],
@@ -2259,6 +2288,21 @@ function buildHandlers(): Record<string, ToolHandler> {
       }
       const status = await threadCompactStatusAsAgent(agent, thread)
       return textResult(JSON.stringify(status, null, 2))
+    },
+
+    // Same gate and reasoning as group_chat_compact_status: a read on a thread
+    // somebody already put this agent into; the membership gate is the control.
+    group_chat_turns: async (args, caller) => {
+      const agent = requireCallingAgent(caller)
+      const thread = args.thread as string | undefined
+      if (!thread) {
+        fail(-32602, 'Missing required param: thread')
+      }
+      const page = await listThreadTurnsAsAgent(agent, thread, {
+        turns: typeof args.turns === 'number' ? args.turns : undefined,
+        beforeIndex: typeof args.beforeIndex === 'number' ? args.beforeIndex : undefined,
+      })
+      return textResult(JSON.stringify(page, null, 2))
     },
 
     // ── list_spaces ─────────────────────────────────────────────────

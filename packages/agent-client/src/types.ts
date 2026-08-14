@@ -78,6 +78,11 @@ export interface SessionMeta {
   // or a session that has not completed a turn since it was loaded, both look
   // like this. A caller deciding whether to compact must not read it as zero.
   usage?: { used: number; size?: number }
+  // Server-held prompts waiting for the current turn to end, composed at read
+  // time from the live queue (same snapshot the 'queue' event publishes). A
+  // number, not undefined: an idle session's queue is genuinely empty, so 0 is
+  // a fact here — unlike `usage`, there is no unknown state to keep distinct.
+  queuedMessages?: number
 }
 
 export interface PlanItem {
