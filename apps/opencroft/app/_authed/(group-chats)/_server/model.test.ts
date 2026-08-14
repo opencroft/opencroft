@@ -16,6 +16,7 @@ import test, { after } from 'node:test'
 // database connection (agent-client is host-agnostic, `slug` is dependency-free
 // and drizzle-orm's `eq` is a pure query builder), so hoisting them cannot make
 // `@opencroft/db` connect before PGLITE_PATH is in place.
+import { handleUpdate } from 'agent-client/agent-client'
 import type { AgentConnection } from 'agent-client/connection'
 import { buildSpawnConfig } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
@@ -1639,11 +1640,47 @@ test('an agent sees the chats it is a member of, with their threads, and no othe
   assert.equal(mine.topic, 'the purpose')
   assert.equal(mine.threads.length, 1)
   assert.equal(mine.threads[0]?.ref, thread.id, 'the thread reference is what a send takes back')
+  assert.equal(
+    mine.threads[0]?.contextUsage,
+    null,
+    'a thread whose session has never been loaded reports unknown usage, not zero',
+  )
 
   assert.equal(
     chats.find((c) => c.ref === notInChat.id),
     undefined,
     'a chat this agent is not a member of must not appear',
+  )
+})
+
+test("a thread's contextUsage mirrors its session's own usage, the same source the ring renders", async () => {
+  const owner = await makeUser('context-usage-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'watched for size', 'stay small')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message')
+  await waitForPrompts(prompts, 1)
+
+  const expectedRef = started.thread.sessionKey.slice('group-chat:'.length)
+  const before = (await model.listGroupChatsForAgentView('Agent Session'))
+    .find((c) => c.ref === chat.id)
+    ?.threads.find((t) => t.ref === expectedRef)
+  assert.equal(before?.contextUsage, null, 'no usage_update has landed yet')
+
+  handleUpdate({
+    sessionId: started.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 12_345, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+
+  const after = (await model.listGroupChatsForAgentView('Agent Session'))
+    .find((c) => c.ref === chat.id)
+    ?.threads.find((t) => t.ref === expectedRef)
+  assert.deepEqual(
+    after?.contextUsage,
+    { usedTokens: 12_345, contextLimit: 200_000 },
+    "the exact figure the thread's own session reported, via the same mechanism ordinary sessions use",
   )
 })
 

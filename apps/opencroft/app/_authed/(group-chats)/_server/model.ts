@@ -21,7 +21,9 @@ import {
   promptLocalImpl,
   stopLocalSessionProcessImpl,
 } from '@/app/_authed/(agent)/_server/acp-impl'
+import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
+import { type ContextUsage, toContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import type { CompactAck, CompactStatus, ThreadDeliveryOutcome } from '@/app/_authed/(extension-runtime)/_server/stream'
 import {
   getCompactStatusOnGraph,
@@ -1265,6 +1267,15 @@ export interface AgentThreadRef {
   /** The agent this thread talks to — which may be the caller itself. */
   agentNodeId: string
   createdAt: Date
+  /**
+   * How much context this thread's session is holding — the exact same
+   * `listSessions` mechanism ordinary sessions use (agent-client's last
+   * `usage` reading, seeded from the persisted per-session usage on cold
+   * start), looked up by this thread's own session key. Null when genuinely
+   * unknown (never loaded since a restart, or no turn has finished yet) —
+   * never zero-for-unknown.
+   */
+  contextUsage: ContextUsage | null
 }
 
 export interface AgentGroupChatRef {
@@ -1393,6 +1404,10 @@ export async function listGroupChatsForAgentView(agentName: string): Promise<Age
         chats.map((c) => c.id),
       ),
     )
+  // Same lookup host.ts's ordinary-session listSessions does: agent-client
+  // only holds live (loaded-since-restart) sessions in memory, so a thread
+  // whose session isn't in this map reports UNKNOWN, not zero.
+  const usageBySessionKey = new Map(agentClient.listSessions().map((meta) => [meta.sessionKey, meta.usage] as const))
   return chats.map((chat) => ({
     ref: chat.id,
     name: chat.name,
@@ -1404,6 +1419,7 @@ export async function listGroupChatsForAgentView(agentName: string): Promise<Age
         title: t.title,
         agentNodeId: t.agentNodeId,
         createdAt: t.createdAt,
+        contextUsage: toContextUsage(usageBySessionKey.get(t.sessionKey)),
       })),
   }))
 }

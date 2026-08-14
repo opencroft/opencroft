@@ -175,7 +175,13 @@ export const toolDefinitions = [
     description:
       'List the group chats you are a member of, with their topic and their threads. ' +
       'Use the `ref` values from this result to address a thread in group_chat_send — ' +
-      'they are opaque handles, not a format to construct.',
+      'they are opaque handles, not a format to construct. Each thread also carries `contextUsage`: ' +
+      "`{ usedTokens, contextLimit }` as last reported by that thread session's own harness, the same " +
+      'figure its context ring renders — never estimated here. Null when UNKNOWN (the session has not ' +
+      'been loaded since a restart, or has not finished a turn yet), and null must not be read as ' +
+      '"nothing held"; `contextLimit` alone is null when the harness cannot say what the model\'s ' +
+      'window is. Use it to spot a thread that should be compacted (group_chat_compact) before ' +
+      'dispatching into it.',
     inputSchema: { type: 'object' as const, properties: {} },
   },
   {
