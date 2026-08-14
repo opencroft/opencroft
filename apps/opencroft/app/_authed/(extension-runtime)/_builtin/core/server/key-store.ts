@@ -80,7 +80,10 @@ export async function keyStoreListKeys(storeId: string): Promise<KeyEntry[]> {
       await host.fs.access(`${filePath}.pub`)
       hasPublicKey = true
     } catch {
-      /* no pub */
+      // No .pub file on disk (e.g. an imported key) — still readable if the
+      // private key itself parses, since keyStoreReadPublicKey falls back to
+      // deriving it from the private key content.
+      hasPublicKey = info !== null
     }
     const inWsl = isWindows ? await isKeyInWsl(name) : false
     keys.push({ name, type, fingerprint, hasPublicKey, inWsl })

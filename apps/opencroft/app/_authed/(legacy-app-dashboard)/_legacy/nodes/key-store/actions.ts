@@ -82,8 +82,9 @@ export const listKeys = createServerFn({ method: 'POST' })
 
       let type = 'unknown'
       let fingerprint = ''
+      let info: ReturnType<typeof inspectSshKey> = null
       try {
-        const info = inspectSshKey(await fs.readFile(filePath, 'utf-8').catch(() => ''))
+        info = inspectSshKey(await fs.readFile(filePath, 'utf-8').catch(() => ''))
         if (info) {
           fingerprint = info.fingerprint
           type = info.type
@@ -97,7 +98,10 @@ export const listKeys = createServerFn({ method: 'POST' })
         await fs.access(`${filePath}.pub`)
         hasPublicKey = true
       } catch {
-        // no pub
+        // No .pub file on disk (e.g. an imported key) — still readable if the
+        // private key itself parses, since readPublicKey falls back to
+        // deriving it from the private key content.
+        hasPublicKey = info !== null
       }
 
       const inWsl = isWindows ? await isKeyInWsl(name) : false
