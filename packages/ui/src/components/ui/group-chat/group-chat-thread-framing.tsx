@@ -135,7 +135,23 @@ export function GroupChatThreadFraming({
           vertical from its aria-orientation, so horizontal is simply the
           default. */}
       <ResizablePanelGroup className='min-h-0 flex-1'>
-      <ResizablePanel defaultSize={100 - initialArtifactSize} minSize={0} className='flex min-w-0 flex-col'>
+      {/* `id` on both panels, because the artifact panel comes and goes: without
+          stable identities the group cannot tell an added panel from a
+          rearranged one, and re-lays-out from scratch each time.
+
+          The size is conditional on something actually being open. It was not,
+          and on a phone -- where the note opens at full width -- that made the
+          conversation 0% high whether or not a note existed, so the thread
+          rendered as nothing at all. A default is only a default when there is
+          something to divide with. */}
+      <ResizablePanel
+        id='conversation'
+        defaultSize={openArtifact ? 100 - initialArtifactSize : 100}
+        collapsible
+        collapsedSize={0}
+        minSize={20}
+        className='flex min-w-0 flex-col'
+      >
       {/* Forces Radix's own internal viewport wrapper (a div ScrollArea
           inserts, not one in this file's own JSX) into a flex column filling
           the full available height -- without it `Flex expanded justify='end'`
@@ -184,8 +200,9 @@ export function GroupChatThreadFraming({
                 route to something otherwise unreachable. */}
             <ResizableHandle withHandle />
             <ResizablePanel
+              id='artifact'
               defaultSize={initialArtifactSize}
-              minSize={15}
+              minSize={20}
               className='flex min-w-0 flex-col border-l border-border'
             >
               <ArtifactPanel artifact={openArtifact} onClose={onCloseArtifact} />
