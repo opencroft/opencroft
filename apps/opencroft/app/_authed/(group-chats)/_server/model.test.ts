@@ -1803,6 +1803,134 @@ test('a removed agent cannot be reached by an agent sender either', async () => 
 })
 
 // ---------------------------------------------------------------------------
+// compactThreadAsAgent / threadCompactStatusAsAgent — the tool-surface
+// counterparts to compactThread/threadCompactStatus, gated on the calling
+// agent's own membership (via resolveThreadForAgent) instead of a signed-in
+// user's. Success-path behaviour (accept, run '/compact', restore standing
+// context) is exercised in depth by compactThread's own tests above; these
+// pin the gate and the status readback specifically.
+
+test('compactThreadAsAgent compacts the addressed thread and re-delivers standing context, same as compactThread', async () => {
+  const owner = await makeUser('agent-compact-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'agent compact', 'the standing topic')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-solo' })
+
+  const prompts: string[] = []
+  const connection = {
+    newSession: async () => ({ sessionId: `agent-compact-${crypto.randomUUID()}` }),
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      prompts.push(params.prompt.map((block) => block.text ?? '').join(''))
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+
+  const workspaceSlug = slug('Agent Session')
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store)
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  // A different member ('Agent Solo') triggers the compaction than the
+  // thread's own agent — the delegation case, same as group_chat_send's.
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message')
+  await waitForPrompts(prompts, 1)
+
+  const ack = await model.compactThreadAsAgent('Agent Solo', started.thread.id)
+  assert.equal(ack.accepted, true)
+
+  await waitForPrompts(prompts, 3) // opening, then '/compact', then the restore
+  assert.equal(prompts[1], '/compact')
+  assert.match(prompts[2] ?? '', /the standing topic/, 'the restore re-delivers the thread standing context')
+
+  const status = await model.threadCompactStatusAsAgent('Agent Solo', started.thread.id)
+  assert.equal(status.state, 'done')
+  assert.equal(status.result?.instructionsRestored, true)
+})
+
+test('compactThreadAsAgent is refused for a non-member the same way sendMessageInThreadAsAgent is', async () => {
+  const owner = await makeUser('agent-compact-gate-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'agent compact gate')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: `group-chat:${chat.id}:agent-a:agent-compact-gate-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  // 'Agent Solo' is a real agent, and not a member of this chat.
+  const outsider = await captureRefusal(() => model.compactThreadAsAgent('Agent Solo', thread.id))
+  const fabricated = await captureRefusal(() => model.compactThreadAsAgent('Agent Solo', crypto.randomUUID()))
+
+  assert.equal(outsider.code, 'not-found')
+  assert.equal(fabricated.code, outsider.code)
+  assert.equal(fabricated.message, outsider.message)
+})
+
+test("compactThreadAsAgent is refused once the thread's agent is no longer a member", async () => {
+  const owner = await makeUser('agent-compact-removed-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'agent compact removed')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-solo' })
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: `group-chat:${chat.id}:agent-a:agent-compact-removed-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  await model.removeMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+
+  // The caller ('Agent Solo') is still a member; the thread's own agent is not.
+  const refusal = await captureRefusal(() => model.compactThreadAsAgent('Agent Solo', thread.id))
+  assert.equal(refusal.code, 'agent-not-a-member')
+})
+
+test('threadCompactStatusAsAgent is refused for a non-member the same way compactThreadAsAgent is', async () => {
+  const owner = await makeUser('agent-compact-status-gate-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'agent compact status gate')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: `group-chat:${chat.id}:agent-a:agent-compact-status-gate-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  const refusal = await captureRefusal(() => model.threadCompactStatusAsAgent('Agent Solo', thread.id))
+  assert.equal(refusal.code, 'not-found')
+})
+
+// ---------------------------------------------------------------------------
 // deliverThreadFromNode — the entry point a send-message node's `thread`
 // envelope goes through, pinned directly here
 // rather than only through stream.ts's own integration test: this is its

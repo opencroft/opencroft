@@ -1431,6 +1431,42 @@ export async function sendMessageInThreadAsAgent(agentName: string, threadRef: s
 }
 
 /**
+ * Compact a thread's session as an agent — the tool-surface counterpart to
+ * `compactThread`. Same target, same effect (compact, then re-deliver the
+ * thread's CURRENT standing context on success — see `compactThread`'s own
+ * header for why that matters), different gate: membership is the calling
+ * agent's own, resolved through `resolveThreadForAgent` exactly like
+ * `sendMessageInThreadAsAgent`, rather than a signed-in user's.
+ *
+ * The thread's OWN agent must also still be a member — `resolveThreadForAgent`
+ * only checks the CALLER, so this repeats the check `compactThread` makes
+ * inline rather than through `deliverIntoThread`, since compaction never goes
+ * through that shared delivery path (it talks to `requestCompactOnGraph`
+ * directly, same as `compactThread` does).
+ */
+export async function compactThreadAsAgent(agentName: string, threadRef: string): Promise<CompactAck> {
+  const agentNodeId = await requireAgentNode(agentName)
+  const row = await resolveThreadForAgent(agentNodeId, threadRef)
+  if (!(await isAgentMember(row.groupChatId, row.agentNodeId))) {
+    throw new GroupChatAccessError('agent-not-a-member', 'That agent is no longer a member of this group chat')
+  }
+  return requestCompactOnGraph([], [], row.sessionKey)
+}
+
+/**
+ * The compact job's status for a thread, as an agent — same resolution as
+ * `compactThreadAsAgent`, but no agent-still-a-member check: reading a
+ * finished or in-flight job's status is harmless even for a thread whose
+ * agent has since left, matching `threadCompactStatus`'s own precedent (it
+ * checks the requester's membership and nothing else either).
+ */
+export async function threadCompactStatusAsAgent(agentName: string, threadRef: string): Promise<CompactStatus> {
+  const agentNodeId = await requireAgentNode(agentName)
+  const row = await resolveThreadForAgent(agentNodeId, threadRef)
+  return getCompactStatusOnGraph(row.sessionKey)
+}
+
+/**
  * Send into a thread from a send-message node's graph-driven envelope — the
  * third caller of the shared delivery path, distinct from both the ones
  * above. Neither a user session nor a calling agent's own membership is the

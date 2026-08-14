@@ -63,7 +63,12 @@ import {
   listArtifactsAsAgent,
   writeArtifactAsAgent,
 } from '@/app/_authed/(group-chats)/_server/artifacts'
-import { listGroupChatsForAgentView, sendMessageInThreadAsAgent } from '@/app/_authed/(group-chats)/_server/model'
+import {
+  compactThreadAsAgent,
+  listGroupChatsForAgentView,
+  sendMessageInThreadAsAgent,
+  threadCompactStatusAsAgent,
+} from '@/app/_authed/(group-chats)/_server/model'
 import { recordAudit } from '@/app/_authed/(mcp)/_server/audit'
 import { executeExtensionTool, getExtensionToolDefinitions } from '@/app/_authed/(mcp)/_server/extension-tools'
 import { skillToolDefinitions, skillToolHandlers } from '@/app/_authed/(mcp)/_server/skill-tools'
@@ -273,6 +278,42 @@ export const toolDefinitions = [
         message: { type: 'string', description: 'The message to send into the thread.' },
       },
       required: ['thread', 'message'],
+    },
+  },
+  {
+    name: 'group_chat_compact',
+    description:
+      "Compact a thread's session: shrinks its context window and, on success, re-delivers the " +
+      "thread's CURRENT standing context (topic + pins). Use this at a task boundary before the next " +
+      'dispatch — do not send a bare "/compact" message instead, since that skips the standing-context ' +
+      're-delivery. Returns immediately once the job is accepted; call group_chat_compact_status to see ' +
+      'when it actually finishes.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        thread: {
+          type: 'string',
+          description: 'A thread reference from group_chat_list. Opaque — pass it back unchanged.',
+        },
+      },
+      required: ['thread'],
+    },
+  },
+  {
+    name: 'group_chat_compact_status',
+    description:
+      "Check a thread's compaction job status (never-requested / pending / running / done / error), " +
+      'including the before/after token counts once done. Poll this after group_chat_compact before ' +
+      'dispatching the next task into the thread.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        thread: {
+          type: 'string',
+          description: 'A thread reference from group_chat_list. Opaque — pass it back unchanged.',
+        },
+      },
+      required: ['thread'],
     },
   },
 
@@ -2187,6 +2228,31 @@ function buildHandlers(): Record<string, ToolHandler> {
       }
       await sendMessageInThreadAsAgent(agent, thread, message)
       return textResult('Message sent into the thread. The reply lands in the thread, not here.')
+    },
+
+    // ── group_chat_compact / group_chat_compact_status ──────────────
+    //
+    // No approval wrapper, same reasoning as group_chat_send: this acts on a
+    // thread somebody already put this agent into, and the membership gate
+    // (compactThreadAsAgent's own) is the control.
+    group_chat_compact: async (args, caller) => {
+      const agent = requireCallingAgent(caller)
+      const thread = args.thread as string | undefined
+      if (!thread) {
+        fail(-32602, 'Missing required param: thread')
+      }
+      const ack = await compactThreadAsAgent(agent, thread)
+      return textResult(JSON.stringify(ack, null, 2))
+    },
+
+    group_chat_compact_status: async (args, caller) => {
+      const agent = requireCallingAgent(caller)
+      const thread = args.thread as string | undefined
+      if (!thread) {
+        fail(-32602, 'Missing required param: thread')
+      }
+      const status = await threadCompactStatusAsAgent(agent, thread)
+      return textResult(JSON.stringify(status, null, 2))
     },
 
     // ── list_spaces ─────────────────────────────────────────────────
