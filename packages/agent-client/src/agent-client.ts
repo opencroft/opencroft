@@ -156,8 +156,14 @@ interface SessionState {
   pendingMcpRefresh?: boolean
   // Last usage_update seen, mirrored here (like modes/configOptions/queue) so
   // a windowed subscribe/getEventsWindow can synthesize it without scanning
-  // history — see the SNAPSHOT_KINDS handling below.
+  // history — see the SNAPSHOT_KINDS handling below. This is the DISPLAYED
+  // value (see the monotonic-within-turn rule at the usage_update case below)
+  // — it can lag the harness's true current reading while a turn is active.
   usage?: { used: number; size?: number }
+  // The latest RAW usage_update reading for the active turn, even one the
+  // monotonic-within-turn rule held back from `usage` — settleTurn applies it
+  // in full at the turn boundary. See the usage_update case for why.
+  pendingUsage?: { used: number; size?: number }
 }
 
 interface ConnEntry {
@@ -479,9 +485,38 @@ export function handleUpdate(notification: SessionNotification): void {
       // size <= 0 means the agent couldn't determine the context window.
       const size = update.size > 0 ? update.size : undefined
       const session = store.sessions.get(sessionId)
-      if (session) {
-        session.usage = { used: update.used, size }
+      if (!session) {
+        break
       }
+      // Monotonic-within-turn display: an external ACP bridge resets its own
+      // running usage tally at the start of every turn and rebuilds it from
+      // streamed deltas, so a turn's early readings
+      // undercount and climb back up over the turn's lifetime — confirmed
+      // against @agentclientprotocol/claude-agent-acp's source: it nulls its
+      // tally on turn activation, and cache-token fields it sums into `used`
+      // aren't guaranteed populated until a later delta. Showing every
+      // reading as-is made the ring visibly collapse and refill each turn.
+      //
+      // While a turn is active, a reading lower than what's currently
+      // displayed is held rather than shown: the true reading is still kept
+      // as `pendingUsage` and applied in full at the turn boundary (see
+      // settleTurn), which is also where a genuine decrease (e.g. after
+      // compaction) takes effect.
+      //
+      // The protocol carries no field to tell a genuine compaction-driven
+      // decrease apart from an ordinary early-turn undercount — both are just
+      // a lower `used`. So a compaction that lands mid-turn (SDK
+      // auto-compaction inside one long tool-calling turn, as opposed to an
+      // explicit /compact command's own turn) is held with everything else
+      // and only takes effect once the turn ends. Accepted: this fails toward
+      // a stale-but-higher number, never an incorrect drop, and self-corrects
+      // at the boundary. Telling the two apart would need an upstream
+      // protocol marker, not a guess made in this shared layer.
+      session.pendingUsage = { used: update.used, size }
+      if (session.activeTurns > 0 && session.usage && update.used < session.usage.used) {
+        break
+      }
+      session.usage = { used: update.used, size }
       emit(sessionId, { kind: 'usage', used: update.used, size })
       break
     }
@@ -1079,6 +1114,20 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     session.activeTurns = Math.max(0, session.activeTurns - 1)
     if (session.activeTurns > 0) {
       return
+    }
+    // The turn boundary the usage_update case's monotonic rule promises
+    // decreases for: apply the turn's true final reading now, even if it's
+    // one that rule held back mid-turn. A no-op when the last applied
+    // reading already matches (the common case — most turns never see a
+    // held-back decrease at all).
+    if (
+      session.pendingUsage &&
+      (!session.usage ||
+        session.pendingUsage.used !== session.usage.used ||
+        session.pendingUsage.size !== session.usage.size)
+    ) {
+      session.usage = session.pendingUsage
+      emit(sessionId, { kind: 'usage', used: session.usage.used, size: session.usage.size })
     }
     if (outcome.stopReason !== undefined) {
       emit(sessionId, { kind: 'turn_end', stopReason: outcome.stopReason })

@@ -947,6 +947,119 @@ test('restoreUsage on an unknown session is a no-op', async () => {
   await h.client.deleteSession(h.sessionId)
 })
 
+// ── monotonic-within-turn usage display ──────────────────────────────────
+//
+// An external ACP bridge resets its own running usage tally at the start of
+// every turn and rebuilds it from streamed deltas, so a turn's early readings
+// undercount and climb back up — displaying every reading as-is made the ring
+// visibly collapse and refill each turn. A reading lower than what's
+// currently displayed must not lower it while the turn is active; the true
+// reading still applies at the turn boundary.
+
+test('a lower reading mid-turn is held; the ring keeps growing or holding, never drops', async () => {
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'hello')
+  for (const used of [50_000, 200, 800]) {
+    handleUpdate({
+      sessionId: h.sessionId,
+      update: { sessionUpdate: 'usage_update', used, size: 200_000 },
+    } as Parameters<typeof handleUpdate>[0])
+  }
+  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
+    used: 50_000,
+    size: 200_000,
+  })
+  assert.deepEqual(
+    h.events.filter((e) => e.kind === 'usage'),
+    [{ kind: 'usage', used: 50_000, size: 200_000 }],
+  )
+  h.endTurn()
+  await settle()
+})
+
+test('the held reading is not lost: it applies once the turn ends', async () => {
+  // A genuine decrease (e.g. after compaction) still reaches the display —
+  // just at the boundary rather than mid-turn.
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'hello')
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 50_000, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 12_000, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
+    used: 50_000,
+    size: 200_000,
+  })
+  h.endTurn()
+  await settle()
+  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
+    used: 12_000,
+    size: 200_000,
+  })
+  assert.deepEqual(
+    h.events.filter((e) => e.kind === 'usage'),
+    [
+      { kind: 'usage', used: 50_000, size: 200_000 },
+      { kind: 'usage', used: 12_000, size: 200_000 },
+    ],
+  )
+})
+
+test('a turn boundary with no held-back reading re-emits nothing', async () => {
+  // The common case: the last mid-turn reading already matches what settled
+  // at the boundary, so there is nothing new to tell a subscriber.
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'hello')
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 50_000, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  h.endTurn()
+  await settle()
+  assert.deepEqual(
+    h.events.filter((e) => e.kind === 'usage'),
+    [{ kind: 'usage', used: 50_000, size: 200_000 }],
+  )
+})
+
+test('the first reading of a turn always applies, however low, when nothing was displayed yet', async () => {
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'hello')
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 200, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
+    used: 200,
+    size: 200_000,
+  })
+  h.endTurn()
+  await settle()
+})
+
+test('a genuine decrease outside of an active turn still applies immediately', async () => {
+  // Native-harness sessions, and any reading that arrives with no turn in
+  // flight (e.g. replayed history), are unaffected by the monotonic rule.
+  const h = await setup('openclaw')
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 50_000, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 12_000, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
+    used: 12_000,
+    size: 200_000,
+  })
+  await h.client.deleteSession(h.sessionId)
+})
+
 // ── hasActiveTurn ────────────────────────────────────────────────────────
 //
 // Same underlying read as activeSessionKeys, by raw session id — the check a
