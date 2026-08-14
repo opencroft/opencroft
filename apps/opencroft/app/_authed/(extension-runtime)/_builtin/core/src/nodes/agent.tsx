@@ -1,5 +1,23 @@
 import { legacy } from '@opencroft/client'
-const { AgentAvatar, Button, Input, InputHandle, Label, NodeFrame, React, ScrollArea, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Textarea, icons, invoke } = legacy
+
+const {
+  AgentAvatar,
+  Button,
+  Input,
+  InputHandle,
+  Label,
+  NodeFrame,
+  React,
+  ScrollArea,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Textarea,
+  icons,
+  invoke,
+} = legacy
 
 import type { KeyValue } from './key-value-editor'
 import { useSecretKeys } from './secrets'
@@ -23,6 +41,9 @@ export interface AgentData {
   reasoningEffort?: string
   /** Sampling temperature for the Custom (native) harness. */
   temperature?: number
+  /** The model's context window in tokens. Unset means unknown, and unknown is
+   * reported as unknown -- nothing guesses one from the model name. */
+  contextWindow?: number
   /** When set, the harness runs inside this Docker container via `docker exec`,
    * with its workspace at /agents/<agent-slug>. Empty = run on the host. */
   containerName?: string
@@ -573,6 +594,26 @@ function NativeProfileFields({ data, updateData }: { data: AgentData; updateData
           }
           placeholder='Provider default'
         />
+      </div>
+      <div className='flex flex-col gap-1'>
+        <Label className='text-xs'>Context window</Label>
+        <Input
+          className='h-8 text-xs'
+          type='number'
+          min={0}
+          step={1000}
+          value={data.contextWindow ?? ''}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            updateData({ contextWindow: e.target.value === '' ? undefined : Number(e.target.value) })
+          }
+          placeholder='Unknown'
+        />
+        {/* "Unknown" rather than a number, because that is what empty MEANS
+            here: the chat shows tokens used and no percentage, instead of a
+            ratio against a figure nobody established. */}
+        <span className='text-[10px] text-muted-foreground'>
+          Tokens. Leave empty if you do not know it — the chat then shows usage without a percentage.
+        </span>
       </div>
     </div>
   )

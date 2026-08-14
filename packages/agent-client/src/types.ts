@@ -26,6 +26,18 @@ export interface AgentSelection {
   // Sampling temperature for the Custom (native) harness; undefined = provider
   // default. Ignored by ACP agents, which manage their own sampling.
   temperature?: number
+  // The model's context window in tokens, when it is CONFIGURED. There is no
+  // default and nothing derives one: a window is either known or it is not.
+  //
+  // This replaced a table that guessed from the model name, which could not be
+  // made correct -- one substring cannot separate a 200k model from a 1M one in
+  // the same family, and every entry rotted on the next provider release. A
+  // wrong-but-plausible window is worse than none: it understates capacity and
+  // can trigger a compaction the session did not need.
+  //
+  // Only the in-process harness reads this. An ACP agent reports its own window
+  // over the protocol and is believed; nothing here overrides it.
+  contextWindow?: number
   // External session key forwarded via ACP `_meta.sessionKey`. Bridges that
   // route by their own session key (e.g. OpenClaw's ACP bridge → Gateway) use
   // it to bind this session to a specific server-side session/agent; ACP agents

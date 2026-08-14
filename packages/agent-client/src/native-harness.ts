@@ -7,7 +7,6 @@ import { type LanguageModel, type ModelMessage, stepCountIs, streamText, type To
 import { z } from 'zod'
 
 import type { AgentConnection } from './connection'
-import { reportedContextWindow } from './context-window'
 import { errorMessage } from './errors'
 import { connectMcpToolset } from './mcp-client'
 import {
@@ -486,10 +485,11 @@ export function createNativeHarness(
           update: {
             sessionUpdate: 'usage_update',
             used,
-            // Not `contextWindow` directly: a guessed window this conversation
-            // has already outgrown is withheld rather than reported, so the
-            // pair can never say the session holds more than fits.
-            size: reportedContextWindow(selection.model, used),
+            // 0 means "not known", and that is the honest answer unless
+            // somebody configured one. The AI SDK does not report a window, so
+            // there is nothing else to say -- and every surface renders the
+            // unknown case as used-tokens-alone rather than inventing a ratio.
+            size: selection.contextWindow ?? 0,
           },
         })
       }

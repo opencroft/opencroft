@@ -57,6 +57,7 @@ interface AgentNodeData {
   systemPrompt?: string
   reasoningEffort?: string
   temperature?: number
+  contextWindow?: number
   containerName?: string
 }
 
@@ -211,6 +212,11 @@ async function openLocalSession(data: {
     systemPrompt: agent.systemPrompt,
     reasoningEffort: agent.reasoningEffort,
     temperature: agent.temperature,
+    // Only when somebody configured one. Nothing derives a window from the
+    // model name any more -- a plausible-but-wrong number reads as fact on
+    // every surface, and understating capacity can trigger a compaction the
+    // session did not need.
+    contextWindow: agent.contextWindow,
     // The chat tab key is already a stable session key
     // (agent:<agent-slug>:<job>:<unique>); forward it so an ACP bridge can bind
     // this session to a stable gateway session/agent instead of an ephemeral
