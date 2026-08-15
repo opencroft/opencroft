@@ -1,6 +1,22 @@
 'use client'
 
 import { DiffEditor } from 'agent-chat/diff-editor'
+
+// @xyflow/react's `useKeyPress` calls `preventDefault()` on the keys it watches
+// unless the event came from an element its `isInputDOMNode` recognises —
+// INPUT / SELECT / TEXTAREA, `contenteditable`, or a `.nokey` ancestor. Monaco
+// takes input through the EditContext API on a plain div, so a caret inside a
+// diff would send Backspace to the canvas as node deletion. `nokey` is xyflow's
+// own opt-out, applied here rather than in agent-chat: the canvas is a host
+// concern and that package stays host-agnostic.
+function CanvasSafeDiffEditor(props: { current: string; next: string }) {
+  return (
+    <div className='nokey'>
+      <DiffEditor {...props} />
+    </div>
+  )
+}
+
 import { GitCompare, Loader2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
@@ -112,7 +128,7 @@ function ToolDiffPanel({
         <NodeCard className='w-full'>
           <div className='px-3 py-2 space-y-2'>
             {label && <div className='font-mono text-xs'>{label}</div>}
-            <DiffEditor current={current} next={next} />
+            <CanvasSafeDiffEditor current={current} next={next} />
           </div>
         </NodeCard>
       </div>
@@ -264,7 +280,7 @@ function RemoteEditView({ args, requestId, mode, result }: ToolViewProps) {
       pending={!result}
       overflowing={current !== null}
     >
-      {current !== null && <DiffEditor current={current} next={next} />}
+      {current !== null && <CanvasSafeDiffEditor current={current} next={next} />}
     </OpBlock>
   )
 }
@@ -626,7 +642,7 @@ function NodeDiff({ mode, update }: { mode: ToolViewProps['mode']; update: NodeU
   return (
     <div className='px-3 py-2 space-y-2'>
       <div className='font-mono text-xs'>{label}</div>
-      <DiffEditor current={JSON.stringify(current, null, 2)} next={JSON.stringify(next, null, 2)} />
+      <CanvasSafeDiffEditor current={JSON.stringify(current, null, 2)} next={JSON.stringify(next, null, 2)} />
     </div>
   )
 }

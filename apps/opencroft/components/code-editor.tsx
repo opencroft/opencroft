@@ -34,7 +34,14 @@ export interface CodeEditorProps {
   height?: string | number
 }
 
-export function CodeEditor({ value, language = 'typescript', readOnly, onChange, line, height = '100%' }: CodeEditorProps) {
+export function CodeEditor({
+  value,
+  language = 'typescript',
+  readOnly,
+  onChange,
+  line,
+  height = '100%',
+}: CodeEditorProps) {
   const { resolvedTheme } = useTheme()
 
   const handleMount: OnMount | undefined = line
@@ -45,31 +52,44 @@ export function CodeEditor({ value, language = 'typescript', readOnly, onChange,
     : undefined
 
   return (
-    <Editor
-      height={height}
-      language={language}
-      value={value}
-      theme={resolvedTheme === 'dark' ? 'vs-dark' : 'vs'}
-      onChange={onChange ? (next) => onChange(next ?? '') : undefined}
-      onMount={handleMount}
-      loading={<div className='h-full w-full animate-pulse bg-muted' />}
-      options={{
-        readOnly: Boolean(readOnly) || !onChange,
-        // `readOnly` alone still takes focus and shows a caret, which reads as
-        // an editable field that silently drops input.
-        domReadOnly: Boolean(readOnly) || !onChange,
-        minimap: { enabled: false },
-        scrollBeyondLastLine: false,
-        lineNumbers: 'on',
-        folding: true,
-        tabSize: 2,
-        contextmenu: false,
-        fontSize: 12,
-        // Containers here are sized by the surrounding layout (inspector tabs,
-        // resizable panels) and change without a React render, so Monaco has to
-        // observe its box rather than be told about it.
-        automaticLayout: true,
-      }}
-    />
+    // `nokey` is @xyflow/react's opt-out: its `useKeyPress` calls
+    // `preventDefault()` on any key it watches unless the event came from an
+    // "interactive element", and `isInputDOMNode` only recognises INPUT /
+    // SELECT / TEXTAREA, `contenteditable`, or a `.nokey` ancestor.
+    //
+    // Monaco defaults `editContext: true`, so it takes input through the
+    // EditContext API on a plain div — none of those. Without this class the
+    // canvas swallows Space (its pan-activation key) so it never reaches the
+    // editor, and Backspace/Delete reach the canvas as node deletion while the
+    // caret is in the editor. The previous CodeMirror editor was a
+    // contenteditable div, which is why neither happened before.
+    <div className='nokey h-full w-full'>
+      <Editor
+        height={height}
+        language={language}
+        value={value}
+        theme={resolvedTheme === 'dark' ? 'vs-dark' : 'vs'}
+        onChange={onChange ? (next) => onChange(next ?? '') : undefined}
+        onMount={handleMount}
+        loading={<div className='h-full w-full animate-pulse bg-muted' />}
+        options={{
+          readOnly: Boolean(readOnly) || !onChange,
+          // `readOnly` alone still takes focus and shows a caret, which reads as
+          // an editable field that silently drops input.
+          domReadOnly: Boolean(readOnly) || !onChange,
+          minimap: { enabled: false },
+          scrollBeyondLastLine: false,
+          lineNumbers: 'on',
+          folding: true,
+          tabSize: 2,
+          contextmenu: false,
+          fontSize: 12,
+          // Containers here are sized by the surrounding layout (inspector tabs,
+          // resizable panels) and change without a React render, so Monaco has to
+          // observe its box rather than be told about it.
+          automaticLayout: true,
+        }}
+      />
+    </div>
   )
 }
