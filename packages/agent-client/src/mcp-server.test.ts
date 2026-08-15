@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createMcpServer, type LocalTool, type ToolsCaller } from './mcp-server'
+import { createMcpServer, type LocalTool, loadSkills, type ToolsCaller } from './mcp-server'
+import { type ResolvedPermissions, skillKey } from './permissions'
 
 // The built-in MCP server builds a fresh server per request, so every request —
 // initialize included — runs the tools factory. That makes the factory the
@@ -85,4 +86,43 @@ test('a host that resolves no callers at all still gets a caller object, never u
   } finally {
     await harness.close()
   }
+})
+
+// The skill tool loads a batch of names, so the joining, de-duplication and
+// per-name permission guard all live in loadSkills — shared by this server and
+// the native harness.
+
+const skillBody = async (name: string) => `body of ${name}`
+
+test('a lone skill comes back as its body, with no heading added', async () => {
+  assert.equal(await loadSkills(['alpha'], skillBody, undefined), 'body of alpha')
+})
+
+test('a batch is labeled per skill, de-duplicated, trimmed and stripped of blanks', async () => {
+  const loaded = await loadSkills(['alpha', ' beta ', 'alpha', '   '], skillBody, undefined)
+  assert.equal(loaded, '## alpha\n\nbody of alpha\n\n## beta\n\nbody of beta')
+})
+
+test('a request naming no usable skill reports that instead of reaching the handler', async () => {
+  let calls = 0
+  const loaded = await loadSkills(
+    ['', '  '],
+    async (name) => {
+      calls += 1
+      return name
+    },
+    undefined,
+  )
+  assert.match(loaded, /provide at least one skill name/)
+  assert.equal(calls, 0)
+})
+
+test('a skill the session cannot reach is withheld while the permitted ones still load', async () => {
+  const permissions: ResolvedPermissions = {
+    mode: 'scoped',
+    allow: { [skillKey('alpha')]: 'Allow' },
+    defaultAccess: 'Allow',
+  }
+  const loaded = await loadSkills(['alpha', 'secret'], skillBody, permissions)
+  assert.equal(loaded, '## alpha\n\nbody of alpha\n\n## secret\n\nSkill "secret" is not available.')
 })

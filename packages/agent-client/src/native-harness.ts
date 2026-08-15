@@ -3,13 +3,23 @@ import { randomUUID } from 'node:crypto'
 import type { McpServer as AcpMcpServer, Client } from '@agentclientprotocol/sdk'
 import { PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
-import { type LanguageModel, type ModelMessage, stepCountIs, streamText, type ToolSet, tool } from 'ai'
-import { z } from 'zod'
+import {
+  type JSONSchema7,
+  jsonSchema,
+  type LanguageModel,
+  type ModelMessage,
+  stepCountIs,
+  streamText,
+  type ToolSet,
+  tool,
+} from 'ai'
+import { type ZodRawShape, z } from 'zod'
 
 import type { AgentConnection } from './connection'
 import { errorMessage } from './errors'
 import { connectMcpToolset } from './mcp-client'
 import {
+  loadSkills,
   SKILL_INPUT_SCHEMA,
   SKILL_TOOL_NAME,
   type SkillHandler,
@@ -155,6 +165,22 @@ async function gateToolCall(
   return null
 }
 
+// Build a native AI SDK tool schema from a tool's ZodRawShape. The zod object is
+// NOT handed to tool() directly: the AI SDK's zod-to-JSON-Schema conversion forces
+// `additionalProperties: false` on every object node, which erases the value type
+// of open records (z.record) and so tells the model such maps must stay empty.
+// Instead the model sees zod's own toJSONSchema output, which preserves record
+// value types, while the zod object stays on as the runtime input validator.
+function toolInputSchema<Shape extends ZodRawShape>(shape: Shape) {
+  const object = z.object(shape)
+  return jsonSchema<z.infer<typeof object>>(z.toJSONSchema(object, { target: 'draft-7', io: 'input' }) as JSONSchema7, {
+    validate: (value) => {
+      const result = object.safeParse(value)
+      return result.success ? { success: true, value: result.data } : { success: false, error: result.error }
+    },
+  })
+}
+
 // Convert the host's LocalTool[] (the same ones served to ACP agents over MCP)
 // into native AI SDK tools, plus the skill tool and any configured MCP servers'
 // tools. Each tool gates itself through the ACP permission flow per its grant.
@@ -179,7 +205,7 @@ async function buildToolset(
     }
     toolset[local.name] = tool({
       description: local.description,
-      inputSchema: z.object(local.inputSchema),
+      inputSchema: toolInputSchema(local.inputSchema),
       execute: async (input, { toolCallId, abortSignal }) => {
         const denied = await gateToolCall(gate, local.name, input, toolCallId, access, abortSignal)
         if (denied || abortSignal?.aborted) {
@@ -197,10 +223,10 @@ async function buildToolset(
   if (skills.length > 0 && skillHandler) {
     toolset[SKILL_TOOL_NAME] = tool({
       description: skillToolDescription(),
-      inputSchema: z.object(SKILL_INPUT_SCHEMA),
-      // Guard the handler too: a model could still name a non-permitted skill.
-      execute: async ({ skill }) =>
-        accessFor(permissions, skillKey(skill)) === null ? `Skill "${skill}" is not available.` : skillHandler(skill),
+      inputSchema: toolInputSchema(SKILL_INPUT_SCHEMA),
+      // loadSkills guards each name too: a model could still request a
+      // non-permitted skill.
+      execute: async ({ skills: requested }) => loadSkills(requested, skillHandler, permissions),
     })
   }
 
