@@ -23,7 +23,10 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
       anthropic: 'https://api.z.ai/api/anthropic',
       openai: 'https://api.z.ai/api/coding/paas/v4',
     },
-    models: ['glm-4.6', 'glm-5.1', 'glm-5.2[1m]'],
+    // Verified against the endpoint above: z.ai rejects the bracketed
+    // context-variant form (`glm-5.2[1m]`) that it used to accept, and now
+    // serves glm-5.3 for any 5.x id it still recognises.
+    models: ['glm-4.6', 'glm-5.1', 'glm-5.3'],
     keyEnv: 'ZAI_API_KEY',
   },
   {
