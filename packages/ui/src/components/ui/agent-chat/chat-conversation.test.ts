@@ -164,7 +164,7 @@ test('legacy formula silently no-ops when React commits the prepend first', () =
 })
 
 test('legacy formula also absorbs unrelated height changes below the reader', () => {
-  // Markdown/codemirror blocks below the viewport finish measuring between
+  // Markdown and code blocks below the viewport finish measuring between
   // capture and restore, growing total height by 250px that has nothing to do
   // with the prepend. The bottom-anchored formula charges it to the restore.
   const before = layout(1000, 0)
