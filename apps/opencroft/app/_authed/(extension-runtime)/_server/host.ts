@@ -605,6 +605,32 @@ export interface HostSendMessageApi {
   ): Promise<{ sessionKey: string; deleted: true }>
 }
 
+// Refuse a session key with the SAME not-found shape for every action below
+// that targets an EXISTING session -- `send` is exempt, since creating a
+// session on first dispatch is its own feature. Reachability (this node's
+// space wires the key's agent/job pair together) proves only that a session
+// under this key COULD exist, not that one actually was created here: the
+// same pair can appear in a syntactically valid key nobody ever sent to.
+// Checking the durable registry too closes that gap once, at the boundary,
+// instead of leaving each action to rely on its own downstream call happening
+// to do something safe for a key that was never real -- which is exactly how
+// this class of gap has gone live before: once as a phantom no-op, once as a
+// phantom session mint. One guard, called first, by every in-scope action.
+async function requireExistingSessionKey(
+  sessionKey: string,
+  nodes: SendMessageNodeLike[],
+  edges: SendMessageEdgeLike[],
+): Promise<void> {
+  const parts = sessionKey ? parseSessionKey(sessionKey) : null
+  if (!parts || !reachablePairs(nodes, edges).has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
+    throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
+  }
+  const known = (await readSessions()).some((entry) => entry.key === sessionKey)
+  if (!known) {
+    throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
+  }
+}
+
 const sendMessageApi: HostSendMessageApi = {
   async send(nodeId, payload) {
     // Schema already requires `message` (see extension.json) — checked again
@@ -707,10 +733,7 @@ const sendMessageApi: HostSendMessageApi = {
       throw new Error(`Node not found: ${nodeId}`)
     }
     const sessionKey = params.sessionKey.trim()
-    const parts = sessionKey ? parseSessionKey(sessionKey) : null
-    if (!parts || !reachablePairs(found.nodes, found.edges).has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
-      throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
-    }
+    await requireExistingSessionKey(sessionKey, found.nodes, found.edges)
     return turnsPageForSessionKey(sessionKey, { turns: params.turns, beforeIndex: params.beforeIndex })
   },
 
@@ -720,12 +743,7 @@ const sendMessageApi: HostSendMessageApi = {
       throw new Error(`Node not found: ${nodeId}`)
     }
     const sessionKey = params.sessionKey.trim()
-    const parts = sessionKey ? parseSessionKey(sessionKey) : null
-    // Same reachability scoping as listSessions/listTurns: a node may only act
-    // on the sessions it could have sent to.
-    if (!parts || !reachablePairs(found.nodes, found.edges).has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
-      throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
-    }
+    await requireExistingSessionKey(sessionKey, found.nodes, found.edges)
 
     // Accepts and returns immediately; the compaction itself — waiting out the
     // in-flight turn, both usage reads, the verdict, the conditional restore —
@@ -740,10 +758,7 @@ const sendMessageApi: HostSendMessageApi = {
       throw new Error(`Node not found: ${nodeId}`)
     }
     const sessionKey = params.sessionKey.trim()
-    const parts = sessionKey ? parseSessionKey(sessionKey) : null
-    if (!parts || !reachablePairs(found.nodes, found.edges).has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
-      throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
-    }
+    await requireExistingSessionKey(sessionKey, found.nodes, found.edges)
     return getCompactStatusOnGraph(sessionKey)
   },
 
@@ -753,10 +768,7 @@ const sendMessageApi: HostSendMessageApi = {
       throw new Error(`Node not found: ${nodeId}`)
     }
     const sessionKey = params.sessionKey.trim()
-    const parts = sessionKey ? parseSessionKey(sessionKey) : null
-    if (!parts || !reachablePairs(found.nodes, found.edges).has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
-      throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
-    }
+    await requireExistingSessionKey(sessionKey, found.nodes, found.edges)
     const status = deriveSessionStatus(sessionKey, {
       pending: new Set(agentClient.pendingPermissionSessionKeys()),
       active: new Set(agentClient.activeSessionKeys()),
@@ -780,21 +792,7 @@ const sendMessageApi: HostSendMessageApi = {
       throw new Error(`Node not found: ${nodeId}`)
     }
     const sessionKey = params.sessionKey.trim()
-    const parts = sessionKey ? parseSessionKey(sessionKey) : null
-    if (!parts || !reachablePairs(found.nodes, found.edges).has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
-      throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
-    }
-    // The reachability check above only asks whether this node COULD send to
-    // this agent/job pair -- it says nothing about whether sessionKey itself
-    // was ever actually created. Unlike unload (which only ever proceeds on
-    // 'idle', a status a nonexistent key can never report), delete's default
-    // path proceeds on 'offline' -- exactly the fallback status a nonexistent
-    // key also reports -- so without this check a garbage key reads as an
-    // ordinary stale session and "succeeds" without deleting anything.
-    const known = (await readSessions()).some((entry) => entry.key === sessionKey)
-    if (!known) {
-      throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
-    }
+    await requireExistingSessionKey(sessionKey, found.nodes, found.edges)
     const force = params.force === true
     if (!force) {
       const status = deriveSessionStatus(sessionKey, {
