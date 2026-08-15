@@ -44,8 +44,24 @@ test('registerThreadDeliveryResolver survives a fresh module instantiation', asy
   const resolver = async () => ({ status: 'not-found' as const })
   first.registerThreadDeliveryResolver(resolver)
   second.registerThreadDeliveryResolver(resolver)
-  const registry = (globalThis as unknown as { __THREAD_DELIVERY_RESOLVERS__: unknown[] })
-    .__THREAD_DELIVERY_RESOLVERS__
+  const registry = (globalThis as unknown as { __THREAD_DELIVERY_RESOLVERS__: unknown[] }).__THREAD_DELIVERY_RESOLVERS__
+  assert.ok(registry, 'the registry must be reachable from globalThis')
+  assert.equal(registry.length, 1, 'the same resolver registered via two module instances must not duplicate')
+})
+
+// Same registration mechanism as the two above, for the offline-compaction
+// wake resolver — the exact hazard those two exist to catch applies here
+// too, since this registry is written from the same server/startup.ts
+// once-per-process guard.
+test('registerSessionWakeResolver survives a fresh module instantiation', async () => {
+  const first = await import('./stream')
+  const second = await import(`./stream?probe=${Math.random()}`)
+  assert.notEqual(second, first, 'sanity: the cache-busted import must actually be a distinct module instance')
+
+  const resolver = async () => null
+  first.registerSessionWakeResolver(resolver)
+  second.registerSessionWakeResolver(resolver)
+  const registry = (globalThis as unknown as { __SESSION_WAKE_RESOLVERS__: unknown[] }).__SESSION_WAKE_RESOLVERS__
   assert.ok(registry, 'the registry must be reachable from globalThis')
   assert.equal(registry.length, 1, 'the same resolver registered via two module instances must not duplicate')
 })

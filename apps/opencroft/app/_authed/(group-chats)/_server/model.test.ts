@@ -54,8 +54,15 @@ const { ensureAuth } = await import('@opencroft/auth/server')
 // server/startup.ts for the real registration. Without this, a group-chat
 // sessionKey resolves to nothing and every compactThread call below throws
 // "No agent/job resolved for session" before performCompact ever runs.
-const { registerStandingContextResolver } = await import('@/app/_authed/(extension-runtime)/_server/stream')
+const { registerSessionWakeResolver, registerStandingContextResolver } = await import(
+  '@/app/_authed/(extension-runtime)/_server/stream'
+)
 registerStandingContextResolver(model.groupChatStandingContext)
+// Same reason, for waking an offline thread ahead of a compact — without
+// this, every offline-compact test below throws "Session cannot be resumed"
+// before requestCompactOnGraph's graph-vs-resolver fallback ever gets a
+// group-chat answer.
+registerSessionWakeResolver(model.groupChatWakeSession)
 
 after(async () => {
   await rm(workdir, { recursive: true, force: true })
@@ -1685,6 +1692,36 @@ test("a thread's contextUsage mirrors its session's own usage, the same source t
   assert.equal(after?.queuedMessages, 0, 'an idle thread holds no server-side prompts — 0 is a fact, not unknown')
 })
 
+test('an offline thread with prior activity reports its last-known usage with asOf, not null', async () => {
+  const owner = await makeUser('offline-usage-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'went offline', 'stay small')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+
+  const sessionKey = `group-chat:${chat.id}:agent-a:offline-usage-fixture`
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({ groupChatId: chat.id, agentNodeId: 'agent-a', sessionKey, createdByUserId: owner.id })
+    .returning()
+  assert.ok(thread)
+
+  // What a real prior turn on this session would have left behind: a durable
+  // pointer (agentClient never holds this session in memory in this test, so
+  // it is genuinely offline) and the usage it last reported.
+  await sessionStore.writePersistedSession(sessionKey, 'offline-usage-session-id', true)
+  await sessionStore.writePersistedUsage('offline-usage-session-id', { used: 88_000, size: 200_000 })
+
+  const chats = await model.listGroupChatsForAgentView('Agent A')
+  const found = chats.find((c) => c.ref === chat.id)?.threads.find((t) => t.ref === thread.id)
+  assert.ok(found?.contextUsage, 'an offline thread with a persisted reading must not report null')
+  assert.equal(found.contextUsage.usedTokens, 88_000)
+  assert.equal(found.contextUsage.contextLimit, 200_000)
+  assert.equal(
+    typeof found.contextUsage.asOf,
+    'number',
+    'asOf marks this as a last-known reading, distinct from a live one',
+  )
+})
+
 test("a thread's recent turns are readable by a member agent, via the same core the send-message listTurns uses", async () => {
   const owner = await makeUser('thread-turns-owner@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'watched for turns', 'stay observable')
@@ -1949,6 +1986,51 @@ test('compactThreadAsAgent compacts the addressed thread and re-delivers standin
   assert.equal(status.result?.instructionsRestored, true)
 })
 
+test('compactThreadAsAgent wakes an offline session from stored state, compacts it, and leaves it running', async () => {
+  const owner = await makeUser('agent-compact-offline-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'offline compact', 'the standing topic')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const prompts: string[] = []
+  seedMockConnection(prompts, 'Agent Session', { resumable: true })
+
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message')
+  await waitForPrompts(prompts, 1)
+
+  const { agentClient } = await import('@/app/_authed/(agent)/_server/agent-client-instance')
+  const { stopLocalSessionProcessImpl } = await import('@/app/_authed/(agent)/_server/acp-impl')
+
+  // Force the session offline the way an idle unload or a server restart
+  // would — the durable session pointer survives, only the live process is
+  // gone. See acp-impl.ts's stopLocalSessionProcessImpl for why this (not
+  // forgetLocalSessionImpl) is the "history survives" primitive.
+  await stopLocalSessionProcessImpl(started.thread.sessionKey)
+  assert.equal(
+    agentClient.listSessions().some((s) => s.id === started.sessionId),
+    false,
+    'sanity: the session must actually be offline before compacting it',
+  )
+
+  const ack = await model.compactThreadAsAgent('Agent Session', started.thread.id)
+  assert.equal(ack.accepted, true)
+
+  // opening, then '/compact' (only reachable once the wake resumed the
+  // session), then the restore re-delivering the standing topic.
+  await waitForPrompts(prompts, 3)
+  assert.equal(prompts[1], '/compact')
+  assert.match(prompts[2] ?? '', /the standing topic/, 'the restore re-delivers the thread standing context')
+
+  const status = await model.threadCompactStatusAsAgent('Agent Session', started.thread.id)
+  assert.equal(status.state, 'done')
+  assert.equal(status.result?.instructionsRestored, true)
+
+  assert.equal(
+    agentClient.listSessions().some((s) => s.id === started.sessionId),
+    true,
+    'the session must be left running after the compact -- compaction never unloads it',
+  )
+})
+
 test('compactThreadAsAgent is refused for a non-member the same way sendMessageInThreadAsAgent is', async () => {
   const owner = await makeUser('agent-compact-gate-owner@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'agent compact gate')
@@ -2165,7 +2247,12 @@ test('deliverThreadFromNode reports not-reachable and delivers nothing when the 
 // config is derived from the agent's own workspace, so seeding two of these
 // gives two separately observable inboxes — which is how a test can tell that a
 // message reached the agent it was addressed to and not merely some agent.
-function seedMockConnection(prompts: string[], agentName = 'Agent Session'): void {
+//
+// `resumable` advertises the `loadSession` capability and answers it with a
+// bare success — needed by any test that forces the session offline
+// (stopLocalSessionProcessImpl) and then expects it to be woken back up via
+// agent-client's own session/load replay, rather than silently rebuilt fresh.
+function seedMockConnection(prompts: string[], agentName = 'Agent Session', opts?: { resumable?: boolean }): void {
   const connection = {
     newSession: async () => ({ sessionId: `mock-${crypto.randomUUID()}` }),
     prompt: async (params: { prompt: Array<{ text?: string }> }) => {
@@ -2173,6 +2260,7 @@ function seedMockConnection(prompts: string[], agentName = 'Agent Session'): voi
       return { stopReason: 'end_turn' }
     },
     resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    ...(opts?.resumable ? { loadSession: async () => ({}) } : {}),
     cancel: async () => {},
     setSessionConfigOption: async () => ({}),
     closeSession: async () => ({}),
@@ -2192,7 +2280,7 @@ function seedMockConnection(prompts: string[], agentName = 'Agent Session'): voi
   store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
     connection,
     lastSessionId: null,
-    loadSession: false,
+    loadSession: Boolean(opts?.resumable),
     initialized: Promise.resolve(),
   })
 }

@@ -21,6 +21,7 @@ import {
   promptLocalImpl,
   stopLocalSessionProcessImpl,
 } from '@/app/_authed/(agent)/_server/acp-impl'
+import { readLastKnownUsage } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { type TurnsPage, turnsPageForSessionKey } from '@/app/_authed/(extension-runtime)/_server/host'
@@ -777,6 +778,34 @@ export async function groupChatStandingContext(sessionKey: string): Promise<Stan
   return row ? standingContextForThread(row.groupChatId, row.agentNodeId) : null
 }
 
+/**
+ * Wakes an offline thread's session from its stored state, or null when the
+ * key is not a group-chat thread's — the offline-compaction counterpart to
+ * `groupChatStandingContext` above, registered the same way (see
+ * server/startup.ts) so `requestCompactOnGraph` can resume a thread with no
+ * graph presence without stream.ts importing group-chat code.
+ *
+ * The same `resolveOrCreateSession` call `deliverIntoThread` makes for an
+ * ordinary message — a thread that has gone offline still has its durable
+ * session pointer, so this resumes it rather than creating a fresh one.
+ */
+export async function groupChatWakeSession(sessionKey: string): Promise<{ sessionId: string } | null> {
+  const [row] = await db
+    .select({ agentNodeId: groupChatThread.agentNodeId })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.sessionKey, sessionKey))
+    .limit(1)
+  if (!row) {
+    return null
+  }
+  const opened = await resolveOrCreateSession(sessionKey, {
+    agentNodeId: row.agentNodeId,
+    jobNodeId: '',
+    tabKey: sessionKey,
+  })
+  return { sessionId: opened.sessionId }
+}
+
 // A thread's session key is namespaced away from the 1:1 chat registry's
 // `agent:<agent>:<job>[:<key>]` shape on purpose — the two must never collide
 // even by coincidence, and a reader who sees this prefix knows immediately
@@ -1272,9 +1301,10 @@ export interface AgentThreadRef {
    * How much context this thread's session is holding — the exact same
    * `listSessions` mechanism ordinary sessions use (agent-client's last
    * `usage` reading, seeded from the persisted per-session usage on cold
-   * start), looked up by this thread's own session key. Null when genuinely
-   * unknown (never loaded since a restart, or no turn has finished yet) —
-   * never zero-for-unknown.
+   * start), looked up by this thread's own session key. An offline thread
+   * with prior activity reports its last-known reading here too, with `asOf`
+   * (see ContextUsage) set. Null only when genuinely unknown (never reported
+   * usage at all) — never zero-for-unknown.
    */
   contextUsage: ContextUsage | null
   /**
@@ -1413,8 +1443,24 @@ export async function listGroupChatsForAgentView(agentName: string): Promise<Age
     )
   // Same lookup host.ts's ordinary-session listSessions does: agent-client
   // only holds live (loaded-since-restart) sessions in memory, so a thread
-  // whose session isn't in this map reports UNKNOWN, not zero.
+  // whose session isn't in this map is offline, not necessarily unknown —
+  // see the last-known fallback below.
   const metaBySessionKey = new Map(agentClient.listSessions().map((meta) => [meta.sessionKey, meta] as const))
+  // Resolved once per thread, ahead of the synchronous map below: an offline
+  // thread falls back to what it persisted before going offline (readLastKnownUsage
+  // does its own settings-store read), and only offline threads pay for that
+  // read at all.
+  const contextUsageByKey = new Map(
+    await Promise.all(
+      threads.map(async (t) => {
+        const live = metaBySessionKey.get(t.sessionKey)
+        const usage = live
+          ? toContextUsage(live.usage)
+          : toContextUsage(undefined, (await readLastKnownUsage(t.sessionKey)) ?? undefined)
+        return [t.sessionKey, usage] as const
+      }),
+    ),
+  )
   return chats.map((chat) => ({
     ref: chat.id,
     name: chat.name,
@@ -1426,7 +1472,7 @@ export async function listGroupChatsForAgentView(agentName: string): Promise<Age
         title: t.title,
         agentNodeId: t.agentNodeId,
         createdAt: t.createdAt,
-        contextUsage: toContextUsage(metaBySessionKey.get(t.sessionKey)?.usage),
+        contextUsage: contextUsageByKey.get(t.sessionKey) ?? null,
         queuedMessages: metaBySessionKey.get(t.sessionKey)?.queuedMessages ?? 0,
       })),
   }))

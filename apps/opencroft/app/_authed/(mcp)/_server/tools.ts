@@ -177,12 +177,13 @@ export const toolDefinitions = [
       'List the group chats you are a member of, with their topic and their threads. ' +
       'Use the `ref` values from this result to address a thread in group_chat_send — ' +
       'they are opaque handles, not a format to construct. Each thread also carries `contextUsage`: ' +
-      "`{ usedTokens, contextLimit }` as last reported by that thread session's own harness, the same " +
-      'figure its context ring renders — never estimated here. Null when UNKNOWN (the session has not ' +
-      'been loaded since a restart, or has not finished a turn yet), and null must not be read as ' +
-      '"nothing held"; `contextLimit` alone is null when the harness cannot say what the model\'s ' +
-      'window is. Use it to spot a thread that should be compacted (group_chat_compact) before ' +
-      'dispatching into it.',
+      "`{ usedTokens, contextLimit, asOf? }` as last reported by that thread session's own harness, the " +
+      'same figure its context ring renders — never estimated here. An offline thread with prior ' +
+      'activity reports its last-known reading here too, with `asOf` (ms since epoch) set — its absence ' +
+      'means the figure is live. Null only when genuinely UNKNOWN (the session has never reported usage), ' +
+      'and null must not be read as "nothing held"; `contextLimit` alone is null when the harness cannot ' +
+      "say what the model's window is. Use it to spot a thread that should be compacted " +
+      '(group_chat_compact) before dispatching into it.',
     inputSchema: { type: 'object' as const, properties: {} },
   },
   {
@@ -291,10 +292,11 @@ export const toolDefinitions = [
     name: 'group_chat_compact',
     description:
       "Compact a thread's session: shrinks its context window and, on success, re-delivers the " +
-      "thread's CURRENT standing context (topic + pins). Use this at a task boundary before the next " +
-      'dispatch — do not send a bare "/compact" message instead, since that skips the standing-context ' +
-      're-delivery. Returns immediately once the job is accepted; call group_chat_compact_status to see ' +
-      'when it actually finishes.',
+      "thread's CURRENT standing context (topic + pins). Works on an offline thread too — it is woken " +
+      'from its stored state first and left running afterwards, the same as a message sent into it would. ' +
+      'Use this at a task boundary before the next dispatch — do not send a bare "/compact" message ' +
+      'instead, since that skips the standing-context re-delivery. Returns immediately once the job is ' +
+      'accepted; call group_chat_compact_status to see when it actually finishes.',
     inputSchema: {
       type: 'object' as const,
       properties: {

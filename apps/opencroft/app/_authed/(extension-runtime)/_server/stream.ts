@@ -767,6 +767,60 @@ async function resolveStandingContext(
   return null
 }
 
+// A source of RESUMING sessions the graph cannot resolve at all — same shape
+// of problem as StandingContextResolver just above (a group-chat thread has
+// no node/edge presence), same registration mechanism, and the same reason
+// this module names neither group chats nor any other owner. Returns the now
+// live session id, or null when this key is not one the resolver's owner
+// recognises.
+export type SessionWakeResolver = (sessionKey: string) => Promise<{ sessionId: string } | null>
+
+// globalThis-backed for the identical reason standingContextResolvers is —
+// see that registry's own comment.
+const globalForSessionWake = globalThis as unknown as {
+  __SESSION_WAKE_RESOLVERS__?: SessionWakeResolver[]
+}
+if (!globalForSessionWake.__SESSION_WAKE_RESOLVERS__) {
+  globalForSessionWake.__SESSION_WAKE_RESOLVERS__ = []
+}
+const sessionWakeResolvers = globalForSessionWake.__SESSION_WAKE_RESOLVERS__
+
+export function registerSessionWakeResolver(resolver: SessionWakeResolver): void {
+  if (!sessionWakeResolvers.includes(resolver)) {
+    sessionWakeResolvers.push(resolver)
+  }
+}
+
+// Resumes an offline session from its stored state — never creates a session
+// that never existed; a truly fresh key has no prior turns to have gone
+// offline from, so there is nothing this is meant to cover. The graph case
+// resolves agentNodeId/jobNodeId the same way resolveStandingContext's own
+// graph branch does; a group-chat thread (or any other owner with no graph
+// presence) answers through a registered resolver instead, same two-tier
+// order as resolveStandingContext.
+async function wakeSession(
+  sessionKey: string,
+  nodes: GraphNodeLike[],
+  edges: GraphEdgeLike[],
+): Promise<{ sessionId: string } | null> {
+  const graphCtx = resolveSessionOnGraph(sessionKey, nodes as unknown as SmNodeLike[], edges as unknown as SmEdgeLike[])
+  if (graphCtx) {
+    const opened = await resolveOrCreateSession(sessionKey, {
+      agentNodeId: graphCtx.agentNodeId,
+      jobNodeId: graphCtx.jobNodeId,
+      tabKey: sessionKey,
+    })
+    return { sessionId: opened.sessionId }
+  }
+  for (const resolver of sessionWakeResolvers) {
+    const resolved = await resolver(sessionKey)
+    if (resolved) {
+      return resolved
+    }
+  }
+  return null
+}
+
 // The guard this replaced used to refuse a working/waiting session outright,
 // because a prompt sent into a busy session is QUEUED rather than delivered,
 // which made compaction unsafe there in a way that no amount of waiting
@@ -962,13 +1016,18 @@ export async function requestCompactOnGraph(
   if (!ctx) {
     throw new Error(`No agent/job resolved for session: ${sessionKey}`)
   }
-  // Only a session with a live process holds context to compact. An offline
-  // one has nothing in memory — say so rather than silently starting a new
-  // session and "compacting" that. Nothing to wait for either, so this stays
-  // a synchronous error rather than a queued job.
-  const existing = await findTargetSessionImpl({ baseKey: sessionKey })
+  // An offline session has nothing in agent-client's memory to compact — wake
+  // it from its stored state (same resume a message sent into it would
+  // trigger) rather than refusing. It stays running afterwards: the whole
+  // point of compacting is to re-orient the agent from the re-delivered
+  // standing context, and unloading it again would throw that away.
+  let existing = await findTargetSessionImpl({ baseKey: sessionKey })
   if (!existing) {
-    throw new Error(`Session has no live process, so there is no context to compact: ${sessionKey}`)
+    const woken = await wakeSession(sessionKey, nodes, edges)
+    if (!woken) {
+      throw new Error(`Session cannot be resumed, so there is no context to compact: ${sessionKey}`)
+    }
+    existing = woken
   }
 
   const current = compactJobs.get(sessionKey)

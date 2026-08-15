@@ -9,15 +9,39 @@ export interface ContextUsage {
   usedTokens: number
   /** null when the harness reports usage but cannot name the model's window. */
   contextLimit: number | null
+  /**
+   * Wall-clock time (ms since epoch) this figure was reported, present ONLY
+   * on a last-known reading served from the persisted store for an offline
+   * session — never on a live one. Its absence means the figure is what the
+   * session is holding right now; its presence means the session has since
+   * gone offline and this is what it held as of that timestamp. A caller
+   * that renders a stale figure dimmed reads this to decide.
+   */
+  asOf?: number
 }
 
-// Maps agent-client's usage snapshot to the wire shape. Absent usage becomes
-// null, never zeros: an offline session, one that has not finished a turn since
-// it was loaded, and a harness that reports no usage all hold an UNKNOWN
-// amount, and a caller that read those as zero would skip a compaction that was
-// due.
-export function toContextUsage(usage?: { used: number; size?: number }): ContextUsage | null {
-  return usage ? { usedTokens: usage.used, contextLimit: usage.size ?? null } : null
+// Maps agent-client's usage snapshot to the wire shape, with a last-known
+// fallback for an offline session. Absent usage becomes null, never zeros: a
+// session that has never reported usage (never loaded, not finished a turn
+// since it was loaded, or a harness that reports none at all) holds a
+// genuinely UNKNOWN amount, and a caller that read that as zero would skip a
+// compaction that was due.
+//
+// `lastKnown` is tried only when `usage` itself is absent (the session is not
+// currently loaded) — a live reading always wins and never carries `asOf`.
+// Passing neither still returns null: an offline session with nothing ever
+// persisted is exactly as unknown as one that was never loaded.
+export function toContextUsage(
+  usage?: { used: number; size?: number },
+  lastKnown?: { used: number; size?: number; at: number },
+): ContextUsage | null {
+  if (usage) {
+    return { usedTokens: usage.used, contextLimit: usage.size ?? null }
+  }
+  if (lastKnown) {
+    return { usedTokens: lastKnown.used, contextLimit: lastKnown.size ?? null, asOf: lastKnown.at }
+  }
+  return null
 }
 
 // Did compaction actually reduce what the session holds?

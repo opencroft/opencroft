@@ -33,6 +33,35 @@ test('zero tokens actually reported is preserved as zero, not folded into unknow
   assert.deepEqual(toContextUsage({ used: 0, size: 200_000 }), { usedTokens: 0, contextLimit: 200_000 })
 })
 
+// ── toContextUsage's last-known fallback (offline sessions) ────────────────
+
+test('no live usage but a last-known reading reports it with asOf set', () => {
+  assert.deepEqual(toContextUsage(undefined, { used: 12_000, size: 200_000, at: 1_700_000_000_000 }), {
+    usedTokens: 12_000,
+    contextLimit: 200_000,
+    asOf: 1_700_000_000_000,
+  })
+})
+
+test('a live reading always wins over a last-known one, and never carries asOf', () => {
+  assert.deepEqual(toContextUsage({ used: 5_000, size: 200_000 }, { used: 999_000, size: 200_000, at: 1 }), {
+    usedTokens: 5_000,
+    contextLimit: 200_000,
+  })
+})
+
+test('no live usage and no last-known reading is still null, never zero', () => {
+  assert.equal(toContextUsage(undefined, undefined), null)
+})
+
+test('a last-known reading with no known window reports the tokens and a null limit, same as live', () => {
+  assert.deepEqual(toContextUsage(undefined, { used: 500, at: 1_700_000_000_000 }), {
+    usedTokens: 500,
+    contextLimit: null,
+    asOf: 1_700_000_000_000,
+  })
+})
+
 // ── compactionVerdict ────────────────────────────────────────────────────
 
 const usage = (usedTokens: number) => ({ usedTokens, contextLimit: 200_000 })

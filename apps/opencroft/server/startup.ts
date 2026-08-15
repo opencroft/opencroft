@@ -1,10 +1,15 @@
 import { startDbBackupScheduler } from '@opencroft/db-backups'
 
 import {
+  registerSessionWakeResolver,
   registerStandingContextResolver,
   registerThreadDeliveryResolver,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
-import { deliverThreadFromNode, groupChatStandingContext } from '@/app/_authed/(group-chats)/_server/model'
+import {
+  deliverThreadFromNode,
+  groupChatStandingContext,
+  groupChatWakeSession,
+} from '@/app/_authed/(group-chats)/_server/model'
 import { startDockerPsPoller } from '@/server/scheduler/docker-ps-poller'
 import { startEventScheduler } from '@/server/scheduler/event-scheduler'
 import { startIdleSessionReaper } from '@/server/scheduler/idle-session-reaper'
@@ -38,6 +43,10 @@ export function ensureServerStarted(): void {
   // graph-driven send can target a group-chat thread without stream.ts ever
   // importing group-chat code.
   registerThreadDeliveryResolver(deliverThreadFromNode)
+  // Same reasoning again, for waking an offline thread ahead of a compact —
+  // requestCompactOnGraph can resume a group-chat thread without stream.ts
+  // ever importing group-chat code.
+  registerSessionWakeResolver(groupChatWakeSession)
   void preload()
 }
 

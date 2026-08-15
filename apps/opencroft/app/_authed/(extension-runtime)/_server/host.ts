@@ -20,6 +20,7 @@ import { foldEvents, isSnapshotEvent } from 'agent-client/fold'
 import type { ChatEvent } from 'agent-client/types'
 
 import { forgetLocalSessionImpl, stopLocalSessionProcessImpl } from '@/app/_authed/(agent)/_server/acp-impl'
+import { readLastKnownUsage } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { deleteSession as deleteSessionEntry, readSessions } from '@/app/_authed/(agent)/_server/agent-sessions-store'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
@@ -373,6 +374,11 @@ export interface SessionSummary {
   // `contextLimit` is null on its own when the harness reports usage but
   // cannot say what the model's window is; a caller wanting a ratio needs both
   // and should treat a null limit as "cannot compute one".
+  //
+  // An `offline` session's last reported reading is served here too, marked
+  // with `asOf` (see ContextUsage) rather than folded into the null case —
+  // `null` now means genuinely never reported (never loaded, or loaded but no
+  // turn has finished since).
   contextUsage: ContextUsage | null
   // Server-held prompts waiting for the session's current turn to end. Unlike
   // `contextUsage`, 0 is a fact, not unknown — an offline/unloaded session
@@ -667,6 +673,15 @@ const sendMessageApi: HostSendMessageApi = {
       if (jobFilter && parts.jobSlug !== jobFilter) {
         continue
       }
+      const live = metaByKey.get(entry.key)
+      // Offline: nothing in agent-client's memory to read a live figure from
+      // — fall back to what the session persisted before it went offline,
+      // marked with `asOf` (see ContextUsage) so a caller can tell it apart
+      // from a fresh reading. Only queried when genuinely offline, so an
+      // online session never pays for a settings-store read it doesn't need.
+      const contextUsage = live
+        ? toContextUsage(live.usage)
+        : toContextUsage(undefined, (await readLastKnownUsage(entry.key)) ?? undefined)
       out.push({
         sessionKey: entry.key,
         agent: parts.agentSlug,
@@ -676,10 +691,10 @@ const sendMessageApi: HostSendMessageApi = {
         // Dead sessions have no in-memory state to read a real activity time
         // from (agent-client sessions don't survive a restart) — fall back to
         // createdAt rather than fabricate one.
-        lastActivityAt: metaByKey.get(entry.key)?.lastActivityAt ?? entry.createdAt,
+        lastActivityAt: live?.lastActivityAt ?? entry.createdAt,
         status: deriveSessionStatus(entry.key, sessionKeys),
-        contextUsage: toContextUsage(metaByKey.get(entry.key)?.usage),
-        queuedMessages: metaByKey.get(entry.key)?.queuedMessages ?? 0,
+        contextUsage,
+        queuedMessages: live?.queuedMessages ?? 0,
       })
     }
     out.sort((a, b) => b.lastActivityAt - a.lastActivityAt)

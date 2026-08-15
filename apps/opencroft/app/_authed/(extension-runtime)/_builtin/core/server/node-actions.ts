@@ -244,11 +244,14 @@ function sendMessageListAgentsAction(ctx: ActionCtx): Promise<{ agent: string; j
 
 // Mirrors the host's shape across the extension boundary — redeclared rather
 // than imported, so the two must move together. `null` context usage means
-// unknown (offline session, no turn completed since it was loaded, or a
-// harness that does not report usage); it never means "nothing held".
+// unknown (never loaded, no turn completed since it was loaded, or a harness
+// that does not report usage); it never means "nothing held". An offline
+// session with a prior reading carries it here too, with `asOf` (ms since
+// epoch) set — its absence means the figure is live.
 interface ContextUsage {
   usedTokens: number
   contextLimit: number | null
+  asOf?: number
 }
 
 interface SessionSummary {

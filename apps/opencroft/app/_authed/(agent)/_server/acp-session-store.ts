@@ -185,6 +185,22 @@ export async function readPersistedUsage(sessionId: string): Promise<PersistedUs
   return store[sessionId] ?? null
 }
 
+/**
+ * The last-known usage for a session key an offline session left behind —
+ * resolved through the durable tabKey pointer to the ACP session id
+ * `readPersistedUsage` is actually keyed by, since a session that has gone
+ * offline is not in agent-client's memory to ask directly. Works for any key
+ * this store's pointer namespace covers (a 1:1 chat tab, an agent:job
+ * dispatch, or a group-chat thread — they all resolve through the same
+ * `agent-tab-sessions` pointer). Null when there is no pointer for this key,
+ * or the pointer's session never reported usage before going offline — the
+ * same UNKNOWN a session that has never been loaded reports.
+ */
+export async function readLastKnownUsage(sessionKey: string): Promise<PersistedUsage | null> {
+  const pointer = await readPersistedSession(sessionKey)
+  return pointer ? readPersistedUsage(pointer.id) : null
+}
+
 export async function writePersistedUsage(sessionId: string, usage: { used: number; size?: number }): Promise<void> {
   await withSettingLock(USAGE_SETTING_ID, () =>
     mutateSettingData(USAGE_SETTING_ID, (raw) => {
