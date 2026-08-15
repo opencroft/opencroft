@@ -26,7 +26,7 @@ import {
   promptLocalImpl,
 } from '@/app/_authed/(agent)/_server/acp-impl'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
-import { upsertSession } from '@/app/_authed/(agent)/_server/agent-sessions-store'
+import { readSessions, upsertSession } from '@/app/_authed/(agent)/_server/agent-sessions-store'
 import { hideSessionByDefault } from '@/app/_authed/(agent)/_server/chat-list-layout-store'
 import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { updateNodeData } from '@/app/_authed/(extension-runtime)/_server/node-data'
@@ -805,6 +805,20 @@ async function wakeSession(
 ): Promise<{ sessionId: string } | null> {
   const graphCtx = resolveSessionOnGraph(sessionKey, nodes as unknown as SmNodeLike[], edges as unknown as SmEdgeLike[])
   if (graphCtx) {
+    // resolveSessionOnGraph proves the KEY'S AGENT/JOB PAIR is wired into the
+    // graph — it says nothing about whether a session was ever actually
+    // created under this exact key (discriminator suffix included), because
+    // reachability is a property of the graph, not of the durable session
+    // registry. Without this check, a structurally-valid but never-created
+    // key would reach resolveOrCreateSession's create branch and mint a
+    // brand-new session for nobody — the same reachability-only gap the
+    // send-message node's `delete` action already guards against with this
+    // exact existence check, left open here only because compact used to
+    // refuse every offline session outright regardless.
+    const known = (await readSessions()).some((entry) => entry.key === sessionKey)
+    if (!known) {
+      return null
+    }
     const opened = await resolveOrCreateSession(sessionKey, {
       agentNodeId: graphCtx.agentNodeId,
       jobNodeId: graphCtx.jobNodeId,

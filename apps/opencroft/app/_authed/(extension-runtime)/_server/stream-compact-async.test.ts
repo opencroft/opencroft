@@ -15,6 +15,7 @@ import type { AgentSelection } from 'agent-client/types'
 
 import { tabSessions } from '@/app/_authed/(agent)/_server/acp-impl'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import { readSessions } from '@/app/_authed/(agent)/_server/agent-sessions-store'
 import { buildSessionKey, type NodeLike } from './send-message-helpers'
 import { getCompactStatusOnGraph, requestCompactOnGraph } from './stream'
 
@@ -188,4 +189,47 @@ test('a second compact request while one is pending coalesces instead of double-
 
   // Exactly one /compact dispatch across both requests, not two.
   assert.equal(h.promptCalls.filter((p) => p === '/compact').length, 1)
+})
+
+test('compact refuses a reachable-pair sessionKey that was never actually created, and creates nothing', async () => {
+  counter += 1
+  const agentName = `Ghost Compact Agent ${counter}`
+  const jobName = 'ghost-job'
+  const nodes: NodeLike[] = [
+    { id: 'ghost-agent-1', type: 'agent', data: { name: agentName } },
+    { id: 'ghost-job-1', type: 'agent-job', data: { name: jobName, context: 'never sent' } },
+  ]
+  // Structurally reachable -- a real agent/job pair is wired into this graph
+  // -- but nothing was ever actually dispatched to this exact key: no
+  // tabSessions entry, no durable session-list entry either. The same
+  // garbage-key shape the send-message node's `delete` action already
+  // guards against; wakeSession's graph branch has to refuse it the same
+  // way, or a caller can mint a live session (and spawn a process) for a key
+  // nobody ever sent to.
+  const sessionKey = buildSessionKey(agentName, jobName, 'never-created')
+
+  const before = await readSessions()
+  assert.equal(
+    before.some((entry) => entry.key === sessionKey),
+    false,
+    'sanity: nothing is registered for this key yet',
+  )
+
+  await assert.rejects(
+    () => requestCompactOnGraph(nodes, [], sessionKey),
+    /cannot be resumed/,
+    'a never-created key must be refused, not silently woken into a new session',
+  )
+
+  assert.equal(
+    agentClient.listSessions().some((s) => s.sessionKey === sessionKey),
+    false,
+    'the refusal must not have spawned a live session for this key',
+  )
+  const after = await readSessions()
+  assert.equal(
+    after.some((entry) => entry.key === sessionKey),
+    false,
+    'and must not have registered a chat-list entry for it either',
+  )
 })
