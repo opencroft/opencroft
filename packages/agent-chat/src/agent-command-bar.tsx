@@ -354,11 +354,14 @@ export function useAgentCommandBar({
     [controls, insertText, sendMessage, session.waiting],
   )
 
-  // The bar's trailing control group, where the approval toggle used to sit.
+  // The bar's pre-settings control group, right after the approval shield.
   // Model leads: it is the least often changed of the three but the one whose
   // current value most changes what the others even mean. Effort before mode:
   // effort is the lighter, more often nudged dial, and mode stays nearest the
-  // host's own controls and the send button.
+  // settings button. `hostControls` (voice dictation and the like) is NOT
+  // included here -- the kit renders it in its own `trailingControls` slot,
+  // after the settings button, so a host's input controls never sit ahead of
+  // the settings they control.
   const controlsNode = useMemo(
     () => (
       <>
@@ -386,10 +389,9 @@ export function useAgentCommandBar({
             lockedReason={lockedConfigOptions?.[MODE_CONFIG_ID]}
           />
         ) : null}
-        {hostControls}
       </>
     ),
-    [dial, lockedConfigOptions, hostControls],
+    [dial, lockedConfigOptions],
   )
 
   const autoApproveRef = useRef(onToggleAutoApprove)
@@ -507,6 +509,7 @@ export function useAgentCommandBar({
         configs={configs}
         onConfigChange={handleConfigChange}
         configExtra={configExtra}
+        trailingControls={hostControls}
         queued={queuedItems}
         onRemoveQueued={onRemoveQueued}
         sendError={sendError}
@@ -539,6 +542,7 @@ export function useAgentCommandBar({
       configs,
       handleConfigChange,
       configExtra,
+      hostControls,
       queuedItems,
       onRemoveQueued,
       sendError,

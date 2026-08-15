@@ -102,8 +102,9 @@ export interface AgentCommandBarProps {
   // where the agent is fixed (a group-chat thread) and there is no session
   // picker to open.
   startIcon?: boolean
-  // Host slot: rendered in the action row after the settings button -- where
-  // input controls the host provides (dictation, attachments) belong.
+  // Host slot: rendered in the action row before the settings button (right
+  // after the approval shield) -- e.g. the per-setting icon buttons (model,
+  // effort, mode) a host breaks out of `configs` to give its own control.
   controls?: ReactNode
   // Agent settings -- model, reasoning effort, anything else the host offers.
   // They collapse into a single icon button that opens a menu of pickers, so
@@ -116,6 +117,12 @@ export interface AgentCommandBarProps {
   // than behind the button because a readout you have to open a menu to see
   // is a readout nobody reads.
   configExtra?: ReactNode
+  // Host slot: rendered in the action row AFTER the settings button, before
+  // Send/Stop -- where input controls the host provides (dictation,
+  // attachments) belong. Kept separate from `controls` (which sits before the
+  // settings button) so a host can put per-setting pickers and input controls
+  // on either side of it without either fighting the other for position.
+  trailingControls?: ReactNode
   queued?: QueuedMessage[]
   onRemoveQueued?: (id: string) => void
   // Copy for a send that did not go through, rendered directly above the
@@ -294,6 +301,7 @@ export function AgentCommandBar({
   configs,
   onConfigChange,
   configExtra,
+  trailingControls,
   queued,
   onRemoveQueued,
   sendError,
@@ -546,6 +554,8 @@ export function AgentCommandBar({
               </DropdownMenuContent>
             </DropdownMenu>
           ) : null}
+
+          {trailingControls}
 
           {/* Send BEFORE Stop, so Stop is the trailing control from the moment
               the turn starts until it ends -- see the ordering note in this
