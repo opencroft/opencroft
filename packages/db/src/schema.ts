@@ -1,4 +1,4 @@
-import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
+import { bigint, boolean, index, integer, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
 
 import { authSchema, user } from './auth-schema'
 
@@ -76,6 +76,36 @@ export const mcpAuditLog = pgTable(
     index('McpAuditLog_tool_idx').on(t.tool),
     index('McpAuditLog_status_idx').on(t.status),
     index('McpAuditLog_createdAt_idx').on(t.createdAt),
+  ],
+)
+
+// One row per (day, agent, model), recomputed in full on every rollup tick —
+// not accumulated incrementally — from the agent-container's own Claude Code
+// JSONL transcripts (billed-equivalent usage, not ACP context-size events).
+// Token counts are bigint: a single agent's cache-read total for one day has
+// already been observed in the tens of billions, well past int32 range.
+export const usageRollupDay = pgTable(
+  'UsageRollupDay',
+  {
+    id: text().primaryKey().notNull().$defaultFn(uuid),
+    day: text().notNull(),
+    agent: text().notNull(),
+    model: text().notNull(),
+    requests: integer().notNull(),
+    rawInputTokens: bigint({ mode: 'number' }).notNull(),
+    cacheWriteTokens: bigint({ mode: 'number' }).notNull(),
+    cacheReadTokens: bigint({ mode: 'number' }).notNull(),
+    outputTokens: bigint({ mode: 'number' }).notNull(),
+    // Requests whose cache write alone exceeded the cold-re-prime threshold —
+    // see usage-rollup's rollup-script for the exact value.
+    coldPrimeRequests: integer().notNull(),
+    coldPrimeTokens: bigint({ mode: 'number' }).notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('UsageRollupDay_day_agent_model_key').on(t.day, t.agent, t.model),
+    index('UsageRollupDay_day_idx').on(t.day),
   ],
 )
 
@@ -434,6 +464,7 @@ export const schema = {
   groupChatPin,
   groupChatThread,
   groupChatThreadArtifact,
+  usageRollupDay,
   ...authSchema,
 }
 
@@ -447,6 +478,7 @@ export type GroupChat = typeof groupChat.$inferSelect
 export type GroupChatPin = typeof groupChatPin.$inferSelect
 export type GroupChatMember = typeof groupChatMember.$inferSelect
 export type GroupChatThread = typeof groupChatThread.$inferSelect
+export type UsageRollupDay = typeof usageRollupDay.$inferSelect
 
 // Better Auth's tables, declared separately because their shape is the
 // library's contract rather than ours — re-exported here so drizzle-kit picks

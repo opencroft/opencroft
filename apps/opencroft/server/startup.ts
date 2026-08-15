@@ -8,6 +8,7 @@ import { deliverThreadFromNode, groupChatStandingContext } from '@/app/_authed/(
 import { startDockerPsPoller } from '@/server/scheduler/docker-ps-poller'
 import { startEventScheduler } from '@/server/scheduler/event-scheduler'
 import { startIdleSessionReaper } from '@/server/scheduler/idle-session-reaper'
+import { startUsageRollupScheduler } from '@/server/scheduler/usage-rollup-scheduler'
 
 const globalForStartup = globalThis as unknown as { __opencroftStarted?: boolean }
 
@@ -26,6 +27,7 @@ export function ensureServerStarted(): void {
   startDockerPsPoller()
   startDbBackupScheduler()
   startIdleSessionReaper()
+  startUsageRollupScheduler()
   // The session layer (extension-runtime/_server/stream.ts) knows nothing of
   // group chats — this is the one place that names both, so compaction's
   // restore step can reach a group-chat thread's current topic + pins

@@ -43,6 +43,12 @@ export function agentNodeAvatar(node: AgentGraphNode): string | undefined {
   return typeof value === 'string' ? value : undefined
 }
 
+/** Which Docker container this agent's harness process runs in, if any (several agents can share one). */
+export function agentNodeContainerName(node: AgentGraphNode): string | undefined {
+  const value = node.data?.['containerName']
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
 // Opt-in for the idle-session reaper (default OFF): unloading can kill
 // background work an idle session still owns, so this must be a deliberate
 // per-agent choice, never a global default.
