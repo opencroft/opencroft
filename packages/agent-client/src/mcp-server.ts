@@ -93,14 +93,37 @@ const servers = globalRef.__acpMcpServers
 export const SKILL_TOOL_NAME = 'skill'
 
 export const SKILL_INPUT_SCHEMA = {
-  skill: z.string().describe('Name of the skill to load'),
+  skills: z.array(z.string()).describe('Names of the skills to load'),
 }
 
 // The catalog itself is served by the skill_list tool, not embedded here — a
 // large skill count previously bloated this description enough to get
 // truncated in tool listings.
 export function skillToolDescription(): string {
-  return 'Load a skill to learn how to perform a task. Call skill_list first to see available skills and when to use them.'
+  return 'Load one or more skills to learn how to perform tasks. Pass the names as the `skills` array. Call skill_list first to see available skills and when to use them.'
+}
+
+// Load skills by name, honoring per-skill permissions, and join their bodies.
+// Names are de-duplicated; a lone skill returns its body verbatim, while several
+// are labeled so the model can tell them apart. Shared by the MCP server and the
+// native harness so both expose an identical instrument.
+export async function loadSkills(
+  names: string[],
+  skillHandler: SkillHandler,
+  permissions: ResolvedPermissions | undefined,
+): Promise<string> {
+  const requested = Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)))
+  if (requested.length === 0) {
+    return 'Error: provide at least one skill name in "skills".'
+  }
+  const sections = await Promise.all(
+    requested.map(async (name) => {
+      const body =
+        accessFor(permissions, skillKey(name)) === null ? `Skill "${name}" is not available.` : await skillHandler(name)
+      return requested.length > 1 ? `## ${name}\n\n${body}` : body
+    }),
+  )
+  return sections.join('\n\n')
 }
 
 function textResult(text: string) {
@@ -138,13 +161,9 @@ async function buildServer(
         description: skillToolDescription(),
         inputSchema: SKILL_INPUT_SCHEMA,
       },
-      // Guard the handler too: a model could still name a non-permitted skill.
-      async ({ skill }) => {
-        if (accessFor(permissions, skillKey(skill)) === null) {
-          return textResult(`Skill "${skill}" is not available.`)
-        }
-        return textResult(await skillHandler(skill))
-      },
+      // loadSkills guards each name too: a model could still request a
+      // non-permitted skill.
+      async ({ skills: requested }) => textResult(await loadSkills(requested, skillHandler, permissions)),
     )
   }
   for (const tool of await resolveTools(options.tools, caller)) {
