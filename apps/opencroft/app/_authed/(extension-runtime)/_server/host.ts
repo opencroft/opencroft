@@ -769,6 +769,17 @@ const sendMessageApi: HostSendMessageApi = {
     if (!parts || !reachablePairs(found.nodes, found.edges).has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
       throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
     }
+    // The reachability check above only asks whether this node COULD send to
+    // this agent/job pair -- it says nothing about whether sessionKey itself
+    // was ever actually created. Unlike unload (which only ever proceeds on
+    // 'idle', a status a nonexistent key can never report), delete's default
+    // path proceeds on 'offline' -- exactly the fallback status a nonexistent
+    // key also reports -- so without this check a garbage key reads as an
+    // ordinary stale session and "succeeds" without deleting anything.
+    const known = (await readSessions()).some((entry) => entry.key === sessionKey)
+    if (!known) {
+      throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
+    }
     const force = params.force === true
     if (!force) {
       const status = deriveSessionStatus(sessionKey, {
