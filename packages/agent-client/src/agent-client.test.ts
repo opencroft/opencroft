@@ -684,7 +684,7 @@ test('a mid-turn prompt without the capability queues even on the claude adapter
   await h.client.reset()
 })
 
-// ── deleteSession / session-close propagation ────
+// ── deleteSession / session-close propagation ──────────────────────────────
 //
 // store.connections is keyed by spawn config, not sessionId, so these tests
 // exercise the three cases that matter: the common single-session case

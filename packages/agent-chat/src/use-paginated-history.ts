@@ -11,13 +11,13 @@ export interface UsePaginatedHistoryOptions {
 
 // The "load older on scroll-up" half of a paginated chat transcript: a host
 // that only streams/renders a bounded tail window (instead of a session's full
-// history; sending the full replay to the
-// browser on every open/reconnect was the actual cause of a server OOM) wires
-// this up to fetch and prepend earlier pages as the user scrolls back. Doesn't
-// know about SSE, EventSource, or agent-client internals — the host supplies
-// `fetchPage` and calls `reset()` once it knows the tail window's own cursor
-// (e.g. from a stream's "history done" marker), then `loadOlder()` from its
-// scroll handler, prepending the returned events ahead of what it already has.
+// history — sending the full replay to the browser on every open or reconnect
+// is a known cause of server OOM) wires this up to fetch and prepend earlier
+// pages as the user scrolls back. Doesn't know about SSE, EventSource, or
+// agent-client internals — the host supplies `fetchPage` and calls `reset()`
+// once it knows the tail window's own cursor (e.g. from a stream's "history
+// done" marker), then `loadOlder()` from its scroll handler, prepending the
+// returned events ahead of what it already has.
 export function usePaginatedHistory({ fetchPage }: UsePaginatedHistoryOptions) {
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)

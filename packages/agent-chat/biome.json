@@ -10,7 +10,7 @@
             "patterns": [
               {
                 "group": ["@/*", "**/apps/**", "**/app/_authed/**"],
-                "message": "packages/agent-chat is a host-agnostic package (reused beyond this app) — it may depend on agent-client and ui, never on the opencroft app. Take whatever this needs as a prop/extension point instead."
+                "message": "packages/agent-chat is a host-agnostic package (reused beyond this app) — it may depend on agent-client and ui, never on the host app. Take whatever this needs as a prop/extension point instead."
               }
             ]
           }
