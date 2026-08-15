@@ -263,3 +263,21 @@ export declare const InspectorTerminalBody: typeof Terminal
 export declare const CommandBar: ComponentType<Record<string, unknown>>
 export declare const CommandBarMenu: ComponentType<Record<string, unknown>>
 export declare const CommandBarMenuItem: ComponentType<Record<string, unknown>>
+
+export type CodeEditorLanguage = 'typescript' | 'javascript' | 'python' | 'shell' | 'json' | 'plaintext'
+export interface CodeEditorProps {
+  value: string
+  language?: CodeEditorLanguage
+  readOnly?: boolean
+  onChange?: (value: string) => void
+  /** Reveal and place the cursor on this 1-based line once, on mount. */
+  line?: number
+  /** Defaults to filling its container, which must have a definite height. */
+  height?: string | number
+}
+/**
+ * The host's code editor. Provided here rather than imported from an editor
+ * package so every surface shares one editor runtime — an extension bundle has
+ * no runtime module resolver, so its own copy would initialise a second one.
+ */
+export declare const CodeEditor: FC<CodeEditorProps>

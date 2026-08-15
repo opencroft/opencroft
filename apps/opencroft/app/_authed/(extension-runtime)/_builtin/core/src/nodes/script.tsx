@@ -1,12 +1,7 @@
-import { javascript } from '@codemirror/lang-javascript'
-import { python } from '@codemirror/lang-python'
-import { oneDark } from '@codemirror/theme-one-dark'
 import { legacy } from '@opencroft/client'
-const { Badge, Button, Input, InputHandle, Label, NodeFrame, OutputHandle, React, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Textarea, dispatch, getStream, icons, inspectorIntent, toast, useGraphNodes, useNodeContext, useReactFlow } = legacy
+const { Badge, Button, CodeEditor, Input, InputHandle, Label, NodeFrame, OutputHandle, React, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Textarea, dispatch, getStream, icons, inspectorIntent, toast, useGraphNodes, useNodeContext, useReactFlow } = legacy
 type Stream<T> = legacy.Stream<T>
 type TextChunk = legacy.TextChunk
-import CodeMirror from '@uiw/react-codemirror'
-
 import { type ScriptResult, setScriptResult, useScriptResult } from './script-output-store'
 
 const { useCallback } = React
@@ -29,14 +24,14 @@ const LANG_CONFIG = {
   node: { icon: icons.Hexagon, accent: 'oklch(0.65 0.2 150)', label: 'Node.js' },
 } as const
 
-function langExtension(language: ScriptData['language']) {
+function editorLanguage(language: ScriptData['language']): legacy.CodeEditorLanguage {
   if (language === 'python') {
-    return [python()]
+    return 'python'
   }
   if (language === 'node') {
-    return [javascript()]
+    return 'javascript'
   }
-  return []
+  return 'shell'
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -288,19 +283,10 @@ export function ScriptCodeEditorTab({
 }) {
   return (
     <div className='h-full w-full overflow-hidden'>
-      <CodeMirror
+      <CodeEditor
         value={data.script ?? ''}
-        height='100%'
-        className='h-full [&_.cm-editor]:h-full [&_.cm-scroller]:overflow-auto'
-        theme={oneDark}
-        extensions={langExtension(data.language)}
-        onChange={(v: string) => updateData({ script: v })}
-        basicSetup={{
-          lineNumbers: true,
-          foldGutter: true,
-          highlightActiveLine: true,
-          tabSize: 2,
-        }}
+        language={editorLanguage(data.language)}
+        onChange={(next: string) => updateData({ script: next })}
       />
     </div>
   )

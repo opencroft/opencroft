@@ -9,10 +9,6 @@ const dst = resolve(root, process.argv[2] || 'extension-deps')
 const roots = [
   '@xterm/xterm',
   '@xterm/addon-fit',
-  '@uiw/react-codemirror',
-  '@codemirror/theme-one-dark',
-  '@codemirror/lang-javascript',
-  '@codemirror/lang-python',
   'js-yaml',
 ]
 

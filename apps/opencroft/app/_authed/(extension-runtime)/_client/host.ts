@@ -43,6 +43,7 @@ import {
   useSeedDockerContainers,
 } from '@/app/_authed/(sse)/_lib/sse-events-store'
 import { useUrlParam } from '@/app/_lib/use-url-param'
+import { CodeEditor } from '@/components/code-editor'
 import { ControlledInput } from '@/components/ui/input/controlled-input'
 
 // What extension code actually receives as `icons` -- see safe-icons.ts for
@@ -318,6 +319,7 @@ export const extensionUiApi = {
   // SearchableDropdown, Popover, Command, Combobox, …) — see `ui/ext`.
   ...uiKit,
   // App-provided components that live outside the `ui` package (or override it).
+  CodeEditor,
   ControlledInput,
   FileBrowser,
   FileManagerProvider,

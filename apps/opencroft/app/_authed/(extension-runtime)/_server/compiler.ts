@@ -315,6 +315,7 @@ export const DialogFooter = ui.DialogFooter;
 export const DialogHeader = ui.DialogHeader;
 export const DialogTitle = ui.DialogTitle;
 export const DialogTrigger = ui.DialogTrigger;
+export const CodeEditor = ui.CodeEditor;
 export const FileBrowser = ui.FileBrowser;
 export const FileManagerProvider = ui.FileManagerProvider;
 export const Terminal = ui.Terminal;
