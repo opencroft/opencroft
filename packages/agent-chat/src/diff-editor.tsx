@@ -1,19 +1,29 @@
 'use client'
 
-import { json } from '@codemirror/lang-json'
-import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
-import { MergeView, unifiedMergeView } from '@codemirror/merge'
-import { oneDark } from '@codemirror/theme-one-dark'
-import { EditorView, lineNumbers } from '@codemirror/view'
-import CodeMirror from '@uiw/react-codemirror'
+import { type DiffOnMount, loader, DiffEditor as MonacoDiffEditor } from '@monaco-editor/react'
 import { Columns2, Rows2 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from 'ui/components/ui/button'
 import { cn } from 'ui/lib/utils'
 
-// A separate subpath export (`agent-chat/diff-editor`), never imported from
-// the core chat modules — CodeMirror is a heavy dependency and hosts that
-// don't register a diff-showing tool view shouldn't pay for it.
+// A separate subpath export (`agent-chat/diff-editor`), never imported from the
+// core chat modules — Monaco is a heavy dependency and hosts that don't register
+// a diff-showing tool view shouldn't pay for it.
+//
+// Monaco's runtime is fetched by @monaco-editor/loader, which by default pulls
+// it from a public CDN. That is why nothing here configures a bundler or a web
+// worker: this package stays host-agnostic precisely because it never touches
+// either. A host that must run offline, or that would rather not have a third
+// party in this load path, re-points the loader once before first render:
+//
+//   import { loader } from 'agent-chat/diff-editor'
+//   import * as monaco from 'monaco-editor'
+//   loader.config({ monaco })                       // from the host's own bundle
+//   loader.config({ paths: { vs: '/monaco/vs' } })  // or from the host's origin
+//
+// Re-exported rather than decided here: where the bytes come from is a bundling
+// and deployment question, and those belong to the host.
+export { loader }
 
 type DiffMode = 'unified' | 'split'
 
@@ -21,6 +31,13 @@ export interface DiffEditorProps {
   current: string
   next: string
 }
+
+// These diffs render inline in a chat transcript, so the editor is sized to its
+// content rather than given a fixed box. The floor keeps a one-line diff from
+// collapsing under its own toolbar; the ceiling stops a thousand-line diff from
+// swallowing the transcript, and hands the rest to Monaco's own scroller.
+const MIN_HEIGHT = 56
+const MAX_HEIGHT = 400
 
 // Tracks the shadcn dark-mode convention (a `dark` class on <html>) via a
 // MutationObserver, rather than depending on a theming library — this stays
@@ -40,59 +57,6 @@ function useIsDarkMode(): boolean {
     return () => observer.disconnect()
   }, [])
   return dark
-}
-
-function UnifiedDiff({ current, next }: { current: string; next: string }) {
-  const dark = useIsDarkMode()
-  const extensions = useMemo(
-    () => [
-      json(),
-      unifiedMergeView({ original: current, mergeControls: false, highlightChanges: true }),
-      EditorView.editable.of(false),
-    ],
-    [current],
-  )
-
-  return (
-    <CodeMirror
-      value={next}
-      theme={dark ? 'dark' : 'light'}
-      extensions={extensions}
-      editable={false}
-      basicSetup={{ lineNumbers: true, foldGutter: false, highlightActiveLine: false }}
-    />
-  )
-}
-
-function SplitDiff({ current, next }: { current: string; next: string }) {
-  const dark = useIsDarkMode()
-  const hostRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const host = hostRef.current
-    if (!host) {
-      return
-    }
-    const themeExt = dark ? [oneDark] : []
-    const baseExtensions = [
-      lineNumbers(),
-      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-      json(),
-      EditorView.editable.of(false),
-      ...themeExt,
-    ]
-    const view = new MergeView({
-      parent: host,
-      a: { doc: current, extensions: baseExtensions },
-      b: { doc: next, extensions: baseExtensions },
-      highlightChanges: true,
-      gutter: true,
-      collapseUnchanged: { margin: 3, minSize: 4 },
-    })
-    return () => view.destroy()
-  }, [current, next, dark])
-
-  return <div ref={hostRef} />
 }
 
 function ModeToggle({ mode, onChange }: { mode: DiffMode; onChange: (mode: DiffMode) => void }) {
@@ -120,10 +84,10 @@ function ModeToggle({ mode, onChange }: { mode: DiffMode; onChange: (mode: DiffM
   )
 }
 
-// A two-mode (unified/split) read-only JSON diff viewer, built on CodeMirror's
-// merge view. Register it (or wrap it) inside a `ToolViewSpec.component` for
-// any tool whose args/result are worth diffing — e.g. before/after a node or
-// file edit.
+// A two-mode (unified/split) read-only JSON diff viewer, built on Monaco's diff
+// editor. Register it (or wrap it) inside a `ToolViewSpec.component` for any
+// tool whose args/result are worth diffing — e.g. before/after a node or file
+// edit.
 export function DiffEditor({ current, next }: DiffEditorProps) {
   // Unified by default. Side by side splits an already narrow column in two and
   // is unreadable on a phone even when it fits; the toggle keeps it one press
@@ -131,60 +95,117 @@ export function DiffEditor({ current, next }: DiffEditorProps) {
   // default that flips under a resize is state to reason about, and nothing
   // here needs it.
   const [mode, setMode] = useState<DiffMode>('unified')
+  const [height, setHeight] = useState(MIN_HEIGHT)
+
+  const editorRef = useRef<Parameters<DiffOnMount>[0] | null>(null)
+  const disposablesRef = useRef<{ dispose: () => void }[]>([])
+  // Read through a ref so the content-size subscriptions below stay valid
+  // across a mode change. Switching mode only updates Monaco's options, it
+  // doesn't remount the editor, so a listener that closed over `mode` would go
+  // on measuring for the mode it was registered in.
+  const modeRef = useRef<DiffMode>(mode)
+  modeRef.current = mode
+
+  const syncHeight = useCallback(() => {
+    const editor = editorRef.current
+    if (!editor) {
+      return
+    }
+    const modified = editor.getModifiedEditor().getContentHeight()
+    // Side by side is as tall as its taller pane. Inline renders the removed
+    // lines inside the modified editor as view zones, so that one already
+    // accounts for both sides and taking the max would overshoot.
+    const tallest =
+      modeRef.current === 'split' ? Math.max(modified, editor.getOriginalEditor().getContentHeight()) : modified
+    setHeight(Math.min(Math.max(tallest, MIN_HEIGHT), MAX_HEIGHT))
+  }, [])
+
+  const handleMount = useCallback<DiffOnMount>(
+    (editor) => {
+      editorRef.current = editor
+      disposablesRef.current = [
+        editor.getOriginalEditor().onDidContentSizeChange(syncHeight),
+        editor.getModifiedEditor().onDidContentSizeChange(syncHeight),
+      ]
+      syncHeight()
+    },
+    [syncHeight],
+  )
+
+  // Re-measure when the mode changes: the two layouts have different heights
+  // for the same pair of documents, and toggling doesn't itself change content
+  // size, so nothing else would fire.
+  useEffect(() => {
+    syncHeight()
+  }, [syncHeight])
+
+  useEffect(
+    () => () => {
+      for (const disposable of disposablesRef.current) {
+        disposable.dispose()
+      }
+      disposablesRef.current = []
+      editorRef.current = null
+    },
+    [],
+  )
+
+  const dark = useIsDarkMode()
 
   return (
     // `min-w-0` and `max-w-full` guard the cases where this box is a flex item
-    // or has a definite containing block. They are not what stops the diff
-    // widening the page — see the scroll box below for that.
+    // or has a definite containing block.
     <div className='relative min-w-0 max-w-full'>
-      <style>{`
-        .cm-merge-a .cm-changedText,
-        .cm-deletedChunk .cm-deletedText {
-          background: rgba(238, 68, 51, 0.3) !important;
-        }
-        .cm-merge-b .cm-changedText,
-        .cm-insertedLine .cm-changedText {
-          background: rgba(34, 187, 34, 0.3) !important;
-        }
-      `}</style>
       {/* Overlaid on top of the diff instead of its own row, so it doesn't cost
           a whole line of vertical space. */}
       <div className='absolute right-2 top-2 z-10'>
         <ModeToggle mode={mode} onChange={setMode} />
       </div>
-      {/* `contain: inline-size` is what actually bounds the diff, and it is here
-          rather than on an ancestor because this is the last box before
-          CodeMirror.
+      {/* `contain: inline-size` makes this box's width computable without
+          looking at its contents, so a long line can't propagate outward
+          through every ancestor whose width is content-derived and widen the
+          whole page — the failure this fixed, measured at 1060px of content
+          inside a 360px column on a phone.
 
-          CodeMirror writes the widest line it has seen onto its content tile as
-          an inline pixel `flex-basis`. That gives `.cm-scroller` — a flex
-          container — a min-content width of the longest line, and that width
-          then propagates outward through every ancestor whose own width is
-          content-derived, all the way to the document. Measured on a phone: the
-          scroller rendered 1060px inside a 360px column, with every ancestor
-          above it wider in lockstep and nothing clamping.
-
-          Percentage widths cannot break that: `w-full` resolves against a
-          containing block that is itself already inflated. `min-w-0` does not
-          either — it removes a flex item's automatic minimum size, and these
-          boxes are not flex items. Both were tried and neither was reached.
-
-          Size containment in the inline axis is what does: it makes this box's
-          width computable without looking at its contents, so the tile stops
-          contributing to anything outside, ancestors resolve against the
-          viewport again, and the overflow lands on this box's own scroller —
-          where horizontal scrolling already worked.
-
-          Under inline-size containment this box contributes nothing to
-          intrinsic sizing, so it requires a containing block with a definite
-          width. Every call site here gives it one — a host that doesn't will
-          collapse it to zero. */}
-      <div className='w-full min-w-0 [contain:inline-size] rounded-md border overflow-auto text-xs'>
-        {mode === 'unified' ? (
-          <UnifiedDiff current={current} next={next} />
-        ) : (
-          <SplitDiff current={current} next={next} />
-        )}
+          Monaco lays out absolutely inside a box it is told the size of, so it
+          is far less likely than the previous CodeMirror implementation to
+          inflate an ancestor on its own. The containment is kept anyway: it
+          costs nothing, and dropping it would be an unforced bet that the new
+          editor never does. Under it this box contributes nothing to intrinsic
+          sizing, so it needs a containing block with a definite width — every
+          call site gives it one, and a host that doesn't will collapse it to
+          zero. */}
+      <div className='w-full min-w-0 [contain:inline-size] overflow-hidden rounded-md border'>
+        <MonacoDiffEditor
+          height={height}
+          language='json'
+          original={current}
+          modified={next}
+          theme={dark ? 'vs-dark' : 'vs'}
+          onMount={handleMount}
+          loading={<div className='h-14 w-full animate-pulse bg-muted' />}
+          options={{
+            readOnly: true,
+            renderSideBySide: mode === 'split',
+            // Monaco traps the wheel by default, which inside a chat transcript
+            // means scrolling stalls whenever the pointer crosses a diff.
+            scrollbar: { alwaysConsumeMouseWheel: false },
+            // Long diffs are mostly untouched context; collapse it the way the
+            // previous implementation's `collapseUnchanged` did.
+            hideUnchangedRegions: { enabled: true, minimumLineCount: 4, contextLineCount: 3 },
+            minimap: { enabled: false },
+            overviewRulerLanes: 0,
+            scrollBeyondLastLine: false,
+            lineNumbers: 'on',
+            folding: false,
+            contextmenu: false,
+            fontSize: 12,
+            // The container's width is set by the host's layout and changes
+            // without a React render (sidebar, rotation), so Monaco has to
+            // observe it rather than be told.
+            automaticLayout: true,
+          }}
+        />
       </div>
     </div>
   )
