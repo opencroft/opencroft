@@ -41,7 +41,7 @@ import {
   stopLocalSessionProcessImpl,
   tabSessions,
 } from './acp-impl'
-import { readPersistedSession } from './acp-session-store'
+import { readPersistedSession, writePersistedUsage } from './acp-session-store'
 
 interface AcpStoreShape {
   connections: Map<string, unknown>
@@ -326,5 +326,47 @@ test('forgetLocalSessionImpl drops the durable pointer too -- unlike stopLocalSe
     await readPersistedSession(tabKey),
     null,
     'delete must drop the durable pointer -- a later restart must not resurrect this session',
+  )
+})
+
+// ── contextUsage ────────────────────────────────────────────────────────
+//
+// The composer seeds its ring from this field so it shows a figure the
+// instant it mounts, instead of waiting for the connection's first live
+// 'usage' event -- resolved the same live-or-last-known way host.ts's own
+// listSessions resolves it (see currentContextUsage).
+
+test('a fresh, never-prompted session has contextUsage: null -- nothing has ever been reported', async () => {
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection)
+  const tabKey = `agent:dock:test:${crypto.randomUUID()}`
+
+  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+
+  assert.equal(opened.contextUsage, null)
+})
+
+// Reattaching an unloaded session (see stopLocalSessionProcessImpl above) goes
+// through the SAME resume path a real restart does, which restores the
+// session's last persisted usage into agent-client BEFORE ensureLocalSession
+// returns -- so by the time the composer ever sees it, the reading is live
+// again, never a last-known/`asOf`-marked one. This is the reason a stale,
+// dimmed ring cannot come from this call: reopening a thread revives it.
+test('reattaching an unloaded session restores its last usage live -- never as a stale (asOf) reading', async () => {
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection, { canLoad: true })
+  const tabKey = `agent:dock:test:${crypto.randomUUID()}`
+
+  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix' })
+  await writePersistedUsage(first.sessionId, { used: 8_000, size: 200_000 })
+  await stopLocalSessionProcessImpl(tabKey)
+
+  const reattached = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+
+  assert.deepEqual(
+    reattached.contextUsage,
+    { usedTokens: 8_000, contextLimit: 200_000 },
+    'the persisted figure comes back, but without asOf -- resuming makes the session live again before this returns',
   )
 })

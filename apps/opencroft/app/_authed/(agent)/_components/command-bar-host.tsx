@@ -39,8 +39,11 @@ interface AgentCommandBarHostProps {
   /** Change one of the session's config options. Must be stable — it feeds the
    * memoized command bar. */
   onSetConfigOption?: (configId: string, value: string | boolean) => void
-  /** Context usage meter (tokens used / window), shown alongside the selectors. */
-  usage?: { used: number; size?: number }
+  /** Context usage meter (tokens used / window), shown alongside the
+   *  selectors. `asOf`, when present, marks a last-known reading from before
+   *  the session went offline rather than a live one — forwarded through to
+   *  the ring unchanged. */
+  usage?: { used: number; size?: number; asOf?: number }
   /** Compact lifecycle for the ring's popover -- the trigger plus what to show
    *  while/after it runs. Omit to render the ring with no Compact button at
    *  all (ContextRing offers one only when it's given a handler). */

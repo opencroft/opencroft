@@ -67,6 +67,11 @@ export type QueuedMessage = QueuedPrompt
 export interface AgentUsage {
   used: number
   size?: number
+  // Wall-clock time (ms since epoch) this figure was last known -- present
+  // only when it's the last-known reading ensureLocalSession seeded while
+  // the session was offline, never on a figure a live 'usage' event reported
+  // this connection. Mirrors ContextUsage's own `asOf` (session-context-usage.ts).
+  asOf?: number
 }
 
 export interface AcpSession {
@@ -354,6 +359,13 @@ export function useAcpSession(
   // block (see buildBlocks' `enclosingTurnId`). Without it that block is renamed
   // by every mid-turn page and the scroll restore loses its anchor.
   const [historyHeader, setHistoryHeader] = useState<{ index: number; text: UserText | null } | null>(null)
+  // Seeded from ensureLocalSession's own read of this session's context usage
+  // (live if it has a process right now, else the last-known reading from
+  // before it went offline). Shown until a live 'usage' event streams in over
+  // THIS connection (folded.usage below), which then takes over permanently —
+  // reset alongside the rest of this tab's state so a previous tab's seed
+  // never leaks into a freshly resolving one.
+  const [seedUsage, setSeedUsage] = useState<AgentUsage | undefined>(undefined)
 
   // Resolve (or lazily create) the live ACP session for this tab.
   // biome-ignore lint/correctness/useExhaustiveDependencies(generation): not read in the body -- it exists purely to force this effect to re-run for the SAME tab after clearSession, which agentNodeId/jobNodeId/tabKey alone would not trigger
@@ -365,6 +377,7 @@ export function useAcpSession(
     setLocalWaiting(false)
     setCanFork(false)
     setCanSteer(false)
+    setSeedUsage(undefined)
     deliveredOnceRef.current = false
     sendChainRef.current = Promise.resolve()
     ensureLocalSession({ data: { agentNodeId, jobNodeId, tabKey } })
@@ -375,6 +388,15 @@ export function useAcpSession(
           setCanSteer(result.canSteer)
           setAdapterId(result.adapterId)
           createdRef.current = result.created
+          setSeedUsage(
+            result.contextUsage
+              ? {
+                  used: result.contextUsage.usedTokens,
+                  size: result.contextUsage.contextLimit ?? undefined,
+                  asOf: result.contextUsage.asOf,
+                }
+              : undefined,
+          )
         }
       })
       .catch((error) => {
@@ -736,7 +758,12 @@ export function useAcpSession(
       asks: folded.asks,
       queue: folded.queue,
       configOptions: folded.configOptions,
-      usage: folded.usage,
+      // A live event this connection has actually seen wins and stays won —
+      // once one lands, folded.usage keeps returning it on every later render
+      // (it's derived from the accumulated event log), so the ring never
+      // reverts to the seed after going live. Before that, the seed is what
+      // ensureLocalSession resolved this tab's usage to at open time.
+      usage: folded.usage ?? seedUsage,
       resolvePermission,
       resolveAsk,
       respondPermissionText,
@@ -750,6 +777,7 @@ export function useAcpSession(
       folded.queue,
       folded.configOptions,
       folded.usage,
+      seedUsage,
       resolvePermission,
       resolveAsk,
       respondPermissionText,

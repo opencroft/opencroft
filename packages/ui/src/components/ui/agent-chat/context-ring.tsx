@@ -16,6 +16,12 @@ export interface ContextRingProps {
   // "no window reported" as well as "nothing used"; the popover is what
   // distinguishes them, which is one more reason it exists.
   contextLimit: number
+  // Wall-clock time (ms since epoch) this figure was reported. Present ONLY
+  // on a last-known reading served for an offline session -- never on a live
+  // one (see ContextUsage in session-context-usage.ts, which this mirrors).
+  // Its presence dims the ring and adds a line to the popover naming when the
+  // reading is from; its absence is the ordinary, fully-opaque ring.
+  asOf?: number
   // Where the ring stops being neutral, as PERCENTAGES -- the unit is in the
   // name because a fraction passed to a percentage prop fails silently: the
   // threshold is simply never crossed and the ring stays neutral at 99%.
@@ -102,6 +108,19 @@ function trimTrailingZero(text: string): string {
   return text.endsWith('.0') ? text.slice(0, -2) : text
 }
 
+// "Reported just now" / "Reported 5m ago" / "Reported 3h ago", falling back
+// to a short date once it's more than a day stale -- same granularity the
+// app's own freshness copy uses elsewhere (see backup-settings.tsx), so a
+// stale reading reads the same way wherever one is shown.
+function formatAsOf(asOf: number): string {
+  const diffMin = Math.round((Date.now() - asOf) / 60_000)
+  if (diffMin < 1) return 'Reported just now'
+  if (diffMin < 60) return `Reported ${diffMin}m ago`
+  const diffHour = Math.round(diffMin / 60)
+  if (diffHour < 24) return `Reported ${diffHour}h ago`
+  return `Reported ${new Date(asOf).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+}
+
 // A circular context-usage indicator for an agent chat: the fraction of the
 // window in use drawn as a ring, the integer percentage written in the centre,
 // and the counts -- plus Compact -- in a popover on press.
@@ -139,6 +158,7 @@ function trimTrailingZero(text: string): string {
 export function ContextRing({
   usedTokens,
   contextLimit,
+  asOf,
   warnAtPercent = 70,
   dangerAtPercent = 90,
   onCompact,
@@ -167,7 +187,8 @@ export function ContextRing({
   const label = hasLimit
     ? `Context usage: ${counts} (${pct}%)`
     : `Context usage: ${counts} used, window size not reported`
-  const ariaLabel = compacting ? `${label} — compacting` : label
+  const freshness = asOf ? formatAsOf(asOf) : null
+  const ariaLabel = compacting ? `${label} — compacting` : freshness ? `${label} — ${freshness}` : label
 
   return (
     <Popover defaultOpen={defaultOpen}>
@@ -181,6 +202,10 @@ export function ContextRing({
             // the space the ring already occupied, so nothing around it moves.
             'relative inline-flex size-7 items-center justify-center rounded-full outline-none transition-colors',
             'hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring',
+            // A last-known reading, not a live one -- same de-emphasis weight
+            // a disabled-but-selectable row already uses elsewhere (see
+            // ChatListItem), reverting the instant a live reading replaces it.
+            asOf ? 'opacity-60' : null,
             className,
           )}
         >
@@ -234,6 +259,7 @@ export function ContextRing({
           <span className='text-xs text-muted-foreground'>
             {hasLimit ? `${pct}% of the window used` : 'Window size not reported'}
           </span>
+          {freshness ? <span className='text-xs text-muted-foreground'>{freshness}</span> : null}
         </div>
         {onCompact || onClear ? (
           // Full width and stacked under a rule: these are the actions here,

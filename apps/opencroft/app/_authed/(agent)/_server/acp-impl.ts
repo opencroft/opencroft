@@ -31,6 +31,7 @@ import type { AgentSelection } from 'agent-client/types'
 import {
   deletePersistedConfigOptions,
   deletePersistedSession,
+  readLastKnownUsage,
   readPersistedConfigOptions,
   readPersistedSession,
   readPersistedUsage,
@@ -42,6 +43,7 @@ import {
   installYoloModeEnforcement,
   modeLockedByYolo,
 } from '@/app/_authed/(agent)/_server/yolo-mode-enforcement'
+import { type ContextUsage, toContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import { secrets } from '@/server/secrets'
@@ -81,6 +83,13 @@ export interface OpenedSession {
   // context, instructions) off this instead of inferring it themselves — see
   // the message-envelope module.
   created: boolean
+  // What this session currently holds, resolved the same way host.ts resolves
+  // it for listSessions: a live reading if the session has a process right
+  // now, else the last-known reading persisted before it went offline (see
+  // ContextUsage's own `asOf`), else null if nothing was ever reported. Lets
+  // the composer show a figure the moment it mounts instead of waiting for
+  // this connection's first live 'usage' event.
+  contextUsage: ContextUsage | null
 }
 
 export interface TabSession {
@@ -145,6 +154,15 @@ async function resolveSecret(key: string): Promise<string> {
   return (await secrets.resolve(key)) ?? ''
 }
 
+// Same live-or-last-known resolution host.ts's listSessions uses, for one
+// key instead of the whole registry. Read fresh at each return point below —
+// not cached across them — since a resume can call restoreUsage in between,
+// which this must see.
+async function currentContextUsage(tabKey: string): Promise<ContextUsage | null> {
+  const live = agentClient.listSessions().find((m) => m.sessionKey === tabKey)
+  return live ? toContextUsage(live.usage) : toContextUsage(undefined, (await readLastKnownUsage(tabKey)) ?? undefined)
+}
+
 // Build the agent's selection in memory from its node data + Secrets Store key
 // (no on-disk profile store), and open (or reuse) the ACP session for this tab.
 export async function ensureLocalSessionImpl(data: {
@@ -186,6 +204,7 @@ async function openLocalSession(data: {
       // in which case there is nothing to classify anyway.
       adapterId: known.adapterId ?? agentClient.sessionModes(known.id)?.adapterId ?? '',
       created: !(known.everPrompted ?? true),
+      contextUsage: await currentContextUsage(data.tabKey),
     }
   }
   const agent = await findNodeData<AgentNodeData>(data.agentNodeId)
@@ -282,7 +301,14 @@ async function openLocalSession(data: {
         agentClient.restoreUsage(resumed.id, { used: usage.used, size: usage.size })
       }
       await pinModeIfYolo(resumed.id)
-      return { sessionId: resumed.id, canFork, canSteer, adapterId, created: !persisted.prompted }
+      return {
+        sessionId: resumed.id,
+        canFork,
+        canSteer,
+        adapterId,
+        created: !persisted.prompted,
+        contextUsage: await currentContextUsage(data.tabKey),
+      }
     }
     // The pointer resolved but the session is gone — the agent can no longer
     // load it. Falling through to a fresh session is the only option, and that
@@ -300,7 +326,14 @@ async function openLocalSession(data: {
   // this session instead of creating a rival for the same key.
   await writePersistedSession(data.tabKey, meta.id, false)
   await pinModeIfYolo(meta.id)
-  return { sessionId: meta.id, canFork, canSteer, adapterId, created: true }
+  return {
+    sessionId: meta.id,
+    canFork,
+    canSteer,
+    adapterId,
+    created: true,
+    contextUsage: await currentContextUsage(data.tabKey),
+  }
 }
 
 // A session opened while YOLO is on starts pinned to bypass, and the toggle
