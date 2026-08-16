@@ -141,9 +141,7 @@ function handleChunk(flow: LoginFlow, spec: OauthSpec, chunk: Buffer) {
   const auth = messages.find((m) => m.id === 1)
   if (auth && !flow.outcomeSettled) {
     flow.outcomeSettled = true
-    flow.settleOutcome(
-      auth.error ? { ok: false, error: auth.error.message ?? 'Authentication failed' } : { ok: true },
-    )
+    flow.settleOutcome(auth.error ? { ok: false, error: auth.error.message ?? 'Authentication failed' } : { ok: true })
   }
 }
 
@@ -244,7 +242,10 @@ export async function submitOauthCode(loginId: string, code: string): Promise<{ 
   const spec = OAUTH_SPECS[flow.adapterId]
   flow.child.stdin.write(`${code.trim()}\n`)
   const timeout = new Promise<{ ok: boolean; error?: string }>((resolve) => {
-    setTimeout(() => resolve({ ok: false, error: 'Timed out waiting for the login to finish' }), CODE_TIMEOUT_MS).unref?.()
+    setTimeout(
+      () => resolve({ ok: false, error: 'Timed out waiting for the login to finish' }),
+      CODE_TIMEOUT_MS,
+    ).unref?.()
   })
   const result = await Promise.race([flow.outcome, timeout])
   endFlow(flow)

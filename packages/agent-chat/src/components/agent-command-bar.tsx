@@ -1,10 +1,9 @@
 'use client'
 
 import { Send, ShieldAlert, ShieldCheck, ShieldCog, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react'
-import { Fragment, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode, Ref } from 'react'
-
-import { Button } from '@/components/ui/button'
+import { Fragment, useRef, useState } from 'react'
+import { Button } from 'ui/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,9 +12,9 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import { Textarea } from '@/components/ui/textarea'
-import { cn } from '@/lib/utils'
+} from 'ui/components/ui/dropdown-menu'
+import { Textarea } from 'ui/components/ui/textarea'
+import { cn } from 'ui/lib/utils'
 
 // A message the host is holding until the current turn finishes. `text` is
 // display-ready: whatever transform the host applies before sending (context
@@ -370,9 +369,7 @@ export function AgentCommandBar({
     // so Enter inserts a newline like in any other textarea; only fine-pointer
     // clients (mouse / physical keyboard) send on Enter. Read at event time --
     // the handler only runs client-side on interaction, so there's nothing to hydrate.
-    const isCoarsePointer =
-      typeof window !== 'undefined' &&
-      window.matchMedia?.('(pointer: coarse)').matches
+    const isCoarsePointer = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches
     if (event.key === 'Enter' && !event.shiftKey && !isCoarsePointer) {
       event.preventDefault()
       send()
@@ -392,7 +389,10 @@ export function AgentCommandBar({
       {queued && queued.length > 0 ? (
         <div className='flex min-w-0 flex-col gap-1'>
           {queued.map((message) => (
-            <div key={message.id} className='flex min-w-0 items-center gap-2 rounded-md border bg-muted/40 px-2 py-1 text-xs'>
+            <div
+              key={message.id}
+              className='flex min-w-0 items-center gap-2 rounded-md border bg-muted/40 px-2 py-1 text-xs'
+            >
               <span className='shrink-0 text-muted-foreground'>Queued</span>
               <span className='min-w-0 flex-1 truncate'>{message.text}</span>
               {onRemoveQueued ? (

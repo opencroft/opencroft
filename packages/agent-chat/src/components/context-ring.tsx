@@ -2,10 +2,9 @@
 
 import { Loader2 } from 'lucide-react'
 import { useState } from 'react'
-
-import { Button } from '@/components/ui/button'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { cn } from '@/lib/utils'
+import { Button } from 'ui/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
+import { cn } from 'ui/lib/utils'
 
 export interface ContextRingProps {
   // Tokens consumed so far.
@@ -174,16 +173,13 @@ export function ContextRing({
   const pct = Math.round(ratio * 100)
 
   const state = pct >= dangerAtPercent ? 'danger' : pct >= warnAtPercent ? 'warning' : 'default'
-  const stroke =
-    state === 'danger' ? 'var(--destructive)' : state === 'warning' ? 'var(--warning)' : 'var(--primary)'
+  const stroke = state === 'danger' ? 'var(--destructive)' : state === 'warning' ? 'var(--warning)' : 'var(--primary)'
 
   const radius = 9
   const circumference = 2 * Math.PI * radius
   const dash = circumference * ratio
 
-  const counts = hasLimit
-    ? `${formatTokens(usedTokens)} / ${formatTokens(contextLimit)}`
-    : formatTokens(usedTokens)
+  const counts = hasLimit ? `${formatTokens(usedTokens)} / ${formatTokens(contextLimit)}` : formatTokens(usedTokens)
   const label = hasLimit
     ? `Context usage: ${counts} (${pct}%)`
     : `Context usage: ${counts} used, window size not reported`

@@ -4,7 +4,7 @@ import '@/components/tool-views/builtin-views'
 
 import { Check, Crosshair, type LucideIcon, MessageCircleQuestion, ShieldQuestion, X } from 'lucide-react'
 import { type KeyboardEvent, useCallback, useEffect, useState, useTransition } from 'react'
-import { AskUser } from 'ui/agent-chat/ask-user'
+import { AskUser } from 'agent-chat/components/ask-user'
 import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 import { Flex } from 'ui/layout/flex'

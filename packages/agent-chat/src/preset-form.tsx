@@ -7,7 +7,7 @@ import { adaptersForProvider, findProvider } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
 import { Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { Button } from 'ui/components/ui/button'
-import { Field, FieldLabel } from 'ui/components/ui/field'
+import { Field, FieldDescription, FieldLabel } from 'ui/components/ui/field'
 import { ControlledInput } from 'ui/components/ui/input/controlled-input'
 import { ControlledTextarea } from 'ui/components/ui/input/controlled-textarea'
 import { SearchableDropdown } from 'ui/components/ui/input/searchable-dropdown'
@@ -302,6 +302,34 @@ export function AgentPresetForm({
             }}
             placeholder='Provider default'
           />
+        </Field>
+      )}
+
+      {/* Only the in-process harness reads this: an agent reports its own
+          window over the protocol and is believed. Left empty, the endpoint is
+          asked — but most cannot answer. Neither the OpenAI nor the Anthropic
+          models route carries a context length, and a llama.cpp router reports
+          none until an instance is up, so for those this field is the only
+          source there is. A wrong value is worse than none, which is why
+          nothing is guessed from the model name to fill it. */}
+      {isNative && (
+        <Field>
+          <FieldLabel>Max context</FieldLabel>
+          <ControlledInput
+            type='number'
+            value={selection.contextWindow?.toString() ?? ''}
+            onValueChanged={(value) => {
+              const parsed = Number(value)
+              onSelectionChange({
+                contextWindow: value.trim() === '' || !Number.isInteger(parsed) || parsed <= 0 ? undefined : parsed,
+              })
+            }}
+            placeholder='Ask the endpoint'
+          />
+          <FieldDescription>
+            Tokens. Set this when the endpoint does not report a window — the context ring shows a bare token count
+            without one.
+          </FieldDescription>
         </Field>
       )}
 

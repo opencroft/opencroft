@@ -1,4 +1,7 @@
-import { hostname } from 'node:os'
+// Client-safe by contract: client components import the provider and adapter
+// lookups below, so nothing here may import a node builtin at the top level —
+// the bundler externalizes it and the page fails at runtime on first access.
+// Anything needing one belongs in its own module (see mcp-url.ts).
 
 import { AGENT_PROVIDERS, type AgentProvider } from './agent-providers'
 import { HARNESS_ADAPTERS, type HarnessAdapter } from './harness-adapters'
@@ -100,22 +103,4 @@ function wrapInDocker(config: SpawnConfig, container: string): SpawnConfig {
 // Single-quote a value for safe embedding in a `sh -c` script.
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`
-}
-
-// The internal MCP server advertises 127.0.0.1 by default, since it normally
-// shares the harness's own network namespace. That breaks once the harness
-// runs via wrapInDocker() above: 127.0.0.1 inside that sibling container is
-// its own loopback, not this process's. Docker's embedded DNS resolves this
-// container's own name/hostname for any sibling container on the same
-// user-defined network, so swap in our hostname (Docker sets it to the short
-// container id by default, which is one of those resolvable names) — this
-// assumes this process runs in a container on the same user-defined network
-// as containerName, which holds for a docker-compose-managed deployment but
-// not every embedder of this package. AGENT_CLIENT_MCP_ADVERTISE_HOST
-// overrides it for setups where that assumption doesn't hold (e.g. the host
-// process runs on bare metal, or the target container is on a different
-// network).
-export function containerReachableMcpUrl(url: string): string {
-  const host = process.env.AGENT_CLIENT_MCP_ADVERTISE_HOST || hostname()
-  return url.replace('127.0.0.1', host)
 }

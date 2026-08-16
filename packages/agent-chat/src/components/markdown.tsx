@@ -1,9 +1,8 @@
 import type { ComponentProps } from 'react'
-import ReactMarkdown from 'react-markdown'
 import type { Components, ExtraProps } from 'react-markdown'
+import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-
-import { cn } from '@/lib/utils'
+import { cn } from 'ui/lib/utils'
 
 // `rel="noopener noreferrer"` travels with `target="_blank"` -- without it the
 // opened page keeps a handle on the one it came from.

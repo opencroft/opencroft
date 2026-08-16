@@ -29,6 +29,7 @@ import { type HarnessFailure, harnessStartError } from './harness-failure'
 import { readMcpConfig, resolveMcpServers } from './mcp-config'
 import { createMcpServer, type SkillHandler, type SkillsInput, type ToolsInput } from './mcp-server'
 import type { McpServerConfig } from './mcp-types'
+import { containerReachableMcpUrl } from './mcp-url'
 import { createNativeHarness, type NativeHarnessConfig, type NativeSession } from './native-harness'
 import {
   type EventsWindow,
@@ -39,7 +40,7 @@ import {
   tailByTurns,
 } from './pagination'
 import { type ResolvedPermissions, toolKey } from './permissions'
-import { buildSpawnConfig, containerReachableMcpUrl, findAdapter } from './resolve'
+import { buildSpawnConfig, findAdapter } from './resolve'
 import { fileSkillHandler, fileSkills } from './skills'
 import { findTurnBoundary } from './turns'
 import type { AgentSelection, ChatEvent, QueuedPrompt, SessionMeta, SessionMode, SpawnConfig } from './types'

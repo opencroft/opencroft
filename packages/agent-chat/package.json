@@ -15,6 +15,7 @@
     "./use-clear-control": "./src/use-clear-control.ts",
     "./use-compact-control": "./src/use-compact-control.ts",
     "./use-paginated-history": "./src/use-paginated-history.ts",
+    "./components/*": "./src/components/*.tsx",
     "./server": "./src/server/index.ts",
     "./server/*": "./src/server/*.ts",
     "./*": "./src/*.tsx"

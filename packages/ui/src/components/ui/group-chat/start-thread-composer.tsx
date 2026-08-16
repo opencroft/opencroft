@@ -4,7 +4,7 @@ import { type ReactNode } from 'react'
 import { Check, ChevronDown, Hash } from 'lucide-react'
 
 import { AgentAvatar } from '@/components/ui/media/agent-avatar'
-import { AgentCommandBar } from '@/components/ui/agent-chat/agent-command-bar'
+import { AgentCommandBar } from 'agent-chat/components/agent-command-bar'
 import {
   DropdownMenu,
   DropdownMenuContent,

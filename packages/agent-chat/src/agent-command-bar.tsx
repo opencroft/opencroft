@@ -13,17 +13,18 @@ import {
   useRef,
   useState,
 } from 'react'
+
 import {
   AgentCommandBar,
   type ApprovalTitles,
   type CommandBarConfig,
   type CommandBarConfigOption,
-} from 'ui/agent-chat/agent-command-bar'
-import { ContextRing } from 'ui/agent-chat/context-ring'
-import { EffortSelector } from 'ui/components/ui/agent-chat/effort-selector'
-import { ModeSelector } from 'ui/components/ui/agent-chat/mode-selector'
-import { ModelSelector } from 'ui/components/ui/agent-chat/model-selector'
-
+} from './components/agent-command-bar'
+import { ContextRing } from './components/context-ring'
+import { EffortSelector } from './components/effort-selector'
+import { FastModeToggle } from './components/fast-mode-toggle'
+import { ModeSelector } from './components/mode-selector'
+import { ModelSelector } from './components/model-selector'
 import { ConfigOptionsBar } from './config-options-bar'
 
 // The config-option id agents use for the permission mode. ACP delivers modes
@@ -38,6 +39,15 @@ const EFFORT_CONFIG_ID = 'effort'
 // Likewise for the model itself. Unlike mode/effort, a model's values have no
 // small closed vocabulary to canonicalize -- the wire label is shown as-is.
 const MODEL_CONFIG_ID = 'model'
+// Fast mode, which an agent advertises per model — absent entirely for a model
+// that cannot do it. Delivered as a native boolean where the client supports
+// one and as a two-value on/off select otherwise, so both shapes are read here.
+// Its description is always present and carries the reason when the setting
+// cannot currently be honoured, so it is shown on hover rather than used to
+// infer a disabled state the wire never states.
+const FAST_MODE_CONFIG_ID = 'fast'
+const FAST_MODE_ON = 'on'
+const FAST_MODE_OFF = 'off'
 
 import type { AgentChatSession } from './session'
 import type { CompactRenderState } from './use-compact-control'
@@ -329,6 +339,10 @@ export function useAgentCommandBar({
     const modeOption = pick(MODE_CONFIG_ID)
     const effortOption = pick(EFFORT_CONFIG_ID)
     const modelOption = pick(MODEL_CONFIG_ID)
+    const fastOption = pick(FAST_MODE_CONFIG_ID) as
+      | { currentValue?: unknown; options?: unknown; type?: unknown; description?: unknown }
+      | undefined
+    const fastBoolean = fastOption?.type === 'boolean'
     const modeWire = flattenOptions(modeOption?.options)
     const effortWire = flattenOptions(effortOption?.options)
     // A wire value nothing recognises passes through as itself: the kit renders
@@ -337,11 +351,24 @@ export function useAgentCommandBar({
     const effortOf = (value: string) => (adapterId ? canonicalEffortId(adapterId, value) : undefined) ?? value
     const modeBack = new Map(modeWire.map((entry) => [modeOf(entry.value), entry.value]))
     const effortBack = new Map(effortWire.map((entry) => [effortOf(entry.value), entry.value]))
+    const effortValues = effortWire.map((entry) => effortOf(entry.value))
+    // `default` is offered even by an agent that advertises no such value: it
+    // means "leave the baseline alone", and an agent without a name for that
+    // still has one. It sends the agent's own `high` -- the strongest value
+    // that is a grade rather than a limit -- so the choice reaches the wire as
+    // something the agent actually accepts.
+    if (effortValues.length > 0 && !effortValues.includes('default')) {
+      const baseline = effortBack.get('high')
+      if (baseline !== undefined) {
+        effortBack.set('default', baseline)
+        effortValues.push('default')
+      }
+    }
     return {
       modeOption,
       effortOption,
       modeValues: modeWire.map((entry) => modeOf(entry.value)),
-      effortValues: effortWire.map((entry) => effortOf(entry.value)),
+      effortValues,
       modeCurrent: modeOf(String(modeOption?.currentValue ?? '')),
       effortCurrent: effortOf(String(effortOption?.currentValue ?? '')),
       modeBack,
@@ -350,6 +377,12 @@ export function useAgentCommandBar({
       // pairs are shown as-is, unlike mode/effort's synonym-normalized values.
       modelOptions: flattenOptions(modelOption?.options),
       modelCurrent: String(modelOption?.currentValue ?? ''),
+      fastOffered: fastOption !== undefined,
+      fastBoolean,
+      fastEnabled: fastBoolean
+        ? Boolean(fastOption?.currentValue)
+        : String(fastOption?.currentValue ?? '') === FAST_MODE_ON,
+      fastDescription: typeof fastOption?.description === 'string' ? fastOption.description : undefined,
     }
   }, [configOptions, adapterId])
 
@@ -383,6 +416,19 @@ export function useAgentCommandBar({
             current={dial.effortCurrent}
             onSelect={(value) => onSetConfigOptionRef.current?.(EFFORT_CONFIG_ID, dial.effortBack.get(value) ?? value)}
             lockedReason={lockedConfigOptions?.[EFFORT_CONFIG_ID]}
+          />
+        ) : null}
+        {dial.fastOffered ? (
+          <FastModeToggle
+            enabled={dial.fastEnabled}
+            description={dial.fastDescription}
+            onToggle={(next) =>
+              onSetConfigOptionRef.current?.(
+                FAST_MODE_CONFIG_ID,
+                dial.fastBoolean ? next : next ? FAST_MODE_ON : FAST_MODE_OFF,
+              )
+            }
+            lockedReason={lockedConfigOptions?.[FAST_MODE_CONFIG_ID]}
           />
         ) : null}
         {dial.modeValues.length > 0 ? (

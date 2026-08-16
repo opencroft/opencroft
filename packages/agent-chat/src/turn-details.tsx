@@ -3,11 +3,11 @@
 import { type ChatMessage, isTerminalToolStatus } from 'agent-client/fold'
 import { Maximize2, Minimize2 } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
-import { ChainDot, type ChainDotVariant, Chained } from 'ui/agent-chat/chain'
 import { Flex } from 'ui/components/ui/layout/flex'
 import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
 import { cn } from 'ui/lib/utils'
 
+import { ChainDot, type ChainDotVariant, Chained } from './components/chain'
 import { type MessageHandlers, MessageView } from './messages'
 import type { ToolViewRegistry } from './tool-views'
 

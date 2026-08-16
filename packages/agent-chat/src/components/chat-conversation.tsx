@@ -1,18 +1,18 @@
 'use client'
 
-import { forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef } from 'react'
 import type { ReactNode } from 'react'
+import { forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef } from 'react'
+import { Flex } from 'ui/components/ui/layout/flex'
 
 import {
   BLOCK_ID_ATTR,
   ChatLoadOlderButton,
   ChatTurnDetails,
-  ChatUserMessage,
   type ChatTurnRenderers,
+  ChatUserMessage,
   type DetailItem,
   type UserText,
-} from '@/components/ui/agent-chat/chat-turn'
-import { Flex } from '@/components/ui/layout/flex'
+} from './chat-turn'
 
 // `id` is the React key, and it has to name the same block before and after a
 // "load older" prepend -- otherwise React rewrites DOM across the visible

@@ -1,9 +1,10 @@
 'use client'
 
 import { FileText, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Markdown } from '@/components/ui/agent-chat/markdown'
-import { cn } from '@/lib/utils'
+import { Button } from 'ui/components/ui/button'
+import { cn } from 'ui/lib/utils'
+
+import { Markdown } from './markdown'
 
 /**
  * A note an agent left on a thread.
@@ -97,9 +98,7 @@ export function ArtifactPanel({ artifact, onClose, className }: ArtifactPanelPro
           {/* Wraps rather than truncates: this is the note's name and the only
               thing identifying which one is open. */}
           <div className='text-sm font-medium'>{artifact.title}</div>
-          {artifact.updatedLabel ? (
-            <div className='text-xs text-muted-foreground'>{artifact.updatedLabel}</div>
-          ) : null}
+          {artifact.updatedLabel ? <div className='text-xs text-muted-foreground'>{artifact.updatedLabel}</div> : null}
         </div>
         {onClose ? (
           <Button type='button' size='icon' variant='ghost' className='size-7 shrink-0' onClick={onClose} title='Close'>

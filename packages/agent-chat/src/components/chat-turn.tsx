@@ -1,13 +1,13 @@
 'use client'
 
 import { Maximize2, Minimize2, Pencil } from 'lucide-react'
-import type { ComponentProps, ComponentType, ReactNode } from 'react'
+import type { ComponentType, ReactNode } from 'react'
 import { useState } from 'react'
-import { Markdown } from '@/components/ui/agent-chat/markdown'
+import { Button } from 'ui/components/ui/button'
+import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
+import { cn } from 'ui/lib/utils'
 
-import { AgentAvatar } from '@/components/ui/media/agent-avatar'
-import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
+import { Markdown } from './markdown'
 
 // The attribute the host's scroll restore uses to find a block again and
 // measure how far it moved. Exported so the host queries the same name rather
@@ -82,14 +82,10 @@ export interface ChatTurnRenderers {
 // consumer that passed a bare renderer would silently lose it. Owning the
 // renderer here is what makes the guarantee a property of the component.
 
-
-
-
 // Chat content is markdown, and rendering it is this component's own
 // presentation rather than something a host supplies: a message component that
 // cannot render its own message is not a component, and pushing the renderer
 // out as a slot would make every consumer re-wire a rendering concern.
-
 
 // The one way older history is loaded. A click cannot fire at the wrong moment
 // or fail to fire at all, which is what four rebuilds of an automatic trigger
@@ -275,24 +271,14 @@ export function ChatDetailsToggle({ collapsed, onToggle }: { collapsed: boolean;
   )
 }
 
-export function ChatAssistantText({
-  text,
-  botName,
-  toggle,
-}: {
-  text: string
-  botName?: string
-  toggle?: ReactNode
-}) {
+export function ChatAssistantText({ text, botName, toggle }: { text: string; botName?: string; toggle?: ReactNode }) {
   return (
     <div className='flex flex-col min-w-0 w-full gap-1'>
       <div className='flex items-center justify-between w-full'>
         {botName ? <div className='text-xs font-medium text-foreground'>{botName}</div> : null}
         {toggle}
       </div>
-      {text ? (
-        <Markdown text={text} />
-      ) : null}
+      {text ? <Markdown text={text} /> : null}
     </div>
   )
 }
@@ -411,9 +397,7 @@ export function ChatTurnDetails({
             {lastTextEntry &&
               lastTextEntry.kind === 'item' &&
               lastTextEntry.item.kind === 'assistant-text' &&
-              lastTextEntry.item.text.trim() && (
-                <Markdown text={lastTextEntry.item.text} />
-              )}
+              lastTextEntry.item.text.trim() && <Markdown text={lastTextEntry.item.text} />}
             {/* Tool call — animate on changes */}
             {lastToolAfterText && lastToolAfterText.kind === 'tool' && (
               <div key={lastToolAfterText.id}>{renderTool(lastToolAfterText)}</div>
@@ -427,9 +411,7 @@ export function ChatTurnDetails({
                     return renderTool(last.item)
                   }
                   if (last.item.kind === 'assistant-text') {
-                    return last.item.text.trim() ? (
-                      <Markdown text={last.item.text} />
-                    ) : null
+                    return last.item.text.trim() ? <Markdown text={last.item.text} /> : null
                   }
                 }
                 return null
