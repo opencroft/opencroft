@@ -12,7 +12,7 @@
 
 import { createSynonymResolver } from './synonyms'
 
-export type CanonicalEffortId = 'default' | 'low' | 'medium' | 'high' | 'extra' | 'max'
+export type CanonicalEffortId = 'default' | 'off' | 'low' | 'medium' | 'high' | 'extra' | 'max'
 
 export interface CanonicalEffortInfo {
   id: CanonicalEffortId
@@ -30,6 +30,7 @@ export const CANONICAL_EFFORTS: Record<CanonicalEffortId, CanonicalEffortInfo> =
   medium: { id: 'medium', label: 'Medium', order: 3 },
   low: { id: 'low', label: 'Low', order: 4 },
   default: { id: 'default', label: 'Default', order: 5 },
+  off: { id: 'off', label: 'Off', order: 6 },
 }
 
 const EFFORT_IDS = Object.keys(CANONICAL_EFFORTS) as CanonicalEffortId[]
@@ -39,12 +40,15 @@ const EFFORT_IDS = Object.keys(CANONICAL_EFFORTS) as CanonicalEffortId[]
  *
  * `xhigh` is the one that earns this file: Claude Code surfaces it as "Xhigh",
  * which is not a word — our "Extra" is exactly what a shared vocabulary is for.
- * `none`/`off` map to `default` because an agent that reports no reasoning and
- * one that reports its own baseline are the same choice from the user's side:
- * "do not tune this".
+ *
+ * `none` maps to `off` rather than to `default`: they are different answers.
+ * `off` is an instruction not to think; `default` is "do not tune this", and
+ * leaves whatever baseline the agent already has. An agent that means the
+ * baseline by `none` overrides this per adapter, which is what the per-adapter
+ * layer of the registry is for.
  */
 const SHARED_EFFORT_SYNONYMS = {
-  default: ['none', 'off'],
+  off: ['none'],
   extra: ['xhigh'],
 }
 

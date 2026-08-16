@@ -1,20 +1,20 @@
 'use client'
 
-import { Lightbulb } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Lightbulb, LightbulbOff } from 'lucide-react'
+import { Button } from 'ui/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+} from 'ui/components/ui/dropdown-menu'
 
 // How hard an agent is asked to think.
 //
 // The whole vocabulary this component knows. Callers pass the levels an agent
 // offers; where those came from, and how they were arrived at, is none of this
 // component's business.
-export type Effort = 'max' | 'extra' | 'high' | 'medium' | 'low' | 'default'
+export type Effort = 'max' | 'extra' | 'high' | 'medium' | 'low' | 'default' | 'off'
 
 // Anything that is not one of ours is shown as its own label, in the neutral
 // colour. `string & {}` keeps autocomplete for the known grades while still
@@ -34,6 +34,7 @@ const EFFORT_COLOR = {
   medium: 'text-yellow-500',
   low: 'text-green-500',
   default: 'text-foreground',
+  off: 'text-foreground',
 }
 
 const EFFORT_LABEL = {
@@ -43,11 +44,12 @@ const EFFORT_LABEL = {
   medium: 'Medium',
   low: 'Low',
   default: 'Default',
+  off: 'Off',
 }
 
 // Strongest first: the heavier grades are the ones reached deliberately, so
 // they sit a short travel from the top of the menu rather than at the far end.
-const EFFORT_ORDER: Effort[] = ['max', 'extra', 'high', 'medium', 'low', 'default']
+const EFFORT_ORDER: Effort[] = ['max', 'extra', 'high', 'medium', 'low', 'default', 'off']
 
 function isKnown(option: EffortOption): option is Effort {
   return (EFFORT_ORDER as string[]).includes(option)
@@ -63,6 +65,13 @@ function labelOf(option: EffortOption): string {
 
 function colourOf(option: EffortOption): string {
   return isKnown(option) ? EFFORT_COLOR[option] : 'text-muted-foreground'
+}
+
+// `off` is not a grade on the dial — it is an instruction not to think — so it
+// is the one level drawn with a different glyph.
+function EffortIcon({ option }: { option: EffortOption }) {
+  const className = `size-4 ${colourOf(option)}`
+  return option === 'off' ? <LightbulbOff className={className} /> : <Lightbulb className={className} />
 }
 
 export interface EffortSelectorProps {
@@ -103,7 +112,7 @@ export function EffortSelector({ options, current, onSelect, lockedReason, class
           title={title}
           aria-label={title}
         >
-          <Lightbulb className={`size-4 ${colourOf(current)}`} />
+          <EffortIcon option={current} />
         </Button>
       </DropdownMenuTrigger>
       {/* The bar this sits in is at the bottom of the screen, so its menus open
@@ -115,7 +124,7 @@ export function EffortSelector({ options, current, onSelect, lockedReason, class
             onSelect={() => onSelect(option)}
             className={option === current ? 'font-medium' : undefined}
           >
-            <Lightbulb className={`size-4 ${colourOf(option)}`} />
+            <EffortIcon option={option} />
             {labelOf(option)}
           </DropdownMenuItem>
         ))}

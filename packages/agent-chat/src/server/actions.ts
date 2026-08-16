@@ -2,6 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { writeSelection } from 'agent-client/config'
 import { checkMcpServer, type McpCheckResult } from 'agent-client/mcp-check'
 import type { McpServerConfig } from 'agent-client/mcp-types'
+import { listOpenAiModels as listModels } from 'agent-client/models'
 import {
   type DefaultAccess,
   type PermissionValue,
@@ -100,18 +101,11 @@ export const setActiveProfile = (id: string) => _setActiveProfile({ data: id })
 const _listOpenAiModels = createServerFn({ method: 'POST' })
   .inputValidator((data: { baseUrl: string; apiKey?: string }) => data)
   .handler(async ({ data }): Promise<string[]> => {
-    const base = data.baseUrl.replace(/\/+$/, '')
-    const headers: Record<string, string> = {}
-    if (data.apiKey) headers.Authorization = `Bearer ${data.apiKey}`
-    const response = await fetch(`${base}/models`, { headers })
-    if (!response.ok) {
-      throw new Error(`${response.status} ${response.statusText}`)
-    }
-    const body = (await response.json()) as { data?: { id?: string }[] }
-    return (body.data ?? [])
-      .map((entry) => entry.id)
-      .filter((id): id is string => Boolean(id))
-      .sort()
+    // The fetch itself lives in the client package: the harness needs the same
+    // response to learn a model's context window, and one shape of it is the
+    // point. This route only narrows it to the ids the picker renders.
+    const models = await listModels(data.baseUrl, data.apiKey)
+    return models.map((model) => model.id)
   })
 export const listOpenAiModels = (baseUrl: string, apiKey?: string) => _listOpenAiModels({ data: { baseUrl, apiKey } })
 

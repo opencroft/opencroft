@@ -80,10 +80,15 @@ test('xhigh resolves to Extra', () => {
   assert.equal(CANONICAL_EFFORTS.extra.label, 'Extra')
 })
 
-test('an agent reporting no reasoning and one reporting its baseline are both Default', () => {
-  for (const spelling of ['default', 'none', 'off']) {
-    assert.equal(canonicalEffortId('claude', spelling), 'default', spelling)
-  }
+test('not thinking and not tuning are different answers', () => {
+  // `off` is an instruction not to think; `default` leaves whatever baseline the
+  // agent already has. Folding them together made one of the two unreachable.
+  assert.equal(canonicalEffortId('claude', 'default'), 'default')
+  assert.equal(canonicalEffortId('claude', 'off'), 'off')
+  // `none` reads as the instruction rather than the baseline. An agent that
+  // means its baseline by it says so per adapter, which is what that layer of
+  // the registry is for.
+  assert.equal(canonicalEffortId('claude', 'none'), 'off')
 })
 
 test('no synonym is registered against two different canonical values', () => {

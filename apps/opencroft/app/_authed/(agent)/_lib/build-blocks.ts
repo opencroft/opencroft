@@ -1,6 +1,6 @@
+import type { Block } from 'agent-chat/components/chat-conversation'
+import type { DetailItem, UserText } from 'agent-chat/components/chat-turn'
 import type { ChatEvent } from 'agent-client/types'
-import type { Block } from 'ui/agent-chat/chat-conversation'
-import type { DetailItem, UserText } from 'ui/agent-chat/chat-turn'
 
 import type { ChatMessage } from '@/app/_authed/(agent)/_lib/messages'
 

@@ -16,7 +16,7 @@ import { Flex } from '@/components/ui/layout/flex'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { StickySection } from '@/components/ui/layouts/sticky-section'
-import { type Artifact, ArtifactPanel, ArtifactStrip } from '@/components/ui/agent-chat/thread-artifacts'
+import { type Artifact, ArtifactPanel, ArtifactStrip } from 'agent-chat/components/thread-artifacts'
 
 export interface GroupChatThreadFramingProps {
   /** The NAME of the group chat this thread belongs to -- not its topic. This

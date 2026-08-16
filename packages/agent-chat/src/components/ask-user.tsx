@@ -2,12 +2,11 @@
 
 import { Check, MessageCircleQuestion, X } from 'lucide-react'
 import { type KeyboardEvent, useCallback, useEffect, useState } from 'react'
-
-import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Button } from 'ui/components/ui/button'
+import { Checkbox } from 'ui/components/ui/checkbox'
+import { Input } from 'ui/components/ui/input'
+import { Label } from 'ui/components/ui/label'
+import { RadioGroup, RadioGroupItem } from 'ui/components/ui/radio-group'
 
 export interface AskUserQuestion {
   title: string

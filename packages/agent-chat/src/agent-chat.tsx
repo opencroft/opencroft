@@ -2,9 +2,9 @@
 
 import type { ReactNode } from 'react'
 import { useCallback, useMemo, useRef } from 'react'
-import { type Block, ChatConversation, type ChatConversationHandle } from 'ui/agent-chat/chat-conversation'
-import type { ChatTurnRenderers, DetailItem, UserText } from 'ui/agent-chat/chat-turn'
 
+import { type Block, ChatConversation, type ChatConversationHandle } from './components/chat-conversation'
+import type { ChatTurnRenderers, DetailItem, UserText } from './components/chat-turn'
 import type { AgentChatSession } from './session'
 import { ThinkingIndicator } from './thinking-indicator'
 

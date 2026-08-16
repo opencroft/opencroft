@@ -1,13 +1,13 @@
 'use client'
 
 import { Brain } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Button } from 'ui/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+} from 'ui/components/ui/dropdown-menu'
 
 // One choice on offer: the wire value an agent expects back, and the label to
 // show for it. Unlike effort/mode, models have no small closed vocabulary this

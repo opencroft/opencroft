@@ -2,8 +2,7 @@
 
 import { ChevronRight, Loader2 } from 'lucide-react'
 import { useState } from 'react'
-
-import { cn } from '@/lib/utils'
+import { cn } from 'ui/lib/utils'
 
 export interface ThinkingBlockProps {
   // The model's reasoning text (may stream in while `pending`).

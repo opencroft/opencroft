@@ -1,9 +1,9 @@
 'use client'
 
+import { ChainDot, Chained } from 'agent-chat/components/chain'
+import type { ChatTurnRenderers, DetailItem as KitDetailItem } from 'agent-chat/components/chat-turn'
+import { ThinkingBlock } from 'agent-chat/components/thinking-block'
 import type { ComponentType } from 'react'
-import { ChainDot, Chained } from 'ui/agent-chat/chain'
-import type { ChatTurnRenderers, DetailItem as KitDetailItem } from 'ui/agent-chat/chat-turn'
-import { ThinkingBlock } from 'ui/agent-chat/thinking-block'
 
 import type { UserText } from '@/app/_authed/(agent)/_lib/build-blocks'
 import type { ChatMessage } from '@/app/_authed/(agent)/_lib/messages'

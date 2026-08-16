@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import type { McpServer as AcpMcpServer, Client } from '@agentclientprotocol/sdk'
+import type { McpServer as AcpMcpServer, Client, SessionConfigOption } from '@agentclientprotocol/sdk'
 import { PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import {
@@ -27,7 +27,9 @@ import {
   skillToolDescription,
   type ToolsInput,
 } from './mcp-server'
+import { discoverModels, type OpenAiModel } from './models'
 import { accessFor, type PermissionValue, type ResolvedPermissions, skillKey, toolKey } from './permissions'
+import { reasoningEfforts } from './reasoning'
 import { findProvider } from './resolve'
 import { flattenToolResult } from './tool-result'
 import { findTurnBoundary } from './turns'
@@ -68,13 +70,20 @@ function resolveBaseUrl(selection: AgentSelection): string {
   )
 }
 
-function resolveModel(selection: AgentSelection): LanguageModel {
+// `model` overrides the profile's choice for one session, which is what the
+// session's own model config option sets.
+function resolveModel(selection: AgentSelection, model = selection.model): LanguageModel {
   const provider = createOpenAICompatible({
     name: selection.providerId,
     baseURL: resolveBaseUrl(selection),
     apiKey: selection.apiKey,
+    // A streaming OpenAI-compatible response carries no token usage unless it
+    // is asked for: this turns on `stream_options: { include_usage: true }`.
+    // Every turn here streams, so without it the harness reports no usage at
+    // all and the context ring has nothing to render.
+    includeUsage: true,
   })
-  return provider(selection.model)
+  return provider(model)
 }
 
 // FinishReason (AI SDK) -> StopReason (ACP).
@@ -143,8 +152,12 @@ async function gateToolCall(
   access: PermissionValue,
   abortSignal?: AbortSignal,
 ): Promise<string | null> {
-  if (access === 'AlwaysAllow' || gate.getMode() === 'bypass') {
+  const decision = toolPermissionDecision(gate.getMode(), access)
+  if (decision === 'allow') {
     return null
+  }
+  if (decision === 'deny') {
+    return 'Permission denied: this session declines tool calls.'
   }
   const response = await raceAbort(
     Promise.resolve(
@@ -259,6 +272,111 @@ export interface NativeSession {
   mode: string
   abort?: AbortController
   permissions?: ResolvedPermissions
+  // Session-level overrides for what the profile selected. A config option
+  // changes the session in front of the reader, never the stored profile.
+  model?: string
+  effort?: string
+  // What the endpoint reports about itself, fetched once per session.
+  // `undefined` means not asked yet; `[]` means asked and it said nothing —
+  // kept apart so a turn never pays for the same failed lookup twice.
+  discovered?: OpenAiModel[]
+}
+
+// The session's effective model: a config option chosen for this session wins
+// over the profile's.
+function sessionModel(session: NativeSession, selection: AgentSelection): string {
+  return session.model || selection.model
+}
+
+// The session's effective reasoning effort, on the same rule.
+function sessionEffort(session: NativeSession, selection: AgentSelection): string | undefined {
+  return session.effort ?? selection.reasoningEffort
+}
+
+function labelFor(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1).replace(/-/g, ' ')
+}
+
+// What this harness advertises over the same config-option surface an ACP agent
+// uses. The client picks these out by id -- 'mode', 'model', 'effort' -- and
+// renders each as its own control, so naming them anything else would leave
+// them in the generic settings row instead.
+//
+// An option is advertised only when it has something to offer: a model with no
+// known reasoning levels contributes no effort option at all, rather than an
+// empty dropdown the reader can do nothing with.
+export function buildConfigOptions(
+  session: NativeSession,
+  selection: AgentSelection,
+  discovered: OpenAiModel[] = [],
+): SessionConfigOption[] {
+  const model = sessionModel(session, selection)
+  const options: SessionConfigOption[] = [
+    {
+      id: 'mode',
+      name: 'Permission',
+      type: 'select',
+      currentValue: session.mode,
+      options: AVAILABLE_MODES.map((mode) => ({ value: mode.id, name: mode.name, description: mode.description })),
+    },
+  ]
+  // The endpoint's own list first; the provider table is the fallback for an
+  // endpoint that reports nothing.
+  const discoveredIds = discovered.map((entry) => entry.id)
+  const models = discoveredIds.length > 0 ? discoveredIds : (findProvider(selection.providerId)?.models ?? [])
+  // The profile's model may be one the provider list does not name (a custom
+  // deployment, a preview id); it still has to appear, or selecting anything
+  // else would make it unreachable.
+  const modelValues = models.includes(model) ? models : [model, ...models]
+  if (modelValues.length > 1) {
+    options.push({
+      id: 'model',
+      name: 'Model',
+      type: 'select',
+      currentValue: model,
+      options: modelValues.map((id) => ({ value: id, name: id })),
+    })
+  }
+  const efforts = reasoningEfforts(model)
+  if (efforts.length > 0) {
+    options.push({
+      id: 'effort',
+      name: 'Reasoning effort',
+      type: 'select',
+      // Only the grades this model takes. `off` would mean an instruction not
+      // to think, and an OpenAI-compatible endpoint has no way to say that —
+      // advertising it would name a state this harness cannot reach. The client
+      // adds `default` itself, which is the "leave it alone" this can honour.
+      currentValue: sessionEffort(session, selection) ?? 'default',
+      options: efforts.map((value) => ({ value, name: labelFor(value) })),
+    })
+  }
+  return options
+}
+
+// One discovery per session, shared by everything derived from it: which models
+// exist, and what window each has. Asking the endpoint beats any table here —
+// a static list cannot describe a custom deployment, and a name-derived window
+// cannot separate a 200k model from a 1M one in the same family.
+async function discovery(session: NativeSession, selection: AgentSelection): Promise<OpenAiModel[]> {
+  const cached = session.discovered
+  if (cached !== undefined) {
+    return cached
+  }
+  const fetched = await discoverModels(resolveBaseUrl(selection), selection.apiKey)
+  session.discovered = fetched
+  return fetched
+}
+
+// The window to report as the session's context size. A configured value wins:
+// it is a deliberate override. 0 means unknown, which every surface renders as
+// used-tokens alone rather than inventing a ratio.
+async function resolveContextWindow(session: NativeSession, selection: AgentSelection): Promise<number> {
+  if (selection.contextWindow) {
+    return selection.contextWindow
+  }
+  const model = sessionModel(session, selection)
+  return (await discovery(session, selection)).find((entry) => entry.id === model)?.contextWindow ?? 0
 }
 
 // Rewind to a branch point: drop everything from the `dropFromTurn`-th user
@@ -278,10 +396,43 @@ function truncateMessages(messages: ModelMessage[], dropFromTurn?: number): Mode
   return messages.slice(0, boundary)
 }
 
+// The permission modes this harness advertises, named with the canonical ids
+// every adapter is classified into (see session-modes) rather than with a
+// private vocabulary. An ACP agent advertises its modes over the protocol and
+// the client renders whatever comes back; this harness has no protocol to carry
+// them, so it states the same shape directly and the client cannot tell the
+// difference.
 const AVAILABLE_MODES = [
-  { id: 'default', name: 'Ask every time' },
-  { id: 'bypass', name: 'Bypass permissions' },
+  { id: 'manual-edits', name: 'Manual', description: 'Asks before running any tool.' },
+  { id: 'accept-edits', name: 'Accept', description: 'Runs tool calls without asking.' },
+  { id: 'reject-edits', name: 'Reject', description: 'Declines every tool call without asking.' },
+  { id: 'bypass', name: 'Bypass', description: 'Skips the permission check entirely.' },
 ]
+
+const DEFAULT_MODE = 'manual-edits'
+
+export type ToolPermissionDecision = 'allow' | 'deny' | 'ask'
+
+// What a session mode means for one tool call, given the grant the session's
+// roles already resolved for that tool. Pure and exported so the decision is
+// stated once and can be tested without standing up a session: the gate below
+// only performs it.
+//
+// An AlwaysAllow grant wins over the mode — it is a per-tool decision the host
+// already made deliberately, and a mode is the session-wide default it sits
+// inside. Any mode this harness does not define (including a stored 'default'
+// from an older session, and the plan/auto modes only ACP agents advertise)
+// falls through to asking, which is the answer that cannot silently do
+// something the reader did not agree to.
+export function toolPermissionDecision(mode: string, access: PermissionValue): ToolPermissionDecision {
+  if (access === 'AlwaysAllow' || mode === 'bypass' || mode === 'accept-edits') {
+    return 'allow'
+  }
+  if (mode === 'reject-edits') {
+    return 'deny'
+  }
+  return 'ask'
+}
 
 /**
  * An in-process agent that satisfies {@link AgentConnection} without any ACP
@@ -310,10 +461,15 @@ export function createNativeHarness(
 
     async newSession() {
       const sessionId = randomUUID()
-      sessions.set(sessionId, { messages: [], mode: 'default' })
+      const session: NativeSession = { messages: [], mode: DEFAULT_MODE }
+      sessions.set(sessionId, session)
       return {
         sessionId,
-        modes: { currentModeId: 'default', availableModes: AVAILABLE_MODES },
+        // Modes are advertised twice, exactly as an ACP agent advertises them:
+        // as session modes, and as the 'mode' config option built from the same
+        // list. The composer drives the option; other surfaces read the modes.
+        modes: { currentModeId: DEFAULT_MODE, availableModes: AVAILABLE_MODES },
+        configOptions: buildConfigOptions(session, selection, await discovery(session, selection)),
       }
     },
 
@@ -344,10 +500,25 @@ export function createNativeHarness(
       return {}
     },
 
-    // The native harness applies reasoning via providerOptions, not config
-    // options, so this is a no-op (kept to satisfy the connection interface).
-    async setSessionConfigOption() {
-      return { configOptions: [] }
+    // Applying an option changes THIS session only — the profile it started
+    // from is untouched, the same way setting a mode on an ACP session does not
+    // rewrite the agent's configuration. The rebuilt list comes back so the
+    // client re-renders from one source: changing the model can add or remove
+    // the effort option entirely, since efforts are per model.
+    async setSessionConfigOption({ sessionId, configId, value }) {
+      const session = sessions.get(sessionId)
+      if (!session) {
+        return { configOptions: [] }
+      }
+      const next = typeof value === 'string' ? value : String(value)
+      if (configId === 'mode') {
+        session.mode = next
+      } else if (configId === 'model') {
+        session.model = next
+      } else if (configId === 'effort') {
+        session.effort = next
+      }
+      return { configOptions: buildConfigOptions(session, selection, await discovery(session, selection)) }
     },
 
     async unstable_forkSession({ sessionId, _meta }) {
@@ -356,13 +527,13 @@ export function createNativeHarness(
       const forkId = randomUUID()
       sessions.set(forkId, {
         messages: source ? truncateMessages(source.messages, dropFromTurn) : [],
-        mode: source?.mode ?? 'default',
+        mode: source?.mode ?? DEFAULT_MODE,
         permissions: source?.permissions,
       })
       return {
         sessionId: forkId,
         modes: {
-          currentModeId: source?.mode ?? 'default',
+          currentModeId: source?.mode ?? DEFAULT_MODE,
           availableModes: AVAILABLE_MODES,
         },
       }
@@ -399,16 +570,17 @@ export function createNativeHarness(
       // Reasoning effort goes to the OpenAI-compatible provider, keyed by the
       // provider name used in resolveModel (selection.providerId). 'off' is an
       // explicit "no preference" choice from the UI, not a literal effort value.
+      const effort = sessionEffort(session, selection)
       const providerOptions =
-        selection.reasoningEffort && selection.reasoningEffort !== 'off'
+        effort && effort !== 'default' && effort !== 'off'
           ? {
               [selection.providerId]: {
-                reasoningEffort: selection.reasoningEffort,
+                reasoningEffort: effort,
               },
             }
           : undefined
       const result = streamText({
-        model: resolveModel(selection),
+        model: resolveModel(selection, sessionModel(session, selection)),
         system: systemPrompt || undefined,
         messages: session.messages,
         tools: toolset,
@@ -511,11 +683,12 @@ export function createNativeHarness(
           update: {
             sessionUpdate: 'usage_update',
             used,
-            // 0 means "not known", and that is the honest answer unless
-            // somebody configured one. The AI SDK does not report a window, so
-            // there is nothing else to say -- and every surface renders the
-            // unknown case as used-tokens-alone rather than inventing a ratio.
-            size: selection.contextWindow ?? 0,
+            // The endpoint's own answer for this model, or a configured
+            // override. 0 still means "not known" — the AI SDK reports no
+            // window, and an endpoint that carries none leaves it unknown
+            // rather than inventing a ratio, which every surface renders as
+            // used-tokens-alone.
+            size: await resolveContextWindow(session, selection),
           },
         })
       }

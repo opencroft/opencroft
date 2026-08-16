@@ -7,6 +7,7 @@ import type { AgentSelection, ChatEvent, QueuedPrompt, SessionMode } from 'agent
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
+import { buildKitBlocks } from './kit-blocks'
 import { canStartSelection, EMPTY_SELECTION } from './preset-form'
 import {
   cancelAgentTurn,
@@ -28,6 +29,7 @@ import {
   setAgentMode,
   startAgentSession,
 } from './server/actions'
+import type { AgentChatSession, PendingAsk, PendingPermission } from './session'
 
 export interface UseAgentSessionOptions {
   // The SSE endpoint that streams a session's events (its `?sessionId=` is
@@ -150,7 +152,28 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
     return () => source.close()
   }, [sessionId, eventsUrl])
 
-  const blocks: ChatBlock[] = useMemo(() => buildBlocks(foldEvents(events)), [events])
+  const messages = useMemo(() => foldEvents(events), [events])
+  const blocks: ChatBlock[] = useMemo(() => buildBlocks(messages), [messages])
+  // The same transcript in the vocabulary the installed conversation renders.
+  const kitBlocks = useMemo(() => buildKitBlocks(messages), [messages])
+
+  // Unresolved approvals, read off the same folded transcript rather than
+  // tracked separately: the fold already flips `resolved` when the resolution
+  // event arrives, so a second source of truth could only drift from it. A
+  // host renders these with <Approvals> — a request with nowhere to be
+  // answered blocks its turn until the turn is killed.
+  const pending = useMemo(() => {
+    const permissions: PendingPermission[] = []
+    const asks: PendingAsk[] = []
+    for (const message of messages) {
+      if (message.kind === 'permission' && !message.resolved) {
+        permissions.push({ requestId: message.requestId, title: message.title, options: message.options })
+      } else if (message.kind === 'ask' && !message.resolved) {
+        asks.push({ requestId: message.requestId, message: message.message })
+      }
+    }
+    return { permissions, asks }
+  }, [messages])
 
   const isCustomEndpoint = selection.providerId === 'openai-compatible'
   const canStart = canStartSelection(selection)
@@ -380,7 +403,56 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
     void sendAgentPrompt(sessionId, text)
   }, [turnActive, sessionId])
 
+  // The named session-shape contract (session.ts) this controller satisfies,
+  // so a host can hand it straight to <AgentChat> and <Approvals> instead of
+  // redrawing the same mapping per application. The `satisfies` pin is here,
+  // at the construction site, per the contract's own note: a field renamed or
+  // dropped on either side fails to typecheck here rather than surfacing as a
+  // prop-shape mismatch somewhere downstream.
+  const session = useMemo(
+    () =>
+      ({
+        sessionKey: sessionId ?? '',
+        loading,
+        sending: starting,
+        waiting: turnActive,
+        botName: name,
+        adapterId: selection.adapterId,
+        send,
+        stop,
+        // Rewinding replays the forked transcript, which only the in-process
+        // harness can reconstruct.
+        canFork: isNative && Boolean(sessionId),
+        editMessage: (turnIndex: number, text: string) => void fork(turnIndex, text),
+        disabled: !sessionId && !canStart,
+        permissions: pending.permissions,
+        asks: pending.asks,
+        resolvePermission: respondPermission,
+        respondPermissionText,
+        resolveAsk: respondAsk,
+        clearSession: clear,
+      }) satisfies AgentChatSession,
+    [
+      sessionId,
+      loading,
+      starting,
+      turnActive,
+      name,
+      selection.adapterId,
+      send,
+      stop,
+      isNative,
+      fork,
+      canStart,
+      pending,
+      respondPermissionText,
+      clear,
+    ],
+  )
+
   return {
+    // the contract shape a host hands to <AgentChat> / <Approvals>
+    session,
     // profiles + preset editing
     profiles,
     activeId,
@@ -404,6 +476,10 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
     sessionId,
     loading,
     blocks,
+    kitBlocks,
+    // Whether anything has been exchanged at all — not the same question as
+    // `kitBlocks.length > 0`, since a message can fold to no renderable block.
+    hasMessages: messages.length > 0,
     turnActive,
     modes,
     currentMode,
