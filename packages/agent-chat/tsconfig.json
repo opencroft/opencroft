@@ -23,7 +23,7 @@
     "strict": true,
     "paths": {
       "@/*": [
-        "../ui/src/*"
+        "./src/*"
       ]
     }
   }
