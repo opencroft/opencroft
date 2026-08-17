@@ -1,10 +1,9 @@
 'use client'
 
 import { FileText, X } from 'lucide-react'
-import { Button } from 'ui/components/ui/button'
-import { cn } from 'ui/lib/utils'
-
-import { Markdown } from './markdown'
+import { Markdown } from 'agent-chat/components/markdown'
+import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
 /**
  * A note an agent left on a thread.
