@@ -504,9 +504,14 @@ export function handleUpdate(notification: SessionNotification): void {
       // withheld exactly as an unreported one already is above: the ring
       // shows `used` alone rather than an impossible ratio, and the ratio
       // returns the moment a consistent size arrives.
+      //
+      // `>=`, not `>`: matches the primary disproof's own strictness (`used >
+      // size` disproves, so `used === size` does not). A `>` here would
+      // withhold a session sitting at exactly its configured cap -- a real
+      // 100%, not a disproved one.
       if (size !== undefined && update.used > size) {
         const configured = session.selection.contextWindow
-        size = configured !== undefined && configured > update.used ? configured : undefined
+        size = configured !== undefined && configured >= update.used ? configured : undefined
       }
       // Monotonic-within-turn display: an external ACP bridge resets its own
       // running usage tally at the start of every turn and rebuilds it from

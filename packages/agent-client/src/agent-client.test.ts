@@ -1159,6 +1159,22 @@ test('a configured window the reading ALSO disproves is withheld, not trusted bl
   })
 })
 
+test('a configured window exactly at used is trusted, not withheld -- the same boundary the primary disproof uses', async () => {
+  // used > size disproves; used === size does not (a session may legitimately
+  // sit at exactly its cap, reading as a real 100%). The override check must
+  // use the same boundary, or a session at exactly its configured cap would
+  // withhold instead of showing 100%.
+  const h = await setup('openclaw', { contextWindow: 500_000 })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 500_000, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
+    used: 500_000,
+    size: 500_000,
+  })
+})
+
 test('an unreported size (already withheld) is unaffected by the disprove check', async () => {
   const h = await setup('openclaw', { contextWindow: 1_000_000 })
   handleUpdate({
