@@ -15,39 +15,23 @@ import {
 } from 'react'
 
 import {
-  AgentCommandBar,
-  type ApprovalTitles,
-  type CommandBarConfig,
-  type CommandBarConfigOption,
-} from './components/agent-command-bar'
+  EFFORT_CONFIG_ID,
+  FAST_MODE_CONFIG_ID,
+  FAST_MODE_OFF,
+  FAST_MODE_ON,
+  flattenOptions,
+  MODE_CONFIG_ID,
+  MODEL_CONFIG_ID,
+  selectLeftoverBooleanOptions,
+  selectLeftoverConfigs,
+} from './agent-command-bar-configs'
+import { AgentCommandBar, type ApprovalTitles, type CommandBarConfig } from './components/agent-command-bar'
 import { ContextRing } from './components/context-ring'
 import { EffortSelector } from './components/effort-selector'
 import { FastModeToggle } from './components/fast-mode-toggle'
 import { ModeSelector } from './components/mode-selector'
 import { ModelSelector } from './components/model-selector'
 import { ConfigOptionsBar } from './config-options-bar'
-
-// The config-option id agents use for the permission mode. ACP delivers modes
-// twice -- as session modes AND as this option, built from the same list -- and
-// this surface drives the option, so the id is the handle for both pulling it
-// out of the generic row and locking it.
-const MODE_CONFIG_ID = 'mode'
-// Likewise for reasoning effort: rendered as its own icon button rather than a
-// labelled dropdown. Unlike `mode`, the values behind this vary per model — the
-// agent decides what it advertises, and it may advertise none.
-const EFFORT_CONFIG_ID = 'effort'
-// Likewise for the model itself. Unlike mode/effort, a model's values have no
-// small closed vocabulary to canonicalize -- the wire label is shown as-is.
-const MODEL_CONFIG_ID = 'model'
-// Fast mode, which an agent advertises per model — absent entirely for a model
-// that cannot do it. Delivered as a native boolean where the client supports
-// one and as a two-value on/off select otherwise, so both shapes are read here.
-// Its description is always present and carries the reason when the setting
-// cannot currently be honoured, so it is shown on hover rather than used to
-// infer a disabled state the wire never states.
-const FAST_MODE_CONFIG_ID = 'fast'
-const FAST_MODE_ON = 'on'
-const FAST_MODE_OFF = 'off'
 
 import type { AgentChatSession } from './session'
 import type { CompactRenderState } from './use-compact-control'
@@ -479,30 +463,10 @@ export function useAgentCommandBar({
     onSetConfigOptionRef.current?.(id, value)
   }, [])
 
-  const configs = useMemo<CommandBarConfig[]>(
-    () =>
-      (configOptions ?? [])
-        // Two filters rather than one condition: TypeScript infers a type
-        // predicate from the bare `type !== 'boolean'` test and narrows the
-        // array to the select variants, which the `.options` read below needs.
-        // Folding a second condition into it silently loses that inference.
-        .filter((option) => option.type !== 'boolean')
-        // `mode`, `effort` and `model` are deliberately absent: each is rendered
-        // as its own icon button above, not as one more labelled dropdown.
-        .filter(
-          (option) => option.id !== MODE_CONFIG_ID && option.id !== EFFORT_CONFIG_ID && option.id !== MODEL_CONFIG_ID,
-        )
-        .map((option) => ({
-          id: option.id,
-          label: option.name,
-          value: String(option.currentValue ?? ''),
-          options: flattenOptions(option.options),
-        })),
-    [configOptions],
-  )
+  const configs = useMemo<CommandBarConfig[]>(() => selectLeftoverConfigs(configOptions), [configOptions])
 
   const configExtra = useMemo(() => {
-    const booleanOptions = (configOptions ?? []).filter((option) => option.type === 'boolean')
+    const booleanOptions = selectLeftoverBooleanOptions(configOptions)
     if (!usage && booleanOptions.length === 0) {
       return null
     }
@@ -612,28 +576,6 @@ export function useAgentCommandBar({
 // Debounce composer draft saves so normal typing doesn't POST every keystroke.
 // Flushed immediately (bypassing this delay) on send and on session switch.
 const DRAFT_SAVE_DEBOUNCE_MS = 600
-
-// A config option's values can be a flat list or grouped under labeled
-// sections — flatten to the { value, label } pairs the command bar's settings
-// dropdown takes.
-function flattenOptions(options: unknown): CommandBarConfigOption[] {
-  const flat: CommandBarConfigOption[] = []
-  if (!Array.isArray(options)) {
-    return flat
-  }
-  for (const entry of options as Array<Record<string, unknown>>) {
-    if (Array.isArray(entry.options)) {
-      for (const option of entry.options as Array<{ name?: string; value?: string }>) {
-        if (typeof option.value === 'string') {
-          flat.push({ value: option.value, label: option.name ?? option.value })
-        }
-      }
-    } else if (typeof entry.value === 'string' && typeof entry.name === 'string') {
-      flat.push({ value: entry.value, label: entry.name })
-    }
-  }
-  return flat
-}
 
 // A session key is long and mostly noise; the tail identifies it well enough
 // for a placeholder.
