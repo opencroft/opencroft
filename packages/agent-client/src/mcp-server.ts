@@ -120,7 +120,7 @@ export async function loadSkills(
     requested.map(async (name) => {
       const body =
         accessFor(permissions, skillKey(name)) === null ? `Skill "${name}" is not available.` : await skillHandler(name)
-      return requested.length > 1 ? `## ${name}\n\n${body}` : body
+      return requested.length > 1 ? `<skill name="${name}">\n${body}\n</skill>` : body
     }),
   )
   return sections.join('\n\n')

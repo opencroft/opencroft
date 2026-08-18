@@ -100,7 +100,7 @@ test('a lone skill comes back as its body, with no heading added', async () => {
 
 test('a batch is labeled per skill, de-duplicated, trimmed and stripped of blanks', async () => {
   const loaded = await loadSkills(['alpha', ' beta ', 'alpha', '   '], skillBody, undefined)
-  assert.equal(loaded, '## alpha\n\nbody of alpha\n\n## beta\n\nbody of beta')
+  assert.equal(loaded, '<skill name="alpha">\nbody of alpha\n</skill>\n\n<skill name="beta">\nbody of beta\n</skill>')
 })
 
 test('a request naming no usable skill reports that instead of reaching the handler', async () => {
@@ -124,5 +124,8 @@ test('a skill the session cannot reach is withheld while the permitted ones stil
     defaultAccess: 'Allow',
   }
   const loaded = await loadSkills(['alpha', 'secret'], skillBody, permissions)
-  assert.equal(loaded, '## alpha\n\nbody of alpha\n\n## secret\n\nSkill "secret" is not available.')
+  assert.equal(
+    loaded,
+    '<skill name="alpha">\nbody of alpha\n</skill>\n\n<skill name="secret">\nSkill "secret" is not available.\n</skill>',
+  )
 })
