@@ -483,11 +483,30 @@ export function handleUpdate(notification: SessionNotification): void {
       break
     }
     case 'usage_update': {
-      // size <= 0 means the agent couldn't determine the context window.
-      const size = update.size > 0 ? update.size : undefined
       const session = store.sessions.get(sessionId)
       if (!session) {
         break
+      }
+      // size <= 0 means the agent couldn't determine the context window.
+      let size = update.size > 0 ? update.size : undefined
+      // A reported size the reading itself disproves (used > size) is
+      // known-wrong -- a session cannot hold more tokens than its own window,
+      // so the window figure is what's broken, not the token count. Observed
+      // live: an external bridge seeds a family's base window (200k) and only
+      // corrects it once an authoritative report arrives; a session that never
+      // gets that correction keeps reporting the base figure even after the
+      // true (larger) window is demonstrably in use.
+      //
+      // A configured window (selection.contextWindow, the same per-model
+      // override native-harness sessions already trust unconditionally -- see
+      // resolveContextWindow in native-harness.ts) wins here IF it exists and
+      // the same reading doesn't ALSO disprove it. Otherwise the size is
+      // withheld exactly as an unreported one already is above: the ring
+      // shows `used` alone rather than an impossible ratio, and the ratio
+      // returns the moment a consistent size arrives.
+      if (size !== undefined && update.used > size) {
+        const configured = session.selection.contextWindow
+        size = configured !== undefined && configured > update.used ? configured : undefined
       }
       // Monotonic-within-turn display: an external ACP bridge resets its own
       // running usage tally at the start of every turn and rebuilds it from

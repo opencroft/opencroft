@@ -45,6 +45,7 @@ async function setup(
     configOptions?: unknown
     sessionKey?: string
     transformDeliveredPrompt?: (text: string) => string
+    contextWindow?: number
   } = {},
 ) {
   counter += 1
@@ -56,6 +57,7 @@ async function setup(
     cwd: `/tmp/agent-client-test-${counter}`,
     ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
     ...(options.sessionKey ? { sessionKey: options.sessionKey } : {}),
+    ...(options.contextWindow !== undefined ? { contextWindow: options.contextWindow } : {}),
   }
   const promptCalls: string[] = []
   const configOptionCalls: Array<{ sessionId: string; configId: string; value: unknown }> = []
@@ -1097,6 +1099,77 @@ test('a same-size lower reading mid-turn is still held (the shipped monotonic be
   )
   h.endTurn()
   await settle()
+})
+
+// ── disproved reported window ───────────────────────────────────────────
+//
+// A session cannot hold more tokens than its own window, so a reading where
+// used > size disproves the size, not the used count -- an external bridge
+// can seed/keep a model family's base window even once the session is
+// demonstrably running under a larger one. Three transitions: undisproved
+// (unaffected), disproved with no usable configured override (withheld, like
+// an unreported size), disproved with a configured override the same reading
+// doesn't ALSO disprove (the configured value wins).
+
+test('a reported size the reading does not disprove is used as-is', async () => {
+  const h = await setup('openclaw', { contextWindow: 1_000_000 })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 150_000, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
+    used: 150_000,
+    size: 200_000,
+  })
+})
+
+test('a disproved size with no usable configured window is withheld to used-alone', async () => {
+  const h = await setup('openclaw')
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 531_737, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
+    used: 531_737,
+    size: undefined,
+  })
+})
+
+test('a disproved size falls back to a configured window the same reading does not also disprove', async () => {
+  const h = await setup('openclaw', { contextWindow: 1_000_000 })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 531_737, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
+    used: 531_737,
+    size: 1_000_000,
+  })
+})
+
+test('a configured window the reading ALSO disproves is withheld, not trusted blindly', async () => {
+  const h = await setup('openclaw', { contextWindow: 300_000 })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 531_737, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
+    used: 531_737,
+    size: undefined,
+  })
+})
+
+test('an unreported size (already withheld) is unaffected by the disprove check', async () => {
+  const h = await setup('openclaw', { contextWindow: 1_000_000 })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 531_737, size: 0 },
+  } as Parameters<typeof handleUpdate>[0])
+  assert.deepEqual(
+    h.client.listSessions().find((s) => s.id === h.sessionId)?.usage,
+    { used: 531_737, size: undefined },
+    'size 0 is already the "unreported" case (see above), not a disproved one -- the configured window is not consulted',
+  )
 })
 
 // ── hasActiveTurn ────────────────────────────────────────────────────────

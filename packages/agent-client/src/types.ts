@@ -35,8 +35,12 @@ export interface AgentSelection {
   // wrong-but-plausible window is worse than none: it understates capacity and
   // can trigger a compaction the session did not need.
   //
-  // Only the in-process harness reads this. An ACP agent reports its own window
-  // over the protocol and is believed; nothing here overrides it.
+  // The in-process harness reads this unconditionally. An ACP agent reports
+  // its own window over the protocol and is normally believed outright --
+  // this is consulted for one exception only: a reported size a reading
+  // itself disproves (used > size) is known-wrong, and this is checked as a
+  // fallback before the reading is withheld to used-alone (see agent-client's
+  // usage_update case).
   contextWindow?: number
   // External session key forwarded via ACP `_meta.sessionKey`. Bridges that
   // route by their own session key (e.g. OpenClaw's ACP bridge → Gateway) use
