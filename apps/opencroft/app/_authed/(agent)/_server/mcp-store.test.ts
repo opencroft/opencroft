@@ -1,7 +1,12 @@
 // Exercises the real database (embedded PGlite by default) — see @opencroft/db's
-// test-env for how this stays off the shared dev/production database. A caller's
-// own MCP Connection node must be surfaced without a global entry, and only to
-// that caller.
+// test-env for how this stays off the shared dev/production database.
+// readMcpServersForAgent used to auto-forward a caller's own MCP Connection
+// node into its session; that mount rode a long-lived MCP client connection
+// that kept rotting with nothing able to heal it, so it was
+// removed -- readMcpServersForAgent is now just the global list, regardless
+// of mcpIdentity or what MCP Connection nodes exist. isConnectionNodeName
+// (a separate concern: keeping a personal credential off the global list,
+// a rule of its own) is unaffected and still pinned below.
 import '@opencroft/db/test-env'
 
 import assert from 'node:assert/strict'
@@ -51,39 +56,17 @@ test('readMcpServersForAgent returns only the global list when the selection car
   )
 })
 
-test("readMcpServersForAgent surfaces the caller's own MCP Connection node without a global entry", async () => {
-  await writeMcpServers([])
+test('readMcpServersForAgent does not forward a matching MCP Connection node even when the selection carries an mcpIdentity', async () => {
+  // Pins the removal itself: this exact setup (global list + an owned-shaped
+  // node + a matching identity) used to merge the node in. It must not
+  // anymore -- the global list, unchanged, is the whole answer regardless of
+  // mcpIdentity.
+  await writeMcpServers([{ name: 'shared-team-server', transport: 'http', url: 'https://example.test/shared' }])
   await spaceWithConnectionNode('openproject-mcp-test-owner')
   const servers = await readMcpServersForAgent(selectionWithIdentity('test-owner'))
   assert.deepEqual(
     servers.map((s) => s.name),
-    ['openproject-mcp-test-owner'],
-  )
-})
-
-test('readMcpServersForAgent does not surface a connection node belonging to a different identity', async () => {
-  await writeMcpServers([])
-  await spaceWithConnectionNode('openproject-mcp-someone-else')
-  const servers = await readMcpServersForAgent(selectionWithIdentity('test-owner-2'))
-  assert.deepEqual(servers, [])
-})
-
-test('readMcpServersForAgent merges owned and global entries, owned winning on a name collision', async () => {
-  await writeMcpServers([
-    { name: 'shared-team-server', transport: 'http', url: 'https://example.test/shared' },
-    { name: 'mcp-test-owner-3', transport: 'http', url: 'https://stale.example.test' },
-  ])
-  await spaceWithConnectionNode('mcp-test-owner-3')
-  const servers = await readMcpServersForAgent(selectionWithIdentity('test-owner-3'))
-  assert.deepEqual(
-    servers.map((s) => s.name).sort(),
-    ['mcp-test-owner-3', 'shared-team-server'].sort(),
-  )
-  const owned = servers.find((s) => s.name === 'mcp-test-owner-3')
-  assert.equal(
-    owned?.url,
-    'https://example.test/mcp-test-owner-3',
-    "the node's own config must win, not the stale global one",
+    ['shared-team-server'],
   )
 })
 

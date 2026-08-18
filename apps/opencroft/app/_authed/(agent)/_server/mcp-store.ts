@@ -35,7 +35,8 @@ interface McpConnectionNodeShape {
 }
 
 // Every MCP Connection graph node, across every space, as an McpServerConfig.
-// The node type has no structural owner field — see readMcpServersForAgent.
+// The node type has no structural owner field — its name is the only signal
+// isConnectionNodeName below has to go on.
 async function allConnectionNodeConfigs(): Promise<McpServerConfig[]> {
   const registry = getSpacesRegistry()
   await registry.ensureLoaded()
@@ -63,39 +64,28 @@ async function allConnectionNodeConfigs(): Promise<McpServerConfig[]> {
   return out
 }
 
-// An MCP Connection node's own name is the only ownership signal that exists
-// today (the node type carries no owner field) — by convention it's already
-// always `<service>-mcp-<identity>`, e.g. `openproject-mcp-carol`. Matching
-// against it, rather than adding a schema field, keeps this entirely inside
-// reviewable app code instead of a live, unversioned local-extension edit.
-function ownsConnectionName(name: string, mcpIdentity: string): boolean {
-  return name === `mcp-${mcpIdentity}` || name.endsWith(`-mcp-${mcpIdentity}`)
+// The global list only. Previously also auto-forwarded a caller's own MCP
+// Connection node(s) by naming convention (`<service>-mcp-<identity>`) into
+// their session's mounted tools -- removed: that mount rode
+// the session's own long-lived MCP client connection, which is exactly what
+// kept rotting (session-init failures, 404 "Could not find session", -32602
+// on every call) with nothing here able to heal it short of a full session
+// restart. The tracker path now is the mcp-connection NODE route (`call` →
+// `call_tool`, a fresh handshake every call — see the openproject-issues
+// skill), never an auto-mounted toolset. `selection` is unused now but kept
+// in the signature: agent-client's `loadMcpServers` hook still calls this
+// with one, and changing that shape is out of scope here (agent-client is a
+// subtree; this stays product-agnostic by not touching it).
+export async function readMcpServersForAgent(_selection: AgentSelection): Promise<McpServerConfig[]> {
+  return readMcpServers()
 }
 
-// The global list, plus — when the caller carries an mcpIdentity — that
-// caller's own MCP Connection node(s), surfaced the same way a global entry
-// would be. A caller's own connection needs no entry in the global list at
-// all once this runs: it's reachable automatically, which is what removes
-// the reason to ever add one there for personal access.
-export async function readMcpServersForAgent(selection: AgentSelection): Promise<McpServerConfig[]> {
-  const global = await readMcpServers()
-  const mcpIdentity = selection.mcpIdentity
-  if (!mcpIdentity) {
-    return global
-  }
-  const owned = (await allConnectionNodeConfigs()).filter((server) => ownsConnectionName(server.name, mcpIdentity))
-  if (owned.length === 0) {
-    return global
-  }
-  const ownedNames = new Set(owned.map((server) => server.name))
-  return [...owned, ...global.filter((server) => !ownedNames.has(server.name))]
-}
-
-// A name already claimed by an MCP Connection node has its own reachable path
-// (readMcpServersForAgent, once the caller's identity matches its naming
-// convention) — registering it globally too is the exact drift this guards
-// against: it re-teaches the next agent that mcp_set is how you restore
-// access to your own connection.
+// A name already claimed by an MCP Connection node must never also be
+// registered globally — that's the exact drift this check guards against:
+// a personal credential becoming visible to every agent's session. Still
+// enforced regardless of the auto-forward's removal above; the two are
+// separate concerns (this is about where a credential is VISIBLE, not about
+// how a session reaches its own connection).
 export async function isConnectionNodeName(name: string): Promise<boolean> {
   const configs = await allConnectionNodeConfigs()
   return configs.some((server) => server.name === name)
