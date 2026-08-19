@@ -64,6 +64,25 @@ export function composeEnvelope(message: string, opts: ComposeEnvelopeOptions): 
   return parts.length ? `${parts.join('\n')}\n${message}` : message
 }
 
+/**
+ * Prefix a message with the reader's current selection, wrapped in its own
+ * envelope tag. The selection travels as context the same way the other
+ * `<opencroft-*>` parts do: ahead of the message, stripped from the user
+ * bubble by the display side's tag stripper, delivered verbatim to the agent.
+ *
+ * `content` is what the agent receives — the selection's label is presentation
+ * and stays on the screen that showed it. A blank content wraps nothing, and a
+ * leading slash marks a command (same rule as composeEnvelope above), passed
+ * through untouched.
+ */
+export function wrapUserSelection(message: string, content: string): string {
+  const trimmed = content.trim()
+  if (!trimmed || message.trim().startsWith('/')) {
+    return message
+  }
+  return `<opencroft-user-selection>${trimmed}</opencroft-user-selection>\n${message}`
+}
+
 function pad(n: number): string {
   return String(n).padStart(2, '0')
 }

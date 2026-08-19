@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { composeEnvelope, stampDeliveryTime } from './message-envelope'
+import { composeEnvelope, stampDeliveryTime, wrapUserSelection } from './message-envelope'
 
 const SYSTEM = { spaceName: 'Agents', spaceSlug: 'agents', selectedNodeId: 'script-node_1' }
 const SESSION_INIT = { jobContext: 'Triage tracker notifications.', instructions: ['Reply in English.', 'Be terse.'] }
@@ -71,6 +71,27 @@ test('blank/whitespace-only jobContext and instructions are omitted', () => {
 test('no options at all leaves the message untouched', () => {
   assert.equal(composeEnvelope('hello', { isNewSession: false }), 'hello')
   assert.equal(composeEnvelope('hello', { isNewSession: true }), 'hello')
+})
+
+// ── wrapUserSelection ─────────────────────────────────────────────────────
+
+test('wrapUserSelection prefixes the selection tag ahead of the message', () => {
+  const out = wrapUserSelection('what does this do?', 'const x = 1')
+  assert.equal(out, '<opencroft-user-selection>const x = 1</opencroft-user-selection>\nwhat does this do?')
+})
+
+test('wrapUserSelection trims the content and wraps nothing when it is blank', () => {
+  assert.equal(
+    wrapUserSelection('hello', '  const x = 1  '),
+    '<opencroft-user-selection>const x = 1</opencroft-user-selection>\nhello',
+  )
+  assert.equal(wrapUserSelection('hello', '   '), 'hello')
+  assert.equal(wrapUserSelection('hello', ''), 'hello')
+})
+
+test('wrapUserSelection passes a leading-slash message through untouched', () => {
+  assert.equal(wrapUserSelection('/compact', 'const x = 1'), '/compact')
+  assert.equal(wrapUserSelection('  /reset', 'const x = 1'), '  /reset')
 })
 
 // ── stampDeliveryTime ─────────────────────────────────────────────────────

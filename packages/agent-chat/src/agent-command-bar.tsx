@@ -133,6 +133,13 @@ export interface UseAgentCommandBarOptions {
    *  host-specific fetch/request callbacks this hook has no business knowing
    *  — same reason `controls` is a render prop instead of built in here. */
   compact?: CompactRenderState
+  /** Host slot: rendered at the START of the config-extra cluster, before the
+   *  usage ring — for a host readout or control that belongs beside the ring
+   *  (same reasoning as the kit's own configExtra slot: a readout behind a
+   *  menu is a readout nobody reads). What it shows is the host's business;
+   *  this hook only places it. Must be identity-stable when nothing meaningful
+   *  changed — it feeds the memoized bar. */
+  configExtraStart?: ReactNode
   /** Discards the session and starts a fresh one, offered from the ring's
    *  popover. Omit to render the ring with no Clear button. */
   onClear?: () => void
@@ -178,6 +185,7 @@ export function useAgentCommandBar({
   approvalTitles,
   compact,
   onClear,
+  configExtraStart,
 }: UseAgentCommandBarOptions): ReactElement {
   // Lazy init so a session opened with an existing draft paints with it
   // already in place — no separate fetch-then-fill flicker. This state
@@ -467,11 +475,12 @@ export function useAgentCommandBar({
 
   const configExtra = useMemo(() => {
     const booleanOptions = selectLeftoverBooleanOptions(configOptions)
-    if (!usage && booleanOptions.length === 0) {
+    if (!configExtraStart && !usage && booleanOptions.length === 0) {
       return null
     }
     return (
       <>
+        {configExtraStart}
         {usage ? (
           <ContextRing
             usedTokens={usage.used}
@@ -492,7 +501,7 @@ export function useAgentCommandBar({
         ) : null}
       </>
     )
-  }, [configOptions, usage, compact, onClear])
+  }, [configOptions, usage, compact, onClear, configExtraStart])
 
   // Memoized for element identity, not for render cost -- see this hook's own
   // doc comment on why identity stability is the whole point. Every entry
