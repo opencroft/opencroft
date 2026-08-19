@@ -19,8 +19,12 @@ interface Props {
 // through immediately — this is a no-op for every dashboard that doesn't
 // opt in.
 export function DashboardView({ component: Body }: Props) {
+  // min-h-0 because this is a flex item that must CONTAIN its dashboard, not
+  // grow with it: without it min-height:auto refuses to shrink below the
+  // content's min-content height, so a dashboard holding a long list pushes
+  // the pane past the viewport and its own internal scrollers never bound.
   return (
-    <Flex expanded>
+    <Flex expanded className='min-h-0'>
       {Body && (
         <Suspense
           fallback={

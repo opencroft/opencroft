@@ -222,6 +222,95 @@ export async function getGroupChat(request: Request, groupChatId: string): Promi
   return row
 }
 
+/**
+ * How an embedded surface's `space` slug resolves for the signed-in caller.
+ *
+ * `missing` and `not-a-member` are DELIBERATELY distinguishable here, unlike
+ * everywhere else in this file (see requireGroupChatMember's collapse). The
+ * embedding surface offers to CREATE a chat whose slug does not exist, so it
+ * has to know which case it is in — and the distinction discloses nothing the
+ * caller could not already learn: `createGroupChat` refuses `slug-taken` for
+ * any existing slug, member or not, so slug existence is observable to every
+ * signed-in user through the creation path this same surface offers. What the
+ * caller SHOWS for `not-a-member` must still be the collapsed `not-found`
+ * refusal, same code and copy as the thread route's.
+ */
+export type GroupChatSlugResolution =
+  | { state: 'missing' }
+  | { state: 'not-a-member' }
+  | { state: 'member'; chat: GroupChatSummary }
+
+/**
+ * Resolve a group chat by the slug an embedding surface addresses it with.
+ * The input is slugified first — the surface passes whatever string its host
+ * configured, and the slug column only ever holds `slugify` output.
+ */
+export async function resolveGroupChatBySlug(request: Request, slug: string): Promise<GroupChatSlugResolution> {
+  const sessionUser = await requireSignedInUser(request)
+  const chatSlug = slugify(slug)
+  if (!chatSlug) {
+    return { state: 'missing' }
+  }
+  const [row] = await db
+    .select({
+      id: groupChat.id,
+      slug: groupChat.slug,
+      name: groupChat.name,
+      topic: groupChat.topic,
+      createdAt: groupChat.createdAt,
+      updatedAt: groupChat.updatedAt,
+    })
+    .from(groupChat)
+    .where(eq(groupChat.slug, chatSlug))
+    .limit(1)
+  if (!row) {
+    return { state: 'missing' }
+  }
+  if (!(await isUserMember(row.id, sessionUser.id))) {
+    return { state: 'not-a-member' }
+  }
+  return { state: 'member', chat: row }
+}
+
+/**
+ * One agent's thread with a given slug inside a group chat, or null.
+ *
+ * Membership-gated exactly as every other read here. Null is an answer, not a
+ * refusal: for the embedded surface a missing thread means "the first send
+ * will create it" (through `startThread`, which re-checks everything), so the
+ * caller needs the absence as data. Scoped to (chat, agent, slug) because
+ * that is the unique index — the same slug under another agent is a different
+ * thread by design.
+ */
+export async function findThreadBySlug(
+  request: Request,
+  groupChatId: string,
+  agentNodeId: string,
+  threadSlug: string,
+): Promise<GroupChatThreadSummary | null> {
+  await requireGroupChatMember(request, groupChatId)
+  const [row] = await db
+    .select({
+      id: groupChatThread.id,
+      groupChatId: groupChatThread.groupChatId,
+      agentNodeId: groupChatThread.agentNodeId,
+      sessionKey: groupChatThread.sessionKey,
+      title: groupChatThread.title,
+      createdAt: groupChatThread.createdAt,
+      draft: groupChatThread.draft,
+    })
+    .from(groupChatThread)
+    .where(
+      and(
+        eq(groupChatThread.groupChatId, groupChatId),
+        eq(groupChatThread.agentNodeId, agentNodeId),
+        eq(groupChatThread.slug, threadSlug),
+      ),
+    )
+    .limit(1)
+  return row ?? null
+}
+
 /** Every thread in a group chat. Membership-gated, not filtered after the fact. */
 export async function listThreadsInGroupChat(request: Request, groupChatId: string): Promise<GroupChatThreadSummary[]> {
   await requireGroupChatMember(request, groupChatId)

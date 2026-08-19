@@ -2449,3 +2449,80 @@ test('a legacy uuid-keyed thread still resolves and still lists', async () => {
   assert.ok(mine)
   assert.equal(mine.threads[0]?.ref, legacy.id, 'a thread with no slug is addressed by its id, as it always was')
 })
+
+// ---------------------------------------------------------------------------
+// The embedded surface's reads: resolving a chat by slug, and one agent's
+// thread by slug. The deliberate asymmetry — `missing` vs `not-a-member` IS
+// distinguishable here, unlike everywhere else — is asserted as such; see
+// resolveGroupChatBySlug's own comment for why it discloses nothing new.
+// ---------------------------------------------------------------------------
+
+test('resolveGroupChatBySlug: member, non-member and missing are three answers', async () => {
+  const owner = await makeUser('embed-resolve-owner@example.test')
+  const outsider = await makeUser('embed-resolve-outsider@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Embed Resolve Chat')
+
+  const asMember = await model.resolveGroupChatBySlug(reqAs(owner), 'embed-resolve-chat')
+  assert.equal(asMember.state, 'member')
+  assert.ok(asMember.state === 'member')
+  assert.equal(asMember.chat.id, chat.id)
+  assert.equal(asMember.chat.slug, 'embed-resolve-chat')
+
+  const asOutsider = await model.resolveGroupChatBySlug(reqAs(outsider), 'embed-resolve-chat')
+  assert.equal(asOutsider.state, 'not-a-member')
+
+  const missing = await model.resolveGroupChatBySlug(reqAs(owner), 'no-such-chat-anywhere')
+  assert.equal(missing.state, 'missing')
+})
+
+test('resolveGroupChatBySlug slugifies its input, the same transform the slug column holds', async () => {
+  const owner = await makeUser('embed-slugify-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Embed Slugify Chat')
+
+  // The raw name — mixed case, spaces — resolves to the same chat its slug does.
+  const byName = await model.resolveGroupChatBySlug(reqAs(owner), 'Embed Slugify Chat')
+  assert.ok(byName.state === 'member')
+  assert.equal(byName.chat.id, chat.id)
+
+  // Nothing to build a slug from is a missing chat, not a fault.
+  const unusable = await model.resolveGroupChatBySlug(reqAs(owner), '???')
+  assert.equal(unusable.state, 'missing')
+})
+
+test('resolveGroupChatBySlug refuses an anonymous caller before answering anything', async () => {
+  const refusal = await captureRefusal(() => model.resolveGroupChatBySlug(reqAnonymous(), 'embed-resolve-chat'))
+  assert.equal(refusal.code, 'unauthenticated')
+})
+
+test('findThreadBySlug: a member gets the row, absence is null, a non-member is refused', async () => {
+  const owner = await makeUser('embed-thread-owner@example.test')
+  const outsider = await makeUser('embed-thread-outsider@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Embed Thread Chat')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+
+  // Direct insert rather than startThread, same reasoning as the access-rule
+  // test above: the lookup is under test, not the session machinery.
+  const [row] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: 'group-chat:embed-thread-chat:agent-a:design-kit',
+      slug: 'design-kit',
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(row)
+
+  const found = await model.findThreadBySlug(reqAs(owner), chat.id, 'agent-a', 'design-kit')
+  assert.equal(found?.id, row.id)
+  assert.equal(found?.sessionKey, 'group-chat:embed-thread-chat:agent-a:design-kit')
+
+  // The same slug under another agent is a different thread by design — and
+  // here, no thread at all.
+  assert.equal(await model.findThreadBySlug(reqAs(owner), chat.id, 'agent-b', 'design-kit'), null)
+  assert.equal(await model.findThreadBySlug(reqAs(owner), chat.id, 'agent-a', 'not-started-yet'), null)
+
+  const refusal = await captureRefusal(() => model.findThreadBySlug(reqAs(outsider), chat.id, 'agent-a', 'design-kit'))
+  assert.equal(refusal.code, 'not-found')
+})

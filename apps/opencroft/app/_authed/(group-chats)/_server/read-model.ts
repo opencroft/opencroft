@@ -17,6 +17,7 @@ import { db, groupChatMember, groupChatThread, user } from '@opencroft/db'
 import { inArray } from 'drizzle-orm'
 
 import {
+  findThreadBySlug,
   getGroupChat,
   getThread,
   listGroupChatsForUser,
@@ -262,6 +263,34 @@ export async function getThreadView(
   threadId: string,
 ): Promise<GroupChatThreadEntry & { draft: string | null }> {
   const thread = await getThread(request, threadId)
+  return enrichThread(request, thread)
+}
+
+/**
+ * One agent's thread with a given slug, enriched like `getThreadView`, or
+ * null when no such thread exists — the embedded surface's "first send will
+ * create it" state, which the caller needs as data rather than a refusal.
+ * The gate is `findThreadBySlug`'s, per this module's header rule.
+ */
+export async function findThreadViewBySlug(
+  request: Request,
+  groupChatId: string,
+  agentNodeId: string,
+  threadSlug: string,
+): Promise<(GroupChatThreadEntry & { draft: string | null }) | null> {
+  const thread = await findThreadBySlug(request, groupChatId, agentNodeId, threadSlug)
+  if (!thread) {
+    return null
+  }
+  return enrichThread(request, thread)
+}
+
+/** The shared tail of the single-thread reads: resolve the agent and its
+ *  current membership for one already-gated thread row. */
+async function enrichThread(
+  request: Request,
+  thread: Awaited<ReturnType<typeof getThread>>,
+): Promise<GroupChatThreadEntry & { draft: string | null }> {
   const agents = await agentsByNodeId()
   const agentMembers = await agentMemberIds(request, thread.groupChatId)
   return {

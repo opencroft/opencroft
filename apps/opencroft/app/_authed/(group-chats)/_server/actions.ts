@@ -32,6 +32,7 @@ import {
   removeMember,
   removePin,
   renameGroupChat,
+  resolveGroupChatBySlug,
   sendMessageInThread,
   setGroupChatTopic,
   setThreadDraft,
@@ -46,6 +47,7 @@ import type {
   MemberRef,
 } from '@/app/_authed/(group-chats)/_server/read-model'
 import {
+  findThreadViewBySlug,
   getGroupChatDetailView,
   getThreadView,
   listGroupChatsForUserView,
@@ -55,6 +57,7 @@ import type { DirectoryUser } from '@/app/_authed/(group-chats)/_server/user-dir
 import { listDirectoryUsers } from '@/app/_authed/(group-chats)/_server/user-directory'
 import type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
 import { GroupChatAccessError } from '@/app/_authed/(group-chats)/_shared/access-error'
+import { slug as slugify } from '@/app/_authed/(server)/_server/types'
 
 // So no client file ever has a reason to name model.ts directly — the same
 // pattern agents.ts just adopted for agents-impl.ts. These are erased at
@@ -319,6 +322,51 @@ export const getGroupChatThreadView = createServerFn({ method: 'GET', strict: { 
     async ({ data: threadId }): Promise<GroupChatThreadEntry & { draft: string | null }> =>
       getThreadView(getRequest(), threadId),
   )
+
+// ── The embedded surface's reads ─────────────────────────────────────────
+
+/**
+ * How an embedded chat's `space` resolves for this caller. `missing` and
+ * `refused` are separate states because the surface CREATES a missing chat —
+ * see `resolveGroupChatBySlug` on why that distinction discloses nothing new.
+ * The refused state still carries the collapsed `not-found` code, so what the
+ * reader sees is exactly the thread route's refusal.
+ */
+export type GroupChatEmbedView =
+  | { state: 'missing' }
+  | { state: 'refused'; code: GroupChatAccessFailure }
+  | { state: 'ok'; chat: GroupChatDetailView }
+
+export const getGroupChatEmbedView = createServerFn({ method: 'GET', strict: { output: false } })
+  .inputValidator((space: string) => space)
+  .handler(async ({ data: space }): Promise<GroupChatEmbedView> => {
+    const resolved = await resolveGroupChatBySlug(getRequest(), space)
+    if (resolved.state === 'missing') {
+      return { state: 'missing' }
+    }
+    if (resolved.state === 'not-a-member') {
+      return { state: 'refused', code: 'not-found' }
+    }
+    return { state: 'ok', chat: await getGroupChatDetailView(getRequest(), resolved.chat.id) }
+  })
+
+/**
+ * The thread an embedded surface's (agent, id) pair maps to, or null when the
+ * first send has yet to create it. `id` is slugified here, the same transform
+ * `startThread` applies to the title the surface will start the thread with —
+ * one transform on both paths is what keeps lookup and creation naming the
+ * same thread. An id that slugifies to nothing finds nothing; the start path
+ * is where it earns its explicit `slug-unusable` refusal.
+ */
+export const findGroupChatEmbedThread = createServerFn({ method: 'GET', strict: { output: false } })
+  .inputValidator((data: { groupChatId: string; agentNodeId: string; id: string }) => data)
+  .handler(async ({ data }): Promise<(GroupChatThreadEntry & { draft: string | null }) | null> => {
+    const threadSlug = slugify(data.id)
+    if (!threadSlug) {
+      return null
+    }
+    return findThreadViewBySlug(getRequest(), data.groupChatId, data.agentNodeId, threadSlug)
+  })
 
 // A thread's artifacts, for the reader. Gated on the caller's own membership,
 // exactly as the thread's messages are — the agent-facing write path is a

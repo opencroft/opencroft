@@ -23,8 +23,10 @@ import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/_authed/(dashbo
 import { NodeFrame, useNodeAccent } from '@/app/_authed/(dashboard)/_canvas/node-frame'
 import { useOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 import { useNodeContext } from '@/app/_authed/(dashboard)/_extension-system/use-node-context'
+import { EmbeddedAgentChat } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { createSafeIcons } from '@/app/_authed/(extension-runtime)/_client/safe-icons'
+import { SelectionProvider, useSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
 import {
   broadcast,
   getStream,
@@ -365,6 +367,12 @@ export const extensionHostApi = {
   useDockerContainers,
   useDockerSnapshotReceived,
   useSeedDockerContainers,
+  // The embeddable group-chat thread (props: `space` group-chat slug, `id`
+  // thread slug) and the scoped selection its composer reads — see
+  // embedded-agent-chat.tsx and selection-context.tsx.
+  EmbeddedAgentChat,
+  SelectionProvider,
+  useSelection,
 }
 
 export type { Stream, TextChunk }

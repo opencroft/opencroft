@@ -71,6 +71,10 @@ interface AgentCommandBarHostProps {
    *  them to the kit's error slot. */
   sendError?: string
   onDismissSendError?: () => void
+  /** Rendered at the start of the config-extra cluster, before the context
+   *  ring — forwarded to the package hook's slot of the same name. Must be
+   *  identity-stable when nothing changed; it feeds the memoized bar. */
+  configExtraStart?: ReactNode
 }
 
 // The approval button's wording. It lives here rather than in the package
@@ -116,6 +120,7 @@ export function AgentCommandBarHost({
   startIcon = true,
   sendError,
   onDismissSendError,
+  configExtraStart,
 }: AgentCommandBarHostProps) {
   const [autoApprove, setAutoApproveState] = useState(false)
   const [yoloMode, setYoloMode] = useState(false)
@@ -211,6 +216,7 @@ export function AgentCommandBarHost({
     adapterId: session.adapterId,
     lockedConfigOptions: lockedConfigOptions,
     approvalTitles: APPROVAL_TITLES,
+    configExtraStart,
   })
 
   useOptionalOverlay({ menu: focusMenu ?? null, bar: barNode })
