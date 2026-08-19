@@ -21,16 +21,14 @@
 //   - thread exists       → the shared assembly reattaches to it; the picker
 //                           moves into the composer's leading slot.
 
-import { Check, ChevronDown } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from 'ui/dropdown-menu'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
 import { AddMemberPicker, type MemberCandidate } from 'ui/group-chat/add-member-picker'
+import { AgentPicker } from 'ui/group-chat/agent-picker'
 import { StartThreadComposer } from 'ui/group-chat/start-thread-composer'
-import { AgentAvatar } from 'ui/media/agent-avatar'
 import { Spinner } from 'ui/spinner'
 
 import { wrapUserSelection } from '@/app/_authed/(agent)/_shared/message-envelope'
@@ -199,12 +197,13 @@ function EmbeddedThread({ chat, id, className }: { chat: GroupChatDetailView; id
 
   const onThreadStarted = useCallback(() => setThreadTick((tick) => tick + 1), [])
 
-  // Stable across renders while the members and selection stand still — it
-  // feeds the memoized command bar through leadingBarContent.
+  // The kit's own picker — the same control the start-thread composer renders
+  // in its leading slot, so the pre-thread and live composers cannot drift.
+  // Selecting another agent switches to THAT agent's thread for the same id
+  // (each agent maps to its own thread by design). Memoized because it feeds
+  // the memoized command bar through leadingBarContent.
   const picker = useMemo(
-    () => (
-      <EmbedAgentPicker agents={memberAgents} selectedAgentNodeId={selectedAgent} onSelectAgent={setRememberedAgent} />
-    ),
+    () => <AgentPicker agents={memberAgents} selectedAgentNodeId={selectedAgent} onSelectAgent={setRememberedAgent} />,
     [memberAgents, selectedAgent, setRememberedAgent],
   )
 
@@ -229,49 +228,6 @@ function EmbeddedThread({ chat, id, className }: { chat: GroupChatDetailView; id
       onStarted={onThreadStarted}
       className={className}
     />
-  )
-}
-
-// The composer's agent picker once a thread is on screen — the same control
-// the kit's start-thread composer keeps in its own leading slot, rebuilt on
-// the kit's primitives because that internal picker is not exported on its
-// own. Selecting another agent switches to THAT agent's thread for the same
-// id (each agent maps to its own thread by design).
-function EmbedAgentPicker({
-  agents,
-  selectedAgentNodeId,
-  onSelectAgent,
-}: {
-  agents: Array<{ nodeId: string; name: string; avatarUrl: string | null }>
-  selectedAgentNodeId: string | null
-  onSelectAgent: (nodeId: string) => void
-}) {
-  const selected = agents.find((a) => a.nodeId === selectedAgentNodeId)
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type='button'
-          className='inline-flex h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-md px-1.5 text-xs text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring'
-          title={selected ? `Thread with ${selected.name}` : 'Choose an agent'}
-        >
-          {selected ? <AgentAvatar avatar={selected.avatarUrl} name={selected.name} size='sm' /> : null}
-          <span className='max-w-32 truncate'>
-            {selected ? selected.name : <span className='text-muted-foreground'>Select agent</span>}
-          </span>
-          <ChevronDown className='size-3.5 shrink-0 text-muted-foreground' />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align='start' side='top' className='min-w-48'>
-        {agents.map((agent) => (
-          <DropdownMenuItem key={agent.nodeId} onSelect={() => onSelectAgent(agent.nodeId)} className='gap-2'>
-            <AgentAvatar avatar={agent.avatarUrl} name={agent.name} size='sm' />
-            <span className='min-w-0 flex-1 truncate'>{agent.name}</span>
-            {agent.nodeId === selectedAgentNodeId ? <Check className='size-3.5 shrink-0 text-primary' /> : null}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
   )
 }
 
