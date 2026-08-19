@@ -112,7 +112,7 @@ export function EmbeddedAgentChat({ space, id, className }: EmbeddedAgentChatPro
       return <CenteredSpinner className={className} />
     case 'error':
       return (
-        <Empty className={className}>
+        <Empty className={cn('h-full', className)}>
           <EmptyHeader>
             <EmptyTitle>Something went wrong</EmptyTitle>
             <EmptyDescription>{state.message}</EmptyDescription>
@@ -120,7 +120,11 @@ export function EmbeddedAgentChat({ space, id, className }: EmbeddedAgentChatPro
         </Empty>
       )
     case 'refused':
-      return <GroupChatRefusal code={state.view.code} />
+      return (
+        <div className={cn('flex h-full min-h-0 flex-col justify-center', className)}>
+          <GroupChatRefusal code={state.view.code} />
+        </div>
+      )
     case 'missing':
       return <CreateChatEmptyState space={space} className={className} onCreated={reload} />
     case 'ready':
@@ -130,7 +134,7 @@ export function EmbeddedAgentChat({ space, id, className }: EmbeddedAgentChatPro
 
 function CenteredSpinner({ className }: { className?: string }) {
   return (
-    <div className={className}>
+    <div className={cn('flex h-full min-h-0 flex-col', className)}>
       <div className='flex h-full min-h-24 items-center justify-center'>
         <Spinner className='size-5 text-muted-foreground' />
       </div>
@@ -302,10 +306,17 @@ function EmbedStartComposer({
   }
 
   return (
-    <div className={cn('flex h-full min-h-0 flex-col', className)}>
-      <div className='flex min-h-0 flex-1 flex-col justify-end gap-1 p-2'>
+    <div className={cn('flex h-full min-h-0 flex-col justify-end', className)}>
+      {/* The composer hugs its content and the slack sits above it. The kit's
+          StartThreadComposer root carries `flex-1` -- it fills the footer row
+          on the group-chat screen -- so as a flex child here it stretched to
+          full height and its own content sat at the TOP of that box, leaving
+          justify-end no free space to push against. `flex-none` puts the hug
+          back, and the wrapper stays shrink-0 so the slack lands above it. */}
+      <div className='flex shrink-0 flex-col gap-1 p-2'>
         <SelectionBadge />
         <StartThreadComposer
+          className='flex-none'
           agents={agents}
           selectedAgentNodeId={selectedAgentNodeId}
           onSelectAgent={onSelectAgent}
@@ -343,7 +354,7 @@ function CreateChatEmptyState({
 }) {
   const [open, setOpen] = useState(false)
   return (
-    <div className={className}>
+    <div className={cn('flex h-full min-h-0 flex-col justify-center', className)}>
       <Empty className='py-8'>
         <EmptyHeader>
           <EmptyTitle>This chat does not exist</EmptyTitle>
