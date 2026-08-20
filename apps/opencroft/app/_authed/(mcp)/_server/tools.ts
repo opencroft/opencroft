@@ -1955,6 +1955,18 @@ export async function remoteExecDetailed(
   return execFn(ctx, command, opts) as Promise<{ stdout: string; truncated: boolean }>
 }
 
+/**
+ * Run a command and return its stdout, discarding whether that stdout was complete.
+ *
+ * Correct only when nobody downstream reads the output — a `mv`, a `chmod`, a byte count the
+ * caller parses itself. **If the result reaches a human or a model, use `remoteExecDetailed` and
+ * report the truncation**, because a string that was cut is indistinguishable from a command
+ * that produced exactly that much, and a reader will treat it as the whole answer.
+ *
+ * The discard is deliberately spelled out here rather than left to the shorter name: this is the
+ * easier function to reach for, its bare `string` return makes dropping the flag type-clean, and
+ * that omission is the original defect in a friendlier form.
+ */
 export async function remoteExec(
   ctx: Record<string, unknown>,
   command: string,
@@ -2057,8 +2069,9 @@ function searchLimit(args: Record<string, unknown>): number {
 
 /**
  * The one truncation note every tool appends, so a reader learns the same shape once and
- * recognises it everywhere. `remedy` names what to change to see the rest, and is the only part
- * that differs between tools.
+ * recognises it everywhere. `remedy` is the whole tail, not a fragment slotted into a fixed
+ * sentence: the tools do not all have the same way out, and a shared "… to see the rest" ending
+ * would have forced the ones that cannot honestly say it to say it anyway.
  *
  * The leading `…` and the parentheses are what keep it from reading as content. That matters
  * most for `remote_read`, whose body is `cat -n`-style numbered lines that get pasted and
@@ -2066,7 +2079,7 @@ function searchLimit(args: Record<string, unknown>): number {
  * sentence could be. Appending on its own line is part of the convention, not a detail.
  */
 export function withTruncationNote(body: string, truncated: boolean, remedy: string): string {
-  return truncated ? `${body}\n… (truncated — ${remedy} to see the rest)` : body
+  return truncated ? `${body}\n… (truncated — ${remedy})` : body
 }
 
 /** Shared tail of remote_glob/remote_grep: strip "./" prefixes, apply the line limit and column
@@ -2085,7 +2098,7 @@ function renderSearchResult(output: string, limit: number): Record<string, unkno
     .slice(0, limit)
     .map((line) => capColumns(line.replace(/^\.\//, '')))
     .join('\n')
-  return textResult(withTruncationNote(body, truncated, 'narrow the pattern, path, or glob'))
+  return textResult(withTruncationNote(body, truncated, 'narrow the pattern, path, or glob to see the rest'))
 }
 
 // Base64 chunk size (of encoded text, per command) for remote writes — keeps each `remoteExec`
@@ -2401,15 +2414,25 @@ function catN(content: string, startLine = 1): string {
  * Render a remote_read response: slice to the requested range, number the lines, and say so when
  * the file arrived cut.
  *
- * The note is added whenever the read was truncated, even when the requested slice sits well
- * inside what did arrive. The read has no way to know how much further the file went, so any
- * line count or "it ends here" taken from it is unsound regardless of which part was asked for.
- * Over-reporting costs a narrower re-read; under-reporting is the silent wrong conclusion this
- * exists to prevent.
+ * The note is attached to the READ, not to the slice — it appears whenever the file was cut,
+ * even when the requested range sits well inside what did arrive. The read has no way to know
+ * how much further the file went, so any line count or "it ends here" taken from it is unsound
+ * regardless of which part was asked for.
+ *
+ * The remedy deliberately does not offer `offset`/`limit`. The whole file is fetched with `cat`
+ * and sliced here, against the string that already arrived, so no offset reaches past the cap —
+ * telling a reader to narrow the range would be a confident wrong instruction on the one surface
+ * that exists to stop producing them. Reaching later parts needs the slicing to happen on the
+ * remote instead.
  */
 export function renderReadResult(content: string, truncated: boolean, offset?: number, limit?: number): string {
   const body = catN(sliceLines(content, offset, limit), offset ?? 1)
-  return withTruncationNote(body, truncated, 'read a narrower range with offset/limit')
+  return withTruncationNote(
+    body,
+    truncated,
+    'the file is larger than one read can return; offset/limit only index what already arrived, ' +
+      'so fetch later parts by slicing on the remote (e.g. sed -n) instead',
+  )
 }
 
 function sliceLines(content: string, offset?: number, limit?: number): string {
@@ -3410,7 +3433,7 @@ function buildHandlers(): Record<string, ToolHandler> {
           : (ctx.cwd as string | undefined)
         const env = await resolveSecretsEnv(args.secrets as string[] | undefined)
         const { stdout, truncated } = await remoteExecDetailed(ctx, command, { cwd: effectiveCwd, env })
-        return textResult(withTruncationNote(stdout, truncated, "narrow the command's output"))
+        return textResult(withTruncationNote(stdout, truncated, "narrow the command's output to see the rest"))
       },
       { view: 'remote_exec' },
     ),
@@ -3441,7 +3464,7 @@ function buildHandlers(): Record<string, ToolHandler> {
             `bash ${shellQuote(tmpPath)} ${argv}; rc=$?; rm -f ${shellQuote(tmpPath)}; exit $rc`,
             { cwd: effectiveCwd, env },
           )
-          return textResult(withTruncationNote(stdout, truncated, "narrow the script's output"))
+          return textResult(withTruncationNote(stdout, truncated, "narrow the script's output to see the rest"))
         } catch (err) {
           // The happy path's `rm -f` never runs if the write itself failed (e.g. verification
           // mismatch) or the exec command never reached the remote — best-effort clean up here too,

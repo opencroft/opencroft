@@ -200,14 +200,24 @@ test('the note keeps the wording remote_grep/remote_glob already used', () => {
   // Pinned, not paraphrased: the search tools shipped this exact sentence before the helper
   // existed, and a reader who learned it there must recognise it everywhere.
   assert.equal(
-    withTruncationNote('body', true, 'narrow the pattern, path, or glob'),
+    withTruncationNote('body', true, 'narrow the pattern, path, or glob to see the rest'),
     'body\n… (truncated — narrow the pattern, path, or glob to see the rest)',
   )
 })
 
 test('an untruncated body is returned untouched, with nothing appended', () => {
-  assert.equal(withTruncationNote('body', false, 'narrow the pattern, path, or glob'), 'body')
+  assert.equal(withTruncationNote('body', false, 'narrow the pattern, path, or glob to see the rest'), 'body')
   assert.equal(withTruncationNote('', false, 'whatever'), '')
+})
+
+test('a read never tells the caller to narrow the range, because that cannot reach the rest', () => {
+  // The file is fetched whole with `cat` and sliced client-side, so offset/limit only index what
+  // already arrived. Advising a narrower range would be a confident wrong instruction — the
+  // exact failure this note exists to prevent, produced by the note itself.
+  const note = renderReadResult('a\nb\n', true).split('\n').at(-1) ?? ''
+  assert.equal(/offset\/limit to see the rest|narrower range/.test(note), false, note)
+  assert.match(note, /larger than one read can return/)
+  assert.match(note, /slicing on the remote/)
 })
 
 test('the note is its own line and cannot be read as a numbered line of the file', () => {
@@ -233,7 +243,10 @@ test('a truncated read is flagged even when the requested slice sits inside what
   // The read cannot know how far the file went, so a slice landing well before the cut is still
   // drawn from an unknown whole. Silence here is the wrong conclusion this check exists to stop.
   const rendered = renderReadResult('a\nb\nc\nd\ne\n', true, 1, 2)
-  assert.equal(rendered, '1\ta\n2\tb\n… (truncated — read a narrower range with offset/limit to see the rest)')
+  const lines = rendered.split('\n')
+  assert.deepEqual(lines.slice(0, 2), ['1\ta', '2\tb'])
+  assert.match(lines[2] ?? '', /^… \(truncated — the file is larger than one read can return;/)
+  assert.equal(lines.length, 3)
 })
 
 test('capColumns leaves short lines alone and truncates long ones with a note', () => {
