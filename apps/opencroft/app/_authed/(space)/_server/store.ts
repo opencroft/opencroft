@@ -1,7 +1,7 @@
 import { db, space, spaceSlugAlias } from '@opencroft/db'
 import { and, asc, eq, inArray } from 'drizzle-orm'
 
-import { slugify, uniqueSlug } from '@/app/_authed/(space)/_server/slug'
+import { slugify } from '@/app/_authed/(space)/_server/slug'
 import {
   ACTIVE_SPACE_SETTING_ID,
   DEFAULT_SPACE_NAME,
@@ -23,6 +23,22 @@ interface SpaceRuntime {
 }
 
 const EMPTY_GRAPH: GraphData = { nodes: [], edges: [] }
+
+// Thrown by `rename` when the name given slugifies onto an address another
+// space already holds.
+//
+// A REFUSAL, NOT A SUFFIX, and the distinction is the point of this whole
+// change: creation asks for *a* space and takes the address it is given, so
+// `createSpaceImpl` appends `-2` quite correctly. A rename asks for *that*
+// address. Quietly handing back `thing-2` leaves a working system pointing
+// somewhere nobody named, with nothing to read that says so -- the same failure
+// every other rule here exists to remove.
+export class SpaceSlugTakenError extends Error {
+  constructor(readonly slug: string) {
+    super(`Another space already answers to "${slug}"`)
+    this.name = 'SpaceSlugTakenError'
+  }
+}
 
 // Thrown by `saveGraph` when `expectedUpdatedAt` no longer matches the
 // stored row — another writer (a different browser tab, or an MCP tool
@@ -209,13 +225,14 @@ class SpacesRegistry {
    * with -- a space still answering to a name it no longer has is the same
    * defect a renamed group chat had.
    *
-   * A CLASH IS SUFFIXED, NOT REFUSED, because that is what creating a space
-   * already does (`createSpaceImpl`/`importSpaceImpl` both go through
-   * `uniqueSlug`) and this returns the resulting summary, so the caller is told
-   * the slug it actually got rather than being left to assume. A name with
-   * nothing to build an address from lands on `slugify`'s own fallback for the
-   * same reason. Group chats refuse instead -- their creation refuses too, and
-   * the rule in both places is "a rename behaves the way a creation would".
+   * A CLASH IS REFUSED and nothing changes -- not even the display name. See
+   * `SpaceSlugTakenError` for why a rename is not a creation. A name with
+   * nothing to build an address from still lands on `slugify`'s own fallback,
+   * `space`, which is refused in turn if another space holds it.
+   *
+   * An ALIAS never counts as taken. Only live spaces do, which is what makes an
+   * address handed over between two spaces possible at all: the first rename
+   * frees it, the second claims it and drops the alias.
    *
    * The old slug keeps resolving, and the active-space setting is moved with
    * it: that setting is read back through a plain equality check, so a rename
@@ -232,10 +249,13 @@ class SpacesRegistry {
       return null
     }
     const previousSlug = runtime.slug
-    // Every OTHER space's slug: renaming to a name that slugifies to what this
-    // space already answers to must not suffix itself into a new address.
-    const taken = new Set([...this.bySlug.keys()].filter((s) => s !== previousSlug))
-    const nextSlug = uniqueSlug(slugify(name), taken)
+    // `nextSlug !== previousSlug` first: a space renamed to a name that
+    // slugifies to the address it already answers to is a display change, and
+    // testing the map alone would have it refuse against itself.
+    const nextSlug = slugify(name)
+    if (nextSlug !== previousSlug && this.bySlug.has(nextSlug)) {
+      throw new SpaceSlugTakenError(nextSlug)
+    }
     const [row] = await db.update(space).set({ name, slug: nextSlug }).where(eq(space.id, id)).returning()
     runtime.name = row.name
     runtime.slug = row.slug

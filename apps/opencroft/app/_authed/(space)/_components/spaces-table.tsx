@@ -28,6 +28,9 @@ interface Props {
 interface RenameState {
   slug: string
   name: string
+  /** Why the last attempt was refused, shown under the input. Cleared on every
+   *  keystroke -- the reader is answering the refusal by typing. */
+  error?: string
 }
 
 function formatDate(value: string) {
@@ -66,7 +69,26 @@ export function SpacesTable({ initialSpaces }: Props) {
     if (!name) {
       return
     }
-    await renameSpace({ data: { slug: renameState.slug, name } })
+    // Renaming moves the space's address, so it can be refused -- another space
+    // already holds the one this name would take. The refusal comes back as
+    // data (see RenameSpaceResult) and is shown here rather than thrown away,
+    // because the alternative is a dialog that closes on a rename that did not
+    // happen.
+    const result = await renameSpace({ data: { slug: renameState.slug, name } })
+    if (!result.ok) {
+      setRenameState((s) =>
+        s
+          ? {
+              ...s,
+              error:
+                result.code === 'slug-taken'
+                  ? 'Another space already answers to that name. Pick a different one.'
+                  : 'That space could not be found.',
+            }
+          : s,
+      )
+      return
+    }
     setRenameState(null)
     await refresh()
     router.invalidate()
@@ -222,13 +244,14 @@ export function SpacesTable({ initialSpaces }: Props) {
           <Input
             autoFocus
             value={renameState?.name ?? ''}
-            onChange={(e) => setRenameState((s) => (s ? { ...s, name: e.target.value } : s))}
+            onChange={(e) => setRenameState((s) => (s ? { ...s, name: e.target.value, error: undefined } : s))}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 handleRename()
               }
             }}
           />
+          {renameState?.error ? <p className='text-sm text-destructive'>{renameState.error}</p> : null}
           <DialogFooter>
             <Button variant='ghost' onClick={() => setRenameState(null)}>
               Cancel

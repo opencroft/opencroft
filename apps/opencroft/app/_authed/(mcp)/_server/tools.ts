@@ -2330,11 +2330,18 @@ function buildHandlers(): Record<string, ToolHandler> {
         fail(-32602, 'Missing required params: space, name')
       }
       const slug = await resolveSpace(args)
-      const space = await renameSpaceImpl({ slug, name })
-      if (!space) {
-        fail(-32602, `Space not found: ${slug}`)
+      const renamed = await renameSpaceImpl({ slug, name })
+      if (!renamed.ok) {
+        // Distinct messages, because these are different things for the caller
+        // to do next: one is a bad reference, the other is a name to change.
+        fail(
+          -32602,
+          renamed.code === 'slug-taken'
+            ? `Another space already answers to the address "${name}" would take`
+            : `Space not found: ${slug}`,
+        )
       }
-      return textResult(JSON.stringify(space, null, 2))
+      return textResult(JSON.stringify(renamed.space, null, 2))
     }),
 
     // ── delete_space ────────────────────────────────────────────────

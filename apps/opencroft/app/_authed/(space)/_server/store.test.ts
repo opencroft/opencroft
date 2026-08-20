@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import { GraphConflictError, getSpacesRegistry } from './store'
+import { GraphConflictError, getSpacesRegistry, SpaceSlugTakenError } from './store'
 
 async function freshSpace(slug: string) {
   const registry = getSpacesRegistry()
@@ -146,4 +146,36 @@ test('renaming the active space moves the stored active slug with it', async () 
     renamed.slug,
     'left pointing at the freed slug, the next load would silently open a different space',
   )
+})
+
+test('renaming onto an address another space holds is refused, and changes nothing', async () => {
+  const registry = getSpacesRegistry()
+  const occupied = `store-rename-taken-${crypto.randomUUID()}`
+  await freshSpace(occupied)
+  const mover = await freshSpace(`store-rename-mover-${crypto.randomUUID()}`)
+
+  await assert.rejects(() => registry.rename(mover.slug, occupied), SpaceSlugTakenError)
+
+  // Not even the display name moves -- a refused rename is not a partial one.
+  const after = registry.getBySlug(mover.slug)
+  assert.equal(after?.slug, mover.slug)
+  assert.equal(after?.name, mover.name)
+})
+
+test('an alias does not count as taken, so an address can be handed between spaces', async () => {
+  const registry = getSpacesRegistry()
+  const wanted = `store-rename-handover-${crypto.randomUUID()}`
+  const holder = await freshSpace(wanted)
+  const wanting = await freshSpace(`store-rename-wanting-${crypto.randomUUID()}`)
+
+  // The holder steps off the address; it keeps resolving to the holder for now.
+  await registry.rename(wanted, `Moved ${crypto.randomUUID()}`)
+  assert.equal(registry.getBySlug(wanted)?.id, holder.id)
+
+  // The second space claims it. If an alias read as taken this would refuse and
+  // the address could never be handed over at all.
+  const taken = await registry.rename(wanting.slug, wanted)
+  assert.ok(taken)
+  assert.equal(taken.slug, wanted)
+  assert.equal(registry.getBySlug(wanted)?.id, wanting.id, 'the space holding it now is the answer')
 })

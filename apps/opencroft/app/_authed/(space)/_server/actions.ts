@@ -2,6 +2,7 @@ import { getSessionUser } from '@opencroft/auth/server'
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 
+import type { RenameSpaceResult } from '@/app/_authed/(space)/_server/actions-impl'
 import {
   createSpaceImpl,
   deleteSpaceImpl,
@@ -74,7 +75,7 @@ export const createSpace = createServerFn({ method: 'POST', strict: { output: fa
 
 export const renameSpace = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { slug: string; name: string }) => data)
-  .handler(async ({ data }): Promise<SpaceSummary | null> => {
+  .handler(async ({ data }): Promise<RenameSpaceResult> => {
     await requireSession()
     return renameSpaceImpl(data)
   })
