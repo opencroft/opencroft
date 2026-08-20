@@ -214,10 +214,14 @@ test('a read never tells the caller to narrow the range, because that cannot rea
   // The file is fetched whole with `cat` and sliced client-side, so offset/limit only index what
   // already arrived. Advising a narrower range would be a confident wrong instruction — the
   // exact failure this note exists to prevent, produced by the note itself.
-  const note = renderReadResult('a\nb\n', true).split('\n').at(-1) ?? ''
-  assert.equal(/offset\/limit to see the rest|narrower range/.test(note), false, note)
-  assert.match(note, /larger than one read can return/)
-  assert.match(note, /slicing on the remote/)
+  // Pinned in full and written out rather than composed. This sentence was wrong once — it told
+  // the reader to narrow a range that no offset can reach past — so any reword must fail here and
+  // be argued again. A pattern banning one phrasing would let the next wrong wording through.
+  assert.equal(
+    renderReadResult('a\nb\n', true).split('\n').at(-1),
+    '… (truncated — the file is larger than one read can return; offset/limit only index what already arrived, ' +
+      'so fetch later parts by slicing on the remote (e.g. sed -n) instead)',
+  )
 })
 
 test('the note is its own line and cannot be read as a numbered line of the file', () => {
