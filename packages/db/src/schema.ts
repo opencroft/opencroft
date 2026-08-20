@@ -60,6 +60,27 @@ export const space = pgTable(
   (t) => [uniqueIndex('Space_slug_key').on(t.slug)],
 )
 
+// A space slug that used to reach this space. Written when a rename moves one.
+//
+// Same contract as the group-chat aliases further down, and for the same
+// reason: a space slug is an address, not a label -- it is in the URL of every
+// canvas someone has open or bookmarked, in the active-space setting, and in
+// whatever an extension was configured with. A live space outranks an alias,
+// and taking a slug live deletes the alias on it, so one address never has two
+// answers.
+export const spaceSlugAlias = pgTable(
+  'SpaceSlugAlias',
+  {
+    id: text().primaryKey().notNull().$defaultFn(uuid),
+    slug: text().notNull(),
+    spaceId: text()
+      .notNull()
+      .references(() => space.id, { onDelete: 'cascade' }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('SpaceSlugAlias_slug_key').on(t.slug), index('SpaceSlugAlias_spaceId_idx').on(t.spaceId)],
+)
+
 export const mcpAuditLog = pgTable(
   'McpAuditLog',
   {
@@ -544,6 +565,7 @@ export const schema = {
   setting,
   secret,
   space,
+  spaceSlugAlias,
   mcpAuditLog,
   apiToken,
   mcpCaller,
@@ -561,6 +583,7 @@ export const schema = {
 export type Setting = typeof setting.$inferSelect
 export type Secret = typeof secret.$inferSelect
 export type Space = typeof space.$inferSelect
+export type SpaceSlugAlias = typeof spaceSlugAlias.$inferSelect
 export type McpAuditLog = typeof mcpAuditLog.$inferSelect
 export type ApiToken = typeof apiToken.$inferSelect
 export type McpCaller = typeof mcpCaller.$inferSelect

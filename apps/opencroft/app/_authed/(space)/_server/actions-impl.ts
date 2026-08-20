@@ -175,10 +175,14 @@ export async function getActiveSpaceSlugImpl(): Promise<string> {
 
 export async function setActiveSpaceSlugImpl(slug: string): Promise<void> {
   const r = await registry()
-  if (!r.hasSlug(slug)) {
+  // Resolved rather than merely existence-checked, and stored canonically: a
+  // caller may hand over a slug a rename freed (an old URL, a stale tab), and
+  // the setting is compared by equality when it is read back.
+  const space = r.getBySlug(slug)
+  if (!space) {
     return
   }
-  await r.setActiveSlug(slug)
+  await r.setActiveSlug(space.slug)
 }
 
 export async function findSpaceByNodeImpl(nodeId: string): Promise<SpaceSummary | null> {
