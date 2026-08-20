@@ -25,6 +25,7 @@ import { and, asc, eq, inArray } from 'drizzle-orm'
 
 import type { OpenedSession } from '@/app/_authed/(agent)/_server/acp-impl'
 import {
+  agentConfiguredWindowByNodeId,
   ensureLocalSessionImpl,
   forgetLocalSessionImpl,
   hasActiveTurnImpl,
@@ -1956,13 +1957,28 @@ export async function listGroupChatsForAgentView(agentName: string): Promise<Age
   // thread falls back to what it persisted before going offline (readLastKnownUsage
   // does its own settings-store read), and only offline threads pay for that
   // read at all.
+  // One node read per distinct agent, not per thread: an offline thread needs
+  // its agent's configured window (the only window authority left once the
+  // session is not loaded -- see toContextUsage), and a chat's threads share
+  // few agents between many threads.
+  const windowByAgentNodeId = new Map<string, number | undefined>()
+  const configuredWindowFor = async (agentNodeId: string): Promise<number | undefined> => {
+    if (!windowByAgentNodeId.has(agentNodeId)) {
+      windowByAgentNodeId.set(agentNodeId, await agentConfiguredWindowByNodeId(agentNodeId))
+    }
+    return windowByAgentNodeId.get(agentNodeId)
+  }
   const contextUsageByKey = new Map(
     await Promise.all(
       threads.map(async (t) => {
         const live = metaBySessionKey.get(t.sessionKey)
         const usage = live
           ? toContextUsage(live.usage)
-          : toContextUsage(undefined, (await readLastKnownUsage(t.sessionKey)) ?? undefined)
+          : toContextUsage(
+              undefined,
+              (await readLastKnownUsage(t.sessionKey)) ?? undefined,
+              await configuredWindowFor(t.agentNodeId),
+            )
         return [t.sessionKey, usage] as const
       }),
     ),

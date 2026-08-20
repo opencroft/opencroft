@@ -106,6 +106,21 @@ export function tryParseJsonMessage(text: string): ParsedMessage | null {
   }
 }
 
+/**
+ * The context window configured on an agent node, by the slug its sessions are
+ * keyed under. Undefined when the agent has none — which is the ordinary case
+ * and means "nobody established this model's window", not zero.
+ *
+ * Exported for the offline context-usage path: a session that is not loaded
+ * has no harness to ask, so the operator's own figure is the only authority
+ * left, and this is where the node shape for it already lives.
+ */
+export function agentConfiguredWindow(agentSlug: string, nodes: NodeLike[]): number | undefined {
+  const node = findAgentBySlug(agentSlug, nodes)
+  const value = node?.data?.contextWindow
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
+}
+
 function findAgentBySlug(agentSlug: string, nodes: NodeLike[]): NodeLike | null {
   for (const n of nodes) {
     if (isAgentNode(n) && slug(agentNodeName(n)) === agentSlug) {

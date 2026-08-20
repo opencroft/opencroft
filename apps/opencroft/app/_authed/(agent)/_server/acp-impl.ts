@@ -147,6 +147,21 @@ async function findNodeData<T>(nodeId: string): Promise<T | null> {
   return null
 }
 
+/**
+ * The context window configured on an agent node, by node id. Undefined when
+ * none is set — the ordinary case, and it means "nobody established this
+ * model's window", never zero.
+ *
+ * Exported because the offline context-usage path needs it from more than one
+ * caller: a session that is not loaded has no harness to ask for a discovered
+ * window, so the operator's own figure is the only authority left to it.
+ */
+export async function agentConfiguredWindowByNodeId(agentNodeId: string): Promise<number | undefined> {
+  const agent = await findNodeData<AgentNodeData>(agentNodeId)
+  const value = agent?.contextWindow
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
+}
+
 async function resolveSecret(key: string): Promise<string> {
   if (!key) {
     return ''
@@ -158,9 +173,17 @@ async function resolveSecret(key: string): Promise<string> {
 // key instead of the whole registry. Read fresh at each return point below —
 // not cached across them — since a resume can call restoreUsage in between,
 // which this must see.
-async function currentContextUsage(tabKey: string): Promise<ContextUsage | null> {
+async function currentContextUsage(tabKey: string, agentNodeId: string): Promise<ContextUsage | null> {
   const live = agentClient.listSessions().find((m) => m.sessionKey === tabKey)
-  return live ? toContextUsage(live.usage) : toContextUsage(undefined, (await readLastKnownUsage(tabKey)) ?? undefined)
+  if (live) {
+    // Already normalised on its way into session state; nothing to resolve.
+    return toContextUsage(live.usage)
+  }
+  return toContextUsage(
+    undefined,
+    (await readLastKnownUsage(tabKey)) ?? undefined,
+    await agentConfiguredWindowByNodeId(agentNodeId),
+  )
 }
 
 // Build the agent's selection in memory from its node data + Secrets Store key
@@ -204,7 +227,7 @@ async function openLocalSession(data: {
       // in which case there is nothing to classify anyway.
       adapterId: known.adapterId ?? agentClient.sessionModes(known.id)?.adapterId ?? '',
       created: !(known.everPrompted ?? true),
-      contextUsage: await currentContextUsage(data.tabKey),
+      contextUsage: await currentContextUsage(data.tabKey, data.agentNodeId),
     }
   }
   const agent = await findNodeData<AgentNodeData>(data.agentNodeId)
@@ -307,7 +330,7 @@ async function openLocalSession(data: {
         canSteer,
         adapterId,
         created: !persisted.prompted,
-        contextUsage: await currentContextUsage(data.tabKey),
+        contextUsage: await currentContextUsage(data.tabKey, data.agentNodeId),
       }
     }
     // The pointer resolved but the session is gone — the agent can no longer
@@ -332,7 +355,7 @@ async function openLocalSession(data: {
     canSteer,
     adapterId,
     created: true,
-    contextUsage: await currentContextUsage(data.tabKey),
+    contextUsage: await currentContextUsage(data.tabKey, data.agentNodeId),
   }
 }
 

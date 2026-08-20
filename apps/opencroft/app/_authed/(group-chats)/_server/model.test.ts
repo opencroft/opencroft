@@ -1740,7 +1740,17 @@ test('an offline thread with prior activity reports its last-known usage with as
   const found = chats.find((c) => c.ref === chat.id)?.threads.find((t) => t.ref === thread.id)
   assert.ok(found?.contextUsage, 'an offline thread with a persisted reading must not report null')
   assert.equal(found.contextUsage.usedTokens, 88_000)
-  assert.equal(found.contextUsage.contextLimit, 200_000)
+  assert.equal(
+    found.contextUsage.contextLimit,
+    null,
+    // The persisted 200_000 was written by an earlier session from its harness's
+    // own report. Reading it back does not make it verifiable, so the offline
+    // path resolves the window from the agent's configured one instead -- and
+    // this fixture's agent has none. The tokens still come back, which is what
+    // this test is for; the window is the one thing an offline reading cannot
+    // establish for itself.
+    'a persisted size is not an authority: the window comes from the agent config or not at all',
+  )
   assert.equal(
     typeof found.contextUsage.asOf,
     'number',

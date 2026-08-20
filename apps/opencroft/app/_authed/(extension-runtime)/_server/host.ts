@@ -29,6 +29,7 @@ import {
   type ExecDispatchSummary,
 } from '@/app/_authed/(extension-runtime)/_server/exec-dispatch'
 import {
+  agentConfiguredWindow,
   parseSessionKey,
   reachableAgentJobs,
   reachablePairKey,
@@ -707,7 +708,13 @@ const sendMessageApi: HostSendMessageApi = {
       // online session never pays for a settings-store read it doesn't need.
       const contextUsage = live
         ? toContextUsage(live.usage)
-        : toContextUsage(undefined, (await readLastKnownUsage(entry.key)) ?? undefined)
+        : toContextUsage(
+            undefined,
+            (await readLastKnownUsage(entry.key)) ?? undefined,
+            // Resolved from the nodes this call already loaded, so an offline
+            // session costs no extra graph read for its window.
+            agentConfiguredWindow(parts.agentSlug, found.nodes),
+          )
       out.push({
         sessionKey: entry.key,
         agent: parts.agentSlug,

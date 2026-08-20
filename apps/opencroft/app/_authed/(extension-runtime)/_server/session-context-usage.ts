@@ -31,15 +31,33 @@ export interface ContextUsage {
 // currently loaded) — a live reading always wins and never carries `asOf`.
 // Passing neither still returns null: an offline session with nothing ever
 // persisted is exactly as unknown as one that was never loaded.
+//
+// `knownWindow` is the offline branch's window, and it REPLACES the persisted
+// `size` rather than filling in for a missing one. This is the third door a
+// reading takes to a surface: the live path and the restore path both run the
+// reading through agent-client's normaliseUsage, but a persisted pair read for
+// an offline session reaches the wire without passing either. Relaying its
+// `size` would relay whatever an older build wrote from a harness report —
+// the exact figure the other two doors exist to refuse.
+//
+// The offline branch cannot ask which window a native session discovered (that
+// lives in a harness process which, by definition here, is not running), so a
+// configured window is the only authority available to it. Absent one, the
+// reading reports tokens and no ratio, which is what the live path would do
+// for the same session.
 export function toContextUsage(
   usage?: { used: number; size?: number },
   lastKnown?: { used: number; size?: number; at: number },
+  knownWindow?: number,
 ): ContextUsage | null {
   if (usage) {
     return { usedTokens: usage.used, contextLimit: usage.size ?? null }
   }
   if (lastKnown) {
-    return { usedTokens: lastKnown.used, contextLimit: lastKnown.size ?? null, asOf: lastKnown.at }
+    // Disproved by the reading it arrived with, so false whoever supplied it —
+    // the same subordinate gate normaliseUsage applies on the live path.
+    const window = knownWindow !== undefined && knownWindow > 0 && lastKnown.used <= knownWindow ? knownWindow : null
+    return { usedTokens: lastKnown.used, contextLimit: window, asOf: lastKnown.at }
   }
   return null
 }

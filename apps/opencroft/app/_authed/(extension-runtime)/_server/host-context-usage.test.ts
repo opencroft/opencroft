@@ -36,11 +36,69 @@ test('zero tokens actually reported is preserved as zero, not folded into unknow
 // ── toContextUsage's last-known fallback (offline sessions) ────────────────
 
 test('no live usage but a last-known reading reports it with asOf set', () => {
-  assert.deepEqual(toContextUsage(undefined, { used: 12_000, size: 200_000, at: 1_700_000_000_000 }), {
+  // The window comes from the agent's configured one, not from the persisted
+  // pair — see the provenance tests below.
+  assert.deepEqual(toContextUsage(undefined, { used: 12_000, size: 200_000, at: 1_700_000_000_000 }, 200_000), {
     usedTokens: 12_000,
     contextLimit: 200_000,
     asOf: 1_700_000_000_000,
   })
+})
+
+// ── the offline branch's window is the agent's, never the persisted one ────
+//
+// This is the third door a reading takes to a surface. The live path and the
+// restore path both run a reading through agent-client's normaliseUsage; a
+// persisted pair read for an offline session reaches the wire without passing
+// either, so it gets the same test here rather than inheriting a cleanliness
+// it was never checked for.
+
+test('a persisted size is not relayed: without a configured window there is no ratio', () => {
+  assert.deepEqual(
+    toContextUsage(undefined, { used: 88_000, size: 200_000, at: 1_700_000_000_000 }),
+    { usedTokens: 88_000, contextLimit: null, asOf: 1_700_000_000_000 },
+    'the 200_000 was written by an earlier session from its harness report; reading it back does not verify it',
+  )
+})
+
+test('the configured window replaces the persisted one rather than filling in for it', () => {
+  assert.deepEqual(
+    toContextUsage(undefined, { used: 88_000, size: 200_000, at: 1_700_000_000_000 }, 1_000_000),
+    { usedTokens: 88_000, contextLimit: 1_000_000, asOf: 1_700_000_000_000 },
+    'a disagreeing persisted size loses to the agent config, exactly as a bridged one loses on the live path',
+  )
+})
+
+test('a configured window the persisted reading disproves is withheld offline too', () => {
+  assert.deepEqual(
+    toContextUsage(undefined, { used: 531_737, size: 200_000, at: 1_700_000_000_000 }, 300_000),
+    { usedTokens: 531_737, contextLimit: null, asOf: 1_700_000_000_000 },
+    'the same subordinate gate the live path applies -- a mistyped override cannot render past 100% here either',
+  )
+})
+
+test('a configured window exactly at the persisted used still shows the ratio offline', () => {
+  assert.deepEqual(toContextUsage(undefined, { used: 500_000, size: 200_000, at: 1 }, 500_000), {
+    usedTokens: 500_000,
+    contextLimit: 500_000,
+    asOf: 1,
+  })
+})
+
+test('a non-positive configured window is treated as none, not as a zero-capacity window', () => {
+  assert.deepEqual(toContextUsage(undefined, { used: 88_000, size: 200_000, at: 1 }, 0), {
+    usedTokens: 88_000,
+    contextLimit: null,
+    asOf: 1,
+  })
+})
+
+test('a live reading ignores the configured window: it was normalised on the way in', () => {
+  assert.deepEqual(
+    toContextUsage({ used: 5_000, size: 128_000 }, undefined, 999),
+    { usedTokens: 5_000, contextLimit: 128_000 },
+    'the live branch must not second-guess agent-client, which already applied the rule with more to go on',
+  )
 })
 
 test('a live reading always wins over a last-known one, and never carries asOf', () => {
