@@ -23,6 +23,7 @@ import {
 } from '@opencroft/db'
 import { and, asc, eq, inArray } from 'drizzle-orm'
 
+import type { OpenedSession } from '@/app/_authed/(agent)/_server/acp-impl'
 import {
   ensureLocalSessionImpl,
   forgetLocalSessionImpl,
@@ -1304,6 +1305,44 @@ export async function startThread(
     .where(eq(groupChatThread.id, thread.id))
 
   return { thread, sessionId: opened.sessionId }
+}
+
+/**
+ * Open (or reattach to) a thread's live session, addressed by THREAD ID.
+ *
+ * A THREAD'S ID NEVER MOVES; ITS SESSION KEY DOES. A reader's screen holds the
+ * key its last load handed it, and a rename between then and now retires it --
+ * so a surface opening by key would not fail, it would MINT a fresh, empty
+ * session under an address nothing resolves, and show an empty chat where the
+ * conversation was. Renaming the same thread in another tab is enough: the
+ * renamer's own screen reloads, a second reader's does not.
+ *
+ * So the key is read HERE, from the row, at the moment the session is opened,
+ * and no stale key ever reaches the session layer -- which keeps taking a plain
+ * tab key and knowing nothing about any of this.
+ *
+ * Membership-gated exactly like `getThread`, with the same single refusal for a
+ * missing thread and for a non-member: opening a session is reaching into the
+ * conversation, not reading a row.
+ */
+export async function openThreadSession(request: Request, threadId: string): Promise<OpenedSession> {
+  const sessionUser = await requireSignedInUser(request)
+  const [row] = await db
+    .select({
+      groupChatId: groupChatThread.groupChatId,
+      agentNodeId: groupChatThread.agentNodeId,
+      sessionKey: groupChatThread.sessionKey,
+    })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.id, threadId))
+    .limit(1)
+  if (!row) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  return ensureLocalSessionImpl({ agentNodeId: row.agentNodeId, jobNodeId: '', tabKey: row.sessionKey })
 }
 
 /**

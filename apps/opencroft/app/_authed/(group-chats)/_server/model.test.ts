@@ -2922,3 +2922,41 @@ test('a retired session key still resolves standing context and still wakes the 
   assert.equal(await model.groupChatStandingContext('group-chat:nothing:nobody:nowhere'), null)
   assert.equal(await model.groupChatWakeSession('group-chat:nothing:nobody:nowhere'), null)
 })
+
+// REGRESSION. A screen holds the session key its last load handed it, and a
+// rename retires it -- by anyone, in any tab. Opening is the one call that can
+// CREATE a session, so a stale key there does not error: it mints an empty
+// conversation under an address nothing resolves, and the reader is shown an
+// empty chat where their history was. Only the renamer's own screen reloads; a
+// second person with the thread open keeps the old key indefinitely.
+//
+// So the surface opens by THREAD ID and the key is read from the row here.
+test('opening a thread by id after a rename reattaches, where the stale key would have created a session', async () => {
+  const owner = await makeUser('open-by-id-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Opened By Id')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Ongoing' })
+  await waitForPrompts(prompts, 1)
+  const staleKey = started.thread.sessionKey
+
+  await model.renameGroupChat(reqAs(owner), chat.id, 'Opened By Id Renamed')
+  const sessionCount = agentClient.listSessions().length
+
+  // What a second reader's screen does on its next mount: it still holds the
+  // pre-rename key, but it opens by the id, which has not moved.
+  const reopened = await model.openThreadSession(reqAs(owner), started.thread.id)
+  assert.equal(reopened.sessionId, started.sessionId, 'the same conversation, not a new one')
+  assert.equal(agentClient.listSessions().length, sessionCount, 'nothing was created')
+  assert.equal(agentClient.aliveSessionKeys().includes(staleKey), false, 'and nothing is alive under the retired key')
+
+  // The gate is the thread's own, not a weaker one, because opening reaches
+  // into the conversation rather than reading a row.
+  const outsider = await makeUser('open-by-id-outsider@example.test')
+  const refusal = await captureRefusal(() => model.openThreadSession(reqAs(outsider), started.thread.id))
+  assert.equal(refusal.code, 'not-found')
+  const fabricated = await captureRefusal(() => model.openThreadSession(reqAs(owner), crypto.randomUUID()))
+  assert.equal(fabricated.code, 'not-found')
+  assert.equal(refusal.message, fabricated.message, 'a non-member and a missing thread stay indistinguishable')
+})

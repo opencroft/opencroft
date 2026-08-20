@@ -29,6 +29,7 @@ import {
   listMembers,
   listPins,
   listThreadsInGroupChat,
+  openThreadSession,
   removeMember,
   removePin,
   renameGroupChat,
@@ -233,6 +234,20 @@ export const startGroupChatThread = createServerFn({ method: 'POST', strict: { o
  * `GroupChatWriteResult` above.
  */
 export type SendThreadMessageResult = GroupChatWriteResult
+
+/**
+ * Open this thread's session, addressed by thread id.
+ *
+ * Deliberately NOT the generic `ensureLocalSession`, which takes a tab key: a
+ * thread's key moves when the chat or the thread is renamed, and a screen loaded
+ * before that still holds the old one. Opening is the one call that can CREATE a
+ * session, so a stale key there does not error -- it produces an empty
+ * conversation under an address nothing resolves. The id is stable; the key is
+ * read from the row. See `openThreadSession`.
+ */
+export const openGroupChatThreadSession = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((threadId: string) => threadId)
+  .handler(async ({ data: threadId }) => openThreadSession(getRequest(), threadId))
 
 export const sendGroupChatThreadMessage = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { threadId: string; text: string; front?: boolean }) => data)

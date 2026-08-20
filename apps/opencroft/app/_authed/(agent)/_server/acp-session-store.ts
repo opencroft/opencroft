@@ -181,16 +181,6 @@ function movedEntries<T>(
 }
 
 /**
- * The one rule a copy must not break: `prompted` only ever moves false -> true.
- *
- * It matters because a copy can run twice -- once before the rename commits and
- * once after, so a prompt that landed under the old key in between is not lost
- * -- and by the second run the destination may already hold a fresher reading
- * of the same session. Taking the older value wholesale there would tell the
- * next open that a session which has been spoken to never was, and it would
- * re-attach opening context the agent already has.
- */
-/**
  * The same rule the pointer gets, for the options: a copy must not undo a write
  * that landed under the destination key.
  *
@@ -207,6 +197,17 @@ function keepDestinationOptions(
   return existing ? { ...incoming, ...existing } : incoming
 }
 
+/**
+ * The one rule a pointer copy must not break: `prompted` only ever moves
+ * false -> true, the same invariant `writePersistedSession` holds.
+ *
+ * It matters because a copy runs TWICE -- once before the rename commits and
+ * once after, so a prompt that landed under the old key in between is not lost
+ * -- and by the second run the destination may already hold the fresher reading
+ * of the same session. Taking the older value wholesale there would tell the
+ * next open that a session which has been spoken to never was, and it would
+ * re-attach opening context the agent already has.
+ */
 function keepPrompted(incoming: StoredValue, existing: StoredValue | undefined): StoredValue {
   const from = normalize(incoming)
   const to = normalize(existing)
