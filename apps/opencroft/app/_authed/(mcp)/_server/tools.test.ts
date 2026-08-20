@@ -3,14 +3,18 @@ import path from 'node:path'
 import test from 'node:test'
 
 import {
+  buildAtomicReplaceCommand,
   buildBase64WriteCommands,
+  buildCountedReadCommand,
   buildLocalExtensionCtx,
+  buildTempWritePath,
   capColumns,
   extensionSlugFromTarget,
   globPatternToEre,
   insideExcludedDir,
   isValidLocalExtensionSlug,
   localSlugFromExtensionId,
+  parseCountedRead,
   replaceExact,
   requireCallingAgent,
   resolveRemoteFilePath,
@@ -174,10 +178,121 @@ test('capColumns leaves short lines alone and truncates long ones with a note', 
   assert.match(capped, /\[\+200 chars\]$/)
 })
 
-// ── buildBase64WriteCommands (pre-existing helper — smoke test kept minimal) ─
+// ── atomic remote writes ───────────────────────────────────────────────────
+//
+// A remote write assembles base64 chunks into a scratch file beside the target, verifies the
+// byte count there, and only then renames it over the target. The chunk commands empty their
+// destination with the first chunk and rebuild it with the rest, so the invariant worth holding
+// on to is that the destination is never the file the caller means to keep.
 
 test('buildBase64WriteCommands still round-trips an empty file (regression guard)', () => {
   assert.deepEqual(buildBase64WriteCommands('/tmp/x', ''), [": > '/tmp/x'"])
+})
+
+test('buildBase64WriteCommands truncates on the first chunk and appends on every later one', () => {
+  // A small chunk size makes the split visible without building a megabyte of content.
+  const commands = buildBase64WriteCommands('/w/.f.tok.tmp', 'abcdefghijkl', 4)
+  assert.equal(commands.length, 4)
+  assert.equal(commands[0].includes(" > '/w/.f.tok.tmp'"), true)
+  assert.equal(
+    commands.filter((command) => command.includes(" > '/w/.f.tok.tmp'")).length,
+    1,
+    'exactly one command may truncate, and it must be the first',
+  )
+  for (const command of commands.slice(1)) {
+    assert.equal(command.includes(" >> '/w/.f.tok.tmp'"), true)
+  }
+})
+
+test('buildBase64WriteCommands reconstructs the content byte-for-byte across a chunk boundary', () => {
+  const content = 'héllo wörld — ünicode\n\ttabs and "quotes"\n'
+  const commands = buildBase64WriteCommands('/w/scratch', content, 8)
+  const encoded = commands
+    .map((command) => /^printf '%s' '([^']*)' \| base64 -d >>? '\/w\/scratch'$/.exec(command)?.[1] ?? '')
+    .join('')
+  assert.equal(Buffer.from(encoded, 'base64').toString('utf8'), content)
+})
+
+test('buildTempWritePath keeps the scratch file in the target directory', () => {
+  // Same directory, so the replacing `mv` is a rename within one filesystem rather than a
+  // cross-device copy — /tmp would reopen the very window this closes.
+  assert.equal(buildTempWritePath('/app/src/index.ts', 'tok'), '/app/src/.index.ts.tok.tmp')
+  assert.equal(buildTempWritePath('/tmp/run.sh', 'tok'), '/tmp/.run.sh.tok.tmp')
+})
+
+test('buildTempWritePath leaves a relative target relative, so it resolves against the same cwd', () => {
+  assert.equal(buildTempWritePath('index.ts', 'tok'), '.index.ts.tok.tmp')
+  assert.equal(buildTempWritePath('src/index.ts', 'tok'), 'src/.index.ts.tok.tmp')
+})
+
+test('buildAtomicReplaceCommand renames last, so the target survives every earlier failure', () => {
+  const command = buildAtomicReplaceCommand('/app/.f.tok.tmp', '/app/f')
+  assert.equal(command.split('; ').at(-1), `mv -f '/app/.f.tok.tmp' "$t"`)
+  // Sequenced with ';' rather than '&&': a target that does not exist yet has no link to
+  // resolve and no mode to copy, and must still be created.
+  assert.equal(command.includes('&& mv'), false)
+})
+
+test('buildAtomicReplaceCommand resolves symlinks and carries the existing mode across', () => {
+  const command = buildAtomicReplaceCommand('/app/.f.tok.tmp', '/app/f')
+  assert.match(command, /r=\$\(readlink -f "\$t" 2>\/dev\/null\) && \[ -n "\$r" \] && t="\$r"/)
+  assert.match(command, /m=\$\(stat -c %a "\$t" 2>\/dev\/null\) && chmod "\$m" '\/app\/\.f\.tok\.tmp'/)
+})
+
+test('buildAtomicReplaceCommand quotes paths that would otherwise break out of the shell', () => {
+  const command = buildAtomicReplaceCommand("/app/.a b'c.tok.tmp", "/app/a b'c")
+  assert.equal(command.startsWith(`t='/app/a b'\\''c'`), true)
+  assert.equal(command.endsWith(`mv -f '/app/.a b'\\''c.tok.tmp' "$t"`), true)
+})
+
+// ── counted reads ──────────────────────────────────────────────────────────
+//
+// remote_edit rewrites whatever the read handed back, so a silently truncated read writes a
+// shortened file and reports success. The byte count travels with the content so the two can be
+// compared before anything is written.
+
+test('buildCountedReadCommand asks for the byte count ahead of the content', () => {
+  assert.equal(buildCountedReadCommand('/app/f.ts'), `wc -c < '/app/f.ts'; cat '/app/f.ts'`)
+})
+
+test('parseCountedRead returns the content when the count agrees', () => {
+  assert.equal(parseCountedRead('5\nhello', '/app/f'), 'hello')
+})
+
+test('parseCountedRead handles an empty file and content that is itself full of newlines', () => {
+  assert.equal(parseCountedRead('0\n', '/app/f'), '')
+  assert.equal(parseCountedRead('12\na\nb\nc\nd\ne\nf\n', '/app/f'), 'a\nb\nc\nd\ne\nf\n')
+})
+
+test('parseCountedRead measures the content in bytes, not characters', () => {
+  const content = 'héllo — wörld\n'
+  assert.equal(parseCountedRead(`${Buffer.byteLength(content, 'utf8')}\n${content}`, '/app/f'), content)
+})
+
+test('parseCountedRead refuses a truncated read instead of handing back the fragment', () => {
+  // What a byte-capped transport produces: the count describes the whole file, the content that
+  // followed it does not.
+  assert.throws(
+    () => parseCountedRead('4096\nonly the first bytes arrived', '/app/f.ts'),
+    (err: { message?: string }) => {
+      assert.match(err.message ?? '', /expected 4096 bytes, received 28/)
+      assert.match(err.message ?? '', /Refusing to edit a partial read/)
+      return true
+    },
+  )
+})
+
+test('parseCountedRead refuses a response carrying no byte count at all', () => {
+  for (const output of ['not a number\ncontent', '']) {
+    assert.throws(
+      () => parseCountedRead(output, '/app/f'),
+      (err: { message?: string }) => {
+        assert.match(err.message ?? '', /reported no byte count/)
+        return true
+      },
+      `expected ${JSON.stringify(output)} to be refused`,
+    )
+  }
 })
 
 // ── replaceExact (remote_edit / edit_node_property) ─────────────────────────

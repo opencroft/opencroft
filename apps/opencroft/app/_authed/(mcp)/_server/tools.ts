@@ -2059,6 +2059,11 @@ const BASE64_WRITE_CHUNK_SIZE = 48 * 1024
  * appending. Pure and side-effect free (no network calls) so it's unit-testable on its own —
  * unlike the old `cat > file << 'OPENCROFTEOF' ... OPENCROFTEOF` heredoc, this can't be corrupted
  * by a file that happens to contain the marker line, and never strips/adds a trailing newline.
+ *
+ * The first chunk truncating is why callers must aim this at a scratch path and never at the
+ * file they mean to replace: the destination is empty from the first command until the last one
+ * lands, so a failure in between leaves only what arrived. `buildTempWritePath` and
+ * `buildAtomicReplaceCommand` are the other half of that contract.
  */
 export function buildBase64WriteCommands(
   filePath: string,
@@ -2080,8 +2085,61 @@ export function buildBase64WriteCommands(
 }
 
 /**
- * Write `content` to `filePath` on the remote exactly byte-for-byte via base64 chunks, then
- * verify the write with `wc -c` and fail loudly on any mismatch.
+ * Scratch path for an atomic write: the same directory as `targetPath`, so replacing the target
+ * is a rename within one filesystem. `/tmp` would not do — it is routinely a different mount,
+ * and `mv` across mounts degrades to copy-then-unlink, reopening the partial-write window this
+ * exists to close. Dot-prefixed and `.tmp`-suffixed so a leftover is recognisable and stays out
+ * of ordinary globs. `token` is supplied by the caller so this stays pure and unit-testable.
+ */
+export function buildTempWritePath(targetPath: string, token: string): string {
+  const dir = path.posix.dirname(targetPath)
+  const base = path.posix.basename(targetPath)
+  return path.posix.join(dir, `.${base}.${token}.tmp`)
+}
+
+/**
+ * Build the command that puts an already-written, already-verified `tmpPath` in place of
+ * `targetPath`. Three things happen, in order:
+ *
+ * - The target is resolved through symlinks, so an edit writes THROUGH a link the way the old
+ *   `> file` redirect did, instead of replacing the link itself with a regular file.
+ * - The existing file's permission bits are copied onto the scratch file, so replacing a mode
+ *   0755 script does not silently hand it back as 0644. Skipped when the target is new.
+ * - `mv -f` renames. Within one directory that is a single `rename(2)`: a reader sees either the
+ *   whole old file or the whole new one, and a failure anywhere earlier leaves the original as
+ *   it was.
+ *
+ * The steps are `;`-separated rather than `&&`-chained on purpose: a target that does not exist
+ * yet has nothing to resolve and no mode to copy, which is the ordinary create case and not a
+ * reason to skip the rename. The rename runs last, so its exit status is the command's.
+ *
+ * One consequence worth naming: this needs the containing directory to be writable, where
+ * writing in place needed only the file to be. A write that used to succeed in a read-only
+ * directory now fails — loudly, which is the trade this whole change is making.
+ */
+export function buildAtomicReplaceCommand(tmpPath: string, targetPath: string): string {
+  const tmp = shellQuote(tmpPath)
+  return [
+    `t=${shellQuote(targetPath)}`,
+    `r=$(readlink -f "$t" 2>/dev/null) && [ -n "$r" ] && t="$r"`,
+    `m=$(stat -c %a "$t" 2>/dev/null) && chmod "$m" ${tmp}`,
+    `mv -f ${tmp} "$t"`,
+  ].join('; ')
+}
+
+/**
+ * Write `content` to `filePath` on the remote exactly byte-for-byte, atomically: the base64
+ * chunks are assembled into a scratch file beside the target, the byte count is verified THERE,
+ * and only a verified scratch file replaces the target.
+ *
+ * The order is the whole point. Assembling in place meant the target was truncated by the first
+ * chunk and rebuilt by the rest, so a failure on any later chunk left a short file behind — and
+ * the `wc -c` check that would have caught it never ran, because the loop had already thrown.
+ * The guard was bypassed in exactly the case it was there for. Assembling elsewhere means every
+ * way this can fail now fails with the original still intact.
+ *
+ * The scratch file is removed on the way out of a failure. That covers a failed run; a process
+ * killed mid-write can still strand one, which is why the name is recognisable.
  */
 async function writeRemoteFileExact(
   ctx: Record<string, unknown>,
@@ -2089,19 +2147,71 @@ async function writeRemoteFileExact(
   content: string,
   opts?: { cwd?: string },
 ): Promise<void> {
-  for (const command of buildBase64WriteCommands(filePath, content)) {
-    await remoteExec(ctx, command, opts)
+  const tmpPath = buildTempWritePath(filePath, crypto.randomUUID())
+  try {
+    for (const command of buildBase64WriteCommands(tmpPath, content)) {
+      await remoteExec(ctx, command, opts)
+    }
+    const expectedBytes = Buffer.byteLength(content, 'utf8')
+    const wcOut = await remoteExec(ctx, `wc -c < ${shellQuote(tmpPath)}`, opts)
+    const actualBytes = Number.parseInt(wcOut.trim(), 10)
+    if (!Number.isFinite(actualBytes) || actualBytes !== expectedBytes) {
+      const reported = Number.isFinite(actualBytes) ? String(actualBytes) : wcOut.trim() || '(empty)'
+      fail(
+        -32603,
+        `Write verification failed for ${filePath}: expected ${expectedBytes} bytes, remote reports ${reported}.`,
+      )
+    }
+    await remoteExec(ctx, buildAtomicReplaceCommand(tmpPath, filePath), opts)
+  } catch (err) {
+    try {
+      await remoteExec(ctx, `rm -f ${shellQuote(tmpPath)}`, opts)
+    } catch {
+      /* best-effort; if the remote is unreachable there is nothing left to clean up */
+    }
+    throw err
   }
-  const expectedBytes = Buffer.byteLength(content, 'utf8')
-  const wcOut = await remoteExec(ctx, `wc -c < ${shellQuote(filePath)}`, opts)
-  const actualBytes = Number.parseInt(wcOut.trim(), 10)
-  if (!Number.isFinite(actualBytes) || actualBytes !== expectedBytes) {
-    const reported = Number.isFinite(actualBytes) ? String(actualBytes) : wcOut.trim() || '(empty)'
+}
+
+/**
+ * Read a file and its byte count in one round trip: the count on the first line, the content
+ * after it. Pairs with `parseCountedRead`, which refuses the read when the two disagree.
+ */
+export function buildCountedReadCommand(filePath: string): string {
+  const quotedPath = shellQuote(filePath)
+  return `wc -c < ${quotedPath}; cat ${quotedPath}`
+}
+
+/**
+ * Split a `buildCountedReadCommand` response into the declared byte count and the content that
+ * followed it, and refuse the read when they disagree.
+ *
+ * Worth checking because the exec transport caps collected output and truncates rather than
+ * erroring, and that cap is invisible to the caller: the result carries a `truncated` flag, but
+ * the exec wrapper returns only the stdout string and drops it. An edit built on a short read is
+ * silent data loss in its own right — the replacement matches inside the fragment, succeeds, and
+ * writes the fragment back as the whole file.
+ *
+ * A file that is not valid UTF-8 also fails here, since the content is measured as UTF-8 bytes.
+ * That is the honest answer rather than a convenient one: the write path re-encodes as UTF-8, so
+ * such a file was already being mangled by any edit, and refusing is the smaller harm.
+ */
+export function parseCountedRead(output: string, filePath: string): string {
+  const newline = output.indexOf('\n')
+  const declared = newline === -1 ? Number.NaN : Number.parseInt(output.slice(0, newline), 10)
+  if (!Number.isFinite(declared)) {
+    fail(-32603, `Read verification failed for ${filePath}: the remote reported no byte count.`)
+  }
+  const content = output.slice(newline + 1)
+  const actualBytes = Buffer.byteLength(content, 'utf8')
+  if (actualBytes !== declared) {
     fail(
       -32603,
-      `Write verification failed for ${filePath}: expected ${expectedBytes} bytes, remote reports ${reported}.`,
+      `Read verification failed for ${filePath}: expected ${declared} bytes, received ${actualBytes}. ` +
+        'Refusing to edit a partial read.',
     )
   }
+  return content
 }
 
 // Resolves each name to a plain env map and lets the terminal backend (packages/terminal) inject
@@ -3097,7 +3207,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         const { ctx } = await resolveTerminalContext(args)
         const resolvedPath = resolveRemoteFilePath(filePath, ctx.cwd as string | undefined)
 
-        const content = await remoteExec(ctx, `cat ${shellQuote(resolvedPath)}`)
+        const content = parseCountedRead(await remoteExec(ctx, buildCountedReadCommand(resolvedPath)), resolvedPath)
         const updated = replaceExact(content, { oldString, newString, replaceAll }, 'file')
 
         await writeRemoteFileExact(ctx, resolvedPath, updated)
