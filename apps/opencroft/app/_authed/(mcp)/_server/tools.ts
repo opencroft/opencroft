@@ -2084,76 +2084,171 @@ export function buildBase64WriteCommands(
   return commands
 }
 
-/**
- * Scratch path for an atomic write: the same directory as `targetPath`, so replacing the target
- * is a rename within one filesystem. `/tmp` would not do — it is routinely a different mount,
- * and `mv` across mounts degrades to copy-then-unlink, reopening the partial-write window this
- * exists to close. Dot-prefixed and `.tmp`-suffixed so a leftover is recognisable and stays out
- * of ordinary globs. `token` is supplied by the caller so this stays pure and unit-testable.
- */
-export function buildTempWritePath(targetPath: string, token: string): string {
-  const dir = path.posix.dirname(targetPath)
-  const base = path.posix.basename(targetPath)
-  return path.posix.join(dir, `.${base}.${token}.tmp`)
+/** What the remote reports about a write target before anything has been written to it. */
+export interface RemoteWriteTarget {
+  /** The path the content must land at, with a final symlink component already resolved. */
+  path: string
+  /** Octal mode to give the scratch file, or null when the target does not exist yet. */
+  mode: string | null
 }
 
 /**
- * Build the command that puts an already-written, already-verified `tmpPath` in place of
- * `targetPath`. Three things happen, in order:
+ * Build the probe that runs before a write: whether the target is a symlink, what it resolves
+ * to, whether it exists, and its mode — everything needed to place the scratch file correctly
+ * and to hand the replacement the permissions the target already had.
  *
- * - The target is resolved through symlinks, so an edit writes THROUGH a link the way the old
- *   `> file` redirect did, instead of replacing the link itself with a regular file.
- * - The existing file's permission bits are copied onto the scratch file, so replacing a mode
- *   0755 script does not silently hand it back as 0644. Skipped when the target is new.
- * - `mv -f` renames. Within one directory that is a single `rename(2)`: a reader sees either the
- *   whole old file or the whole new one, and a failure anywhere earlier leaves the original as
- *   it was.
- *
- * The steps are `;`-separated rather than `&&`-chained on purpose: a target that does not exist
- * yet has nothing to resolve and no mode to copy, which is the ordinary create case and not a
- * reason to skip the rename. The rename runs last, so its exit status is the command's.
- *
- * One consequence worth naming: this needs the containing directory to be writable, where
- * writing in place needed only the file to be. A write that used to succeed in a read-only
- * directory now fails — loudly, which is the trade this whole change is making.
+ * Every field is emitted unconditionally, empty ones included, and a trailing `ok=1` marks a
+ * complete run. That is what lets `parseResolveTarget` tell "this remote has no working
+ * `stat -c`" apart from "this file does not exist": if a failed substitution were simply left
+ * out the two would be indistinguishable, and guessing wrong means silently resetting a file's
+ * mode. `readlink -f` and `stat -c` are both GNU, so a BusyBox or BSD remote must be detected
+ * rather than quietly degraded to.
  */
-export function buildAtomicReplaceCommand(tmpPath: string, targetPath: string): string {
-  const tmp = shellQuote(tmpPath)
+export function buildResolveTargetCommand(filePath: string): string {
   return [
-    `t=${shellQuote(targetPath)}`,
-    `r=$(readlink -f "$t" 2>/dev/null) && [ -n "$r" ] && t="$r"`,
-    `m=$(stat -c %a "$t" 2>/dev/null) && chmod "$m" ${tmp}`,
-    `mv -f ${tmp} "$t"`,
+    `t=${shellQuote(filePath)}`,
+    `if [ -L "$t" ]; then l=1; else l=0; fi`,
+    `if [ -e "$t" ]; then e=1; else e=0; fi`,
+    `r=$(readlink -f "$t" 2>/dev/null || true)`,
+    `m=$(stat -c %a "$t" 2>/dev/null || true)`,
+    `printf 'link=%s\\nresolved=%s\\nexists=%s\\nmode=%s\\nok=1\\n' "$l" "$r" "$e" "$m"`,
   ].join('; ')
 }
 
 /**
- * Write `content` to `filePath` on the remote exactly byte-for-byte, atomically: the base64
- * chunks are assembled into a scratch file beside the target, the byte count is verified THERE,
- * and only a verified scratch file replaces the target.
+ * Read a `buildResolveTargetCommand` response, refusing the write when the remote could not
+ * answer rather than proceeding on a guess. Each refusal below is a case where carrying on would
+ * quietly destroy something: an unresolvable symlink gets replaced by a regular file, and an
+ * unreadable mode gets reset to the umask default.
+ */
+export function parseResolveTarget(output: string, filePath: string): RemoteWriteTarget {
+  const fields = new Map<string, string>()
+  for (const line of output.split('\n')) {
+    const separator = line.indexOf('=')
+    if (separator > 0) {
+      fields.set(line.slice(0, separator), line.slice(separator + 1))
+    }
+  }
+  if (fields.get('ok') !== '1') {
+    fail(-32603, `Cannot write ${filePath}: the remote did not complete the pre-write probe.`)
+  }
+  const resolved = fields.get('resolved') ?? ''
+  if (fields.get('link') === '1' && !resolved) {
+    fail(
+      -32603,
+      `Cannot write ${filePath}: it is a symlink and this remote has no working \`readlink -f\` to resolve it.`,
+    )
+  }
+  const target = resolved || filePath
+  if (fields.get('exists') !== '1') {
+    return { path: target, mode: null }
+  }
+  const mode = fields.get('mode') ?? ''
+  if (!/^[0-7]{3,4}$/.test(mode)) {
+    fail(
+      -32603,
+      `Cannot write ${filePath}: this remote reported no usable file mode (\`stat -c %a\` gave ${JSON.stringify(mode)}), ` +
+        'so the existing permissions could not be preserved.',
+    )
+  }
+  return { path: target, mode }
+}
+
+/**
+ * Scratch path for an atomic write. `resolvedPath` must be the target with its final symlink
+ * component already resolved: the scratch has to share a directory with the file the rename
+ * actually lands on, not with the name the caller happened to use. A symlink pointing into
+ * another filesystem would otherwise put the two on different mounts, where `mv` degrades to
+ * open-truncate-copy-unlink — the very failure this exists to prevent, moved to a rarer path.
+ *
+ * A symlinked *parent* component is harmless: the redirect that creates the scratch follows it
+ * too, so both land in the same real directory. It is only the final component that matters.
+ *
+ * `/tmp` is wrong for the same reason — routinely a different mount. Dot-prefixed and
+ * `.tmp`-suffixed so a leftover is recognisable and stays out of ordinary globs. `token` is
+ * supplied by the caller so this stays pure and unit-testable.
+ */
+export function buildTempWritePath(resolvedPath: string, token: string): string {
+  const dir = path.posix.dirname(resolvedPath)
+  const base = path.posix.basename(resolvedPath)
+  return path.posix.join(dir, `.${base}.${token}.tmp`)
+}
+
+/**
+ * Create the scratch file empty and give it the target's mode BEFORE any content lands in it.
+ * The order is about confidentiality, not tidiness: applying the mode afterwards would leave a
+ * 0600 file's contents sitting at the umask default for the whole duration of the write. `>` on
+ * an existing file truncates without touching its permissions, so the chunks that follow inherit
+ * the mode set here.
+ *
+ * `&&`, not `;`: if the mode cannot be applied the write stops here, while the scratch file is
+ * still empty and the target untouched. A chmod that fails and gets renamed over the target
+ * anyway produces exactly the silent 0755 → 0644 downgrade this step exists to prevent.
+ */
+export function buildScratchInitCommand(tmpPath: string, mode: string | null): string {
+  const tmp = shellQuote(tmpPath)
+  return mode === null ? `: > ${tmp}` : `: > ${tmp} && chmod ${shellQuote(mode)} ${tmp}`
+}
+
+/**
+ * Rename the finished scratch file over the target. Both paths sit in the same resolved
+ * directory, so this is a single `rename(2)`: a reader sees either the whole old file or the
+ * whole new one, and any failure before this point leaves the original exactly as it was.
+ *
+ * Two properties of the old in-place redirect are deliberately NOT preserved, because replacing
+ * a directory entry cannot preserve them:
+ *
+ * - **Ownership.** The scratch file belongs to whoever ran the write, and no `chown` is
+ *   attempted: it needs privileges the writer may not have, so making it mandatory would turn
+ *   writes that work today into failures. A write by someone other than the file's owner
+ *   therefore changes its owner.
+ * - **Hard links.** The old redirect wrote through the inode, so every link saw the new content.
+ *   A rename swaps the directory entry instead, so other links keep the old content and the link
+ *   count drops. Accepted deliberately: writing through a shared inode silently mutates every
+ *   other path pointing at it — files hard-linked out of a package cache, for one — and the
+ *   in-place write that preserved links is the same one that truncated the target on failure.
+ *
+ * Also worth naming: this needs the containing directory writable, where writing in place needed
+ * only the file to be. A write into a read-only directory now fails loudly.
+ */
+export function buildAtomicReplaceCommand(tmpPath: string, targetPath: string): string {
+  return `mv -f ${shellQuote(tmpPath)} ${shellQuote(targetPath)}`
+}
+
+/**
+ * The orchestration behind every remote write, with the exec channel injected so the ordering
+ * can be tested without a shell: probe the target, prepare a scratch file beside its *resolved*
+ * path, assemble the content there, verify the byte count THERE, and only then rename it into
+ * place.
  *
  * The order is the whole point. Assembling in place meant the target was truncated by the first
  * chunk and rebuilt by the rest, so a failure on any later chunk left a short file behind — and
  * the `wc -c` check that would have caught it never ran, because the loop had already thrown.
- * The guard was bypassed in exactly the case it was there for. Assembling elsewhere means every
+ * The guard was bypassed in exactly the case it existed for. Assembling elsewhere means every
  * way this can fail now fails with the original still intact.
  *
  * The scratch file is removed on the way out of a failure. That covers a failed run; a process
  * killed mid-write can still strand one, which is why the name is recognisable.
  */
-async function writeRemoteFileExact(
-  ctx: Record<string, unknown>,
+export async function writeFileExactWith(
+  exec: (command: string) => Promise<string>,
   filePath: string,
   content: string,
-  opts?: { cwd?: string },
+  token: string = crypto.randomUUID(),
 ): Promise<void> {
-  const tmpPath = buildTempWritePath(filePath, crypto.randomUUID())
+  // Outside the try: a probe that fails has created no scratch file to clean up.
+  const target = parseResolveTarget(await exec(buildResolveTargetCommand(filePath)), filePath)
+  const tmpPath = buildTempWritePath(target.path, token)
   try {
-    for (const command of buildBase64WriteCommands(tmpPath, content)) {
-      await remoteExec(ctx, command, opts)
+    // The scratch preparation rides along with the first chunk rather than paying its own round
+    // trip. Both halves stay independently testable; `&&` keeps the mode strictly before content.
+    const [firstChunk, ...remainingChunks] = buildBase64WriteCommands(tmpPath, content)
+    await exec(`${buildScratchInitCommand(tmpPath, target.mode)} && ${firstChunk}`)
+    for (const command of remainingChunks) {
+      await exec(command)
     }
     const expectedBytes = Buffer.byteLength(content, 'utf8')
-    const wcOut = await remoteExec(ctx, `wc -c < ${shellQuote(tmpPath)}`, opts)
+    const wcOut = await exec(`wc -c < ${shellQuote(tmpPath)}`)
     const actualBytes = Number.parseInt(wcOut.trim(), 10)
     if (!Number.isFinite(actualBytes) || actualBytes !== expectedBytes) {
       const reported = Number.isFinite(actualBytes) ? String(actualBytes) : wcOut.trim() || '(empty)'
@@ -2162,15 +2257,25 @@ async function writeRemoteFileExact(
         `Write verification failed for ${filePath}: expected ${expectedBytes} bytes, remote reports ${reported}.`,
       )
     }
-    await remoteExec(ctx, buildAtomicReplaceCommand(tmpPath, filePath), opts)
+    await exec(buildAtomicReplaceCommand(tmpPath, target.path))
   } catch (err) {
     try {
-      await remoteExec(ctx, `rm -f ${shellQuote(tmpPath)}`, opts)
+      await exec(`rm -f ${shellQuote(tmpPath)}`)
     } catch {
       /* best-effort; if the remote is unreachable there is nothing left to clean up */
     }
     throw err
   }
+}
+
+/** Write `content` to `filePath` on the remote exactly byte-for-byte, atomically. */
+async function writeRemoteFileExact(
+  ctx: Record<string, unknown>,
+  filePath: string,
+  content: string,
+  opts?: { cwd?: string },
+): Promise<void> {
+  return writeFileExactWith((command) => remoteExec(ctx, command, opts), filePath, content)
 }
 
 /**
