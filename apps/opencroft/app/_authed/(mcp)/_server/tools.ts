@@ -2103,6 +2103,11 @@ export interface RemoteWriteTarget {
  * out the two would be indistinguishable, and guessing wrong means silently resetting a file's
  * mode. `readlink -f` and `stat -c` are both GNU, so a BusyBox or BSD remote must be detected
  * rather than quietly degraded to.
+ *
+ * That detection only bites where something could be destroyed. Creating a file that does not
+ * exist yet has no symlink to resolve and no mode to carry, so it needs neither utility and
+ * still succeeds; the refusal falls on writes to an *existing* target, whose mode or symlink
+ * would otherwise be discarded without a word.
  */
 export function buildResolveTargetCommand(filePath: string): string {
   return [
@@ -2229,6 +2234,13 @@ export function buildAtomicReplaceCommand(tmpPath: string, targetPath: string): 
  *
  * The scratch file is removed on the way out of a failure. That covers a failed run; a process
  * killed mid-write can still strand one, which is why the name is recognisable.
+ *
+ * Resolving in its own round trip widens one window worth naming: the gap between resolving the
+ * target and renaming onto it now spans the whole content write rather than a single shell
+ * command. If the target is re-pointed inside that window, the write lands on the destination
+ * that was resolved at probe time rather than the new one. It cannot separate the scratch file
+ * from its destination — both are derived from the same resolved value — so the worst outcome is
+ * a write to a stale destination, never a partial file.
  */
 export async function writeFileExactWith(
   exec: (command: string) => Promise<string>,
