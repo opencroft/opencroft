@@ -91,6 +91,7 @@ import {
   listSpacesImpl,
   loadSpaceGraphImpl,
   renameSpaceImpl,
+  resolveSpaceSlugImpl,
 } from '@/app/_authed/(space)/_server/actions-impl'
 import { withGraphConflictRetry } from '@/app/_authed/(space)/_server/graph-conflict-retry'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
@@ -1517,15 +1518,20 @@ function redactMcpServer(server: McpServerConfig): McpServerConfig {
   }
 }
 
+// Every space-addressed tool comes through here, so this is the one place an
+// agent's slug is turned into a space -- and it asks the registry rather than
+// matching slugs against a list, which is the difference between resolving an
+// address and comparing two strings. A slug a rename freed still resolves, the
+// same way it does for the web routes; matching by hand saw live spaces only,
+// so a renamed space vanished from all agent tooling while the UI was fine.
 async function resolveSpace(args: Record<string, unknown>): Promise<string> {
   const input = args.space as string | undefined
   if (!input) {
     return getActiveSpaceSlugImpl()
   }
-  const spaces = await listSpacesImpl()
-  const bySlug = spaces.find((s) => s.slug === input)
-  if (bySlug) {
-    return bySlug.slug
+  const resolved = await resolveSpaceSlugImpl(input)
+  if (resolved) {
+    return resolved
   }
   fail(-32602, `Space not found: ${input} (use a slug — see list_spaces)`)
 }

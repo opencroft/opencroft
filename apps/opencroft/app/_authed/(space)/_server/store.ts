@@ -168,11 +168,26 @@ class SpacesRegistry {
    * delete the alias on a slug they bind, so the two should never both match.
    */
   getBySlug(slug: string): SpaceRuntime | null {
-    const id = this.bySlug.get(slug) ?? this.aliasBySlug.get(slug)
-    if (!id) {
-      return null
-    }
-    return this.spaces.get(id) ?? null
+    const id = this.idFor(slug)
+    return id ? (this.spaces.get(id) ?? null) : null
+  }
+
+  /**
+   * THE ONE PLACE a slug becomes a space. Live first, then a slug a rename
+   * freed.
+   *
+   * Written once and used by every method that takes a slug, because the
+   * alternative was proved to fail: three of them resolved live-only after the
+   * alias landed, and the misses were invisible -- a canvas autosaving under
+   * the address its page was loaded with got "Space not found" the moment
+   * somebody renamed the space out from under it.
+   *
+   * The ONE deliberate exception is the availability check in `rename`, which
+   * asks `bySlug` directly. An alias must never read as taken, or a freed
+   * address could not be handed to another space.
+   */
+  private idFor(slug: string): string | undefined {
+    return this.bySlug.get(slug) ?? this.aliasBySlug.get(slug)
   }
 
   private async dropAliases(slugs: string[]): Promise<void> {
@@ -204,7 +219,7 @@ class SpacesRegistry {
   }
 
   async setPinned(slug: string, pinned: boolean): Promise<SpaceRuntime | null> {
-    const id = this.bySlug.get(slug)
+    const id = this.idFor(slug)
     if (!id) {
       return null
     }
@@ -240,7 +255,7 @@ class SpacesRegistry {
    * different space on their next load.
    */
   async rename(slug: string, name: string): Promise<SpaceRuntime | null> {
-    const id = this.bySlug.get(slug) ?? this.aliasBySlug.get(slug)
+    const id = this.idFor(slug)
     if (!id) {
       return null
     }
@@ -292,7 +307,7 @@ class SpacesRegistry {
   }
 
   async remove(slug: string): Promise<boolean> {
-    const id = this.bySlug.get(slug) ?? this.aliasBySlug.get(slug)
+    const id = this.idFor(slug)
     if (!id) {
       return false
     }
@@ -315,7 +330,7 @@ class SpacesRegistry {
   // enforced by the UPDATE's WHERE clause so the check-then-write is atomic
   // even across concurrent requests.
   async saveGraph(slug: string, graph: GraphData, expectedUpdatedAt?: string): Promise<SpaceRuntime | null> {
-    const id = this.bySlug.get(slug)
+    const id = this.idFor(slug)
     if (!id) {
       return null
     }
