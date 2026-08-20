@@ -26,6 +26,7 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { supportsMidTurnInput } from 'agent-client'
+import { usableContextWindow } from 'agent-client/context-window'
 import type { AgentSelection } from 'agent-client/types'
 
 import {
@@ -158,8 +159,7 @@ async function findNodeData<T>(nodeId: string): Promise<T | null> {
  */
 export async function agentConfiguredWindowByNodeId(agentNodeId: string): Promise<number | undefined> {
   const agent = await findNodeData<AgentNodeData>(agentNodeId)
-  const value = agent?.contextWindow
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
+  return usableContextWindow(agent?.contextWindow)
 }
 
 async function resolveSecret(key: string): Promise<string> {

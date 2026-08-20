@@ -40,14 +40,33 @@ import type { AgentSelection } from './types'
 // cannot vouch for is the failure this exists to prevent; the remedy is to
 // configure the window, not to trust the wire harder.
 export function knownContextWindow(selection: AgentSelection, reportedSize?: number): number | undefined {
-  const configured = selection.contextWindow
-  if (configured !== undefined && configured > 0) {
+  const configured = usableContextWindow(selection.contextWindow)
+  if (configured !== undefined) {
     return configured
   }
-  if (findAdapter(selection.adapterId)?.kind === 'native' && reportedSize !== undefined && reportedSize > 0) {
-    return reportedSize
+  if (findAdapter(selection.adapterId)?.kind === 'native') {
+    return usableContextWindow(reportedSize)
   }
   return undefined
+}
+
+/**
+ * A window a ratio may be drawn against, or undefined.
+ *
+ * THE ONE PLACE that decides what counts. The question is asked of three
+ * different shapes -- this module's own typed selection field, and an agent
+ * node's `data` reached by node id or by slug -- and each site used to carry
+ * its own copy of the test. A rule about which numbers may be trusted is a
+ * poor one to keep three copies of, which is the thesis of the work that
+ * introduced this module.
+ *
+ * `unknown` in, because two of the callers read the value off untyped node
+ * data, where a stored graph may hold anything. Non-finite is rejected as well
+ * as non-positive: `Infinity` cannot arrive over JSON but can be produced
+ * in-process, and it renders every session as 0% full forever.
+ */
+export function usableContextWindow(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
 }
 
 // One reading, normalised for display.

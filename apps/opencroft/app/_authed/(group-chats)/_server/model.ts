@@ -1961,12 +1961,20 @@ export async function listGroupChatsForAgentView(agentName: string): Promise<Age
   // its agent's configured window (the only window authority left once the
   // session is not loaded -- see toContextUsage), and a chat's threads share
   // few agents between many threads.
-  const windowByAgentNodeId = new Map<string, number | undefined>()
-  const configuredWindowFor = async (agentNodeId: string): Promise<number | undefined> => {
-    if (!windowByAgentNodeId.has(agentNodeId)) {
-      windowByAgentNodeId.set(agentNodeId, await agentConfiguredWindowByNodeId(agentNodeId))
+  // The PROMISE is memoised, not the value it resolves to. These lookups run
+  // inside the Promise.all below, so an await between the check and the store
+  // would let every thread reach the check before any of them had stored
+  // anything: all miss, all issue the lookup, and the memo dedupes nothing
+  // while reading as though it does. Storing before the first await is what
+  // makes the claim above true.
+  const windowByAgentNodeId = new Map<string, Promise<number | undefined>>()
+  const configuredWindowFor = (agentNodeId: string): Promise<number | undefined> => {
+    let pending = windowByAgentNodeId.get(agentNodeId)
+    if (!pending) {
+      pending = agentConfiguredWindowByNodeId(agentNodeId)
+      windowByAgentNodeId.set(agentNodeId, pending)
     }
-    return windowByAgentNodeId.get(agentNodeId)
+    return pending
   }
   const contextUsageByKey = new Map(
     await Promise.all(

@@ -60,6 +60,21 @@ test('a non-positive configured window is not a window', () => {
   assert.equal(knownContextWindow(selection({ contextWindow: -1 }), 200_000), undefined)
 })
 
+test('a non-finite window is not a window either, from either authority', () => {
+  // This rule is asked of three shapes -- the typed field below, and an agent
+  // node's `data` reached two ways -- and this one accepted Infinity while the
+  // other two rejected it. It cannot arrive over JSON, but it can be produced
+  // in-process, and a ratio drawn against it reads 0% at every token count,
+  // which is the most convincing way to be wrong.
+  assert.equal(knownContextWindow(selection({ contextWindow: Number.POSITIVE_INFINITY }), 200_000), undefined)
+  assert.equal(knownContextWindow(selection({ contextWindow: Number.NaN }), 200_000), undefined)
+  assert.equal(
+    knownContextWindow(selection({ adapterId: 'native' }), Number.POSITIVE_INFINITY),
+    undefined,
+    'the discovery authority gets the same test as the configured one',
+  )
+})
+
 test('an unknown adapter id is treated as unverified, not as native', () => {
   // Fails toward withholding: a name we cannot resolve earns no trust.
   assert.equal(knownContextWindow(selection({ adapterId: 'not-a-real-adapter' }), 200_000), undefined)
