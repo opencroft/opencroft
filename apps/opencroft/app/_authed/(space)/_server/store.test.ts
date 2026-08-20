@@ -179,3 +179,35 @@ test('an alias does not count as taken, so an address can be handed between spac
   assert.equal(taken.slug, wanted)
   assert.equal(registry.getBySlug(wanted)?.id, wanting.id, 'the space holding it now is the answer')
 })
+
+// REGRESSION, found by trying it rather than by reading the code: adding the
+// alias to `getBySlug` left three other slug-addressed methods resolving live
+// only, and the misses are silent in different ways -- a canvas autosaving under
+// the address its page was loaded with simply stops saving.
+//
+// Every method that takes a slug goes through one resolver now, so this covers
+// the class rather than the three instances.
+test('every slug-addressed operation reaches a space through an address a rename freed', async () => {
+  const registry = getSpacesRegistry()
+  const freed = `store-reach-${crypto.randomUUID()}`
+  const space = await freshSpace(freed)
+  const renamed = await registry.rename(freed, `Reached ${crypto.randomUUID()}`)
+  assert.ok(renamed)
+  assert.notEqual(renamed.slug, freed)
+
+  // The canvas autosave: addressed by whatever slug the open page was loaded
+  // with, so a rename in another tab used to make every later save a no-op.
+  const graph = { nodes: [{ id: 'saved', type: 'x', position: { x: 0, y: 0 }, data: {} }], edges: [] }
+  const saved = await registry.saveGraph(freed, graph)
+  assert.ok(saved, 'saveGraph must resolve a freed address')
+  assert.deepEqual(registry.getBySlug(renamed.slug)?.graph.nodes, graph.nodes)
+
+  const pinned = await registry.setPinned(freed, true)
+  assert.equal(pinned?.pinned, true, 'setPinned must resolve a freed address')
+
+  // And removal, so a stale reference can still delete what it names.
+  assert.equal(await registry.remove(freed), true)
+  assert.equal(registry.getBySlug(freed), null)
+  assert.equal(registry.getBySlug(renamed.slug), null)
+  assert.equal(registry.getById(space.id), null)
+})

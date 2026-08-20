@@ -141,9 +141,41 @@ export async function renameSpaceImpl(data: { slug: string; name: string }): Pro
   }
 }
 
+/**
+ * A slug an agent handed us, resolved to the slug that space answers to NOW,
+ * or null.
+ *
+ * Exists so no caller has to match slugs itself. The MCP surface used to do
+ * that -- `listSpacesImpl()` then a `===` against each `slug` -- which reads
+ * like a lookup and is not one: it sees live spaces only, so a renamed space
+ * disappeared from every agent tool while the web routes, which go through the
+ * registry, resolved it fine. Agents keep space slugs in their own skills and
+ * notes, so that is the whole surface an agent addresses a space through.
+ *
+ * Returns the CANONICAL slug rather than the input, so a caller that stores or
+ * echoes the result carries the current address forward instead of keeping the
+ * freed one alive.
+ */
+export async function resolveSpaceSlugImpl(slug: string): Promise<string | null> {
+  const r = await registry()
+  return r.getBySlug(slug)?.slug ?? null
+}
+
 export async function deleteSpaceImpl(slug: string): Promise<boolean> {
   const r = await registry()
-  if (slug === DEFAULT_SPACE_SLUG && r.list().length <= 1) {
+  // Resolved before it is compared, so the guard tests the SPACE rather than
+  // the string it was addressed by. Since slugs move, the two came apart: the
+  // default slug can now name one space as its live address and another as a
+  // freed one, and matching the input would apply the guard to whichever was
+  // typed instead of to whichever it reaches.
+  //
+  // NAMED, because resolving does not fix it: a default space that has been
+  // renamed no longer answers to `default` at all, so the slug half of this
+  // guard stops protecting it. That is a question about what the guard is for
+  // -- the last space, or that particular one -- and is left as it was rather
+  // than answered here.
+  const space = r.getBySlug(slug)
+  if (space?.slug === DEFAULT_SPACE_SLUG && r.list().length <= 1) {
     return false
   }
   return r.remove(slug)
