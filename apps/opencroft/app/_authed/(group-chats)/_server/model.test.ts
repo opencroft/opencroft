@@ -2788,3 +2788,41 @@ test('a chat rename leaves a thread whose key was never built from the slug exac
     'nothing was freed, so nothing is aliased',
   )
 })
+
+// THE HANDOVER. The operational sequence for a chat that is holding a slug some
+// other surface needs -- a chat whose address froze under an earlier name, so an
+// embedded dashboard resolving that slug lands in it rather than in the chat the
+// reader meant. Freeing it takes two renames, and this is the proof that the
+// second one is not blocked by the first one's alias and does take the address
+// over completely.
+test('a chat can hand a slug to another chat: the alias neither blocks the rename nor survives it', async () => {
+  const owner = await makeUser('handover-owner@example.test')
+  const holder = await model.createGroupChat(reqAs(owner), 'Wrong Holder')
+  const wanted = holder.slug
+
+  // Step one: move the holder off the address. It keeps resolving to the
+  // holder, by design -- nothing else has claimed it yet.
+  await model.renameGroupChat(reqAs(owner), holder.id, 'Moved Away')
+  const stillHolder = await model.resolveGroupChatBySlug(reqAs(owner), wanted)
+  assert.ok(stillHolder.state === 'member')
+  assert.equal(stillHolder.chat.id, holder.id, 'a freed address keeps working until something takes it')
+
+  // Step two: the chat that should have it takes it. An alias must NOT read as
+  // taken here -- the slug-taken check is against live chats only, and if an
+  // alias blocked this the address could never be handed over at all.
+  const wanting = await model.createGroupChat(reqAs(owner), 'Wants That Address')
+  await model.renameGroupChat(reqAs(owner), wanting.id, 'Wrong Holder')
+
+  const resolved = await model.resolveGroupChatBySlug(reqAs(owner), wanted)
+  assert.ok(resolved.state === 'member')
+  assert.equal(resolved.chat.id, wanting.id, 'the address now reaches the chat that holds it, not the one that used to')
+  assert.equal((await model.getGroupChat(reqAs(owner), wanting.id)).slug, wanted)
+  assert.equal(
+    (await db.select().from(groupChatSlugAlias).where(eq(groupChatSlugAlias.slug, wanted))).length,
+    0,
+    'the alias is dropped by the handover, not left to be outranked on every read',
+  )
+
+  // The chat that gave it up is unharmed and still reachable by its own address.
+  assert.equal((await model.getGroupChat(reqAs(owner), holder.id)).slug, 'moved-away')
+})
