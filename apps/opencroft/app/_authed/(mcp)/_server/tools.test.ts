@@ -33,10 +33,12 @@ import {
   localSlugFromExtensionId,
   parseCountedRead,
   parseResolveTarget,
+  renderReadResult,
   replaceExact,
   requireCallingAgent,
   resolveRemoteFilePath,
   resolveTerminalContext,
+  withTruncationNote,
   writeFileExactWith,
 } from './tools'
 
@@ -187,6 +189,51 @@ test('insideExcludedDir matches whole path segments only', () => {
   assert.equal(insideExcludedDir('repo/dist'), true)
   assert.equal(insideExcludedDir('/app/src/components'), false)
   assert.equal(insideExcludedDir('/app/distributed/lib'), false)
+})
+
+// ── the truncation note ────────────────────────────────────────────────────
+//
+// Output that was silently cut is the bug this note exists to remove, so the note itself must
+// never be mistakable for the content it follows — an agent pastes and greps these results.
+
+test('the note keeps the wording remote_grep/remote_glob already used', () => {
+  // Pinned, not paraphrased: the search tools shipped this exact sentence before the helper
+  // existed, and a reader who learned it there must recognise it everywhere.
+  assert.equal(
+    withTruncationNote('body', true, 'narrow the pattern, path, or glob'),
+    'body\n… (truncated — narrow the pattern, path, or glob to see the rest)',
+  )
+})
+
+test('an untruncated body is returned untouched, with nothing appended', () => {
+  assert.equal(withTruncationNote('body', false, 'narrow the pattern, path, or glob'), 'body')
+  assert.equal(withTruncationNote('', false, 'whatever'), '')
+})
+
+test('the note is its own line and cannot be read as a numbered line of the file', () => {
+  // remote_read numbers every content line `<spaces><n>\t...`. The note carries no number and
+  // no tab, so nothing in the body's own shape can be confused with it, and vice versa.
+  const rendered = renderReadResult('alpha\nbeta\n', true)
+  const lines = rendered.split('\n')
+  const note = lines.at(-1) ?? ''
+  assert.match(note, /^… \(truncated — /)
+  assert.equal(/^\s*\d+\t/.test(note), false, 'the note must not look like a numbered content line')
+  for (const line of lines.slice(0, -1)) {
+    assert.match(line, /^\s*\d+\t/, 'every content line is numbered')
+  }
+})
+
+test('renderReadResult numbers from the requested offset and slices to the limit', () => {
+  const content = 'a\nb\nc\nd\ne\n'
+  assert.equal(renderReadResult(content, false, 2, 2), '2\tb\n3\tc')
+  assert.equal(renderReadResult(content, false), '1\ta\n2\tb\n3\tc\n4\td\n5\te\n6\t')
+})
+
+test('a truncated read is flagged even when the requested slice sits inside what arrived', () => {
+  // The read cannot know how far the file went, so a slice landing well before the cut is still
+  // drawn from an unknown whole. Silence here is the wrong conclusion this check exists to stop.
+  const rendered = renderReadResult('a\nb\nc\nd\ne\n', true, 1, 2)
+  assert.equal(rendered, '1\ta\n2\tb\n… (truncated — read a narrower range with offset/limit to see the rest)')
 })
 
 test('capColumns leaves short lines alone and truncates long ones with a note', () => {

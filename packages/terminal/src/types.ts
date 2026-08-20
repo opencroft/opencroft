@@ -40,7 +40,14 @@ export interface ExecResult {
   stdout: string
   stderr: string
   exitCode: number
+  /** Either stream hit the output cap and was cut. Kept as the broad "something was lost" answer. */
   truncated?: boolean
+  /**
+   * `stdout` specifically was cut at the output cap. Separate from `truncated` because most
+   * callers keep only stdout, and telling them their output is incomplete when it was really
+   * stderr that overflowed is a false alarm about the one thing they can see.
+   */
+  stdoutTruncated?: boolean
   timedOut?: boolean
 }
 

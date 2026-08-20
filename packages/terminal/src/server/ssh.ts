@@ -308,6 +308,7 @@ export async function sshExecResult(
           stderr: stderr.toString(),
           exitCode: timedOut ? 124 : (code ?? 1),
           truncated: stdout.truncated || stderr.truncated || undefined,
+          stdoutTruncated: stdout.truncated || undefined,
           timedOut: timedOut || undefined,
         })
       })

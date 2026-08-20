@@ -398,14 +398,34 @@ interface ServerStats {
 // string that had no equivalent way to carry env at all.
 // ═══════════════════════════════════════════════════════════════════
 
-async function terminalExecWithOpts(ctx: TerminalContext, command: string, opts?: ExecOptions): Promise<string> {
+/**
+ * Run a command and return its stdout alongside whether the backend cut that stdout at its
+ * output cap. Same failure contract as `terminal.exec` — a non-zero exit throws — but the
+ * caller also learns that what it received is incomplete.
+ *
+ * The cap truncates rather than erroring, so without this the loss is invisible: a string that
+ * was cut is indistinguishable from a command that simply produced that much. Every caller
+ * returning command output to a reader wants this; `terminal.exec` remains for the ones that
+ * only care about the text.
+ */
+async function terminalExecDetailed(
+  ctx: TerminalContext,
+  command: string,
+  opts?: ExecOptions,
+): Promise<{ stdout: string; truncated: boolean }> {
   const result = await host.terminal.execResult(ctx, command, opts)
   if (result.exitCode !== 0) {
     const detail = result.timedOut ? ' (timed out)' : ''
     const suffix = result.stderr ? `: ${result.stderr}` : ''
     throw new Error(`Command exited with code ${result.exitCode}${detail}${suffix}`)
   }
-  return result.stdout
+  return { stdout: result.stdout, truncated: result.stdoutTruncated === true }
+}
+
+// Delegates so the failure contract lives in exactly one place — the two must never disagree
+// about what a non-zero exit means.
+async function terminalExecWithOpts(ctx: TerminalContext, command: string, opts?: ExecOptions): Promise<string> {
+  return (await terminalExecDetailed(ctx, command, opts)).stdout
 }
 
 async function serverGetStats(config: ServerConfig): Promise<ServerStats> {
@@ -463,6 +483,8 @@ export const actions = {
   'terminal.run': (ctx: TerminalContext, args: string[]) => host.terminal.run(ctx, args),
   'terminal.exec': (ctx: TerminalContext, command: string, opts?: ExecOptions) =>
     terminalExecWithOpts(ctx, command, opts),
+  'terminal.execDetailed': (ctx: TerminalContext, command: string, opts?: ExecOptions) =>
+    terminalExecDetailed(ctx, command, opts),
   'script.run': (params: ScriptRunParams) => runScript(params),
   'handler.run': (params: HandlerRunParams) => runHandler(params),
   'openai.chat': (params: OpenAIChatParams) => openaiChat(params),
