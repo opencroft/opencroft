@@ -60,6 +60,27 @@ export const space = pgTable(
   (t) => [uniqueIndex('Space_slug_key').on(t.slug)],
 )
 
+// A space slug that used to reach this space. Written when a rename moves one.
+//
+// Same contract as the group-chat aliases further down, and for the same
+// reason: a space slug is an address, not a label -- it is in the URL of every
+// canvas someone has open or bookmarked, in the active-space setting, and in
+// whatever an extension was configured with. A live space outranks an alias,
+// and taking a slug live deletes the alias on it, so one address never has two
+// answers.
+export const spaceSlugAlias = pgTable(
+  'SpaceSlugAlias',
+  {
+    id: text().primaryKey().notNull().$defaultFn(uuid),
+    slug: text().notNull(),
+    spaceId: text()
+      .notNull()
+      .references(() => space.id, { onDelete: 'cascade' }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('SpaceSlugAlias_slug_key').on(t.slug), index('SpaceSlugAlias_spaceId_idx').on(t.spaceId)],
+)
+
 export const mcpAuditLog = pgTable(
   'McpAuditLog',
   {
@@ -259,12 +280,17 @@ export const groupChat = pgTable(
   {
     id: text().primaryKey().notNull().$defaultFn(uuid),
     // The readable half of every session key this chat's threads are opened
-    // under, derived from `name` when the chat is created.
+    // under, derived from `name` when the chat is created and MOVED when the
+    // chat is renamed.
     //
-    // IMMUTABLE once set, and that is the point rather than a limitation: the
-    // slug is embedded in session keys, and a key that changes is a key that
-    // stops finding the session it named. Renaming a chat changes `name`, which
-    // is what people read, and leaves this alone.
+    // It moves because it is an ADDRESS rather than a label — extension
+    // surfaces and agents both reach a chat by it, so a slug left behind meant a
+    // chat answering to something it was no longer called. It was immutable for
+    // the opposite reason, that a key which changes stops finding its session;
+    // renaming now migrates every key derived from it, and records the freed
+    // slug in `GroupChatSlugAlias` so references already written down still land
+    // here. The model module holds the ordering that makes a half-finished move
+    // harmless.
     slug: text().notNull(),
     name: text().notNull(),
     topic: text().notNull(),
@@ -353,9 +379,16 @@ export const groupChatPin = pgTable(
 
 // A thread: one agent, fixed at creation, bound to the same kind of ACP
 // session a 1:1 agent chat uses. `sessionKey` is that session's tabKey —
-// globally unique the same way the existing chat registry's session keys
-// are, and namespaced (`group-chat:<groupChatId>:<agentNodeId>:<id>`, minted
-// in the model module) so it can never collide with a 1:1 chat's key.
+// globally unique the same way the existing chat registry's session keys are,
+// and namespaced (`group-chat:<chat-slug>:<agent-slug>:<thread-slug>`, minted
+// in the model module) so it can never collide with a 1:1 chat's key. Threads
+// created before slugs existed carry ids in those three positions instead and
+// keep working: nothing derives them, so no rename can stale them.
+//
+// THE KEY MOVES when the chat or the thread is renamed, since two of its
+// segments are slugs that move. That is a migration rather than an update —
+// everything filed under the key travels with it — and the model module is
+// where the ordering that makes it safe is written down.
 //
 // No message content lives here either — the ACP session (agentClient's own
 // history, resumable via session/load) is still the one place a
@@ -418,6 +451,94 @@ export const groupChatThread = pgTable(
   ],
 )
 
+// ── Freed addresses ──────────────────────────────────────────────────────
+//
+// Renaming moves a slug, and a slug is an ADDRESS: it is embedded in session
+// keys, written into extension configuration, and stored by agents that were
+// told where to write. The two tables below are what keeps every one of those
+// references working after the thing they name has moved — they record the
+// address a rename freed, pointing at whatever now answers to it.
+//
+// THE ONE RULE THEY BOTH OBEY: a live binding outranks an alias, always. Every
+// lookup tries the real row first, and taking an address live DELETES the alias
+// on it, so the two never both claim one address. That ordering is not a
+// preference — an alias that outranked a real row is the one failure a
+// membership check cannot catch, because it delivers to the wrong recipient
+// while every gate passes.
+//
+// Nothing here is presentation. A row exists only because an address moved, and
+// it disappears when the thing it points at is deleted (cascade) or when
+// something takes the address back.
+
+// A group-chat slug that used to reach this chat.
+export const groupChatSlugAlias = pgTable(
+  'GroupChatSlugAlias',
+  {
+    id: text().primaryKey().notNull().$defaultFn(uuid),
+    // Unique across the whole table for the same reason GroupChat.slug is:
+    // together they form ONE address space, and an address that resolved two
+    // ways would have to pick one.
+    slug: text().notNull(),
+    groupChatId: text()
+      .notNull()
+      .references(() => groupChat.id, { onDelete: 'cascade' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('GroupChatSlugAlias_slug_key').on(t.slug),
+    index('GroupChatSlugAlias_groupChatId_idx').on(t.groupChatId),
+  ],
+)
+
+// An address that used to reach this thread. One row per rename that moved one,
+// so a thread renamed twice keeps both of its former addresses working.
+//
+// TWO ADDRESSES, TWO NULLABLE COLUMNS, because a thread is addressed two ways
+// and a rename does not always free both:
+//
+//   sessionKey            the whole readable address a send names. Freed when
+//                         EITHER the chat or the thread is renamed, since the
+//                         chat's slug is a segment of it.
+//   (chat, agent, slug)   the thread slug an embedded surface names, scoped the
+//                         way the live unique index is. Freed only by a THREAD
+//                         rename — a chat rename leaves every thread slug where
+//                         it was.
+//
+// Each column is NULL when that dimension did not move: a chat rename writes a
+// row with no `slug`, and a thread whose key was never derived from its slug
+// writes one with no `sessionKey`. NULL is the statement that nothing was freed
+// there, and Postgres treating NULLs as distinct in a unique index — the same
+// property GroupChatThread.slug and GroupChatMember already rely on — is what
+// lets any number of such rows coexist without colliding with each other or
+// with the live binding they still share the other half of. A row with both
+// NULL would say nothing and is never written.
+//
+// `groupChatId`/`agentNodeId` are copied from the thread rather than joined for
+// that second index's sake, and copying them is safe precisely because neither
+// can ever change: a thread's agent is fixed at creation and a thread never
+// moves between chats.
+export const groupChatThreadAlias = pgTable(
+  'GroupChatThreadAlias',
+  {
+    id: text().primaryKey().notNull().$defaultFn(uuid),
+    threadId: text()
+      .notNull()
+      .references(() => groupChatThread.id, { onDelete: 'cascade' }),
+    groupChatId: text()
+      .notNull()
+      .references(() => groupChat.id, { onDelete: 'cascade' }),
+    agentNodeId: text().notNull(),
+    sessionKey: text(),
+    slug: text(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('GroupChatThreadAlias_sessionKey_key').on(t.sessionKey),
+    uniqueIndex('GroupChatThreadAlias_groupChatId_agentNodeId_slug_key').on(t.groupChatId, t.agentNodeId, t.slug),
+    index('GroupChatThreadAlias_threadId_idx').on(t.threadId),
+  ],
+)
+
 // A note an agent leaves on a thread after doing work, and revises on a later
 // iteration. Markdown, rendered the same way the conversation's own messages
 // are — an artifact is the agent still talking about work it just did.
@@ -456,13 +577,16 @@ export const schema = {
   setting,
   secret,
   space,
+  spaceSlugAlias,
   mcpAuditLog,
   apiToken,
   mcpCaller,
   groupChat,
   groupChatMember,
   groupChatPin,
+  groupChatSlugAlias,
   groupChatThread,
+  groupChatThreadAlias,
   groupChatThreadArtifact,
   usageRollupDay,
   ...authSchema,
@@ -471,6 +595,7 @@ export const schema = {
 export type Setting = typeof setting.$inferSelect
 export type Secret = typeof secret.$inferSelect
 export type Space = typeof space.$inferSelect
+export type SpaceSlugAlias = typeof spaceSlugAlias.$inferSelect
 export type McpAuditLog = typeof mcpAuditLog.$inferSelect
 export type ApiToken = typeof apiToken.$inferSelect
 export type McpCaller = typeof mcpCaller.$inferSelect
@@ -478,6 +603,8 @@ export type GroupChat = typeof groupChat.$inferSelect
 export type GroupChatPin = typeof groupChatPin.$inferSelect
 export type GroupChatMember = typeof groupChatMember.$inferSelect
 export type GroupChatThread = typeof groupChatThread.$inferSelect
+export type GroupChatSlugAlias = typeof groupChatSlugAlias.$inferSelect
+export type GroupChatThreadAlias = typeof groupChatThreadAlias.$inferSelect
 export type UsageRollupDay = typeof usageRollupDay.$inferSelect
 
 // Better Auth's tables, declared separately because their shape is the

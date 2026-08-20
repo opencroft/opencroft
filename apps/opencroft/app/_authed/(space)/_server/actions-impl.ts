@@ -31,7 +31,7 @@
 import { resolveGraphContexts } from '@/app/_authed/(extension-runtime)/_server/graph-context-resolver'
 import type { GraphSnapshot } from '@/app/_authed/(extension-runtime)/_server/host'
 import { slugify, uniqueSlug } from '@/app/_authed/(space)/_server/slug'
-import { getSpacesRegistry, type SpaceRuntime } from '@/app/_authed/(space)/_server/store'
+import { getSpacesRegistry, type SpaceRuntime, SpaceSlugTakenError } from '@/app/_authed/(space)/_server/store'
 import {
   DEFAULT_SPACE_SLUG,
   type GraphData,
@@ -110,13 +110,35 @@ export async function createSpaceImpl(name: string): Promise<SpaceSummary> {
   return toSummary(runtime)
 }
 
-export async function renameSpaceImpl(data: { slug: string; name: string }): Promise<SpaceSummary | null> {
+/**
+ * Renamed, or refused with a code.
+ *
+ * A REFUSAL IS RETURNED, NOT THROWN, for the reason the group-chat writes
+ * already document: a thrown error does not survive `createServerFn` intact --
+ * it crosses as `$TSR/Error` carrying `message` and nothing else, so a client
+ * branching on a code silently falls through to whatever its fallback is. As
+ * data, the code arrives whole and the wording stays a client-side concern.
+ *
+ * `not-found` replaces the bare `null` this used to answer with, so the two
+ * outcomes a caller must tell apart are two members of one type rather than a
+ * null and a throw.
+ */
+export type RenameSpaceResult = { ok: true; space: SpaceSummary } | { ok: false; code: 'not-found' | 'slug-taken' }
+
+export async function renameSpaceImpl(data: { slug: string; name: string }): Promise<RenameSpaceResult> {
   const r = await registry()
-  const runtime = await r.rename(data.slug, data.name.trim() || 'Space')
-  if (!runtime) {
-    return null
+  try {
+    const runtime = await r.rename(data.slug, data.name.trim() || 'Space')
+    return runtime ? { ok: true, space: toSummary(runtime) } : { ok: false, code: 'not-found' }
+  } catch (error) {
+    // `instanceof` is reliable here and only here: this runs in the process
+    // that threw, with the real class. It is the client that cannot use it,
+    // which is why the code goes onto the wire as data.
+    if (error instanceof SpaceSlugTakenError) {
+      return { ok: false, code: 'slug-taken' }
+    }
+    throw error
   }
-  return toSummary(runtime)
 }
 
 export async function deleteSpaceImpl(slug: string): Promise<boolean> {
@@ -175,10 +197,14 @@ export async function getActiveSpaceSlugImpl(): Promise<string> {
 
 export async function setActiveSpaceSlugImpl(slug: string): Promise<void> {
   const r = await registry()
-  if (!r.hasSlug(slug)) {
+  // Resolved rather than merely existence-checked, and stored canonically: a
+  // caller may hand over a slug a rename freed (an old URL, a stale tab), and
+  // the setting is compared by equality when it is read back.
+  const space = r.getBySlug(slug)
+  if (!space) {
     return
   }
-  await r.setActiveSlug(slug)
+  await r.setActiveSlug(space.slug)
 }
 
 export async function findSpaceByNodeImpl(nodeId: string): Promise<SpaceSummary | null> {

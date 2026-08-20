@@ -14,7 +14,7 @@ import { ScrollArea } from 'ui/scroll-area'
 
 import { AgentChatStatusIndicators, CHAT_RENDERERS, renderToolCall } from '@/app/_authed/(agent)/_components/agent-chat'
 import { AgentCommandBarHost } from '@/app/_authed/(agent)/_components/command-bar-host'
-import type { LocalSource, SendTransport } from '@/app/_authed/(agent)/_components/use-acp-session'
+import type { LocalSource, OpenTransport, SendTransport } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { buildBlocks } from '@/app/_authed/(agent)/_lib/build-blocks'
 import { wrapUserSelection } from '@/app/_authed/(agent)/_shared/message-envelope'
@@ -27,6 +27,7 @@ import {
   clearGroupChatThread,
   compactGroupChatThread,
   getGroupChatThreadCompactStatus,
+  openGroupChatThreadSession,
   sendGroupChatThreadMessage,
   setGroupChatThreadDraft,
 } from '@/app/_authed/(group-chats)/_server/actions'
@@ -134,7 +135,14 @@ export function GroupChatThreadChat({
       },
     [thread.id],
   )
-  const acp = useAcpSession(source, undefined, thread.agent.name, undefined, sendTransport)
+  // Opened by THREAD ID, not by the key this screen happens to be holding.
+  // `thread.sessionKey` was right when the loader ran, and a rename since then --
+  // by anyone, in any tab -- has retired it. Opening by a retired key does not
+  // fail: it creates a fresh, empty session under an address nothing else
+  // resolves, and the reader sees an empty chat where their conversation was.
+  // A thread's id never moves, so the server reads whatever key it has now.
+  const openTransport = useCallback<OpenTransport>(() => openGroupChatThreadSession({ data: thread.id }), [thread.id])
+  const acp = useAcpSession(source, undefined, thread.agent.name, undefined, sendTransport, openTransport)
 
   // Computed over the FULL message list, not the visible window: turn indices
   // (for edit/fork) must stay correct regardless of how much is rendered, and

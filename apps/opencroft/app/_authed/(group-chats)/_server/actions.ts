@@ -29,9 +29,11 @@ import {
   listMembers,
   listPins,
   listThreadsInGroupChat,
+  openThreadSession,
   removeMember,
   removePin,
   renameGroupChat,
+  renameThread,
   resolveGroupChatBySlug,
   sendMessageInThread,
   setGroupChatTopic,
@@ -158,6 +160,16 @@ export const renameMyGroupChat = createServerFn({ method: 'POST', strict: { outp
       asWriteResult(() => renameGroupChat(getRequest(), data.groupChatId, data.name)),
   )
 
+// Renaming a thread moves its slug, so it can be refused for a taken name the
+// same way creating one can -- which is why it returns a result rather than
+// throwing, like every other write whose refusal a person can act on.
+export const renameMyGroupChatThread = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { threadId: string; title: string }) => data)
+  .handler(
+    async ({ data }): Promise<GroupChatWriteResult> =>
+      asWriteResult(() => renameThread(getRequest(), data.threadId, data.title)),
+  )
+
 export const setMyGroupChatTopic = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { groupChatId: string; topic: string }) => data)
   .handler(
@@ -222,6 +234,20 @@ export const startGroupChatThread = createServerFn({ method: 'POST', strict: { o
  * `GroupChatWriteResult` above.
  */
 export type SendThreadMessageResult = GroupChatWriteResult
+
+/**
+ * Open this thread's session, addressed by thread id.
+ *
+ * Deliberately NOT the generic `ensureLocalSession`, which takes a tab key: a
+ * thread's key moves when the chat or the thread is renamed, and a screen loaded
+ * before that still holds the old one. Opening is the one call that can CREATE a
+ * session, so a stale key there does not error -- it produces an empty
+ * conversation under an address nothing resolves. The id is stable; the key is
+ * read from the row. See `openThreadSession`.
+ */
+export const openGroupChatThreadSession = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((threadId: string) => threadId)
+  .handler(async ({ data: threadId }) => openThreadSession(getRequest(), threadId))
 
 export const sendGroupChatThreadMessage = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { threadId: string; text: string; front?: boolean }) => data)

@@ -12,6 +12,7 @@ import { stopProcessLocal } from '@/app/_authed/(agent)/_server/acp'
 import { deriveSessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import {
   GroupChatRenameDialog,
+  GroupChatThreadRenameDialog,
   GroupChatTopicDialog,
 } from '@/app/_authed/(group-chats)/_components/group-chat-edit-dialogs'
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
@@ -76,6 +77,10 @@ function GroupChatDetailPage() {
   const [deleteError, setDeleteError] = useState<string>()
   const [renaming, setRenaming] = useState(false)
   const [editingTopic, setEditingTopic] = useState(false)
+  // Which thread's Rename was chosen. The kit's row reports the id and stops
+  // there -- renaming can be refused, so the dialog is where the new title is
+  // collected and where a refusal has somewhere to be shown.
+  const [renameThreadId, setRenameThreadId] = useState<string | null>(null)
 
   // Same shared poll and derivation the sidebar chat list uses (see
   // use-chat-list-nodes.ts's toLeaf) — one status vocabulary, one source,
@@ -116,6 +121,7 @@ function GroupChatDetailPage() {
     return <GroupChatRefusal code={data.code} />
   }
   const { chat, directory, agents, pins } = data
+  const threadBeingRenamed = threads.find((t: GroupChatThreadEntry) => t.id === renameThreadId)
 
   return (
     <ScrollPage>
@@ -183,6 +189,7 @@ function GroupChatDetailPage() {
                   console.error('Failed to stop thread process', threadId, err)
                 })
               }}
+              onRename={(threadId) => setRenameThreadId(threadId)}
               onDelete={(threadId) => {
                 setDeleteError(undefined)
                 setDeleteTarget(threadId)
@@ -206,6 +213,22 @@ function GroupChatDetailPage() {
       />
 
       <GroupChatRenameDialog open={renaming} onOpenChange={setRenaming} groupChatId={groupChatId} name={chat.name} />
+      {/* Keyed on the thread id so the dialog's draft is seeded from the row
+          actually chosen -- without it, opening Rename on a second thread would
+          reuse the first one's mounted state and offer the wrong title. */}
+      {threadBeingRenamed ? (
+        <GroupChatThreadRenameDialog
+          key={threadBeingRenamed.id}
+          open
+          onOpenChange={(next) => {
+            if (!next) {
+              setRenameThreadId(null)
+            }
+          }}
+          threadId={threadBeingRenamed.id}
+          title={threadBeingRenamed.title ?? ''}
+        />
+      ) : null}
       <GroupChatTopicDialog
         open={editingTopic}
         onOpenChange={setEditingTopic}

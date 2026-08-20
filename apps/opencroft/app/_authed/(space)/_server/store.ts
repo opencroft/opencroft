@@ -1,6 +1,7 @@
-import { db, space } from '@opencroft/db'
-import { and, asc, eq } from 'drizzle-orm'
+import { db, space, spaceSlugAlias } from '@opencroft/db'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 
+import { slugify } from '@/app/_authed/(space)/_server/slug'
 import {
   ACTIVE_SPACE_SETTING_ID,
   DEFAULT_SPACE_NAME,
@@ -23,6 +24,22 @@ interface SpaceRuntime {
 
 const EMPTY_GRAPH: GraphData = { nodes: [], edges: [] }
 
+// Thrown by `rename` when the name given slugifies onto an address another
+// space already holds.
+//
+// A REFUSAL, NOT A SUFFIX, and the distinction is the point of this whole
+// change: creation asks for *a* space and takes the address it is given, so
+// `createSpaceImpl` appends `-2` quite correctly. A rename asks for *that*
+// address. Quietly handing back `thing-2` leaves a working system pointing
+// somewhere nobody named, with nothing to read that says so -- the same failure
+// every other rule here exists to remove.
+export class SpaceSlugTakenError extends Error {
+  constructor(readonly slug: string) {
+    super(`Another space already answers to "${slug}"`)
+    this.name = 'SpaceSlugTakenError'
+  }
+}
+
 // Thrown by `saveGraph` when `expectedUpdatedAt` no longer matches the
 // stored row — another writer (a different browser tab, or an MCP tool
 // call) persisted a newer graph in between this caller's load and save.
@@ -44,6 +61,11 @@ function parseGraph(data: string): GraphData {
 class SpacesRegistry {
   private spaces = new Map<string, SpaceRuntime>()
   private bySlug = new Map<string, string>()
+  // Slugs a rename freed -> the space that answers to them now. Kept beside
+  // `bySlug` rather than merged into it because the two are not equals: a live
+  // slug always wins, and `list()` and every availability check must see only
+  // the live ones.
+  private aliasBySlug = new Map<string, string>()
   private loaded = false
   private loadPromise: Promise<void> | null = null
 
@@ -73,6 +95,9 @@ class SpacesRegistry {
       this.spaces.set(row.id, runtime)
       this.bySlug.set(row.slug, row.id)
     }
+    for (const alias of await db.query.spaceSlugAlias.findMany()) {
+      this.aliasBySlug.set(alias.slug, alias.spaceId)
+    }
     if (this.spaces.size === 0) {
       await this.createInternal(DEFAULT_SPACE_NAME, DEFAULT_SPACE_SLUG, EMPTY_GRAPH)
     }
@@ -97,6 +122,8 @@ class SpacesRegistry {
   }
 
   private async createInternal(name: string, slug: string, graph: GraphData): Promise<SpaceRuntime> {
+    // A live space outranks an alias, so taking this slug takes it outright.
+    await this.dropAliases([slug])
     const [row] = await db
       .insert(space)
       .values({ name, slug, data: JSON.stringify(graph) })
@@ -128,16 +155,35 @@ class SpacesRegistry {
       }))
   }
 
-  hasSlug(slug: string): boolean {
-    return this.bySlug.has(slug)
-  }
-
+  /**
+   * A space by slug, live first and then by a slug a rename freed.
+   *
+   * Every caller gets the alias fallback, which is the point: a bookmarked
+   * canvas URL, the stored active-space slug and an extension configured with a
+   * space name are all addresses written down outside this process, and nothing
+   * rewrites them when someone renames a space.
+   *
+   * Live first is load-bearing -- if another space has since taken the freed
+   * slug, the space holding it now is the answer. Creating and renaming both
+   * delete the alias on a slug they bind, so the two should never both match.
+   */
   getBySlug(slug: string): SpaceRuntime | null {
-    const id = this.bySlug.get(slug)
+    const id = this.bySlug.get(slug) ?? this.aliasBySlug.get(slug)
     if (!id) {
       return null
     }
     return this.spaces.get(id) ?? null
+  }
+
+  private async dropAliases(slugs: string[]): Promise<void> {
+    const present = slugs.filter((s) => this.aliasBySlug.has(s))
+    if (present.length === 0) {
+      return
+    }
+    await db.delete(spaceSlugAlias).where(inArray(spaceSlugAlias.slug, present))
+    for (const s of present) {
+      this.aliasBySlug.delete(s)
+    }
   }
 
   getById(id: string): SpaceRuntime | null {
@@ -169,26 +215,97 @@ class SpacesRegistry {
     return runtime
   }
 
+  /**
+   * Rename a space: the name people read AND the slug everything addresses it
+   * by. Resolves through an alias like every other lookup, so renaming twice in
+   * a row works from either address.
+   *
+   * THE SLUG MOVES BECAUSE IT IS AN ADDRESS. It is in canvas URLs, in the
+   * stored active-space setting, and in whatever an extension was configured
+   * with -- a space still answering to a name it no longer has is the same
+   * defect a renamed group chat had.
+   *
+   * A CLASH IS REFUSED and nothing changes -- not even the display name. See
+   * `SpaceSlugTakenError` for why a rename is not a creation. A name with
+   * nothing to build an address from still lands on `slugify`'s own fallback,
+   * `space`, which is refused in turn if another space holds it.
+   *
+   * An ALIAS never counts as taken. Only live spaces do, which is what makes an
+   * address handed over between two spaces possible at all: the first rename
+   * frees it, the second claims it and drops the alias.
+   *
+   * The old slug keeps resolving, and the active-space setting is moved with
+   * it: that setting is read back through a plain equality check, so a rename
+   * that left it pointing at the old slug would silently drop the reader onto a
+   * different space on their next load.
+   */
   async rename(slug: string, name: string): Promise<SpaceRuntime | null> {
-    const id = this.bySlug.get(slug)
+    const id = this.bySlug.get(slug) ?? this.aliasBySlug.get(slug)
     if (!id) {
       return null
     }
-    const runtime = this.spaces.get(id)!
-    const [row] = await db.update(space).set({ name }).where(eq(space.id, id)).returning()
+    const runtime = this.spaces.get(id)
+    if (!runtime) {
+      return null
+    }
+    const previousSlug = runtime.slug
+    // `nextSlug !== previousSlug` first: a space renamed to a name that
+    // slugifies to the address it already answers to is a display change, and
+    // testing the map alone would have it refuse against itself.
+    const nextSlug = slugify(name)
+    if (nextSlug !== previousSlug && this.bySlug.has(nextSlug)) {
+      throw new SpaceSlugTakenError(nextSlug)
+    }
+    if (nextSlug === previousSlug) {
+      // Display change only: no address moved, so there is nothing to free and
+      // nothing to alias.
+      const [row] = await db.update(space).set({ name }).where(eq(space.id, id)).returning()
+      runtime.name = row.name
+      runtime.updatedAt = row.updatedAt
+      return runtime
+    }
+    // ONE TRANSACTION over the three writes, because each is only correct with
+    // the others: the row's new address, the alias on it dropped so a live
+    // binding is never outranked, and the freed address recorded. A failure
+    // between them leaves either an address resolving nowhere or one with two
+    // answers.
+    const row = await db.transaction(async (tx) => {
+      const [updated] = await tx.update(space).set({ name, slug: nextSlug }).where(eq(space.id, id)).returning()
+      await tx.delete(spaceSlugAlias).where(inArray(spaceSlugAlias.slug, [nextSlug, previousSlug]))
+      await tx.insert(spaceSlugAlias).values({ slug: previousSlug, spaceId: id })
+      return updated
+    })
     runtime.name = row.name
+    runtime.slug = row.slug
     runtime.updatedAt = row.updatedAt
+    // In-memory only after the commit -- these mirror the rows, so publishing
+    // them before the write is durable would answer with a state a rollback
+    // could take back.
+    this.bySlug.delete(previousSlug)
+    this.bySlug.set(row.slug, id)
+    this.aliasBySlug.delete(nextSlug)
+    this.aliasBySlug.set(previousSlug, id)
+    if ((await this.readActiveSlug()) === previousSlug) {
+      await this.setActiveSlug(row.slug)
+    }
     return runtime
   }
 
   async remove(slug: string): Promise<boolean> {
-    const id = this.bySlug.get(slug)
+    const id = this.bySlug.get(slug) ?? this.aliasBySlug.get(slug)
     if (!id) {
       return false
     }
+    const runtime = this.spaces.get(id)
     await db.delete(space).where(eq(space.id, id))
     this.spaces.delete(id)
-    this.bySlug.delete(slug)
+    this.bySlug.delete(runtime?.slug ?? slug)
+    // The rows cascade with the space; this drops the in-memory mirror of them.
+    for (const [aliasSlug, aliasId] of this.aliasBySlug) {
+      if (aliasId === id) {
+        this.aliasBySlug.delete(aliasSlug)
+      }
+    }
     return true
   }
 
@@ -214,7 +331,11 @@ class SpacesRegistry {
     const condition = expectedUpdatedAt
       ? and(eq(space.id, id), eq(space.updatedAt, new Date(expectedUpdatedAt)))
       : eq(space.id, id)
-    const [row] = await db.update(space).set({ data: JSON.stringify(graph) }).where(condition).returning()
+    const [row] = await db
+      .update(space)
+      .set({ data: JSON.stringify(graph) })
+      .where(condition)
+      .returning()
     if (!row) {
       throw new GraphConflictError(slug)
     }
@@ -227,16 +348,23 @@ class SpacesRegistry {
     await upsertSetting(ACTIVE_SPACE_SETTING_ID, JSON.stringify({ slug }))
   }
 
-  async getActiveSlug(): Promise<string | null> {
+  /** The stored value, whether or not it still names a live space. */
+  private async readActiveSlug(): Promise<string | null> {
     const row = await getSetting(ACTIVE_SPACE_SETTING_ID)
     if (!row) {
       return null
     }
     const { slug } = JSON.parse(row.data) as { slug?: string }
-    if (!slug || !this.bySlug.has(slug)) {
-      return null
-    }
-    return slug
+    return slug ?? null
+  }
+
+  // Answers with the space's CURRENT slug, resolving a stored value through an
+  // alias first: the setting is written once and read on every load, so a value
+  // left over from before a rename must land on the space it named rather than
+  // silently falling back to whichever space happens to be first.
+  async getActiveSlug(): Promise<string | null> {
+    const slug = await this.readActiveSlug()
+    return slug ? (this.getBySlug(slug)?.slug ?? null) : null
   }
 }
 

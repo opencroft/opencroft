@@ -49,6 +49,39 @@ export type SendTransport = (args: { sessionId: string; text: string; front?: bo
 const promptLocalTransport: SendTransport = ({ sessionId, text, front }) =>
   promptLocal({ data: { sessionId, text, front } })
 
+/**
+ * How this tab's live session is opened.
+ *
+ * Exists for a host whose tab key is DERIVED from something renameable, which
+ * means the key this hook is holding can go stale while the tab is open. Opening
+ * by that key is the one call that can create a session, so a stale one does not
+ * fail -- it mints a fresh, empty conversation under an address nothing else
+ * resolves, and the reader sees an empty chat where their history was.
+ *
+ * The fix is not to resolve the stale key. It is to stop addressing a session by
+ * a mutable value: a host that has a STABLE id for the thing the session belongs
+ * to passes a transport that sends that id instead, and the server reads
+ * whatever key the thing currently has. Group chats do exactly that -- a thread's
+ * id never moves, its session key does.
+ *
+ * OMITTING IT MUST CHANGE NOTHING. Every existing caller passes no transport and
+ * therefore runs the `ensureLocalSession` path below, unchanged.
+ */
+export type OpenTransport = (source: LocalSource) => Promise<OpenedSessionResult>
+
+/** What opening a session answers with, whichever transport did it. */
+export interface OpenedSessionResult {
+  sessionId: string
+  canFork: boolean
+  canSteer: boolean
+  adapterId: string
+  created: boolean
+  contextUsage: { usedTokens: number; contextLimit: number | null; asOf?: number } | null
+}
+
+// The default: exactly the call this hook has always made.
+const ensureLocalSessionTransport: OpenTransport = (source) => ensureLocalSession({ data: source })
+
 export interface PendingPermission {
   requestId: string
   title: string
@@ -260,8 +293,18 @@ export function useAcpSession(
   onTitle?: (title: string) => void,
   // Optional on purpose — see SendTransport. No argument, no behaviour change.
   sendTransport?: SendTransport,
+  // Optional on purpose — see OpenTransport. No argument, no behaviour change.
+  openTransport?: OpenTransport,
 ): AcpSession {
   const { agentNodeId, jobNodeId, tabKey } = source
+  // Held in a ref and called through it, so a caller that rebuilds the function
+  // each render cannot make the resolve-session effect re-run and reopen the
+  // session in a loop -- the same guard the send transport's own callers rely on
+  // by memoising, made unnecessary here because opening is not idempotent from
+  // the reader's point of view.
+  const openRef = useRef<OpenTransport>(openTransport ?? ensureLocalSessionTransport)
+  openRef.current = openTransport ?? ensureLocalSessionTransport
+  const open = useCallback((source: LocalSource) => openRef.current(source), [])
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [events, setEvents] = useState<ChatEvent[]>([])
   const [loading, setLoading] = useState(true)
@@ -380,7 +423,7 @@ export function useAcpSession(
     setSeedUsage(undefined)
     deliveredOnceRef.current = false
     sendChainRef.current = Promise.resolve()
-    ensureLocalSession({ data: { agentNodeId, jobNodeId, tabKey } })
+    open({ agentNodeId, jobNodeId, tabKey })
       .then((result) => {
         if (!cancelled) {
           setSessionId(result.sessionId)
@@ -400,7 +443,7 @@ export function useAcpSession(
         }
       })
       .catch((error) => {
-        console.error('ensureLocalSession failed', error)
+        console.error('opening the session failed', error)
         if (!cancelled) {
           setLoading(false)
         }
@@ -408,7 +451,7 @@ export function useAcpSession(
     return () => {
       cancelled = true
     }
-  }, [agentNodeId, jobNodeId, tabKey, generation])
+  }, [agentNodeId, jobNodeId, tabKey, generation, open])
 
   // Stream events once the session id is known.
   useEffect(() => {
