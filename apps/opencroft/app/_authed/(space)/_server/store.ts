@@ -256,17 +256,34 @@ class SpacesRegistry {
     if (nextSlug !== previousSlug && this.bySlug.has(nextSlug)) {
       throw new SpaceSlugTakenError(nextSlug)
     }
-    const [row] = await db.update(space).set({ name, slug: nextSlug }).where(eq(space.id, id)).returning()
+    if (nextSlug === previousSlug) {
+      // Display change only: no address moved, so there is nothing to free and
+      // nothing to alias.
+      const [row] = await db.update(space).set({ name }).where(eq(space.id, id)).returning()
+      runtime.name = row.name
+      runtime.updatedAt = row.updatedAt
+      return runtime
+    }
+    // ONE TRANSACTION over the three writes, because each is only correct with
+    // the others: the row's new address, the alias on it dropped so a live
+    // binding is never outranked, and the freed address recorded. A failure
+    // between them leaves either an address resolving nowhere or one with two
+    // answers.
+    const row = await db.transaction(async (tx) => {
+      const [updated] = await tx.update(space).set({ name, slug: nextSlug }).where(eq(space.id, id)).returning()
+      await tx.delete(spaceSlugAlias).where(inArray(spaceSlugAlias.slug, [nextSlug, previousSlug]))
+      await tx.insert(spaceSlugAlias).values({ slug: previousSlug, spaceId: id })
+      return updated
+    })
     runtime.name = row.name
     runtime.slug = row.slug
     runtime.updatedAt = row.updatedAt
-    if (row.slug === previousSlug) {
-      return runtime
-    }
+    // In-memory only after the commit -- these mirror the rows, so publishing
+    // them before the write is durable would answer with a state a rollback
+    // could take back.
     this.bySlug.delete(previousSlug)
     this.bySlug.set(row.slug, id)
-    await this.dropAliases([row.slug, previousSlug])
-    await db.insert(spaceSlugAlias).values({ slug: previousSlug, spaceId: id })
+    this.aliasBySlug.delete(nextSlug)
     this.aliasBySlug.set(previousSlug, id)
     if ((await this.readActiveSlug()) === previousSlug) {
       await this.setActiveSlug(row.slug)

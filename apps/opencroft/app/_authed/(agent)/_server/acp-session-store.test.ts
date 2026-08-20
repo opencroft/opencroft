@@ -6,7 +6,16 @@ import '@opencroft/db/test-env'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { readLastKnownUsage, writePersistedSession, writePersistedUsage } from './acp-session-store'
+import {
+  copyTabKeys,
+  dropTabKeys,
+  readLastKnownUsage,
+  readPersistedConfigOptions,
+  readPersistedSession,
+  writePersistedConfigOption,
+  writePersistedSession,
+  writePersistedUsage,
+} from './acp-session-store'
 
 test('readLastKnownUsage resolves through the durable pointer to the usage its session left behind', async () => {
   const sessionKey = `offline-usage-${crypto.randomUUID()}`
@@ -32,4 +41,70 @@ test("readLastKnownUsage is null when the pointer's session never reported usage
 
   const usage = await readLastKnownUsage(sessionKey)
   assert.equal(usage, null, 'a pointer with nothing persisted under its session id is exactly as unknown as no pointer')
+})
+
+// MOVING A TAB KEY. `copyTabKeys` runs TWICE -- once before the rename that
+// makes the destination the live address, once after, so a write that landed
+// under the old key in between is not lost. That second pass is why neither row
+// can take the incoming value wholesale: by then the destination may hold the
+// fresher reading of the two.
+
+test('copyTabKeys carries the pointer and the options onto the new key, leaving the old one alone', async () => {
+  const from = `move-src-${crypto.randomUUID()}`
+  const to = `move-dst-${crypto.randomUUID()}`
+  const sessionId = `session-${crypto.randomUUID()}`
+  await writePersistedSession(from, sessionId, true)
+  await writePersistedConfigOption(from, 'thought_level', 'high')
+
+  await copyTabKeys([{ from, to }])
+
+  assert.equal((await readPersistedSession(to))?.id, sessionId)
+  assert.deepEqual(await readPersistedConfigOptions(to), { thought_level: 'high' })
+  assert.equal((await readPersistedSession(from))?.id, sessionId, 'the old key still resolves until it is dropped')
+
+  await dropTabKeys([{ from, to }])
+  assert.equal(await readPersistedSession(from), null)
+  assert.deepEqual(await readPersistedConfigOptions(from), {})
+  assert.equal((await readPersistedSession(to))?.id, sessionId, 'dropping the old key must not disturb the new one')
+})
+
+test('a second copy never undoes what landed under the destination in between', async () => {
+  const from = `merge-src-${crypto.randomUUID()}`
+  const to = `merge-dst-${crypto.randomUUID()}`
+  const sessionId = `session-${crypto.randomUUID()}`
+  // The state at staging time: never prompted, one option set.
+  await writePersistedSession(from, sessionId, false)
+  await writePersistedConfigOption(from, 'thought_level', 'low')
+  await copyTabKeys([{ from, to }])
+
+  // Past the commit the destination is the live address, so these are what a
+  // real first message and a reader's own change look like landing on it.
+  await writePersistedSession(to, sessionId, true)
+  await writePersistedConfigOption(to, 'thought_level', 'high')
+
+  // The re-copy before the old key is retired.
+  await copyTabKeys([{ from, to }])
+
+  assert.equal(
+    (await readPersistedSession(to))?.prompted,
+    true,
+    'prompted only ever moves false -> true; reverting it re-injects opening context the agent already has',
+  )
+  assert.deepEqual(
+    await readPersistedConfigOptions(to),
+    { thought_level: 'high' },
+    "the destination is live, so a reader's setting there wins over the value staged before the rename",
+  )
+})
+
+test('an option held only by the old key is still carried across by the second copy', async () => {
+  const from = `merge-fill-src-${crypto.randomUUID()}`
+  const to = `merge-fill-dst-${crypto.randomUUID()}`
+  await writePersistedConfigOption(from, 'thought_level', 'low')
+  await copyTabKeys([{ from, to }])
+  await writePersistedConfigOption(from, 'model', 'something-else')
+
+  await copyTabKeys([{ from, to }])
+
+  assert.deepEqual(await readPersistedConfigOptions(to), { thought_level: 'low', model: 'something-else' })
 })

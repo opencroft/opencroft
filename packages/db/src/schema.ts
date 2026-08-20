@@ -280,12 +280,17 @@ export const groupChat = pgTable(
   {
     id: text().primaryKey().notNull().$defaultFn(uuid),
     // The readable half of every session key this chat's threads are opened
-    // under, derived from `name` when the chat is created.
+    // under, derived from `name` when the chat is created and MOVED when the
+    // chat is renamed.
     //
-    // IMMUTABLE once set, and that is the point rather than a limitation: the
-    // slug is embedded in session keys, and a key that changes is a key that
-    // stops finding the session it named. Renaming a chat changes `name`, which
-    // is what people read, and leaves this alone.
+    // It moves because it is an ADDRESS rather than a label — extension
+    // surfaces and agents both reach a chat by it, so a slug left behind meant a
+    // chat answering to something it was no longer called. It was immutable for
+    // the opposite reason, that a key which changes stops finding its session;
+    // renaming now migrates every key derived from it, and records the freed
+    // slug in `GroupChatSlugAlias` so references already written down still land
+    // here. The model module holds the ordering that makes a half-finished move
+    // harmless.
     slug: text().notNull(),
     name: text().notNull(),
     topic: text().notNull(),
@@ -374,9 +379,16 @@ export const groupChatPin = pgTable(
 
 // A thread: one agent, fixed at creation, bound to the same kind of ACP
 // session a 1:1 agent chat uses. `sessionKey` is that session's tabKey —
-// globally unique the same way the existing chat registry's session keys
-// are, and namespaced (`group-chat:<groupChatId>:<agentNodeId>:<id>`, minted
-// in the model module) so it can never collide with a 1:1 chat's key.
+// globally unique the same way the existing chat registry's session keys are,
+// and namespaced (`group-chat:<chat-slug>:<agent-slug>:<thread-slug>`, minted
+// in the model module) so it can never collide with a 1:1 chat's key. Threads
+// created before slugs existed carry ids in those three positions instead and
+// keep working: nothing derives them, so no rename can stale them.
+//
+// THE KEY MOVES when the chat or the thread is renamed, since two of its
+// segments are slugs that move. That is a migration rather than an update —
+// everything filed under the key travels with it — and the model module is
+// where the ordering that makes it safe is written down.
 //
 // No message content lives here either — the ACP session (agentClient's own
 // history, resumable via session/load) is still the one place a

@@ -105,6 +105,20 @@ await db.insert(space).values({
         type: 'agent',
         data: { name: 'Agent Session Two', providerId: 'test-provider', adapterId: 'openclaw', model: 'test-model' },
       },
+      // TWO NODES, ONE NAME. Nothing makes agent node names unique, and a
+      // session key's agent segment is `slugify(name)` -- so these two mint the
+      // same segment, which is what lets a rename pass a check scoped to
+      // (chat, agent, slug) and still target a key another thread holds.
+      {
+        id: 'agent-twin-a',
+        type: 'agent',
+        data: { name: 'Twin Agent', providerId: 'test-provider', adapterId: 'openclaw', model: 'test-model' },
+      },
+      {
+        id: 'agent-twin-b',
+        type: 'agent',
+        data: { name: 'Twin Agent', providerId: 'test-provider', adapterId: 'openclaw', model: 'test-model' },
+      },
       // Wired into `agent-a` below. A thread's standing context has to carry
       // the agent's OWN instruction nodes, not just the chat's topic and
       // pins — that is the whole point of the edge existing.
@@ -2825,4 +2839,86 @@ test('a chat can hand a slug to another chat: the alias neither blocks the renam
 
   // The chat that gave it up is unharmed and still reachable by its own address.
   assert.equal((await model.getGroupChat(reqAs(owner), holder.id)).slug, 'moved-away')
+})
+
+// REGRESSION. The scoped slug check and the global `sessionKey` unique index are
+// not the same guarantee, and the gap between them is reachable: two agent nodes
+// sharing a name mint the same agent segment, so a rename can pass the scoped
+// check and still target a key another thread holds.
+//
+// What made it worse than a failed write is the ORDER. Staging copies the
+// durable session pointer onto the destination key before the transaction runs,
+// so a rename that then lost at the unique index left the victim thread
+// resolving to the renamer's ACP session -- every gate passed, nothing logged,
+// and no rollback that reaches the settings store. The guard therefore has to
+// run before staging, which is what this pins.
+test('a rename that would collide on the session key is refused before anything is staged', async () => {
+  const owner = await makeUser('key-collision-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Twin Agents')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-twin-a' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-twin-b' })
+  const prompts: string[] = []
+  seedMockConnection(prompts, 'Twin Agent')
+
+  const victim = await model.startThread(reqAs(owner), chat.id, 'agent-twin-a', 'first', { title: 'Alpha' })
+  await waitForPrompts(prompts, 1)
+  const mover = await model.startThread(reqAs(owner), chat.id, 'agent-twin-b', 'second', { title: 'Beta' })
+  await waitForPrompts(prompts, 2)
+
+  // The two share an agent segment, so the mover's target IS the victim's key.
+  assert.equal(victim.thread.sessionKey, 'group-chat:twin-agents:twin-agent:alpha')
+  assert.equal(mover.thread.sessionKey, 'group-chat:twin-agents:twin-agent:beta')
+
+  const refusal = await captureRefusal(() => model.renameThread(reqAs(owner), mover.thread.id, 'Alpha'))
+  assert.equal(refusal.code, 'slug-taken')
+
+  // THE ASSERTION THAT MATTERS. A refusal after staging would leave this
+  // pointing at the mover's session, and every other check here would still
+  // pass -- the thread reads fine, its row is untouched, and only the
+  // conversation behind it has changed.
+  assert.equal(
+    (await sessionStore.readPersistedSession(victim.thread.sessionKey))?.id,
+    victim.sessionId,
+    'the untouched thread must still resolve to its OWN session',
+  )
+  assert.equal((await model.getThread(reqAs(owner), victim.thread.id)).sessionKey, victim.thread.sessionKey)
+
+  // And the refused rename moved nothing of its own.
+  const moverAfter = await model.getThread(reqAs(owner), mover.thread.id)
+  assert.equal(moverAfter.title, 'Beta')
+  assert.equal(moverAfter.sessionKey, mover.thread.sessionKey)
+  assert.equal((await sessionStore.readPersistedSession(mover.thread.sessionKey))?.id, mover.sessionId)
+})
+
+// REGRESSION. A session key can be captured in a closure and resolved a whole
+// turn later -- `requestCompactOnGraph` does exactly that -- so a rename
+// committing in between hands these two functions an address that has just been
+// retired. Without the alias fallback the compaction drops the history and then
+// silently does NOT restore the topic, pins and instructions that were the
+// reason for compacting.
+test('a retired session key still resolves standing context and still wakes the right session', async () => {
+  const owner = await makeUser('retired-key-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Retired Key Chat', 'the standing purpose')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Ongoing' })
+  await waitForPrompts(prompts, 1)
+  const retiredKey = started.thread.sessionKey
+
+  await model.renameGroupChat(reqAs(owner), chat.id, 'Renamed Mid Compaction')
+
+  const standing = await model.groupChatStandingContext(retiredKey)
+  assert.ok(standing, 'a retired key must still resolve, or the restore after a compaction is skipped')
+  assert.match(standing.jobContext, /the standing purpose/)
+
+  // Waking must open the thread's CURRENT key, not the one asked with --
+  // otherwise the wake itself creates the second session.
+  const woken = await model.groupChatWakeSession(retiredKey)
+  assert.equal(woken?.sessionId, started.sessionId, 'the same live session, reached through the freed address')
+  assert.equal(agentClient.aliveSessionKeys().includes(retiredKey), false, 'nothing was opened under the retired key')
+
+  // A key that never named a thread is still null, not a wrong answer.
+  assert.equal(await model.groupChatStandingContext('group-chat:nothing:nobody:nowhere'), null)
+  assert.equal(await model.groupChatWakeSession('group-chat:nothing:nobody:nowhere'), null)
 })

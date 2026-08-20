@@ -190,6 +190,23 @@ function movedEntries<T>(
  * next open that a session which has been spoken to never was, and it would
  * re-attach opening context the agent already has.
  */
+/**
+ * The same rule the pointer gets, for the options: a copy must not undo a write
+ * that landed under the destination key.
+ *
+ * `copyTabKeys` runs twice, and after the rename commits the destination is the
+ * LIVE address -- so an option set in that window belongs to the destination and
+ * wins, while anything the source holds and the destination does not is still
+ * carried across. Overwriting wholesale on the second pass would silently
+ * revert a reader's setting to whatever it was before the rename.
+ */
+function keepDestinationOptions(
+  incoming: Record<string, string | boolean>,
+  existing: Record<string, string | boolean> | undefined,
+): Record<string, string | boolean> {
+  return existing ? { ...incoming, ...existing } : incoming
+}
+
 function keepPrompted(incoming: StoredValue, existing: StoredValue | undefined): StoredValue {
   const from = normalize(incoming)
   const to = normalize(existing)
@@ -231,7 +248,7 @@ export async function copyTabKeys(moves: readonly TabKeyMove[]): Promise<void> {
   }
   await withSettingLock(CONFIG_OPTIONS_SETTING_ID, () =>
     mutateSettingData(CONFIG_OPTIONS_SETTING_ID, (raw) => {
-      const next = movedEntries(configOptionsStoreFromRaw(raw), moves)
+      const next = movedEntries(configOptionsStoreFromRaw(raw), moves, keepDestinationOptions)
       return next ? { options: next } : raw
     }),
   )

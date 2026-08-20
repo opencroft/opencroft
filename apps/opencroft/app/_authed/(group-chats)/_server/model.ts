@@ -552,6 +552,10 @@ export async function renameGroupChat(request: Request, groupChatId: string, nam
     ]
   })
 
+  await requireSessionKeysFree(
+    moves.map((move) => move.to),
+    moves.map((move) => move.threadId),
+  )
   await stageSessionKeyMoves(moves)
   await db.transaction(async (tx) => {
     await tx.delete(groupChatSlugAlias).where(inArray(groupChatSlugAlias.slug, [chat.slug, nextSlug]))
@@ -994,11 +998,48 @@ async function standingContextForThread(groupChatId: string, agentNodeId: string
  *
  * This is the shape the session layer asks for by session key.
  */
+/**
+ * THE ONE PLACE a session key is turned into a thread. Live first, then an
+ * address a rename freed -- the rule every lookup here obeys, written once so a
+ * caller cannot accidentally get the live half of it and not the other.
+ *
+ * Every site that resolves a key needs the alias half, not just the ones a
+ * person reaches. A key can be captured in a closure and resolved a whole turn
+ * later (see `requestCompactOnGraph`), by which time a rename may have retired
+ * it; a lookup without the fallback finds nothing and its caller carries on
+ * with whatever "not a group-chat thread" means to it -- which, for the
+ * compaction path, is dropping the history and then not restoring the topic,
+ * pins and instructions that were the point of compacting.
+ *
+ * The alias row carries `threadId` directly, so this is one indexed read per
+ * half and no join.
+ */
+async function threadIdForSessionKey(sessionKey: string): Promise<string | null> {
+  const [live] = await db
+    .select({ id: groupChatThread.id })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.sessionKey, sessionKey))
+    .limit(1)
+  if (live) {
+    return live.id
+  }
+  const [aliased] = await db
+    .select({ threadId: groupChatThreadAlias.threadId })
+    .from(groupChatThreadAlias)
+    .where(eq(groupChatThreadAlias.sessionKey, sessionKey))
+    .limit(1)
+  return aliased?.threadId ?? null
+}
+
 export async function groupChatStandingContext(sessionKey: string): Promise<StandingContext | null> {
+  const threadId = await threadIdForSessionKey(sessionKey)
+  if (!threadId) {
+    return null
+  }
   const [row] = await db
     .select({ groupChatId: groupChatThread.groupChatId, agentNodeId: groupChatThread.agentNodeId })
     .from(groupChatThread)
-    .where(eq(groupChatThread.sessionKey, sessionKey))
+    .where(eq(groupChatThread.id, threadId))
     .limit(1)
   return row ? standingContextForThread(row.groupChatId, row.agentNodeId) : null
 }
@@ -1015,18 +1056,25 @@ export async function groupChatStandingContext(sessionKey: string): Promise<Stan
  * session pointer, so this resumes it rather than creating a fresh one.
  */
 export async function groupChatWakeSession(sessionKey: string): Promise<{ sessionId: string } | null> {
+  const threadId = await threadIdForSessionKey(sessionKey)
+  if (!threadId) {
+    return null
+  }
   const [row] = await db
-    .select({ agentNodeId: groupChatThread.agentNodeId })
+    .select({ agentNodeId: groupChatThread.agentNodeId, sessionKey: groupChatThread.sessionKey })
     .from(groupChatThread)
-    .where(eq(groupChatThread.sessionKey, sessionKey))
+    .where(eq(groupChatThread.id, threadId))
     .limit(1)
   if (!row) {
     return null
   }
-  const opened = await resolveOrCreateSession(sessionKey, {
+  // The thread's CURRENT key, not the one asked with. Reached through an alias,
+  // those differ -- and opening under a retired address would create exactly the
+  // second session this whole change exists to prevent.
+  const opened = await resolveOrCreateSession(row.sessionKey, {
     agentNodeId: row.agentNodeId,
     jobNodeId: '',
-    tabKey: sessionKey,
+    tabKey: row.sessionKey,
   })
   return { sessionId: opened.sessionId }
 }
@@ -1099,6 +1147,37 @@ function threadSlugFromTitle(title: string): string {
     )
   }
   return candidate
+}
+
+/**
+ * Refuse if any key about to be written is already some other thread's.
+ *
+ * THE SCOPED SLUG CHECKS ARE NOT THIS CHECK. `(chat, agent, slug)` is scoped;
+ * `GroupChatThread_sessionKey_key` is global, and the two can disagree: a key's
+ * agent segment is `slugify(agent node name)`, and nothing makes node names
+ * unique, so two agent nodes sharing a name mint the same segment and a rename
+ * whose scoped check passed can still target a key another thread holds.
+ *
+ * IT HAS TO RUN BEFORE STAGING, not merely before the write. Staging copies the
+ * durable session pointer and the config options onto the destination key
+ * unconditionally; if the transaction then loses at the unique index and rolls
+ * back, nothing undoes that copy, and the thread that held the key is left
+ * resolving to somebody else's ACP session with every gate passed and nothing
+ * logged. The transaction protects the rows, not the settings store, so this is
+ * what keeps the staging step's "the destination is unoccupied" premise true.
+ */
+async function requireSessionKeysFree(keys: string[], exceptThreadIds: string[]): Promise<void> {
+  if (keys.length === 0) {
+    return
+  }
+  const rows = await db
+    .select({ id: groupChatThread.id, sessionKey: groupChatThread.sessionKey })
+    .from(groupChatThread)
+    .where(inArray(groupChatThread.sessionKey, keys))
+  const clash = rows.find((row) => !exceptThreadIds.includes(row.id))
+  if (clash) {
+    throw new GroupChatAccessError('slug-taken', `Another thread already answers to "${clash.sessionKey}"`)
+  }
 }
 
 export interface StartThreadResult {
@@ -1177,18 +1256,22 @@ export async function startThread(
   // and a real binding takes it outright. Leaving both would give one address
   // two answers -- the one wrong-recipient failure a membership gate cannot
   // catch, since a sender able to write the address is a member of both.
-  await db
-    .delete(groupChatThreadAlias)
-    .where(
-      and(
-        eq(groupChatThreadAlias.groupChatId, groupChatId),
-        eq(groupChatThreadAlias.agentNodeId, agentNodeId),
-        eq(groupChatThreadAlias.slug, threadSlug),
-      ),
-    )
-  await db.delete(groupChatThreadAlias).where(eq(groupChatThreadAlias.sessionKey, sessionKey))
-  const [thread] = await db
-    .insert(groupChatThread)
+  //
+  // Evicting and binding in ONE transaction, because the eviction is only
+  // justified by the binding that replaces it: a failed insert -- the unique
+  // index on `sessionKey` is one way to lose -- would otherwise leave two
+  // addresses freed with nothing live in their place, resolving nowhere.
+  const [thread] = await db.transaction(async (tx) => {
+    await tx
+      .delete(groupChatThreadAlias)
+      .where(
+        and(
+          eq(groupChatThreadAlias.groupChatId, groupChatId),
+          eq(groupChatThreadAlias.agentNodeId, agentNodeId),
+          eq(groupChatThreadAlias.slug, threadSlug),
+        ),
+      )
+    await tx.delete(groupChatThreadAlias).where(eq(groupChatThreadAlias.sessionKey, sessionKey))
     // `deliveredContextSignature` is deliberately left NULL here and written
     // only once the prompt below has been accepted -- same rule as
     // `sendMessageInThread`, and for the same reason. Recording it at insert
@@ -1197,16 +1280,11 @@ export async function startThread(
     // never told its topic or pins and will not be told until something else
     // changes. Left NULL, a retry re-delivers through the once-on-change path
     // without needing a second mechanism.
-    .values({ groupChatId, agentNodeId, sessionKey, slug: threadSlug, title, createdByUserId: userId })
-    .returning({
-      id: groupChatThread.id,
-      groupChatId: groupChatThread.groupChatId,
-      agentNodeId: groupChatThread.agentNodeId,
-      sessionKey: groupChatThread.sessionKey,
-      title: groupChatThread.title,
-      createdAt: groupChatThread.createdAt,
-      draft: groupChatThread.draft,
-    })
+    return tx
+      .insert(groupChatThread)
+      .values({ groupChatId, agentNodeId, sessionKey, slug: threadSlug, title, createdByUserId: userId })
+      .returning(threadSummaryColumns)
+  })
   if (!thread) {
     throw new Error('The thread could not be created')
   }
@@ -1568,6 +1646,7 @@ export async function renameThread(request: Request, threadId: string, title: st
       : []
   const move = moves[0]
 
+  await requireSessionKeysFree(move ? [move.to] : [], [row.id])
   await stageSessionKeyMoves(moves)
   await db.transaction(async (tx) => {
     // The live binding this rename creates takes both of its addresses
@@ -1750,21 +1829,16 @@ export async function requireAgentNode(agentName: string): Promise<string> {
  */
 async function resolveByKey(ref: string): Promise<ThreadDeliveryTarget | null> {
   const key = ref.startsWith('group-chat:') ? ref : `group-chat:${ref}`
-  const [live] = await db
-    .select(threadDeliveryColumns)
-    .from(groupChatThread)
-    .where(eq(groupChatThread.sessionKey, key))
-    .limit(1)
-  if (live) {
-    return live
+  const threadId = await threadIdForSessionKey(key)
+  if (!threadId) {
+    return null
   }
-  const [aliased] = await db
+  const [row] = await db
     .select(threadDeliveryColumns)
     .from(groupChatThread)
-    .innerJoin(groupChatThreadAlias, eq(groupChatThreadAlias.threadId, groupChatThread.id))
-    .where(eq(groupChatThreadAlias.sessionKey, key))
+    .where(eq(groupChatThread.id, threadId))
     .limit(1)
-  return aliased ?? null
+  return row ?? null
 }
 
 async function resolveById(ref: string): Promise<ThreadDeliveryTarget | null> {
