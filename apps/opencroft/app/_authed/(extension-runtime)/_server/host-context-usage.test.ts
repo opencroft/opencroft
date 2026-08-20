@@ -8,11 +8,18 @@ import test from 'node:test'
 import { compactionVerdict, toContextUsage } from './session-context-usage'
 
 // ── toContextUsage ───────────────────────────────────────────────────────
+//
+// The live-branch fixtures below use a window that could only have been
+// vouched for -- a discovered or configured one. 200_000 is the family base
+// window an unlabelled bridge advertises, and it appears deliberately only in
+// the provenance tests further down, where refusing it is the point. A fixture
+// that relayed it here would read as an endorsement of the one figure this
+// module exists to refuse.
 
 test('a harness that reported usage maps straight through', () => {
-  assert.deepEqual(toContextUsage({ used: 12_000, size: 200_000 }), {
+  assert.deepEqual(toContextUsage({ used: 12_000, size: 128_000 }), {
     usedTokens: 12_000,
-    contextLimit: 200_000,
+    contextLimit: 128_000,
   })
 })
 
@@ -30,7 +37,7 @@ test('usage without a known window reports the tokens and a null limit', () => {
 })
 
 test('zero tokens actually reported is preserved as zero, not folded into unknown', () => {
-  assert.deepEqual(toContextUsage({ used: 0, size: 200_000 }), { usedTokens: 0, contextLimit: 200_000 })
+  assert.deepEqual(toContextUsage({ used: 0, size: 128_000 }), { usedTokens: 0, contextLimit: 128_000 })
 })
 
 // ── toContextUsage's last-known fallback (offline sessions) ────────────────
@@ -38,9 +45,9 @@ test('zero tokens actually reported is preserved as zero, not folded into unknow
 test('no live usage but a last-known reading reports it with asOf set', () => {
   // The window comes from the agent's configured one, not from the persisted
   // pair — see the provenance tests below.
-  assert.deepEqual(toContextUsage(undefined, { used: 12_000, size: 200_000, at: 1_700_000_000_000 }, 200_000), {
+  assert.deepEqual(toContextUsage(undefined, { used: 12_000, size: 200_000, at: 1_700_000_000_000 }, 1_000_000), {
     usedTokens: 12_000,
-    contextLimit: 200_000,
+    contextLimit: 1_000_000,
     asOf: 1_700_000_000_000,
   })
 })
@@ -102,9 +109,9 @@ test('a live reading ignores the configured window: it was normalised on the way
 })
 
 test('a live reading always wins over a last-known one, and never carries asOf', () => {
-  assert.deepEqual(toContextUsage({ used: 5_000, size: 200_000 }, { used: 999_000, size: 200_000, at: 1 }), {
+  assert.deepEqual(toContextUsage({ used: 5_000, size: 128_000 }, { used: 999_000, size: 200_000, at: 1 }), {
     usedTokens: 5_000,
-    contextLimit: 200_000,
+    contextLimit: 128_000,
   })
 })
 

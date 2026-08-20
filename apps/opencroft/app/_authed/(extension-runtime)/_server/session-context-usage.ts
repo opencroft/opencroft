@@ -1,3 +1,5 @@
+import { displayableContextWindow } from 'agent-client/context-window'
+
 // How much context a session is holding, and whether a compaction reduced it.
 //
 // Its own module because both ends of the compaction path need it: stream.ts
@@ -42,9 +44,17 @@ export interface ContextUsage {
 //
 // The offline branch cannot ask which window a native session discovered (that
 // lives in a harness process which, by definition here, is not running), so a
-// configured window is the only authority available to it. Absent one, the
-// reading reports tokens and no ratio, which is what the live path would do
-// for the same session.
+// configured window is the only authority available to it.
+//
+// SO THIS DOOR IS DELIBERATELY STRICTER THAN THE OTHER TWO, and the three must
+// not be collapsed into one. The live and restore paths hold a selection, so
+// they can accept a native session's discovered size as its own authority;
+// this one has no selection and no way to tell a discovered size from a
+// bridged claim, so it accepts neither and takes the configured window or
+// nothing. The consequence is real and intended rather than overlooked: a
+// native session whose window was discovered but never configured shows no
+// ratio while it is offline, and has it back the moment it loads. Configuring
+// the window on the agent closes that gap.
 export function toContextUsage(
   usage?: { used: number; size?: number },
   lastKnown?: { used: number; size?: number; at: number },
@@ -54,10 +64,13 @@ export function toContextUsage(
     return { usedTokens: usage.used, contextLimit: usage.size ?? null }
   }
   if (lastKnown) {
-    // Disproved by the reading it arrived with, so false whoever supplied it —
-    // the same subordinate gate normaliseUsage applies on the live path.
-    const window = knownWindow !== undefined && knownWindow > 0 && lastKnown.used <= knownWindow ? knownWindow : null
-    return { usedTokens: lastKnown.used, contextLimit: window, asOf: lastKnown.at }
+    // The same gate the live and restore doors apply, called rather than
+    // restated: a window this reading disproves is false whoever supplied it.
+    return {
+      usedTokens: lastKnown.used,
+      contextLimit: displayableContextWindow(knownWindow, lastKnown.used) ?? null,
+      asOf: lastKnown.at,
+    }
   }
   return null
 }

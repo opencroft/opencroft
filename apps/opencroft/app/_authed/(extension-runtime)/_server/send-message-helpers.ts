@@ -1,3 +1,5 @@
+import { usableContextWindow } from 'agent-client/context-window'
+
 import {
   agentInstructionText,
   agentJobContext,
@@ -116,9 +118,7 @@ export function tryParseJsonMessage(text: string): ParsedMessage | null {
  * left, and this is where the node shape for it already lives.
  */
 export function agentConfiguredWindow(agentSlug: string, nodes: NodeLike[]): number | undefined {
-  const node = findAgentBySlug(agentSlug, nodes)
-  const value = node?.data?.contextWindow
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
+  return usableContextWindow(findAgentBySlug(agentSlug, nodes)?.data?.contextWindow)
 }
 
 function findAgentBySlug(agentSlug: string, nodes: NodeLike[]): NodeLike | null {
