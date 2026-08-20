@@ -43,11 +43,16 @@ delete process.env.DATABASE_URL
 // configured before it will sign or verify a session at all.
 process.env.NODE_ENV = 'development'
 
-const { db, space, groupChatMember, groupChatThread } = await import('@opencroft/db')
+const { db, space, groupChatMember, groupChatSlugAlias, groupChatThread, groupChatThreadAlias } = await import(
+  '@opencroft/db'
+)
 const model = await import('./model')
 // Dynamic like the rest: it reads and writes the settings table, so importing
 // it statically would touch the database before PGLITE_PATH is set above.
 const sessionStore = await import('@/app/_authed/(agent)/_server/acp-session-store')
+// The live session registry a rename has to carry the session across -- same
+// singleton the app uses, imported dynamically for the same reason as above.
+const { agentClient } = await import('@/app/_authed/(agent)/_server/agent-client-instance')
 const { ensureAuth } = await import('@opencroft/auth/server')
 // The production wiring this test process never runs (it imports model.ts
 // directly, not through server.ts's ensureServerStarted) — see
@@ -2290,16 +2295,44 @@ function seedMockConnection(prompts: string[], agentName = 'Agent Session', opts
 // pair of uuids, and the slugs inside it are what a caller addresses it by.
 // ---------------------------------------------------------------------------
 
-test('a chat takes an immutable slug from its name, and renaming does not move it', async () => {
+test('a chat takes its slug from its name, and a rename moves it', async () => {
   const owner = await makeUser('slug-owner@example.test')
-  const chat = await model.createGroupChat(reqAs(owner), '  OpenCroft Development!  ')
+  const chat = await model.createGroupChat(reqAs(owner), '  Some Product Development!  ')
 
-  assert.equal(chat.slug, 'opencroft-development', 'punctuation and spacing collapse to one readable token')
+  assert.equal(chat.slug, 'some-product-development', 'punctuation and spacing collapse to one readable token')
 
   await model.renameGroupChat(reqAs(owner), chat.id, 'Something Else Entirely')
   const after = await model.getGroupChat(reqAs(owner), chat.id)
   assert.equal(after.name, 'Something Else Entirely')
-  assert.equal(after.slug, 'opencroft-development', 'the slug is in session keys, so a rename must not move it')
+  assert.equal(after.slug, 'something-else-entirely', 'the address follows the name -- what the rename is for')
+})
+
+test('a rename that does not move the slug leaves every address exactly where it was', async () => {
+  const owner = await makeUser('slug-display-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Steady Address')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Notes' })
+  await waitForPrompts(prompts, 1)
+
+  // Capitalisation and punctuation only: the same slug, so nothing about the
+  // address moved and there is nothing to alias.
+  await model.renameGroupChat(reqAs(owner), chat.id, '  steady   address!! ')
+
+  const after = await model.getGroupChat(reqAs(owner), chat.id)
+  assert.equal(after.name, 'steady   address!!')
+  assert.equal(after.slug, 'steady-address')
+  assert.equal((await model.getThread(reqAs(owner), started.thread.id)).sessionKey, started.thread.sessionKey)
+  assert.equal(
+    (await db.select().from(groupChatSlugAlias).where(eq(groupChatSlugAlias.groupChatId, chat.id))).length,
+    0,
+    'no address was freed, so no alias is recorded for one',
+  )
+  assert.equal(
+    (await db.select().from(groupChatThreadAlias).where(eq(groupChatThreadAlias.groupChatId, chat.id))).length,
+    0,
+  )
 })
 
 test('a name whose slug is taken is refused, with a code the form can show', async () => {
@@ -2525,4 +2558,233 @@ test('findThreadBySlug: a member gets the row, absence is null, a non-member is 
 
   const refusal = await captureRefusal(() => model.findThreadBySlug(reqAs(outsider), chat.id, 'agent-a', 'design-kit'))
   assert.equal(refusal.code, 'not-found')
+})
+
+// ---------------------------------------------------------------------------
+// RENAMING MOVES AN ADDRESS. A slug is the identity of a live session, not a
+// label, so these tests are about the migration: that the conversation, its
+// process and everything filed under its key come with it, and that every
+// address the rename freed still lands where it used to.
+//
+// The failure they exist to catch does not throw. A migration that misses a
+// store opens a fresh empty session beside the real one, or drops an extension
+// embed into its create flow, and reports success either way -- so each test
+// below asserts on the thing that would still be there afterwards, not on the
+// call returning.
+// ---------------------------------------------------------------------------
+
+test('renaming a chat re-keys every thread in it, and the live session comes with the key', async () => {
+  const owner = await makeUser('chat-rekey-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Shipping Train')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+
+  const standup = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Standup' })
+  await waitForPrompts(prompts, 1)
+  const retro = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'second', { title: 'Retro' })
+  await waitForPrompts(prompts, 2)
+  const oldKey = standup.thread.sessionKey
+  assert.equal(oldKey, 'group-chat:shipping-train:agent-session:standup')
+
+  // What a real session carries besides its transcript, and what a rename that
+  // moved only the row would silently leave behind.
+  await sessionStore.writePersistedConfigOption(oldKey, 'thought_level', 'high')
+  handleUpdate({
+    sessionId: standup.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 4_321, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  const sessionCountBefore = agentClient.listSessions().length
+
+  await model.renameGroupChat(reqAs(owner), chat.id, 'Delivery Train')
+
+  // Every thread, not just the one that was looked at.
+  const newKey = 'group-chat:delivery-train:agent-session:standup'
+  assert.equal((await model.getThread(reqAs(owner), standup.thread.id)).sessionKey, newKey)
+  assert.equal(
+    (await model.getThread(reqAs(owner), retro.thread.id)).sessionKey,
+    'group-chat:delivery-train:agent-session:retro',
+  )
+
+  // The durable pointer is the one that decides whether reopening finds the
+  // conversation or starts a new one.
+  assert.equal((await sessionStore.readPersistedSession(newKey))?.id, standup.sessionId)
+  assert.equal(await sessionStore.readPersistedSession(oldKey), null, 'the old key is retired, not left resolving too')
+  assert.deepEqual(await sessionStore.readPersistedConfigOptions(newKey), { thought_level: 'high' })
+  assert.deepEqual(await sessionStore.readPersistedConfigOptions(oldKey), {})
+
+  // agent-client answers by key, so a session left behind here reads as offline
+  // with an empty ring while it is in fact running.
+  assert.equal(agentClient.aliveSessionKeys().includes(newKey), true)
+  assert.equal(agentClient.aliveSessionKeys().includes(oldKey), false)
+
+  // The ring, through the same read the composer makes.
+  const view = (await model.listGroupChatsForAgentView('Agent Session'))
+    .find((c) => c.ref === chat.id)
+    ?.threads.find((t) => t.ref === newKey.slice('group-chat:'.length))
+  assert.deepEqual(view?.contextUsage, { usedTokens: 4_321, contextLimit: 200_000 })
+
+  // And a send lands in the session that was already there -- the whole point.
+  // A migration that missed the pointer would pass every assertion above that
+  // reads a row and still create a second session here.
+  await model.sendMessageInThread(reqAs(owner), standup.thread.id, 'after the rename')
+  await waitForPrompts(prompts, 3)
+  assert.equal(agentClient.listSessions().length, sessionCountBefore, 'no fresh session was opened beside the real one')
+})
+
+test('an address a chat rename freed still reaches the same chat and the same thread', async () => {
+  const owner = await makeUser('chat-alias-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Old Chat Name')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-solo' })
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Planning' })
+  await waitForPrompts(prompts, 1)
+  const oldKey = started.thread.sessionKey
+
+  await model.renameGroupChat(reqAs(owner), chat.id, 'New Chat Name')
+
+  // The extension embed's own read: `space` is whatever the host configured,
+  // and nothing rewrites it when a chat is renamed.
+  const byOldSlug = await model.resolveGroupChatBySlug(reqAs(owner), 'old-chat-name')
+  assert.equal(byOldSlug.state, 'member', 'the embed must find the chat, not fall into its create flow')
+  assert.ok(byOldSlug.state === 'member')
+  assert.equal(byOldSlug.chat.id, chat.id)
+  assert.equal(byOldSlug.chat.slug, 'new-chat-name', 'resolved through the old address, answered with the current one')
+
+  // A message already addressed to the key the rename retired.
+  const outcome = await model.deliverThreadFromNode(oldKey, 'sent to the old address', () => true)
+  assert.equal(outcome.status === 'not-found' || outcome.status === 'not-reachable', false)
+  await waitForPrompts(prompts, 2)
+  assert.match(prompts.at(-1) ?? '', /sent to the old address/)
+
+  // And through the agent-facing surface, which takes the readable half.
+  await model.sendMessageInThreadAsAgent('Agent Solo', 'old-chat-name:agent-session:planning', 'also the old path')
+  await waitForPrompts(prompts, 3)
+  assert.match(prompts.at(-1) ?? '', /also the old path/)
+
+  // Nothing was created to absorb any of that.
+  assert.equal((await model.listThreadsInGroupChat(reqAs(owner), chat.id)).length, 1)
+})
+
+test('renaming a thread moves its slug and its key, and keeps everything the thread was holding', async () => {
+  const owner = await makeUser('thread-rekey-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Thread Renames')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Standup' })
+  await waitForPrompts(prompts, 1)
+  const oldKey = started.thread.sessionKey
+  await model.setThreadDraft(reqAs(owner), started.thread.id, 'half-typed message')
+
+  await model.renameThread(reqAs(owner), started.thread.id, 'Daily Standup')
+
+  const after = await model.getThread(reqAs(owner), started.thread.id)
+  assert.equal(after.title, 'Daily Standup')
+  assert.equal(after.sessionKey, 'group-chat:thread-renames:agent-session:daily-standup')
+  assert.equal(after.draft, 'half-typed message', 'the draft is on the row and must survive the move')
+  assert.equal((await sessionStore.readPersistedSession(after.sessionKey))?.id, started.sessionId)
+  assert.equal(await sessionStore.readPersistedSession(oldKey), null)
+  assert.equal(agentClient.aliveSessionKeys().includes(after.sessionKey), true)
+
+  // The embed addresses a thread by the id its host configured -- the slug.
+  const byOldSlug = await model.findThreadBySlug(reqAs(owner), chat.id, 'agent-session', 'standup')
+  assert.equal(byOldSlug?.id, started.thread.id, 'the embed must find the same thread, not start an empty one')
+
+  // And the key an agent may have written down.
+  const outcome = await model.deliverThreadFromNode(oldKey, 'to the old thread address', () => true)
+  assert.equal(outcome.status === 'not-found' || outcome.status === 'not-reachable', false)
+  await waitForPrompts(prompts, 2)
+  assert.equal((await model.listThreadsInGroupChat(reqAs(owner), chat.id)).length, 1)
+})
+
+test('a taken slug is refused and nothing moves, for a chat and for a thread alike', async () => {
+  const owner = await makeUser('rename-clash-owner@example.test')
+  await model.createGroupChat(reqAs(owner), 'Occupied Name')
+  const chat = await model.createGroupChat(reqAs(owner), 'Mover')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+  const keep = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Kept' })
+  await waitForPrompts(prompts, 1)
+  const moving = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'second', { title: 'Moving' })
+  await waitForPrompts(prompts, 2)
+
+  const chatClash = await captureRefusal(() => model.renameGroupChat(reqAs(owner), chat.id, 'occupied   name'))
+  assert.equal(chatClash.code, 'slug-taken', 'different words, same address -- still a clash')
+  const unchanged = await model.getGroupChat(reqAs(owner), chat.id)
+  assert.equal(unchanged.name, 'Mover', 'a refused rename changes nothing at all, not even the display name')
+  assert.equal(unchanged.slug, 'mover')
+  assert.equal((await model.getThread(reqAs(owner), moving.thread.id)).sessionKey, moving.thread.sessionKey)
+
+  const threadClash = await captureRefusal(() => model.renameThread(reqAs(owner), moving.thread.id, '  kept  '))
+  assert.equal(threadClash.code, 'slug-taken')
+  assert.equal((await model.getThread(reqAs(owner), moving.thread.id)).title, 'Moving')
+  assert.equal((await model.getThread(reqAs(owner), moving.thread.id)).sessionKey, moving.thread.sessionKey)
+  assert.equal((await model.getThread(reqAs(owner), keep.thread.id)).sessionKey, keep.thread.sessionKey)
+
+  const unusable = await captureRefusal(() => model.renameThread(reqAs(owner), moving.thread.id, '!!! ---'))
+  assert.equal(unusable.code, 'slug-unusable')
+})
+
+test('a new thread taking a freed address wins it, and the alias for it stops resolving', async () => {
+  const owner = await makeUser('alias-outranked-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Reuse')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+  const first = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Standup' })
+  await waitForPrompts(prompts, 1)
+  const freedKey = first.thread.sessionKey
+
+  // Frees 'standup' and the key built from it.
+  await model.renameThread(reqAs(owner), first.thread.id, 'Daily Standup')
+  assert.equal((await model.findThreadBySlug(reqAs(owner), chat.id, 'agent-session', 'standup'))?.id, first.thread.id)
+
+  // A second thread now claims exactly that address.
+  const second = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'third', { title: 'Standup' })
+  await waitForPrompts(prompts, 2)
+  assert.equal(second.thread.sessionKey, freedKey)
+
+  // A LIVE THREAD OUTRANKS AN ALIAS. This is the one case where getting the
+  // order wrong delivers to the wrong agent while every gate passes.
+  assert.equal(
+    (await model.findThreadBySlug(reqAs(owner), chat.id, 'agent-session', 'standup'))?.id,
+    second.thread.id,
+    'the thread holding the address now is the answer, not the one that used to',
+  )
+  const outcome = await model.deliverThreadFromNode(freedKey, 'to whoever holds it now', () => true)
+  assert.equal(outcome.status === 'not-found' || outcome.status === 'not-reachable', false)
+  await waitForPrompts(prompts, 3)
+  const aliases = await db.select().from(groupChatThreadAlias).where(eq(groupChatThreadAlias.sessionKey, freedKey))
+  assert.equal(aliases.length, 0, 'the alias on a re-taken address is dropped, not merely outranked at read time')
+})
+
+test('a chat rename leaves a thread whose key was never built from the slug exactly as it was', async () => {
+  const owner = await makeUser('legacy-rekey-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Has A Legacy Thread')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+
+  // The shape threads were created with before slugs existed: ids, not slugs.
+  const legacyKey = `group-chat:${chat.id}:agent-a:${crypto.randomUUID()}`
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({ groupChatId: chat.id, agentNodeId: 'agent-a', sessionKey: legacyKey, createdByUserId: owner.id })
+    .returning()
+  assert.ok(thread)
+
+  await model.renameGroupChat(reqAs(owner), chat.id, 'Renamed Around It')
+
+  assert.equal(
+    (await model.getThread(reqAs(owner), thread.id)).sessionKey,
+    legacyKey,
+    'the chat slug was never in this key, so the rename cannot have staled it -- re-minting would break it',
+  )
+  assert.equal(
+    (await db.select().from(groupChatThreadAlias).where(eq(groupChatThreadAlias.threadId, thread.id))).length,
+    0,
+    'nothing was freed, so nothing is aliased',
+  )
 })

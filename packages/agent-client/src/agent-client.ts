@@ -1266,6 +1266,45 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return [...keys]
     },
 
+    // Move a live session from one external session key to another, WITHOUT
+    // touching the conversation, the process, or anything in flight. For a host
+    // whose keys are derived from something renameable: the session is the same
+    // session, and only the name the host reaches it by has changed.
+    //
+    // Both copies of the key move together — `selection.sessionKey`, which the
+    // key-based reads above answer from, and the mirror on `meta` that
+    // `listSessions` publishes. Leaving either behind would make one of the two
+    // answer with an address nothing else recognises.
+    //
+    // WHAT THIS DOES NOT DO, and it matters for bridge-backed harnesses: the
+    // external key reaches an agent as ACP `_meta.sessionKey`, which is sent
+    // when a session is CREATED or LOADED and never again. So a bridge that
+    // bound its own routing to the old key keeps that binding for as long as
+    // this session lives — the rename is invisible to it — and it is the next
+    // cold-start resume, presenting the new key, that moves routing. A host
+    // that needs the wire identity to outlive a rename has to keep the original
+    // key itself and pass it back as `selection.sessionKey` on resume; this
+    // engine has nowhere durable to remember it.
+    //
+    // Returns whether a live session actually answered to `from`. False is an
+    // ordinary answer, not a failure: an unloaded session has no record here at
+    // all, and its key lives only in whatever the host persisted.
+    renameSessionKey(from: string, to: string): boolean {
+      if (!from || !to || from === to) {
+        return false
+      }
+      let moved = false
+      for (const session of store.sessions.values()) {
+        if (session.selection.sessionKey !== from) {
+          continue
+        }
+        session.selection = { ...session.selection, sessionKey: to }
+        session.meta.sessionKey = to
+        moved = true
+      }
+      return moved
+    },
+
     // The host's registered LocalTools (for role-permission editors). Resolves
     // a dynamic tools source (e.g. live agent-tool graph nodes) same as a turn
     // would. Per-session MCP and skill tools are separate and not listed here.

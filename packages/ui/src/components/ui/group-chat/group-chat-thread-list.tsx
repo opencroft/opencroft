@@ -46,6 +46,15 @@ export interface GroupChatThreadListProps {
   threads: GroupChatThreadListItem[]
   activeId?: string
   onSelect?: (id: string) => void
+  /** Per-row rename. Forwards to ChatListItem's context-menu Rename -- same
+     icon, same wording, same position as an ordinary chat row's.
+
+     The kit does not edit the title in place: it reports which row was asked
+     for, and the host opens whatever it uses to collect a new one. Renaming may
+     be refused (a name already in use, a name a host cannot build an id from),
+     and a row that edited itself would have to unwind an edit the reader had
+     already seen take effect. */
+  onRename?: (id: string) => void
   /** Per-row "stop the agent process". Forwards to ChatListItem's own
      context-menu item -- same icon, same wording, same position as an ordinary
      chat row's; the host decides what stopping means.
@@ -78,7 +87,7 @@ export interface GroupChatThreadListProps {
 // to stop it lying. Now that the real thing is available the label has nothing
 // to do, and there is no room to keep both -- ChatListItem composes exactly
 // `description · statusWord`, with no third segment, and the line truncates.
-export function GroupChatThreadList({ threads, activeId, onSelect, onStopProcess, onDelete, className }: GroupChatThreadListProps) {
+export function GroupChatThreadList({ threads, activeId, onSelect, onRename, onStopProcess, onDelete, className }: GroupChatThreadListProps) {
   return (
     <div className={cn('flex w-full min-w-0 flex-col gap-0.5', className)}>
       {threads.map((t) => (
@@ -98,6 +107,10 @@ export function GroupChatThreadList({ threads, activeId, onSelect, onStopProcess
           active={t.id === activeId}
           disabled={t.disabled}
           onSelect={onSelect}
+          // Offered on a removed-agent row for the same reason Stop is: the
+          // thread stays readable after its agent leaves, and what it is called
+          // is a property of the thread rather than of the membership.
+          onRename={onRename}
           // Offered on a removed-agent row too, unlike `status` just above --
           // the two are not the same kind of thing. A state describes the
           // thread, and a dimmed row already carries the one fact worth

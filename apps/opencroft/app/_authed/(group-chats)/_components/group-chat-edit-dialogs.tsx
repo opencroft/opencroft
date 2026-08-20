@@ -1,9 +1,16 @@
 'use client'
 
-// Edit dialogs for a group chat's name and topic -- the host side of the kit's
-// onEditName/onEditTopic affordances (group-chat-detail.tsx). Same split as the
-// members dialog and the delete confirm: the kit only carries the affordance,
-// the app owns what it opens.
+// Edit dialogs for a group chat's name and topic, and for a thread's title --
+// the host side of the kit's onEditName/onEditTopic affordances
+// (group-chat-detail.tsx) and of the thread row's own Rename item
+// (group-chat-thread-list.tsx). Same split as the members dialog and the delete
+// confirm: the kit only carries the affordance, the app owns what it opens.
+//
+// Renaming EITHER a chat or a thread moves the address it is addressed by, not
+// only what it is called -- so both dialogs say so, and both can be refused for
+// a name whose address is already taken. That refusal arrives as data and is
+// shown in place, which is the whole reason these are dialogs rather than
+// in-row editing: there is somewhere to put the answer.
 
 import { useRouter } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
@@ -13,7 +20,11 @@ import { Input } from 'ui/input'
 
 import { memberActionRefusal } from '@/app/_authed/(group-chats)/_lib/member-action-refusal'
 import type { GroupChatWriteResult } from '@/app/_authed/(group-chats)/_server/actions'
-import { renameMyGroupChat, setMyGroupChatTopic } from '@/app/_authed/(group-chats)/_server/actions'
+import {
+  renameMyGroupChat,
+  renameMyGroupChatThread,
+  setMyGroupChatTopic,
+} from '@/app/_authed/(group-chats)/_server/actions'
 
 interface EditFieldDialogProps {
   open: boolean
@@ -136,6 +147,7 @@ export function GroupChatRenameDialog({
       label='Group chat name'
       placeholder='e.g. Q3 launch planning'
       value={name}
+      description='This also moves the address the chat is known by. Anything still using the old one keeps working.'
       submit={(value) => renameMyGroupChat({ data: { groupChatId, name: value } })}
     />
   )
@@ -162,6 +174,31 @@ export function GroupChatTopicDialog({
       value={topic}
       description="Every agent in this chat is told this as what it's for. It isn't shown anywhere else for you beyond this screen."
       submit={(value) => setMyGroupChatTopic({ data: { groupChatId, topic: value } })}
+    />
+  )
+}
+
+export function GroupChatThreadRenameDialog({
+  open,
+  onOpenChange,
+  threadId,
+  title,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  threadId: string
+  title: string
+}) {
+  return (
+    <EditFieldDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title='Rename thread'
+      label='Thread title'
+      placeholder='e.g. Pricing page copy'
+      value={title}
+      description='This also moves the address the thread is known by. Anything still using the old one keeps working.'
+      submit={(value) => renameMyGroupChatThread({ data: { threadId, title: value } })}
     />
   )
 }

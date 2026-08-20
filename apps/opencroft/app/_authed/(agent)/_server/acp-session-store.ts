@@ -133,6 +133,135 @@ export async function deletePersistedConfigOptions(tabKey: string): Promise<void
   )
 }
 
+// ── Moving a tab key ─────────────────────────────────────────────────────
+//
+// A tab key is derived from something renameable (a group chat's slug, a
+// thread's), so renaming re-mints it and everything filed under the old key has
+// to move with it. Both rows above are keyed by tab key and both are moved
+// here; the usage row further down is NOT, because it is keyed by ACP session
+// id and is reached THROUGH the pointer — moving the pointer already carries it.
+//
+// SPLIT IN TWO ON PURPOSE, and the split is the safety property rather than a
+// convenience. There is no transaction spanning a settings row and the database
+// row that names the key, so the only way a half-finished move cannot strand a
+// session is if the new key already resolves before anything starts using it:
+//
+//   copyTabKeys   run BEFORE the rename commits. Afterwards both keys point at
+//                 the same session, so whichever one a reader ends up holding
+//                 finds it. Nothing is addressed by the new key yet, so the
+//                 duplicate is inert.
+//   dropTabKeys   run AFTER it commits, when the old key is nobody's address
+//                 any more.
+//
+// Interrupted between the two, the worst case is a stale entry under an address
+// nothing uses — never a thread whose session cannot be found. Interrupted
+// inside either one, the per-row lock means that row moved every key or none.
+
+export interface TabKeyMove {
+  from: string
+  to: string
+}
+
+function movedEntries<T>(
+  store: Record<string, T>,
+  moves: readonly TabKeyMove[],
+  merge: (incoming: T, existing: T | undefined) => T = (incoming) => incoming,
+): Record<string, T> | null {
+  const next = { ...store }
+  let changed = false
+  for (const { from, to } of moves) {
+    const entry = store[from]
+    if (entry === undefined || from === to) {
+      continue
+    }
+    next[to] = merge(entry, store[to])
+    changed = true
+  }
+  return changed ? next : null
+}
+
+/**
+ * The one rule a copy must not break: `prompted` only ever moves false -> true.
+ *
+ * It matters because a copy can run twice -- once before the rename commits and
+ * once after, so a prompt that landed under the old key in between is not lost
+ * -- and by the second run the destination may already hold a fresher reading
+ * of the same session. Taking the older value wholesale there would tell the
+ * next open that a session which has been spoken to never was, and it would
+ * re-attach opening context the agent already has.
+ */
+function keepPrompted(incoming: StoredValue, existing: StoredValue | undefined): StoredValue {
+  const from = normalize(incoming)
+  const to = normalize(existing)
+  if (!from) {
+    return incoming
+  }
+  if (!to || to.id !== from.id) {
+    return from
+  }
+  return { id: from.id, prompted: from.prompted || to.prompted }
+}
+
+function withoutKeys<T>(store: Record<string, T>, moves: readonly TabKeyMove[]): Record<string, T> | null {
+  const next = { ...store }
+  let changed = false
+  for (const { from, to } of moves) {
+    if (from === to || !(from in next)) {
+      continue
+    }
+    delete next[from]
+    changed = true
+  }
+  return changed ? next : null
+}
+
+/**
+ * Point every `to` key at what its `from` key currently holds, leaving `from`
+ * alone. Idempotent, so a retried rename is free.
+ *
+ * The config options are copied BEFORE the session pointer, and that order is
+ * the one thing to preserve here: the pointer is what makes a key resolve to a
+ * conversation, so a crash between the two rows leaves the new key holding
+ * options nothing addresses yet, rather than a resolvable session that lost the
+ * reasoning-effort override its reader had set.
+ */
+export async function copyTabKeys(moves: readonly TabKeyMove[]): Promise<void> {
+  if (moves.length === 0) {
+    return
+  }
+  await withSettingLock(CONFIG_OPTIONS_SETTING_ID, () =>
+    mutateSettingData(CONFIG_OPTIONS_SETTING_ID, (raw) => {
+      const next = movedEntries(configOptionsStoreFromRaw(raw), moves)
+      return next ? { options: next } : raw
+    }),
+  )
+  await withSettingLock(SETTING_ID, () =>
+    mutateSettingData(SETTING_ID, (raw) => {
+      const next = movedEntries(storeFromRaw(raw), moves, keepPrompted)
+      return next ? { sessions: next } : raw
+    }),
+  )
+}
+
+/** Forget every `from` key. The pointer goes first, mirroring `copyTabKeys`. */
+export async function dropTabKeys(moves: readonly TabKeyMove[]): Promise<void> {
+  if (moves.length === 0) {
+    return
+  }
+  await withSettingLock(SETTING_ID, () =>
+    mutateSettingData(SETTING_ID, (raw) => {
+      const next = withoutKeys(storeFromRaw(raw), moves)
+      return next ? { sessions: next } : raw
+    }),
+  )
+  await withSettingLock(CONFIG_OPTIONS_SETTING_ID, () =>
+    mutateSettingData(CONFIG_OPTIONS_SETTING_ID, (raw) => {
+      const next = withoutKeys(configOptionsStoreFromRaw(raw), moves)
+      return next ? { options: next } : raw
+    }),
+  )
+}
+
 // Durable last-known context usage per ACP session id. ACP has no way to ASK an
 // agent how much context a session holds: `size`/`used` arrive only as
 // `usage_update` notifications the agent pushes, and in practice only during a

@@ -11,7 +11,16 @@
 // bug, not a style choice.
 
 import { getSessionUser } from '@opencroft/auth/server'
-import { db, groupChat, groupChatMember, groupChatPin, groupChatThread, user } from '@opencroft/db'
+import {
+  db,
+  groupChat,
+  groupChatMember,
+  groupChatPin,
+  groupChatSlugAlias,
+  groupChatThread,
+  groupChatThreadAlias,
+  user,
+} from '@opencroft/db'
 import { and, asc, eq, inArray } from 'drizzle-orm'
 
 import {
@@ -23,6 +32,11 @@ import {
 } from '@/app/_authed/(agent)/_server/acp-impl'
 import { readLastKnownUsage } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import {
+  settleSessionKeyMoves,
+  stageSessionKeyMoves,
+  type TabKeyMove,
+} from '@/app/_authed/(agent)/_server/session-key-move'
 import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { type TurnsPage, turnsPageForSessionKey } from '@/app/_authed/(extension-runtime)/_server/host'
 import { type ContextUsage, toContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
@@ -235,6 +249,27 @@ export async function getGroupChat(request: Request, groupChatId: string): Promi
  * caller SHOWS for `not-a-member` must still be the collapsed `not-found`
  * refusal, same code and copy as the thread route's.
  */
+const chatColumns = {
+  id: groupChat.id,
+  slug: groupChat.slug,
+  name: groupChat.name,
+  topic: groupChat.topic,
+  createdAt: groupChat.createdAt,
+  updatedAt: groupChat.updatedAt,
+}
+
+/** The columns a `GroupChatThreadSummary` is made of, named once so the live
+ *  and alias lookups below cannot select different shapes for the same type. */
+const threadSummaryColumns = {
+  id: groupChatThread.id,
+  groupChatId: groupChatThread.groupChatId,
+  agentNodeId: groupChatThread.agentNodeId,
+  sessionKey: groupChatThread.sessionKey,
+  title: groupChatThread.title,
+  createdAt: groupChatThread.createdAt,
+  draft: groupChatThread.draft,
+}
+
 export type GroupChatSlugResolution =
   | { state: 'missing' }
   | { state: 'not-a-member' }
@@ -251,18 +286,26 @@ export async function resolveGroupChatBySlug(request: Request, slug: string): Pr
   if (!chatSlug) {
     return { state: 'missing' }
   }
-  const [row] = await db
-    .select({
-      id: groupChat.id,
-      slug: groupChat.slug,
-      name: groupChat.name,
-      topic: groupChat.topic,
-      createdAt: groupChat.createdAt,
-      updatedAt: groupChat.updatedAt,
-    })
-    .from(groupChat)
-    .where(eq(groupChat.slug, chatSlug))
-    .limit(1)
+  // Live first, alias second. A SLUG A RENAME FREED STILL RESOLVES, through
+  // `groupChatSlugAlias`, because an extension's configured `space` is written
+  // down somewhere nobody edits when a chat is renamed -- without this a rename
+  // drops every embed into its "this chat does not exist" create flow, and
+  // reports nothing wrong while doing it.
+  //
+  // The ordering is load-bearing rather than cosmetic: if a later chat has
+  // taken this slug for real, the chat holding it NOW is the answer. Every path
+  // that binds a slug live deletes the alias on it, so the two should never
+  // both match -- reading live first is what makes that a guarantee instead of
+  // a likelihood.
+  const [live] = await db.select(chatColumns).from(groupChat).where(eq(groupChat.slug, chatSlug)).limit(1)
+  const [row] = live
+    ? [live]
+    : await db
+        .select(chatColumns)
+        .from(groupChat)
+        .innerJoin(groupChatSlugAlias, eq(groupChatSlugAlias.groupChatId, groupChat.id))
+        .where(eq(groupChatSlugAlias.slug, chatSlug))
+        .limit(1)
   if (!row) {
     return { state: 'missing' }
   }
@@ -289,16 +332,8 @@ export async function findThreadBySlug(
   threadSlug: string,
 ): Promise<GroupChatThreadSummary | null> {
   await requireGroupChatMember(request, groupChatId)
-  const [row] = await db
-    .select({
-      id: groupChatThread.id,
-      groupChatId: groupChatThread.groupChatId,
-      agentNodeId: groupChatThread.agentNodeId,
-      sessionKey: groupChatThread.sessionKey,
-      title: groupChatThread.title,
-      createdAt: groupChatThread.createdAt,
-      draft: groupChatThread.draft,
-    })
+  const [live] = await db
+    .select(threadSummaryColumns)
     .from(groupChatThread)
     .where(
       and(
@@ -308,24 +343,32 @@ export async function findThreadBySlug(
       ),
     )
     .limit(1)
-  return row ?? null
+  if (live) {
+    return live
+  }
+  // A slug a rename freed, scoped exactly as the live lookup is, and reached
+  // in the same live-first order for the same reason as `resolveGroupChatBySlug`
+  // above. Without it a renamed thread makes an embedded surface silently start
+  // a SECOND, empty thread beside the conversation it meant to open.
+  const [aliased] = await db
+    .select(threadSummaryColumns)
+    .from(groupChatThread)
+    .innerJoin(groupChatThreadAlias, eq(groupChatThreadAlias.threadId, groupChatThread.id))
+    .where(
+      and(
+        eq(groupChatThreadAlias.groupChatId, groupChatId),
+        eq(groupChatThreadAlias.agentNodeId, agentNodeId),
+        eq(groupChatThreadAlias.slug, threadSlug),
+      ),
+    )
+    .limit(1)
+  return aliased ?? null
 }
 
 /** Every thread in a group chat. Membership-gated, not filtered after the fact. */
 export async function listThreadsInGroupChat(request: Request, groupChatId: string): Promise<GroupChatThreadSummary[]> {
   await requireGroupChatMember(request, groupChatId)
-  return db
-    .select({
-      id: groupChatThread.id,
-      groupChatId: groupChatThread.groupChatId,
-      agentNodeId: groupChatThread.agentNodeId,
-      sessionKey: groupChatThread.sessionKey,
-      title: groupChatThread.title,
-      createdAt: groupChatThread.createdAt,
-      draft: groupChatThread.draft,
-    })
-    .from(groupChatThread)
-    .where(eq(groupChatThread.groupChatId, groupChatId))
+  return db.select(threadSummaryColumns).from(groupChatThread).where(eq(groupChatThread.groupChatId, groupChatId))
 }
 
 /**
@@ -345,15 +388,7 @@ export async function listThreadsInGroupChat(request: Request, groupChatId: stri
 export async function getThread(request: Request, threadId: string): Promise<GroupChatThreadSummary> {
   const sessionUser = await requireSignedInUser(request)
   const [row] = await db
-    .select({
-      id: groupChatThread.id,
-      groupChatId: groupChatThread.groupChatId,
-      agentNodeId: groupChatThread.agentNodeId,
-      sessionKey: groupChatThread.sessionKey,
-      title: groupChatThread.title,
-      createdAt: groupChatThread.createdAt,
-      draft: groupChatThread.draft,
-    })
+    .select(threadSummaryColumns)
     .from(groupChatThread)
     .where(eq(groupChatThread.id, threadId))
     .limit(1)
@@ -406,6 +441,11 @@ export async function createGroupChat(request: Request, name: string, topic?: st
     throw new GroupChatAccessError('slug-taken', `A group chat named "${trimmedName}" already exists`)
   }
   return db.transaction(async (tx) => {
+    // A LIVE CHAT OUTRANKS AN ALIAS, so taking this slug takes it outright: any
+    // alias still freeing it is dropped in the same transaction that binds it.
+    // Leaving both would give one address two answers, and the one that is not
+    // the chat just created is a wrong-recipient bug waiting to happen.
+    await tx.delete(groupChatSlugAlias).where(eq(groupChatSlugAlias.slug, chatSlug))
     const [chat] = await tx
       .insert(groupChat)
       .values({ slug: chatSlug, name: trimmedName, topic: trimmedTopic, createdByUserId: sessionUser.id })
@@ -423,11 +463,37 @@ export async function createGroupChat(request: Request, name: string, topic?: st
 }
 
 /**
- * Rename a group chat. Membership-gated like every other write here.
+ * Rename a group chat: the name people read AND the slug everything addresses
+ * it by, which means every thread in it is re-keyed. Membership-gated like
+ * every other write here.
  *
- * Presentation only, and that is the whole contract: no session is touched, no
- * agent is told, nothing is re-delivered. Every screen reads the new name on
- * its next load because every read goes through the same row.
+ * THE SLUG IS THE IDENTITY OF EVERY LIVE SESSION UNDERNEATH, not a label. It is
+ * a segment of each thread's session key, and that key is what the durable
+ * session pointer, the in-process registries and agent-client all file the
+ * conversation under. So this is a migration rather than an update, and the
+ * order it happens in is what keeps a half-finished one harmless:
+ *
+ *   1. Work out every key that moves, and refuse before touching anything if
+ *      the new slug is taken.
+ *   2. `stageSessionKeyMoves` -- make the new keys resolve to the sessions the
+ *      old keys resolve to. Nothing addresses them yet, so this is inert.
+ *   3. One transaction: the chat's slug and name, every thread's key, and the
+ *      aliases that keep the freed addresses working. All of it or none.
+ *   4. `settleSessionKeyMoves` -- retire the old keys and repoint what is held
+ *      in memory. Past the commit, so it never reports failure upward.
+ *
+ * Interrupted anywhere, no thread is left naming a session that cannot be
+ * found: step 2 guarantees the new key already works before step 3 makes it the
+ * address, and step 4 only tidies up after it is.
+ *
+ * NOTHING IS RE-DELIVERED TO ANY AGENT, deliberately -- the same contract
+ * `setGroupChatTopic` documents. A rename is not a new task and must not
+ * interrupt a turn to announce itself; the aliases, not a notification, are
+ * what keep an agent's stored thread address working.
+ *
+ * The AGENT segment of a key is untouched. It was frozen at thread creation
+ * (see `startThread`) and stays frozen: whether renaming an agent should move
+ * it too is a separate question, deliberately not answered here.
  */
 export async function renameGroupChat(request: Request, groupChatId: string, name: string): Promise<void> {
   await requireGroupChatMember(request, groupChatId)
@@ -435,7 +501,77 @@ export async function renameGroupChat(request: Request, groupChatId: string, nam
   if (!trimmed) {
     throw new Error('A group chat needs a name')
   }
-  await db.update(groupChat).set({ name: trimmed }).where(eq(groupChat.id, groupChatId))
+  const [chat] = await db.select({ slug: groupChat.slug }).from(groupChat).where(eq(groupChat.id, groupChatId)).limit(1)
+  if (!chat) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  const nextSlug = slugify(trimmed)
+  if (!nextSlug) {
+    throw new GroupChatAccessError('slug-unusable', 'That name has no letters or numbers to build a name from')
+  }
+  // Capitalisation, punctuation, a trailing space: a name that slugifies to
+  // what this chat already answers to is a display change and nothing more.
+  // Migrating for it would re-mint every key to its own value and write aliases
+  // for addresses that never moved.
+  if (nextSlug === chat.slug) {
+    await db.update(groupChat).set({ name: trimmed }).where(eq(groupChat.id, groupChatId))
+    return
+  }
+  const [taken] = await db.select({ id: groupChat.id }).from(groupChat).where(eq(groupChat.slug, nextSlug)).limit(1)
+  if (taken) {
+    // The refusal creation already gives, with the same code, because a taken
+    // name is something the person can act on. Silently suffixing it would hand
+    // them an address they did not choose and cannot predict.
+    throw new GroupChatAccessError('slug-taken', `A group chat named "${trimmed}" already exists`)
+  }
+
+  const threads = await db
+    .select({
+      id: groupChatThread.id,
+      agentNodeId: groupChatThread.agentNodeId,
+      sessionKey: groupChatThread.sessionKey,
+    })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.groupChatId, groupChatId))
+  const moves = threads.flatMap((thread) => {
+    const parts = partsOfSessionKey(thread.sessionKey)
+    // Only a key this chat's CURRENT slug is genuinely a segment of moves. A
+    // thread from before slugs existed carries ids where these carry slugs, so
+    // no rename can stale it, and re-minting one would break an address that
+    // was working. This check is what tells the two apart.
+    if (!parts || parts.chatSlug !== chat.slug) {
+      return []
+    }
+    return [
+      {
+        threadId: thread.id,
+        agentNodeId: thread.agentNodeId,
+        from: thread.sessionKey,
+        to: mintSessionKey(nextSlug, parts.agentSlug, parts.threadSlug),
+      },
+    ]
+  })
+
+  await stageSessionKeyMoves(moves)
+  await db.transaction(async (tx) => {
+    await tx.delete(groupChatSlugAlias).where(inArray(groupChatSlugAlias.slug, [chat.slug, nextSlug]))
+    await tx.insert(groupChatSlugAlias).values({ slug: chat.slug, groupChatId })
+    await tx.update(groupChat).set({ name: trimmed, slug: nextSlug }).where(eq(groupChat.id, groupChatId))
+    for (const move of moves) {
+      await tx.delete(groupChatThreadAlias).where(eq(groupChatThreadAlias.sessionKey, move.to))
+      // `slug: null` -- a chat rename frees the whole address, not the thread's
+      // own slug, which has not moved. See the alias table's own comment.
+      await tx.insert(groupChatThreadAlias).values({
+        threadId: move.threadId,
+        groupChatId,
+        agentNodeId: move.agentNodeId,
+        sessionKey: move.from,
+        slug: null,
+      })
+      await tx.update(groupChatThread).set({ sessionKey: move.to }).where(eq(groupChatThread.id, move.threadId))
+    }
+  })
+  await settleSessionKeyMoves(moves)
 }
 
 /**
@@ -904,6 +1040,35 @@ function mintSessionKey(groupSlug: string, agentSlug: string, threadSlug: string
   return `group-chat:${groupSlug}:${agentSlug}:${threadSlug}`
 }
 
+interface SessionKeyParts {
+  chatSlug: string
+  agentSlug: string
+  threadSlug: string
+}
+
+/**
+ * The inverse of `mintSessionKey`, and the ONLY thing that takes a group-chat
+ * key apart. It exists because renaming has to re-mint a key while keeping the
+ * segments the rename does not touch -- above all the agent's, which is frozen
+ * at creation and must never be recomputed from a name that may have changed
+ * since.
+ *
+ * Unambiguous because every segment is `slugify` output, which cannot contain a
+ * colon: a key with exactly four segments splits exactly one way.
+ *
+ * NULL FOR ANYTHING ELSE, which is how a key from before slugs existed is
+ * recognised. Those carry ids where these carry slugs, so no rename can stale
+ * them -- and a caller handed null is being told to leave the key alone, not to
+ * guess at its shape.
+ */
+function partsOfSessionKey(sessionKey: string): SessionKeyParts | null {
+  const match = /^group-chat:([^:]+):([^:]+):([^:]+)$/.exec(sessionKey)
+  if (!match?.[1] || !match[2] || !match[3]) {
+    return null
+  }
+  return { chatSlug: match[1], agentSlug: match[2], threadSlug: match[3] }
+}
+
 /**
  * A thread slug when the creator did not name the thread.
  *
@@ -1007,6 +1172,21 @@ export async function startThread(
   const agentNodes = await listAgentNodesImpl()
   const agentName = agentNodes.find((n) => n.nodeId === agentNodeId)?.name ?? agentNodeId
   const sessionKey = mintSessionKey(chatRow.slug, slugify(agentName) || agentNodeId, threadSlug)
+  // A LIVE THREAD OUTRANKS AN ALIAS. Either address this thread is about to
+  // answer to may still be freeing itself for a thread renamed away from it,
+  // and a real binding takes it outright. Leaving both would give one address
+  // two answers -- the one wrong-recipient failure a membership gate cannot
+  // catch, since a sender able to write the address is a member of both.
+  await db
+    .delete(groupChatThreadAlias)
+    .where(
+      and(
+        eq(groupChatThreadAlias.groupChatId, groupChatId),
+        eq(groupChatThreadAlias.agentNodeId, agentNodeId),
+        eq(groupChatThreadAlias.slug, threadSlug),
+      ),
+    )
+  await db.delete(groupChatThreadAlias).where(eq(groupChatThreadAlias.sessionKey, sessionKey))
   const [thread] = await db
     .insert(groupChatThread)
     // `deliveredContextSignature` is deliberately left NULL here and written
@@ -1316,6 +1496,113 @@ export async function clearThread(request: Request, threadId: string): Promise<v
 }
 
 /**
+ * Rename a thread: its title AND the slug that is the last segment of its
+ * session key. Membership-gated like `getThread` -- the same single refusal for
+ * a missing thread and for a non-member.
+ *
+ * Same migration, same four steps, same reasoning as `renameGroupChat` -- read
+ * its header for why the order is what it is. What differs is only which
+ * addresses move: a thread rename frees BOTH the thread's slug (which an
+ * embedded surface names) and its whole session key (which a send names), where
+ * a chat rename frees only the key.
+ *
+ * A THREAD WITH NO SLUG IS GIVEN ONE AND NOTHING IS FREED. Threads created
+ * before slugs existed carry ids in their keys, so there is no old slug a
+ * reference could have been written against and no key segment to move: title
+ * and slug are set, the key stays exactly as it was, and no alias is recorded
+ * because no address stopped working.
+ */
+export async function renameThread(request: Request, threadId: string, title: string): Promise<void> {
+  const sessionUser = await requireSignedInUser(request)
+  const [row] = await db
+    .select({
+      id: groupChatThread.id,
+      groupChatId: groupChatThread.groupChatId,
+      agentNodeId: groupChatThread.agentNodeId,
+      sessionKey: groupChatThread.sessionKey,
+      slug: groupChatThread.slug,
+    })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.id, threadId))
+    .limit(1)
+  if (!row) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  const trimmed = title.trim()
+  if (!trimmed) {
+    throw new Error('A thread needs a title')
+  }
+  // Refuses a title with nothing to build a slug from, rather than falling back
+  // to a hash the way an UNNAMED thread does at creation: someone typing a
+  // title means to see it in the address, and quietly replacing it is worse
+  // than saying it cannot be used.
+  const nextSlug = threadSlugFromTitle(trimmed)
+  if (nextSlug === row.slug) {
+    await db.update(groupChatThread).set({ title: trimmed }).where(eq(groupChatThread.id, threadId))
+    return
+  }
+  const [taken] = await db
+    .select({ id: groupChatThread.id })
+    .from(groupChatThread)
+    .where(
+      and(
+        eq(groupChatThread.groupChatId, row.groupChatId),
+        eq(groupChatThread.agentNodeId, row.agentNodeId),
+        eq(groupChatThread.slug, nextSlug),
+      ),
+    )
+    .limit(1)
+  if (taken) {
+    // Scoped to (chat, agent) because that is what the key path is -- the same
+    // scope, code and wording `startThread` refuses with.
+    throw new GroupChatAccessError('slug-taken', `This agent already has a thread named "${nextSlug}" here`)
+  }
+
+  const parts = partsOfSessionKey(row.sessionKey)
+  const moves: TabKeyMove[] =
+    parts && row.slug && parts.threadSlug === row.slug
+      ? [{ from: row.sessionKey, to: mintSessionKey(parts.chatSlug, parts.agentSlug, nextSlug) }]
+      : []
+  const move = moves[0]
+
+  await stageSessionKeyMoves(moves)
+  await db.transaction(async (tx) => {
+    // The live binding this rename creates takes both of its addresses
+    // outright -- see `startThread` for why an alias may never outrank one.
+    await tx
+      .delete(groupChatThreadAlias)
+      .where(
+        and(
+          eq(groupChatThreadAlias.groupChatId, row.groupChatId),
+          eq(groupChatThreadAlias.agentNodeId, row.agentNodeId),
+          eq(groupChatThreadAlias.slug, nextSlug),
+        ),
+      )
+    if (move) {
+      await tx.delete(groupChatThreadAlias).where(eq(groupChatThreadAlias.sessionKey, move.to))
+    }
+    // One row records everything this rename freed. Nothing freed, no row.
+    if (row.slug || move) {
+      await tx.insert(groupChatThreadAlias).values({
+        threadId: row.id,
+        groupChatId: row.groupChatId,
+        agentNodeId: row.agentNodeId,
+        sessionKey: move?.from ?? null,
+        slug: row.slug,
+      })
+    }
+    await tx
+      .update(groupChatThread)
+      .set({ title: trimmed, slug: nextSlug, ...(move ? { sessionKey: move.to } : {}) })
+      .where(eq(groupChatThread.id, threadId))
+  })
+  await settleSessionKeyMoves(moves)
+}
+
+/**
  * Save (or clear, with an empty string) a thread's unsent composer draft --
  * the same mechanism SessionEntry.draft gives the 1:1 chat, kept per-thread
  * on the thread's own row rather than in that settings-row list, since a
@@ -1442,12 +1729,20 @@ export async function requireAgentNode(agentName: string): Promise<string> {
  * the one wrong-recipient failure a membership gate cannot catch, because a
  * sender able to write the address is a member of both.
  *
- * A stored key never changes, so exact matching is also immune to an agent
- * rename: the key keeps the agent segment it was minted with, and every
- * reference the list surface hands out IS that stored key's readable part, so
- * a reference passed back always matches itself. What it does not accept is a
+ * The agent segment is immune to an agent rename: a key keeps the segment it
+ * was minted with, and every reference the list surface hands out IS the stored
+ * key's readable part, so a reference passed back always matches itself. What it does not accept is a
  * hand-written address using an agent's CURRENT name after a rename — and an
  * unambiguous address is worth more than that convenience.
+ *
+ * A KEY A RENAME FREED STILL RESOLVES, through `groupChatThreadAlias`. A
+ * stored key used to be permanent; renaming a chat or a thread moves it, and
+ * the addresses already written down -- in an agent's own notes, in a skill, in
+ * a message queued before the rename -- cannot be rewritten by it. The alias is
+ * what lands those where they always did instead of nowhere.
+ *
+ * Live first, alias second, for the reason every alias lookup here shares: if a
+ * new thread has since taken the freed key, that thread is the answer.
  *
  * Returns null rather than refusing when nothing matches, so the caller falls
  * through to an id: the forms are alternatives, and an agent that stored an id
@@ -1455,12 +1750,21 @@ export async function requireAgentNode(agentName: string): Promise<string> {
  */
 async function resolveByKey(ref: string): Promise<ThreadDeliveryTarget | null> {
   const key = ref.startsWith('group-chat:') ? ref : `group-chat:${ref}`
-  const [row] = await db
+  const [live] = await db
     .select(threadDeliveryColumns)
     .from(groupChatThread)
     .where(eq(groupChatThread.sessionKey, key))
     .limit(1)
-  return row ?? null
+  if (live) {
+    return live
+  }
+  const [aliased] = await db
+    .select(threadDeliveryColumns)
+    .from(groupChatThread)
+    .innerJoin(groupChatThreadAlias, eq(groupChatThreadAlias.threadId, groupChatThread.id))
+    .where(eq(groupChatThreadAlias.sessionKey, key))
+    .limit(1)
+  return aliased ?? null
 }
 
 async function resolveById(ref: string): Promise<ThreadDeliveryTarget | null> {

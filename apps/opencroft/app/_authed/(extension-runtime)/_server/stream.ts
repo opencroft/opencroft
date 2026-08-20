@@ -962,6 +962,27 @@ if (!globalForCompact.__COMPACT_JOBS__) {
 }
 const compactJobs = globalForCompact.__COMPACT_JOBS__
 
+/**
+ * Re-file a session's compaction job under a new key, for a host that has just
+ * moved the session's key out from under it.
+ *
+ * The job itself is unaffected either way — it holds a session id and finishes
+ * regardless — so this is about the STATUS POLL, which asks by key: without it,
+ * `getCompactStatusOnGraph` answers 'never-requested' for a compaction the
+ * reader is watching run. Silent, and it makes the ring look stuck.
+ *
+ * A key with no job is the ordinary case (nothing was compacting), so absence
+ * is a no-op rather than anything to report.
+ */
+export function renameCompactJobKey(from: string, to: string): void {
+  const job = compactJobs.get(from)
+  if (!job || from === to) {
+    return
+  }
+  compactJobs.set(to, job)
+  compactJobs.delete(from)
+}
+
 // Resolves once the session has no turn in flight right now — never sends
 // anything, so it can never be what interrupts a turn. Loops rather than
 // resolving on the first turn_end/error: agent-client drains its own queue
