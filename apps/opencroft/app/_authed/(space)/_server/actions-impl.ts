@@ -161,21 +161,27 @@ export async function resolveSpaceSlugImpl(slug: string): Promise<string | null>
   return r.getBySlug(slug)?.slug ?? null
 }
 
+/**
+ * Deleted, or refused because it was the last space left.
+ *
+ * THE GUARD IS ABOUT THE COUNT, NOT ABOUT WHICH SPACE. It used to also require
+ * the space to be the default one, which stopped meaning anything once a slug
+ * could move: a renamed default space answers to a different address, so the
+ * comparison protected exactly the spaces nobody had renamed. Naming a space is
+ * not a decision about whether it may be deleted.
+ *
+ * So the rule is the count alone -- which is what every surface above this one
+ * already promises its callers: the last remaining space cannot be deleted. A
+ * lone space that was never the default is now refused too, where it was not
+ * before; that is the invariant being true rather than nearly true.
+ *
+ * At the limit this answers before looking the slug up at all, so a slug that
+ * names nothing and the space being protected come back the same -- which they
+ * already did to every caller, since the answer is a bare boolean.
+ */
 export async function deleteSpaceImpl(slug: string): Promise<boolean> {
   const r = await registry()
-  // Resolved before it is compared, so the guard tests the SPACE rather than
-  // the string it was addressed by. Since slugs move, the two came apart: the
-  // default slug can now name one space as its live address and another as a
-  // freed one, and matching the input would apply the guard to whichever was
-  // typed instead of to whichever it reaches.
-  //
-  // NAMED, because resolving does not fix it: a default space that has been
-  // renamed no longer answers to `default` at all, so the slug half of this
-  // guard stops protecting it. That is a question about what the guard is for
-  // -- the last space, or that particular one -- and is left as it was rather
-  // than answered here.
-  const space = r.getBySlug(slug)
-  if (space?.slug === DEFAULT_SPACE_SLUG && r.list().length <= 1) {
+  if (r.list().length <= 1) {
     return false
   }
   return r.remove(slug)
