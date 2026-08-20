@@ -78,6 +78,7 @@ function collectProcess(child: ChildProcess, opts: ExecOptions): Promise<ExecRes
         stderr: stderr.toString(),
         exitCode: timedOut ? 124 : (code ?? 1),
         truncated: stdout.truncated || stderr.truncated || undefined,
+        stdoutTruncated: stdout.truncated || undefined,
         timedOut: timedOut || undefined,
       })
     })

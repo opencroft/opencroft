@@ -849,7 +849,7 @@ export const toolDefinitions = [
   {
     name: 'remote_read',
     description:
-      'Read a file from a remote node. The target is a terminal-context output handle in "node-id/handle-id" format (e.g. "localhost_abc/terminal"). Output is line-numbered (cat -n style). Optional offset/limit slice by 1-indexed line.',
+      'Read a file from a remote node. The target is a terminal-context output handle in "node-id/handle-id" format (e.g. "localhost_abc/terminal"). Output is line-numbered (cat -n style). Optional offset/limit slice by 1-indexed line. A file too large for one read comes back cut, with an unnumbered "(truncated …)" note as the last line — when you see it, the file continues past what you were shown, so do not conclude anything from where it appears to end.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -993,7 +993,7 @@ export const toolDefinitions = [
   {
     name: 'remote_exec',
     description:
-      'Execute a shell command on a remote node. The target is a terminal-context output handle in "node-id/handle-id" format. Optionally inject secret values from any Secrets Store as env vars (reference them in the command via "$NAME").',
+      'Execute a shell command on a remote node. The target is a terminal-context output handle in "node-id/handle-id" format. Optionally inject secret values from any Secrets Store as env vars (reference them in the command via "$NAME"). Very large output is cut, with a "(truncated …)" note as the last line — treat the result as incomplete rather than as the command\'s full output.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -1025,7 +1025,7 @@ export const toolDefinitions = [
   {
     name: 'remote_script',
     description:
-      'Execute a multiline bash script on a remote node. Unlike remote_exec, the script body is written to a temp file first, so it avoids quoting/escaping issues with heredocs, loops, and nested quotes. The target is a terminal-context output handle in "node-id/handle-id" format. Optionally inject secret values from any Secrets Store as env vars (reference them in the script via "$NAME").',
+      'Execute a multiline bash script on a remote node. Unlike remote_exec, the script body is written to a temp file first, so it avoids quoting/escaping issues with heredocs, loops, and nested quotes. The target is a terminal-context output handle in "node-id/handle-id" format. Optionally inject secret values from any Secrets Store as env vars (reference them in the script via "$NAME"). Very large output is cut, with a "(truncated …)" note as the last line — treat the result as incomplete rather than as the script\'s full output.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -1929,16 +1929,56 @@ export async function resolveTerminalContext(
   return { ctx: ctx as Record<string, unknown>, slug }
 }
 
+/** Resolve one of the core extension's actions, failing loudly when it is not there. */
+async function coreAction(name: string): Promise<(...args: unknown[]) => unknown> {
+  const core = await getExtensionModule(CORE_EXTENSION_ID)
+  const action = core.actions[name]
+  if (!action) {
+    fail(-32603, `Core extension has no ${name} action`)
+  }
+  return action as (...args: unknown[]) => unknown
+}
+
+/**
+ * Run a command and report whether the backend cut its stdout at the output cap.
+ *
+ * Worth carrying: the cap truncates rather than erroring, so a tool that hands command output to
+ * a reader cannot otherwise tell a complete result from a clipped one — and neither can the
+ * reader. Any tool whose output a caller will reason over should use this and say so.
+ *
+ * Deliberately NOT what `remoteExec` is built on, even though it could be. The extension module
+ * cache lives on `globalThis`, so it outlives a hot reload: a deploy that pulls new code without
+ * restarting the process keeps serving the previously loaded core extension, and an action added
+ * in the same commit is missing until a restart. Keeping the plain path on the older action means
+ * that window costs the three tools that report truncation, not every remote tool there is.
+ */
+export async function remoteExecDetailed(
+  ctx: Record<string, unknown>,
+  command: string,
+  opts?: { cwd?: string; env?: Record<string, string> },
+): Promise<{ stdout: string; truncated: boolean }> {
+  const execFn = await coreAction('terminal.execDetailed')
+  return execFn(ctx, command, opts) as Promise<{ stdout: string; truncated: boolean }>
+}
+
+/**
+ * Run a command and return its stdout, discarding whether that stdout was complete.
+ *
+ * Correct only when nobody downstream reads the output — a `mv`, a `chmod`, a byte count the
+ * caller parses itself. **If the result reaches a human or a model, use `remoteExecDetailed` and
+ * report the truncation**, because a string that was cut is indistinguishable from a command
+ * that produced exactly that much, and a reader will treat it as the whole answer.
+ *
+ * The discard is deliberately spelled out here rather than left to the shorter name: this is the
+ * easier function to reach for, its bare `string` return makes dropping the flag type-clean, and
+ * that omission is the original defect in a friendlier form.
+ */
 export async function remoteExec(
   ctx: Record<string, unknown>,
   command: string,
   opts?: { cwd?: string; env?: Record<string, string> },
 ): Promise<string> {
-  const core = await getExtensionModule(CORE_EXTENSION_ID)
-  const execFn = core.actions['terminal.exec']
-  if (!execFn) {
-    fail(-32603, 'Core extension has no terminal.exec action')
-  }
+  const execFn = await coreAction('terminal.exec')
   return execFn(ctx, command, opts) as Promise<string>
 }
 
@@ -2033,6 +2073,21 @@ function searchLimit(args: Record<string, unknown>): number {
   return SEARCH_LIMIT_DEFAULT
 }
 
+/**
+ * The one truncation note every tool appends, so a reader learns the same shape once and
+ * recognises it everywhere. `remedy` is the whole tail, not a fragment slotted into a fixed
+ * sentence: the tools do not all have the same way out, and a shared "… to see the rest" ending
+ * would have forced the ones that cannot honestly say it to say it anyway.
+ *
+ * The leading `…` and the parentheses are what keep it from reading as content. That matters
+ * most for `remote_read`, whose body is `cat -n`-style numbered lines that get pasted and
+ * grepped: an unnumbered parenthetical cannot be mistaken for a line of the file, whereas a bare
+ * sentence could be. Appending on its own line is part of the convention, not a detail.
+ */
+export function withTruncationNote(body: string, truncated: boolean, remedy: string): string {
+  return truncated ? `${body}\n… (truncated — ${remedy})` : body
+}
+
 /** Shared tail of remote_glob/remote_grep: strip "./" prefixes, apply the line limit and column
  * cap, and append a truncation note instead of silently dropping the rest. */
 function renderSearchResult(output: string, limit: number): Record<string, unknown> {
@@ -2049,10 +2104,7 @@ function renderSearchResult(output: string, limit: number): Record<string, unkno
     .slice(0, limit)
     .map((line) => capColumns(line.replace(/^\.\//, '')))
     .join('\n')
-  if (!truncated) {
-    return textResult(body)
-  }
-  return textResult(`${body}\n… (truncated — narrow the pattern, path, or glob to see the rest)`)
+  return textResult(withTruncationNote(body, truncated, 'narrow the pattern, path, or glob to see the rest'))
 }
 
 // Base64 chunk size (of encoded text, per command) for remote writes — keeps each `remoteExec`
@@ -2362,6 +2414,31 @@ function catN(content: string, startLine = 1): string {
   const lastLineNo = startLine + lines.length - 1
   const width = String(lastLineNo).length
   return lines.map((line, i) => `${String(startLine + i).padStart(width)}\t${line}`).join('\n')
+}
+
+/**
+ * Render a remote_read response: slice to the requested range, number the lines, and say so when
+ * the file arrived cut.
+ *
+ * The note is attached to the READ, not to the slice — it appears whenever the file was cut,
+ * even when the requested range sits well inside what did arrive. The read has no way to know
+ * how much further the file went, so any line count or "it ends here" taken from it is unsound
+ * regardless of which part was asked for.
+ *
+ * The remedy deliberately does not offer `offset`/`limit`. The whole file is fetched with `cat`
+ * and sliced here, against the string that already arrived, so no offset reaches past the cap —
+ * telling a reader to narrow the range would be a confident wrong instruction on the one surface
+ * that exists to stop producing them. Reaching later parts needs the slicing to happen on the
+ * remote instead.
+ */
+export function renderReadResult(content: string, truncated: boolean, offset?: number, limit?: number): string {
+  const body = catN(sliceLines(content, offset, limit), offset ?? 1)
+  return withTruncationNote(
+    body,
+    truncated,
+    'the file is larger than one read can return; offset/limit only index what already arrived, ' +
+      'so fetch later parts by slicing on the remote (e.g. sed -n) instead',
+  )
 }
 
 function sliceLines(content: string, offset?: number, limit?: number): string {
@@ -3236,9 +3313,8 @@ function buildHandlers(): Record<string, ToolHandler> {
       const limit = args.limit as number | undefined
       const { ctx } = await resolveTerminalContext(args)
       const resolvedPath = resolveRemoteFilePath(filePath, ctx.cwd as string | undefined)
-      const content = await remoteExec(ctx, `cat ${shellQuote(resolvedPath)}`)
-      const sliced = sliceLines(content, offset, limit)
-      return textResult(catN(sliced, offset ?? 1))
+      const { stdout: content, truncated } = await remoteExecDetailed(ctx, `cat ${shellQuote(resolvedPath)}`)
+      return textResult(renderReadResult(content, truncated, offset, limit))
     },
 
     // ── glob (remote) ────────────────────────────────────────────────
@@ -3362,8 +3438,8 @@ function buildHandlers(): Record<string, ToolHandler> {
           ? resolveRemoteFilePath(cwd, ctx.cwd as string | undefined)
           : (ctx.cwd as string | undefined)
         const env = await resolveSecretsEnv(args.secrets as string[] | undefined)
-        const output = await remoteExec(ctx, command, { cwd: effectiveCwd, env })
-        return textResult(output)
+        const { stdout, truncated } = await remoteExecDetailed(ctx, command, { cwd: effectiveCwd, env })
+        return textResult(withTruncationNote(stdout, truncated, "narrow the command's output to see the rest"))
       },
       { view: 'remote_exec' },
     ),
@@ -3387,12 +3463,14 @@ function buildHandlers(): Record<string, ToolHandler> {
         try {
           await writeRemoteFileExact(ctx, tmpPath, script)
           const argv = scriptArgs.map(shellQuote).join(' ')
-          const output = await remoteExec(
+          // Same exposure as remote_exec — this is command output too, and a script is the more
+          // likely of the two to produce enough of it to be cut.
+          const { stdout, truncated } = await remoteExecDetailed(
             ctx,
             `bash ${shellQuote(tmpPath)} ${argv}; rc=$?; rm -f ${shellQuote(tmpPath)}; exit $rc`,
             { cwd: effectiveCwd, env },
           )
-          return textResult(output)
+          return textResult(withTruncationNote(stdout, truncated, "narrow the script's output to see the rest"))
         } catch (err) {
           // The happy path's `rm -f` never runs if the write itself failed (e.g. verification
           // mismatch) or the exec command never reached the remote — best-effort clean up here too,
