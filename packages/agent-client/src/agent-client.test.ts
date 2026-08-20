@@ -858,7 +858,10 @@ test('a session that has never reported usage has none, rather than zero', async
 })
 
 test('listSessions surfaces the last reported usage', async () => {
-  const h = await setup('openclaw')
+  // Configured, so the reading has a window it may be shown against at all --
+  // a bridged session with none reports its tokens and no ratio (see the
+  // known-window tests below, and context-window.test.ts for the rule itself).
+  const h = await setup('openclaw', { contextWindow: 200_000 })
   handleUpdate({
     sessionId: h.sessionId,
     update: { sessionUpdate: 'usage_update', used: 12_000, size: 200_000 },
@@ -870,7 +873,7 @@ test('listSessions surfaces the last reported usage', async () => {
 
 test('a later usage report replaces the earlier one', async () => {
   // What a host reads after a compaction: the newest figure, not the peak.
-  const h = await setup('openclaw')
+  const h = await setup('openclaw', { contextWindow: 1_000_000 })
   for (const used of [500_000, 20_000]) {
     handleUpdate({
       sessionId: h.sessionId,
@@ -879,7 +882,7 @@ test('a later usage report replaces the earlier one', async () => {
   }
   assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
     used: 20_000,
-    size: 200_000,
+    size: 1_000_000,
   })
   await h.client.deleteSession(h.sessionId)
 })
@@ -900,7 +903,7 @@ test('a harness that cannot name the context window reports usage with no size',
 test('restoreUsage seeds a session that has reported none', async () => {
   // The resume case: ACP offers no way to ask an agent what a loaded session
   // holds, so a host that kept the last figure hands it back this way.
-  const h = await setup('openclaw')
+  const h = await setup('openclaw', { contextWindow: 200_000 })
   h.client.restoreUsage(h.sessionId, { used: 8_000, size: 200_000 })
   assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
     used: 8_000,
@@ -913,7 +916,7 @@ test('a restored usage figure reaches a subscriber that connects afterwards', as
   // The whole point of restoring it: the chat opens with a populated context
   // ring instead of a blank one, via the same snapshot-prefix path a live
   // reading takes.
-  const h = await setup('openclaw')
+  const h = await setup('openclaw', { contextWindow: 200_000 })
   h.client.restoreUsage(h.sessionId, { used: 8_000, size: 200_000 })
   const seen: ChatEvent[] = []
   const unsubscribe = h.client.subscribe(h.sessionId, (event) => seen.push(event))
@@ -929,7 +932,7 @@ test('restoreUsage never overwrites a figure the agent actually reported', async
   // A restored value is last-turn's estimate. Once the agent has spoken for
   // itself, the stored guess must not be able to clobber it — otherwise a
   // late-arriving restore would walk a live session's ring backwards.
-  const h = await setup('openclaw')
+  const h = await setup('openclaw', { contextWindow: 200_000 })
   handleUpdate({
     sessionId: h.sessionId,
     update: { sessionUpdate: 'usage_update', used: 12_000, size: 200_000 },
@@ -959,7 +962,7 @@ test('restoreUsage on an unknown session is a no-op', async () => {
 // reading still applies at the turn boundary.
 
 test('a lower reading mid-turn is held; the ring keeps growing or holding, never drops', async () => {
-  const h = await setup('openclaw')
+  const h = await setup('openclaw', { contextWindow: 200_000 })
   await h.client.prompt(h.sessionId, 'hello')
   for (const used of [50_000, 200, 800]) {
     handleUpdate({
@@ -982,7 +985,7 @@ test('a lower reading mid-turn is held; the ring keeps growing or holding, never
 test('the held reading is not lost: it applies once the turn ends', async () => {
   // A genuine decrease (e.g. after compaction) still reaches the display —
   // just at the boundary rather than mid-turn.
-  const h = await setup('openclaw')
+  const h = await setup('openclaw', { contextWindow: 200_000 })
   await h.client.prompt(h.sessionId, 'hello')
   handleUpdate({
     sessionId: h.sessionId,
@@ -1014,7 +1017,7 @@ test('the held reading is not lost: it applies once the turn ends', async () => 
 test('a turn boundary with no held-back reading re-emits nothing', async () => {
   // The common case: the last mid-turn reading already matches what settled
   // at the boundary, so there is nothing new to tell a subscriber.
-  const h = await setup('openclaw')
+  const h = await setup('openclaw', { contextWindow: 200_000 })
   await h.client.prompt(h.sessionId, 'hello')
   handleUpdate({
     sessionId: h.sessionId,
@@ -1029,7 +1032,7 @@ test('a turn boundary with no held-back reading re-emits nothing', async () => {
 })
 
 test('the first reading of a turn always applies, however low, when nothing was displayed yet', async () => {
-  const h = await setup('openclaw')
+  const h = await setup('openclaw', { contextWindow: 200_000 })
   await h.client.prompt(h.sessionId, 'hello')
   handleUpdate({
     sessionId: h.sessionId,
@@ -1046,7 +1049,7 @@ test('the first reading of a turn always applies, however low, when nothing was 
 test('a genuine decrease outside of an active turn still applies immediately', async () => {
   // Native-harness sessions, and any reading that arrives with no turn in
   // flight (e.g. replayed history), are unaffected by the monotonic rule.
-  const h = await setup('openclaw')
+  const h = await setup('openclaw', { contextWindow: 200_000 })
   handleUpdate({
     sessionId: h.sessionId,
     update: { sessionUpdate: 'usage_update', used: 50_000, size: 200_000 },
@@ -1062,13 +1065,20 @@ test('a genuine decrease outside of an active turn still applies immediately', a
   await h.client.deleteSession(h.sessionId)
 })
 
-test('a size change mid-turn applies immediately, even as a decrease (a restart-restored stale pair under an old window)', async () => {
-  // Observed live: after a restart, a session woke with its persisted
-  // pre-restart pair, saved under a smaller window. The first fresh reading
-  // under the CURRENT (larger) window can have a lower `used` than that
-  // stale pair — that is a new window, not an undercount, and must not be
-  // held the way a same-size drop is.
-  const h = await setup('openclaw')
+test('a bridged window can no longer flip mid-turn: the wire does not decide it any more', async () => {
+  // This used to pin the opposite scenario — a restored pair saved under an
+  // old window, then a fresh reading under a larger one, where the size CHANGE
+  // was the signal that let a lower `used` through the monotonic hold.
+  //
+  // A bridged session can no longer produce that: the window is the configured
+  // one throughout, whatever sizes cross the wire, so the two readings compare
+  // as same-size and the hold applies. The stale-pair problem this guarded
+  // against is gone at the source rather than handled downstream.
+  //
+  // The size-change branch of the hold is still live, but now only where a
+  // window can genuinely change under a session: a native harness whose model
+  // switches mid-session resolves a different discovered window.
+  const h = await setup('openclaw', { contextWindow: 1_000_000 })
   h.client.restoreUsage(h.sessionId, { used: 609_000, size: 200_000 })
   await h.client.prompt(h.sessionId, 'hello')
   handleUpdate({
@@ -1077,15 +1087,15 @@ test('a size change mid-turn applies immediately, even as a decrease (a restart-
   } as Parameters<typeof handleUpdate>[0])
   assert.deepEqual(
     h.client.listSessions().find((s) => s.id === h.sessionId)?.usage,
-    { used: 5_000, size: 1_000_000 },
-    'a different size applies immediately, even though used dropped',
+    { used: 609_000, size: 1_000_000 },
+    'same window on both readings, so the lower one is held exactly as any same-size drop is',
   )
   h.endTurn()
   await settle()
 })
 
 test('a same-size lower reading mid-turn is still held (the shipped monotonic behaviour, unchanged)', async () => {
-  const h = await setup('openclaw')
+  const h = await setup('openclaw', { contextWindow: 1_000_000 })
   h.client.restoreUsage(h.sessionId, { used: 609_000, size: 200_000 })
   await h.client.prompt(h.sessionId, 'hello')
   handleUpdate({
@@ -1094,60 +1104,85 @@ test('a same-size lower reading mid-turn is still held (the shipped monotonic be
   } as Parameters<typeof handleUpdate>[0])
   assert.deepEqual(
     h.client.listSessions().find((s) => s.id === h.sessionId)?.usage,
-    { used: 609_000, size: 200_000 },
+    { used: 609_000, size: 1_000_000 },
     'same size, so the lower reading is held exactly as before this fix',
   )
   h.endTurn()
   await settle()
 })
 
-// ── disproved reported window ───────────────────────────────────────────
+// ── the window a reading may be shown against ───────────────────────────
 //
-// A session cannot hold more tokens than its own window, so a reading where
-// used > size disproves the size, not the used count -- an external bridge
-// can seed/keep a model family's base window even once the session is
-// demonstrably running under a larger one. Three transitions: undisproved
-// (unaffected), disproved with no usable configured override (withheld, like
-// an unreported size), disproved with a configured override the same reading
-// doesn't ALSO disprove (the configured value wins).
+// A window is displayed only when it comes from an authority we can stand
+// behind — see context-window.ts for the rule and context-window.test.ts for
+// it in isolation. These pin it at the two doors into session state, because
+// the failure that reopened this was the two doors disagreeing: the live one
+// applied a check the restored one had never heard of.
 
-test('a reported size the reading does not disprove is used as-is', async () => {
-  const h = await setup('openclaw', { contextWindow: 1_000_000 })
-  handleUpdate({
-    sessionId: h.sessionId,
-    update: { sessionUpdate: 'usage_update', used: 150_000, size: 200_000 },
-  } as Parameters<typeof handleUpdate>[0])
-  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
-    used: 150_000,
-    size: 200_000,
-  })
-})
-
-test('a disproved size with no usable configured window is withheld to used-alone', async () => {
+test('a bridged window is not shown, even when this reading does not contradict it', async () => {
+  // The observed failure verbatim: 185k against a reported 200k is not
+  // self-contradicting, so a rule keyed on `used > size` never fired and the
+  // bridge's number was relayed as fact — a fresh-looking session reading 93%
+  // full. Nothing about it is verifiable, so no ratio is shown.
   const h = await setup('openclaw')
   handleUpdate({
     sessionId: h.sessionId,
-    update: { sessionUpdate: 'usage_update', used: 531_737, size: 200_000 },
+    update: { sessionUpdate: 'usage_update', used: 185_000, size: 200_000 },
   } as Parameters<typeof handleUpdate>[0])
   assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
-    used: 531_737,
+    used: 185_000,
     size: undefined,
   })
 })
 
-test('a disproved size falls back to a configured window the same reading does not also disprove', async () => {
-  const h = await setup('openclaw', { contextWindow: 1_000_000 })
-  handleUpdate({
-    sessionId: h.sessionId,
-    update: { sessionUpdate: 'usage_update', used: 531_737, size: 200_000 },
-  } as Parameters<typeof handleUpdate>[0])
-  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
-    used: 531_737,
-    size: 1_000_000,
-  })
+test('a configured window beats the reported one whether or not the reading disproves it', async () => {
+  // Both directions of the same rule: the configured window wins at 185k
+  // (where the reported figure is merely wrong) and at 531k (where it is also
+  // impossible). Provenance decides, not arithmetic.
+  for (const used of [185_000, 531_737]) {
+    const h = await setup('openclaw', { contextWindow: 1_000_000 })
+    handleUpdate({
+      sessionId: h.sessionId,
+      update: { sessionUpdate: 'usage_update', used, size: 200_000 },
+    } as Parameters<typeof handleUpdate>[0])
+    assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
+      used,
+      size: 1_000_000,
+    })
+    await h.client.deleteSession(h.sessionId)
+  }
 })
 
-test('a configured window the reading ALSO disproves is withheld, not trusted blindly', async () => {
+test('a restored reading gets the same rule as a live one', async () => {
+  // The reported case: the session had gone offline holding history, and the
+  // first message back restored a persisted {used, size} straight into state.
+  // The restore door bypassed every check the live door applied, so the ring
+  // came back showing a window the live path would already have refused.
+  const h = await setup('openclaw')
+  h.client.restoreUsage(h.sessionId, { used: 185_000, size: 200_000 })
+  assert.deepEqual(
+    h.client.listSessions().find((s) => s.id === h.sessionId)?.usage,
+    { used: 185_000, size: undefined },
+    'a persisted size was written from the same untrustworthy source and earns no more trust for having survived a restart',
+  )
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a restored reading keeps a configured window, exactly as a live one does', async () => {
+  const h = await setup('openclaw', { contextWindow: 1_000_000 })
+  h.client.restoreUsage(h.sessionId, { used: 185_000, size: 200_000 })
+  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
+    used: 185_000,
+    size: 1_000_000,
+  })
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a configured window the reading itself disproves is withheld, not rendered past 100%', async () => {
+  // Provenance alone would relay this: a configured window is an authority.
+  // But an operator can still type a number the session demonstrably exceeds,
+  // and 531k against a configured 300k is the same impossible ratio this work
+  // began with — merely sourced from us rather than from the bridge.
   const h = await setup('openclaw', { contextWindow: 300_000 })
   handleUpdate({
     sessionId: h.sessionId,
@@ -1159,11 +1194,9 @@ test('a configured window the reading ALSO disproves is withheld, not trusted bl
   })
 })
 
-test('a configured window exactly at used is trusted, not withheld -- the same boundary the primary disproof uses', async () => {
-  // used > size disproves; used === size does not (a session may legitimately
-  // sit at exactly its cap, reading as a real 100%). The override check must
-  // use the same boundary, or a session at exactly its configured cap would
-  // withhold instead of showing 100%.
+test('a session sitting exactly at its configured window still shows the ratio', async () => {
+  // `used > known` disproves; `used === known` is a real 100%, not a
+  // contradiction, and a session at its cap is exactly when the ring matters.
   const h = await setup('openclaw', { contextWindow: 500_000 })
   handleUpdate({
     sessionId: h.sessionId,
@@ -1173,19 +1206,6 @@ test('a configured window exactly at used is trusted, not withheld -- the same b
     used: 500_000,
     size: 500_000,
   })
-})
-
-test('an unreported size (already withheld) is unaffected by the disprove check', async () => {
-  const h = await setup('openclaw', { contextWindow: 1_000_000 })
-  handleUpdate({
-    sessionId: h.sessionId,
-    update: { sessionUpdate: 'usage_update', used: 531_737, size: 0 },
-  } as Parameters<typeof handleUpdate>[0])
-  assert.deepEqual(
-    h.client.listSessions().find((s) => s.id === h.sessionId)?.usage,
-    { used: 531_737, size: undefined },
-    'size 0 is already the "unreported" case (see above), not a disproved one -- the configured window is not consulted',
-  )
 })
 
 // ── hasActiveTurn ────────────────────────────────────────────────────────
@@ -1445,7 +1465,9 @@ test('getEventsWindow tail matches what subscribe replays with the same fromInde
 })
 
 test('a windowed subscribe still delivers the latest config/title/usage snapshot even when it predates the cut', async () => {
-  const h = await setup('openclaw')
+  // Configured, so the usage snapshot carries a window at all — this is about
+  // snapshot delivery across a window cut, not about which windows are shown.
+  const h = await setup('openclaw', { contextWindow: 1000 })
   for (let i = 0; i < 5; i++) {
     pushTurn(h.sessionId, `q${i}`, `a${i}`)
   }

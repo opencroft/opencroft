@@ -1705,8 +1705,15 @@ test("a thread's contextUsage mirrors its session's own usage, the same source t
     ?.threads.find((t) => t.ref === expectedRef)
   assert.deepEqual(
     after?.contextUsage,
-    { usedTokens: 12_345, contextLimit: 200_000 },
-    "the exact figure the thread's own session reported, via the same mechanism ordinary sessions use",
+    { usedTokens: 12_345, contextLimit: null },
+    // The tokens are the thread's own session's, via the same mechanism
+    // ordinary sessions use — that is what this test is for, and it still
+    // holds. The window is null because this fixture's agent has no configured
+    // context window and the session is bridged, so the 200_000 it reported is
+    // a figure nobody established: agent-client withholds it rather than let a
+    // ratio be drawn against it (see context-window.ts). Configure a window on
+    // the agent to get a percentage back.
+    "the exact token figure the thread's own session reported; its window is withheld as unverified",
   )
   assert.equal(after?.queuedMessages, 0, 'an idle thread holds no server-side prompts — 0 is a fact, not unknown')
 })
@@ -2632,11 +2639,15 @@ test('renaming a chat re-keys every thread in it, and the live session comes wit
   assert.equal(agentClient.aliveSessionKeys().includes(newKey), true)
   assert.equal(agentClient.aliveSessionKeys().includes(oldKey), false)
 
-  // The ring, through the same read the composer makes.
+  // The ring, through the same read the composer makes. The tokens are what
+  // this assertion is about: they survived the re-key, which a rename that
+  // moved only the row would have lost. The window is null for the same reason
+  // as in the contextUsage test above — an unconfigured bridged session has no
+  // window anyone established, so none is shown.
   const view = (await model.listGroupChatsForAgentView('Agent Session'))
     .find((c) => c.ref === chat.id)
     ?.threads.find((t) => t.ref === newKey.slice('group-chat:'.length))
-  assert.deepEqual(view?.contextUsage, { usedTokens: 4_321, contextLimit: 200_000 })
+  assert.deepEqual(view?.contextUsage, { usedTokens: 4_321, contextLimit: null })
 
   // And a send lands in the session that was already there -- the whole point.
   // A migration that missed the pointer would pass every assertion above that

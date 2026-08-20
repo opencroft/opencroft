@@ -23,6 +23,7 @@ import type {
 import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
 
 import type { AgentConnection } from './connection'
+import { normalizeUsage } from './context-window'
 import { errorMessage } from './errors'
 import { isTerminalToolStatus, lastConversationEvent } from './fold'
 import { type HarnessFailure, harnessStartError } from './harness-failure'
@@ -487,32 +488,20 @@ export function handleUpdate(notification: SessionNotification): void {
       if (!session) {
         break
       }
-      // size <= 0 means the agent couldn't determine the context window.
-      let size = update.size > 0 ? update.size : undefined
-      // A reported size the reading itself disproves (used > size) is
-      // known-wrong -- a session cannot hold more tokens than its own window,
-      // so the window figure is what's broken, not the token count. Observed
-      // live: an external bridge seeds a family's base window (200k) and only
-      // corrects it once an authoritative report arrives; a session that never
-      // gets that correction keeps reporting the base figure even after the
-      // true (larger) window is demonstrably in use.
+      // Which window this reading may be shown against -- a window we know,
+      // or none at all. See normalizeUsage: the harness's own `size` is only
+      // an authority when we computed it (a native session), because a bridged
+      // one cannot be told apart from that bridge's seeded default.
       //
-      // A configured window (selection.contextWindow, the same per-model
-      // override native-harness sessions already trust unconditionally -- see
-      // resolveContextWindow in native-harness.ts) wins here IF it exists and
-      // the same reading doesn't ALSO disprove it. Otherwise the size is
-      // withheld exactly as an unreported one already is above: the ring
-      // shows `used` alone rather than an impossible ratio, and the ratio
-      // returns the moment a consistent size arrives.
+      // This replaced a narrower rule that only intervened when the reading
+      // contradicted itself (`used > size`). That caught the impossible case
+      // and left every merely-false one alone, so a window was corrected
+      // exactly once it had already misreported past 100%, and stayed wrong
+      // while it was quietly wrong below it.
       //
-      // `>=`, not `>`: matches the primary disproof's own strictness (`used >
-      // size` disproves, so `used === size` does not). A `>` here would
-      // withhold a session sitting at exactly its configured cap -- a real
-      // 100%, not a disproved one.
-      if (size !== undefined && update.used > size) {
-        const configured = session.selection.contextWindow
-        size = configured !== undefined && configured >= update.used ? configured : undefined
-      }
+      // The same call is what restoreUsage makes. One function, both doors:
+      // the two had drifted, and the restored door was the one still open.
+      const { size } = normalizeUsage(session.selection, { used: update.used, size: update.size })
       // Monotonic-within-turn display: an external ACP bridge resets its own
       // running usage tally at the start of every turn and rebuilds it from
       // streamed deltas, so a turn's early readings
@@ -1207,7 +1196,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       if (!session || session.usage) {
         return
       }
-      session.usage = { used: usage.used, size: usage.size }
+      // Normalised on the way in, exactly as a live reading is. What is handed
+      // back here was persisted by an earlier session from the same harness
+      // `size` a live reading has to justify, so it gets no weaker a test for
+      // having survived a restart -- a restored figure that skipped this is
+      // how an offline session came back still showing a window the live path
+      // would have refused.
+      session.usage = normalizeUsage(session.selection, usage)
     },
 
     // Session keys (selection.sessionKey) of every session currently blocked on

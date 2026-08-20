@@ -366,7 +366,15 @@ test('reattaching an unloaded session restores its last usage live -- never as a
 
   assert.deepEqual(
     reattached.contextUsage,
-    { usedTokens: 8_000, contextLimit: 200_000 },
-    'the persisted figure comes back, but without asOf -- resuming makes the session live again before this returns',
+    { usedTokens: 8_000, contextLimit: null },
+    // The tokens come back and there is no asOf: resuming makes the session
+    // live again before this returns, which is what this test is for.
+    //
+    // The window does not come back, and that is the point of the restore-path
+    // fix: the persisted 200_000 was written from a bridged session's own
+    // report, and a figure that would be withheld on the live path cannot be
+    // laundered into fact by having been persisted and read back. This
+    // fixture's agent configures no window, so there is none to substitute.
+    'the persisted tokens come back live (no asOf); the unverified window does not come back at all',
   )
 })
