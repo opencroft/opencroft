@@ -69,6 +69,32 @@ export function usableContextWindow(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
 }
 
+/**
+ * The window a reading may actually be shown against: the one we believe in,
+ * unless this very reading disproves it.
+ *
+ * A sanity gate, not a second source. Provenance alone cannot catch this -- a
+ * configured window is an authority, but an operator can still type a number
+ * smaller than what the session demonstrably holds, and rendering that as 265%
+ * would be the same impossible ratio this work started from, merely sourced
+ * from us instead of the bridge. It only ever REMOVES a window; it can never
+ * promote an unverified figure into one.
+ *
+ * `used == known` passes. A session sitting exactly at its window is an honest
+ * 100%, not a contradiction.
+ *
+ * Takes a resolved window rather than a selection, so that EVERY door shares
+ * it -- including the offline one, which has no selection to resolve from and
+ * is handed a number. That door carried its own copy of this test, written in
+ * the opposite polarity: it named the case that keeps the window where this
+ * names the case that drops it, so an edit to one would not have visually
+ * resembled the other.
+ */
+export function displayableContextWindow(known: number | undefined, used: number): number | undefined {
+  const window = usableContextWindow(known)
+  return window !== undefined && used <= window ? window : undefined
+}
+
 // One reading, normalised for display.
 //
 // Applied wherever a reading enters session state — a live `usage_update` and a
@@ -80,18 +106,13 @@ export function usableContextWindow(value: unknown): number | undefined {
 // something it can actually see; this rule has nothing to say about it, and a
 // reading whose window is withheld still reports its tokens in full.
 //
-// The second step is a sanity gate, not a second source: a window the reading
-// itself disproves is false whoever supplied it. Provenance alone cannot catch
-// this — a configured window is an authority, but an operator can still type a
-// number smaller than what the session demonstrably holds, and rendering that
-// as 265% would be the same impossible ratio this work started from, merely
-// sourced from us instead of the bridge. The gate only ever REMOVES a ratio;
-// it can never promote an unverified figure into one.
+// Two steps, and the second is deliberately not a second source: which window
+// is an authority (knownContextWindow), then whether this reading leaves it
+// standing (displayableContextWindow). Both are shared with the offline door,
+// which reaches the second directly because it has no selection for the first.
 export function normalizeUsage(
   selection: AgentSelection,
   usage: { used: number; size?: number },
 ): { used: number; size?: number } {
-  const known = knownContextWindow(selection, usage.size)
-  const disproved = known !== undefined && usage.used > known
-  return { used: usage.used, size: disproved ? undefined : known }
+  return { used: usage.used, size: displayableContextWindow(knownContextWindow(selection, usage.size), usage.used) }
 }

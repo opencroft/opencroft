@@ -1,3 +1,5 @@
+import { displayableContextWindow } from 'agent-client/context-window'
+
 // How much context a session is holding, and whether a compaction reduced it.
 //
 // Its own module because both ends of the compaction path need it: stream.ts
@@ -62,10 +64,13 @@ export function toContextUsage(
     return { usedTokens: usage.used, contextLimit: usage.size ?? null }
   }
   if (lastKnown) {
-    // Disproved by the reading it arrived with, so false whoever supplied it —
-    // the same subordinate gate normaliseUsage applies on the live path.
-    const window = knownWindow !== undefined && knownWindow > 0 && lastKnown.used <= knownWindow ? knownWindow : null
-    return { usedTokens: lastKnown.used, contextLimit: window, asOf: lastKnown.at }
+    // The same gate the live and restore doors apply, called rather than
+    // restated: a window this reading disproves is false whoever supplied it.
+    return {
+      usedTokens: lastKnown.used,
+      contextLimit: displayableContextWindow(knownWindow, lastKnown.used) ?? null,
+      asOf: lastKnown.at,
+    }
   }
   return null
 }
