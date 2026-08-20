@@ -693,9 +693,9 @@ export interface ChatConversationProps {
 }
 
 // The scrollable conversation: turn sections built from `blocks`, a
-// load-older control above them, and the scroll behaviour that holds the
-// reader's place across a prepend, follows a streaming reply, and lands at
-// the end on a session change.
+// load-older control inside the first of them, and the scroll behaviour that
+// holds the reader's place across a prepend, follows a streaming reply, and
+// lands at the end on a session change.
 //
 // **Fully controlled and host-agnostic about data.** It takes the blocks the
 // host already built and reports edits by position; it fetches nothing itself
@@ -733,6 +733,17 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
     detailsCollapsedRef.current = collapsed
   }, [])
 
+  // Built once here and PLACED by the section loop below, rather than rendered
+  // where it is built: its position is derived from the list, so the one thing
+  // that must not happen is two copies of this decision drifting apart.
+  //
+  // Null when the host says there is nothing left to fetch -- that absence is
+  // what makes the control disappear, and `loadingMoreHistory` is what disables
+  // it while a fetch is in flight. Both are unchanged by where it now sits.
+  const loadOlder = hasMoreHistory ? (
+    <ChatLoadOlderButton loading={loadingMoreHistory === true} onLoadOlder={onLoadOlder ?? (() => {})} />
+  ) : null
+
   return (
     <Flex ref={rootRef} justify='end' className='min-h-full min-w-0 gap-3 px-4 py-4'>
       {loading ? (
@@ -741,9 +752,13 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
         <div className='text-sm text-muted-foreground'>{emptyText ?? 'no messages yet'}</div>
       ) : (
         <>
-          {hasMoreHistory && (
-            <ChatLoadOlderButton loading={loadingMoreHistory === true} onLoadOlder={onLoadOlder ?? (() => {})} />
-          )}
+          {/* Nothing to sit under, because there is no section at all. `blocks`
+              can be empty while the conversation genuinely has messages -- a
+              first question that strips to nothing but system tags -- and that
+              is exactly the case where dropping the control would strand the
+              reader with no way back into history. So it renders on its own
+              here, which is also where it always used to render. */}
+          {sections.length === 0 && loadOlder}
           {sections.map((section, sectionIndex) => (
             // One section per turn: the user message sticks to the top of the
             // viewport while its own replies scroll under it, and the next
@@ -773,6 +788,29 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
                   <ChatUserMessage sticky renderers={renderers} blockId='u:header' text={historyHeaderText} />
                 )
               )}
+              {/* The control belongs to whatever is CURRENTLY the first section,
+                  under whatever leads it: a real question, or the synthesized
+                  header standing in for one that sits above the window. After a
+                  prepend the first section is a different turn, so the button
+                  moves with it -- which is why its place is derived from
+                  `sectionIndex` on every render instead of being rendered once
+                  beside the list. Getting that wrong strands it mid-transcript
+                  after a single click.
+
+                  A first section with neither a question nor a header is
+                  reachable (the header text and its index are separately
+                  optional), and needs no special case: with nothing rendered
+                  above it, this falls to the top of the section on its own.
+
+                  It passes BEHIND the leading message rather than over it. This
+                  is a plain static box, so it paints at its parent's level,
+                  while the message above is `sticky z-1`. Nothing here may take
+                  a z-index or open a stacking context: the header's `z-1` is
+                  exact (see chat-turn for why neither bound has slack), and a
+                  positioned box with an automatic z-index sits at 0 and loses to
+                  it on tree order -- which is precisely what keeps this
+                  underneath. */}
+              {sectionIndex === 0 && loadOlder}
               {section.items.map((b) =>
                 b.kind === 'user' ? null : (
                   <ChatTurnDetails

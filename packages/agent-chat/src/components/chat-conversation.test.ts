@@ -210,6 +210,31 @@ test('waits for a later commit when the prepend has not landed yet', () => {
   assert.equal(restoreShift(anchor, 1000.2), null)
 })
 
+// The load-older control lives INSIDE the first turn section, under whatever
+// leads it. So a prepend does not merely add turns above the
+// anchor -- it can also MOVE the control across the anchor, because the first
+// section afterwards is a different turn from the one it was attached to.
+//
+// Nothing in the restore needs to know that, and this test exists to keep it
+// that way: the shift is the anchor's own measured displacement, so anything
+// that ends up above it is charged automatically, whatever it is and however it
+// got there. A restore derived instead from the fetched page's own height would
+// be short by exactly the control's height, and would nudge the reader by that
+// much on every single click.
+test('anchor restore absorbs the load-older control moving across it', () => {
+  const CONTROL = 36
+
+  // First section led by a real user message: the control sat UNDER that
+  // message, so below the anchor, and afterwards sits under the new first
+  // turn's message -- above it.
+  assert.equal(restoreShift({ id: 'u:A', top: 1000 }, 1000 + ADDED + CONTROL), ADDED + CONTROL)
+
+  // Led by the synthesized header, or by nothing at all: the control already
+  // rendered above the first block and stays above it, so it is no part of the
+  // shift and the reader lands in exactly the same place as before.
+  assert.equal(restoreShift({ id: 't:X', top: 1000 }, 1000 + ADDED), ADDED)
+})
+
 // Geometry for the anchor path; the container figures are unused there and are
 // only present because the fallback shares the shape.
 function atAnchor(anchorTop: number) {
