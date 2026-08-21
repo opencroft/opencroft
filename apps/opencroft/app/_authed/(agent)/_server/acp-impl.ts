@@ -27,7 +27,7 @@ import { join } from 'node:path'
 
 import { supportsMidTurnInput } from 'agent-client'
 import { usableContextWindow } from 'agent-client/context-window'
-import type { AgentSelection } from 'agent-client/types'
+import type { AgentSelection, QueueMode } from 'agent-client/types'
 
 import {
   deletePersistedConfigOptions,
@@ -374,16 +374,25 @@ async function pinModeIfYolo(sessionId: string): Promise<void> {
   })
 }
 
-// `front` queues the message ahead of anything already held for the session
-// when a turn is running (e.g. corrective guidance after a rejected permission).
-// `flush` instead delivers everything held together with this message as one
-// turn — used after interrupting a turn, so the agent sees the whole picture.
+// `queue` says how this message relates to anything already held for the
+// session — `wait` to be delivered on its own when the turn ends, `push` to
+// interrupt and deliver the whole queue as one turn. Required, so a caller
+// sending into a busy session states the intent rather than inheriting one; the
+// meaning of both values lives in agentClient.prompt, never here.
+//
+// `front` is separate and orthogonal: it decides POSITION within the queue (e.g.
+// corrective guidance after a rejected permission jumping ahead of what is
+// already held), not whether to interrupt.
+//
+// Returns whether a turn was actually interrupted, so callers can report it
+// without probing the session themselves — that answer is only correct at the
+// instant the message arrives.
 export async function promptLocalImpl(data: {
   sessionId: string
   text: string
   front?: boolean
-  flush?: boolean
-}): Promise<void> {
+  queue: QueueMode
+}): Promise<{ interrupted: boolean }> {
   // Claimed before the prompt is even sent (matching the client's own
   // deliveredOnceRef, set at deliver() call time) — a concurrent
   // ensureLocalSession call for this tab must see the claim immediately, not
@@ -404,7 +413,7 @@ export async function promptLocalImpl(data: {
   if (tabKey) {
     await writePersistedSession(tabKey, data.sessionId, true)
   }
-  await agentClient.prompt(data.sessionId, data.text, { front: data.front, flush: data.flush })
+  return agentClient.prompt(data.sessionId, data.text, { front: data.front, queue: data.queue })
 }
 
 // Resolve the live ACP session a Send Message node should target for a base

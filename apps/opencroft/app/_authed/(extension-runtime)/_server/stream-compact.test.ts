@@ -52,7 +52,7 @@ let counter = 0
 // `turns` is exposed so a caller can wait for an auto-drained delivery's mock
 // call to actually register — activeTurns increments synchronously the
 // moment a delivery starts (see deliverPrompt in agent-client.ts), but the
-// mock connection.prompt() below it is only reached after awaiting
+// mock connection.prompt(, { queue: 'wait' }) below it is only reached after awaiting
 // connectionForSession, an async gap a caller may need to wait out before
 // the NEXT endTurn has anything to resolve.
 async function setupSession() {
@@ -97,14 +97,14 @@ test('awaitDispatchedTurn resolves on the RESTORE turn, not a message that auto-
   // turn ('/compact', here just 'tracked turn') is running, so it auto-starts
   // the instant that turn settles — before performCompact ever gets to
   // dispatch the restore.
-  await agentClient.prompt(h.sessionId, 'tracked turn')
-  await agentClient.prompt(h.sessionId, 'auto-drained ping') // queues behind the tracked turn
+  await agentClient.prompt(h.sessionId, 'tracked turn', { queue: 'wait' })
+  await agentClient.prompt(h.sessionId, 'auto-drained ping', { queue: 'wait' }) // queues behind the tracked turn
 
   // front: true, matching performCompact's actual restore dispatch —
   // this is what guarantees the restore becomes the very next thing delivered
   // once the currently active turn ends, ahead of the ping still queued.
   const waitForRestore = awaitDispatchedTurn(h.sessionId, () =>
-    agentClient.prompt(h.sessionId, 'restore', { front: true }),
+    agentClient.prompt(h.sessionId, 'restore', { front: true, queue: 'wait' }),
   )
 
   h.endTurn() // ends the tracked turn; settleTurn auto-drains the restore (front) next
@@ -125,7 +125,9 @@ test('awaitDispatchedTurn resolves on the RESTORE turn, not a message that auto-
 
 test('a cancelled dispatched turn is reported interrupted, not finished', async () => {
   const h = await setupSession()
-  const waitForTurn = awaitDispatchedTurn(h.sessionId, () => agentClient.prompt(h.sessionId, 'hello'))
+  const waitForTurn = awaitDispatchedTurn(h.sessionId, () =>
+    agentClient.prompt(h.sessionId, 'hello', { queue: 'wait' }),
+  )
   await waitFor(() => h.turns.length > 0)
   h.endTurn('cancelled')
   assert.equal(await waitForTurn, 'interrupted')
@@ -133,7 +135,9 @@ test('a cancelled dispatched turn is reported interrupted, not finished', async 
 
 test('an ordinary finished turn on an otherwise idle session resolves finished', async () => {
   const h = await setupSession()
-  const waitForTurn = awaitDispatchedTurn(h.sessionId, () => agentClient.prompt(h.sessionId, 'hello'))
+  const waitForTurn = awaitDispatchedTurn(h.sessionId, () =>
+    agentClient.prompt(h.sessionId, 'hello', { queue: 'wait' }),
+  )
   await waitFor(() => h.turns.length > 0)
   h.endTurn()
   assert.equal(await waitForTurn, 'finished')

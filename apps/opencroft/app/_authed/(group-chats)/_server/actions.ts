@@ -5,6 +5,7 @@
 
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
+import type { QueueMode } from 'agent-client/types'
 
 import type { CompactAck, CompactStatus } from '@/app/_authed/(extension-runtime)/_server/stream'
 import { listArtifactsForThread, type ThreadArtifact } from '@/app/_authed/(group-chats)/_server/artifacts'
@@ -251,10 +252,12 @@ export const openGroupChatThreadSession = createServerFn({ method: 'POST', stric
   .handler(async ({ data: threadId }) => openThreadSession(getRequest(), threadId))
 
 export const sendGroupChatThreadMessage = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { threadId: string; text: string; front?: boolean }) => data)
+  .inputValidator((data: { threadId: string; text: string; front?: boolean; queue: QueueMode }) => data)
   .handler(
     async ({ data }): Promise<SendThreadMessageResult> =>
-      asWriteResult(() => sendMessageInThread(getRequest(), data.threadId, data.text, { front: data.front })),
+      asWriteResult(() =>
+        sendMessageInThread(getRequest(), data.threadId, data.text, { front: data.front, queue: data.queue }),
+      ),
   )
 
 /** Compaction started, or refused with a code — same shape as `StartThreadOutcome`. */

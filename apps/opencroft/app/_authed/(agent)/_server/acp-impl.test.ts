@@ -154,7 +154,7 @@ test('once a message is delivered, a later ensureLocalSession call for the same 
   const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
   assert.equal(opened.created, true)
 
-  await promptLocalImpl({ sessionId: opened.sessionId, text: 'hello' })
+  await promptLocalImpl({ sessionId: opened.sessionId, text: 'hello', queue: 'wait' })
 
   const resumed = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
   assert.equal(resumed.created, false, 'a session that already received a message is never "new" again')
@@ -187,7 +187,7 @@ test('a restart before the first turn ends resumes the same session instead of c
   const tabKey = `agent:agent:test:${crypto.randomUUID()}`
 
   const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
-  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix' })
+  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait' })
   forgetInMemorySession(tabKey)
 
   const afterRestart = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
@@ -224,7 +224,7 @@ test('a dead pointer falls back to a fresh session that still gets the full cont
   const tabKey = `agent:agent:test:${crypto.randomUUID()}`
 
   const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
-  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix' })
+  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait' })
   assert.deepEqual(await readPersistedSession(tabKey), { id: first.sessionId, prompted: true })
 
   // The pointer survives, the session does not.
@@ -293,7 +293,7 @@ test('a message after unload reattaches to the SAME session instead of starting 
   const tabKey = `agent:resume:test:${crypto.randomUUID()}`
 
   const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
-  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix' })
+  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait' })
   await stopLocalSessionProcessImpl(tabKey)
 
   const afterUnload = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
@@ -358,7 +358,7 @@ test('reattaching an unloaded session restores its last usage live -- never as a
   const tabKey = `agent:dock:test:${crypto.randomUUID()}`
 
   const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
-  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix' })
+  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait' })
   await writePersistedUsage(first.sessionId, { used: 8_000, size: 200_000 })
   await stopLocalSessionProcessImpl(tabKey)
 

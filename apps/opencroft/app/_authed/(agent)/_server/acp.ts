@@ -6,6 +6,7 @@
 // — see the header of acp-impl.ts, which is where plain implementations go.
 import { createServerFn } from '@tanstack/react-start'
 import type { RecordsWindow } from 'agent-client/pagination'
+import type { QueueMode } from 'agent-client/types'
 
 import {
   cancelLocalImpl,
@@ -20,6 +21,7 @@ import {
 } from '@/app/_authed/(agent)/_server/acp-impl'
 import { writePersistedConfigOption, writePersistedSession } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import { modeLockedByYolo } from '@/app/_authed/(agent)/_server/yolo-mode-enforcement'
 import {
   type CompactAck,
   type CompactStatus,
@@ -28,20 +30,19 @@ import {
   getCompactStatusOnGraph,
   requestCompactOnGraph,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
-import { modeLockedByYolo } from '@/app/_authed/(agent)/_server/yolo-mode-enforcement'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 
 export const ensureLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { agentNodeId: string; jobNodeId: string; tabKey: string }) => data)
   .handler(async ({ data }): Promise<OpenedSession> => ensureLocalSessionImpl(data))
 
-// `front` queues the message ahead of anything already held for the session
-// when a turn is running (e.g. corrective guidance after a rejected permission).
-// `flush` instead delivers everything held together with this message as one
-// turn — used after interrupting a turn, so the agent sees the whole picture.
+// `queue` says how this message relates to anything already held: `wait` to be
+// delivered on its own when the turn ends, `push` to interrupt and deliver the
+// whole queue as one turn. Required — sending into a busy session is a choice,
+// not a default. `front` is orthogonal and decides position within the queue.
 export const promptLocal = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { sessionId: string; text: string; front?: boolean; flush?: boolean }) => data)
-  .handler(async ({ data }): Promise<void> => promptLocalImpl(data))
+  .inputValidator((data: { sessionId: string; text: string; front?: boolean; queue: QueueMode }) => data)
+  .handler(async ({ data }): Promise<{ interrupted: boolean }> => promptLocalImpl(data))
 
 export const findTargetSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { baseKey: string }) => data)

@@ -21,6 +21,7 @@ import {
   groupChatThreadAlias,
   user,
 } from '@opencroft/db'
+import type { QueueMode } from 'agent-client/types'
 import { and, asc, eq, inArray } from 'drizzle-orm'
 
 import type { OpenedSession } from '@/app/_authed/(agent)/_server/acp-impl'
@@ -1448,7 +1449,7 @@ async function createThread(
     sessionInit: { jobContext: standing.jobContext, instructions: standing.instructions },
     isNewSession: opened.created,
   })
-  await promptLocalImpl({ sessionId: opened.sessionId, text: envelope })
+  await promptLocalImpl({ sessionId: opened.sessionId, text: envelope, queue: 'wait' })
   // Accepted, so what it carried is now on the record. A thread that starts
   // with nothing pinned still records a signature rather than NULL, so the
   // first pin added afterwards reads as a change.
@@ -1507,7 +1508,7 @@ export async function sendMessageInThread(
   request: Request,
   threadId: string,
   text: string,
-  opts?: { front?: boolean },
+  opts: { front?: boolean; queue: QueueMode },
 ): Promise<void> {
   const sessionUser = await requireSignedInUser(request)
   const [row] = await db
@@ -1566,7 +1567,7 @@ const threadDeliveryColumns = {
 async function deliverIntoThread(
   row: ThreadDeliveryTarget,
   text: string,
-  opts?: { front?: boolean },
+  opts: { front?: boolean; queue: QueueMode },
 ): Promise<{ queued: boolean }> {
   // The agent has to still be a member, whoever is sending. Without this,
   // removing an agent is decoration: its threads survive by design, they carry
@@ -1624,7 +1625,7 @@ async function deliverIntoThread(
   // ordinary agent session and reaches that flow too, so a send path that
   // silently ignored it would behave differently from a 1:1 chat in exactly
   // the situation the user is trying to correct the agent.
-  await promptLocalImpl({ sessionId: opened.sessionId, text: payload, front: opts?.front })
+  await promptLocalImpl({ sessionId: opened.sessionId, text: payload, front: opts.front, queue: opts.queue })
   // Recorded only after the message carrying it has been accepted: a send that
   // threw would otherwise mark context delivered that never went anywhere, and
   // the next send would skip it.
@@ -2182,17 +2183,28 @@ export async function listGroupChatsForAgentView(agentName: string): Promise<Age
  * code, not a second copy that drifts.
  *
  * No `front`: that flag exists for the permission flow's corrective guidance,
- * where a person is interrupting a run they are watching. An agent writing to a
- * thread-mate is an ordinary message and queues like one.
+ * where a person is interrupting a run they are watching, and it is a different
+ * axis from `queue` — position within the queue, not whether to interrupt.
+ *
+ * Whether this message waits or pushes is the CALLER's to state, and it is
+ * required of them: an agent writing to a thread-mate usually has nothing
+ * urgent, but the one sending a correction into a turn going the wrong way is
+ * exactly who `push` exists for, and this function has no way to tell those
+ * apart.
  */
-export async function sendMessageInThreadAsAgent(agentName: string, threadRef: string, text: string): Promise<void> {
+export async function sendMessageInThreadAsAgent(
+  agentName: string,
+  threadRef: string,
+  text: string,
+  queue: QueueMode,
+): Promise<void> {
   const agentNodeId = await requireAgentNode(agentName)
   const trimmed = text.trim()
   if (!trimmed) {
     throw new Error('A message needs some text')
   }
   const row = await resolveThreadForAgent(agentNodeId, threadRef)
-  await deliverIntoThread(row, trimmed)
+  await deliverIntoThread(row, trimmed, { queue })
 }
 
 /**
@@ -2364,6 +2376,7 @@ export async function deliverThreadFromNode(
   threadRef: string,
   text: string,
   isReachable: (agentNodeId: string) => boolean,
+  queue: QueueMode,
 ): Promise<ThreadDeliveryOutcome> {
   const trimmed = threadRef.trim()
   if (!trimmed) {
@@ -2376,6 +2389,6 @@ export async function deliverThreadFromNode(
   if (!isReachable(row.agentNodeId)) {
     return { status: 'not-reachable' }
   }
-  const { queued } = await deliverIntoThread(row, text)
+  const { queued } = await deliverIntoThread(row, text, { queue })
   return { status: queued ? 'queued' : 'delivered' }
 }

@@ -29,6 +29,7 @@ export type {
   PermissionOpt,
   PlanItem,
   QueuedPrompt,
+  QueueMode,
   SessionMeta,
   SessionMode,
   SpawnConfig,
