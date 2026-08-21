@@ -1339,6 +1339,30 @@ export async function startThread(
   if (!(await isAgentMember(groupChatId, agentNodeId))) {
     throw new GroupChatAccessError('agent-not-a-member', 'That agent is not a member of this group chat')
   }
+  return createThread(groupChatId, agentNodeId, firstMessage, { title: opts?.title, createdByUserId: userId })
+}
+
+/**
+ * Mint a thread and deliver its first message. THE ONLY PLACE A THREAD IS
+ * CREATED — `startThread` and `startThreadAsAgent` are gates in front of this,
+ * not two implementations of it.
+ *
+ * It has NO gate of its own, which is the point and the hazard: every caller
+ * must have already established that whoever is asking may create a thread
+ * here, and that `agentNodeId` is a member. Both existing callers do so
+ * immediately above their call, and a third must too. Kept private for that
+ * reason — an ungated creation path is not something to export.
+ *
+ * `createdByUserId` is provenance, not ownership (see the column's own note in
+ * schema.ts), so null is a legitimate value and means "no user did this" —
+ * which is exactly true of a thread an agent started.
+ */
+async function createThread(
+  groupChatId: string,
+  agentNodeId: string,
+  firstMessage: string,
+  opts: { title?: string; createdByUserId: string | null },
+): Promise<StartThreadResult> {
   const standing = await standingContextForThread(groupChatId, agentNodeId)
   if (!standing) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
@@ -1347,7 +1371,7 @@ export async function startThread(
   // A NAMED thread takes its slug from the title; an ad-hoc one gets a short
   // hash. Most threads are ad-hoc, so the hash is the default rather than a
   // fallback for a missing title.
-  const title = opts?.title?.trim() || undefined
+  const title = opts.title?.trim() || undefined
   const threadSlug = title ? threadSlugFromTitle(title) : mintThreadSlug()
   const [slugTaken] = await db
     .select({ id: groupChatThread.id })
@@ -1412,7 +1436,7 @@ export async function startThread(
     // without needing a second mechanism.
     return tx
       .insert(groupChatThread)
-      .values({ groupChatId, agentNodeId, sessionKey, slug: threadSlug, title, createdByUserId: userId })
+      .values({ groupChatId, agentNodeId, sessionKey, slug: threadSlug, title, createdByUserId: opts.createdByUserId })
       .returning(threadSummaryColumns)
   })
   if (!thread) {
@@ -1942,6 +1966,13 @@ export interface AgentGroupChatRef {
   ref: string
   name: string
   topic: string
+  /**
+   * The agent members of this chat, by the name `group_chat_start_thread`
+   * takes as its target. A chat's roster is not a secret from someone already
+   * in it, and this is what makes the required target name readable rather
+   * than remembered.
+   */
+  members: string[]
   threads: AgentThreadRef[]
 }
 
@@ -2119,10 +2150,16 @@ export async function listGroupChatsForAgentView(agentName: string): Promise<Age
       }),
     ),
   )
+  // The rosters for every chat at once, alongside the threads. Needed because
+  // `group_chat_start_thread` takes the target agent BY NAME and has no
+  // defensible default (see startThreadAsAgent): without this the caller would
+  // be made to guess a name and get the deliberately vague refusal for a typo.
+  const membersByChatId = await agentMembersByChat(chats.map((c) => c.id))
   return chats.map((chat) => ({
     ref: chat.id,
     name: chat.name,
     topic: chat.topic,
+    members: (membersByChatId.get(chat.id) ?? []).map((m) => m.name),
     threads: threads
       .filter((t) => t.groupChatId === chat.id)
       .map((t) => ({
@@ -2156,6 +2193,96 @@ export async function sendMessageInThreadAsAgent(agentName: string, threadRef: s
   }
   const row = await resolveThreadForAgent(agentNodeId, threadRef)
   await deliverIntoThread(row, trimmed)
+}
+
+/**
+ * The agent members of each of several chats, with the names an agent
+ * addresses them by. Ungated on its own — every caller here has already
+ * established the caller's own membership, and a chat's roster is not a
+ * secret from someone already in it.
+ *
+ * ONE membership query and ONE node-list read for the whole set, in the same
+ * shape the threads above are fetched: `listAgentNodesImpl` walks every space
+ * in the registry, so calling it per chat turns a listing into as many full
+ * graph reads as the caller has chats.
+ *
+ * Names, not node ids, because a name is what the tool surface takes and what
+ * an agent can read. A member whose node has since disappeared is dropped
+ * rather than listed with a placeholder: it cannot be addressed either way.
+ * Every requested id gets an entry, so a caller never has to tell "no agent
+ * members" apart from "chat not in the result".
+ */
+async function agentMembersByChat(
+  groupChatIds: string[],
+): Promise<Map<string, Array<{ nodeId: string; name: string }>>> {
+  const out = new Map(groupChatIds.map((id) => [id, [] as Array<{ nodeId: string; name: string }>]))
+  if (groupChatIds.length === 0) {
+    return out
+  }
+  const rows = await db
+    .select({ groupChatId: groupChatMember.groupChatId, agentNodeId: groupChatMember.agentNodeId })
+    .from(groupChatMember)
+    .where(and(inArray(groupChatMember.groupChatId, groupChatIds), eq(groupChatMember.principalType, 'agent')))
+  const nameByNodeId = new Map((await listAgentNodesImpl()).map((n) => [n.nodeId, n.name]))
+  for (const row of rows) {
+    const name = row.agentNodeId ? nameByNodeId.get(row.agentNodeId) : undefined
+    if (!row.agentNodeId || name === undefined) {
+      continue
+    }
+    out.get(row.groupChatId)?.push({ nodeId: row.agentNodeId, name })
+  }
+  return out
+}
+
+/** One chat's agent members — see agentMembersByChat, which does the work. */
+async function agentMembersOfChat(groupChatId: string): Promise<Array<{ nodeId: string; name: string }>> {
+  return (await agentMembersByChat([groupChatId])).get(groupChatId) ?? []
+}
+
+/**
+ * Start a thread as an agent — the tool-surface counterpart to `startThread`.
+ * Same creation path (`createThread` mints every thread, whoever asked),
+ * different gate: the CALLING agent's own membership of the chat, resolved
+ * from its credential, exactly as `sendMessageInThreadAsAgent` does.
+ *
+ * WHICH AGENT THE THREAD ADDRESSES IS AN ARGUMENT, NOT AN INFERENCE. There is
+ * no defensible default: addressing it to the caller would make handing work
+ * to somebody else impossible, which is the entire reason this exists, and
+ * picking any other member would be guessing at intent. So it is named, and
+ * `group_chat_list` reports each chat's `members` so the name can be read off
+ * rather than remembered.
+ *
+ * The target is resolved WITHIN the chat's own membership, which collapses
+ * "no such agent" and "that agent is not in this chat" into one refusal —
+ * they are the same fact to a caller who is not entitled to tell them apart,
+ * and both arrive as the vague UNAVAILABLE a missing thread already gives. A
+ * caller's own unknown name still refuses informatively through
+ * `requireAgentNode`, because being told YOU are unrecognised leaks nothing
+ * about anyone else.
+ */
+export async function startThreadAsAgent(
+  callerAgentName: string,
+  groupChatId: string,
+  targetAgentName: string,
+  firstMessage: string,
+  opts?: { title?: string },
+): Promise<StartThreadResult> {
+  const callerNodeId = await requireAgentNode(callerAgentName)
+  // The caller's membership is the gate, and a chat that does not exist has no
+  // members — so a bad id and a chat the caller is not in refuse identically,
+  // with no existence check to leak the difference.
+  if (!(await isAgentMember(groupChatId, callerNodeId))) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  const trimmed = firstMessage.trim()
+  if (!trimmed) {
+    throw new Error('A message needs some text')
+  }
+  const target = (await agentMembersOfChat(groupChatId)).find((m) => m.name === targetAgentName.trim())
+  if (!target) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  return createThread(groupChatId, target.nodeId, trimmed, { title: opts?.title, createdByUserId: null })
 }
 
 /**

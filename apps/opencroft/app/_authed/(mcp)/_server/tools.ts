@@ -68,6 +68,7 @@ import {
   listGroupChatsForAgentView,
   listThreadTurnsAsAgent,
   sendMessageInThreadAsAgent,
+  startThreadAsAgent,
   threadCompactStatusAsAgent,
 } from '@/app/_authed/(group-chats)/_server/model'
 import { recordAudit } from '@/app/_authed/(mcp)/_server/audit'
@@ -276,7 +277,8 @@ export const toolDefinitions = [
       'Send a message into a thread of a group chat you are a member of. The thread has one agent, ' +
       'which receives your message in its own session and replies in the thread — the reply does NOT ' +
       'come back to you, so read the thread later to see it. The thread agent may be you: that is how ' +
-      'you hand work to a fresh-context instance of yourself.',
+      'you hand work to a fresh-context instance of yourself. To reach an agent that has no thread ' +
+      'yet, use group_chat_start_thread — this tool only addresses threads that already exist.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -287,6 +289,40 @@ export const toolDefinitions = [
         message: { type: 'string', description: 'The message to send into the thread.' },
       },
       required: ['thread', 'message'],
+    },
+  },
+  {
+    name: 'group_chat_start_thread',
+    description:
+      'Start a NEW thread in a group chat you are a member of, addressed to one of its agents, and ' +
+      'send its first message. This is how you reach an agent that has no thread yet — group_chat_send ' +
+      'can only address a thread that already exists. Creating a thread is deliberate: it is this tool ' +
+      'and nothing else, so a mistyped thread reference elsewhere can never silently make one. ' +
+      'The agent receives the message in its own session and replies IN THE THREAD, not to you, so read ' +
+      'the thread later for the answer. Returns the new thread, whose `ref` addresses it from then on.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        chat: {
+          type: 'string',
+          description: 'The chat to start the thread in — a `ref` from group_chat_list.',
+        },
+        agent: {
+          type: 'string',
+          description:
+            "Which agent the thread is addressed to, by name, as listed in that chat's `members` from " +
+            'group_chat_list. It must be a member of the chat. Name yourself to hand work to a ' +
+            'fresh-context instance of yourself.',
+        },
+        message: { type: 'string', description: "The thread's first message." },
+        title: {
+          type: 'string',
+          description:
+            'Optional name for the thread, which also becomes its address. Omit for an ad-hoc thread, ' +
+            'which gets a short generated name instead — most threads are ad-hoc.',
+        },
+      },
+      required: ['chat', 'agent', 'message'],
     },
   },
   {
@@ -2575,6 +2611,51 @@ function buildHandlers(): Record<string, ToolHandler> {
       }
       await sendMessageInThreadAsAgent(agent, thread, message)
       return textResult('Message sent into the thread. The reply lands in the thread, not here.')
+    },
+
+    // ── group_chat_start_thread ─────────────────────────────────────
+    //
+    // No approval wrapper, same reasoning as group_chat_send: this creates a
+    // conversation in a chat somebody already put this agent into, on a
+    // surface that is visible on a screen, and the membership gate is the
+    // control. Creation being its own tool -- rather than a side effect of a
+    // send whose thread reference happened not to resolve -- is what keeps it
+    // deliberate: there is no argument to this tool that a caller could get
+    // subtly wrong and end up with a thread it did not mean to make.
+    group_chat_start_thread: async (args, caller) => {
+      const callerAgent = requireCallingAgent(caller)
+      const chat = args.chat as string | undefined
+      const agent = args.agent as string | undefined
+      const message = args.message as string | undefined
+      if (!chat) {
+        fail(-32602, 'Missing required param: chat')
+      }
+      if (!agent) {
+        fail(-32602, 'Missing required param: agent')
+      }
+      if (!message) {
+        fail(-32602, 'Missing required param: message')
+      }
+      const { thread } = await startThreadAsAgent(callerAgent, chat, agent, message, {
+        title: args.title as string | undefined,
+      })
+      // The ref, in the same shape group_chat_list hands out, so the caller can
+      // address the thread it just made without a second lookup.
+      //
+      // Sliced unconditionally: this thread was just minted by createThread,
+      // which builds every key through mintSessionKey, so the prefix is there
+      // by construction. A fallback for its absence would be unreachable, and
+      // reachable only in a world where the key is not what it claims to be --
+      // in which case handing back something else would be papering over that
+      // rather than addressing it.
+      const ref = thread.sessionKey.slice('group-chat:'.length)
+      return textResult(
+        JSON.stringify(
+          { ref, title: thread.title, sent: true, note: 'The reply lands in the thread, not here.' },
+          null,
+          2,
+        ),
+      )
     },
 
     // ── group_chat_compact / group_chat_compact_status ──────────────

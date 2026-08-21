@@ -3417,3 +3417,154 @@ test('opening a thread by id after a rename reattaches, where the stale key woul
   assert.equal(fabricated.code, 'not-found')
   assert.equal(refusal.message, fabricated.message, 'a non-member and a missing thread stay indistinguishable')
 })
+
+// ---------------------------------------------------------------------------
+// STARTING A THREAD AS AN AGENT. The agent-gated counterpart to startThread,
+// and the only way an agent can reach a colleague who has no thread yet.
+//
+// The gate is the CALLER's own membership; the target is named explicitly and
+// resolved within the chat's roster, so "no such agent" and "that agent is not
+// in this chat" arrive as one refusal. Every creation still goes through
+// createThread, so parity with a UI-created thread is structural rather than
+// something these tests have to police field by field -- but the session key
+// and the standing-context delivery are checked anyway, because they are what
+// a thread has to get right to be usable at all.
+// ---------------------------------------------------------------------------
+
+test('an agent starts a thread for a colleague who has none, and the first message lands with the standing context', async () => {
+  const owner = await makeUser('agent-start-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'agent start delegation', 'ship the reconciliation')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session-2' })
+
+  const inbox: string[] = []
+  seedMockConnection(inbox, 'Agent Session Two')
+
+  const started = await model.startThreadAsAgent(
+    'Agent Session',
+    chat.id,
+    'Agent Session Two',
+    'take the kit docs sweep',
+  )
+  await waitForPrompts(inbox, 1)
+
+  assert.match(inbox[0] ?? '', /take the kit docs sweep/, 'the first message reaches the agent it was addressed to')
+  assert.match(inbox[0] ?? '', /ship the reconciliation/, "and carries the chat's topic, exactly as a UI start does")
+  assert.equal(started.thread.agentNodeId, 'agent-session-2', 'the thread is addressed to the NAMED agent')
+  assert.match(
+    started.thread.sessionKey,
+    /^group-chat:agent-start-delegation:agent-session-two:/,
+    'same session key shape a UI-created thread gets -- one mint, one format',
+  )
+})
+
+test('an agent-started thread is indistinguishable from a UI-started one', async () => {
+  const owner = await makeUser('agent-start-parity@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'agent start parity', 'compare the two paths')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session-2' })
+  seedMockConnection([], 'Agent Session Two')
+
+  const byUser = await model.startThread(reqAs(owner), chat.id, 'agent-session-2', 'from a person', {
+    title: 'Made By Hand',
+  })
+  const byAgent = await model.startThreadAsAgent('Agent Session', chat.id, 'Agent Session Two', 'from an agent', {
+    title: 'Made By Agent',
+  })
+
+  // Same title-to-slug rule on both paths, so the address reads the same way.
+  assert.match(byUser.thread.sessionKey, /:made-by-hand$/)
+  assert.match(byAgent.thread.sessionKey, /:made-by-agent$/)
+  const shapeOf = (key: string) => key.split(':').length
+  assert.equal(shapeOf(byAgent.thread.sessionKey), shapeOf(byUser.thread.sessionKey))
+
+  // The one field that legitimately differs, and it is provenance rather than
+  // behaviour: no user did this, so the column says so instead of naming one.
+  const [agentRow] = await db
+    .select({ createdByUserId: groupChatThread.createdByUserId })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.id, byAgent.thread.id))
+  const [userRow] = await db
+    .select({ createdByUserId: groupChatThread.createdByUserId })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.id, byUser.thread.id))
+  assert.equal(agentRow?.createdByUserId, null, 'an agent-started thread claims no user as its creator')
+  assert.equal(userRow?.createdByUserId, owner.id)
+})
+
+test('a caller that is not a member of the chat is refused, with the refusal a missing thread gives', async () => {
+  const owner = await makeUser('agent-start-outsider@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'agent start closed room', 'members only')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session-2' })
+  seedMockConnection([], 'Agent Session Two')
+
+  // 'Agent Session' was never added to this chat.
+  const refusal = await captureRefusal(() =>
+    model.startThreadAsAgent('Agent Session', chat.id, 'Agent Session Two', 'let me in'),
+  )
+  const missingThread = await captureRefusal(() =>
+    model.sendMessageInThreadAsAgent('Agent Session', 'nope:nope:nope', 'x'),
+  )
+  assert.deepEqual(refusal, missingThread, 'a non-member caller learns exactly what a bad thread reference teaches')
+})
+
+test('a target agent that is not a member is refused the same way, and so is a name that matches nothing', async () => {
+  const owner = await makeUser('agent-start-nonmember-target@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'agent start one member', 'only one agent here')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  // A real agent node, but not a member of THIS chat.
+  const nonMember = await captureRefusal(() =>
+    model.startThreadAsAgent('Agent Session', chat.id, 'Agent Session Two', 'hello'),
+  )
+  // Not an agent at all.
+  const unknown = await captureRefusal(() =>
+    model.startThreadAsAgent('Agent Session', chat.id, 'No Such Agent At All', 'hello'),
+  )
+  assert.equal(nonMember.code, 'not-found')
+  assert.deepEqual(
+    nonMember,
+    unknown,
+    'a real non-member and an invented name are one refusal: the caller is not entitled to tell them apart',
+  )
+})
+
+test('a chat the caller cannot see refuses identically to one that does not exist', async () => {
+  const owner = await makeUser('agent-start-hidden-chat@example.test')
+  const hidden = await model.createGroupChat(reqAs(owner), 'agent start hidden chat', 'private')
+  await model.addMember(reqAs(owner), hidden.id, { kind: 'agent', agentNodeId: 'agent-session-2' })
+
+  const real = await captureRefusal(() =>
+    model.startThreadAsAgent('Agent Session', hidden.id, 'Agent Session Two', 'hi'),
+  )
+  const imaginary = await captureRefusal(() =>
+    model.startThreadAsAgent('Agent Session', 'no-such-chat-id', 'Agent Session Two', 'hi'),
+  )
+  assert.deepEqual(real, imaginary, 'existence of a chat is not something a non-member may probe')
+})
+
+test("group_chat_list reports each chat's agent members, so the target name can be read rather than guessed", async () => {
+  const owner = await makeUser('agent-start-members@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'agent start roster', 'who is here')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session-2' })
+
+  const seen = (await model.listGroupChatsForAgentView('Agent Session')).find((c) => c.ref === chat.id)
+  assert.ok(seen)
+  assert.deepEqual(
+    [...seen.members].sort(),
+    ['Agent Session', 'Agent Session Two'],
+    'the roster a start_thread caller needs, including the caller itself -- naming yourself is a legitimate target',
+  )
+})
+
+test('an empty first message is refused before a thread is created', async () => {
+  const owner = await makeUser('agent-start-empty@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'agent start empty send', 'no blanks')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session-2' })
+
+  await assert.rejects(() => model.startThreadAsAgent('Agent Session', chat.id, 'Agent Session Two', '   '))
+  const threads = await db.select().from(groupChatThread).where(eq(groupChatThread.groupChatId, chat.id))
+  assert.equal(threads.length, 0, 'a refused start leaves no half-made thread behind')
+})
