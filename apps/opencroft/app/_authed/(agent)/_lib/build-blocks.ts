@@ -1,6 +1,8 @@
 import type { Block } from 'agent-chat/components/chat-conversation'
-import type { DetailItem, UserText } from 'agent-chat/components/chat-turn'
-import type { ChatEvent } from 'agent-client/types'
+import type { ChatUserMessagePart, DetailItem, UserText } from 'agent-chat/components/chat-turn'
+import type { ChatUnreadMessage } from 'agent-chat/components/chat-unread'
+import { toUserParts } from 'agent-chat/user-parts'
+import type { ChatEvent, QueuedPrompt } from 'agent-client/types'
 
 import type { ChatMessage } from '@/app/_authed/(agent)/_lib/messages'
 
@@ -43,6 +45,49 @@ function stripOpencroftTags(text: string): string {
 export function userText(raw: string): UserText | null {
   const stripped = stripOpencroftTags(raw)
   return stripped.trim() ? (stripped as UserText) : null
+}
+
+// A user turn as the transcript renders it: the whole turn as it was delivered,
+// and that same delivery read back into the messages it carried.
+//
+// Both, because they are asked for by different things. `parts` is what draws.
+// `text` stays whole — it is what an edit puts back into the composer, and
+// anything trimmed out of it here would be trimmed out of the message on the
+// way back out, where nothing would notice. That is also why it keeps the
+// delivery's own tag lines: they are how the turn's authors and times survive a
+// session reload, so a re-send that dropped them would lose them for good.
+//
+// Null when the turn has no words at all — every message in it was system tags
+// and nothing else. That turn draws no bubble, exactly as before.
+function userTurn(raw: string): { text: UserText; parts: ChatUserMessagePart[] } | null {
+  const parts = toUserParts(raw, userText)
+  const text = userText(raw)
+  return parts.length > 0 && text !== null ? { text, parts } : null
+}
+
+// The one branded value that is not somebody's words. It exists so a message
+// with no words of its own can still occupy a row, and it is declared here
+// because this module is the only place a `UserText` is ever produced —
+// spelling the cast at a call site instead would make the brand forgeable
+// anywhere.
+const EMPTY_USER_TEXT = '' as UserText
+
+// What is waiting to be read, as the reader sees it: the same strip `userText`
+// does for a delivered message, applied to one not delivered yet.
+//
+// A prompt that is nothing but tags keeps its row with empty words rather than
+// disappearing. It is still being held and can still be taken back, and a row
+// that is not drawn is one the reader cannot remove.
+//
+// A system prompt has no author and no send time, which is why the union is
+// read here rather than flattened: the fields are absent, not blank.
+export function buildUnread(queue: readonly QueuedPrompt[]): ChatUnreadMessage[] {
+  return queue.map((entry) => ({
+    id: entry.id,
+    text: userText(entry.text) ?? EMPTY_USER_TEXT,
+    sender: entry.kind === 'message' ? entry.sender : undefined,
+    sentAt: entry.kind === 'message' ? entry.sentAt : undefined,
+  }))
 }
 
 // The sticky header for a turn the loaded window starts inside — its own user
@@ -103,11 +148,11 @@ export function buildBlocks(messages: ChatMessage[], enclosingTurnId?: number): 
         if (p.type !== 'text') {
           continue
         }
-        const v = userText(p.text || '')
-        if (v === null) {
+        const turn = userTurn(p.text || '')
+        if (turn === null) {
           continue
         }
-        blocks.push({ id: `u:${m.id}`, kind: 'user', text: v })
+        blocks.push({ id: `u:${m.id}`, kind: 'user', ...turn })
       }
       continue
     }

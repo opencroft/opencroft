@@ -31,6 +31,7 @@ import type { AgentConnection } from 'agent-client/connection'
 import { buildSpawnConfig } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
 
+import type { WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import {
@@ -42,6 +43,19 @@ import {
   tabSessions,
 } from './acp-impl'
 import { readPersistedSession, writePersistedUsage } from './acp-session-store'
+
+// The browser must not be able to say who a message is from — the name is
+// resolved server-side, from the session, in promptLocalImpl.
+//
+// This is a compile-time assertion on purpose, because the guarantee is
+// structural: there is no runtime check to exercise, only a wire that has
+// nowhere to put a name. `@ts-expect-error` inverts it into something that
+// FAILS — in the ordinary typecheck gate — the day someone widens
+// WirePromptOrigin back to include `{ kind: 'message' }`, which is precisely
+// how this hole would reopen. A comment could not do that.
+// @ts-expect-error a client-stated sender must not typecheck
+const _forgedOrigin: WirePromptOrigin = { kind: 'message', sender: 'somebody-else' }
+void _forgedOrigin
 
 interface AcpStoreShape {
   connections: Map<string, unknown>
@@ -154,7 +168,7 @@ test('once a message is delivered, a later ensureLocalSession call for the same 
   const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
   assert.equal(opened.created, true)
 
-  await promptLocalImpl({ sessionId: opened.sessionId, text: 'hello', queue: 'wait' })
+  await promptLocalImpl({ sessionId: opened.sessionId, text: 'hello', queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
 
   const resumed = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
   assert.equal(resumed.created, false, 'a session that already received a message is never "new" again')
@@ -187,7 +201,7 @@ test('a restart before the first turn ends resumes the same session instead of c
   const tabKey = `agent:agent:test:${crypto.randomUUID()}`
 
   const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
-  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait' })
+  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
   forgetInMemorySession(tabKey)
 
   const afterRestart = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
@@ -224,7 +238,7 @@ test('a dead pointer falls back to a fresh session that still gets the full cont
   const tabKey = `agent:agent:test:${crypto.randomUUID()}`
 
   const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
-  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait' })
+  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
   assert.deepEqual(await readPersistedSession(tabKey), { id: first.sessionId, prompted: true })
 
   // The pointer survives, the session does not.
@@ -293,7 +307,7 @@ test('a message after unload reattaches to the SAME session instead of starting 
   const tabKey = `agent:resume:test:${crypto.randomUUID()}`
 
   const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
-  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait' })
+  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
   await stopLocalSessionProcessImpl(tabKey)
 
   const afterUnload = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
@@ -358,7 +372,7 @@ test('reattaching an unloaded session restores its last usage live -- never as a
   const tabKey = `agent:dock:test:${crypto.randomUUID()}`
 
   const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
-  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait' })
+  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
   await writePersistedUsage(first.sessionId, { used: 8_000, size: 200_000 })
   await stopLocalSessionProcessImpl(tabKey)
 

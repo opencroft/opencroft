@@ -1449,7 +1449,7 @@ async function createThread(
     sessionInit: { jobContext: standing.jobContext, instructions: standing.instructions },
     isNewSession: opened.created,
   })
-  await promptLocalImpl({ sessionId: opened.sessionId, text: envelope, queue: 'wait' })
+  await promptLocalImpl({ sessionId: opened.sessionId, text: envelope, queue: 'wait', origin: { kind: 'system' } })
   // Accepted, so what it carried is now on the record. A thread that starts
   // with nothing pinned still records a signature rather than NULL, so the
   // first pin added afterwards reads as a change.
@@ -1522,7 +1522,10 @@ export async function sendMessageInThread(
   if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
-  await deliverIntoThread(row, text, opts)
+  // The reader's own name, resolved from the session that is already required
+  // above — the surface knows who is speaking, so it says so rather than
+  // pushing the question up to its caller.
+  await deliverIntoThread(row, text, { ...opts, sender: sessionUser.name })
 }
 
 /** The columns every delivery path needs off a thread row. */
@@ -1567,7 +1570,7 @@ const threadDeliveryColumns = {
 async function deliverIntoThread(
   row: ThreadDeliveryTarget,
   text: string,
-  opts: { front?: boolean; queue: QueueMode },
+  opts: { front?: boolean; queue: QueueMode; sender: string },
 ): Promise<{ queued: boolean }> {
   // The agent has to still be a member, whoever is sending. Without this,
   // removing an agent is decoration: its threads survive by design, they carry
@@ -1625,7 +1628,13 @@ async function deliverIntoThread(
   // ordinary agent session and reaches that flow too, so a send path that
   // silently ignored it would behave differently from a 1:1 chat in exactly
   // the situation the user is trying to correct the agent.
-  await promptLocalImpl({ sessionId: opened.sessionId, text: payload, front: opts.front, queue: opts.queue })
+  await promptLocalImpl({
+    sessionId: opened.sessionId,
+    text: payload,
+    front: opts.front,
+    queue: opts.queue,
+    origin: { kind: 'message', sender: opts.sender },
+  })
   // Recorded only after the message carrying it has been accepted: a send that
   // threw would otherwise mark context delivered that never went anywhere, and
   // the next send would skip it.
@@ -2204,7 +2213,7 @@ export async function sendMessageInThreadAsAgent(
     throw new Error('A message needs some text')
   }
   const row = await resolveThreadForAgent(agentNodeId, threadRef)
-  await deliverIntoThread(row, trimmed, { queue })
+  await deliverIntoThread(row, trimmed, { queue, sender: agentName })
 }
 
 /**
@@ -2377,6 +2386,7 @@ export async function deliverThreadFromNode(
   text: string,
   isReachable: (agentNodeId: string) => boolean,
   queue: QueueMode,
+  sender: string,
 ): Promise<ThreadDeliveryOutcome> {
   const trimmed = threadRef.trim()
   if (!trimmed) {
@@ -2389,6 +2399,6 @@ export async function deliverThreadFromNode(
   if (!isReachable(row.agentNodeId)) {
     return { status: 'not-reachable' }
   }
-  const { queued } = await deliverIntoThread(row, text, { queue })
+  const { queued } = await deliverIntoThread(row, text, { queue, sender })
   return { status: queued ? 'queued' : 'delivered' }
 }

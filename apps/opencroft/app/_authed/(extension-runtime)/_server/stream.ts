@@ -418,6 +418,7 @@ export type ThreadDeliveryResolver = (
   text: string,
   isReachable: (agentNodeId: string) => boolean,
   queue: QueueMode,
+  sender: string,
 ) => Promise<ThreadDeliveryOutcome>
 
 // globalThis-backed like compactJobs further down (and every other
@@ -487,7 +488,7 @@ export async function deliverToSendMessageNode(
       isAgentNodeReachable(nodes as unknown as SmNodeLike[], edges as unknown as SmEdgeLike[], agentNodeId)
     let outcome: ThreadDeliveryOutcome = { status: 'not-found' }
     for (const resolver of threadDeliveryResolvers) {
-      outcome = await resolver(threadRef, parsed.message, isReachable, parsed.queue)
+      outcome = await resolver(threadRef, parsed.message, isReachable, parsed.queue, parsed.sender ?? 'Send Message')
       if (outcome.status !== 'not-found') {
         break
       }
@@ -548,7 +549,12 @@ export async function deliverToSendMessageNode(
   // Not `front` for either mode: held messages stay ahead of this one, so the
   // newest reads as the latest word on them rather than a preamble to messages
   // written before it.
-  const { interrupted } = await promptLocalImpl({ sessionId, text: message, queue: route.queue })
+  const { interrupted } = await promptLocalImpl({
+    sessionId,
+    text: message,
+    queue: route.queue,
+    origin: { kind: 'message', sender: route.sender },
+  })
   return { kind: 'agent', sessionKey: route.sessionKey, created, forced: interrupted }
 }
 
@@ -851,7 +857,7 @@ async function performCompact(
   // Sent raw: a leading slash marks a command, and composeEnvelope passes those
   // through unwrapped anyway.
   const compactOutcome = await awaitDispatchedTurn(sessionId, () =>
-    promptLocalImpl({ sessionId, text: '/compact', queue: 'wait' }),
+    promptLocalImpl({ sessionId, text: '/compact', queue: 'wait', origin: { kind: 'system' } }),
   )
   // Read only once /compact's OWN turn has actually finished. 'interrupted'
   // (cancelled, the connection dying mid-turn, or a plain error) and 'timeout'
@@ -902,7 +908,7 @@ async function performCompact(
   // thing delivered once the current turn ends, which is also the assumption
   // awaitDispatchedTurn's turn-counting relies on.
   const restoreOutcome = await awaitDispatchedTurn(sessionId, () =>
-    promptLocalImpl({ sessionId, text: restore, front: true, queue: 'wait' }),
+    promptLocalImpl({ sessionId, text: restore, front: true, queue: 'wait', origin: { kind: 'system' } }),
   )
   // Honestly reflects whether the agent actually finished reading the restore,
   // not merely whether it was handed to the connection — see this function's
@@ -1112,6 +1118,7 @@ interface RouteResolution {
   ctx: AgentContext
   title: string
   queue: QueueMode
+  sender: string
 }
 
 function resolveRoute(
@@ -1159,7 +1166,15 @@ function resolveRoute(
   // state an intent with. That wire waits: it is the conservative half of the
   // choice, and the only place in this change where a value is assumed rather
   // than stated.
-  return { sessionKey, message, ctx, title, queue: parsed?.queue ?? 'wait' }
+  // Who the message is from: the sender the payload names, or the node
+  // speaking for itself. The `text-in` wire carries no payload at all, so it
+  // always takes the node's name — the same wire, and the same reason, as the
+  // `wait` default just above.
+  // The node's own display name is not carried on its data, so a node speaking
+  // for itself is attributed by node type. Named here rather than left blank so
+  // the transcript says something rather than nothing.
+  const nodeName = 'Send Message'
+  return { sessionKey, message, ctx, title, queue: parsed?.queue ?? 'wait', sender: parsed?.sender ?? nodeName }
 }
 
 const g = globalThis as Record<string, unknown>

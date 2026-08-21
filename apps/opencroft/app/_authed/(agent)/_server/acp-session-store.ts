@@ -1,3 +1,5 @@
+import type { Presence } from 'agent-client/types'
+
 import { mutateSettingData, withSettingLock } from '@/app/_authed/(settings)/_server/settings-cas'
 import { getSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
 
@@ -115,6 +117,64 @@ export async function writePersistedConfigOption(
       const store = configOptionsStoreFromRaw(raw)
       const nextTab = { ...(store[tabKey] ?? {}), [configId]: value }
       return { options: { ...store, [tabKey]: nextTab } }
+    }),
+  )
+}
+
+// How often each session's agent reads its queue, kept so a reopened session
+// reads at the cadence it was set to rather than at the default.
+//
+// This is a settings row rather than a column on the queue table, because it is
+// a per-session SETTING and not a queued thing: it exists for sessions whose
+// queue is empty, and it must outlive every message it ever held back.
+//
+// Keyed by SESSION KEY, matching the durable queue, for the same reason: a
+// restart mints a new session id, so an id could not name the session being
+// restored into.
+//
+// Small and rewritten wholesale, which is what the settings store is good at.
+// The queue went into a table instead because it is appended to per message;
+// this changes when somebody presses a button.
+const PRESENCE_SETTING_ID = 'agent-session-presence'
+
+type PresenceStore = Record<string, Presence>
+
+function presenceStoreFromRaw(raw: Record<string, unknown>): PresenceStore {
+  return (raw as { presence?: PresenceStore }).presence ?? {}
+}
+
+/**
+ * The cadence a session was last set to, or null if it was never set.
+ *
+ * Null rather than the default: "never set" and "deliberately set to realtime"
+ * are the same behaviour but not the same fact, and the caller that restores
+ * this should be able to leave its own default in place rather than have one
+ * asserted over it here.
+ */
+export async function readPersistedPresence(sessionKey: string): Promise<Presence | null> {
+  const row = await getSettingImpl(PRESENCE_SETTING_ID)
+  const store = row ? presenceStoreFromRaw(row.data) : {}
+  return store[sessionKey] ?? null
+}
+
+export async function writePersistedPresence(sessionKey: string, presence: Presence): Promise<void> {
+  await withSettingLock(PRESENCE_SETTING_ID, () =>
+    mutateSettingData(PRESENCE_SETTING_ID, (raw) => ({
+      presence: { ...presenceStoreFromRaw(raw), [sessionKey]: presence },
+    })),
+  )
+}
+
+export async function deletePersistedPresence(sessionKey: string): Promise<void> {
+  await withSettingLock(PRESENCE_SETTING_ID, () =>
+    mutateSettingData(PRESENCE_SETTING_ID, (raw) => {
+      const store = presenceStoreFromRaw(raw)
+      if (!(sessionKey in store)) {
+        return raw
+      }
+      const next = { ...store }
+      delete next[sessionKey]
+      return { presence: next }
     }),
   )
 }

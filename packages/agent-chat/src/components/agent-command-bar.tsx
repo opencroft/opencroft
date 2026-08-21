@@ -1,16 +1,6 @@
 'use client'
 
-import {
-  Send,
-  SendHorizontal,
-  ShieldAlert,
-  ShieldCheck,
-  ShieldCog,
-  SlidersHorizontal,
-  Sparkles,
-  Square,
-  X,
-} from 'lucide-react'
+import { Send, ShieldAlert, ShieldCheck, ShieldCog, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react'
 import type { KeyboardEvent, ReactNode, Ref } from 'react'
 import { Fragment, useRef, useState } from 'react'
 import { Button } from 'ui/components/ui/button'
@@ -25,15 +15,6 @@ import {
 } from 'ui/components/ui/dropdown-menu'
 import { Textarea } from 'ui/components/ui/textarea'
 import { cn } from 'ui/lib/utils'
-
-// A message the host is holding until the current turn finishes. `text` is
-// display-ready: whatever transform the host applies before sending (context
-// tags and the like) has already been undone, because that transform belongs
-// to the host's protocol, not to this panel.
-export interface QueuedMessage {
-  id: string
-  text: string
-}
 
 // One choice inside a setting.
 export interface CommandBarConfigOption {
@@ -93,24 +74,12 @@ export interface AgentCommandBarProps {
   // to submit. An empty composer shows Stop alone.
   //
   // Send is deliberately NOT gated on `busy`. Submitting during a turn is how a
-  // follow-up message gets queued (see `queued`), and `send()` never had a busy
+  // follow-up message is held until the turn ends, and `send()` never had a busy
   // gate -- only the button was taken away, which left a coarse pointer with no
   // way to submit during a turn at all: Enter inserts a newline there by design,
   // so the button is the only other route.
   busy?: boolean
   onStop?: () => void
-  // Push everything already waiting through to the agent now, interrupting the
-  // turn it is working on, instead of letting it drain one message per turn.
-  //
-  // Takes over the Send slot only when the composer is EMPTY and something is
-  // queued — with text typed, the button is an ordinary Send again and that
-  // message joins the queue like any other. So this never changes what an
-  // existing control does under a reaching finger: with an empty composer
-  // mid-turn the slot is otherwise empty, and this fills it. Stop keeps the
-  // trailing slot throughout, unmoved.
-  //
-  // Optional: a host that gives no handler simply never shows the affordance.
-  onPush?: () => void
   // A send is in flight, or the agent cannot accept one. Both only gate
   // sending; stopping stays available.
   sending?: boolean
@@ -138,14 +107,12 @@ export interface AgentCommandBarProps {
   // than behind the button because a readout you have to open a menu to see
   // is a readout nobody reads.
   configExtra?: ReactNode
-  // Host slot: rendered in the action row AFTER the settings button, before
+  // Host slot: rendered in the action row after `controls`, immediately before
   // Send/Stop -- where input controls the host provides (dictation,
-  // attachments) belong. Kept separate from `controls` (which sits before the
-  // settings button) so a host can put per-setting pickers and input controls
-  // on either side of it without either fighting the other for position.
+  // attachments) belong. Kept separate from `controls` so a host can place
+  // per-setting pickers and input controls independently, without either
+  // fighting the other for position.
   trailingControls?: ReactNode
-  queued?: QueuedMessage[]
-  onRemoveQueued?: (id: string) => void
   // Copy for a send that did not go through, rendered directly above the
   // composer. One shape for every chat, so a refusal reads the same wherever
   // the panel is mounted -- a host wrapping the panel in its own error layout
@@ -157,8 +124,8 @@ export interface AgentCommandBarProps {
   sendError?: string
   // Delegation, not notification: the panel does not own `sendError`, so
   // without this there is no way to clear it and no dismiss control is
-  // offered. (Contrast `onRemoveQueued`, which gates its own button for the
-  // same reason -- and `configs`, where the feature is gated on the data.)
+  // offered. (Contrast `configs`, where the feature is gated on the data the
+  // host provides rather than on a callback.)
   onDismissSendError?: () => void
   // Show the approval toggle at all. Default true; false removes it for a
   // composer where there is nothing to approve -- starting a thread sends one
@@ -190,11 +157,6 @@ export interface AgentCommandBarProps {
 // can match it without copying four class names and drifting from them.
 export const commandBarControlClass = 'size-7 shrink-0'
 
-// One sentence, used as both `title` and `aria-label`. Deliberately says what
-// happens rather than naming a mechanism, and deliberately carries no count:
-// the queued strip above the composer already shows what is waiting, and a
-// number in the label would be a second place for it to be wrong.
-const PUSH_LABEL = 'Push the waiting messages through now, interrupting what the agent is doing'
 
 // The reset-contract decision behind the buffered `value` (see this
 // component's own doc comment): true when the `value` PROP has changed since
@@ -219,8 +181,8 @@ export function shouldResyncBuffer(value: string, prevValue: string): boolean {
   return value !== prevValue
 }
 
-// The bottom panel of an agent chat: a strip of queued messages, the composer,
-// and an action row underneath carrying every control and every host slot.
+// The bottom panel of an agent chat: the composer, and an action row underneath
+// carrying every control and every host slot.
 //
 // **Two rows, and the split is the point.** The composer owns the full width of
 // its own line, so a message is read on the width it was typed on rather than
@@ -277,15 +239,16 @@ export function shouldResyncBuffer(value: string, prevValue: string): boolean {
 // The visible cost of this choice is one frame of empty composer before the
 // text returns, which is the trade made deliberately.
 //
-// **The host owns the width.** Every element from a queued message's text up to
-// this root carries `min-w-0`, and the text truncates -- so a long message, or
-// an unbroken one like a URL or a path, shortens to one line rather than
-// widening its row. That holds only while something above gives this panel a
-// bounded width. A containing block that is shrink-to-fit -- an overlay with no
-// width and no opposing inset, or `w-max` / `w-fit` / `inline-flex` on the way
-// down -- derives its width FROM this panel, and no class in here can clamp
-// against a width its own content produced. If a queued message runs off the
-// screen, the broken link is above this component.
+// **The host owns the width.** Every element from the composer and the action
+// row up to this root carries `min-w-0`, so a long line of text or a wide host
+// control shortens its own row rather than widening the panel -- including an
+// unbroken run like a URL or a path, since `truncate` brings `overflow: hidden`
+// with it and drops the automatic minimum size to zero. That holds only while
+// something above gives this panel a bounded width. A containing block that is
+// shrink-to-fit -- an overlay with no width and no opposing inset, or `w-max` /
+// `w-fit` / `inline-flex` on the way down -- derives its width FROM this panel,
+// and no class in here can clamp against a width its own content produced. If a
+// row runs off the screen, the broken link is above this component.
 //
 // Enter sends on a fine-pointer client (Shift+Enter inserts a newline; on touch
 // there is no Shift key, so the button sends); Escape clears.
@@ -296,18 +259,18 @@ export function shouldResyncBuffer(value: string, prevValue: string): boolean {
 // text does. The order is the whole of the decision. Were Send trailing, the
 // rightmost button would change meaning under a reaching finger the moment a
 // character was typed -- and the two are not equally recoverable: a mis-pressed
-// Send queues a message the host can remove, a mis-pressed Stop kills a running
-// turn. So the costly one is the one that stays put.
+// Send holds a message the host can still take back, a mis-pressed Stop kills a
+// running turn. So the costly one is the one that stays put.
 //
 // Both sit in the `shrink-0` cluster, so the second button takes its width from
 // the host's own controls, never from Send or Stop.
 //
 // One structural rule matters more than it looks: **the wrapper column, the
-// composer and the action row are rendered unconditionally**, even with nothing
-// queued. If the element structure changed when messages queue or drain, the
-// textarea would be a different element afterwards -- React would remount it
-// and the caret would vanish mid-sentence. A host memoising this panel has to
-// preserve the same property on its side.
+// composer and the action row are rendered unconditionally**, even with no
+// error above the composer. If the element structure changed as a conditional
+// slot appeared and cleared, the textarea would be a different element
+// afterwards -- React would remount it and the caret would vanish mid-sentence.
+// A host memoising this panel has to preserve the same property on its side.
 export function AgentCommandBar({
   value,
   onValueChange,
@@ -319,7 +282,6 @@ export function AgentCommandBar({
   onBlur,
   busy = false,
   onStop,
-  onPush,
   sending = false,
   disabled = false,
   leading,
@@ -330,8 +292,6 @@ export function AgentCommandBar({
   onConfigChange,
   configExtra,
   trailingControls,
-  queued,
-  onRemoveQueued,
   sendError,
   onDismissSendError,
   approval,
@@ -365,16 +325,11 @@ export function AgentCommandBar({
   const canSend = hasText && !sending && !disabled
   const hasConfigs = Boolean(configs && configs.length > 0)
 
-  // An empty composer with messages waiting turns the Send slot into a push.
-  // Typing anything turns it back: what you wrote is a message, and it joins the
-  // queue like the rest, so the button that submits it must mean Send.
-  const canPush = !hasText && Boolean(onPush) && (queued?.length ?? 0) > 0 && !sending && !disabled
-
   // Stop is present for the whole turn; Send is only withheld from a turn with
-  // nothing to queue. Without `onStop` there is no stop button to make room for,
+  // nothing to send. Without `onStop` there is no stop button to make room for,
   // so `busy` alone changes nothing -- the row stays the resting one.
   const showStop = busy && Boolean(onStop)
-  const showSend = !showStop || hasText || canPush
+  const showSend = !showStop || hasText
 
   // The button carries an icon and no text, so its current values have to live
   // somewhere reachable -- otherwise the only way to read the model you are on
@@ -420,41 +375,16 @@ export function AgentCommandBar({
 
   return (
     <div className={cn('flex min-w-0 flex-1 flex-col gap-1', className)}>
-      {queued && queued.length > 0 ? (
-        <div className='flex min-w-0 flex-col gap-1'>
-          {queued.map((message) => (
-            <div
-              key={message.id}
-              className='flex min-w-0 items-center gap-2 rounded-md border bg-muted/40 px-2 py-1 text-xs'
-            >
-              <span className='shrink-0 text-muted-foreground'>Queued</span>
-              <span className='min-w-0 flex-1 truncate'>{message.text}</span>
-              {onRemoveQueued ? (
-                <button
-                  type='button'
-                  onClick={() => onRemoveQueued(message.id)}
-                  className='shrink-0 text-muted-foreground transition-colors hover:text-foreground'
-                  title='Remove from queue'
-                >
-                  <X className='size-3.5' />
-                </button>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
-
       {/* A failed send, directly above the composer with the text that failed
           already back in it. `role='alert'` so it is announced rather than
           only seen -- the text reappearing under the cursor is not something a
           screen reader reports.
 
-          Conditional in the same way the queued strip is: a slot that holds
-          its position whether or not it renders, so the textarea below keeps
-          its place among the children and is never remounted. See the
-          structural rule in this component's doc comment -- an element that
-          appears and disappears ABOVE the composer is exactly the shape that
-          would break it if it were spliced in instead. */}
+          A conditional slot that holds its position whether or not it renders,
+          so the textarea below keeps its place among the children and is never
+          remounted. See the structural rule in this component's doc comment --
+          an element that appears and disappears ABOVE the composer is exactly
+          the shape that would break it if it were spliced in instead. */}
       {sendError ? (
         <div role='alert' className='flex min-w-0 items-start gap-2 px-1 text-sm text-destructive'>
           <span className='min-w-0 flex-1 wrap-break-word'>{sendError}</span>
@@ -603,22 +533,16 @@ export function AgentCommandBar({
               variant='ghost'
               className={commandBarControlClass}
               onMouseDown={(e) => e.preventDefault()}
-              onClick={canPush ? onPush : send}
-              disabled={canPush ? false : !canSend}
+              onClick={send}
+              disabled={!canSend}
               // Both carry an explicit name as well as a title. `title` alone
               // does name a button with no text, but weakly -- and these two
               // are now adjacent icons a press apart, one of which ends the
-              // turn. Same shape as the settings button above. Push says what
-              // it does in full for the same reason, and says the same thing
-              // twice so a pointer and a screen reader are told the same.
-              title={canPush ? PUSH_LABEL : 'Send'}
-              aria-label={canPush ? PUSH_LABEL : 'Send'}
+              // turn. Same shape as the settings button above.
+              title='Send'
+              aria-label='Send'
             >
-              {/* Rotated a quarter turn anticlockwise so it points UP, not right:
-                  `SendHorizontal` ships pointing right, and up is the direction
-                  intended — it reads as "send these onward"
-                  rather than as a next/skip arrow beside Stop. */}
-              {canPush ? <SendHorizontal className='size-4 -rotate-90' /> : <Send className='size-4' />}
+              <Send className='size-4' />
             </Button>
           ) : null}
 

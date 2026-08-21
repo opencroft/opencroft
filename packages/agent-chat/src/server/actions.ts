@@ -12,7 +12,7 @@ import {
 import type { AgentProfile, ProfilesFile } from 'agent-client/profiles'
 import type { AgentSelection, QueueMode, SessionMeta } from 'agent-client/types'
 
-import { getRuntime, type RoleRecord, type SkillRecord } from './runtime'
+import { getRuntime, type RoleRecord, resolveReaderName, type SkillRecord } from './runtime'
 
 // ---- Agent selection (provider / adapter / model / key / cwd) ----
 
@@ -169,10 +169,20 @@ export const forkAgentSession = (sessionId: string, dropFromTurn?: number) =>
 // `queue` is required here for the same reason it is required everywhere else:
 // sending into a session that may be busy is a choice, and a default would make
 // it on the caller's behalf without telling them. See QueueMode.
+//
+// The sender is NOT on this wire, and that absence is the whole mechanism.
+// Every message now carries its author into the agent's own reading of it, so a
+// browser able to pass `sender` could be attributed as anybody — the name would
+// be quoted verbatim in the transcript and in every agent's view of who said
+// what. It is resolved from the host's request context instead, which the
+// client cannot reach. See ReaderIdentity.
 const _sendAgentPrompt = createServerFn({ method: 'POST' })
   .inputValidator((data: { sessionId: string; text: string; queue: QueueMode }) => data)
   .handler(async ({ data }) => {
-    const { interrupted } = await getRuntime().agent.prompt(data.sessionId, data.text, { queue: data.queue })
+    const { interrupted } = await getRuntime().agent.prompt(data.sessionId, data.text, {
+      queue: data.queue,
+      origin: { kind: 'message', sender: await resolveReaderName() },
+    })
     return { ok: true, interrupted }
   })
 export const sendAgentPrompt = (sessionId: string, text: string, queue: QueueMode) =>

@@ -1,13 +1,20 @@
 import { type ChatMessage, isTerminalToolStatus } from 'agent-client/fold'
 
 import type { Block } from './components/chat-conversation'
-import type { DetailItem, UserText } from './components/chat-turn'
+import type { ChatUserMessagePart, DetailItem, UserText } from './components/chat-turn'
 import { formatToolValue } from './tool-views'
+import { toUserParts } from './user-parts'
 
 // Re-exported rather than redeclared: the component that renders these is what
 // defines their shape, so there is exactly one definition of each. A second one
 // here would drift the moment either side changed on its own.
-export type { Block, DetailItem, UserText }
+export type { Block, ChatUserMessagePart, DetailItem, UserText }
+
+// A host with no prompt pipeline of its own: the words a reader sees are the
+// message exactly as it was sent, and a message with none has nothing to draw.
+// A host that wraps prompts in something of its own undoes that in its own
+// builder instead -- which is the difference this file exists for.
+const plainUserText = (raw: string): UserText | null => (raw.trim() ? (raw as UserText) : null)
 
 // Group a folded transcript into the blocks the installed conversation renders:
 // a user message is its own block, and every reply until the next user message
@@ -38,10 +45,14 @@ export function buildKitBlocks(messages: readonly ChatMessage[]): Block[] {
   for (const message of messages) {
     if (message.kind === 'user') {
       flush()
-      // A message that renders nothing still ends the run above it, so the
-      // flush happens before this check rather than after.
-      if (message.text.trim()) {
-        blocks.push({ id: `u:${message.id}`, kind: 'user', text: message.text as UserText })
+      // A turn that renders nothing still ends the run above it, so the flush
+      // happens before this check rather than after.
+      //
+      // One delivery can carry several messages, so the text is read back into
+      // the ones it was built from; the turn itself stays whole in `text`.
+      const parts = toUserParts(message.text, plainUserText)
+      if (parts.length > 0) {
+        blocks.push({ id: `u:${message.id}`, kind: 'user', text: message.text as UserText, parts })
       }
       continue
     }

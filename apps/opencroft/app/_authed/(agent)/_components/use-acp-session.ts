@@ -3,13 +3,15 @@
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { usePaginatedHistory } from 'agent-chat/use-paginated-history'
 import { isTerminalToolStatus } from 'agent-client/fold'
-import type { ChatEvent, PermissionOpt, QueuedPrompt, QueueMode } from 'agent-client/types'
+import { DEFAULT_PRESENCE } from 'agent-client/presence'
+import type { ChatEvent, PermissionOpt, Presence, QueuedPrompt, QueueMode } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 
 import type { AgentSession } from '@/app/_authed/(agent)/_components/agent-chat'
 import { type AcpStreamEvent, HISTORY_END_KIND } from '@/app/_authed/(agent)/_lib/acp-stream'
 import { headerFromWindow, type UserText } from '@/app/_authed/(agent)/_lib/build-blocks'
 import type { ChatMessage, ChatPart } from '@/app/_authed/(agent)/_lib/messages'
+import { READER_ORIGIN, type WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import {
   cancelLocal,
   ensureLocalSession,
@@ -20,6 +22,8 @@ import {
   removeQueuedLocal,
   respondLocal,
   setLocalConfigOption,
+  setPresenceLocal,
+  stopLocal,
 } from '@/app/_authed/(agent)/_server/acp'
 import { sendFailureMessage } from '@/app/_authed/(agent)/_shared/send-refused-error'
 
@@ -48,12 +52,13 @@ export type SendTransport = (args: {
   text: string
   front?: boolean
   queue: QueueMode
+  origin: WirePromptOrigin
 }) => Promise<unknown>
 
 // The default transport: exactly the call this hook has always made, now
 // carrying the caller's queue choice rather than deciding it here.
-const promptLocalTransport: SendTransport = ({ sessionId, text, front, queue }) =>
-  promptLocal({ data: { sessionId, text, front, queue } })
+const promptLocalTransport: SendTransport = ({ sessionId, text, front, queue, origin }) =>
+  promptLocal({ data: { sessionId, text, front, queue, origin } })
 
 /**
  * How this tab's live session is opened.
@@ -124,6 +129,10 @@ export interface AcpSession {
   // the latest 'config_options' snapshot. Empty for adapters that don't
   // advertise any.
   configOptions: SessionConfigOption[]
+  // How often this session reads what is waiting for it — the latest
+  // 'presence' snapshot. Realtime until the server says otherwise, which is
+  // also what a session that has never been told anything else reads at.
+  presence: Presence
   // Context usage meter (tokens used / window) from the latest 'usage' event.
   usage?: AgentUsage
   resolvePermission: (requestId: string, optionId?: string) => void
@@ -134,6 +143,9 @@ export interface AcpSession {
   // Change one of the session's advertised config options. Applies to this
   // session only — never written back into the profile it was started from.
   setConfigOption: (configId: string, value: string | boolean) => void
+  // Change how often this session reads what is waiting for it. Persisted
+  // server-side, so it outlives the tab that set it.
+  setPresence: (presence: Presence) => void
 }
 
 type ToolPart = Extract<ChatPart, { type: 'tool-call' }>
@@ -154,6 +166,8 @@ export interface Folded {
   queue: QueuedMessage[]
   // The last 'config_options' snapshot wins.
   configOptions: SessionConfigOption[]
+  // The last 'presence' snapshot wins, same as the queue's.
+  presence: Presence
   usage?: AgentUsage
 }
 
@@ -173,6 +187,9 @@ export function fold(events: ChatEvent[], baseIndex: number): Folded {
   let waiting = false
   let queue: QueuedMessage[] = []
   let configOptions: SessionConfigOption[] = []
+  // Seeded with the engine's own default rather than a second copy of it, so
+  // "what a session reads at until told otherwise" is stated in one place.
+  let presence: Presence = DEFAULT_PRESENCE
   let usage: AgentUsage | undefined
 
   const ensureAssistant = (id: number): ChatMessage => {
@@ -259,6 +276,12 @@ export function fold(events: ChatEvent[], baseIndex: number): Folded {
         configOptions = event.options
         break
       }
+      case 'presence': {
+        // A snapshot like the queue's, for the same reason: a reconnecting
+        // client folds the last one seen and knows what it is looking at.
+        presence = event.presence
+        break
+      }
       case 'usage': {
         usage = { used: event.used, size: event.size }
         break
@@ -285,6 +308,7 @@ export function fold(events: ChatEvent[], baseIndex: number): Folded {
     waiting,
     queue,
     configOptions,
+    presence,
     usage,
   }
 }
@@ -538,7 +562,7 @@ export function useAcpSession(
   // so requests are chained here to reach it in send order. `front` asks the
   // server to queue ahead of anything already held.
   const deliver = useCallback(
-    (value: string, opts: { front?: boolean; queue: QueueMode }) => {
+    (value: string, opts: { front?: boolean; queue: QueueMode; origin: WirePromptOrigin }) => {
       if (!sessionId) {
         return
       }
@@ -561,6 +585,7 @@ export function useAcpSession(
             text,
             front: opts.front,
             queue: opts.queue,
+            origin: opts.origin,
           })
         } catch (error) {
           console.error('promptLocal failed', error)
@@ -602,7 +627,7 @@ export function useAcpSession(
       // Always hand the message to the server: it delivers immediately when the
       // session is idle and queues it when a turn is running. deliver() chains
       // the requests so rapid sends reach the server in send order.
-      deliver(value, { queue: 'wait' })
+      deliver(value, { queue: 'wait', origin: READER_ORIGIN })
     },
     [sessionId, deliver],
   )
@@ -614,38 +639,21 @@ export function useAcpSession(
     }
     const text = pending.current
     pending.current = null
-    deliver(text, { queue: 'wait' })
+    deliver(text, { queue: 'wait', origin: READER_ORIGIN })
   }, [sessionId, deliver])
 
   // Interrupt the running turn. The agent emits a (cancelled) turn_end, which
   // clears the waiting state through the event stream.
+  // Stop, which the server may turn into a delivery: with unread messages held
+  // it cancels the turn AND hands them over, since a stop with something unsaid
+  // is usually a redirection rather than an abandonment. The queue is read
+  // server-side, next to the queue -- this component's copy of it is a render
+  // old, and a message landing between the paint and the click is exactly the
+  // case the behaviour exists for.
   const stop = useCallback(() => {
     if (sessionId) {
-      void cancelLocal({ data: sessionId })
+      void stopLocal({ data: sessionId })
     }
-  }, [sessionId])
-
-  // Deliver everything already held NOW, interrupting the running turn. Carries
-  // no text: the button only appears with an empty composer, so there is nothing
-  // of the reader's to add — `queue: 'push'` against an empty message means
-  // "send what is waiting", and agentClient.prompt appends nothing.
-  //
-  // Deliberately NOT routed through `deliver`: that path transforms the text,
-  // claims the first-message slot and latches deliveredOnce, all of which are
-  // about a message being written. There is no message here.
-  const push = useCallback(() => {
-    if (!sessionId) {
-      return
-    }
-    setLocalWaiting(true)
-    setSendError(undefined)
-    void (transportRef.current ?? promptLocalTransport)({ sessionId, text: '', queue: 'push' }).catch(
-      (error: unknown) => {
-        console.error('push failed', error)
-        setLocalWaiting(false)
-        setSendError(error instanceof Error ? error.message : String(error))
-      },
-    )
   }, [sessionId])
 
   // Branch the session at a user turn (0-based). Switching to the fork's id
@@ -701,11 +709,11 @@ export function useAcpSession(
         return
       }
       if (canSteer) {
-        deliver(value, { queue: 'wait' })
+        deliver(value, { queue: 'wait', origin: READER_ORIGIN })
         return
       }
       void cancelLocal({ data: sessionId })
-      deliver(value, { front: true, queue: 'wait' })
+      deliver(value, { front: true, queue: 'wait', origin: READER_ORIGIN })
     },
     [sessionId, resolvePermission, deliver, canSteer],
   )
@@ -770,7 +778,6 @@ export function useAcpSession(
       botName,
       send,
       stop,
-      push,
       canFork,
       adapterId,
       editMessage,
@@ -793,7 +800,6 @@ export function useAcpSession(
       botName,
       send,
       stop,
-      push,
       canFork,
       adapterId,
       editMessage,
@@ -830,6 +836,17 @@ export function useAcpSession(
     [sessionId],
   )
 
+  // The server confirms via a fresh 'presence' snapshot on the stream — no
+  // optimistic local state to keep in sync.
+  const setPresence = useCallback(
+    (presence: Presence) => {
+      if (sessionId) {
+        void setPresenceLocal({ data: { sessionId, presence } })
+      }
+    },
+    [sessionId],
+  )
+
   return useMemo(
     () => ({
       session,
@@ -837,6 +854,7 @@ export function useAcpSession(
       asks: folded.asks,
       queue: folded.queue,
       configOptions: folded.configOptions,
+      presence: folded.presence,
       // A live event this connection has actually seen wins and stays won —
       // once one lands, folded.usage keeps returning it on every later render
       // (it's derived from the accumulated event log), so the ring never
@@ -848,6 +866,7 @@ export function useAcpSession(
       respondPermissionText,
       removeQueued,
       setConfigOption,
+      setPresence,
     }),
     [
       session,
@@ -855,6 +874,7 @@ export function useAcpSession(
       folded.asks,
       folded.queue,
       folded.configOptions,
+      folded.presence,
       folded.usage,
       seedUsage,
       resolvePermission,
@@ -862,6 +882,7 @@ export function useAcpSession(
       respondPermissionText,
       removeQueued,
       setConfigOption,
+      setPresence,
     ],
   )
 }

@@ -10,6 +10,7 @@ import {
   ChatTurnDetails,
   type ChatTurnRenderers,
   ChatUserMessage,
+  type ChatUserMessagePart,
   type DetailItem,
   type UserText,
 } from './chat-turn'
@@ -25,7 +26,16 @@ import {
 // rename it on every fetch. Naming it by the turn was always the honest
 // identity -- a details block *is* one turn's replies -- and it only looked
 // stable before because every page began at a turn boundary.
-export type Block = { id: string; kind: 'user'; text: UserText } | { id: string; kind: 'details'; items: DetailItem[] }
+//
+// A user block carries its turn twice, in two forms that answer different
+// questions. `parts` is what renders: one message per author and send time.
+// `text` is the turn exactly as the host handed it over, and it is what an edit
+// puts back into the composer -- so it keeps whatever the host's own encoding
+// left in it, because anything dropped there would be dropped from the message
+// on the way back out, silently and with nothing to notice it by.
+export type Block =
+  | { id: string; kind: 'user'; text: UserText; parts: readonly ChatUserMessagePart[] }
+  | { id: string; kind: 'details'; items: DetailItem[] }
 
 // Each block carries its own position in the full `blocks` array, assigned
 // once while grouping. `onEditUser`/`pending` both need "where is this in the
@@ -771,7 +781,7 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
                   sticky
                   renderers={renderers}
                   blockId={section.user.id}
-                  text={section.user.text}
+                  parts={section.user.parts}
                   editDisabled={waiting}
                   onEdit={
                     onEditUser && section.user
@@ -783,9 +793,20 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
                 // Only the first section can lack a question: the window starts
                 // inside a turn whose own `user` event is above it. Not
                 // editable -- the message it refers to isn't loaded.
+                //
+                // It arrives as one text rather than as the messages it was
+                // built from: the host has the words but not the delivery they
+                // were decoded out of. A turn that carried several therefore
+                // reads as one here, until the rest of it is loaded and the
+                // real block replaces it.
                 sectionIndex === 0 &&
                 historyHeaderText != null && (
-                  <ChatUserMessage sticky renderers={renderers} blockId='u:header' text={historyHeaderText} />
+                  <ChatUserMessage
+                    sticky
+                    renderers={renderers}
+                    blockId='u:header'
+                    parts={[{ text: historyHeaderText }]}
+                  />
                 )
               )}
               {/* The control belongs to whatever is CURRENTLY the first section,

@@ -16,7 +16,7 @@ import { AgentChatStatusIndicators, CHAT_RENDERERS, renderToolCall } from '@/app
 import { AgentCommandBarHost } from '@/app/_authed/(agent)/_components/command-bar-host'
 import type { LocalSource, OpenTransport, SendTransport } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
-import { buildBlocks } from '@/app/_authed/(agent)/_lib/build-blocks'
+import { buildBlocks, buildUnread } from '@/app/_authed/(agent)/_lib/build-blocks'
 import { wrapUserSelection } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { SelectionBadge } from '@/app/_authed/(extension-runtime)/_client/selection-badge'
 import { useOptionalSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
@@ -152,6 +152,11 @@ export function GroupChatThreadChat({
     [acp.session.messages, acp.session.historyHeader?.index],
   )
 
+  const unread = useMemo(() => buildUnread(acp.queue), [acp.queue])
+  // Memoized for the same reason as `unread`: it feeds the memoized command
+  // bar, and a fresh object every render would rebuild it every render.
+  const presence = useMemo(() => ({ value: acp.presence, onSelect: acp.setPresence }), [acp.presence, acp.setPresence])
+
   // Compacts and clears THIS thread, membership-checked (see clearThread's
   // own comment in model.ts for why clearSession -- generic across both
   // surfaces, no check of any kind -- isn't used here directly). Keyed on
@@ -262,10 +267,9 @@ export function GroupChatThreadChat({
       startIcon={false}
       session={acp.session}
       agentNodeId={thread.agent.nodeId}
-      queued={acp.queue}
-      onRemoveQueued={acp.removeQueued}
       configOptions={acp.configOptions}
       onSetConfigOption={acp.setConfigOption}
+      presence={presence}
       usage={acp.usage}
       compact={compact}
       onClear={clear.onClear}
@@ -291,6 +295,8 @@ export function GroupChatThreadChat({
         defaultExpanded
         renderTool={renderToolCall}
         renderers={CHAT_RENDERERS}
+        unread={unread}
+        onRemoveUnread={acp.removeQueued}
         footerExtra={<AgentChatStatusIndicators />}
       />
       {/* A thread's agent asks for approval exactly as a 1:1 chat's does, and

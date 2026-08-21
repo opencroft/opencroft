@@ -573,6 +573,50 @@ export const groupChatThreadArtifact = pgTable(
   (t) => [index('GroupChatThreadArtifact_threadId_idx').on(t.threadId)],
 )
 
+// A prompt an agent session is holding but has not been given yet.
+//
+// The queue itself lives in memory and is served from there; this is a
+// write-behind copy, so nothing here sits on the path a message takes to an
+// agent. It exists because a reading cadence stretches how long a message can
+// wait from seconds to a day, and a restart in between used to lose everything
+// held.
+//
+// Addressed by SESSION KEY rather than session id: a restart mints a new id, so
+// rows keyed by one would name nothing that could ever load or delete them.
+//
+// `kind` is a real column rather than something inferred from `sender` being
+// null. The queue genuinely holds two kinds of entry -- a message somebody
+// sent, and a command the application issued on its own behalf -- and the two
+// leave differently: messages batch together and wait for the reading window, a
+// command is delivered alone and immediately. Restoring messages only would
+// turn a held [message, command, message] into one merged batch and drop the
+// command, which is a request somebody made being silently forgotten.
+//
+// `sender` and `sentAt` are null exactly when `kind` is 'system', which has
+// neither an author nor a meaningful send time.
+//
+// `position` orders the queue explicitly rather than ordering by `sentAt`: a
+// system row has no send time, and corrective guidance after a rejected
+// permission is inserted at the FRONT, so arrival order is not queue order.
+// Appends take max+1 and front-inserts min-1, which keeps both O(1) and never
+// rewrites the rows already there -- the write amplification a table was chosen
+// over a settings blob to avoid.
+export const agentQueueEntry = pgTable(
+  'AgentQueueEntry',
+  {
+    // The engine's own entry id, so a delivery deletes exactly what it took.
+    id: text().primaryKey().notNull(),
+    sessionKey: text().notNull(),
+    kind: text().notNull(),
+    sender: text(),
+    text: text().notNull(),
+    sentAt: timestamp({ withTimezone: true, mode: 'date' }),
+    position: integer().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index('AgentQueueEntry_sessionKey_position_idx').on(t.sessionKey, t.position)],
+)
+
 export const schema = {
   setting,
   secret,
@@ -589,9 +633,11 @@ export const schema = {
   groupChatThreadAlias,
   groupChatThreadArtifact,
   usageRollupDay,
+  agentQueueEntry,
   ...authSchema,
 }
 
+export type AgentQueueEntry = typeof agentQueueEntry.$inferSelect
 export type Setting = typeof setting.$inferSelect
 export type Secret = typeof secret.$inferSelect
 export type Space = typeof space.$inferSelect

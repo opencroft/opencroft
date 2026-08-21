@@ -6,8 +6,9 @@
 // — see the header of acp-impl.ts, which is where plain implementations go.
 import { createServerFn } from '@tanstack/react-start'
 import type { RecordsWindow } from 'agent-client/pagination'
-import type { QueueMode } from 'agent-client/types'
+import type { Presence, QueueMode } from 'agent-client/types'
 
+import type { WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import {
   cancelLocalImpl,
   ensureLocalSessionImpl,
@@ -16,6 +17,8 @@ import {
   hasActiveTurnImpl,
   type OpenedSession,
   promptLocalImpl,
+  setPresenceLocalImpl,
+  stopLocalImpl,
   stopLocalSessionProcessImpl,
   tabSessions,
 } from '@/app/_authed/(agent)/_server/acp-impl'
@@ -40,9 +43,25 @@ export const ensureLocalSession = createServerFn({ method: 'POST', strict: { out
 // delivered on its own when the turn ends, `push` to interrupt and deliver the
 // whole queue as one turn. Required — sending into a busy session is a choice,
 // not a default. `front` is orthogonal and decides position within the queue.
+//
+// `origin` is `WirePromptOrigin`, whose only variant names nobody: this is the
+// browser's door, so a name stated here would be a name anyone could state.
+// promptLocalImpl resolves it against the signed-in session.
 export const promptLocal = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { sessionId: string; text: string; front?: boolean; queue: QueueMode }) => data)
+  .inputValidator(
+    (data: { sessionId: string; text: string; front?: boolean; queue: QueueMode; origin: WirePromptOrigin }) => data,
+  )
   .handler(async ({ data }): Promise<{ interrupted: boolean }> => promptLocalImpl(data))
+
+// How often this session's agent reads its queue. Remembered, so a session
+// reopened after a restart reads at the cadence it was set to rather than
+// handing over everything it was holding the moment it comes back.
+export const setPresenceLocal = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { sessionId: string; presence: Presence }) => data)
+  .handler(async ({ data }): Promise<{ ok: true }> => {
+    await setPresenceLocalImpl(data)
+    return { ok: true }
+  })
 
 export const findTargetSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { baseKey: string }) => data)
@@ -143,6 +162,16 @@ export const setLocalConfigOption = createServerFn({ method: 'POST', strict: { o
 export const cancelLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((sessionId: string) => sessionId)
   .handler(async ({ data: sessionId }): Promise<void> => cancelLocalImpl(sessionId))
+
+// The reader's Stop, which is not the same thing as a cancel: with unread
+// messages held it cancels AND delivers them, because a stop with something
+// unsaid is usually a correction rather than an abandonment. Separate from
+// cancelLocal so the plain cancel stays available to callers that mean only
+// that -- the permission flow's corrective guidance still cancels and queues
+// ahead, and must not sweep the queue out while doing it.
+export const stopLocal = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((sessionId: string) => sessionId)
+  .handler(async ({ data: sessionId }): Promise<{ delivered: number }> => stopLocalImpl(sessionId))
 
 export const hasActiveTurn = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((sessionId: string) => sessionId)

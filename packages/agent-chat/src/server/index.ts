@@ -12,8 +12,11 @@ export {
   getRuntime,
   type McpStore,
   type ProfilesStore,
+  READER_FALLBACK,
+  type ReaderIdentity,
   type RoleRecord,
   type RolesDataLayer,
+  resolveReaderName,
   type SkillRecord,
   type SkillsDataLayer,
 } from './runtime'

@@ -54,6 +54,12 @@ export interface ParsedMessage {
    */
   queue: QueueMode
   /**
+   * Who the message is from, for attribution in the transcript. Optional
+   * because a node sending on its own behalf has no one else to name; absent
+   * means the node speaks for itself.
+   */
+  sender?: string
+  /**
    * A group-chat thread reference (`<group-slug>:<agent-slug>:<thread-slug>`,
    * a whole session key, or a thread id) instead of an agent:job session.
    * Mutually exclusive with `agent`/`job`/`key`/`session` — carrying both is a
@@ -123,6 +129,7 @@ export function tryParseJsonMessage(text: string): ParsedMessage | null {
     title: optStr(obj['title']),
     session: optStr(obj['session']),
     queue,
+    sender: optStr(obj['sender']),
     thread: optStr(obj['thread']),
   }
 }

@@ -90,6 +90,10 @@ export interface SessionMeta {
   // number, not undefined: an idle session's queue is genuinely empty, so 0 is
   // a fact here — unlike `usage`, there is no unknown state to keep distinct.
   queuedMessages?: number
+  // How often this session's agent reads its queue. Always present: every
+  // session has a reading cadence, and `realtime` is a real answer rather than
+  // an absent one.
+  presence?: Presence
 }
 
 export interface PlanItem {
@@ -107,31 +111,82 @@ export interface PermissionOpt {
 // A prompt held while a turn is running. ACP allows one prompt-turn at a time
 // per session, so mid-turn messages are queued in the session state and
 // delivered in order as turns end. Surfaced to clients via the 'queue' event.
-export interface QueuedPrompt {
-  id: string
-  text: string
-}
+/**
+ * One entry waiting in a session's queue.
+ *
+ * The kind is a union rather than a flag for the same reason the delivery is:
+ * a system entry that forgets to declare itself gets batched and tagged, and a
+ * tag in front of `/compact` stops it being a command at all. Forgetting to pick
+ * a variant does not compile; forgetting a flag falls through to the dangerous
+ * side.
+ *
+ * - `message` — something somebody sent. Carries who and when, because those
+ *   have to reach the agent and survive a reload, and because Presence gates on
+ *   how long the oldest one has waited.
+ * - `system` — a prompt the application issues on its own behalf. It has no
+ *   author, is never batched with anything, and is never gated by Presence.
+ */
+export type QueuedPrompt =
+  | { id: string; kind: 'message'; sender: string; sentAt: string; text: string }
+  | { id: string; kind: 'system'; text: string }
+
+/**
+ * Who a prompt is from, which decides whether it is a message at all.
+ *
+ * A union rather than an optional sender, because the two sides fail
+ * differently: a message with no sender loses its author permanently once the
+ * transcript is replayed, and a system prompt treated as a message gets a tag
+ * in front of it — which stops `/compact` being a command. Neither is
+ * reachable by forgetting to say which.
+ */
+export type PromptOrigin = { kind: 'message'; sender: string } | { kind: 'system' }
 
 /**
  * How a message relates to the queue it is being sent into. Required at every
  * send surface rather than defaulted: sending into a busy session is a real
  * choice, and a default would make it silently for the caller.
  *
- * - `wait` — the message is held until the running turn ends, then delivered on
- *   its own. It is the MESSAGE that waits, never the caller: a send resolves as
- *   soon as the message is safely held, because blocking until an agent
- *   finished would hang a caller for tens of minutes.
+ * - `wait` — the message is held, and delivered with everything else waiting
+ *   with it when the queue is next handed over. It is the MESSAGE that waits,
+ *   never the caller: a send resolves as soon as the message is safely held,
+ *   because blocking until an agent finished would hang a caller for tens of
+ *   minutes. WHEN the hand-over happens is Presence's answer, not this one.
  * - `push` — interrupt whatever is running and deliver everything held, this
  *   message included and last, as ONE turn. One interrupt for the whole queue
- *   rather than one per held message.
+ *   rather than one per held message, and Presence is bypassed: a caller asking
+ *   for attention now is not waiting for a reading window.
  *
- * Against an EMPTY queue the two are the same ordinary send, framing and
- * disclaimer included, because a batch of one is not a batch.
+ * Against an EMPTY queue under realtime Presence the two are the same ordinary
+ * send. Under any other Presence they are not: `wait` still waits.
  *
  * Defined here, and the behaviour implemented once in `agentClient.prompt`, so
  * surfaces differ only in how they are addressed — never in what these mean.
  */
 export type QueueMode = 'wait' | 'push'
+
+/**
+ * How often the agent reads its queue.
+ *
+ * `queue` says how a message relates to what is already held; this says when
+ * what is held is handed over. They are independent axes: `wait` under
+ * `realtime` goes at the next turn boundary, `wait` under `hourly` waits for
+ * the hour, and `push` ignores this entirely.
+ *
+ * The window is measured from the OLDEST waiting message, not the newest — the
+ * question it answers is "how long has anyone been waiting for a reply", and
+ * measuring from the newest would let a steady trickle of messages hold the
+ * queue shut forever.
+ *
+ * A union rather than a name plus an optional interval: only `custom` has one,
+ * and an optional field would let the other four carry a number that silently
+ * means nothing.
+ */
+export type Presence =
+  | { kind: 'realtime' }
+  | { kind: 'minutes' }
+  | { kind: 'hourly' }
+  | { kind: 'daily' }
+  | { kind: 'custom'; intervalMs: number }
 
 export type ChatEvent =
   | { kind: 'user'; text: string }
@@ -176,6 +231,10 @@ export type ChatEvent =
   // queue change. Snapshot (not delta) so the stored-event replay leaves any
   // (re)connecting client with the current queue: fold the LAST one seen.
   | { kind: 'queue'; items: QueuedPrompt[] }
+  // The session's reading cadence, emitted whenever it changes. A snapshot for
+  // the same reason `queue` is: a reconnecting client folds the last one seen
+  // and knows what it is looking at, rather than having to ask.
+  | { kind: 'presence'; presence: Presence }
   | { kind: 'usage'; used: number; size?: number }
   | { kind: 'turn_end'; stopReason: string }
   | { kind: 'error'; message: string }

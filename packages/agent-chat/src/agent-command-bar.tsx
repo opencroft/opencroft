@@ -31,6 +31,7 @@ import { EffortSelector } from './components/effort-selector'
 import { FastModeToggle } from './components/fast-mode-toggle'
 import { ModeSelector } from './components/mode-selector'
 import { ModelSelector } from './components/model-selector'
+import { PresenceSelector, type PresenceValue } from './components/presence-selector'
 import { ConfigOptionsBar } from './config-options-bar'
 import type { AgentChatSession } from './session'
 import type { CompactRenderState } from './use-compact-control'
@@ -44,13 +45,8 @@ export type { ApprovalTitles }
 // without a wrapper.
 export type AgentCommandBarSession = Pick<
   AgentChatSession,
-  'sessionKey' | 'draft' | 'send' | 'waiting' | 'stop' | 'push' | 'sending' | 'disabled'
+  'sessionKey' | 'draft' | 'send' | 'waiting' | 'stop' | 'sending' | 'disabled'
 >
-
-export interface AgentCommandBarQueuedItem {
-  id: string
-  text: string
-}
 
 // What a `controls` render prop is handed — the primitives it needs to wire
 // an input method (voice dictation, anything else) into the composer without
@@ -75,13 +71,6 @@ export interface UseAgentCommandBarOptions {
   onStartIconClick?: () => void
   /** Show the sparkles start icon at all. Default true. */
   startIcon?: boolean
-  /** Messages held in the host's server-side queue while a turn runs, already
-   *  formatted to display text — a host with its own outgoing-text transform
-   *  (e.g. stripping tags it added before sending) undoes it before calling
-   *  this hook, the same way AgentChat takes pre-built `blocks` rather than
-   *  raw messages. */
-  queued?: AgentCommandBarQueuedItem[]
-  onRemoveQueued?: (id: string) => void
   configOptions?: SessionConfigOption[]
   onSetConfigOption?: (configId: string, value: string | boolean) => void
   /** `asOf` (ms since epoch), when present, marks this as a last-known
@@ -142,6 +131,18 @@ export interface UseAgentCommandBarOptions {
   /** Discards the session and starts a fresh one, offered from the ring's
    *  popover. Omit to render the ring with no Clear button. */
   onClear?: () => void
+  /** How often the session reads what is waiting for it, and how to change it.
+   *
+   *  Built in rather than left to a host slot: the queue and its hand-over are
+   *  the engine's, so the control over WHEN it is handed over belongs with the
+   *  panel that any host embedding the engine already gets. A host with no
+   *  queue of its own omits this and no control is offered.
+   *
+   *  One object rather than a value and a callback, so half of it cannot be
+   *  passed — a cadence with no way to change it is a control that lies. Must
+   *  be identity-stable when nothing meaningful changed; it feeds the memoized
+   *  bar. */
+  presence?: { value: PresenceValue; onSelect: (presence: PresenceValue) => void }
 }
 
 // Everything the command bar needs that the design-kit component deliberately
@@ -165,8 +166,6 @@ export function useAgentCommandBar({
   leadingBarContent,
   onStartIconClick,
   startIcon = true,
-  queued,
-  onRemoveQueued,
   configOptions,
   onSetConfigOption,
   usage,
@@ -185,6 +184,7 @@ export function useAgentCommandBar({
   compact,
   onClear,
   configExtraStart,
+  presence,
 }: UseAgentCommandBarOptions): ReactElement {
   // Lazy init so a session opened with an existing draft paints with it
   // already in place — no separate fetch-then-fill flicker. This state
@@ -430,9 +430,12 @@ export function useAgentCommandBar({
             lockedReason={lockedConfigOptions?.[MODE_CONFIG_ID]}
           />
         ) : null}
+        {/* Last in the group: the others say what the agent is and what it may
+            do, and this one says when it will get round to reading. */}
+        {presence ? <PresenceSelector presence={presence.value} onSelect={presence.onSelect} /> : null}
       </>
     ),
-    [dial, lockedConfigOptions],
+    [dial, lockedConfigOptions, presence],
   )
 
   const autoApproveRef = useRef(onToggleAutoApprove)
@@ -459,10 +462,6 @@ export function useAgentCommandBar({
     textRef.current = ''
     setValue('')
   }, [])
-
-  // Queued items arrive pre-formatted (see this hook's own prop doc) — no
-  // transform needed here, only the shape change to what the kit expects.
-  const queuedItems = useMemo(() => queued?.map((m) => ({ id: m.id, text: m.text })), [queued])
 
   const onSetConfigOptionRef = useRef(onSetConfigOption)
   onSetConfigOptionRef.current = onSetConfigOption
@@ -523,7 +522,6 @@ export function useAgentCommandBar({
         onBlur={handleBlur}
         busy={session.waiting}
         onStop={session.stop}
-        onPush={session.push}
         sending={session.sending}
         disabled={session.disabled}
         leading={leadingBarContent}
@@ -534,8 +532,6 @@ export function useAgentCommandBar({
         onConfigChange={handleConfigChange}
         configExtra={configExtra}
         trailingControls={hostControls}
-        queued={queuedItems}
-        onRemoveQueued={onRemoveQueued}
         sendError={sendError}
         onDismissSendError={onDismissSendError}
         approval={approval}
@@ -557,7 +553,6 @@ export function useAgentCommandBar({
       handleBlur,
       session.waiting,
       session.stop,
-      session.push,
       session.sending,
       session.disabled,
       leadingBarContent,
@@ -568,8 +563,6 @@ export function useAgentCommandBar({
       handleConfigChange,
       configExtra,
       hostControls,
-      queuedItems,
-      onRemoveQueued,
       sendError,
       onDismissSendError,
       approval,

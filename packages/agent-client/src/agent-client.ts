@@ -41,10 +41,22 @@ import {
   tailByTurns,
 } from './pagination'
 import { type ResolvedPermissions, toolKey } from './permissions'
+import { DEFAULT_PRESENCE, msUntilDue, presenceWindowMs } from './presence'
+import { buildDelivery } from './queue-tags'
 import { buildSpawnConfig, findAdapter } from './resolve'
 import { fileSkillHandler, fileSkills } from './skills'
 import { findTurnBoundary } from './turns'
-import type { AgentSelection, ChatEvent, QueuedPrompt, QueueMode, SessionMeta, SessionMode, SpawnConfig } from './types'
+import type {
+  AgentSelection,
+  ChatEvent,
+  Presence,
+  PromptOrigin,
+  QueuedPrompt,
+  QueueMode,
+  SessionMeta,
+  SessionMode,
+  SpawnConfig,
+} from './types'
 
 export interface ClientInfo {
   name: string
@@ -108,6 +120,65 @@ export interface AgentClientOptions {
   // is called inside a try/catch so a throwing host observer cannot break the
   // emit, and its return value is ignored.
   onEvent?: (sessionId: string, event: ChatEvent) => void
+  // Durable copy of the queue, for a host whose queue can outlive its process.
+  //
+  // The engine serves entirely from memory and never reads this to make a
+  // decision: it is written after the in-memory queue has already changed, and
+  // read once, when a session is opened. Absent, everything works exactly as
+  // before and a queue simply does not survive a restart — which was fine while
+  // a message waited seconds, and stops being fine under a daily reading
+  // cadence. See QueueStore.
+  queueStore?: QueueStore
+  // The reading cadence a session should reopen at, if the host remembers one.
+  //
+  // Read at session open, BEFORE the durable queue is evaluated, and that
+  // ordering is the whole reason this exists rather than being left to the host
+  // to set afterwards: a queue restored under the default cadence is a queue
+  // delivered immediately, which is exactly what an hourly session asked not to
+  // happen. Returning undefined means "no cadence remembered" and leaves the
+  // default in place.
+  loadPresence?: (sessionKey: string) => Presence | undefined | Promise<Presence | undefined>
+}
+
+/**
+ * Where a host keeps the queue so it outlives the process.
+ *
+ * Write-behind, deliberately: every method is called AFTER the in-memory queue
+ * has already changed, and none of them is awaited on the send path. A store
+ * that is slow delays durability; it must never delay a message. The cost of
+ * that choice is bounded and known — a process killed between the enqueue and
+ * the write loses that one message, where blocking the send would have made
+ * every message wait for a disk.
+ *
+ * Addressed by session KEY rather than session id: the id is per-process and a
+ * restart mints a new one, so it cannot name the thing being restored into.
+ * A session with no key is not persisted at all, because nothing could address
+ * it afterwards.
+ *
+ * Errors are the host's to handle. The engine calls these fire-and-forget, so a
+ * rejected promise must not escape — implementations log and swallow.
+ */
+export interface QueueStore {
+  /**
+   * Record one entry. `placement` mirrors what the in-memory queue just did:
+   * `front` for the corrective guidance that jumps the line, `end` otherwise.
+   * The store owns how order is represented; the engine only says where.
+   */
+  append(sessionKey: string, entry: QueuedPrompt, placement: 'front' | 'end'): void | Promise<void>
+  /** Forget entries that have been delivered or removed by the reader. */
+  remove(sessionKey: string, entryIds: string[]): void | Promise<void>
+  /**
+   * Forget everything held under a key that is being retired for good.
+   *
+   * Called by the HOST, never by the engine. Dropping a live session is not the
+   * same as retiring it — a host also does that to stop an agent's process
+   * while keeping the conversation, and clearing there would discard a queue
+   * that is about to be restored into the reopened session. Only the host knows
+   * which of its own deletions is final, so it makes this call.
+   */
+  clear(sessionKey: string): void | Promise<void>
+  /** The queue as it was left, oldest first. Read once, when a session opens. */
+  load(sessionKey: string): QueuedPrompt[] | Promise<QueuedPrompt[]>
 }
 
 type Subscriber = (event: ChatEvent) => void
@@ -141,6 +212,52 @@ interface SessionState {
   // Prompts received while a turn was active, delivered FIFO as turns end.
   // Every change is published as a 'queue' snapshot event.
   queue: QueuedPrompt[]
+  // Set before an interrupt so the delivery it buys carries the note. Written
+  // BEFORE the cancel, never after: cancelling a real agent ends its turn
+  // synchronously enough that a drain can run while the caller is still
+  // suspended, and a note set afterwards arrives too late to be attached.
+  noteNextDelivery?: boolean
+  /**
+   * Whether readers have been shown a non-empty queue for this session.
+   *
+   * Batching moved to dequeue, so EVERY message passes through the queue — even
+   * one sent to an idle session, which is enqueued and drained in the same
+   * call. Announcing those would flash an ordinary message into the Unread list
+   * and straight back out, on every send. So a snapshot goes out when a message
+   * is actually held, and the clearing snapshot goes out only when there is
+   * something announced to clear.
+   */
+  queueAnnounced?: boolean
+  /** How often this session reads its queue. See Presence. */
+  presence: Presence
+  /**
+   * The window rolled for the CURRENT waiting period, in ms.
+   *
+   * Held rather than recomputed because the `minutes` cadence is random within
+   * a range: recomputing would move the deadline under its own timer, and the
+   * wait would end when the dice agreed rather than after the interval. Rolled
+   * when the queue starts waiting, and again whenever the cadence changes.
+   */
+  presenceWindowMs?: number
+  /**
+   * Armed while messages are waiting on Presence rather than on a turn.
+   *
+   * An idle session has no turn boundary coming, so nothing would ever ask
+   * again — an hourly agent with a message waiting would simply never receive
+   * it. Unref'd: a pending read is not a reason to keep the process alive.
+   */
+  presenceTimer?: ReturnType<typeof setTimeout>
+  /**
+   * Set when the next message delivery must ignore Presence: a `push`, or a
+   * Stop with something unread. Somebody asking for attention now is not
+   * waiting for a reading window.
+   *
+   * Deliberately NOT folded into `noteNextDelivery`, which today happens to be
+   * set in the same places. They answer different questions — "explain the
+   * interrupt" and "skip the wait" — and an idle `push` needs the second
+   * without the first, because it interrupted nothing.
+   */
+  bypassPresenceOnce?: boolean
   // True only while session/load is replaying this session's history. The
   // replay carries no turn boundaries of its own, so handleUpdate reconstructs
   // them while this is set — see the `user_message_chunk` case.
@@ -382,6 +499,14 @@ function withSnapshotPrefix(session: SessionState, windowed: ChatEvent[]): ChatE
   }
   if (session.queue.length > 0 && !has('queue')) {
     prefix.push({ kind: 'queue', items: [...session.queue] })
+  }
+  // Only when it is not the default, matching every line above: absent means
+  // realtime, which is what DEFAULT_PRESENCE documents and what a session that
+  // has never been told otherwise is actually doing. Synthesizing one for every
+  // session would also put an event in a windowed read that the live subscribe
+  // replay does not have, and those two must agree.
+  if (session.presence.kind !== DEFAULT_PRESENCE.kind && !has('presence')) {
+    prefix.push({ kind: 'presence', presence: session.presence })
   }
   return prefix.length > 0 ? [...prefix, ...windowed] : windowed
 }
@@ -1017,6 +1142,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // stored for replay, so a stored snapshot must not alias the live array that
   // later pushes/shifts would mutate.
   function emitQueue(sessionId: string, queue: QueuedPrompt[]): void {
+    const session = store.sessions.get(sessionId)
+    if (session) {
+      session.queueAnnounced = queue.length > 0
+    }
     emit(sessionId, { kind: 'queue', items: [...queue] })
   }
 
@@ -1033,49 +1162,6 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     }
     const connection = await connectionForSession(sessionId)
     await connection.cancel({ sessionId })
-  }
-
-  // What a pushed batch says to the agent before the messages themselves.
-  //
-  // Written here, once, beside the only function that can produce a batch —
-  // every push goes through joinPrompts, so there is nowhere else for a second
-  // wording to appear.
-  //
-  // The second paragraph is the one that earns its place. An interrupt destroys
-  // the cancelled turn's reasoning while leaving its transcript: the agent can
-  // still see what it did, but not what it was part-way through concluding. Told
-  // only that it *may* continue, an agent with no train of thought left tends to
-  // start the task again from the beginning — which is the opposite of the
-  // intent and wastes exactly the work the push was trying to redirect. So it is
-  // told where to pick the thread back up, not merely that it is allowed to.
-  function batchDisclaimer(count: number): string {
-    return [
-      `[${count} messages delivered together]`,
-      'Your turn was interrupted so everything waiting for you could arrive at once. The interrupt does',
-      'not by itself mean the work you were doing was wrong or should be dropped — these messages may',
-      'correct it, re-prioritise it, or have nothing to do with it.',
-      '',
-      'The interrupted turn left its transcript but not its reasoning. Re-read what you had already done,',
-      'then continue from there — do not start the task over.',
-    ].join('\n')
-  }
-
-  // Frame several held messages into the single prompt a push delivers. They
-  // have to stay individually readable: a push exists so the agent can see
-  // everything still pending BEFORE it acts, which fails if the messages run
-  // together into one instruction. Numbering makes their order explicit, so a
-  // later message can correct an earlier one and be understood as doing that.
-  //
-  // One message is returned untouched, disclaimer included — a push against an
-  // empty queue must read exactly like an ordinary send, with nothing to
-  // explain because nothing was batched. Keeping that rule HERE rather than at
-  // the call sites is what makes "never on a single message" structural.
-  function joinPrompts(texts: string[]): string {
-    if (texts.length < 2) {
-      return texts[0] ?? ''
-    }
-    const numbered = texts.map((text, i) => `[message ${i + 1} of ${texts.length}]\n${text}`).join('\n\n')
-    return `${batchDisclaimer(texts.length)}\n\n${numbered}`
   }
 
   // Hand one prompt to the agent. The in-flight counter is incremented
@@ -1132,25 +1218,347 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // releases and drains — exactly the single-prompt error path of old. Queue
   // depth is small (hand-typed messages), so the drain's self-call chain stays
   // shallow: each delivery runs a full agent turn before the next drain.
-  // One entry per drain, always: a push has already collapsed everything it
-  // wanted delivered together into a single queue entry before interrupting,
-  // so this never needs to know a push happened. Split out of settleTurn so a deferred MCP
-  // resume (see pendingMcpRefresh) can run to completion first and still reach
-  // this: draining here while that resume is still in flight would deliver a
-  // prompt over the same connection the resume is using.
-  function drainQueue(sessionId: string): void {
+  // Split out of settleTurn so a deferred MCP resume (see pendingMcpRefresh)
+  // can run to completion first and still reach this: draining here while that
+  // resume is still in flight would deliver a prompt over the same connection
+  // the resume is using.
+  /**
+   * Take the leading run off the queue and deliver it as ONE prompt.
+   *
+   * This is where batching happens — at dequeue, not at send. A message waits as
+   * itself, carrying its own author and time, and only becomes part of a batch
+   * at the moment the queue is handed over. That is what lets a message keep its
+   * true send time however long it waited.
+   *
+   * A run is either the leading stretch of consecutive `message` entries, or a
+   * single `system` entry. System entries are never merged with anything and
+   * never merge things across themselves, so `[A, /compact, B]` delivers as a
+   * batch of A, then the command by itself, then a batch of B — three turns,
+   * original order, and the command still first in its own prompt.
+   *
+   * The one time that order does not hold is the one time it cannot: while the
+   * reading window is holding the leading messages, the first system entry
+   * behind them is delivered alone and they keep waiting. A system entry is
+   * never gated by the cadence, and being queued behind something that IS would
+   * gate it by the back door — leaving whatever waits on its turn to report a
+   * failure the session never had.
+   *
+   * Batching here is also what removed the interrupt race: whatever else has
+   * happened by the time a drain runs, it takes the whole leading run rather
+   * than one entry, so a settle landing mid-cancel can no longer ship one stale
+   * message on its own.
+   */
+  function drainQueue(sessionId: string): Promise<void> | undefined {
+    const session = store.sessions.get(sessionId)
+    if (!session) {
+      return undefined
+    }
+    const queue = session.queue ?? []
+    const run = leadingRun(queue)
+    if (run.length === 0) {
+      clearPresenceTimer(session)
+      return undefined
+    }
+    // Presence gates MESSAGE runs only. A system entry is plumbing, not
+    // conversation: compaction asked for now must not wait an hour because the
+    // agent's reading cadence is hourly.
+    if (run[0].kind === 'message' && !consumePresenceBypass(session)) {
+      const waitMs = msUntilDue(run, presenceWindow(session), Date.now())
+      if (waitMs !== null && waitMs > 0) {
+        // Announced HERE rather than at enqueue, because this is the moment it
+        // is known to be waiting. A message held by the reading window is
+        // exactly as unread as one held by a running turn, and an idle session
+        // has no turn to have announced it.
+        emitQueue(sessionId, queue)
+        armPresenceTimer(sessionId, session, waitMs)
+        // "Never gated" has to mean never, including from BEHIND. A system
+        // entry queued after messages the window is holding would otherwise
+        // inherit their wait — and the caller waiting on its turn (compaction
+        // does) reports a failure the reading cadence caused, on a session
+        // where nothing is wrong.
+        //
+        // So it goes alone, and the messages stay exactly where they are: their
+        // order among themselves is untouched, the window they are waiting on
+        // keeps running, and the next drain finds them still due at the same
+        // moment they always were.
+        const system = queue.find((entry) => entry.kind === 'system')
+        return system ? dispatchRun(sessionId, session, [system]) : undefined
+      }
+    }
+    clearPresenceTimer(session)
+    return dispatchRun(sessionId, session, run)
+  }
+
+  /**
+   * Hand one run to the agent: take it out of the queue, drop the durable copy
+   * of it, and deliver it as a single prompt.
+   *
+   * Entries are taken by ID rather than by position, because a run is not
+   * always the head of the queue: a system entry that jumps a message run the
+   * reading window is holding comes out of the middle.
+   */
+  function dispatchRun(sessionId: string, session: SessionState, run: QueuedPrompt[]): Promise<void> {
+    const taken = new Set(run.map((entry) => entry.id))
+    session.queue = (session.queue ?? []).filter((entry) => !taken.has(entry.id))
+    // Delivered, so the durable copy has nothing left to restore. Dropped after
+    // the hand-over rather than before it: a crash between the two replays the
+    // run, and a message arriving twice is recoverable where one that never
+    // arrives is not.
+    persist(session, (store, key) =>
+      store.remove(
+        key,
+        run.map((entry) => entry.id),
+      ),
+    )
+    // Nothing to correct when nothing was ever announced: a message that passed
+    // straight through was never shown as waiting, so it needs no clearing.
+    if (session.queueAnnounced || session.queue.length > 0) {
+      emitQueue(sessionId, session.queue)
+    }
+    // The note belongs to the delivery the interrupt bought, so it is consumed
+    // by the first MESSAGE delivery after it. A system entry drained in between
+    // never carries one and must not swallow it either.
+    const first = run[0]
+    const interrupted = first.kind === 'message' && session.noteNextDelivery === true
+    if (interrupted) {
+      session.noteNextDelivery = false
+    }
+    const text = buildRunDelivery(run, interrupted)
+    // Returned rather than fired and forgotten, so a send into an IDLE session
+    // can await its own dispatch. Every message goes through the queue now, and
+    // without this a send that nothing was holding up would resolve before the
+    // prompt had reached the harness — turning what used to be "delivered by
+    // the time this resolves" into a race the caller cannot see. Drains from a
+    // turn settlement have nobody waiting and keep discarding it.
+    return deliverPrompt(sessionId, text).catch((error: unknown) =>
+      emit(sessionId, { kind: 'error', message: errorMessage(error) }),
+    )
+  }
+
+  /**
+   * The durable queue's address for a session, or null when it has none.
+   *
+   * A session with no key cannot be restored into after a restart — nothing
+   * would know which session the rows belonged to — so it is not written
+   * either. Writing rows nobody could ever read back is just a leak.
+   */
+  function queueKey(session: SessionState): string | null {
+    return options.queueStore ? (session.meta.sessionKey ?? null) : null
+  }
+
+  /**
+   * Run a durable-queue write without letting it touch the send path.
+   *
+   * Not awaited and never able to throw into a caller: durability is a
+   * side-channel here. A store that is slow delays the copy, not the message,
+   * and a store that is broken costs a queue that does not survive a restart —
+   * which is where every host without one already is.
+   */
+  function persist(session: SessionState, write: (store: QueueStore, key: string) => void | Promise<void>): void {
+    const key = queueKey(session)
+    if (!key || !options.queueStore) {
+      return
+    }
+    const store = options.queueStore
+    void (async () => {
+      try {
+        await write(store, key)
+      } catch (error) {
+        console.error('[agent-client] durable queue write failed', error)
+      }
+    })()
+  }
+
+  /**
+   * Put back what the previous process was still holding for this session.
+   *
+   * Awaited at session open, unlike every other durable-queue call: this one
+   * has to finish before the session can take a message, or a restored message
+   * would be prepended in front of one already delivered. Once per open is not
+   * the hot path — the rule this stays off is the SEND path.
+   *
+   * The wait continues rather than restarting. Each message carries its own
+   * send time, and the window is measured from the oldest of them, so an hourly
+   * message that had waited fifty-nine minutes is due in one — the timer
+   * re-arms itself from the persisted times with no arithmetic of its own.
+   */
+  async function restoreSessionState(sessionId: string): Promise<void> {
     const session = store.sessions.get(sessionId)
     if (!session) {
       return
     }
-    const next = session.queue?.shift()
-    if (!next) {
+    const sessionKey = session.meta.sessionKey
+    if (!sessionKey) {
       return
     }
-    emitQueue(sessionId, session.queue)
-    void deliverPrompt(sessionId, next.text).catch((error: unknown) =>
-      emit(sessionId, { kind: 'error', message: errorMessage(error) }),
+    // The cadence FIRST, and this order is load-bearing: evaluating a restored
+    // queue under the default cadence would deliver, at once, everything an
+    // hourly session had been holding back — the restart itself becoming the
+    // interruption the setting exists to prevent.
+    if (options.loadPresence) {
+      try {
+        const presence = await options.loadPresence(sessionKey)
+        if (presence) {
+          session.presence = presence
+          emit(sessionId, { kind: 'presence', presence })
+        }
+      } catch (error) {
+        // Falling back to realtime reads early rather than never, which is the
+        // safe direction for a setting that decides whether a message arrives.
+        console.error('[agent-client] presence restore failed', error)
+      }
+    }
+    if (!options.queueStore) {
+      return
+    }
+    const key = queueKey(session)
+    if (!key) {
+      return
+    }
+    let restored: QueuedPrompt[]
+    try {
+      restored = await options.queueStore.load(key)
+    } catch (error) {
+      // A queue that cannot be read back is the state every host without a
+      // store is in permanently. Opening the session is still the right
+      // outcome; refusing to would turn a lost queue into a lost session.
+      console.error('[agent-client] durable queue restore failed', error)
+      return
+    }
+    // Anything already in memory was sent to THIS process and is therefore
+    // newer, so restored entries go in front of it. Ids are matched because a
+    // resume can race a send: the same entry must not land twice.
+    const known = new Set(session.queue.map((entry) => entry.id))
+    const fresh = restored.filter((entry) => !known.has(entry.id))
+    if (fresh.length === 0) {
+      return
+    }
+    session.queue = [...fresh, ...session.queue]
+    // Not announced here. The drain below decides whether these are actually
+    // waiting — under a cadence that has already elapsed they go straight out
+    // and were never unread — and it is the one place that announcement is
+    // made. Publishing a snapshot here as well would show every restored queue
+    // twice, including the ones that never waited at all.
+    if (session.activeTurns === 0) {
+      void drainQueue(sessionId)
+    }
+  }
+
+  /**
+   * The window in force for the CURRENT waiting period, rolled once and kept.
+   *
+   * Rolling per call would matter for the `minutes` cadence, which is random
+   * within a range: the deadline would move every time it was checked, and the
+   * wait would end when the dice agreed rather than after the interval.
+   */
+  function presenceWindow(session: SessionState): number {
+    session.presenceWindowMs ??= presenceWindowMs(session.presence)
+    return session.presenceWindowMs
+  }
+
+  /**
+   * Whether this delivery skips the wait — and spends the right to do so.
+   *
+   * One-shot: a `push` bypasses the window for the delivery it bought, not for
+   * everything that follows it. A cadence that stayed bypassed after one urgent
+   * message would be a setting that quietly switched itself off.
+   */
+  function consumePresenceBypass(session: SessionState): boolean {
+    if (!session.bypassPresenceOnce) {
+      return false
+    }
+    session.bypassPresenceOnce = false
+    return true
+  }
+
+  function clearPresenceTimer(session: SessionState): void {
+    if (session.presenceTimer) {
+      clearTimeout(session.presenceTimer)
+      session.presenceTimer = undefined
+    }
+    // The window belongs to a waiting period, and this ends one. The next
+    // message to wait rolls its own — otherwise the first `minutes` roll a
+    // session ever made would govern every wait it had after that.
+    session.presenceWindowMs = undefined
+  }
+
+  /**
+   * Ask again when the window closes.
+   *
+   * The turn boundary cannot be relied on here: a session holding messages
+   * under a non-realtime cadence is usually IDLE, so nothing is coming that
+   * would prompt another look, and without this an hourly agent with a message
+   * waiting would simply never receive it.
+   *
+   * Re-armed rather than left running when a newer message arrives, because the
+   * window is measured from the oldest — the deadline does not move, but the
+   * queue it will deliver does.
+   *
+   * `unref` so a pending read never keeps a process alive: a queue waiting for
+   * tomorrow is not a reason for the host to stay up, and in tests it is the
+   * difference between a suite that exits and one that hangs.
+   */
+  function armPresenceTimer(sessionId: string, session: SessionState, waitMs: number): void {
+    if (session.presenceTimer) {
+      clearTimeout(session.presenceTimer)
+    }
+    const timer = setTimeout(() => {
+      session.presenceTimer = undefined
+      // A window can now close while a turn is running: a system entry that
+      // jumped the held messages started one. Delivering into it would put a
+      // prompt over a live turn, which is the thing the queue exists to
+      // prevent — and nothing is lost by declining, because that turn's own
+      // settlement drains whatever has come due by then.
+      if (session.activeTurns > 0 && !supportsMidTurnInput(session.selection)) {
+        return
+      }
+      void drainQueue(sessionId)
+    }, waitMs)
+    timer.unref?.()
+    session.presenceTimer = timer
+  }
+
+  /**
+   * Build the queue entry for a prompt, or nothing when there is nothing to
+   * send. The send time is stamped HERE, at enqueue, because that is when the
+   * message was actually sent — a batch formed hours later must still report
+   * when each part was written, not when it was handed over.
+   */
+  function toEntry(text: string, origin: PromptOrigin): QueuedPrompt | null {
+    if (text.trim().length === 0) {
+      return null
+    }
+    if (origin.kind === 'system') {
+      return { id: randomUUID(), kind: 'system', text }
+    }
+    return { id: randomUUID(), kind: 'message', sender: origin.sender, sentAt: new Date().toISOString(), text }
+  }
+
+  /** The leading run: consecutive messages, or exactly one system entry. */
+  function leadingRun(queue: QueuedPrompt[]): QueuedPrompt[] {
+    const first = queue[0]
+    if (!first) {
+      return []
+    }
+    if (first.kind === 'system') {
+      return [first]
+    }
+    const end = queue.findIndex((entry) => entry.kind !== 'message')
+    return end === -1 ? [...queue] : queue.slice(0, end)
+  }
+
+  /** Turn a run into the one prompt it delivers. */
+  function buildRunDelivery(run: QueuedPrompt[], interrupted: boolean): string {
+    const first = run[0]
+    if (first.kind === 'system') {
+      return buildDelivery({ kind: 'system', text: first.text })
+    }
+    const messages = run.map((entry) =>
+      entry.kind === 'message'
+        ? { sender: entry.sender, sentAt: entry.sentAt, text: entry.text }
+        : { sender: '', sentAt: '', text: entry.text },
     )
+    return buildDelivery({ kind: 'messages', messages, interrupted })
   }
 
   function settleTurn(sessionId: string, outcome: { stopReason?: string }): void {
@@ -1194,7 +1602,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // session state stays the single source of truth for it.
     listSessions(): SessionMeta[] {
       return [...store.sessions.values()]
-        .map((session) => ({ ...session.meta, usage: session.usage, queuedMessages: session.queue.length }))
+        .map((session) => ({
+          ...session.meta,
+          usage: session.usage,
+          queuedMessages: session.queue.length,
+          presence: session.presence,
+        }))
         .sort((a, b) => a.createdAt - b.createdAt)
     },
 
@@ -1393,7 +1806,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         permissions,
         activeTurns: 0,
         queue: [],
+        presence: DEFAULT_PRESENCE,
       })
+      // A session opened under a key that was holding messages when the last
+      // process stopped takes them back, at the cadence it was reading at,
+      // before it can be sent anything new.
+      await restoreSessionState(sessionId)
       if (response.modes) {
         emitSessionModes(sessionId)
       }
@@ -1486,6 +1904,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         permissions,
         activeTurns: 0,
         queue: [],
+        presence: DEFAULT_PRESENCE,
         // Replay notifications land via handleUpdate while the call below is
         // pending; this is what tells it to reconstruct the turn boundaries the
         // replay omits.
@@ -1526,6 +1945,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       if (loaded) {
         loaded.replaying = false
       }
+      // After the replay, not before it: restoring mid-replay would let a
+      // drain deliver into a session that is still reconstructing its own
+      // history, and the queue snapshot would be published against a
+      // half-built transcript.
+      await restoreSessionState(sessionId)
       // The replay streams history but no turn boundary, so the client would stay
       // stuck "waiting". A terminal turn_end marks the resumed session idle.
       //
@@ -1630,6 +2054,17 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // connection do we fall back to killing the whole subprocess.
     async deleteSession(sessionId: string): Promise<void> {
       const session = store.sessions.get(sessionId)
+      // A deleted session's pending read has nothing left to deliver into, and
+      // a timer holding a reference to it would keep the record alive.
+      if (session) {
+        clearPresenceTimer(session)
+      }
+      // The durable queue is deliberately NOT cleared here. This drops the live
+      // session record, which a host also does to stop an agent's process while
+      // keeping the conversation — and clearing there would discard everything
+      // queued for a session that is about to be reopened, which is the exact
+      // loss the durable queue exists to prevent. Only the host knows which
+      // deletion is final, so `clear` is the host's call. See QueueStore.
       if (session && !isNativeSelection(session.selection)) {
         const key = spawnKey(buildSpawnConfig(session.selection))
         const entry = store.connections.get(key)
@@ -1730,6 +2165,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         permissions: session.permissions,
         activeTurns: 0,
         queue: [],
+        // Inherited: a fork continues the same conversation, and a reader who
+        // set this session to hourly did not ask to be read in realtime because
+        // they branched it.
+        presence: session.presence,
       })
       return meta
     },
@@ -1750,99 +2189,150 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // need to report whether anything was actually interrupted read it off the
     // return value instead of probing the session themselves.
     //
-    // Against an empty queue the two are the same ordinary send — a batch of
-    // one is not a batch (see joinPrompts).
+    // Against an empty queue the two are the same ordinary send: there is
+    // nothing held to hand over and so nothing to interrupt for.
     async prompt(
       sessionId: string,
       text: string,
-      opts: { front?: boolean; queue: QueueMode },
+      opts: { front?: boolean; queue: QueueMode; origin: PromptOrigin },
     ): Promise<{ interrupted: boolean }> {
       const session = store.sessions.get(sessionId)
       if (!session) {
         return { interrupted: false }
       }
-      const push = opts.queue === 'push'
       // Session records that survived a dev hot-reload may predate the queue
-      // fields (the store outlives createStore); backfill in place. Done before
-      // the interrupt decision below, which reads the queue.
+      // fields (the store outlives createStore); backfill in place.
       session.queue ??= []
       session.activeTurns ??= 0
-      // A push can carry nothing of its own: the composer's push button asks for
-      // what is already held to go through NOW, with no message of its own to
-      // add. Nothing is appended in that case — an empty message is not a
-      // message, and numbering it `[message N of M]` with no content would read
-      // as something lost in transit.
-      const adds = text.trim().length > 0
-      // A push that would deliver nothing must not interrupt anything. Empty
-      // text against an empty queue has nothing to hand over, so cancelling
-      // would end a turn purely to say nothing — and the disclaimer's own
-      // sentence, "interrupted so everything waiting could arrive at once", is
-      // only true when something is in fact waiting.
-      // Steering-capable agents (see supportsMidTurnInput) never queue: the
-      // prompt goes straight through and the live turn picks it up as streaming
-      // input, so there is nothing to batch and nothing worth interrupting.
+
+      // Steering-capable agents never queue: the prompt goes straight through
+      // and the live turn picks it up as streaming input, so there is nothing to
+      // batch and nothing worth interrupting.
       const holding = session.activeTurns > 0 && !supportsMidTurnInput(session.selection)
 
-      if (push) {
-        // COLLAPSE FIRST, INTERRUPT SECOND. The batch is formed and put in the
-        // queue BEFORE the turn is cancelled, so at the instant the turn dies
-        // the queue holds exactly one item. However many times the settle path
-        // drains — and cancelling a real agent ends its turn inside the `await`
-        // below, so at least one drain runs while this call is still suspended
-        // — there is only ever one thing to deliver, and it is the whole batch.
+      const entry = toEntry(text, opts.origin)
+      if (!entry) {
+        // Nothing of its own to send. For `wait` that is simply nothing: an
+        // empty prompt would start a turn saying nothing.
         //
-        // The previous order (cancel, then enqueue, then set a flag telling the
-        // drain to take everything) lost that race: the drain ran on an ordinary
-        // queue before the flag was set, shipped one stale message on its own,
-        // and started a fresh turn — which is why a push looked like it had not
-        // interrupted anything. Ordering it this way removes the flag entirely
-        // rather than making the race narrower.
-        const held = session.queue.map((item) => item.text)
-        const texts = adds ? [...held, text] : held
-        if (texts.length === 0) {
-          // Nothing held and nothing of its own: the composer's button pressed
-          // against a queue that drained between the render and the click.
-          // Doing nothing is the honest outcome — an empty prompt would start a
-          // turn saying nothing, and cancelling would end one to say nothing.
+        // For a `push` it is the "send what is already held, now" case — a
+        // caller with nothing to add that still wants what is waiting to go. So
+        // it interrupts, because there is something to hand over instead. With
+        // nothing held there is nothing to deliver, and ending a turn to say
+        // nothing is never what a caller meant.
+        if (opts.queue !== 'push' || session.queue.length === 0) {
           return { interrupted: false }
         }
-        const batched = joinPrompts(texts)
+        // A push means now, whatever the reading cadence says.
+        session.bypassPresenceOnce = true
         if (!holding) {
-          // No turn to interrupt. A queue can still outlive its turn when that
-          // turn failed before settling, so the batch is delivered rather than
-          // left waiting for a turn that is never coming.
-          session.queue = []
-          emitQueue(sessionId, session.queue)
-          await deliverPrompt(sessionId, batched)
+          await drainQueue(sessionId)
           return { interrupted: false }
         }
-        session.queue = [{ id: randomUUID(), text: batched }]
-        emitQueue(sessionId, session.queue)
+        session.noteNextDelivery = true
         await cancelSession(sessionId)
         return { interrupted: true }
       }
 
-      // `wait`: a running turn means the message is held here (server-side,
-      // surviving the client that typed it) and the snapshot published. `front`
-      // puts it ahead of earlier queued messages, e.g. corrective guidance
-      // after a rejected permission that must reach the agent before anything
-      // else. It is meaningful only on this path — a push has no queue left to
-      // be at the front of, since it collapses the queue into one item.
-      if (holding) {
-        const item: QueuedPrompt = { id: randomUUID(), text }
-        if (opts.front) {
-          session.queue.unshift(item)
-        } else {
-          session.queue.push(item)
+      // `front` puts a message ahead of what is already held — corrective
+      // guidance after a rejected permission, which must reach the agent before
+      // anything else. It is a position within the queue, not a decision about
+      // interrupting.
+      //
+      // It is ignored under `push`, which promises the opposite in as many
+      // words: everything held, this message LAST. That promise is written in
+      // QueueMode, in the tool descriptions and in the node manifest, so
+      // honouring `front` here would silently invert an order three documented
+      // surfaces state. Ignored rather than trusted not to be passed.
+      const placement = opts.front && opts.queue !== 'push' ? 'front' : 'end'
+      if (placement === 'front') {
+        session.queue.unshift(entry)
+        // Jumping the line means jumping the reading window too. `front` is the
+        // corrective guidance sent after a rejected permission: the turn it
+        // belongs to has already been cancelled, so holding it for the cadence
+        // leaves the agent stopped and the reader's answer undelivered for as
+        // long as the window lasts. A position in the queue it can never reach
+        // in time is not a position at all.
+        //
+        // Scoped to a MESSAGE deliberately. A system entry also goes in front —
+        // the standing-context restore does — and system entries are never
+        // presence-gated in the first place, so a bypass granted there would
+        // spend nothing and sit unspent until some later message run consumed
+        // it and skipped a window nobody asked to skip.
+        if (entry.kind === 'message') {
+          session.bypassPresenceOnce = true
         }
+      } else {
+        session.queue.push(entry)
+      }
+      // After the in-memory queue, never before it: the message is already safe
+      // to deliver, and the durable copy is catching up.
+      persist(session, (store, key) => store.append(key, entry, placement))
+      // Announced only when it will actually WAIT — and only for the case that
+      // is knowable here, a turn already running. Whether the READING WINDOW
+      // will hold it is the drain's answer, so that announcement is made there.
+      // A send that passes straight through was never held, and saying
+      // otherwise would put every ordinary message through the Unread list on
+      // its way out.
+      if (holding) {
         emitQueue(sessionId, session.queue)
+      }
+
+      if (opts.queue !== 'push') {
+        // `wait`: held until the turn ends, or until Presence opens the window.
+        // If nothing is running, it goes now.
+        if (!holding) {
+          await drainQueue(sessionId)
+        }
         return { interrupted: false }
       }
-      if (!adds) {
+
+      // `push`: interrupt, and let the drain that follows take the whole leading
+      // run. MARK BEFORE INTERRUPTING — cancelling a real agent ends its turn
+      // inside the await below, so a drain can run while this call is still
+      // suspended. Setting the note afterwards was the race that once shipped a
+      // stale message on its own; the ordering is the fix, not a narrower
+      // window.
+      // A push means now, whatever the reading cadence says. Set for the idle
+      // path too: nothing was interrupted there, but the caller still asked for
+      // this to go rather than to wait for a window.
+      session.bypassPresenceOnce = true
+      if (!holding) {
+        await drainQueue(sessionId)
         return { interrupted: false }
       }
-      await deliverPrompt(sessionId, text)
-      return { interrupted: false }
+      session.noteNextDelivery = true
+      await cancelSession(sessionId)
+      return { interrupted: true }
+    },
+
+    /**
+     * Set how often this session's agent reads its queue.
+     *
+     * Applied to what is ALREADY waiting, not only to what arrives next: a
+     * reader who switches an hourly session to realtime is asking for the
+     * message they can see sitting there, and telling them to send another one
+     * to shake it loose would be absurd. So the pending wait is re-evaluated
+     * immediately — which delivers now if the new window has already elapsed,
+     * and otherwise re-arms against the new one.
+     */
+    setPresence(sessionId: string, presence: Presence): void {
+      const session = store.sessions.get(sessionId)
+      if (!session) {
+        return
+      }
+      session.presence = presence
+      // The old window belonged to the old cadence; the next check rolls one
+      // for the new one. Clearing the timer with it is what stops the previous
+      // deadline firing against a setting nobody holds any more.
+      clearPresenceTimer(session)
+      emit(sessionId, { kind: 'presence', presence })
+      // Only when nothing is running: a turn in flight has its own drain coming
+      // at the boundary, and starting a second delivery underneath it is the
+      // thing the turn guard exists to prevent.
+      if (session.activeTurns === 0) {
+        void drainQueue(sessionId)
+      }
     },
 
     // Drop a still-queued prompt before it's delivered. Unknown ids are a
@@ -1854,6 +2344,56 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       }
       session.queue = session.queue.filter((item) => item.id !== id)
       emitQueue(sessionId, session.queue)
+      // A reader who took a message back means it: it must not come back at the
+      // next restart.
+      persist(session, (store, key) => store.remove(key, [id]))
+    },
+
+    /**
+     * What the reader's Stop means, decided here rather than by the caller.
+     *
+     * Stopping with unread messages held is usually a CORRECTION, not an
+     * abandonment: the reader has written something the agent has not seen and
+     * wants it to act on that instead. So the turn is cancelled AND everything
+     * held goes at once — the same mark-then-interrupt shape a `push` uses, so a
+     * drain landing inside the cancel takes the whole leading run rather than
+     * one stale entry. Presence is bypassed for the same reason a push bypasses
+     * it: a person asking for attention now is not waiting for a window.
+     *
+     * With nothing held it is an ordinary cancel and nothing is delivered.
+     *
+     * The queue is read HERE, not in the caller, because the caller's view of
+     * it is a render old: a message arriving between the paint and the click
+     * would otherwise get an ordinary stop and stay unread, which is precisely
+     * the case this feature exists for. Deciding it next to the queue makes
+     * that unobservable rather than unlikely.
+     *
+     * Distinct from `prompt(..., { queue: 'push' })` with empty text in exactly
+     * one way, and deliberately: a push with nothing to deliver interrupts
+     * nothing, because ending a turn to say nothing is never what a caller
+     * meant. A Stop with nothing to deliver still stops — that IS what the
+     * reader meant.
+     */
+    async stop(sessionId: string): Promise<{ delivered: number }> {
+      const session = store.sessions.get(sessionId)
+      if (!session) {
+        return { delivered: 0 }
+      }
+      session.queue ??= []
+      // "Unread" means messages. A queue holding only system entries has nothing
+      // the reader wrote and has not been seen, so a stop there is a plain stop —
+      // the same rule the Unread section renders by.
+      const unread = session.queue.filter((entry) => entry.kind === 'message').length
+      if (unread > 0) {
+        // Marked before the cancel, so the delivery the interrupt buys carries
+        // the note however soon the settle lands.
+        session.noteNextDelivery = true
+        // And skips the reading window: a person who pressed Stop with
+        // something unsaid is asking to be read now, not at the hour.
+        session.bypassPresenceOnce = true
+      }
+      await cancelSession(sessionId)
+      return { delivered: unread }
     },
 
     resolvePermission(requestId: string, optionId?: string): void {

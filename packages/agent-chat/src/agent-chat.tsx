@@ -5,11 +5,12 @@ import { useCallback, useMemo, useRef } from 'react'
 
 import { type Block, ChatConversation, type ChatConversationHandle } from './components/chat-conversation'
 import type { ChatTurnRenderers, DetailItem, UserText } from './components/chat-turn'
+import { ChatUnread, type ChatUnreadMessage } from './components/chat-unread'
 import type { AgentChatSession } from './session'
 import { ThinkingIndicator } from './thinking-indicator'
 
 export type { AgentChatSession } from './session'
-export type { Block, DetailItem, UserText }
+export type { Block, ChatUnreadMessage, DetailItem, UserText }
 
 // The Pick of the named session-shape contract (session.ts) this component
 // actually reads — not the host's full session controller, and not even the
@@ -86,6 +87,17 @@ export interface AgentChatProps {
   // reason: a module-level constant (see this app's CHAT_RENDERERS), never
   // an object literal built inline in a render.
   renderers: ChatTurnRenderers
+  // Messages that have arrived but the agent has not read yet, already
+  // formatted to display text — a host with its own outgoing-text transform
+  // undoes it first, the same way it hands over pre-built `blocks` rather than
+  // raw messages. They render at the foot of the transcript, after the activity
+  // indicator: what the agent is doing now comes before what it has not got to
+  // yet.
+  unread?: readonly ChatUnreadMessage[]
+  // Take one of them back before it is delivered. Without it no remove control
+  // is offered, which is what a host that can show what is waiting but not edit
+  // it wants.
+  onRemoveUnread?: (id: string) => void
   // Extra content rendered in the footer alongside the thinking indicator —
   // a host-specific status indicator (e.g. a voice playback visualizer) with
   // nowhere else in this component's own contract to live.
@@ -104,6 +116,8 @@ export function AgentChat({
   showThinkingIndicator = true,
   renderTool,
   renderers,
+  unread,
+  onRemoveUnread,
   footerExtra,
 }: AgentChatProps) {
   const displayName = agentName ?? session.botName
@@ -161,6 +175,10 @@ export function AgentChat({
       footer={
         <>
           {showThinkingIndicator && session.waiting && <ThinkingIndicator />}
+          {/* Unconditional: the section renders nothing with nothing waiting,
+              so guarding it here would only duplicate a check it already
+              makes. */}
+          <ChatUnread messages={unread ?? []} onRemove={onRemoveUnread} renderers={renderers} />
           {footerExtra}
         </>
       }

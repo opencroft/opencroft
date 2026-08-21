@@ -1,13 +1,13 @@
 'use client'
 
-import { Maximize2, Minimize2, Pencil } from 'lucide-react'
+import { Maximize2, Minimize2, Pencil, X } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
 import { useState } from 'react'
-import { Button } from 'ui/components/ui/button'
-import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
-import { cn } from 'ui/lib/utils'
-
 import { Markdown } from './markdown'
+
+import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
+import { Button } from 'ui/components/ui/button'
+import { cn } from 'ui/lib/utils'
 
 // The attribute the host's scroll restore uses to find a block again and
 // measure how far it moved. Exported so the host queries the same name rather
@@ -82,10 +82,14 @@ export interface ChatTurnRenderers {
 // consumer that passed a bare renderer would silently lose it. Owning the
 // renderer here is what makes the guarantee a property of the component.
 
+
+
+
 // Chat content is markdown, and rendering it is this component's own
 // presentation rather than something a host supplies: a message component that
 // cannot render its own message is not a component, and pushing the renderer
 // out as a slot would make every consumer re-wire a rendering concern.
+
 
 // The one way older history is loaded. A click cannot fire at the wrong moment
 // or fail to fire at all, which is what four rebuilds of an automatic trigger
@@ -108,14 +112,78 @@ export function ChatLoadOlderButton({ loading, onLoadOlder }: { loading: boolean
   )
 }
 
+// A message's send time, rendered small beside whoever sent it.
+//
+// It is shown at all because the send time and the read time stop being close
+// together: a message can wait to be read for as long as the reading cadence
+// says, so when it was SENT is a fact the reader has no other way to recover.
+//
+// `<time>` rather than a span: the exact instant stays in `dateTime` and in the
+// title, so the visible text can stay short enough to sit on the header's line
+// without ever being truncated.
+export function ChatMessageTime({ sentAt }: { sentAt: string }) {
+  const at = new Date(sentAt)
+  if (Number.isNaN(at.getTime())) {
+    return null
+  }
+  return (
+    <time dateTime={at.toISOString()} title={at.toLocaleString()} className='shrink-0 text-xs text-muted-foreground'>
+      {formatSentAt(at)}
+    </time>
+  )
+}
+
+// Today's messages read as a clock time; anything older carries its date too,
+// because a bare clock time is ambiguous the moment a day has passed -- which
+// under a slow reading cadence is an ordinary case and not an edge one.
+//
+// `now` is a parameter so the boundary this turns on can be stated in a test
+// rather than waited for.
+export function formatSentAt(at: Date, now: Date = new Date()): string {
+  const time = at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  const sameDay =
+    at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate()
+  return sameDay ? time : `${at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${time}`
+}
+
+// One message inside a turn: its own words, and who sent them when.
+//
+// `sender` and `sentAt` are optional together: a prompt the application issued
+// on its own behalf has no author and no send time, and it is still rendered,
+// so that something waiting is never invisible.
+//
+// `sentAt` is the SENT time and never the delivered one. Those are different
+// instants as soon as a message waits, and only the first is a fact about the
+// sender.
+export interface ChatUserMessagePart {
+  text: UserText
+  sender?: string
+  sentAt?: string
+}
+
 export interface ChatUserMessageProps {
   // Marks this block in the DOM so the host's load-older restore can find it
   // again and measure how far it moved. Sits on the outermost box, which is the
   // block's own element in the flow.
-  blockId: string
-  text: UserText
+  //
+  // Optional, because not every message this renders is a block: one still
+  // waiting to be read has no place in the transcript for a restore to find.
+  blockId?: string
+  // Everything this turn said, in the order it was sent.
+  //
+  // A list rather than one text because a turn can carry more than one message:
+  // a reader can send several while the agent is busy, and they are handed over
+  // together as a single turn. Joined into one text they would all render under
+  // one author and one time, which is wrong for every message but the last.
+  //
+  // One message is the one-part case, and needs no special handling anywhere.
+  parts: readonly ChatUserMessagePart[]
   editDisabled?: boolean
   onEdit?: () => void
+  // Take this message back before it is ever delivered. Its button is always
+  // visible rather than revealed on hover -- hover is not a route on a touch
+  // screen, and this is the only way to undo a send.
+  onRemove?: () => void
   // Hold the top of the viewport while this turn's replies scroll underneath.
   // Needs an opaque background, since replies pass behind it.
   //
@@ -137,7 +205,15 @@ export interface ChatUserMessageProps {
   renderers: ChatTurnRenderers
 }
 
-export function ChatUserMessage({ blockId, text, editDisabled, onEdit, sticky, renderers }: ChatUserMessageProps) {
+export function ChatUserMessage({
+  blockId,
+  parts,
+  editDisabled,
+  onEdit,
+  onRemove,
+  sticky,
+  renderers,
+}: ChatUserMessageProps) {
   const { Chained } = renderers
   return (
     // The same rail the replies below are rendered in, so both columns start at
@@ -188,50 +264,54 @@ export function ChatUserMessage({ blockId, text, editDisabled, onEdit, sticky, r
 
       <Chained marker={<AgentAvatar size='md' />} lineAbove={false} lineBelow={false} align='start'>
         <div className='flex items-start group w-full gap-1'>
-          <div className='flex flex-col flex-1 relative gap-1.5 rounded-md bg-muted border-1 p-2'>
-            {sticky && (
-              // The stuck message's shadow -- the command bar's, on the same
-              // opaque rounded box the composer's card uses, so it floats on
-              // the gradient rather than tracing a dissolving edge.
-              //
-              // Its own layer, matching the bubble's box by being its child,
-              // because only opacity may animate: this appears and disappears
-              // repeatedly as each header pushes the previous one out during a
-              // single scroll, and a transitioned box-shadow would repaint
-              // every time. Behind the bubble's background, which hides
-              // nothing -- an outer shadow is drawn outside the border box.
-              //
-              // No support guard is needed. Where scroll-state queries are
-              // unavailable the declaration on the container is dropped and the
-              // query never matches, so this simply stays at opacity 0 and the
-              // header renders as it did before. Currently that means the
-              // shadow appears in Chromium only.
-              <div
-                aria-hidden
-                className='absolute inset-0 -z-1 rounded-md pointer-events-none shadow-lg shadow-black/50 opacity-0 transition-opacity duration-150 motion-reduce:transition-none [@container_scroll-state(stuck:top)]:opacity-100'
+          {/* Three lines, but only while this turn is stuck to the top. That is
+              the whole of the problem: a question renders at its full height,
+              and because the header holds the top of the viewport while its own
+              replies scroll underneath, a tall one covers the answer it belongs
+              to. Read in its own place in the flow it costs nothing, so it is
+              left alone there.
+
+              The bound is on the TURN and not on each message in it. Clamping
+              per message would make a turn carrying three of them three times
+              too tall, and the header would cover exactly what clamping exists
+              to reveal. So a stuck turn shows its LAST message, clamped: later
+              messages supersede earlier ones, which is the rule the agent is
+              told to read the turn by, and it is the one worth keeping on
+              screen.
+
+              Expressed as "the earlier ones stand down" rather than as a height
+              on the group, because a line clamp is `-webkit-box` and that
+              display value cannot be put on a column of bordered bubbles
+              without destroying them. Leaving exactly one bubble stuck is also
+              what keeps the backing and the shadow correct: both are drawn
+              against a single rounded box.
+
+              Clamping only where it matters is what removes the need for any
+              expand control: the turn is already whole wherever the reader is
+              actually looking at it, and short again the moment it becomes a
+              header. Nothing to press, nothing to measure, no state.
+
+              A container query on the wrapper's own scroll-state, so it costs
+              no scroll listener and animates nothing -- the backing still spans
+              the wrapper's box and the rail still aligns the columns.
+
+              Where scroll-state queries are unsupported no query matches, so a
+              stuck turn is neither clamped nor reduced. Those are the same
+              browsers that already render no stuck shadow. */}
+          <div className='flex min-w-0 flex-1 flex-col gap-1.5'>
+            {parts.map((part, index) => (
+              // Keyed by position: a turn's parts are decoded from text that
+              // cannot change once it has been sent, so they never reorder and
+              // nothing is ever inserted between them. There is no id to key on
+              // instead -- a message carries an author and a time, not an
+              // identity.
+              <UserMessageBubble
+                key={index}
+                part={part}
+                sticky={sticky}
+                supersededWhenStuck={sticky === true && index < parts.length - 1}
               />
-            )}
-            {/* Three lines, but only while this header is stuck to the top.
-                That is the whole of the problem: a question renders at its full
-                height, and because the header holds the top of the viewport
-                while its own replies scroll underneath, a tall one covers the
-                answer it belongs to. Read in its own place in the flow it costs
-                nothing, so it is left alone there.
-
-                Clamping only where it matters is what removes the need for any
-                expand control: the message is already whole wherever the reader
-                is actually looking at it, and short again the moment it becomes
-                a header. Nothing to press, nothing to measure, no state.
-
-                A container query on the wrapper's own scroll-state, so it costs
-                no scroll listener and animates nothing -- the backing still
-                spans the wrapper's box, the shadow still matches the bubble by
-                being its child, and the rail still aligns the columns.
-
-                Where scroll-state queries are unsupported the query never
-                matches and a stuck header is not clamped at all. Those are the
-                same browsers that already render no stuck shadow. */}
-            <Markdown text={text} className='[@container_scroll-state(stuck:top)]:line-clamp-3' />
+            ))}
           </div>
           {onEdit && (
             <Button
@@ -246,8 +326,81 @@ export function ChatUserMessage({ blockId, text, editDisabled, onEdit, sticky, r
               <Pencil className='size-3.5' />
             </Button>
           )}
+          {onRemove && (
+            <Button
+              type='button'
+              size='icon'
+              variant='ghost'
+              className='h-6 w-6 shrink-0'
+              title='Remove message'
+              onClick={onRemove}
+            >
+              <X className='size-3.5' />
+            </Button>
+          )}
         </div>
       </Chained>
+    </div>
+  )
+}
+
+// One message's own box, inside the turn that carried it.
+//
+// Its author and send time sit INSIDE the bubble rather than above it, so a
+// message waiting to be read and one already in the transcript are the same
+// object with the same header. That is what lets one component render both
+// instead of two that drift apart.
+function UserMessageBubble({
+  part,
+  sticky,
+  supersededWhenStuck,
+}: {
+  part: ChatUserMessagePart
+  sticky?: boolean
+  // Stands down while the turn is stuck to the top, because a later message in
+  // the same turn supersedes it. See `ChatUserMessage` for why the turn is
+  // reduced to one message rather than clamped as a whole.
+  supersededWhenStuck: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        'flex flex-col relative min-w-0 gap-1.5 rounded-md bg-muted border-1 p-2',
+        supersededWhenStuck && '[@container_scroll-state(stuck:top)]:hidden',
+      )}
+    >
+      {sticky && (
+        // The stuck message's shadow -- the command bar's, on the same opaque
+        // rounded box the composer's card uses, so it floats on the gradient
+        // rather than tracing a dissolving edge.
+        //
+        // Its own layer, matching the bubble's box by being its child, because
+        // only opacity may animate: this appears and disappears repeatedly as
+        // each header pushes the previous one out during a single scroll, and a
+        // transitioned box-shadow would repaint every time. Behind the bubble's
+        // background, which hides nothing -- an outer shadow is drawn outside
+        // the border box.
+        //
+        // No support guard is needed. Where scroll-state queries are
+        // unavailable the declaration on the container is dropped and the query
+        // never matches, so this simply stays at opacity 0 and the header
+        // renders as it did before. Currently that means the shadow appears in
+        // Chromium only.
+        <div
+          aria-hidden
+          className='absolute inset-0 -z-1 rounded-md pointer-events-none shadow-lg shadow-black/50 opacity-0 transition-opacity duration-150 motion-reduce:transition-none [@container_scroll-state(stuck:top)]:opacity-100'
+        />
+      )}
+      {(part.sender || part.sentAt) && (
+        // Author on the left, send time on the right, above the words.
+        <div className='flex min-w-0 items-baseline justify-between gap-2'>
+          {part.sender ? (
+            <span className='min-w-0 truncate text-xs font-medium text-foreground'>{part.sender}</span>
+          ) : null}
+          {part.sentAt ? <ChatMessageTime sentAt={part.sentAt} /> : null}
+        </div>
+      )}
+      <Markdown text={part.text} className='[@container_scroll-state(stuck:top)]:line-clamp-3' />
     </div>
   )
 }
@@ -271,14 +424,29 @@ export function ChatDetailsToggle({ collapsed, onToggle }: { collapsed: boolean;
   )
 }
 
-export function ChatAssistantText({ text, botName, toggle }: { text: string; botName?: string; toggle?: ReactNode }) {
+export function ChatAssistantText({
+  text,
+  botName,
+  sentAt,
+  toggle,
+}: {
+  text: string
+  botName?: string
+  sentAt?: string
+  toggle?: ReactNode
+}) {
   return (
     <div className='flex flex-col min-w-0 w-full gap-1'>
-      <div className='flex items-center justify-between w-full'>
-        {botName ? <div className='text-xs font-medium text-foreground'>{botName}</div> : null}
+      <div className='flex items-center justify-between w-full gap-2'>
+        <div className='flex min-w-0 items-baseline gap-2'>
+          {botName ? <div className='truncate text-xs font-medium text-foreground'>{botName}</div> : null}
+          {sentAt ? <ChatMessageTime sentAt={sentAt} /> : null}
+        </div>
         {toggle}
       </div>
-      {text ? <Markdown text={text} /> : null}
+      {text ? (
+        <Markdown text={text} />
+      ) : null}
     </div>
   )
 }
@@ -302,6 +470,10 @@ export interface ChatTurnDetailsProps {
   blockId: string
   items: DetailItem[]
   botName: string
+  // When this reply began. A reply is one turn, so the time belongs to the
+  // chain rather than to each entry in it, and it is shown once beside the
+  // name at the top.
+  sentAt?: string
   agentAvatar?: string
   defaultCollapsed?: boolean
   onCollapseChange?: (collapsed: boolean) => void
@@ -320,6 +492,7 @@ export function ChatTurnDetails({
   blockId,
   items,
   botName,
+  sentAt,
   agentAvatar,
   defaultCollapsed,
   onCollapseChange,
@@ -342,13 +515,19 @@ export function ChatTurnDetails({
       />
     ) : null
 
-  const renderEntry = (entry: DetailEntry, name?: string, entryToggle?: ReactNode, entryPending?: boolean) => {
+  const renderEntry = (
+    entry: DetailEntry,
+    name?: string,
+    entryToggle?: ReactNode,
+    entryPending?: boolean,
+    entrySentAt?: string,
+  ) => {
     if (entry.kind === 'header') {
-      return <ChatAssistantText text='' botName={name} toggle={entryToggle} />
+      return <ChatAssistantText text='' botName={name} sentAt={entrySentAt} toggle={entryToggle} />
     }
     const { item } = entry
     if (item.kind === 'assistant-text') {
-      return <ChatAssistantText text={item.text} botName={name} toggle={entryToggle} />
+      return <ChatAssistantText text={item.text} botName={name} sentAt={entrySentAt} toggle={entryToggle} />
     }
     if (item.kind === 'thinking') {
       return <ThinkingBlock text={item.text} pending={entryPending} />
@@ -389,15 +568,20 @@ export function ChatTurnDetails({
       <div className='flex flex-col min-w-0 w-full' {...{ [BLOCK_ID_ATTR]: blockId }}>
         <Chained marker={marker} lineAbove={false} lineBelow={false} align={hasAvatar ? 'start' : 'first-line'}>
           <div className='flex flex-col min-w-0 w-full gap-1'>
-            <div className='flex items-center justify-between w-full'>
-              <div className='text-xs font-medium text-foreground'>{botName}</div>
+            <div className='flex items-center justify-between w-full gap-2'>
+              <div className='flex min-w-0 items-baseline gap-2'>
+                <div className='truncate text-xs font-medium text-foreground'>{botName}</div>
+                {sentAt ? <ChatMessageTime sentAt={sentAt} /> : null}
+              </div>
               {toggle}
             </div>
             {/* Text — no animation, stable */}
             {lastTextEntry &&
               lastTextEntry.kind === 'item' &&
               lastTextEntry.item.kind === 'assistant-text' &&
-              lastTextEntry.item.text.trim() && <Markdown text={lastTextEntry.item.text} />}
+              lastTextEntry.item.text.trim() && (
+                <Markdown text={lastTextEntry.item.text} />
+              )}
             {/* Tool call — animate on changes */}
             {lastToolAfterText && lastToolAfterText.kind === 'tool' && (
               <div key={lastToolAfterText.id}>{renderTool(lastToolAfterText)}</div>
@@ -411,7 +595,9 @@ export function ChatTurnDetails({
                     return renderTool(last.item)
                   }
                   if (last.item.kind === 'assistant-text') {
-                    return last.item.text.trim() ? <Markdown text={last.item.text} /> : null
+                    return last.item.text.trim() ? (
+                      <Markdown text={last.item.text} />
+                    ) : null
                   }
                 }
                 return null
@@ -441,7 +627,13 @@ export function ChatTurnDetails({
             lineBelow={!isLast}
             align={hasAvatar ? 'start' : 'first-line'}
           >
-            {renderEntry(entry, isFirst ? botName : undefined, isFirst ? toggle : undefined, isLast && pending)}
+            {renderEntry(
+              entry,
+              isFirst ? botName : undefined,
+              isFirst ? toggle : undefined,
+              isLast && pending,
+              isFirst ? sentAt : undefined,
+            )}
           </Chained>
         )
       })}

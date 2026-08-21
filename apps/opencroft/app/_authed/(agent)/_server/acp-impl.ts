@@ -25,20 +25,26 @@
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { getSessionUser } from '@opencroft/auth/server'
+import { getRequest } from '@tanstack/react-start/server'
 import { supportsMidTurnInput } from 'agent-client'
 import { usableContextWindow } from 'agent-client/context-window'
-import type { AgentSelection, QueueMode } from 'agent-client/types'
+import type { AgentSelection, Presence, PromptOrigin, QueueMode } from 'agent-client/types'
 
+import type { PromptOriginInput } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import {
   deletePersistedConfigOptions,
+  deletePersistedPresence,
   deletePersistedSession,
   readLastKnownUsage,
   readPersistedConfigOptions,
   readPersistedSession,
   readPersistedUsage,
+  writePersistedPresence,
   writePersistedSession,
 } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import { queueStore } from '@/app/_authed/(agent)/_server/queue-store'
 import {
   forceBypassMode,
   installYoloModeEnforcement,
@@ -384,6 +390,13 @@ async function pinModeIfYolo(sessionId: string): Promise<void> {
 // corrective guidance after a rejected permission jumping ahead of what is
 // already held), not whether to interrupt.
 //
+// `origin` says who the message is from, and it is the one field a caller may
+// state loosely: the browser sends `{ kind: 'reader' }`, which names nobody,
+// and the real name is resolved HERE from the session this request already
+// carries. Server-side callers pass a concrete origin because they already know
+// their own truth. See WirePromptOrigin for why the browser is not trusted with
+// a name.
+//
 // Returns whether a turn was actually interrupted, so callers can report it
 // without probing the session themselves — that answer is only correct at the
 // instant the message arrives.
@@ -392,6 +405,7 @@ export async function promptLocalImpl(data: {
   text: string
   front?: boolean
   queue: QueueMode
+  origin: PromptOriginInput
 }): Promise<{ interrupted: boolean }> {
   // Claimed before the prompt is even sent (matching the client's own
   // deliveredOnceRef, set at deliver() call time) — a concurrent
@@ -413,7 +427,52 @@ export async function promptLocalImpl(data: {
   if (tabKey) {
     await writePersistedSession(tabKey, data.sessionId, true)
   }
-  return agentClient.prompt(data.sessionId, data.text, { front: data.front, queue: data.queue })
+  return agentClient.prompt(data.sessionId, data.text, {
+    front: data.front,
+    queue: data.queue,
+    origin: await resolvePromptOrigin(data.origin),
+  })
+}
+
+// Where `{ kind: 'reader' }` becomes a name — the trust boundary, sitting
+// exactly where the signed-in session is known and nowhere else.
+//
+// `agentClient.prompt` only ever receives a concrete `PromptOrigin`, so
+// `reader` cannot travel past this function and reach the queue, the batch tag,
+// or the transcript.
+async function resolvePromptOrigin(origin: PromptOriginInput): Promise<PromptOrigin> {
+  if (origin.kind !== 'reader') {
+    return origin
+  }
+  const user = await getSessionUser(getRequest())
+  if (!user) {
+    // Refusing is the honest answer. Attributing the message to a placeholder
+    // would put words in the transcript under a name nobody owns, which is the
+    // failure this resolution exists to prevent. Nothing typed is lost: the
+    // hook catches the failed send, restores the draft and shows the error.
+    throw new Error('Sign in to send messages')
+  }
+  return { kind: 'message', sender: user.name }
+}
+
+/**
+ * Set how often a session's agent reads its queue, and remember it.
+ *
+ * Persisted here rather than by an event observer because this is the only
+ * thing that changes the cadence, and the engine re-emits the setting whenever
+ * a session reopens — an observer would write the restored value straight back
+ * on every open, for nothing.
+ *
+ * A session with no key is set but not remembered: the key is what a restart
+ * would restore it by, and a session without one cannot be reopened as itself.
+ */
+export async function setPresenceLocalImpl(data: { sessionId: string; presence: Presence }): Promise<void> {
+  agentClient.setPresence(data.sessionId, data.presence)
+  const sessionKey = agentClient.listSessions().find((session) => session.id === data.sessionId)?.sessionKey
+  if (!sessionKey) {
+    return
+  }
+  await writePersistedPresence(sessionKey, data.presence)
 }
 
 // Resolve the live ACP session a Send Message node should target for a base
@@ -467,6 +526,14 @@ export async function findTargetSessionImpl(data: { baseKey: string }): Promise<
   return null
 }
 
+// The reader's Stop. Delegates the decision to agentClient.stop, which reads
+// the queue next to the queue rather than trusting a caller's render-old copy:
+// with unread messages held it cancels AND delivers them, otherwise it is an
+// ordinary cancel. Returns how many were delivered so a caller can say so.
+export async function stopLocalImpl(sessionId: string): Promise<{ delivered: number }> {
+  return agentClient.stop(sessionId)
+}
+
 export async function cancelLocalImpl(sessionId: string): Promise<void> {
   await agentClient.cancel(sessionId)
 }
@@ -512,4 +579,11 @@ export async function forgetLocalSessionImpl(tabKey: string): Promise<void> {
   // Drop the durable pointer too, so a later restart doesn't resurrect it.
   await deletePersistedSession(tabKey)
   await deletePersistedConfigOptions(tabKey)
+  await deletePersistedPresence(tabKey)
+  // This is where the key is retired for good, which is why the durable queue
+  // is cleared HERE and not when the engine drops a live session — that also
+  // happens when a process is stopped and the conversation is meant to survive,
+  // and anything still held for it must survive with it. Rows left behind by a
+  // tab that is gone are orphans nothing would ever load or delete.
+  await queueStore.clear(tabKey)
 }

@@ -1,8 +1,9 @@
 import { createAgentClient, type PermissionContext, type PermissionOutcome } from 'agent-client/agent-client'
 import type { ChatEvent } from 'agent-client/types'
 
-import { writePersistedUsage } from '@/app/_authed/(agent)/_server/acp-session-store'
+import { readPersistedPresence, writePersistedUsage } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { readMcpServersForAgent } from '@/app/_authed/(agent)/_server/mcp-store'
+import { queueStore } from '@/app/_authed/(agent)/_server/queue-store'
 import { loadSkillDefs, skillBodyHandler } from '@/app/_authed/(agent)/_server/skill-store'
 import { opencroftLocalTools } from '@/app/_authed/(agent)/_server/tools-bridge'
 import { stampDeliveryTime } from '@/app/_authed/(agent)/_shared/message-envelope'
@@ -65,9 +66,29 @@ function persistUsageOnTurnEnd(sessionId: string, event: ChatEvent): void {
   })
 }
 
+// A session reopens at the cadence it was reading at, and this is resolved
+// BEFORE its restored queue is evaluated (see agent-client's restore). Without
+// that ordering an hourly session would hand over everything it had been
+// holding the moment it reopened — the restart becoming the interruption the
+// setting exists to prevent, with nothing able to un-deliver it afterwards.
+async function loadPresence(sessionKey: string) {
+  try {
+    return (await readPersistedPresence(sessionKey)) ?? undefined
+  } catch (error) {
+    // Undefined leaves the engine's own default in place. Reading early is the
+    // safe direction for a setting that decides whether a message arrives.
+    console.error('Failed to read persisted presence for session key', sessionKey, error)
+    return undefined
+  }
+}
+
 export const agentClient = createAgentClient({
   tools: opencroftLocalTools,
   loadMcpServers: readMcpServersForAgent,
+  // Durable copy of the queue. Written behind the in-memory one and never read
+  // to make a decision — see QueueStore.
+  queueStore,
+  loadPresence,
   // Global skill catalog from the settings DB, resolved per turn. For now every
   // configured skill is exposed to this agent client (not scoped per node).
   skills: loadSkillDefs,

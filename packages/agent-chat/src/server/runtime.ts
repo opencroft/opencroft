@@ -90,6 +90,28 @@ export interface RolesDataLayer {
   setDefaultAccess(access: DefaultAccess): void | Promise<void>
 }
 
+// Who the chat composer's messages are attributed to.
+//
+// Resolved on the SERVER, for the current request, and deliberately not a
+// parameter the browser supplies: a sender is written into the message the
+// agent reads and into every transcript of who said what, so a client able to
+// state one could be attributed as anybody. `name()` takes no arguments — a
+// host reads its own request context (a session cookie, a header) however it
+// already does elsewhere.
+export interface ReaderIdentity {
+  name(): string | Promise<string>
+}
+
+// Used when a host registers no `reader`. It names nobody on purpose: a host
+// with no notion of a signed-in user (a single-user desktop chat) should say
+// so rather than borrow a name.
+//
+// Note what this default is NOT doing: it is not the thing that makes
+// attribution unforgeable. The browser has no way to state a sender either
+// way, because the field is not on the wire — so a host that forgets to wire
+// `reader` gets a vague attribution, never somebody else's.
+export const READER_FALLBACK = 'User'
+
 export interface AgentChatRuntime {
   agent: AgentEngine
   skills: SkillsDataLayer
@@ -99,6 +121,9 @@ export interface AgentChatRuntime {
   mcp?: McpStore
   // Optional — when absent, sessions are unrestricted (no roles).
   roles?: RolesDataLayer
+  // Optional — when absent, composer messages are attributed to
+  // READER_FALLBACK. See ReaderIdentity for why this is not a client field.
+  reader?: ReaderIdentity
 }
 
 interface ResolvedRuntime extends AgentChatRuntime {
@@ -132,4 +157,11 @@ export function getRuntime(): ResolvedRuntime {
     )
   }
   return runtime
+}
+
+// The single place a composer message gets a sender. Kept here rather than at
+// the call site so there is one answer to "who is this from?" — a second
+// resolution path is how one surface ends up trusting the client again.
+export async function resolveReaderName(): Promise<string> {
+  return (await getRuntime().reader?.name()) ?? READER_FALLBACK
 }

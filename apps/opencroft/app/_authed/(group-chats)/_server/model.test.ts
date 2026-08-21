@@ -2600,15 +2600,15 @@ test('deliverThreadFromNode resolves the same forms sendMessageInThreadAsAgent d
 
   const alwaysReachable = () => true
 
-  await model.deliverThreadFromNode('node-delivery-forms:agent-session:standup', 'by path', alwaysReachable, 'wait')
+  await model.deliverThreadFromNode('node-delivery-forms:agent-session:standup', 'by path', alwaysReachable, 'wait', 'Node')
   await waitForPrompts(prompts, 2)
   assert.match(prompts[1] ?? '', /by path/)
 
-  await model.deliverThreadFromNode(started.thread.sessionKey, 'by key', alwaysReachable, 'wait')
+  await model.deliverThreadFromNode(started.thread.sessionKey, 'by key', alwaysReachable, 'wait', 'Node')
   await waitForPrompts(prompts, 3)
   assert.match(prompts[2] ?? '', /by key/)
 
-  await model.deliverThreadFromNode(started.thread.id, 'by id', alwaysReachable, 'wait')
+  await model.deliverThreadFromNode(started.thread.id, 'by id', alwaysReachable, 'wait', 'Node')
   await waitForPrompts(prompts, 4)
   assert.match(prompts[3] ?? '', /by id/)
 })
@@ -2623,6 +2623,7 @@ test('deliverThreadFromNode reports not-found for an unresolvable reference with
       return true
     },
     'wait',
+    'Node',
   )
   assert.deepEqual(outcome, { status: 'not-found' })
   assert.equal(called, false, 'a reference that resolves to nothing has no agent to check reachability for')
@@ -2696,8 +2697,8 @@ test('two concurrent deliveries into a brand-new thread session produce exactly 
 
   const alwaysReachable = () => true
   await Promise.all([
-    model.deliverThreadFromNode(thread.sessionKey, 'first', alwaysReachable, 'wait'),
-    model.deliverThreadFromNode(thread.sessionKey, 'second', alwaysReachable, 'wait'),
+    model.deliverThreadFromNode(thread.sessionKey, 'first', alwaysReachable, 'wait', 'Node'),
+    model.deliverThreadFromNode(thread.sessionKey, 'second', alwaysReachable, 'wait', 'Node'),
   ])
 
   assert.equal(
@@ -2725,7 +2726,7 @@ test('deliverThreadFromNode reports not-reachable and delivers nothing when the 
 
   // The predicate is authoritative and caller-supplied — this proves the seam
   // itself, independent of any real graph or reachablePairs computation.
-  const outcome = await model.deliverThreadFromNode(thread.sessionKey, 'should not land', () => false, 'wait')
+  const outcome = await model.deliverThreadFromNode(thread.sessionKey, 'should not land', () => false, 'wait', 'Node')
   assert.deepEqual(outcome, { status: 'not-reachable' })
 })
 
@@ -3146,7 +3147,7 @@ test('an address a chat rename freed still reaches the same chat and the same th
   assert.equal(byOldSlug.chat.slug, 'new-chat-name', 'resolved through the old address, answered with the current one')
 
   // A message already addressed to the key the rename retired.
-  const outcome = await model.deliverThreadFromNode(oldKey, 'sent to the old address', () => true, 'wait')
+  const outcome = await model.deliverThreadFromNode(oldKey, 'sent to the old address', () => true, 'wait', 'Node')
   assert.equal(outcome.status === 'not-found' || outcome.status === 'not-reachable', false)
   await waitForPrompts(prompts, 2)
   assert.match(prompts.at(-1) ?? '', /sent to the old address/)
@@ -3191,7 +3192,7 @@ test('renaming a thread moves its slug and its key, and keeps everything the thr
   assert.equal(byOldSlug?.id, started.thread.id, 'the embed must find the same thread, not start an empty one')
 
   // And the key an agent may have written down.
-  const outcome = await model.deliverThreadFromNode(oldKey, 'to the old thread address', () => true, 'wait')
+  const outcome = await model.deliverThreadFromNode(oldKey, 'to the old thread address', () => true, 'wait', 'Node')
   assert.equal(outcome.status === 'not-found' || outcome.status === 'not-reachable', false)
   await waitForPrompts(prompts, 2)
   assert.equal((await model.listThreadsInGroupChat(reqAs(owner), chat.id)).length, 1)
@@ -3252,7 +3253,7 @@ test('a new thread taking a freed address wins it, and the alias for it stops re
     second.thread.id,
     'the thread holding the address now is the answer, not the one that used to',
   )
-  const outcome = await model.deliverThreadFromNode(freedKey, 'to whoever holds it now', () => true, 'wait')
+  const outcome = await model.deliverThreadFromNode(freedKey, 'to whoever holds it now', () => true, 'wait', 'Node')
   assert.equal(outcome.status === 'not-found' || outcome.status === 'not-reachable', false)
   await waitForPrompts(prompts, 3)
   const aliases = await db.select().from(groupChatThreadAlias).where(eq(groupChatThreadAlias.sessionKey, freedKey))

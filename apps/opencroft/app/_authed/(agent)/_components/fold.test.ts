@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { DEFAULT_PRESENCE } from 'agent-client/presence'
 import type { ChatEvent } from 'agent-client/types'
 
 import { fold } from './use-acp-session'
@@ -66,4 +67,22 @@ test('a tool_call keeps the id of the raw event that opened it, unaffected by la
   ]
   const { messages } = fold(events, 50)
   assert.equal(messages[1].id, 51)
+})
+
+test('a session nobody has set a cadence for reads in realtime', () => {
+  // What every session did before a reading cadence existed. A new setting
+  // must not change the behaviour of one that has not asked for it, and the
+  // control has to show the same answer the engine is acting on.
+  assert.deepEqual(fold(turn('q', 'a'), 0).presence, DEFAULT_PRESENCE)
+})
+
+test('the last presence snapshot wins, like the queue', () => {
+  // Snapshots rather than deltas, so a client that reconnects mid-stream folds
+  // the last one it sees and knows what it is looking at without asking.
+  const events: ChatEvent[] = [
+    { kind: 'presence', presence: { kind: 'hourly' } },
+    { kind: 'user', text: 'q' },
+    { kind: 'presence', presence: { kind: 'custom', intervalMs: 15 * 60_000 } },
+  ]
+  assert.deepEqual(fold(events, 0).presence, { kind: 'custom', intervalMs: 15 * 60_000 })
 })

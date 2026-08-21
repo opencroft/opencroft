@@ -3,12 +3,11 @@
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { type AgentCommandBarControlsContext, useAgentCommandBar } from 'agent-chat/agent-command-bar'
 import type { CompactRenderState } from 'agent-chat/use-compact-control'
-import type { QueuedPrompt } from 'agent-client/types'
+import type { Presence } from 'agent-client/types'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { AgentChatInputControls, type AgentSession } from '@/app/_authed/(agent)/_components/agent-chat'
-import { userText } from '@/app/_authed/(agent)/_lib/build-blocks'
 import { getAutoApprove, setAutoApprove } from '@/app/_authed/(approvals)/_server/actions'
 import { useOptionalOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 
@@ -29,11 +28,6 @@ interface AgentCommandBarHostProps {
   /** When set, the Sparkles start icon becomes a button that runs this (e.g. open
    * the session picker). Must be stable — it feeds the memoized command bar. */
   onStartIconClick?: () => void
-  /** Messages held in the session's server-side queue while a turn runs. */
-  queued?: QueuedPrompt[]
-  /** Drop a still-queued message before delivery. Must be stable — it feeds the
-   * memoized command bar. */
-  onRemoveQueued?: (id: string) => void
   /** The session's agent-advertised config options (model/effort/mode/…). */
   configOptions?: SessionConfigOption[]
   /** Change one of the session's config options. Must be stable — it feeds the
@@ -75,6 +69,11 @@ interface AgentCommandBarHostProps {
    *  ring — forwarded to the package hook's slot of the same name. Must be
    *  identity-stable when nothing changed; it feeds the memoized bar. */
   configExtraStart?: ReactNode
+  /** How often the session reads what is waiting for it, and how to change it —
+   *  both from the session controller, forwarded straight to the package hook's
+   *  slot of the same name. Must be identity-stable when nothing changed; it
+   *  feeds the memoized bar. */
+  presence?: { value: Presence; onSelect: (presence: Presence) => void }
 }
 
 // The approval button's wording. It lives here rather than in the package
@@ -107,8 +106,6 @@ export function AgentCommandBarHost({
   leadingBarContent,
   focusMenu,
   onStartIconClick,
-  queued,
-  onRemoveQueued,
   configOptions,
   onSetConfigOption,
   usage,
@@ -121,6 +118,7 @@ export function AgentCommandBarHost({
   sendError,
   onDismissSendError,
   configExtraStart,
+  presence,
 }: AgentCommandBarHostProps) {
   const [autoApprove, setAutoApproveState] = useState(false)
   const [yoloMode, setYoloMode] = useState(false)
@@ -148,18 +146,6 @@ export function AgentCommandBarHost({
     const next = await setAutoApprove({ data: !autoApproveRef.current })
     setAutoApproveState(next)
   }, [])
-
-  // Queued text arrives transformed for the agent (system/context tags applied
-  // at send time); the panel shows the user's own words, same as delivered user
-  // bubbles. The transform is this app's, so undoing it is too — the package
-  // hook takes queued items pre-formatted, the same way AgentChat takes
-  // pre-built blocks rather than raw messages.
-  // `userText` returns null for a prompt that is nothing but tags. Rendering it
-  // straight into JSX used to make that an empty line rather than a missing
-  // row, and the row still says "Queued" and still offers removal — so the
-  // empty string keeps that, rather than dropping a message the user can see
-  // is being held.
-  const queuedItems = useMemo(() => queued?.map((m) => ({ id: m.id, text: userText(m.text) ?? '' })), [queued])
 
   // Extension-provided input controls (e.g. voice) get a stable context from
   // the package hook (insertText/sendMessage/streaming); this app supplies
@@ -191,8 +177,6 @@ export function AgentCommandBarHost({
     leadingBarContent,
     onStartIconClick,
     startIcon,
-    queued: queuedItems,
-    onRemoveQueued,
     configOptions,
     onSetConfigOption,
     usage,
@@ -217,6 +201,7 @@ export function AgentCommandBarHost({
     lockedConfigOptions: lockedConfigOptions,
     approvalTitles: APPROVAL_TITLES,
     configExtraStart,
+    presence,
   })
 
   useOptionalOverlay({ menu: focusMenu ?? null, bar: barNode })

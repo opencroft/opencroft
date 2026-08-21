@@ -1,11 +1,12 @@
 'use client'
 
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
-import { AgentChat } from 'agent-chat/agent-chat'
+import { AgentChat, type ChatUnreadMessage } from 'agent-chat/agent-chat'
 import { Approvals } from 'agent-chat/approvals'
 import { useClearControl } from 'agent-chat/use-clear-control'
 import type { CompactStatus } from 'agent-chat/use-compact-control'
 import { useCompactControl } from 'agent-chat/use-compact-control'
+import type { Presence } from 'agent-client/types'
 import { ArrowLeft, Pencil } from 'lucide-react'
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
@@ -19,8 +20,8 @@ import {
   renderToolCall,
 } from '@/app/_authed/(agent)/_components/agent-chat'
 import { AgentCommandBarHost } from '@/app/_authed/(agent)/_components/command-bar-host'
-import { type LocalSource, type QueuedMessage, useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
-import { buildBlocks } from '@/app/_authed/(agent)/_lib/build-blocks'
+import { type LocalSource, useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
+import { buildBlocks, buildUnread } from '@/app/_authed/(agent)/_lib/build-blocks'
 import { compactLocal, getLocalCompactStatus } from '@/app/_authed/(agent)/_server/acp'
 import { useOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 
@@ -79,10 +80,11 @@ function ChatHost({
   onFocusChange,
   approvals,
   defaultExpanded,
-  queued,
-  onRemoveQueued,
+  unread,
+  onRemoveUnread,
   configOptions,
   onSetConfigOption,
+  presence,
   usage,
   listView,
   menuView,
@@ -103,10 +105,13 @@ function ChatHost({
   onFocusChange: (focused: boolean) => void
   approvals?: ReactNode
   defaultExpanded?: boolean
-  queued?: QueuedMessage[]
-  onRemoveQueued?: (id: string) => void
+  unread?: readonly ChatUnreadMessage[]
+  onRemoveUnread?: (id: string) => void
   configOptions?: SessionConfigOption[]
   onSetConfigOption?: (configId: string, value: string | boolean) => void
+  // How often this session reads what is waiting for it, and how to change it.
+  // Forwarded to the composer, which is where the control sits.
+  presence?: { value: Presence; onSelect: (presence: Presence) => void }
   usage?: { used: number; size?: number }
   listView?: ReactNode
   menuView?: ReactNode
@@ -179,12 +184,25 @@ function ChatHost({
           defaultExpanded={defaultExpanded}
           renderTool={renderToolCall}
           renderers={CHAT_RENDERERS}
+          unread={unread}
+          onRemoveUnread={onRemoveUnread}
           footerExtra={<AgentChatStatusIndicators />}
         />
         {approvals}
       </>
     )
-  }, [showChat, inspectorPage, listView, session, blocks, activeAgent, approvals, defaultExpanded])
+  }, [
+    showChat,
+    inspectorPage,
+    listView,
+    session,
+    blocks,
+    activeAgent,
+    approvals,
+    defaultExpanded,
+    unread,
+    onRemoveUnread,
+  ])
 
   // On the conversation page, dock a back + rename control into the inspector header.
   const headerNode = useMemo(() => {
@@ -204,8 +222,8 @@ function ChatHost({
 
   // ChatHost renders no visible DOM of its own: it mounts inside the canvas
   // container underneath the absolutely-positioned canvas/overlay layers, so
-  // anything emitted here is painted over. All real UI — the conversation, the
-  // composer, and the queued-messages list — is published into overlay slots
+  // anything emitted here is painted over. All real UI — the conversation and
+  // the composer — is published into overlay slots
   // (content/header above, bar via AgentCommandBarHost).
   return (
     <AgentCommandBarHost
@@ -216,10 +234,9 @@ function ChatHost({
       leadingBarContent={createButton}
       focusMenu={focusMenu}
       onStartIconClick={onOpenSessions}
-      queued={queued}
-      onRemoveQueued={onRemoveQueued}
       configOptions={configOptions}
       onSetConfigOption={onSetConfigOption}
+      presence={presence}
       usage={usage}
       compact={compact}
       onClear={clear.onClear}
@@ -398,6 +415,13 @@ export function LocalAgentHost({
   // Stable element identity so ChatHost's memoized content (and the published
   // overlay slot) don't re-fire every render — that would be an infinite update loop.
   const approvals = useMemo(() => <Approvals session={acp} />, [acp])
+  // Memoized for identity, not for cost: this feeds ChatHost's memoized
+  // content, which is published into an overlay slot — a fresh array every
+  // render would republish it every render.
+  const unread = useMemo(() => buildUnread(acp.queue), [acp.queue])
+  // Memoized for the same reason as `unread`: it feeds the memoized command
+  // bar, and a fresh object every render would rebuild it every render.
+  const presence = useMemo(() => ({ value: acp.presence, onSelect: acp.setPresence }), [acp.presence, acp.setPresence])
   return (
     <ChatHost
       session={acp.session}
@@ -408,10 +432,11 @@ export function LocalAgentHost({
       onFocusChange={onFocusChange}
       approvals={approvals}
       defaultExpanded
-      queued={acp.queue}
-      onRemoveQueued={acp.removeQueued}
+      unread={unread}
+      onRemoveUnread={acp.removeQueued}
       configOptions={acp.configOptions}
       onSetConfigOption={acp.setConfigOption}
+      presence={presence}
       usage={acp.usage}
       listView={listView}
       menuView={menuView}
