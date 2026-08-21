@@ -26,29 +26,55 @@ test('parseSessionKey accepts and ignores an optional third segment', () => {
 test('tryParseJsonMessage requires a string message and coerces the rest', () => {
   assert.equal(tryParseJsonMessage('not json'), null)
   assert.equal(tryParseJsonMessage('{"agent":"alice"}'), null, 'no message field')
-  assert.deepEqual(tryParseJsonMessage('{"message":"hi","force":true}'), {
+  assert.deepEqual(tryParseJsonMessage('{"message":"hi","queue":"push"}'), {
     message: 'hi',
     agent: undefined,
     job: undefined,
     key: undefined,
     title: undefined,
     session: undefined,
-    force: true,
+    queue: 'push',
     thread: undefined,
   })
 })
 
 test('tryParseJsonMessage coerces a thread reference the same way as the other optional fields', () => {
-  assert.deepEqual(tryParseJsonMessage('{"message":"hi","thread":"dev:alice:standup"}'), {
+  assert.deepEqual(tryParseJsonMessage('{"message":"hi","thread":"dev:alice:standup","queue":"wait"}'), {
     message: 'hi',
     agent: undefined,
     job: undefined,
     key: undefined,
     title: undefined,
     session: undefined,
-    force: false,
+    queue: 'wait',
     thread: 'dev:alice:standup',
   })
+})
+
+// Refused, not defaulted — and thrown rather than returned as null, because a
+// null here means "not a payload, treat the whole thing as message text", which
+// would deliver the caller's JSON as the message instead of saying what is wrong.
+test('tryParseJsonMessage refuses a payload that does not state queue', () => {
+  for (const payload of ['{"message":"hi"}', '{"message":"hi","queue":"maybe"}', '{"message":"hi","queue":true}']) {
+    assert.throws(
+      () => tryParseJsonMessage(payload),
+      (error: { message?: string }) => {
+        assert.match(error.message ?? '', /"queue" is required and must be "wait" or "push"/)
+        return true
+      },
+      `expected ${payload} to be refused`,
+    )
+  }
+})
+
+test('a payload still sending the retired force is pointed at its replacement', () => {
+  assert.throws(
+    () => tryParseJsonMessage('{"message":"hi","force":true}'),
+    (error: { message?: string }) => {
+      assert.match(error.message ?? '', /`force` has been replaced by `queue: "push"`/)
+      return true
+    },
+  )
 })
 
 const graph = () => ({

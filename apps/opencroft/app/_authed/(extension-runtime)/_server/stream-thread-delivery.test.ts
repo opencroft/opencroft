@@ -163,7 +163,7 @@ test('a thread envelope delivers when the thread agent is reachable from this no
     target,
     nodes,
     edges,
-    JSON.stringify({ message: 'the hourly pass has run', thread: started.thread.sessionKey }),
+    JSON.stringify({ message: 'the hourly pass has run', thread: started.thread.sessionKey, queue: 'wait' }),
   )
 
   assert.deepEqual(result, { kind: 'thread', threadRef: started.thread.sessionKey, status: 'delivered' })
@@ -193,7 +193,7 @@ test('a thread envelope refuses cleanly when its agent is not reachable from thi
         target,
         nodes,
         edges,
-        JSON.stringify({ message: 'should not land', thread: thread.sessionKey }),
+        JSON.stringify({ message: 'should not land', thread: thread.sessionKey, queue: 'wait' }),
       ),
     /not reachable/i,
   )
@@ -207,7 +207,7 @@ test('a thread envelope refuses cleanly for an unknown thread reference — noth
         target,
         nodes,
         edges,
-        JSON.stringify({ message: 'nowhere to go', thread: 'no-such-chat:no-such-agent:no-such-thread' }),
+        JSON.stringify({ message: 'nowhere to go', thread: 'no-such-chat:no-such-agent:no-such-thread', queue: 'wait' }),
       ),
     /not reachable/i,
   )
@@ -221,7 +221,7 @@ test('a thread and an agent/job field together are refused, not silently resolve
         target,
         nodes,
         edges,
-        JSON.stringify({ message: 'ambiguous', thread: 'a:b:c', agent: 'session', job: 'task' }),
+        JSON.stringify({ message: 'ambiguous', thread: 'a:b:c', agent: 'session', job: 'task', queue: 'wait' }),
       ),
     /not both/i,
   )
@@ -260,7 +260,7 @@ test('a message already queued behind a running turn reports queued, not deliver
     target,
     nodes,
     edges,
-    JSON.stringify({ message: 'arrives mid-turn', thread: started.thread.sessionKey }),
+    JSON.stringify({ message: 'arrives mid-turn', thread: started.thread.sessionKey, queue: 'wait' }),
   )
   assert.deepEqual(result, { kind: 'thread', threadRef: started.thread.sessionKey, status: 'queued' })
 
@@ -293,7 +293,7 @@ test('an agent:job envelope still creates then reuses one stable session, unaffe
     target,
     nodes,
     edges,
-    JSON.stringify({ message: 'first', agent: 'agent session', job: 'task' }),
+    JSON.stringify({ message: 'first', agent: 'agent session', job: 'task', queue: 'wait' }),
   )
   assert.ok(first?.kind === 'agent', 'the first delivery must resolve the agent:job path')
   assert.equal(first.created, true)
@@ -304,7 +304,7 @@ test('an agent:job envelope still creates then reuses one stable session, unaffe
     target,
     nodes,
     edges,
-    JSON.stringify({ message: 'second', agent: 'agent session', job: 'task' }),
+    JSON.stringify({ message: 'second', agent: 'agent session', job: 'task', queue: 'wait' }),
   )
   assert.ok(second?.kind === 'agent')
   assert.equal(second.sessionKey, first.sessionKey, 'the same stable session, not a second one')
