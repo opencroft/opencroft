@@ -2018,8 +2018,14 @@ export async function listGroupChatsForAgentView(agentName: string): Promise<Age
  * code, not a second copy that drifts.
  *
  * No `front`: that flag exists for the permission flow's corrective guidance,
- * where a person is interrupting a run they are watching. An agent writing to a
- * thread-mate is an ordinary message and queues like one.
+ * where a person is interrupting a run they are watching, and it is a different
+ * axis from `queue` — position within the queue, not whether to interrupt.
+ *
+ * Whether this message waits or pushes is the CALLER's to state, and it is
+ * required of them: an agent writing to a thread-mate usually has nothing
+ * urgent, but the one sending a correction into a turn going the wrong way is
+ * exactly who `push` exists for, and this function has no way to tell those
+ * apart.
  */
 export async function sendMessageInThreadAsAgent(
   agentName: string,

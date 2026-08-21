@@ -1783,17 +1783,30 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         return { interrupted: false }
       }
       const push = opts.queue === 'push'
+      // Session records that survived a dev hot-reload may predate the queue
+      // fields (the store outlives createStore); backfill in place. Done before
+      // the interrupt decision below, which reads the queue.
+      session.queue ??= []
+      session.activeTurns ??= 0
+      // A push can carry nothing of its own: the composer's push button asks for
+      // what is already held to go through NOW, with no message of its own to
+      // add. Nothing is appended in that case — an empty message is not a
+      // message, and numbering it `[message N of M]` with no content would read
+      // as something lost in transit.
+      const adds = text.trim().length > 0
+      // A push that would deliver nothing must not interrupt anything. Empty
+      // text against an empty queue has nothing to hand over, so cancelling
+      // would end a turn purely to say nothing — and the disclaimer's own
+      // sentence, "interrupted so everything waiting could arrive at once", is
+      // only true when something is in fact waiting.
+      const willDeliver = adds || session.queue.length > 0
       // Read BEFORE cancelling, so the answer describes what this call found
       // rather than what the cancel left behind. A push against an idle session
       // interrupted nothing and must not claim otherwise.
-      const interrupted = push && session.activeTurns > 0
+      const interrupted = push && willDeliver && session.activeTurns > 0
       if (interrupted) {
         await cancelSession(sessionId)
       }
-      // Session records that survived a dev hot-reload may predate the queue
-      // fields (the store outlives createStore); backfill in place.
-      session.queue ??= []
-      session.activeTurns ??= 0
       // A running turn normally means the message must wait: ACP takes one
       // prompt-turn at a time, so it's held here (server-side, surviving the
       // client that typed it) and the snapshot published. `front` puts it
@@ -1802,16 +1815,17 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // Steering-capable agents (see supportsMidTurnInput) skip the queue
       // entirely: the prompt goes straight through and the live turn picks it
       // up as streaming input.
-      // A push can carry nothing of its own: the composer's push button asks for
-      // what is already held to go through NOW, with no message of its own to
-      // add. Nothing is appended in that case — an empty message is not a
-      // message, and numbering it `[message N of M]` with no content would read
-      // as something lost in transit.
-      const adds = text.trim().length > 0
       if (session.activeTurns > 0 && !supportsMidTurnInput(session.selection)) {
         if (adds) {
           const item: QueuedPrompt = { id: randomUUID(), text }
-          if (opts.front) {
+          // `front` is ignored under a push, rather than merely unused by the
+          // callers that push today. A push means "everything held, and this
+          // one last": held messages came first and stay first, so the newest
+          // reads as the latest word on them rather than as a preamble to
+          // messages written before it. `front` would invert exactly that, and
+          // the contract is stated in QueueMode, both tool descriptions and the
+          // node manifest — so it is enforced here instead of relied upon.
+          if (opts.front && !push) {
             session.queue.unshift(item)
           } else {
             session.queue.push(item)
@@ -1819,9 +1833,6 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         }
         // Held, not delivered: the interrupted turn has not settled yet. The
         // flag makes the drain that follows take the whole queue at once.
-        // Deliberately NOT `front` even for a push — the held messages came
-        // first and stay first, so the newest one reads as the latest word on
-        // them rather than as a preamble to messages written before it.
         if (push) {
           session.pushQueue = true
         }

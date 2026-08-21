@@ -1401,6 +1401,52 @@ test('a push with nothing held and nothing to add starts no turn', async () => {
   await h.client.deleteSession(h.sessionId)
 })
 
+test('a push that would deliver nothing does not interrupt the turn it found', async () => {
+  // Ending a turn is only justified by having something to hand over instead.
+  // With nothing held and nothing to add there is nothing to deliver, so the
+  // turn is left alone — the disclaimer's "everything waiting could arrive at
+  // once" would be a lie about an empty queue.
+  const h = await setup()
+  await h.client.prompt(h.sessionId, 'working', { queue: 'wait' })
+  assert.equal(h.client.hasActiveTurn(h.sessionId), true)
+
+  const { interrupted } = await h.client.prompt(h.sessionId, '   ', { queue: 'push' })
+  assert.equal(interrupted, false, 'nothing to deliver, so nothing was interrupted')
+  assert.equal(h.client.hasActiveTurn(h.sessionId), true, 'the turn must still be running')
+
+  h.endTurn()
+  await settle()
+  assert.deepEqual(h.promptCalls, ['working'], 'and nothing extra was ever delivered')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('push ignores front, so the new message is last however the caller asks', async () => {
+  // `push` promises "everything held, this one last" in QueueMode, in both tool
+  // descriptions and in the node manifest. `front` would invert that, so it is
+  // ignored rather than trusted not to be passed.
+  const h = await setup()
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'held', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'pushed', { front: true, queue: 'push' })
+  assert.deepEqual(queueSnapshots(h.events).at(-1), ['held', 'pushed'], 'front must not jump the queue here')
+
+  h.endTurn()
+  await settle()
+  assert.equal(h.promptCalls[1].endsWith('[message 1 of 2]\nheld\n\n[message 2 of 2]\npushed'), true, h.promptCalls[1])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('front still works for wait, which is the axis it belongs to', async () => {
+  // The guard above is specific to push; it must not quietly disable `front`
+  // for the permission flow's corrective guidance, which is what it exists for.
+  const h = await setup()
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'ordinary', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'corrective', { front: true, queue: 'wait' })
+  assert.deepEqual(queueSnapshots(h.events).at(-1), ['corrective', 'ordinary'])
+  await h.client.deleteSession(h.sessionId)
+})
+
 // The interrupt is part of what `push` MEANS, so it lives in prompt() rather
 // than at each call site — otherwise every surface has to remember to cancel
 // first, which is the same semantics written twice.
