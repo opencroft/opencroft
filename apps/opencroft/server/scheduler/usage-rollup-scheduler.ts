@@ -66,7 +66,7 @@ async function tick(): Promise<void> {
   const { day, message } = result.pendingDelivery
   try {
     const config = await getUsageRollupConfig()
-    await sendMessageInThreadAsAgent(config.deliverAgentName, config.deliverThreadRef, message)
+    await sendMessageInThreadAsAgent(config.deliverAgentName, config.deliverThreadRef, message, 'wait')
     // Committed only after the send succeeds -- a failed send leaves
     // lastDeliveredDay unset so the next tick retries instead of skipping it.
     await setUsageRollupConfig({ lastDeliveredDay: day })

@@ -1,6 +1,16 @@
 'use client'
 
-import { Send, ShieldAlert, ShieldCheck, ShieldCog, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react'
+import {
+  Send,
+  SendHorizontal,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldCog,
+  SlidersHorizontal,
+  Sparkles,
+  Square,
+  X,
+} from 'lucide-react'
 import type { KeyboardEvent, ReactNode, Ref } from 'react'
 import { Fragment, useRef, useState } from 'react'
 import { Button } from 'ui/components/ui/button'
@@ -89,6 +99,18 @@ export interface AgentCommandBarProps {
   // so the button is the only other route.
   busy?: boolean
   onStop?: () => void
+  // Push everything already waiting through to the agent now, interrupting the
+  // turn it is working on, instead of letting it drain one message per turn.
+  //
+  // Takes over the Send slot only when the composer is EMPTY and something is
+  // queued — with text typed, the button is an ordinary Send again and that
+  // message joins the queue like any other. So this never changes what an
+  // existing control does under a reaching finger: with an empty composer
+  // mid-turn the slot is otherwise empty, and this fills it. Stop keeps the
+  // trailing slot throughout, unmoved.
+  //
+  // Optional: a host that gives no handler simply never shows the affordance.
+  onPush?: () => void
   // A send is in flight, or the agent cannot accept one. Both only gate
   // sending; stopping stays available.
   sending?: boolean
@@ -167,6 +189,12 @@ export interface AgentCommandBarProps {
 // Shared metrics for every control in the action row, exported so host slots
 // can match it without copying four class names and drifting from them.
 export const commandBarControlClass = 'size-7 shrink-0'
+
+// One sentence, used as both `title` and `aria-label`. Deliberately says what
+// happens rather than naming a mechanism, and deliberately carries no count:
+// the queued strip above the composer already shows what is waiting, and a
+// number in the label would be a second place for it to be wrong.
+const PUSH_LABEL = 'Push the waiting messages through now, interrupting what the agent is doing'
 
 // The reset-contract decision behind the buffered `value` (see this
 // component's own doc comment): true when the `value` PROP has changed since
@@ -291,6 +319,7 @@ export function AgentCommandBar({
   onBlur,
   busy = false,
   onStop,
+  onPush,
   sending = false,
   disabled = false,
   leading,
@@ -336,11 +365,16 @@ export function AgentCommandBar({
   const canSend = hasText && !sending && !disabled
   const hasConfigs = Boolean(configs && configs.length > 0)
 
+  // An empty composer with messages waiting turns the Send slot into a push.
+  // Typing anything turns it back: what you wrote is a message, and it joins the
+  // queue like the rest, so the button that submits it must mean Send.
+  const canPush = !hasText && Boolean(onPush) && (queued?.length ?? 0) > 0 && !sending && !disabled
+
   // Stop is present for the whole turn; Send is only withheld from a turn with
   // nothing to queue. Without `onStop` there is no stop button to make room for,
   // so `busy` alone changes nothing -- the row stays the resting one.
   const showStop = busy && Boolean(onStop)
-  const showSend = !showStop || hasText
+  const showSend = !showStop || hasText || canPush
 
   // The button carries an icon and no text, so its current values have to live
   // somewhere reachable -- otherwise the only way to read the model you are on
@@ -569,16 +603,18 @@ export function AgentCommandBar({
               variant='ghost'
               className={commandBarControlClass}
               onMouseDown={(e) => e.preventDefault()}
-              onClick={send}
-              disabled={!canSend}
+              onClick={canPush ? onPush : send}
+              disabled={canPush ? false : !canSend}
               // Both carry an explicit name as well as a title. `title` alone
               // does name a button with no text, but weakly -- and these two
               // are now adjacent icons a press apart, one of which ends the
-              // turn. Same shape as the settings button above.
-              title='Send'
-              aria-label='Send'
+              // turn. Same shape as the settings button above. Push says what
+              // it does in full for the same reason, and says the same thing
+              // twice so a pointer and a screen reader are told the same.
+              title={canPush ? PUSH_LABEL : 'Send'}
+              aria-label={canPush ? PUSH_LABEL : 'Send'}
             >
-              <Send className='size-4' />
+              {canPush ? <SendHorizontal className='size-4' /> : <Send className='size-4' />}
             </Button>
           ) : null}
 

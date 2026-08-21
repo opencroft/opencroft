@@ -32,7 +32,6 @@ import { FastModeToggle } from './components/fast-mode-toggle'
 import { ModeSelector } from './components/mode-selector'
 import { ModelSelector } from './components/model-selector'
 import { ConfigOptionsBar } from './config-options-bar'
-
 import type { AgentChatSession } from './session'
 import type { CompactRenderState } from './use-compact-control'
 
@@ -45,7 +44,7 @@ export type { ApprovalTitles }
 // without a wrapper.
 export type AgentCommandBarSession = Pick<
   AgentChatSession,
-  'sessionKey' | 'draft' | 'send' | 'waiting' | 'stop' | 'sending' | 'disabled'
+  'sessionKey' | 'draft' | 'send' | 'waiting' | 'stop' | 'push' | 'sending' | 'disabled'
 >
 
 export interface AgentCommandBarQueuedItem {
@@ -524,6 +523,7 @@ export function useAgentCommandBar({
         onBlur={handleBlur}
         busy={session.waiting}
         onStop={session.stop}
+        onPush={session.push}
         sending={session.sending}
         disabled={session.disabled}
         leading={leadingBarContent}
@@ -557,6 +557,7 @@ export function useAgentCommandBar({
       handleBlur,
       session.waiting,
       session.stop,
+      session.push,
       session.sending,
       session.disabled,
       leadingBarContent,

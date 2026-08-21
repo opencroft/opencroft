@@ -3,7 +3,7 @@
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { usePaginatedHistory } from 'agent-chat/use-paginated-history'
 import { isTerminalToolStatus } from 'agent-client/fold'
-import type { ChatEvent, PermissionOpt, QueuedPrompt } from 'agent-client/types'
+import type { ChatEvent, PermissionOpt, QueuedPrompt, QueueMode } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 
 import type { AgentSession } from '@/app/_authed/(agent)/_components/agent-chat'
@@ -43,11 +43,17 @@ export interface LocalSource {
  * OMITTING IT MUST CHANGE NOTHING. Every existing caller passes no transport
  * and therefore runs the `promptLocal` path below, unchanged.
  */
-export type SendTransport = (args: { sessionId: string; text: string; front?: boolean }) => Promise<void>
+export type SendTransport = (args: {
+  sessionId: string
+  text: string
+  front?: boolean
+  queue: QueueMode
+}) => Promise<unknown>
 
-// The default transport: exactly the call this hook has always made.
-const promptLocalTransport: SendTransport = ({ sessionId, text, front }) =>
-  promptLocal({ data: { sessionId, text, front } })
+// The default transport: exactly the call this hook has always made, now
+// carrying the caller's queue choice rather than deciding it here.
+const promptLocalTransport: SendTransport = ({ sessionId, text, front, queue }) =>
+  promptLocal({ data: { sessionId, text, front, queue } })
 
 /**
  * How this tab's live session is opened.
@@ -532,7 +538,7 @@ export function useAcpSession(
   // so requests are chained here to reach it in send order. `front` asks the
   // server to queue ahead of anything already held.
   const deliver = useCallback(
-    (value: string, opts?: { front?: boolean }) => {
+    (value: string, opts: { front?: boolean; queue: QueueMode }) => {
       if (!sessionId) {
         return
       }
@@ -550,7 +556,12 @@ export function useAcpSession(
       setSendError(undefined)
       const chained = sendChainRef.current.then(async () => {
         try {
-          await (transportRef.current ?? promptLocalTransport)({ sessionId, text, front: opts?.front })
+          await (transportRef.current ?? promptLocalTransport)({
+            sessionId,
+            text,
+            front: opts.front,
+            queue: opts.queue,
+          })
         } catch (error) {
           console.error('promptLocal failed', error)
           setLocalWaiting(false)
@@ -591,7 +602,7 @@ export function useAcpSession(
       // Always hand the message to the server: it delivers immediately when the
       // session is idle and queues it when a turn is running. deliver() chains
       // the requests so rapid sends reach the server in send order.
-      deliver(value)
+      deliver(value, { queue: 'wait' })
     },
     [sessionId, deliver],
   )
@@ -603,7 +614,7 @@ export function useAcpSession(
     }
     const text = pending.current
     pending.current = null
-    deliver(text)
+    deliver(text, { queue: 'wait' })
   }, [sessionId, deliver])
 
   // Interrupt the running turn. The agent emits a (cancelled) turn_end, which
@@ -612,6 +623,29 @@ export function useAcpSession(
     if (sessionId) {
       void cancelLocal({ data: sessionId })
     }
+  }, [sessionId])
+
+  // Deliver everything already held NOW, interrupting the running turn. Carries
+  // no text: the button only appears with an empty composer, so there is nothing
+  // of the reader's to add — `queue: 'push'` against an empty message means
+  // "send what is waiting", and agentClient.prompt appends nothing.
+  //
+  // Deliberately NOT routed through `deliver`: that path transforms the text,
+  // claims the first-message slot and latches deliveredOnce, all of which are
+  // about a message being written. There is no message here.
+  const push = useCallback(() => {
+    if (!sessionId) {
+      return
+    }
+    setLocalWaiting(true)
+    setSendError(undefined)
+    void (transportRef.current ?? promptLocalTransport)({ sessionId, text: '', queue: 'push' }).catch(
+      (error: unknown) => {
+        console.error('push failed', error)
+        setLocalWaiting(false)
+        setSendError(error instanceof Error ? error.message : String(error))
+      },
+    )
   }, [sessionId])
 
   // Branch the session at a user turn (0-based). Switching to the fork's id
@@ -667,11 +701,11 @@ export function useAcpSession(
         return
       }
       if (canSteer) {
-        deliver(value)
+        deliver(value, { queue: 'wait' })
         return
       }
       void cancelLocal({ data: sessionId })
-      deliver(value, { front: true })
+      deliver(value, { front: true, queue: 'wait' })
     },
     [sessionId, resolvePermission, deliver, canSteer],
   )
@@ -736,6 +770,7 @@ export function useAcpSession(
       botName,
       send,
       stop,
+      push,
       canFork,
       adapterId,
       editMessage,
@@ -758,6 +793,7 @@ export function useAcpSession(
       botName,
       send,
       stop,
+      push,
       canFork,
       adapterId,
       editMessage,

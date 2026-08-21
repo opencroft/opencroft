@@ -141,7 +141,7 @@ test('compact against an idle session returns immediately and runs to completion
 test('compact against a working session queues behind the turn without interrupting it', async () => {
   const h = await setupCompactableSession()
 
-  await agentClient.prompt(h.sessionId, 'ongoing work')
+  await agentClient.prompt(h.sessionId, 'ongoing work', { queue: 'wait' })
   await waitFor(() => h.promptCalls.length > 0)
   assert.match(
     h.promptCalls[0] ?? '',
@@ -172,7 +172,7 @@ test('compact against a working session queues behind the turn without interrupt
 test('a second compact request while one is pending coalesces instead of double-firing', async () => {
   const h = await setupCompactableSession()
 
-  await agentClient.prompt(h.sessionId, 'ongoing work')
+  await agentClient.prompt(h.sessionId, 'ongoing work', { queue: 'wait' })
   await waitFor(() => h.promptCalls.length > 0)
 
   const first = await requestCompactOnGraph(h.nodes, h.edges, h.sessionKey)

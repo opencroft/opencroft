@@ -47,6 +47,11 @@ export interface AgentChatSession {
   // Cancels the in-flight turn. Absent on a session with no live process to
   // cancel (e.g. a placeholder session with nothing selected yet).
   stop?: () => void
+  // Deliver everything already queued NOW, interrupting the running turn,
+  // instead of letting it drain one message per turn. Carries no message of its
+  // own — this is the composer's push button, pressed with nothing typed.
+  // Absent on a session that cannot queue, which simply never shows the button.
+  push?: () => void
   // Whether `editMessage` is meaningful for this session — a session that
   // cannot fork/rewind leaves both this and `editMessage` unset rather than
   // supplying a no-op.

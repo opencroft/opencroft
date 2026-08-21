@@ -518,9 +518,9 @@ test('a session_info_update notification updates the session title and emits it'
 
 test('prompt during an active turn queues and emits a snapshot', async () => {
   const h = await setup()
-  await h.client.prompt(h.sessionId, 'first')
-  await h.client.prompt(h.sessionId, 'second')
-  await h.client.prompt(h.sessionId, 'third')
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'third', { queue: 'wait' })
   // Only the first prompt reached the agent; the rest were held.
   assert.deepEqual(h.promptCalls, ['first'])
   assert.deepEqual(queueSnapshots(h.events), [['second'], ['second', 'third']])
@@ -529,9 +529,9 @@ test('prompt during an active turn queues and emits a snapshot', async () => {
 
 test('turn end drains the queue in order, one message per turn', async () => {
   const h = await setup()
-  await h.client.prompt(h.sessionId, 'first')
-  await h.client.prompt(h.sessionId, 'second')
-  await h.client.prompt(h.sessionId, 'third')
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'third', { queue: 'wait' })
   h.endTurn()
   await settle()
   // One drained delivery per turn end, not the whole queue at once.
@@ -553,9 +553,9 @@ test('turn end drains the queue in order, one message per turn', async () => {
 
 test('front-queued prompt jumps the line', async () => {
   const h = await setup()
-  await h.client.prompt(h.sessionId, 'first')
-  await h.client.prompt(h.sessionId, 'second')
-  await h.client.prompt(h.sessionId, 'urgent', { front: true })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'urgent', { front: true, queue: 'wait' })
   assert.deepEqual(queueSnapshots(h.events).at(-1), ['urgent', 'second'])
   h.endTurn()
   await settle()
@@ -565,9 +565,9 @@ test('front-queued prompt jumps the line', async () => {
 
 test('removeQueued drops a held message and is a no-op for unknown ids', async () => {
   const h = await setup()
-  await h.client.prompt(h.sessionId, 'first')
-  await h.client.prompt(h.sessionId, 'second')
-  await h.client.prompt(h.sessionId, 'third')
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'third', { queue: 'wait' })
   const queued = h.events.filter((event) => event.kind === 'queue').at(-1)
   assert.ok(queued && queued.kind === 'queue')
   h.client.removeQueued(h.sessionId, queued.items[0].id)
@@ -584,8 +584,8 @@ test('removeQueued drops a held message and is a no-op for unknown ids', async (
 
 test('a failed turn emits an error and still drains the queue', async () => {
   const h = await setup()
-  await h.client.prompt(h.sessionId, 'first')
-  await h.client.prompt(h.sessionId, 'second')
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait' })
   h.failTurn('boom')
   await settle()
   const errorIndex = h.events.findIndex((event) => event.kind === 'error')
@@ -617,8 +617,8 @@ test('a mid-turn prompt on a steering adapter goes straight through, unqueued', 
   const restore = enableMidTurnInput('claude')
   try {
     const h = await setup('claude')
-    await h.client.prompt(h.sessionId, 'first')
-    await h.client.prompt(h.sessionId, 'steer')
+    await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+    await h.client.prompt(h.sessionId, 'steer', { queue: 'wait' })
     // Both prompts reached the connection while the first turn was still open.
     assert.deepEqual(h.promptCalls, ['first', 'steer'])
     assert.equal(h.events.filter((event) => event.kind === 'user').length, 2)
@@ -636,8 +636,8 @@ test('overlapping prompts emit turn_end only on the last settlement', async () =
   const restore = enableMidTurnInput('claude')
   try {
     const h = await setup('claude')
-    await h.client.prompt(h.sessionId, 'first')
-    await h.client.prompt(h.sessionId, 'steer')
+    await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+    await h.client.prompt(h.sessionId, 'steer', { queue: 'wait' })
     h.endTurn()
     await settle()
     // One of two prompts settled — the turn is still running.
@@ -655,8 +655,8 @@ test('an intermediate failure surfaces immediately; turn_end still waits for the
   const restore = enableMidTurnInput('claude')
   try {
     const h = await setup('claude')
-    await h.client.prompt(h.sessionId, 'first')
-    await h.client.prompt(h.sessionId, 'steer')
+    await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+    await h.client.prompt(h.sessionId, 'steer', { queue: 'wait' })
     h.failTurn('boom')
     await settle()
     assert.equal(h.events.filter((event) => event.kind === 'error').length, 1)
@@ -674,8 +674,8 @@ test('an intermediate failure surfaces immediately; turn_end still waits for the
 // mid-turn prompts like any other — the flag alone decides.
 test('a mid-turn prompt without the capability queues even on the claude adapter', async () => {
   const h = await setup('claude')
-  await h.client.prompt(h.sessionId, 'first')
-  await h.client.prompt(h.sessionId, 'second')
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait' })
   assert.deepEqual(h.promptCalls, ['first'])
   assert.deepEqual(queueSnapshots(h.events), [['second']])
   h.endTurn()
@@ -796,7 +796,7 @@ test('activeSessionKeys is empty before any prompt is sent', async () => {
 
 test('activeSessionKeys includes the key while a turn is in flight, and drops it once the turn ends', async () => {
   const h = await setup('openclaw', { sessionKey: 'agent:carol:test' })
-  await h.client.prompt(h.sessionId, 'hello')
+  await h.client.prompt(h.sessionId, 'hello', { queue: 'wait' })
   assert.deepEqual(h.client.activeSessionKeys(), ['agent:carol:test'])
   h.endTurn()
   await settle()
@@ -805,7 +805,7 @@ test('activeSessionKeys includes the key while a turn is in flight, and drops it
 
 test('a session created without a sessionKey never appears, even mid-turn', async () => {
   const h = await setup()
-  await h.client.prompt(h.sessionId, 'hello')
+  await h.client.prompt(h.sessionId, 'hello', { queue: 'wait' })
   assert.deepEqual(h.client.activeSessionKeys(), [])
 })
 
@@ -963,7 +963,7 @@ test('restoreUsage on an unknown session is a no-op', async () => {
 
 test('a lower reading mid-turn is held; the ring keeps growing or holding, never drops', async () => {
   const h = await setup('openclaw', { contextWindow: 200_000 })
-  await h.client.prompt(h.sessionId, 'hello')
+  await h.client.prompt(h.sessionId, 'hello', { queue: 'wait' })
   for (const used of [50_000, 200, 800]) {
     handleUpdate({
       sessionId: h.sessionId,
@@ -986,7 +986,7 @@ test('the held reading is not lost: it applies once the turn ends', async () => 
   // A genuine decrease (e.g. after compaction) still reaches the display —
   // just at the boundary rather than mid-turn.
   const h = await setup('openclaw', { contextWindow: 200_000 })
-  await h.client.prompt(h.sessionId, 'hello')
+  await h.client.prompt(h.sessionId, 'hello', { queue: 'wait' })
   handleUpdate({
     sessionId: h.sessionId,
     update: { sessionUpdate: 'usage_update', used: 50_000, size: 200_000 },
@@ -1018,7 +1018,7 @@ test('a turn boundary with no held-back reading re-emits nothing', async () => {
   // The common case: the last mid-turn reading already matches what settled
   // at the boundary, so there is nothing new to tell a subscriber.
   const h = await setup('openclaw', { contextWindow: 200_000 })
-  await h.client.prompt(h.sessionId, 'hello')
+  await h.client.prompt(h.sessionId, 'hello', { queue: 'wait' })
   handleUpdate({
     sessionId: h.sessionId,
     update: { sessionUpdate: 'usage_update', used: 50_000, size: 200_000 },
@@ -1033,7 +1033,7 @@ test('a turn boundary with no held-back reading re-emits nothing', async () => {
 
 test('the first reading of a turn always applies, however low, when nothing was displayed yet', async () => {
   const h = await setup('openclaw', { contextWindow: 200_000 })
-  await h.client.prompt(h.sessionId, 'hello')
+  await h.client.prompt(h.sessionId, 'hello', { queue: 'wait' })
   handleUpdate({
     sessionId: h.sessionId,
     update: { sessionUpdate: 'usage_update', used: 200, size: 200_000 },
@@ -1080,7 +1080,7 @@ test('a bridged window can no longer flip mid-turn: the wire does not decide it 
   // switches mid-session resolves a different discovered window.
   const h = await setup('openclaw', { contextWindow: 1_000_000 })
   h.client.restoreUsage(h.sessionId, { used: 609_000, size: 200_000 })
-  await h.client.prompt(h.sessionId, 'hello')
+  await h.client.prompt(h.sessionId, 'hello', { queue: 'wait' })
   handleUpdate({
     sessionId: h.sessionId,
     update: { sessionUpdate: 'usage_update', used: 5_000, size: 1_000_000 },
@@ -1097,7 +1097,7 @@ test('a bridged window can no longer flip mid-turn: the wire does not decide it 
 test('a same-size lower reading mid-turn is still held (the shipped monotonic behaviour, unchanged)', async () => {
   const h = await setup('openclaw', { contextWindow: 1_000_000 })
   h.client.restoreUsage(h.sessionId, { used: 609_000, size: 200_000 })
-  await h.client.prompt(h.sessionId, 'hello')
+  await h.client.prompt(h.sessionId, 'hello', { queue: 'wait' })
   handleUpdate({
     sessionId: h.sessionId,
     update: { sessionUpdate: 'usage_update', used: 5_000, size: 200_000 },
@@ -1217,7 +1217,7 @@ test('a session sitting exactly at its configured window still shows the ratio',
 test('hasActiveTurn is false before any prompt and true while one is in flight', async () => {
   const h = await setup()
   assert.equal(h.client.hasActiveTurn(h.sessionId), false)
-  await h.client.prompt(h.sessionId, 'hello')
+  await h.client.prompt(h.sessionId, 'hello', { queue: 'wait' })
   assert.equal(h.client.hasActiveTurn(h.sessionId), true)
   h.endTurn()
   await settle()
@@ -1246,7 +1246,7 @@ test('refreshMcpServers resumes an idle session right away', async () => {
 
 test('refreshMcpServers does not resume a session with a turn in flight, and applies it once the turn settles', async () => {
   const h = await setup()
-  await h.client.prompt(h.sessionId, 'hello')
+  await h.client.prompt(h.sessionId, 'hello', { queue: 'wait' })
   await h.client.refreshMcpServers()
   assert.deepEqual(h.resumeCalls, [], 'a live turn must not be interrupted by a resume')
   assert.equal(h.client.hasActiveTurn(h.sessionId), true, 'refreshMcpServers must not itself end the turn')
@@ -1258,8 +1258,8 @@ test('refreshMcpServers does not resume a session with a turn in flight, and app
 
 test('a queued prompt still delivers after a deferred MCP resume runs', async () => {
   const h = await setup()
-  await h.client.prompt(h.sessionId, 'first')
-  await h.client.prompt(h.sessionId, 'second') // queues: a turn is already active
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait' }) // queues: a turn is already active
   await h.client.refreshMcpServers() // deferred: 'first' is still in flight
   h.endTurn() // ends 'first'
   await settle()
@@ -1281,8 +1281,8 @@ test('a queued prompt still delivers after a deferred MCP resume runs', async ()
 
 test('cancelling the active turn does not disrupt the queue; the queued message still drains once the turn settles', async () => {
   const h = await setup()
-  await h.client.prompt(h.sessionId, 'first')
-  await h.client.prompt(h.sessionId, 'second') // queues: a turn is already active
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait' }) // queues: a turn is already active
   assert.deepEqual(queueSnapshots(h.events).at(-1), ['second'])
   await h.client.cancel(h.sessionId) // the mock connection's cancel is a no-op; real settlement is separate
   assert.equal(h.client.hasActiveTurn(h.sessionId), true, 'cancel alone must not touch activeTurns')
@@ -1298,10 +1298,10 @@ test('cancelling the active turn does not disrupt the queue; the queued message 
 // act on each stale message first and only then reach the newest one.
 test('a flushing prompt delivers the whole queue and itself as ONE turn, in order, itself last', async () => {
   const h = await setup()
-  await h.client.prompt(h.sessionId, 'first')
-  await h.client.prompt(h.sessionId, 'second')
-  await h.client.prompt(h.sessionId, 'third')
-  await h.client.prompt(h.sessionId, 'forced', { flush: true })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'third', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'forced', { queue: 'push' })
   // Still held: the interrupted turn has not settled yet.
   assert.deepEqual(h.promptCalls, ['first'])
   assert.deepEqual(queueSnapshots(h.events).at(-1), ['second', 'third', 'forced'])
@@ -1310,9 +1310,15 @@ test('a flushing prompt delivers the whole queue and itself as ONE turn, in orde
   await settle()
 
   // One delivery carrying all three, in the order sent, the forced one last —
-  // and each still individually readable.
+  // and each still individually readable. Asserted as the TAIL of the delivery:
+  // the disclaimer that precedes it is pinned once, in its own test below, so a
+  // reword does not have to be chased through every test that pushes.
   assert.equal(h.promptCalls.length, 2)
-  assert.equal(h.promptCalls[1], '[message 1 of 3]\nsecond\n\n[message 2 of 3]\nthird\n\n[message 3 of 3]\nforced')
+  assert.equal(
+    h.promptCalls[1].endsWith('[message 1 of 3]\nsecond\n\n[message 2 of 3]\nthird\n\n[message 3 of 3]\nforced'),
+    true,
+    h.promptCalls[1],
+  )
   // Nothing left displayed as Queued.
   assert.deepEqual(queueSnapshots(h.events).at(-1), [])
   // One turn, not three: a single user event for the flushed delivery.
@@ -1325,27 +1331,111 @@ test('a flushing prompt delivers the whole queue and itself as ONE turn, in orde
 
 test('a flushing prompt with nothing held reads exactly like an ordinary send', async () => {
   const h = await setup()
-  await h.client.prompt(h.sessionId, 'first')
-  await h.client.prompt(h.sessionId, 'forced', { flush: true })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'forced', { queue: 'push' })
   h.endTurn()
   await settle()
-  // No framing to explain when there is only one message.
+  // No framing AND no disclaimer when there is only one message — a batch of
+  // one is not a batch, so there is nothing to explain.
   assert.deepEqual(h.promptCalls, ['first', 'forced'])
+  await h.client.deleteSession(h.sessionId)
+})
+
+// The disclaimer's wording, pinned in one place and written out rather than
+// composed. An interrupt destroys the cancelled turn's reasoning while leaving
+// its transcript, so an agent told only that it *may* continue tends to start
+// the task again — the thing this text exists to prevent.
+test('a pushed batch tells the agent to re-read what it did and continue, not that it may continue', async () => {
+  const h = await setup()
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'third', { queue: 'push' })
+  h.endTurn()
+  await settle()
+
+  const delivered = h.promptCalls[1]
+  assert.equal(
+    delivered.startsWith(
+      '[2 messages delivered together]\n' +
+        'Your turn was interrupted so everything waiting for you could arrive at once. The interrupt does\n' +
+        'not by itself mean the work you were doing was wrong or should be dropped — these messages may\n' +
+        'correct it, re-prioritise it, or have nothing to do with it.\n' +
+        '\n' +
+        'The interrupted turn left its transcript but not its reasoning. Re-read what you had already done,\n' +
+        'then continue from there — do not start the task over.\n\n',
+    ),
+    true,
+    delivered,
+  )
+  await h.client.deleteSession(h.sessionId)
+})
+
+// The composer's push button presses with an empty composer: it asks for what is
+// already held to go through now and has nothing of its own to add.
+test('a push with no text of its own delivers what is held and adds nothing', async () => {
+  const h = await setup()
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'third', { queue: 'wait' })
+  assert.deepEqual(queueSnapshots(h.events).at(-1), ['second', 'third'])
+
+  const { interrupted } = await h.client.prompt(h.sessionId, '', { queue: 'push' })
+  assert.equal(interrupted, true)
+  // Nothing appended — still the two that were waiting, not three.
+  assert.deepEqual(queueSnapshots(h.events).at(-1), ['second', 'third'])
+
+  h.endTurn()
+  await settle()
+  assert.equal(h.promptCalls.length, 2)
+  assert.equal(h.promptCalls[1].endsWith('[message 1 of 2]\nsecond\n\n[message 2 of 2]\nthird'), true, h.promptCalls[1])
+  assert.equal(h.promptCalls[1].includes('[message 3 of'), false, 'an empty message must not be numbered in')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a push with nothing held and nothing to add starts no turn', async () => {
+  // The button pressed against a queue that drained between render and click.
+  const h = await setup()
+  const { interrupted } = await h.client.prompt(h.sessionId, '', { queue: 'push' })
+  assert.equal(interrupted, false)
+  assert.deepEqual(h.promptCalls, [], 'an empty prompt would start a turn saying nothing')
+  await h.client.deleteSession(h.sessionId)
+})
+
+// The interrupt is part of what `push` MEANS, so it lives in prompt() rather
+// than at each call site — otherwise every surface has to remember to cancel
+// first, which is the same semantics written twice.
+test('push interrupts a running turn and says so; wait never interrupts', async () => {
+  const h = await setup()
+  const idle = await h.client.prompt(h.sessionId, 'first', { queue: 'push' })
+  assert.equal(idle.interrupted, false, 'nothing was running, so nothing was interrupted')
+
+  const held = await h.client.prompt(h.sessionId, 'waited', { queue: 'wait' })
+  assert.equal(held.interrupted, false, 'wait never interrupts, however busy the session is')
+  assert.equal(h.client.hasActiveTurn(h.sessionId), true)
+
+  const pushed = await h.client.prompt(h.sessionId, 'pushed', { queue: 'push' })
+  assert.equal(pushed.interrupted, true, 'a turn was running, so this one did interrupt it')
+
+  h.endTurn()
+  await settle()
+  // Both held messages arrive in the one delivery the interrupt bought.
+  assert.equal(h.promptCalls.length, 2)
+  assert.equal(h.promptCalls[1].endsWith('[message 1 of 2]\nwaited\n\n[message 2 of 2]\npushed'), true)
   await h.client.deleteSession(h.sessionId)
 })
 
 test('a flush does not change how later ordinary sends drain', async () => {
   const h = await setup()
-  await h.client.prompt(h.sessionId, 'first')
-  await h.client.prompt(h.sessionId, 'second')
-  await h.client.prompt(h.sessionId, 'forced', { flush: true })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'forced', { queue: 'push' })
   h.endTurn()
   await settle()
   assert.equal(h.promptCalls.length, 2)
 
   // The flag is spent, so the queue goes back to one message per turn.
-  await h.client.prompt(h.sessionId, 'later-a')
-  await h.client.prompt(h.sessionId, 'later-b')
+  await h.client.prompt(h.sessionId, 'later-a', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'later-b', { queue: 'wait' })
   h.endTurn()
   await settle()
   assert.equal(h.promptCalls.at(-1), 'later-a')
@@ -1369,7 +1459,7 @@ test('transformDeliveredPrompt is applied on an immediate, idle delivery', async
       return `[stamped] ${text}`
     },
   })
-  await h.client.prompt(h.sessionId, 'hello')
+  await h.client.prompt(h.sessionId, 'hello', { queue: 'wait' })
   assert.deepEqual(calls, ['hello'])
   assert.deepEqual(h.promptCalls, ['[stamped] hello'])
   await h.client.deleteSession(h.sessionId)
@@ -1383,8 +1473,8 @@ test('transformDeliveredPrompt runs at drain time, not at the moment a message q
       return `[stamped] ${text}`
     },
   })
-  await h.client.prompt(h.sessionId, 'first') // delivers immediately: session was idle
-  await h.client.prompt(h.sessionId, 'second') // queues: a turn is already active
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait' }) // delivers immediately: session was idle
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait' }) // queues: a turn is already active
   assert.deepEqual(calls, ['first'], 'the still-queued message must not be transformed yet')
 
   h.endTurn()
@@ -1402,16 +1492,19 @@ test('a flush-joined batch is transformed once, as the joined delivery, not once
       return `[stamped] ${text}`
     },
   })
-  await h.client.prompt(h.sessionId, 'first')
-  await h.client.prompt(h.sessionId, 'second')
-  await h.client.prompt(h.sessionId, 'forced', { flush: true })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'forced', { queue: 'push' })
   assert.deepEqual(calls, ['first'], 'nothing held is transformed before the flush actually delivers')
 
   h.endTurn()
   await settle()
   assert.equal(calls.length, 2, 'one call for the idle first delivery, one for the whole joined flush')
-  assert.equal(calls[1], '[message 1 of 2]\nsecond\n\n[message 2 of 2]\nforced')
-  assert.equal(h.promptCalls[1], '[stamped] [message 1 of 2]\nsecond\n\n[message 2 of 2]\nforced')
+  // What this test is about is that the transform saw the JOINED delivery once,
+  // not each message — so it asserts the shape of what it saw, not the
+  // disclaimer's wording, which is pinned in its own test.
+  assert.equal(calls[1].endsWith('[message 1 of 2]\nsecond\n\n[message 2 of 2]\nforced'), true, calls[1])
+  assert.equal(h.promptCalls[1], `[stamped] ${calls[1]}`)
   await h.client.deleteSession(h.sessionId)
 })
 

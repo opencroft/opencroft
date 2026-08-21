@@ -112,6 +112,27 @@ export interface QueuedPrompt {
   text: string
 }
 
+/**
+ * How a message relates to the queue it is being sent into. Required at every
+ * send surface rather than defaulted: sending into a busy session is a real
+ * choice, and a default would make it silently for the caller.
+ *
+ * - `wait` — the message is held until the running turn ends, then delivered on
+ *   its own. It is the MESSAGE that waits, never the caller: a send resolves as
+ *   soon as the message is safely held, because blocking until an agent
+ *   finished would hang a caller for tens of minutes.
+ * - `push` — interrupt whatever is running and deliver everything held, this
+ *   message included and last, as ONE turn. One interrupt for the whole queue
+ *   rather than one per held message.
+ *
+ * Against an EMPTY queue the two are the same ordinary send, framing and
+ * disclaimer included, because a batch of one is not a batch.
+ *
+ * Defined here, and the behaviour implemented once in `agentClient.prompt`, so
+ * surfaces differ only in how they are addressed — never in what these mean.
+ */
+export type QueueMode = 'wait' | 'push'
+
 export type ChatEvent =
   | { kind: 'user'; text: string }
   | { kind: 'agent_message'; text: string }

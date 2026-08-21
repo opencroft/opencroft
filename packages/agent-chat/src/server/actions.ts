@@ -10,7 +10,7 @@ import {
   resolveSessionPermissions,
 } from 'agent-client/permissions'
 import type { AgentProfile, ProfilesFile } from 'agent-client/profiles'
-import type { AgentSelection, SessionMeta } from 'agent-client/types'
+import type { AgentSelection, QueueMode, SessionMeta } from 'agent-client/types'
 
 import { getRuntime, type RoleRecord, type SkillRecord } from './runtime'
 
@@ -166,13 +166,17 @@ export const forkAgentSession = (sessionId: string, dropFromTurn?: number) =>
 
 // ---- Turn control ----
 
+// `queue` is required here for the same reason it is required everywhere else:
+// sending into a session that may be busy is a choice, and a default would make
+// it on the caller's behalf without telling them. See QueueMode.
 const _sendAgentPrompt = createServerFn({ method: 'POST' })
-  .inputValidator((data: { sessionId: string; text: string }) => data)
+  .inputValidator((data: { sessionId: string; text: string; queue: QueueMode }) => data)
   .handler(async ({ data }) => {
-    await getRuntime().agent.prompt(data.sessionId, data.text)
-    return { ok: true }
+    const { interrupted } = await getRuntime().agent.prompt(data.sessionId, data.text, { queue: data.queue })
+    return { ok: true, interrupted }
   })
-export const sendAgentPrompt = (sessionId: string, text: string) => _sendAgentPrompt({ data: { sessionId, text } })
+export const sendAgentPrompt = (sessionId: string, text: string, queue: QueueMode) =>
+  _sendAgentPrompt({ data: { sessionId, text, queue } })
 
 const _cancelAgentTurn = createServerFn({ method: 'POST' })
   .inputValidator((sessionId: string) => sessionId)

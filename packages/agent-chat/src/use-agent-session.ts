@@ -331,7 +331,7 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
         }
       }
       setTurnActive(true)
-      void sendAgentPrompt(id, text)
+      void sendAgentPrompt(id, text, 'wait')
     },
     [turnActive, sessionId, canStart, selection, resetSessionState],
   )
@@ -388,7 +388,7 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
         pendingPrompt.current = value
       } else {
         setTurnActive(true)
-        void sendAgentPrompt(sessionId, value)
+        void sendAgentPrompt(sessionId, value, 'wait')
       }
     },
     [sessionId, turnActive],
@@ -400,7 +400,7 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
     const text = pendingPrompt.current
     pendingPrompt.current = null
     setTurnActive(true)
-    void sendAgentPrompt(sessionId, text)
+    void sendAgentPrompt(sessionId, text, 'wait')
   }, [turnActive, sessionId])
 
   // The named session-shape contract (session.ts) this controller satisfies,

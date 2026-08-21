@@ -450,7 +450,7 @@ test('a non-member calling sendMessageInThread is refused before any agent sessi
   assert.ok(thread)
 
   await assert.rejects(
-    () => model.sendMessageInThread(reqAs(outsider), thread.id, 'let me in'),
+    () => model.sendMessageInThread(reqAs(outsider), thread.id, 'let me in', { queue: 'wait' }),
     (error: unknown) => {
       assert.ok(error instanceof model.GroupChatAccessError, 'must be the access error, not some other failure')
       assert.equal(error.code, 'not-found')
@@ -550,13 +550,15 @@ test('a non-member cannot send into a thread', async () => {
     .returning()
   assert.ok(thread)
 
-  const refusal = await captureRefusal(() => model.sendMessageInThread(reqAs(outsider), thread.id, 'let me in'))
+  const refusal = await captureRefusal(() =>
+    model.sendMessageInThread(reqAs(outsider), thread.id, 'let me in', { queue: 'wait' }),
+  )
   assert.equal(refusal.code, 'not-found')
 
   // And a fabricated thread id refuses identically, so sending is not a way to
   // probe which threads exist either.
   const fabricated = await captureRefusal(() =>
-    model.sendMessageInThread(reqAs(outsider), crypto.randomUUID(), 'hello'),
+    model.sendMessageInThread(reqAs(outsider), crypto.randomUUID(), 'hello', { queue: 'wait' }),
   )
   assert.equal(fabricated.code, refusal.code)
   assert.equal(fabricated.message, refusal.message)
@@ -756,7 +758,9 @@ test('removing an agent stops sends into its existing threads, which are kept, n
   // And sending into it is refused, with a code distinct from the not-found
   // collapse: the caller is a member and can see the thread, so telling them
   // why is not a leak.
-  const refusal = await captureRefusal(() => model.sendMessageInThread(reqAs(owner), thread.id, 'still there?'))
+  const refusal = await captureRefusal(() =>
+    model.sendMessageInThread(reqAs(owner), thread.id, 'still there?', { queue: 'wait' }),
+  )
   assert.equal(refusal.code, 'agent-not-a-member')
 })
 
@@ -914,13 +918,15 @@ test('an anonymous request cannot send into a thread', async () => {
     .returning()
   assert.ok(thread)
 
-  const refusal = await captureRefusal(() => model.sendMessageInThread(reqAnonymous(), thread.id, 'hello'))
+  const refusal = await captureRefusal(() =>
+    model.sendMessageInThread(reqAnonymous(), thread.id, 'hello', { queue: 'wait' }),
+  )
   assert.equal(refusal.code, 'unauthenticated')
 })
 
 // `promptLocalImpl` hands the message to the client's queue and returns; the
 // queue then dispatches to the connection without the caller awaiting it (see
-// agent-client's `void connection.prompt(...)`). So a test that inspects what
+// agent-client's `void connection.prompt(..., { queue: 'wait' })`). So a test that inspects what
 // the agent received has to wait for the dispatch rather than assume it has
 // already happened -- asserting straight after the call is a race that passes
 // on a fast machine.
@@ -1039,18 +1045,18 @@ test('a changed topic rides the next send into an open thread, once', async () =
   assert.match(prompts[0] ?? '', /the first purpose/, 'a new thread is told the topic as it stands')
 
   // Nothing has changed, so an ordinary send carries nothing extra.
-  await model.sendMessageInThread(reqAs(owner), first.thread.id, 'an ordinary message')
+  await model.sendMessageInThread(reqAs(owner), first.thread.id, 'an ordinary message', { queue: 'wait' })
   await waitForPrompts(prompts, 2)
   assert.doesNotMatch(prompts[1] ?? '', /the first purpose/, 'unchanged context is not restated on every turn')
 
   await model.setGroupChatTopic(reqAs(owner), chat.id, 'the second purpose')
 
-  await model.sendMessageInThread(reqAs(owner), first.thread.id, 'a message after the edit')
+  await model.sendMessageInThread(reqAs(owner), first.thread.id, 'a message after the edit', { queue: 'wait' })
   await waitForPrompts(prompts, 3)
   assert.match(prompts[2] ?? '', /the second purpose/, 'the change rides the next message into the open thread')
 
   // ONCE. The thread has now been told, so the message after it is plain again.
-  await model.sendMessageInThread(reqAs(owner), first.thread.id, 'and one more')
+  await model.sendMessageInThread(reqAs(owner), first.thread.id, 'and one more', { queue: 'wait' })
   await waitForPrompts(prompts, 4)
   assert.doesNotMatch(prompts[3] ?? '', /the second purpose/, 'and is not repeated on every message afterwards')
 
@@ -1102,14 +1108,14 @@ test('a changed pin set rides the next send the same way the topic does', async 
   await waitForPrompts(prompts, 1)
 
   const pin = await model.addPin(reqAs(owner), chat.id, 'do not deploy on a Friday')
-  await model.sendMessageInThread(reqAs(owner), thread.thread.id, 'after pinning')
+  await model.sendMessageInThread(reqAs(owner), thread.thread.id, 'after pinning', { queue: 'wait' })
   await waitForPrompts(prompts, 2)
   assert.match(prompts[1] ?? '', /do not deploy on a Friday/, 'a new pin reaches the open thread')
 
   // And unpinning everything is itself a change: the block goes away, and the
   // thread is not told about pins it no longer has.
   await model.removePin(reqAs(owner), pin.id)
-  await model.sendMessageInThread(reqAs(owner), thread.thread.id, 'after unpinning')
+  await model.sendMessageInThread(reqAs(owner), thread.thread.id, 'after unpinning', { queue: 'wait' })
   await waitForPrompts(prompts, 3)
   assert.doesNotMatch(prompts[2] ?? '', /do not deploy on a Friday/, 'an unpinned note stops being delivered')
   assert.doesNotMatch(prompts[2] ?? '', /standing guidance/, 'and no empty reminder block is sent in its place')
@@ -1616,7 +1622,7 @@ test('a first prompt that fails leaves the context unrecorded, and a later send 
 
   // And because it is NULL rather than recorded, the ordinary once-on-change
   // path re-delivers it on the next send -- no second recovery mechanism.
-  await model.sendMessageInThread(reqAs(owner), row.id, 'trying again')
+  await model.sendMessageInThread(reqAs(owner), row.id, 'trying again', { queue: 'wait' })
   await waitForPrompts(prompts, 1)
   assert.match(prompts[0] ?? '', /the purpose that must arrive/, 'the topic reaches the agent on the retry')
   assert.match(prompts[0] ?? '', /and the pin that must arrive with it/, 'and so do the pins')
@@ -1854,7 +1860,7 @@ test('an agent can send into a thread of a chat it is in, through the shared del
   const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message')
   await waitForPrompts(prompts, 1)
 
-  await model.sendMessageInThreadAsAgent('Agent Solo', started.thread.id, '  please review the change  ')
+  await model.sendMessageInThreadAsAgent('Agent Solo', started.thread.id, '  please review the change  ', 'wait')
   await waitForPrompts(prompts, 2)
 
   assert.match(prompts[1] ?? '', /please review the change/, 'the message reaches the thread agent')
@@ -1877,9 +1883,11 @@ test('an agent cannot send into a thread of a chat it is not in, and cannot tell
   assert.ok(thread)
 
   // 'Agent Solo' is a real agent, and not a member of this chat.
-  const outsider = await captureRefusal(() => model.sendMessageInThreadAsAgent('Agent Solo', thread.id, 'hello'))
+  const outsider = await captureRefusal(() =>
+    model.sendMessageInThreadAsAgent('Agent Solo', thread.id, 'hello', 'wait'),
+  )
   const fabricated = await captureRefusal(() =>
-    model.sendMessageInThreadAsAgent('Agent Solo', crypto.randomUUID(), 'hello'),
+    model.sendMessageInThreadAsAgent('Agent Solo', crypto.randomUUID(), 'hello', 'wait'),
   )
 
   assert.equal(outsider.code, 'not-found')
@@ -1931,7 +1939,7 @@ test('an agent may send into a thread whose agent is itself', async () => {
   await waitForPrompts(prompts, 1)
 
   // Same agent on both ends: the sender and the thread's agent.
-  await model.sendMessageInThreadAsAgent('Agent Session', started.thread.id, 'take the next review')
+  await model.sendMessageInThreadAsAgent('Agent Session', started.thread.id, 'take the next review', 'wait')
   await waitForPrompts(prompts, 2)
   assert.match(prompts[1] ?? '', /take the next review/)
 })
@@ -1956,7 +1964,9 @@ test('a removed agent cannot be reached by an agent sender either', async () => 
 
   // The sender is still a member; the thread's agent is not. The rule lives in
   // the shared delivery path, so it holds for whoever is sending.
-  const refusal = await captureRefusal(() => model.sendMessageInThreadAsAgent('Agent Solo', thread.id, 'still there?'))
+  const refusal = await captureRefusal(() =>
+    model.sendMessageInThreadAsAgent('Agent Solo', thread.id, 'still there?', 'wait'),
+  )
   assert.equal(refusal.code, 'agent-not-a-member')
 })
 
@@ -2154,25 +2164,30 @@ test('deliverThreadFromNode resolves the same forms sendMessageInThreadAsAgent d
 
   const alwaysReachable = () => true
 
-  await model.deliverThreadFromNode('node-delivery-forms:agent-session:standup', 'by path', alwaysReachable)
+  await model.deliverThreadFromNode('node-delivery-forms:agent-session:standup', 'by path', alwaysReachable, 'wait')
   await waitForPrompts(prompts, 2)
   assert.match(prompts[1] ?? '', /by path/)
 
-  await model.deliverThreadFromNode(started.thread.sessionKey, 'by key', alwaysReachable)
+  await model.deliverThreadFromNode(started.thread.sessionKey, 'by key', alwaysReachable, 'wait')
   await waitForPrompts(prompts, 3)
   assert.match(prompts[2] ?? '', /by key/)
 
-  await model.deliverThreadFromNode(started.thread.id, 'by id', alwaysReachable)
+  await model.deliverThreadFromNode(started.thread.id, 'by id', alwaysReachable, 'wait')
   await waitForPrompts(prompts, 4)
   assert.match(prompts[3] ?? '', /by id/)
 })
 
 test('deliverThreadFromNode reports not-found for an unresolvable reference without calling isReachable', async () => {
   let called = false
-  const outcome = await model.deliverThreadFromNode('nothing:here:at-all', 'hello', () => {
-    called = true
-    return true
-  })
+  const outcome = await model.deliverThreadFromNode(
+    'nothing:here:at-all',
+    'hello',
+    () => {
+      called = true
+      return true
+    },
+    'wait',
+  )
   assert.deepEqual(outcome, { status: 'not-found' })
   assert.equal(called, false, 'a reference that resolves to nothing has no agent to check reachability for')
 })
@@ -2245,8 +2260,8 @@ test('two concurrent deliveries into a brand-new thread session produce exactly 
 
   const alwaysReachable = () => true
   await Promise.all([
-    model.deliverThreadFromNode(thread.sessionKey, 'first', alwaysReachable),
-    model.deliverThreadFromNode(thread.sessionKey, 'second', alwaysReachable),
+    model.deliverThreadFromNode(thread.sessionKey, 'first', alwaysReachable, 'wait'),
+    model.deliverThreadFromNode(thread.sessionKey, 'second', alwaysReachable, 'wait'),
   ])
 
   assert.equal(
@@ -2274,7 +2289,7 @@ test('deliverThreadFromNode reports not-reachable and delivers nothing when the 
 
   // The predicate is authoritative and caller-supplied — this proves the seam
   // itself, independent of any real graph or reachablePairs computation.
-  const outcome = await model.deliverThreadFromNode(thread.sessionKey, 'should not land', () => false)
+  const outcome = await model.deliverThreadFromNode(thread.sessionKey, 'should not land', () => false, 'wait')
   assert.deepEqual(outcome, { status: 'not-reachable' })
 })
 
@@ -2429,17 +2444,17 @@ test('an agent can address a thread by its readable path, by a whole key, or by 
   await waitForPrompts(prompts, 1)
 
   // The readable path, as it appears in the key.
-  await model.sendMessageInThreadAsAgent('Agent Solo', 'addressing:agent-session:standup', 'by path')
+  await model.sendMessageInThreadAsAgent('Agent Solo', 'addressing:agent-session:standup', 'by path', 'wait')
   await waitForPrompts(prompts, 2)
   assert.match(prompts[1] ?? '', /by path/)
 
   // The whole key, prefix included — what someone pastes off a screen.
-  await model.sendMessageInThreadAsAgent('Agent Solo', started.thread.sessionKey, 'by key')
+  await model.sendMessageInThreadAsAgent('Agent Solo', started.thread.sessionKey, 'by key', 'wait')
   await waitForPrompts(prompts, 3)
   assert.match(prompts[2] ?? '', /by key/)
 
   // And the id, which is what a caller stored before slugs existed.
-  await model.sendMessageInThreadAsAgent('Agent Solo', started.thread.id, 'by id')
+  await model.sendMessageInThreadAsAgent('Agent Solo', started.thread.id, 'by id', 'wait')
   await waitForPrompts(prompts, 4)
   assert.match(prompts[3] ?? '', /by id/)
 })
@@ -2478,12 +2493,18 @@ test('two threads sharing a slug in one chat are addressed apart by the agent in
     'Agent Solo',
     'ambiguous:agent-session-two:code-review',
     'meant for the second',
+    'wait',
   )
   await waitForPrompts(promptsSecond, 2)
   assert.match(promptsSecond[1] ?? '', /meant for the second/)
   assert.equal(promptsFirst.length, 1, 'the agent named in the address receives it, and the other hears nothing')
 
-  await model.sendMessageInThreadAsAgent('Agent Solo', 'ambiguous:agent-session:code-review', 'meant for the first')
+  await model.sendMessageInThreadAsAgent(
+    'Agent Solo',
+    'ambiguous:agent-session:code-review',
+    'meant for the first',
+    'wait',
+  )
   await waitForPrompts(promptsFirst, 2)
   assert.match(promptsFirst[1] ?? '', /meant for the first/)
   assert.equal(promptsSecond.length, 2, 'and the same holds in the other direction')
@@ -2662,7 +2683,7 @@ test('renaming a chat re-keys every thread in it, and the live session comes wit
   // And a send lands in the session that was already there -- the whole point.
   // A migration that missed the pointer would pass every assertion above that
   // reads a row and still create a second session here.
-  await model.sendMessageInThread(reqAs(owner), standup.thread.id, 'after the rename')
+  await model.sendMessageInThread(reqAs(owner), standup.thread.id, 'after the rename', { queue: 'wait' })
   await waitForPrompts(prompts, 3)
   assert.equal(agentClient.listSessions().length, sessionCountBefore, 'no fresh session was opened beside the real one')
 })
@@ -2689,13 +2710,18 @@ test('an address a chat rename freed still reaches the same chat and the same th
   assert.equal(byOldSlug.chat.slug, 'new-chat-name', 'resolved through the old address, answered with the current one')
 
   // A message already addressed to the key the rename retired.
-  const outcome = await model.deliverThreadFromNode(oldKey, 'sent to the old address', () => true)
+  const outcome = await model.deliverThreadFromNode(oldKey, 'sent to the old address', () => true, 'wait')
   assert.equal(outcome.status === 'not-found' || outcome.status === 'not-reachable', false)
   await waitForPrompts(prompts, 2)
   assert.match(prompts.at(-1) ?? '', /sent to the old address/)
 
   // And through the agent-facing surface, which takes the readable half.
-  await model.sendMessageInThreadAsAgent('Agent Solo', 'old-chat-name:agent-session:planning', 'also the old path')
+  await model.sendMessageInThreadAsAgent(
+    'Agent Solo',
+    'old-chat-name:agent-session:planning',
+    'also the old path',
+    'wait',
+  )
   await waitForPrompts(prompts, 3)
   assert.match(prompts.at(-1) ?? '', /also the old path/)
 
@@ -2729,7 +2755,7 @@ test('renaming a thread moves its slug and its key, and keeps everything the thr
   assert.equal(byOldSlug?.id, started.thread.id, 'the embed must find the same thread, not start an empty one')
 
   // And the key an agent may have written down.
-  const outcome = await model.deliverThreadFromNode(oldKey, 'to the old thread address', () => true)
+  const outcome = await model.deliverThreadFromNode(oldKey, 'to the old thread address', () => true, 'wait')
   assert.equal(outcome.status === 'not-found' || outcome.status === 'not-reachable', false)
   await waitForPrompts(prompts, 2)
   assert.equal((await model.listThreadsInGroupChat(reqAs(owner), chat.id)).length, 1)
@@ -2790,7 +2816,7 @@ test('a new thread taking a freed address wins it, and the alias for it stops re
     second.thread.id,
     'the thread holding the address now is the answer, not the one that used to',
   )
-  const outcome = await model.deliverThreadFromNode(freedKey, 'to whoever holds it now', () => true)
+  const outcome = await model.deliverThreadFromNode(freedKey, 'to whoever holds it now', () => true, 'wait')
   assert.equal(outcome.status === 'not-found' || outcome.status === 'not-reachable', false)
   await waitForPrompts(prompts, 3)
   const aliases = await db.select().from(groupChatThreadAlias).where(eq(groupChatThreadAlias.sessionKey, freedKey))

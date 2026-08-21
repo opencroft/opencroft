@@ -1,4 +1,5 @@
 import { usableContextWindow } from 'agent-client/context-window'
+import type { QueueMode } from 'agent-client/types'
 
 import {
   agentInstructionText,
@@ -44,9 +45,14 @@ export interface ParsedMessage {
   title?: string
   /** Legacy combined key `agent:<agent>:<job>`; honored when `agent`/`job` are absent. */
   session?: string
-  /** Cancel an in-flight turn and enqueue this message after whatever's
-   *  already queued, instead of waiting behind it. */
-  force?: boolean
+  /**
+   * How this message relates to the target session's queue — `wait` to be
+   * delivered on its own once the running turn ends, `push` to interrupt and
+   * deliver everything held as one turn. Required in a JSON payload: sending
+   * into a busy session is a choice the caller makes, not one it inherits.
+   * Replaces the former `force`, which was this same interrupt-and-push.
+   */
+  queue: QueueMode
   /**
    * A group-chat thread reference (`<group-slug>:<agent-slug>:<thread-slug>`,
    * a whole session key, or a thread id) instead of an agent:job session.
@@ -96,6 +102,19 @@ export function tryParseJsonMessage(text: string): ParsedMessage | null {
     return null
   }
   const optStr = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
+  // Refused rather than defaulted, and THROWN rather than returned as null: a
+  // null here means "not a payload, treat the whole thing as message text",
+  // which would quietly deliver the caller's JSON as the message instead of
+  // telling them what they left out.
+  //
+  // `force` is named specifically because it was this parameter under its old
+  // name, so a caller still sending it gets pointed at its replacement rather
+  // than a bare "queue is required".
+  const queue = obj['queue']
+  if (queue !== 'wait' && queue !== 'push') {
+    const had = 'force' in obj ? ' (`force` has been replaced by `queue: "push"`)' : ''
+    throw new Error(`send: "queue" is required and must be "wait" or "push"${had}`)
+  }
   return {
     message: obj['message'],
     agent: optStr(obj['agent']),
@@ -103,7 +122,7 @@ export function tryParseJsonMessage(text: string): ParsedMessage | null {
     key: optStr(obj['key']),
     title: optStr(obj['title']),
     session: optStr(obj['session']),
-    force: obj['force'] === true,
+    queue,
     thread: optStr(obj['thread']),
   }
 }

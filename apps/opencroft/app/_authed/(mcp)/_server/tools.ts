@@ -285,8 +285,19 @@ export const toolDefinitions = [
           description: 'A thread reference from group_chat_list. Opaque — pass it back unchanged.',
         },
         message: { type: 'string', description: 'The message to send into the thread.' },
+        queue: {
+          type: 'string',
+          enum: ['wait', 'push'],
+          description:
+            'How this message relates to anything already waiting for that agent. "wait" holds it until ' +
+            'the turn it is working on ends, then delivers it on its own. "push" interrupts that turn and ' +
+            'delivers everything held at once, this message last, so the agent sees the whole picture ' +
+            'before acting — use it when what you are sending changes what it should be doing. With ' +
+            'nothing already waiting the two are the same ordinary send. It is the MESSAGE that waits, ' +
+            'never you: this call returns as soon as the message is safely held.',
+        },
       },
-      required: ['thread', 'message'],
+      required: ['thread', 'message', 'queue'],
     },
   },
   {
@@ -2573,7 +2584,15 @@ function buildHandlers(): Record<string, ToolHandler> {
       if (!message) {
         fail(-32602, 'Missing required param: message')
       }
-      await sendMessageInThreadAsAgent(agent, thread, message)
+      // Refused rather than defaulted. The thread agent may be mid-turn, and
+      // whether this message should wait for that turn or interrupt it is
+      // something only the sender knows — a default would decide it for them
+      // silently, which is the guesswork this parameter exists to remove.
+      const queue = args.queue
+      if (queue !== 'wait' && queue !== 'push') {
+        fail(-32602, 'Missing or invalid param: queue must be "wait" or "push"')
+      }
+      await sendMessageInThreadAsAgent(agent, thread, message, queue)
       return textResult('Message sent into the thread. The reply lands in the thread, not here.')
     },
 

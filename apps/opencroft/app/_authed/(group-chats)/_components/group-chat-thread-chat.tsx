@@ -127,7 +127,7 @@ export function GroupChatThreadChat({
         const scope = selectionRef.current
         const outgoing = scope?.selection && scope.passEnabled ? wrapUserSelection(text, scope.selection.content) : text
         const refusal = threadSendRefusal(
-          await sendGroupChatThreadMessage({ data: { threadId: thread.id, text: outgoing, front } }),
+          await sendGroupChatThreadMessage({ data: { threadId: thread.id, text: outgoing, front, queue: 'wait' } }),
         )
         if (refusal) {
           throw refusal

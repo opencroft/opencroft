@@ -44,7 +44,7 @@ import { type ResolvedPermissions, toolKey } from './permissions'
 import { buildSpawnConfig, findAdapter } from './resolve'
 import { fileSkillHandler, fileSkills } from './skills'
 import { findTurnBoundary } from './turns'
-import type { AgentSelection, ChatEvent, QueuedPrompt, SessionMeta, SessionMode, SpawnConfig } from './types'
+import type { AgentSelection, ChatEvent, QueuedPrompt, QueueMode, SessionMeta, SessionMode, SpawnConfig } from './types'
 
 export interface ClientInfo {
   name: string
@@ -150,7 +150,7 @@ interface SessionState {
   // instead of one entry, and clears this. Held as state rather than passed to
   // the drain because the two are separated in time: the flush is requested
   // while the turn it interrupts is still settling.
-  flushQueue?: boolean
+  pushQueue?: boolean
   // Set by refreshMcpServers() when it finds this session mid-turn, instead of
   // resuming it immediately — a resume rides the same connection a live
   // prompt is streaming over. settleTurn applies the deferred resume once the
@@ -1026,19 +1026,62 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     emit(sessionId, { kind: 'queue', items: [...queue] })
   }
 
-  // Frame several held messages into the single prompt a flush delivers. They
-  // have to stay individually readable: a flush exists so the agent can see
+  // Signal the agent to stop. Shared by the public `cancel` and by a `push`,
+  // which has to interrupt before it can deliver — one implementation, so the
+  // two can never disagree about what stopping a turn involves.
+  //
+  // Only a signal: it does not touch activeTurns or the queue. Whatever ends
+  // the cancelled turn's in-flight prompt is what actually drains it (see
+  // settleTurn), which is why a push queues rather than delivering directly.
+  async function cancelSession(sessionId: string): Promise<void> {
+    if (!store.sessions.has(sessionId)) {
+      return
+    }
+    const connection = await connectionForSession(sessionId)
+    await connection.cancel({ sessionId })
+  }
+
+  // What a pushed batch says to the agent before the messages themselves.
+  //
+  // Written here, once, beside the only function that can produce a batch —
+  // every push goes through joinPrompts, so there is nowhere else for a second
+  // wording to appear.
+  //
+  // The second paragraph is the one that earns its place. An interrupt destroys
+  // the cancelled turn's reasoning while leaving its transcript: the agent can
+  // still see what it did, but not what it was part-way through concluding. Told
+  // only that it *may* continue, an agent with no train of thought left tends to
+  // start the task again from the beginning — which is the opposite of the
+  // intent and wastes exactly the work the push was trying to redirect. So it is
+  // told where to pick the thread back up, not merely that it is allowed to.
+  function batchDisclaimer(count: number): string {
+    return [
+      `[${count} messages delivered together]`,
+      'Your turn was interrupted so everything waiting for you could arrive at once. The interrupt does',
+      'not by itself mean the work you were doing was wrong or should be dropped — these messages may',
+      'correct it, re-prioritise it, or have nothing to do with it.',
+      '',
+      'The interrupted turn left its transcript but not its reasoning. Re-read what you had already done,',
+      'then continue from there — do not start the task over.',
+    ].join('\n')
+  }
+
+  // Frame several held messages into the single prompt a push delivers. They
+  // have to stay individually readable: a push exists so the agent can see
   // everything still pending BEFORE it acts, which fails if the messages run
   // together into one instruction. Numbering makes their order explicit, so a
   // later message can correct an earlier one and be understood as doing that.
   //
-  // One message is returned untouched — a flush against an empty queue must
-  // read exactly like an ordinary send, with no framing to explain.
+  // One message is returned untouched, disclaimer included — a push against an
+  // empty queue must read exactly like an ordinary send, with nothing to
+  // explain because nothing was batched. Keeping that rule HERE rather than at
+  // the call sites is what makes "never on a single message" structural.
   function joinPrompts(texts: string[]): string {
     if (texts.length < 2) {
       return texts[0] ?? ''
     }
-    return texts.map((text, i) => `[message ${i + 1} of ${texts.length}]\n${text}`).join('\n\n')
+    const numbered = texts.map((text, i) => `[message ${i + 1} of ${texts.length}]\n${text}`).join('\n\n')
+    return `${batchDisclaimer(texts.length)}\n\n${numbered}`
   }
 
   // Hand one prompt to the agent. The in-flight counter is incremented
@@ -1107,8 +1150,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (!session) {
       return
     }
-    if (session.flushQueue) {
-      session.flushQueue = false
+    if (session.pushQueue) {
+      session.pushQueue = false
       const pending = session.queue ?? []
       if (pending.length === 0) {
         return
@@ -1712,16 +1755,40 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return meta
     },
 
-    // `flush` turns this into a push: everything already held for the session
-    // is delivered together with this message, in the order it was sent and
-    // with this one last, as ONE turn. Callers use it after interrupting an
-    // in-flight turn, so the agent reads the full picture before acting rather
-    // than working through each stale message first. Ordinary sends are
-    // untouched: still one message per turn, drained as turns end.
-    async prompt(sessionId: string, text: string, opts?: { front?: boolean; flush?: boolean }): Promise<void> {
+    // How this message relates to the queue, stated by every caller rather than
+    // defaulted — the whole point of the parameter is that sending into a busy
+    // session stops being a guess.
+    //
+    // `wait`: held until the turn ends, delivered on its own. Note it is the
+    // MESSAGE that waits, never the caller — this resolves as soon as the
+    // message is safely held.
+    //
+    // `push`: interrupt whatever is running and deliver everything held,
+    // together with this message and this message last, as ONE turn. The
+    // interrupt lives HERE rather than at each call site: "push" is a single
+    // idea, and a surface that had to remember to cancel first before prompting
+    // would be a second copy of the semantics waiting to drift. Callers that
+    // need to report whether anything was actually interrupted read it off the
+    // return value instead of probing the session themselves.
+    //
+    // Against an empty queue the two are the same ordinary send — a batch of
+    // one is not a batch (see joinPrompts).
+    async prompt(
+      sessionId: string,
+      text: string,
+      opts: { front?: boolean; queue: QueueMode },
+    ): Promise<{ interrupted: boolean }> {
       const session = store.sessions.get(sessionId)
       if (!session) {
-        return
+        return { interrupted: false }
+      }
+      const push = opts.queue === 'push'
+      // Read BEFORE cancelling, so the answer describes what this call found
+      // rather than what the cancel left behind. A push against an idle session
+      // interrupted nothing and must not claim otherwise.
+      const interrupted = push && session.activeTurns > 0
+      if (interrupted) {
+        await cancelSession(sessionId)
       }
       // Session records that survived a dev hot-reload may predate the queue
       // fields (the store outlives createStore); backfill in place.
@@ -1735,33 +1802,53 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // Steering-capable agents (see supportsMidTurnInput) skip the queue
       // entirely: the prompt goes straight through and the live turn picks it
       // up as streaming input.
+      // A push can carry nothing of its own: the composer's push button asks for
+      // what is already held to go through NOW, with no message of its own to
+      // add. Nothing is appended in that case — an empty message is not a
+      // message, and numbering it `[message N of M]` with no content would read
+      // as something lost in transit.
+      const adds = text.trim().length > 0
       if (session.activeTurns > 0 && !supportsMidTurnInput(session.selection)) {
-        const item: QueuedPrompt = { id: randomUUID(), text }
-        if (opts?.front) {
-          session.queue.unshift(item)
-        } else {
-          session.queue.push(item)
+        if (adds) {
+          const item: QueuedPrompt = { id: randomUUID(), text }
+          if (opts.front) {
+            session.queue.unshift(item)
+          } else {
+            session.queue.push(item)
+          }
         }
         // Held, not delivered: the interrupted turn has not settled yet. The
         // flag makes the drain that follows take the whole queue at once.
-        if (opts?.flush) {
-          session.flushQueue = true
+        // Deliberately NOT `front` even for a push — the held messages came
+        // first and stay first, so the newest one reads as the latest word on
+        // them rather than as a preamble to messages written before it.
+        if (push) {
+          session.pushQueue = true
         }
         emitQueue(sessionId, session.queue)
-        return
+        return { interrupted }
       }
-      // Idle, so this delivers now. A flush still has to carry anything left
+      // Idle, so this delivers now. A push still has to carry anything left
       // holding — a queue can outlive its turn when that turn failed before
       // settling — otherwise those messages would wait for a turn that is
       // never coming.
-      if (opts?.flush && session.queue.length > 0) {
-        const texts = [...session.queue.map((item) => item.text), text]
+      if (push && session.queue.length > 0) {
+        const held = session.queue.map((item) => item.text)
+        const texts = adds ? [...held, text] : held
         session.queue = []
         emitQueue(sessionId, session.queue)
         await deliverPrompt(sessionId, joinPrompts(texts))
-        return
+        return { interrupted }
+      }
+      // A push with nothing held and nothing of its own has nothing to deliver.
+      // Reached when the button is pressed against a queue that drained between
+      // the render and the click — doing nothing is the honest outcome, and an
+      // empty prompt would start a turn saying nothing.
+      if (!adds) {
+        return { interrupted }
       }
       await deliverPrompt(sessionId, text)
+      return { interrupted }
     },
 
     // Drop a still-queued prompt before it's delivered. Unknown ids are a
@@ -1800,11 +1887,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     },
 
     async cancel(sessionId: string): Promise<void> {
-      if (!store.sessions.has(sessionId)) {
-        return
-      }
-      const connection = await connectionForSession(sessionId)
-      await connection.cancel({ sessionId })
+      await cancelSession(sessionId)
     },
 
     // `opts.fromIndex` bounds the replayed history to `session.events` starting

@@ -18,8 +18,9 @@
 // function's handler, and nesting another one there is unreliable (see
 // deliverToSendMessageNode). acp-impl.ts is server-only by construction — see
 // its header for why that separation also keeps the client bundle clean.
+import type { QueueMode } from 'agent-client/types'
+
 import {
-  cancelLocalImpl,
   ensureLocalSessionImpl,
   findTargetSessionImpl,
   hasActiveTurnImpl,
@@ -416,6 +417,7 @@ export type ThreadDeliveryResolver = (
   threadRef: string,
   text: string,
   isReachable: (agentNodeId: string) => boolean,
+  queue: QueueMode,
 ) => Promise<ThreadDeliveryOutcome>
 
 // globalThis-backed like compactJobs further down (and every other
@@ -464,7 +466,7 @@ export function registerThreadDeliveryResolver(resolver: ThreadDeliveryResolver)
 // default only on a genuine creation), and composes the
 // envelope with instructions/task context gated on that same `created` flag
 // too — so every caller gets identical session and envelope
-// semantics, not a re-implementation of them. `force` is part of the
+// semantics, not a re-implementation of them. `queue` (formerly `force`) is part of the
 // same shared payload schema, so either entry point can carry it, and so
 // is `thread` — mutually exclusive with agent/job/key/session, checked
 // before either branch runs so a caller naming both gets a clear refusal
@@ -485,7 +487,7 @@ export async function deliverToSendMessageNode(
       isAgentNodeReachable(nodes as unknown as SmNodeLike[], edges as unknown as SmEdgeLike[], agentNodeId)
     let outcome: ThreadDeliveryOutcome = { status: 'not-found' }
     for (const resolver of threadDeliveryResolvers) {
-      outcome = await resolver(threadRef, parsed.message, isReachable)
+      outcome = await resolver(threadRef, parsed.message, isReachable, parsed.queue)
       if (outcome.status !== 'not-found') {
         break
       }
@@ -525,21 +527,6 @@ export async function deliverToSendMessageNode(
     await hideSessionByDefault(route.sessionKey).catch(() => {})
   }
 
-  // `force`: interrupt an in-flight turn instead of waiting behind it.
-  // cancelLocal only signals the agent to stop — it doesn't touch activeTurns
-  // or the queue itself; whatever ends the cancelled turn's in-flight prompt
-  // is what actually drains it (see agent-client's settleTurn). Only
-  // meaningful against a session that already has a turn running, so `forced`
-  // reports honestly: a force call against an idle or brand-new session never
-  // claims to have interrupted anything.
-  let forced = false
-  if (route.force) {
-    forced = hasActiveTurnImpl(sessionId)
-    if (forced) {
-      await cancelLocalImpl(sessionId)
-    }
-  }
-
   // Automated senders never include the selected-node/space system context
   // (chat-only); task context + instructions are session-scoped, so only a
   // freshly created ACP session gets them.
@@ -548,15 +535,21 @@ export async function deliverToSendMessageNode(
     isNewSession: created,
   })
 
-  // Not `front`: activeTurns is still >0 the instant this call is made (the
-  // cancel above hasn't resolved yet), so this lands at the END of whatever's
-  // already queued — queued messages first, then this one, which is the order a
-  // force wants. `flush` is what then delivers them together as one turn once
-  // the cancelled turn settles, instead of one per turn: a force is a push, and
-  // draining one at a time would have the agent act on each stale message
-  // before it ever reached this one.
-  await promptLocalImpl({ sessionId, text: message, flush: route.force })
-  return { kind: 'agent', sessionKey: route.sessionKey, created, forced }
+  // `push` (formerly `force`) interrupts the in-flight turn and delivers
+  // everything held as ONE turn, rather than draining one per turn and having
+  // the agent act on each stale message before it reaches this one.
+  //
+  // Both halves of that live in agentClient.prompt now — this used to cancel
+  // here and then pass a separate flush flag, which meant any other surface
+  // wanting a push had to remember to do the same two things in the same order.
+  // `interrupted` comes back from the same call, and is still honest about an
+  // idle or brand-new session: it interrupted nothing and does not claim to.
+  //
+  // Not `front` for either mode: held messages stay ahead of this one, so the
+  // newest reads as the latest word on them rather than a preamble to messages
+  // written before it.
+  const { interrupted } = await promptLocalImpl({ sessionId, text: message, queue: route.queue })
+  return { kind: 'agent', sessionKey: route.sessionKey, created, forced: interrupted }
 }
 
 // Nothing guarantees the compaction is observable when the prompt call returns,
@@ -612,7 +605,7 @@ export type DispatchedTurnOutcome = 'finished' | 'interrupted' | 'timeout'
 
 export async function awaitDispatchedTurn(
   sessionId: string,
-  dispatch: () => Promise<void>,
+  dispatch: () => Promise<unknown>,
 ): Promise<DispatchedTurnOutcome> {
   const turnsAhead = hasActiveTurnImpl(sessionId) ? 1 : 0
   const tail = agentClient.getEventsWindow(sessionId, { turns: 1 })
@@ -857,7 +850,9 @@ async function performCompact(
   const contextUsageBefore = readUsage()
   // Sent raw: a leading slash marks a command, and composeEnvelope passes those
   // through unwrapped anyway.
-  const compactOutcome = await awaitDispatchedTurn(sessionId, () => promptLocalImpl({ sessionId, text: '/compact' }))
+  const compactOutcome = await awaitDispatchedTurn(sessionId, () =>
+    promptLocalImpl({ sessionId, text: '/compact', queue: 'wait' }),
+  )
   // Read only once /compact's OWN turn has actually finished. 'interrupted'
   // (cancelled, the connection dying mid-turn, or a plain error) and 'timeout'
   // both leave usage unknown rather than reporting a stale or partial figure as
@@ -907,7 +902,7 @@ async function performCompact(
   // thing delivered once the current turn ends, which is also the assumption
   // awaitDispatchedTurn's turn-counting relies on.
   const restoreOutcome = await awaitDispatchedTurn(sessionId, () =>
-    promptLocalImpl({ sessionId, text: restore, front: true }),
+    promptLocalImpl({ sessionId, text: restore, front: true, queue: 'wait' }),
   )
   // Honestly reflects whether the agent actually finished reading the restore,
   // not merely whether it was handed to the connection — see this function's
@@ -1116,7 +1111,7 @@ interface RouteResolution {
   message: string
   ctx: AgentContext
   title: string
-  force: boolean
+  queue: QueueMode
 }
 
 function resolveRoute(
@@ -1158,7 +1153,13 @@ function resolveRoute(
   // over the node's override, then falls back to the job name.
   const title = parsed?.title || (data.titleOverride || '').trim() || ctx.jobName
 
-  return { sessionKey, message, ctx, title, force: parsed?.force === true }
+  // A JSON payload always carries `queue` — tryParseJsonMessage refuses one that
+  // does not. `parsed` is null only for PLAIN TEXT arriving on the node's
+  // `text-in` wire, which takes no parameters at all and so has no caller to
+  // state an intent with. That wire waits: it is the conservative half of the
+  // choice, and the only place in this change where a value is assumed rather
+  // than stated.
+  return { sessionKey, message, ctx, title, queue: parsed?.queue ?? 'wait' }
 }
 
 const g = globalThis as Record<string, unknown>
