@@ -47,6 +47,7 @@ import {
   getCompactStatusOnGraph,
   requestCompactOnGraph,
   resolveOrCreateSession,
+  withSessionKeyLock,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
 import { GroupChatAccessError } from '@/app/_authed/(group-chats)/_shared/access-error'
 import { slug as slugify } from '@/app/_authed/(server)/_server/types'
@@ -600,6 +601,133 @@ export async function setGroupChatTopic(request: Request, groupChatId: string, t
     throw new Error('A group chat needs a topic')
   }
   await db.update(groupChat).set({ topic: trimmed }).where(eq(groupChat.id, groupChatId))
+}
+
+// How many times `deleteGroupChat` will re-read a chat's threads looking for
+// ones started while it was tearing the previous batch down. Not a retry count
+// -- every pass does real work -- and reached only if threads keep arriving
+// faster than they can be drained, which no ordinary use produces.
+const DELETE_DRAIN_PASSES = 5
+
+/**
+ * Delete a group chat: every thread's session + process first, then the chat
+ * row, whose cascade takes the rest of it.
+ *
+ * Membership-gated through `requireGroupChatMember`, so any member may delete
+ * and a missing chat and a non-member get the same single refusal -- the rule
+ * every other mutation on this surface already follows. There is no owner or
+ * creator concept on a group chat, so there is nothing narrower to gate on.
+ *
+ * THE ORDER IS `deleteThread`'S RULE, ONE LEVEL UP. A thread row is the only
+ * handle anything has on its `sessionKey`, so the session and its agent
+ * subprocess come down BEFORE the row does; dropping rows first turns a failed
+ * teardown into a live session and a running process that no screen lists and
+ * no retry can reach. Deleting the chat would drop every thread row at once by
+ * cascade, so that failure mode is the same one multiplied by the thread count
+ * -- which is exactly why the teardown loop runs first and completes before
+ * the row delete is issued. A teardown that throws leaves the whole chat
+ * intact and the delete retryable.
+ *
+ * `forgetLocalSessionImpl`, the same call `deleteThread` makes, NOT
+ * `stopLocalSessionProcessImpl` as `removeMember` makes. The distinction is
+ * whether the conversation is meant to survive: a removed agent's threads stay
+ * readable, so its sessions are stopped and the durable tabKey->sessionId
+ * pointer is kept. Here the chat and everything in it is going away, so
+ * forgetting is right and leaving pointers behind would be the bug.
+ *
+ * IT DRAINS RATHER THAN SNAPSHOTTING, and that is not fussiness. Tearing down
+ * a session is an unbounded await -- it reaches a subprocess -- so a thread
+ * started while the loop is running (another member on the chat screen, or any
+ * path that mints one) lands in a chat that is about to be deleted. Against a
+ * list read once at the top, that thread's session is never torn down and its
+ * row is removed by the cascade a moment later: the stranded process this
+ * whole ordering exists to prevent, arrived at from the other side. So the
+ * thread list is re-read after every pass and anything new is torn down too,
+ * until a pass finds nothing left. `forgetLocalSessionImpl` is safe to call for
+ * a key it has no entry for, so a re-read that returns a thread already handled
+ * costs a map lookup.
+ *
+ * A chat being written to faster than it can be drained refuses rather than
+ * deleting: `DELETE_DRAIN_PASSES` is generous enough that ordinary concurrency
+ * never reaches it, and the alternative at the bound is to delete rows whose
+ * sessions are still up, which is the one outcome this function exists to
+ * avoid. A refusal is retryable; a stranded agent process is not.
+ *
+ * DRAINING ALONE IS NOT ENOUGH, and the gap is the reason for the sweep after
+ * the cascade below. It covers a thread that did not exist when the loop
+ * started; it cannot cover an existing thread whose session is re-created
+ * after that thread was already torn down, because `tornDown` deliberately
+ * filters that key out of every later pass. Read the sweep for the rest.
+ *
+ * WHAT A FAILED TEARDOWN COSTS, stated plainly because the rows and the
+ * conversations do not fare the same. If a teardown throws mid-loop the chat
+ * and every row in it survive and the delete can be retried -- but the threads
+ * already processed have had their durable tabKey->sessionId pointers dropped,
+ * so those conversations are gone and their threads reopen empty. That is
+ * acceptable only because the caller asked to destroy all of it; it is NOT a
+ * clean rollback, and reading it as one would be wrong.
+ *
+ * Two ways this differs from calling `deleteThread` in a loop, both deliberate:
+ * it re-checks membership once rather than once per thread, and it lets the
+ * cascade drop the thread rows instead of deleting them one at a time. The
+ * second is the one that matters -- rows going with the chat in a single
+ * statement means there is no window where some threads are gone and the chat
+ * they belonged to is still listed.
+ *
+ * Nothing else needs cleaning up by hand. Members, pins, threads, slug aliases
+ * and thread aliases are all `onDelete: 'cascade'` on the chat, and a thread's
+ * artifacts and aliases cascade on the thread -- verified in schema.ts and in
+ * the migrations, not assumed. Artifact content is an inline `text()` column
+ * with no file or object storage behind it, so the cascade is the whole of it.
+ */
+export async function deleteGroupChat(request: Request, groupChatId: string): Promise<void> {
+  await requireGroupChatMember(request, groupChatId)
+  const tornDown = new Set<string>()
+  for (let pass = 0; ; pass++) {
+    const threads = await db
+      .select({ sessionKey: groupChatThread.sessionKey })
+      .from(groupChatThread)
+      .where(eq(groupChatThread.groupChatId, groupChatId))
+    const pending = threads.filter((thread) => !tornDown.has(thread.sessionKey))
+    if (pending.length === 0) {
+      break
+    }
+    if (pass >= DELETE_DRAIN_PASSES) {
+      throw new Error('Threads kept being started in this group chat while it was being deleted — try again')
+    }
+    for (const thread of pending) {
+      await forgetLocalSessionImpl(thread.sessionKey)
+      tornDown.add(thread.sessionKey)
+    }
+  }
+  await db.delete(groupChat).where(eq(groupChat.id, groupChatId))
+  // The sweep. Draining handles a thread that did not exist yet; this handles
+  // an EXISTING thread whose session was re-created after its teardown -- the
+  // likelier of the two, since a chat worth deleting may still have agents
+  // posting into it. Every delivery path resolves the thread row first and the
+  // rows live until the cascade above, so between a key's teardown and that
+  // cascade a delivery re-opens its session through resolveOrCreateSession's
+  // create branch. The drain cannot catch it: `tornDown` filters that key out
+  // of every later pass by design.
+  //
+  // Post-cascade is what makes this final rather than another racing pass --
+  // the row is gone, so no delivery path can resolve the thread and re-create
+  // anything after it. Each call is a map lookup that finds nothing unless the
+  // race actually fired.
+  //
+  // Under the same per-key lock deliveries take, so a delivery already inside
+  // its critical section finishes before the key is swept rather than being
+  // interleaved with it.
+  //
+  // ONE WINDOW REMAINS, and it is not closed here: a delivery that read its
+  // row before the cascade and enters the lock after the sweep will re-create
+  // a session for a thread that no longer exists. That is the same single
+  // await `deleteThread` has had all along, it needs a change to the delivery
+  // paths rather than to this one, and it is left open deliberately rather
+  // than papered over -- this comment is the record that it is known.
+  for (const sessionKey of tornDown) {
+    await withSessionKeyLock(sessionKey, () => forgetLocalSessionImpl(sessionKey))
+  }
 }
 
 export type MemberPrincipal = { kind: 'user'; userId: string } | { kind: 'agent'; agentNodeId: string }

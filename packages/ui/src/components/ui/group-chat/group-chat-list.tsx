@@ -1,8 +1,14 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { ChevronLeft } from 'lucide-react'
+import { ChevronLeft, Trash2 } from 'lucide-react'
 
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 import { MemberAvatarGroup, type MemberRef } from '@/components/ui/group-chat/member-avatar-group'
 import { cn } from '@/lib/utils'
 
@@ -23,6 +29,16 @@ export interface GroupChatListRowProps {
   threadCount: number
   active?: boolean
   onSelect?: (id: string) => void
+  /** Per-row delete, on the same shadcn context-menu primitive a chat row and a
+     thread row already use -- same icon, same wording, same destructive
+     styling, so deleting a container is reached the same way as deleting a
+     thread inside it rather than through an affordance of its own.
+
+     The kit does not confirm, exactly as ChatListItem does not: whether a
+     delete is worth confirming, and what the confirmation says, depends on what
+     is being destroyed and how much of it -- which is the host's knowledge, not
+     this list's. Omit the handler and no menu appears at all. */
+  onDelete?: (id: string) => void
 }
 
 function threadLabel(n: number) {
@@ -43,8 +59,9 @@ export function GroupChatListRow({
   threadCount,
   active = false,
   onSelect,
+  onDelete,
 }: GroupChatListRowProps) {
-  return (
+  const row = (
     <div
       role='button'
       tabIndex={0}
@@ -68,6 +85,27 @@ export function GroupChatListRow({
       </span>
     </div>
   )
+
+  // No handler, no menu -- the row is returned exactly as it was before this
+  // existed, so a host that offers no delete pays nothing for the option.
+  if (!onDelete) {
+    return row
+  }
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+      {/* Same width, same stopPropagation and the same destructive item as
+          ChatListItem's menu: the click must not fall through to the row
+          underneath, which would open the very chat being deleted. */}
+      <ContextMenuContent className='min-w-[8rem]' onClick={(e) => e.stopPropagation()}>
+        <ContextMenuItem className='text-destructive focus:text-destructive' onClick={() => onDelete(id)}>
+          <Trash2 className='size-3' />
+          Delete
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
 }
 
 export interface GroupChatListProps {
@@ -81,6 +119,9 @@ export interface GroupChatListProps {
   // Where creating a group chat is reached from. Rendered above the rows and
   // kept whether the list has any or not -- see the note below.
   action?: ReactNode
+  /** Per-row delete, forwarded to every row's context menu. See the row's own
+     prop for why the confirmation is the host's and not this list's. */
+  onDelete?: (id: string) => void
   emptyState?: ReactNode
   className?: string
 }
@@ -100,6 +141,7 @@ export function GroupChatList({
   onSelect,
   onBack,
   action,
+  onDelete,
   emptyState,
   className,
 }: GroupChatListProps) {
@@ -136,6 +178,7 @@ export function GroupChatList({
               threadCount={chat.threadCount}
               active={chat.id === activeId}
               onSelect={onSelect}
+              onDelete={onDelete}
             />
           ))}
         </div>

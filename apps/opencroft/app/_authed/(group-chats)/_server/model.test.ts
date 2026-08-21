@@ -43,9 +43,17 @@ delete process.env.DATABASE_URL
 // configured before it will sign or verify a session at all.
 process.env.NODE_ENV = 'development'
 
-const { db, space, groupChatMember, groupChatSlugAlias, groupChatThread, groupChatThreadAlias } = await import(
-  '@opencroft/db'
-)
+const {
+  db,
+  space,
+  groupChat,
+  groupChatMember,
+  groupChatPin,
+  groupChatSlugAlias,
+  groupChatThread,
+  groupChatThreadAlias,
+  groupChatThreadArtifact,
+} = await import('@opencroft/db')
 const model = await import('./model')
 // Dynamic like the rest: it reads and writes the settings table, so importing
 // it statically would touch the database before PGLITE_PATH is set above.
@@ -683,6 +691,434 @@ test('a member can clear a thread and the row survives; a non-member is refused 
   // own test asserts for sends.
   const fabricated = await captureRefusal(() => model.clearThread(reqAs(outsider), crypto.randomUUID()))
   assert.equal(fabricated.code, refusal.code)
+})
+
+// ---------------------------------------------------------------------------
+// DELETING THE CHAT ITSELF.
+//
+// The ordering property `deleteThread` has, one level up and multiplied: a
+// chat delete drops EVERY thread row at once by cascade, so a teardown that
+// has not finished when the rows go leaves one stranded agent process per
+// thread, none of them reachable from any screen. Asserted the same way the
+// single-thread test asserts it -- from inside the mock connection's own
+// `closeSession`, which is the last thing forgetLocalSessionImpl drives before
+// returning. If the rows are still readable at that moment, teardown ran
+// first.
+//
+// TWO threads, on two different agents: one would not distinguish "tears down
+// every thread" from "tears down the first one and then deletes". Two agents
+// rather than two threads on one, because a mock connection is keyed on the
+// agent's own spawn config, so two agents is what gives two observable
+// teardowns.
+// ---------------------------------------------------------------------------
+test('deleteGroupChat tears down every thread session before the rows they are reachable through go', async () => {
+  const owner = await makeUser('chat-delete-order-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'chat delete ordering')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session-2' })
+
+  let closeSessionCalls = 0
+  let rowsVisibleDuringEveryTeardown = true
+  let chatVisibleDuringEveryTeardown = true
+
+  const observingConnection = () =>
+    ({
+      newSession: async () => ({ sessionId: `test-session-${crypto.randomUUID()}` }),
+      prompt: async () => ({ stopReason: 'end_turn' }),
+      resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+      cancel: async () => {},
+      setSessionConfigOption: async () => ({}),
+      closeSession: async () => {
+        closeSessionCalls += 1
+        // Read the tables directly rather than through the model: the
+        // observation is of the rows themselves, not of a membership-gated
+        // view of them.
+        const threadRows = await db.select().from(groupChatThread).where(eq(groupChatThread.groupChatId, chat.id))
+        if (threadRows.length !== 2) {
+          rowsVisibleDuringEveryTeardown = false
+        }
+        const chatRows = await db.select().from(groupChat).where(eq(groupChat.id, chat.id))
+        if (chatRows.length !== 1) {
+          chatVisibleDuringEveryTeardown = false
+        }
+        return {}
+      },
+    }) as unknown as AgentConnection
+
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store, 'agent-client global store must exist after import')
+  for (const agentName of ['Agent Session', 'Agent Session Two']) {
+    const selection: AgentSelection = {
+      providerId: 'test-provider',
+      adapterId: 'openclaw',
+      model: 'test-model',
+      apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+      cwd: join(process.cwd(), 'data', 'agent-workspace', slug(agentName)),
+      baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    }
+    store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+      connection: observingConnection(),
+      lastSessionId: null,
+      loadSession: false,
+      initialized: Promise.resolve(),
+    })
+  }
+
+  await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first')
+  await model.startThread(reqAs(owner), chat.id, 'agent-session-2', 'second')
+
+  await model.deleteGroupChat(reqAs(owner), chat.id)
+
+  assert.equal(closeSessionCalls, 2, 'every thread’s session must be torn down, not just the first')
+  assert.equal(
+    rowsVisibleDuringEveryTeardown,
+    true,
+    'every thread row must still exist while any session is being torn down — otherwise a teardown failure strands live agent processes nothing can reach',
+  )
+  assert.equal(chatVisibleDuringEveryTeardown, true, 'and so must the chat, since its cascade is what drops them')
+
+  const threadsAfter = await db.select().from(groupChatThread).where(eq(groupChatThread.groupChatId, chat.id))
+  assert.equal(threadsAfter.length, 0, 'and the threads are gone once the delete completes')
+  const chatAfter = await db.select().from(groupChat).where(eq(groupChat.id, chat.id))
+  assert.equal(chatAfter.length, 0, 'as is the chat')
+})
+
+// ---------------------------------------------------------------------------
+// The gate, and the cascade. The cascade half is asserted rather than trusted
+// to the schema: the question is specifically whether artifacts, pins and
+// membership rows go with the chat or are left orphaned, and a foreign key
+// that says `cascade` in schema.ts is only the answer if the migration that
+// built the table agrees. This test runs against the real migrated database,
+// so it is the two of them agreeing that passes it.
+// ---------------------------------------------------------------------------
+test('a non-member cannot delete a chat, and a member’s delete leaves no pin, member, thread or artifact behind', async () => {
+  const owner = await makeUser('chat-delete-owner@example.test')
+  const outsider = await makeUser('chat-delete-outsider@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'cascade check')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  await model.addPin(reqAs(owner), chat.id, 'a pinned note')
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: `group-chat:${chat.id}:agent-a:cascade-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+  await db.insert(groupChatThreadArtifact).values({ threadId: thread.id, title: 'note', content: 'body' })
+
+  const refusal = await captureRefusal(() => model.deleteGroupChat(reqAs(outsider), chat.id))
+  assert.equal(refusal.code, 'not-found')
+  const untouched = await db.select().from(groupChat).where(eq(groupChat.id, chat.id))
+  assert.equal(untouched.length, 1, 'a refused delete must not touch the chat')
+
+  // A fabricated id refuses identically, so deleting is not a way to probe
+  // which chats exist -- the same property the read and send paths assert.
+  const fabricated = await captureRefusal(() => model.deleteGroupChat(reqAs(outsider), crypto.randomUUID()))
+  assert.equal(fabricated.code, refusal.code)
+
+  await model.deleteGroupChat(reqAs(owner), chat.id)
+
+  assert.equal((await db.select().from(groupChat).where(eq(groupChat.id, chat.id))).length, 0, 'chat')
+  assert.equal(
+    (await db.select().from(groupChatMember).where(eq(groupChatMember.groupChatId, chat.id))).length,
+    0,
+    'membership rows cascade',
+  )
+  assert.equal(
+    (await db.select().from(groupChatPin).where(eq(groupChatPin.groupChatId, chat.id))).length,
+    0,
+    'pins cascade',
+  )
+  assert.equal(
+    (await db.select().from(groupChatThread).where(eq(groupChatThread.groupChatId, chat.id))).length,
+    0,
+    'threads cascade',
+  )
+  assert.equal(
+    (await db.select().from(groupChatThreadArtifact).where(eq(groupChatThreadArtifact.threadId, thread.id))).length,
+    0,
+    'and a thread’s artifacts cascade with the thread — nothing is orphaned',
+  )
+})
+
+// ---------------------------------------------------------------------------
+// A THREAD STARTED WHILE THE DELETE IS RUNNING.
+//
+// Tearing a session down reaches a subprocess, so the loop is a real window,
+// and a thread started inside it lands in a chat that is about to be deleted.
+// Read the thread list once at the top and that thread's session is never torn
+// down while the cascade removes its row moments later -- the stranded process
+// the ordering rule exists to prevent, reached from the other direction.
+//
+// The window is simulated exactly rather than approximated: the mock
+// connection's `closeSession` IS the middle of forgetLocalSessionImpl, so
+// inserting a row there is a thread arriving mid-teardown. It is given a
+// session key that already has a live session, so its teardown is observable
+// as a third closeSession call rather than having to be inferred.
+// ---------------------------------------------------------------------------
+test('deleteGroupChat drains threads started while it is tearing down, instead of stranding them', async () => {
+  const owner = await makeUser('chat-delete-drain-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'drain race')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const stragglerKey = `group-chat:${chat.id}:agent-session:arrived-late`
+  let closeSessionCalls = 0
+  let inserted = false
+
+  const connection = {
+    newSession: async () => ({ sessionId: `test-session-${crypto.randomUUID()}` }),
+    prompt: async () => ({ stopReason: 'end_turn' }),
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => {
+      closeSessionCalls += 1
+      // Exactly once, on the first teardown: a second member starts a thread
+      // in this chat while the delete is mid-flight.
+      if (!inserted) {
+        inserted = true
+        await db.insert(groupChatThread).values({
+          groupChatId: chat.id,
+          agentNodeId: 'agent-session',
+          sessionKey: stragglerKey,
+          slug: 'arrived-late',
+          createdByUserId: owner.id,
+        })
+      }
+      return {}
+    },
+  } as unknown as AgentConnection
+
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', slug('Agent Session')),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store, 'agent-client global store must exist after import')
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first')
+  // The straggler's session, opened ahead of time under the key the row
+  // inserted mid-teardown will carry -- so there is a real session for the
+  // drain pass to tear down, and closeSession fires when it does.
+  const { ensureLocalSessionImpl } = await import('@/app/_authed/(agent)/_server/acp-impl')
+  await ensureLocalSessionImpl({ agentNodeId: 'agent-session', jobNodeId: '', tabKey: stragglerKey })
+
+  await model.deleteGroupChat(reqAs(owner), chat.id)
+
+  assert.equal(inserted, true, 'the test must actually have inserted a thread mid-teardown')
+  assert.equal(
+    closeSessionCalls,
+    2,
+    'the original thread and the straggler that arrived during its teardown — a loop that read the thread list once tears down only the original, leaving the straggler’s live session to be cascaded away underneath it',
+  )
+  assert.equal(
+    (await db.select().from(groupChatThread).where(eq(groupChatThread.groupChatId, chat.id))).length,
+    0,
+    'and everything, straggler included, is gone',
+  )
+})
+
+// ---------------------------------------------------------------------------
+// A SESSION RE-CREATED AFTER ITS THREAD WAS TORN DOWN.
+//
+// The drain covers a thread that did not exist when the loop started. It
+// cannot cover this: an EXISTING thread, already torn down, whose session a
+// delivery re-opens while the loop is still working through the others. Every
+// delivery path resolves the thread row first, and the rows survive until the
+// cascade, so that re-creation is reachable for the whole remainder of the
+// delete -- and `tornDown` filters the key out of every later pass by design,
+// so no amount of draining revisits it. Without the post-cascade sweep the
+// cascade then removes the row underneath a live session: a running agent
+// process plus a fresh durable pointer, reachable from nothing.
+//
+// Simulated at the point it really happens: `closeSession` is the middle of
+// forgetLocalSessionImpl, so re-opening the FIRST thread's session from inside
+// the SECOND thread's teardown is exactly a delivery landing mid-delete.
+// ---------------------------------------------------------------------------
+test('deleteGroupChat sweeps a session re-created after its own thread was torn down', async () => {
+  const owner = await makeUser('chat-delete-recreate-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'recreate race')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session-2' })
+
+  const { ensureLocalSessionImpl, findTargetSessionImpl } = await import('@/app/_authed/(agent)/_server/acp-impl')
+
+  let firstKey = ''
+  let reopened = false
+  let closeSessionCalls = 0
+
+  const connectionFor = (agentNodeId: string) =>
+    ({
+      newSession: async () => ({ sessionId: `test-session-${crypto.randomUUID()}` }),
+      prompt: async () => ({ stopReason: 'end_turn' }),
+      resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+      cancel: async () => {},
+      setSessionConfigOption: async () => ({}),
+      closeSession: async () => {
+        closeSessionCalls += 1
+        // While tearing down the SECOND thread, a delivery arrives for the
+        // FIRST -- whose row is still there, because nothing is deleted until
+        // the cascade -- and re-opens its session.
+        if (agentNodeId === 'agent-session-2' && !reopened) {
+          reopened = true
+          await ensureLocalSessionImpl({ agentNodeId: 'agent-session', jobNodeId: '', tabKey: firstKey })
+        }
+        return {}
+      },
+    }) as unknown as AgentConnection
+
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store, 'agent-client global store must exist after import')
+  for (const [agentNodeId, agentName] of [
+    ['agent-session', 'Agent Session'],
+    ['agent-session-2', 'Agent Session Two'],
+  ] as const) {
+    const selection: AgentSelection = {
+      providerId: 'test-provider',
+      adapterId: 'openclaw',
+      model: 'test-model',
+      apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+      cwd: join(process.cwd(), 'data', 'agent-workspace', slug(agentName)),
+      baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    }
+    store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+      connection: connectionFor(agentNodeId),
+      lastSessionId: null,
+      loadSession: false,
+      initialized: Promise.resolve(),
+    })
+  }
+
+  const first = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first')
+  firstKey = first.thread.sessionKey
+  await model.startThread(reqAs(owner), chat.id, 'agent-session-2', 'second')
+
+  await model.deleteGroupChat(reqAs(owner), chat.id)
+
+  assert.equal(reopened, true, 'the test must actually have re-created a session mid-delete')
+  assert.equal(
+    await findTargetSessionImpl({ baseKey: firstKey }),
+    null,
+    'the re-created session must not survive the delete — its thread row is gone, so nothing could ever reach it again to shut it down',
+  )
+  // The sweep is what closes it, so it shows up as an extra teardown beyond
+  // the two threads' own.
+  assert.ok(
+    closeSessionCalls >= 3,
+    `the sweep must actually tear the re-created session down (saw ${closeSessionCalls})`,
+  )
+})
+
+// ---------------------------------------------------------------------------
+// THE ROWS THAT REAL DATABASES HOLD, not the tidy ones a fixture builds.
+//
+// `slug` is nullable on both GroupChatThread and GroupChatThreadAlias, and
+// deliberately so: threads predating slugs have none and keep resolving on
+// their original uuid-shaped session keys, and the unique indexes rely on
+// Postgres treating NULLs as distinct so any number of them coexist. Real data
+// holds exactly this -- scratch chats with null-slug threads on old-shape keys,
+// and a thread-alias row whose slug is null (and whose sessionKey may be too).
+//
+// So the delete has to be indifferent to slug and to key SHAPE. It is, by
+// construction rather than by care: it selects `sessionKey` (which is notNull)
+// and nothing else, and hands it to forgetLocalSessionImpl, which uses it as an
+// opaque map key and no-ops when there is no entry -- nothing anywhere parses a
+// group-chat key. This test is what stops that quietly stopping being true.
+//
+// A legacy thread and a modern one in the SAME chat, because a delete that
+// coped with only one shape at a time would still be broken for a real chat.
+// ---------------------------------------------------------------------------
+test('deleteGroupChat copes with legacy null-slug threads on old-shape session keys', async () => {
+  const owner = await makeUser('chat-delete-legacy-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'legacy shapes')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+
+  // Pre-slug: no slug, no title, and a session key that is a bare uuid rather
+  // than the `group-chat:<chat>:<agent>:<slug>` form current code mints.
+  const legacyKey = crypto.randomUUID()
+  const [legacy] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-a',
+      sessionKey: legacyKey,
+      slug: null,
+      title: null,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(legacy)
+
+  // A second legacy row, to prove the null-slug unique index really does admit
+  // more than one of them -- if it did not, a chat like this could not exist
+  // and the rest of this test would be theatre.
+  const [legacyTwo] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-b',
+      sessionKey: crypto.randomUUID(),
+      slug: null,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(legacyTwo, 'two null-slug threads must be able to coexist in one chat')
+
+  const [modern] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-solo',
+      sessionKey: `group-chat:${chat.id}:agent-solo:tidy`,
+      slug: 'tidy',
+      title: 'Tidy',
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(modern)
+
+  // The freed-address row seen in real data: null slug AND null sessionKey.
+  await db.insert(groupChatThreadAlias).values({
+    threadId: legacy.id,
+    groupChatId: chat.id,
+    agentNodeId: 'agent-a',
+    sessionKey: null,
+    slug: null,
+  })
+  await db.insert(groupChatThreadArtifact).values({ threadId: legacy.id, title: 'old note', content: 'body' })
+
+  // The whole point: this must not throw on the legacy rows.
+  await model.deleteGroupChat(reqAs(owner), chat.id)
+
+  assert.equal((await db.select().from(groupChat).where(eq(groupChat.id, chat.id))).length, 0, 'the chat is gone')
+  assert.equal(
+    (await db.select().from(groupChatThread).where(eq(groupChatThread.groupChatId, chat.id))).length,
+    0,
+    'both legacy threads and the modern one go together',
+  )
+  assert.equal(
+    (await db.select().from(groupChatThreadAlias).where(eq(groupChatThreadAlias.groupChatId, chat.id))).length,
+    0,
+    'and the null-slug alias row cascades rather than being left pointing at a thread that no longer exists',
+  )
+  assert.equal(
+    (await db.select().from(groupChatThreadArtifact).where(eq(groupChatThreadArtifact.threadId, legacy.id))).length,
+    0,
+    'as do a legacy thread’s artifacts',
+  )
 })
 
 test('a member can save and clear a thread draft; a non-member is refused and changes nothing', async () => {

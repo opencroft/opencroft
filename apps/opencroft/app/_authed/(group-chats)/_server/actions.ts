@@ -21,6 +21,7 @@ import {
   clearThread,
   compactThread,
   createGroupChat,
+  deleteGroupChat,
   deleteThread,
   editPin,
   getGroupChat,
@@ -412,6 +413,20 @@ export const setGroupChatThreadDraft = createServerFn({ method: 'POST', strict: 
 export const deleteGroupChatThread = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((threadId: string) => threadId)
   .handler(async ({ data: threadId }): Promise<void> => deleteThread(getRequest(), threadId))
+
+// Deleting the container, not a thread in it. Same throwing shape as
+// deleteGroupChatThread just above and for the same reason: the only refusal
+// this can produce is the shared not-found/non-member one, which a person can
+// do nothing differently about, so there is nothing for a refusal-as-data
+// shape to carry that the confirm dialog's generic failure line does not
+// already say.
+//
+// UI only, deliberately. There is no agent-facing counterpart on the MCP
+// surface: an agent deleting a chat it is a member of -- including the one it
+// is running in -- is a footgun with no use case behind it.
+export const deleteMyGroupChat = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((groupChatId: string) => groupChatId)
+  .handler(async ({ data: groupChatId }): Promise<void> => deleteGroupChat(getRequest(), groupChatId))
 
 // Same shape as deleteGroupChatThread (throws a GroupChatAccessError on
 // refusal rather than returning one as data) -- useClearControl's contract
