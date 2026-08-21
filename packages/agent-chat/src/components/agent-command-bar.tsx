@@ -614,7 +614,11 @@ export function AgentCommandBar({
               title={canPush ? PUSH_LABEL : 'Send'}
               aria-label={canPush ? PUSH_LABEL : 'Send'}
             >
-              {canPush ? <SendHorizontal className='size-4' /> : <Send className='size-4' />}
+              {/* Rotated a quarter turn anticlockwise so it points UP, not right:
+                  `SendHorizontal` ships pointing right, and up is the direction
+                  intended — it reads as "send these onward"
+                  rather than as a next/skip arrow beside Stop. */}
+              {canPush ? <SendHorizontal className='size-4 -rotate-90' /> : <Send className='size-4' />}
             </Button>
           ) : null}
 

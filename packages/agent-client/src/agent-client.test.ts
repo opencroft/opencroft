@@ -46,6 +46,11 @@ async function setup(
     sessionKey?: string
     transformDeliveredPrompt?: (text: string) => string
     contextWindow?: number
+    // Model a real ACP agent: cancelling ends the turn it was running, which
+    // resolves the in-flight prompt promise and therefore fires settleTurn.
+    // The default no-op cancel hides every ordering question that depends on
+    // the settle landing while the caller is still mid-call.
+    cancelEndsTurn?: boolean
   } = {},
 ) {
   counter += 1
@@ -80,7 +85,11 @@ async function setup(
       resumeCalls.push(params.sessionId)
       return {}
     },
-    cancel: async () => {},
+    cancel: async () => {
+      if (options.cancelEndsTurn) {
+        turns.shift()?.resolve({ stopReason: 'cancelled' })
+      }
+    },
     setSessionConfigOption: async (params: { sessionId: string; configId: string; value: unknown }) => {
       configOptionCalls.push(params)
       return { configOptions: options.configOptions }
@@ -1304,7 +1313,11 @@ test('a flushing prompt delivers the whole queue and itself as ONE turn, in orde
   await h.client.prompt(h.sessionId, 'forced', { queue: 'push' })
   // Still held: the interrupted turn has not settled yet.
   assert.deepEqual(h.promptCalls, ['first'])
-  assert.deepEqual(queueSnapshots(h.events).at(-1), ['second', 'third', 'forced'])
+  // Collapsed to ONE entry before the interrupt — that single entry is what
+  // makes the delivery immune to however many times the settle path drains.
+  const heldAfterPush = queueSnapshots(h.events).at(-1) ?? []
+  assert.equal(heldAfterPush.length, 1, JSON.stringify(heldAfterPush))
+  assert.equal(heldAfterPush[0].endsWith('[message 3 of 3]\nforced'), true, heldAfterPush[0])
 
   h.endTurn()
   await settle()
@@ -1381,8 +1394,11 @@ test('a push with no text of its own delivers what is held and adds nothing', as
 
   const { interrupted } = await h.client.prompt(h.sessionId, '', { queue: 'push' })
   assert.equal(interrupted, true)
-  // Nothing appended — still the two that were waiting, not three.
-  assert.deepEqual(queueSnapshots(h.events).at(-1), ['second', 'third'])
+  // Collapsed to one entry, and nothing of its own appended: the batch is the
+  // two that were waiting, not three.
+  const collapsed = queueSnapshots(h.events).at(-1) ?? []
+  assert.equal(collapsed.length, 1, JSON.stringify(collapsed))
+  assert.equal(collapsed[0].endsWith('[message 1 of 2]\nsecond\n\n[message 2 of 2]\nthird'), true, collapsed[0])
 
   h.endTurn()
   await settle()
@@ -1428,7 +1444,12 @@ test('push ignores front, so the new message is last however the caller asks', a
   await h.client.prompt(h.sessionId, 'first', { queue: 'wait' })
   await h.client.prompt(h.sessionId, 'held', { queue: 'wait' })
   await h.client.prompt(h.sessionId, 'pushed', { front: true, queue: 'push' })
-  assert.deepEqual(queueSnapshots(h.events).at(-1), ['held', 'pushed'], 'front must not jump the queue here')
+  // `front` has nothing to act on under a push: the queue is replaced by the
+  // single batch rather than having an item inserted into it. What matters is
+  // that the new message is LAST inside that batch, whatever the caller asked.
+  const batch = queueSnapshots(h.events).at(-1) ?? []
+  assert.equal(batch.length, 1, JSON.stringify(batch))
+  assert.equal(batch[0].endsWith('[message 1 of 2]\nheld\n\n[message 2 of 2]\npushed'), true, batch[0])
 
   h.endTurn()
   await settle()
@@ -1444,6 +1465,44 @@ test('front still works for wait, which is the axis it belongs to', async () => 
   await h.client.prompt(h.sessionId, 'ordinary', { queue: 'wait' })
   await h.client.prompt(h.sessionId, 'corrective', { front: true, queue: 'wait' })
   assert.deepEqual(queueSnapshots(h.events).at(-1), ['corrective', 'ordinary'])
+  await h.client.deleteSession(h.sessionId)
+})
+
+// ── the push ordering defect ──────────────────────────────────────────────
+//
+// Against a REAL agent, cancelling ends the running turn, so settleTurn fires
+// while prompt() is still suspended on its own `await cancelSession(...)`. The
+// queue is untouched at that instant and the push flag is not set yet, so the
+// drain that runs sees ordinary state. These two tests describe what a push
+// must do regardless of when the settle lands.
+
+test('a push batches everything into one delivery even when the cancel settles the turn immediately', async () => {
+  const h = await setup('openclaw', { cancelEndsTurn: true })
+  await h.client.prompt(h.sessionId, 'running', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'held-one', { queue: 'wait' })
+  await h.client.prompt(h.sessionId, 'held-two', { queue: 'wait' })
+  assert.deepEqual(queueSnapshots(h.events).at(-1), ['held-one', 'held-two'])
+
+  await h.client.prompt(h.sessionId, 'newest', { queue: 'push' })
+  await settle()
+
+  // One delivery carrying all three, not three turns draining one at a time.
+  assert.equal(h.promptCalls.length, 2, `expected one batched delivery, got: ${JSON.stringify(h.promptCalls)}`)
+  assert.equal(
+    h.promptCalls[1].endsWith('[message 1 of 3]\nheld-one\n\n[message 2 of 3]\nheld-two\n\n[message 3 of 3]\nnewest'),
+    true,
+    h.promptCalls[1],
+  )
+  assert.deepEqual(queueSnapshots(h.events).at(-1), [], 'nothing may be left queued')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a push reports the interrupt it performed even when the turn ends inside the cancel', async () => {
+  const h = await setup('openclaw', { cancelEndsTurn: true })
+  await h.client.prompt(h.sessionId, 'running', { queue: 'wait' })
+  const { interrupted } = await h.client.prompt(h.sessionId, 'newest', { queue: 'push' })
+  assert.equal(interrupted, true, 'a turn was running when this call arrived')
+  await settle()
   await h.client.deleteSession(h.sessionId)
 })
 

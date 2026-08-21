@@ -3529,7 +3529,7 @@ test('a caller that is not a member of the chat is refused, with the refusal a m
     model.startThreadAsAgent('Agent Session', chat.id, 'Agent Session Two', 'let me in'),
   )
   const missingThread = await captureRefusal(() =>
-    model.sendMessageInThreadAsAgent('Agent Session', 'nope:nope:nope', 'x'),
+    model.sendMessageInThreadAsAgent('Agent Session', 'nope:nope:nope', 'x', 'wait'),
   )
   assert.deepEqual(refusal, missingThread, 'a non-member caller learns exactly what a bad thread reference teaches')
 })

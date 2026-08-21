@@ -145,12 +145,6 @@ interface SessionState {
   // replay carries no turn boundaries of its own, so handleUpdate reconstructs
   // them while this is set — see the `user_message_chunk` case.
   replaying?: boolean
-  // Set by a flushing prompt (see prompt's `flush`) while a turn is still
-  // running. The next drain then hands the WHOLE queue over as one delivery
-  // instead of one entry, and clears this. Held as state rather than passed to
-  // the drain because the two are separated in time: the flush is requested
-  // while the turn it interrupts is still settling.
-  pushQueue?: boolean
   // Set by refreshMcpServers() when it finds this session mid-turn, instead of
   // resuming it immediately — a resume rides the same connection a live
   // prompt is streaming over. settleTurn applies the deferred resume once the
@@ -1138,30 +1132,15 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // releases and drains — exactly the single-prompt error path of old. Queue
   // depth is small (hand-typed messages), so the drain's self-call chain stays
   // shallow: each delivery runs a full agent turn before the next drain.
-  // A flush requested mid-turn (see prompt's `flush`) drains EVERYTHING as one
-  // delivery rather than one entry per turn — the agent would otherwise act on
-  // each stale message before reaching the newest one, which is the whole
-  // reason a flush was asked for. Split out of settleTurn so a deferred MCP
+  // One entry per drain, always: a push has already collapsed everything it
+  // wanted delivered together into a single queue entry before interrupting,
+  // so this never needs to know a push happened. Split out of settleTurn so a deferred MCP
   // resume (see pendingMcpRefresh) can run to completion first and still reach
   // this: draining here while that resume is still in flight would deliver a
   // prompt over the same connection the resume is using.
   function drainQueue(sessionId: string): void {
     const session = store.sessions.get(sessionId)
     if (!session) {
-      return
-    }
-    if (session.pushQueue) {
-      session.pushQueue = false
-      const pending = session.queue ?? []
-      if (pending.length === 0) {
-        return
-      }
-      const text = joinPrompts(pending.map((item) => item.text))
-      session.queue = []
-      emitQueue(sessionId, session.queue)
-      void deliverPrompt(sessionId, text).catch((error: unknown) =>
-        emit(sessionId, { kind: 'error', message: errorMessage(error) }),
-      )
       return
     }
     const next = session.queue?.shift()
@@ -1799,67 +1778,71 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // would end a turn purely to say nothing — and the disclaimer's own
       // sentence, "interrupted so everything waiting could arrive at once", is
       // only true when something is in fact waiting.
-      const willDeliver = adds || session.queue.length > 0
-      // Read BEFORE cancelling, so the answer describes what this call found
-      // rather than what the cancel left behind. A push against an idle session
-      // interrupted nothing and must not claim otherwise.
-      const interrupted = push && willDeliver && session.activeTurns > 0
-      if (interrupted) {
-        await cancelSession(sessionId)
-      }
-      // A running turn normally means the message must wait: ACP takes one
-      // prompt-turn at a time, so it's held here (server-side, surviving the
-      // client that typed it) and the snapshot published. `front` puts it
-      // ahead of earlier queued messages, e.g. corrective guidance after a
-      // rejected permission that must reach the agent before anything else.
-      // Steering-capable agents (see supportsMidTurnInput) skip the queue
-      // entirely: the prompt goes straight through and the live turn picks it
-      // up as streaming input.
-      if (session.activeTurns > 0 && !supportsMidTurnInput(session.selection)) {
-        if (adds) {
-          const item: QueuedPrompt = { id: randomUUID(), text }
-          // `front` is ignored under a push, rather than merely unused by the
-          // callers that push today. A push means "everything held, and this
-          // one last": held messages came first and stay first, so the newest
-          // reads as the latest word on them rather than as a preamble to
-          // messages written before it. `front` would invert exactly that, and
-          // the contract is stated in QueueMode, both tool descriptions and the
-          // node manifest — so it is enforced here instead of relied upon.
-          if (opts.front && !push) {
-            session.queue.unshift(item)
-          } else {
-            session.queue.push(item)
-          }
-        }
-        // Held, not delivered: the interrupted turn has not settled yet. The
-        // flag makes the drain that follows take the whole queue at once.
-        if (push) {
-          session.pushQueue = true
-        }
-        emitQueue(sessionId, session.queue)
-        return { interrupted }
-      }
-      // Idle, so this delivers now. A push still has to carry anything left
-      // holding — a queue can outlive its turn when that turn failed before
-      // settling — otherwise those messages would wait for a turn that is
-      // never coming.
-      if (push && session.queue.length > 0) {
+      // Steering-capable agents (see supportsMidTurnInput) never queue: the
+      // prompt goes straight through and the live turn picks it up as streaming
+      // input, so there is nothing to batch and nothing worth interrupting.
+      const holding = session.activeTurns > 0 && !supportsMidTurnInput(session.selection)
+
+      if (push) {
+        // COLLAPSE FIRST, INTERRUPT SECOND. The batch is formed and put in the
+        // queue BEFORE the turn is cancelled, so at the instant the turn dies
+        // the queue holds exactly one item. However many times the settle path
+        // drains — and cancelling a real agent ends its turn inside the `await`
+        // below, so at least one drain runs while this call is still suspended
+        // — there is only ever one thing to deliver, and it is the whole batch.
+        //
+        // The previous order (cancel, then enqueue, then set a flag telling the
+        // drain to take everything) lost that race: the drain ran on an ordinary
+        // queue before the flag was set, shipped one stale message on its own,
+        // and started a fresh turn — which is why a push looked like it had not
+        // interrupted anything. Ordering it this way removes the flag entirely
+        // rather than making the race narrower.
         const held = session.queue.map((item) => item.text)
         const texts = adds ? [...held, text] : held
-        session.queue = []
+        if (texts.length === 0) {
+          // Nothing held and nothing of its own: the composer's button pressed
+          // against a queue that drained between the render and the click.
+          // Doing nothing is the honest outcome — an empty prompt would start a
+          // turn saying nothing, and cancelling would end one to say nothing.
+          return { interrupted: false }
+        }
+        const batched = joinPrompts(texts)
+        if (!holding) {
+          // No turn to interrupt. A queue can still outlive its turn when that
+          // turn failed before settling, so the batch is delivered rather than
+          // left waiting for a turn that is never coming.
+          session.queue = []
+          emitQueue(sessionId, session.queue)
+          await deliverPrompt(sessionId, batched)
+          return { interrupted: false }
+        }
+        session.queue = [{ id: randomUUID(), text: batched }]
         emitQueue(sessionId, session.queue)
-        await deliverPrompt(sessionId, joinPrompts(texts))
-        return { interrupted }
+        await cancelSession(sessionId)
+        return { interrupted: true }
       }
-      // A push with nothing held and nothing of its own has nothing to deliver.
-      // Reached when the button is pressed against a queue that drained between
-      // the render and the click — doing nothing is the honest outcome, and an
-      // empty prompt would start a turn saying nothing.
+
+      // `wait`: a running turn means the message is held here (server-side,
+      // surviving the client that typed it) and the snapshot published. `front`
+      // puts it ahead of earlier queued messages, e.g. corrective guidance
+      // after a rejected permission that must reach the agent before anything
+      // else. It is meaningful only on this path — a push has no queue left to
+      // be at the front of, since it collapses the queue into one item.
+      if (holding) {
+        const item: QueuedPrompt = { id: randomUUID(), text }
+        if (opts.front) {
+          session.queue.unshift(item)
+        } else {
+          session.queue.push(item)
+        }
+        emitQueue(sessionId, session.queue)
+        return { interrupted: false }
+      }
       if (!adds) {
-        return { interrupted }
+        return { interrupted: false }
       }
       await deliverPrompt(sessionId, text)
-      return { interrupted }
+      return { interrupted: false }
     },
 
     // Drop a still-queued prompt before it's delivered. Unknown ids are a
