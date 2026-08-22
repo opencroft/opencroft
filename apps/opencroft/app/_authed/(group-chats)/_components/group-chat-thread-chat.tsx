@@ -297,6 +297,7 @@ export function GroupChatThreadChat({
         renderers={CHAT_RENDERERS}
         unread={unread}
         onRemoveUnread={acp.removeQueued}
+        onDeliverUnread={acp.deliverQueue}
         footerExtra={<AgentChatStatusIndicators />}
       />
       {/* A thread's agent asks for approval exactly as a 1:1 chat's does, and

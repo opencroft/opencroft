@@ -2,8 +2,10 @@
 
 import type { ReactNode } from 'react'
 import { useCallback, useMemo, useRef } from 'react'
+import { LogoLoader } from 'ui/components/ui/logo-loader'
 
 import { type Block, ChatConversation, type ChatConversationHandle } from './components/chat-conversation'
+import { ChatEmptyState } from './components/chat-empty-state'
 import type { ChatTurnRenderers, DetailItem, UserText } from './components/chat-turn'
 import { ChatUnread, type ChatUnreadMessage } from './components/chat-unread'
 import type { AgentChatSession } from './session'
@@ -158,6 +160,41 @@ export function AgentChat({
     conversationRef.current?.holdAcrossLoadOlder(() => session.loadMoreHistory?.())
   }, [session])
 
+  const footer = (
+    <>
+      {showThinkingIndicator && session.waiting && <ThinkingIndicator />}
+      {/* Unconditional: the section renders nothing with nothing waiting, so
+          guarding it here would only duplicate a check it already makes. */}
+      <ChatUnread messages={unread ?? []} onRemove={onRemoveUnread} onDeliver={onDeliverUnread} renderers={renderers} />
+      {footerExtra}
+    </>
+  )
+
+  // Loading and empty are PANEL states, not transcript states: the reader is
+  // between conversations or waiting for one to load, not sitting at the
+  // bottom of a short one. ChatConversation renders its own placeholders
+  // inside its bottom-anchored region, which is the right placement when the
+  // transcript IS the panel; the app's chat panels wrap the conversation in a
+  // scroll region pinned to the composer, and there a placeholder inside the
+  // region lands at the bottom with the transcript it stands in for. Rendered
+  // here instead, the state fills the region the host gives this component
+  // and centres in it. The footer still renders beneath, so a queue arriving
+  // mid-load keeps its divider and the deliver affordance.
+  const panelState = session.loading ? (
+    <LogoLoader size={40} className='text-foreground' />
+  ) : !hasMessages && (unread?.length ?? 0) === 0 ? (
+    <ChatEmptyState text={emptyText ?? 'no messages yet'} />
+  ) : null
+
+  if (panelState) {
+    return (
+      <div className='flex min-h-0 min-w-0 flex-1 flex-col'>
+        <div className='flex flex-1 items-center justify-center p-4'>{panelState}</div>
+        {footer}
+      </div>
+    )
+  }
+
   return (
     <ChatConversation
       ref={conversationRef}
@@ -178,21 +215,7 @@ export function AgentChat({
       agentAvatar={agentAvatar}
       renderers={renderers}
       renderTool={renderTool}
-      footer={
-        <>
-          {showThinkingIndicator && session.waiting && <ThinkingIndicator />}
-          {/* Unconditional: the section renders nothing with nothing waiting,
-              so guarding it here would only duplicate a check it already
-              makes. */}
-          <ChatUnread
-            messages={unread ?? []}
-            onRemove={onRemoveUnread}
-            onDeliver={onDeliverUnread}
-            renderers={renderers}
-          />
-          {footerExtra}
-        </>
-      }
+      footer={footer}
     />
   )
 }
