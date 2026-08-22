@@ -14,6 +14,7 @@ import type { ChatMessage, ChatPart } from '@/app/_authed/(agent)/_lib/messages'
 import { READER_ORIGIN, type WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import {
   cancelLocal,
+  deliverQueueLocal,
   ensureLocalSession,
   forgetLocalSession,
   forkLocal,
@@ -140,6 +141,8 @@ export interface AcpSession {
   respondPermissionText: (requestId: string, text: string) => void
   // Drop a still-queued message before it's delivered.
   removeQueued: (id: string) => void
+  // Deliver the whole waiting queue now, whatever the cadence would do.
+  deliverQueue: () => void
   // Change one of the session's advertised config options. Applies to this
   // session only — never written back into the profile it was started from.
   setConfigOption: (configId: string, value: string | boolean) => void
@@ -522,7 +525,14 @@ export function useAcpSession(
         return
       }
       setEvents((prev) => [...prev, event])
-      if (event.kind === 'turn_end' || event.kind === 'error') {
+      // turn_end / error: the turn is over, so whatever the client optimistically
+      // marked working is not working. A NON-EMPTY queue snapshot is the other
+      // half of the same correction: the engine saying a message is WAITING
+      // means nothing is running to wait on. Without it, a message held by the
+      // session's cadence leaves the optimistic flag stuck on — a working
+      // indicator and a Stop button over an agent that is idle, until the chat
+      // is left and re-entered.
+      if (event.kind === 'turn_end' || event.kind === 'error' || (event.kind === 'queue' && event.items.length > 0)) {
         setLocalWaiting(false)
       }
     }
@@ -653,6 +663,15 @@ export function useAcpSession(
   const stop = useCallback(() => {
     if (sessionId) {
       void stopLocal({ data: sessionId })
+    }
+  }, [sessionId])
+
+  // Deliver everything waiting, now — the Unread divider, pressed. The engine
+  // owns the hand-over (and what it interrupts to do it); the queue snapshots
+  // it emits are what say the queue went, the same as for a send.
+  const deliverQueue = useCallback(() => {
+    if (sessionId) {
+      void deliverQueueLocal({ data: sessionId })
     }
   }, [sessionId])
 
@@ -865,6 +884,7 @@ export function useAcpSession(
       resolveAsk,
       respondPermissionText,
       removeQueued,
+      deliverQueue,
       setConfigOption,
       setPresence,
     }),
@@ -881,6 +901,7 @@ export function useAcpSession(
       resolveAsk,
       respondPermissionText,
       removeQueued,
+      deliverQueue,
       setConfigOption,
       setPresence,
     ],

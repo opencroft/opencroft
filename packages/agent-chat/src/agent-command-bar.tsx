@@ -430,12 +430,21 @@ export function useAgentCommandBar({
             lockedReason={lockedConfigOptions?.[MODE_CONFIG_ID]}
           />
         ) : null}
-        {/* Last in the group: the others say what the agent is and what it may
-            do, and this one says when it will get round to reading. */}
-        {presence ? <PresenceSelector presence={presence.value} onSelect={presence.onSelect} /> : null}
       </>
     ),
-    [dial, lockedConfigOptions, presence],
+    [dial, lockedConfigOptions],
+  )
+
+  // Presence, immediately LEFT of the approval shield rather than with the
+  // dials above: it and the shield are the session-level pair -- this one says
+  // when the agent will get round to reading, that one what it may do -- and
+  // the model/effort/mode pickers that used to sit between them bury a pair
+  // that reads better side by side. A memo of its own for the same reason as
+  // `controlsNode`: a presence change re-identifies this slot alone, not the
+  // whole bar node.
+  const approvalLeadingNode = useMemo(
+    () => (presence ? <PresenceSelector presence={presence.value} onSelect={presence.onSelect} /> : null),
+    [presence],
   )
 
   const autoApproveRef = useRef(onToggleAutoApprove)
@@ -527,6 +536,7 @@ export function useAgentCommandBar({
         leading={leadingBarContent}
         onStartIconClick={onStartIconClick}
         startIcon={startIcon}
+        approvalLeading={approvalLeadingNode}
         controls={controlsNode}
         configs={configs}
         onConfigChange={handleConfigChange}
@@ -558,6 +568,7 @@ export function useAgentCommandBar({
       leadingBarContent,
       onStartIconClick,
       startIcon,
+      approvalLeadingNode,
       controlsNode,
       configs,
       handleConfigChange,

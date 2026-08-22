@@ -36,9 +36,16 @@ export const MINUTES_WINDOW_MAX_MS = 3 * MINUTE_MS
  * `custom` is clamped at zero rather than rejected. A negative interval has an
  * unambiguous meaning here — no waiting — and refusing it would turn a bad
  * setting into a message that never arrives, which is the worse failure.
+ *
+ * `high-attention` returns zero for the same reason `realtime` does, but the
+ * zero does different work: messages never wait under it (nothing is enqueued
+ * to wait — `prompt` runs them as pushes), so this branch exists for what was
+ * already held when the cadence was switched. For those, zero makes them due
+ * immediately, which is what choosing the cadence means.
  */
 export function presenceWindowMs(presence: Presence, roll: () => number = Math.random): number {
   switch (presence.kind) {
+    case 'high-attention':
     case 'realtime':
       return 0
     case 'minutes':

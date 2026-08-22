@@ -42,7 +42,7 @@ import {
 } from './pagination'
 import { type ResolvedPermissions, toolKey } from './permissions'
 import { DEFAULT_PRESENCE, msUntilDue, presenceWindowMs } from './presence'
-import { buildDelivery } from './queue-tags'
+import { buildDelivery, type DeliveryNote } from './queue-tags'
 import { buildSpawnConfig, findAdapter } from './resolve'
 import { fileSkillHandler, fileSkills } from './skills'
 import { findTurnBoundary } from './turns'
@@ -212,11 +212,13 @@ interface SessionState {
   // Prompts received while a turn was active, delivered FIFO as turns end.
   // Every change is published as a 'queue' snapshot event.
   queue: QueuedPrompt[]
-  // Set before an interrupt so the delivery it buys carries the note. Written
-  // BEFORE the cancel, never after: cancelling a real agent ends its turn
-  // synchronously enough that a drain can run while the caller is still
-  // suspended, and a note set afterwards arrives too late to be attached.
-  noteNextDelivery?: boolean
+  // Set before an interrupt so the delivery it buys carries the note, and WHICH
+  // note it carries — the queue-jump wording for a one-off push or a Stop, the
+  // compact per-interrupt wording for High Attention. Written BEFORE the cancel,
+  // never after: cancelling a real agent ends its turn synchronously enough that
+  // a drain can run while the caller is still suspended, and a note set
+  // afterwards arrives too late to be attached.
+  nextDeliveryNote?: DeliveryNote
   /**
    * Whether readers have been shown a non-empty queue for this session.
    *
@@ -252,7 +254,7 @@ interface SessionState {
    * Stop with something unread. Somebody asking for attention now is not
    * waiting for a reading window.
    *
-   * Deliberately NOT folded into `noteNextDelivery`, which today happens to be
+   * Deliberately NOT folded into `nextDeliveryNote`, which today happens to be
    * set in the same places. They answer different questions — "explain the
    * interrupt" and "skip the wait" — and an idle `push` needs the second
    * without the first, because it interrupted nothing.
@@ -1319,11 +1321,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // by the first MESSAGE delivery after it. A system entry drained in between
     // never carries one and must not swallow it either.
     const first = run[0]
-    const interrupted = first.kind === 'message' && session.noteNextDelivery === true
-    if (interrupted) {
-      session.noteNextDelivery = false
+    const note: DeliveryNote | undefined = first.kind === 'message' ? session.nextDeliveryNote : undefined
+    if (note) {
+      session.nextDeliveryNote = undefined
     }
-    const text = buildRunDelivery(run, interrupted)
+    const text = buildRunDelivery(run, note)
     // Returned rather than fired and forgotten, so a send into an IDLE session
     // can await its own dispatch. Every message goes through the queue now, and
     // without this a send that nothing was holding up would resolve before the
@@ -1548,7 +1550,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   }
 
   /** Turn a run into the one prompt it delivers. */
-  function buildRunDelivery(run: QueuedPrompt[], interrupted: boolean): string {
+  function buildRunDelivery(run: QueuedPrompt[], note?: DeliveryNote): string {
     const first = run[0]
     if (first.kind === 'system') {
       return buildDelivery({ kind: 'system', text: first.text })
@@ -1558,7 +1560,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         ? { sender: entry.sender, sentAt: entry.sentAt, text: entry.text }
         : { sender: '', sentAt: '', text: entry.text },
     )
-    return buildDelivery({ kind: 'messages', messages, interrupted })
+    return buildDelivery({ kind: 'messages', messages, note })
   }
 
   function settleTurn(sessionId: string, outcome: { stopReason?: string }): void {
@@ -2210,6 +2212,18 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // batch and nothing worth interrupting.
       const holding = session.activeTurns > 0 && !supportsMidTurnInput(session.selection)
 
+      // High Attention decides the mode itself: everything sent while that
+      // cadence is set goes now, with a stop for whatever turn is running. The
+      // sender does not opt in — `queue` is the sender's word about one message,
+      // a cadence is the reader's standing word about all of them, and the
+      // standing word wins.
+      const mode: QueueMode = session.presence.kind === 'high-attention' ? 'push' : opts.queue
+      // And which interrupt note a delivery it buys would open with: the
+      // compact per-interrupt wording under High Attention, where stopping is
+      // how messages routinely arrive, the queue-jump wording for a one-off
+      // push.
+      const noteKind: DeliveryNote = session.presence.kind === 'high-attention' ? 'interrupt' : 'queue-jump'
+
       const entry = toEntry(text, opts.origin)
       if (!entry) {
         // Nothing of its own to send. For `wait` that is simply nothing: an
@@ -2220,7 +2234,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // it interrupts, because there is something to hand over instead. With
         // nothing held there is nothing to deliver, and ending a turn to say
         // nothing is never what a caller meant.
-        if (opts.queue !== 'push' || session.queue.length === 0) {
+        if (mode !== 'push' || session.queue.length === 0) {
           return { interrupted: false }
         }
         // A push means now, whatever the reading cadence says.
@@ -2229,7 +2243,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
           await drainQueue(sessionId)
           return { interrupted: false }
         }
-        session.noteNextDelivery = true
+        session.nextDeliveryNote = noteKind
         await cancelSession(sessionId)
         return { interrupted: true }
       }
@@ -2243,8 +2257,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // words: everything held, this message LAST. That promise is written in
       // QueueMode, in the tool descriptions and in the node manifest, so
       // honouring `front` here would silently invert an order three documented
-      // surfaces state. Ignored rather than trusted not to be passed.
-      const placement = opts.front && opts.queue !== 'push' ? 'front' : 'end'
+      // surfaces state. Ignored rather than trusted not to be passed. High
+      // Attention runs every message as a push, so the same applies there.
+      const placement = opts.front && mode !== 'push' ? 'front' : 'end'
       if (placement === 'front') {
         session.queue.unshift(entry)
         // Jumping the line means jumping the reading window too. `front` is the
@@ -2278,7 +2293,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         emitQueue(sessionId, session.queue)
       }
 
-      if (opts.queue !== 'push') {
+      if (mode !== 'push') {
         // `wait`: held until the turn ends, or until Presence opens the window.
         // If nothing is running, it goes now.
         if (!holding) {
@@ -2301,7 +2316,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         await drainQueue(sessionId)
         return { interrupted: false }
       }
-      session.noteNextDelivery = true
+      session.nextDeliveryNote = noteKind
       await cancelSession(sessionId)
       return { interrupted: true }
     },
@@ -2386,8 +2401,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       const unread = session.queue.filter((entry) => entry.kind === 'message').length
       if (unread > 0) {
         // Marked before the cancel, so the delivery the interrupt buys carries
-        // the note however soon the settle lands.
-        session.noteNextDelivery = true
+        // the note however soon the settle lands. The queue-jump wording: a
+        // Stop is a one-off ask for attention now, not the cadence talking.
+        session.nextDeliveryNote = 'queue-jump'
         // And skips the reading window: a person who pressed Stop with
         // something unsaid is asking to be read now, not at the hour.
         session.bypassPresenceOnce = true

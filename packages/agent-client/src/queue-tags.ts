@@ -127,6 +127,32 @@ const INTERRUPT_NOTE =
   "work out the sender's current intent, then continue from what you had already done."
 
 /**
+ * The High Attention cadence's version of the same event: a message arrived and
+ * was handed over at once, stopping the turn to do it. One line, because under
+ * this cadence an interrupt is the ordinary way a message arrives — the reader
+ * asked for everything to reach them now — so the four-clause queue-jump note
+ * would be repeated at them message after message. Same discipline though:
+ * neutral about what the interrupt meant, and it says continue, not start over.
+ */
+const HIGH_ATTENTION_NOTE =
+  'Your turn was interrupted to deliver the incoming messages below. Read them, then continue from what you had.'
+
+/**
+ * Which of the two notes a delivery opens with. `'queue-jump'` explains a
+ * one-off push past the cadence the reader set; `'interrupt'` explains a stop
+ * the cadence itself asked for. Same event either way — a turn was ended to
+ * hand something over — which is why they are one field and not two booleans:
+ * a delivery that interrupted nothing has no note at all, and one that did has
+ * exactly one wording.
+ */
+export type DeliveryNote = 'queue-jump' | 'interrupt'
+
+const DELIVERY_NOTES: Record<DeliveryNote, string> = {
+  'queue-jump': INTERRUPT_NOTE,
+  interrupt: HIGH_ATTENTION_NOTE,
+}
+
+/**
  * What is being handed to the agent. A caller must say which, and the two are
  * not interchangeable.
  *
@@ -145,7 +171,7 @@ const INTERRUPT_NOTE =
  * dangerous side of the branch.
  */
 export type Delivery =
-  | { kind: 'messages'; messages: TaggedMessage[]; interrupted: boolean }
+  | { kind: 'messages'; messages: TaggedMessage[]; note?: DeliveryNote }
   | { kind: 'system'; text: string }
 
 /**
@@ -168,7 +194,7 @@ export function buildDelivery(delivery: Delivery): string {
     return ''
   }
   const body = encodeBatch(delivery.messages)
-  return delivery.interrupted ? `${INTERRUPT_NOTE}\n\n${body}` : body
+  return delivery.note ? `${DELIVERY_NOTES[delivery.note]}\n\n${body}` : body
 }
 
 /**

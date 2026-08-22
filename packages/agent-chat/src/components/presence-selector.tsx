@@ -15,25 +15,29 @@ import { cn } from 'ui/lib/utils'
 // manifest, which is the layering this component exists on the right side of.
 // The host's own copy satisfies this structurally.
 export type PresenceValue =
+  // Above realtime: not merely read as it arrives -- a running turn is
+  // stopped to read it.
+  | { kind: 'high-attention' }
   | { kind: 'realtime' }
   | { kind: 'minutes' }
   | { kind: 'hourly' }
   | { kind: 'daily' }
   | { kind: 'custom'; intervalMs: number }
 
-export type FixedPresenceKind = 'realtime' | 'minutes' | 'hourly' | 'daily'
+export type FixedPresenceKind = 'high-attention' | 'realtime' | 'minutes' | 'hourly' | 'daily'
 
 const MINUTE_MS = 60_000
 
 // Literal classes only -- a constructed name would not survive the build.
 //
-// Three colours for five cadences, deliberately. What the colour answers is
-// "how soon will this be read", not "which setting is selected": green reads
-// now, blue reads later, violet reads on an interval somebody chose. Which of
-// the three later cadences is in force is not a thing to read off a 16-pixel
-// glyph, so it is on the button's title and in the popover, where an exact
-// answer belongs.
+// Four colours for six cadences, deliberately. What the colour answers is
+// "how does this cadence read", not "which setting is selected": red stops
+// the turn to read now, green reads now, blue reads later, violet reads on an
+// interval somebody chose. Which of the three later cadences is in force is
+// not a thing to read off a 16-pixel glyph, so it is on the button's title
+// and in the popover, where an exact answer belongs.
 const PRESENCE_COLOR = {
+  'high-attention': 'text-red-500',
   realtime: 'text-green-500',
   minutes: 'text-blue-500',
   hourly: 'text-blue-500',
@@ -47,6 +51,7 @@ const PRESENCE_COLOR = {
 // Custom is not among them. It is the one that needs a number, which makes it a
 // row with an input rather than another item to press.
 const FIXED: { kind: FixedPresenceKind; label: string; hint: string }[] = [
+  { kind: 'high-attention', label: 'High Attention', hint: 'interrupts to read' },
   { kind: 'realtime', label: 'Realtime', hint: 'as it arrives' },
   { kind: 'minutes', label: 'In minutes', hint: 'within a few' },
   { kind: 'hourly', label: 'Hourly', hint: 'once an hour' },

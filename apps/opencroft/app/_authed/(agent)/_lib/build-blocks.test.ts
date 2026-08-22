@@ -287,7 +287,7 @@ test('the note on an interrupted delivery is not part of the conversation', () =
   // whoever's message it happened to arrive in front of.
   const raw = buildDelivery({
     kind: 'messages',
-    interrupted: true,
+    note: 'queue-jump',
     messages: [sent('Alex Rivera', '2026-03-04T09:12:00.000Z', 'stop and read this')],
   })
   assert.deepEqual(partsOf(buildBlocks([userMessage(1, raw)])[0]), [

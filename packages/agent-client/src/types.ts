@@ -177,11 +177,19 @@ export type QueueMode = 'wait' | 'push'
  * measuring from the newest would let a steady trickle of messages hold the
  * queue shut forever.
  *
+ * `high-attention` never opens a window at all — but unlike `realtime`, which
+ * also has no window, it reaches the next delivery as an interrupt: every
+ * message goes now, with a stop for whatever turn is running, and the delivery
+ * opens with the compact per-interrupt note rather than the queue-jump one.
+ * It is a Presence rather than a `queue` mode because the sender does not opt
+ * in — the reader set the cadence, and everything sent to them lands under it.
+ *
  * A union rather than a name plus an optional interval: only `custom` has one,
  * and an optional field would let the other four carry a number that silently
  * means nothing.
  */
 export type Presence =
+  | { kind: 'high-attention' }
   | { kind: 'realtime' }
   | { kind: 'minutes' }
   | { kind: 'hourly' }

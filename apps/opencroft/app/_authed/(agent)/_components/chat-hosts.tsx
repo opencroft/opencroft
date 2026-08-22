@@ -82,6 +82,7 @@ function ChatHost({
   defaultExpanded,
   unread,
   onRemoveUnread,
+  onDeliverUnread,
   configOptions,
   onSetConfigOption,
   presence,
@@ -107,6 +108,8 @@ function ChatHost({
   defaultExpanded?: boolean
   unread?: readonly ChatUnreadMessage[]
   onRemoveUnread?: (id: string) => void
+  // Deliver the whole waiting queue now — the Unread divider, pressed.
+  onDeliverUnread?: () => void
   configOptions?: SessionConfigOption[]
   onSetConfigOption?: (configId: string, value: string | boolean) => void
   // How often this session reads what is waiting for it, and how to change it.
@@ -186,6 +189,7 @@ function ChatHost({
           renderers={CHAT_RENDERERS}
           unread={unread}
           onRemoveUnread={onRemoveUnread}
+          onDeliverUnread={onDeliverUnread}
           footerExtra={<AgentChatStatusIndicators />}
         />
         {approvals}
@@ -202,6 +206,7 @@ function ChatHost({
     defaultExpanded,
     unread,
     onRemoveUnread,
+    onDeliverUnread,
   ])
 
   // On the conversation page, dock a back + rename control into the inspector header.
@@ -434,6 +439,7 @@ export function LocalAgentHost({
       defaultExpanded
       unread={unread}
       onRemoveUnread={acp.removeQueued}
+      onDeliverUnread={acp.deliverQueue}
       configOptions={acp.configOptions}
       onSetConfigOption={acp.setConfigOption}
       presence={presence}

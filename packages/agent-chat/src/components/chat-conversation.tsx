@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef } from 'react'
 import { Flex } from 'ui/components/ui/layout/flex'
 
+import { ChatEmptyState } from './chat-empty-state'
 import {
   BLOCK_ID_ATTR,
   ChatLoadOlderButton,
@@ -672,8 +673,15 @@ export interface ChatConversationProps {
   // (all system tags, no reply yet). That state renders as the ordinary
   // (visually blank) conversation view, not the empty-state text: there IS a
   // conversation, it just has nothing to show yet. Only the true absence of
-  // any message shows `emptyText`.
+  // any message shows `emptyText` -- and `hasUndelivered` dismisses it for
+  // content that has not become blocks yet.
   hasMessages: boolean
+  // Whether anything is waiting outside the block list -- messages that
+  // arrived but have not been delivered to the agent yet, rendered in the
+  // footer rather than as blocks. The empty state is dismissed by ANY
+  // content, and a message waiting its turn is content: a placeholder
+  // standing beside a waiting queue would say nothing has been sent.
+  hasUndelivered?: boolean
   loading?: boolean
   emptyText?: string
   // True while a turn is generating -- disables editing the last user message
@@ -717,6 +725,7 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
     sessionKey,
     blocks,
     hasMessages,
+    hasUndelivered,
     loading,
     emptyText,
     waiting,
@@ -758,8 +767,10 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
     <Flex ref={rootRef} justify='end' className='min-h-full min-w-0 gap-3 px-4 py-4'>
       {loading ? (
         <div className='text-sm text-muted-foreground'>loading…</div>
-      ) : !hasMessages ? (
-        <div className='text-sm text-muted-foreground'>{emptyText ?? 'no messages yet'}</div>
+      ) : !hasMessages && !hasUndelivered ? (
+        <div className='flex flex-1 items-center justify-center'>
+          <ChatEmptyState text={emptyText ?? 'no messages yet'} />
+        </div>
       ) : (
         <>
           {/* Nothing to sit under, because there is no section at all. `blocks`
