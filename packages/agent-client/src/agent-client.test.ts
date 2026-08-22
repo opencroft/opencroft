@@ -2099,6 +2099,104 @@ test('switching to realtime releases what is already waiting', async () => {
   await h.client.deleteSession(h.sessionId)
 })
 
+// ── High Attention: the cadence decides, the sender does not opt in ────────
+
+test('under High Attention an ordinary send to an idle session goes now, unannotated', async () => {
+  // Immediacy with nothing to interrupt: the note explains a stop, and nothing
+  // stopped. `wait` was marked as wait — the cadence overrules it, which is the
+  // whole distinction from a push the sender chose.
+  const h = await setup()
+  h.client.setPresence(h.sessionId, { kind: 'high-attention' })
+  await h.client.prompt(h.sessionId, 'urgent', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  assert.equal(h.promptCalls[0]?.startsWith('<agent-message'), true, h.promptCalls[0])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('under High Attention a send marked wait still interrupts, with the compact note', async () => {
+  // The cadence decides, not the sender: `wait` under High Attention is a push,
+  // and the delivery opens with the per-interrupt line — not the queue-jump
+  // note, which is worded for a one-off ask rather than this cadence's ordinary
+  // way of delivering. ONE message, because "per interrupt" must hold at the
+  // size where a batch framing was once thought unnecessary.
+  const h = await setup()
+  h.client.setPresence(h.sessionId, { kind: 'high-attention' })
+  await h.client.prompt(h.sessionId, 'running', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  const { interrupted } = await h.client.prompt(h.sessionId, 'urgent', {
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  assert.equal(interrupted, true, 'the cadence stops the turn even though the sender said wait')
+  h.endTurn()
+  await settle()
+
+  const delivered = h.promptCalls[1]
+  assert.equal(
+    delivered.startsWith('Your turn was interrupted to deliver the incoming messages below.'),
+    true,
+    delivered,
+  )
+  assert.equal(delivered.includes('may or may not'), false, 'the queue-jump note must not carry over')
+  assert.deepEqual(partsOf(delivered), ['urgent'])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('an explicit push under High Attention opens with the compact note too', async () => {
+  // The note follows the cadence, not the flag: under this cadence every stop
+  // is the cadence's doing, whichever word the sender used. Asserted because it
+  // is a choice — the flag is visible at the same spot, and reaching for it
+  // would give the same sender two different explanations for one behaviour.
+  const h = await setup()
+  h.client.setPresence(h.sessionId, { kind: 'high-attention' })
+  await h.client.prompt(h.sessionId, 'running', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  await h.client.prompt(h.sessionId, 'urgent', { queue: 'push', origin: { kind: 'message', sender: 'Reader' } })
+  h.endTurn()
+  await settle()
+  assert.equal(
+    h.promptCalls[1].startsWith('Your turn was interrupted to deliver the incoming messages below.'),
+    true,
+    h.promptCalls[1],
+  )
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('High Attention ignores `front`: everything held, the new message last', async () => {
+  // It runs every message as a push, and `front` under a push would invert the
+  // "this message LAST" promise the mode makes on three documented surfaces.
+  const h = await setup()
+  h.client.setPresence(h.sessionId, { kind: 'high-attention' })
+  await h.client.prompt(h.sessionId, 'running', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  await h.client.prompt(h.sessionId, 'held', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await h.client.prompt(h.sessionId, 'urgent', {
+    front: true,
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  h.endTurn()
+  await settle()
+  assert.deepEqual(partsOf(h.promptCalls[1]), ['held', 'urgent'])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('switching to High Attention releases what is already waiting, without a note', async () => {
+  // Like realtime, the window is over the moment the cadence is set. But the
+  // release interrupted nothing — there was no turn — so unlike a High
+  // Attention send it arrives unannotated: the note is for stops, and this is
+  // a drain.
+  const h = await setup()
+  h.client.setPresence(h.sessionId, { kind: 'custom', intervalMs: 60_000 })
+  await h.client.prompt(h.sessionId, 'waiting', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  assert.deepEqual(deliveries(h), [])
+
+  h.client.setPresence(h.sessionId, { kind: 'high-attention' })
+  await settle()
+  assert.deepEqual(deliveries(h), [['waiting']])
+  await h.client.deleteSession(h.sessionId)
+})
+
 test('the cadence is published as a snapshot, so a reconnecting client can read it', async () => {
   const h = await setup()
   h.client.setPresence(h.sessionId, { kind: 'hourly' })

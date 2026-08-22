@@ -98,6 +98,10 @@ export interface AgentChatProps {
   // is offered, which is what a host that can show what is waiting but not edit
   // it wants.
   onRemoveUnread?: (id: string) => void
+  // Deliver everything waiting, now, rather than at the session's cadence.
+  // Without it the unread heading is only a heading, which is what a host
+  // without a way to hand the queue over wants.
+  onDeliverUnread?: () => void
   // Extra content rendered in the footer alongside the thinking indicator —
   // a host-specific status indicator (e.g. a voice playback visualizer) with
   // nowhere else in this component's own contract to live.
@@ -118,6 +122,7 @@ export function AgentChat({
   renderers,
   unread,
   onRemoveUnread,
+  onDeliverUnread,
   footerExtra,
 }: AgentChatProps) {
   const displayName = agentName ?? session.botName
@@ -159,6 +164,7 @@ export function AgentChat({
       sessionKey={session.sessionKey}
       blocks={blocks}
       hasMessages={hasMessages}
+      hasUndelivered={(unread?.length ?? 0) > 0}
       loading={session.loading}
       emptyText={emptyText}
       waiting={session.waiting}
@@ -178,7 +184,12 @@ export function AgentChat({
           {/* Unconditional: the section renders nothing with nothing waiting,
               so guarding it here would only duplicate a check it already
               makes. */}
-          <ChatUnread messages={unread ?? []} onRemove={onRemoveUnread} renderers={renderers} />
+          <ChatUnread
+            messages={unread ?? []}
+            onRemove={onRemoveUnread}
+            onDeliver={onDeliverUnread}
+            renderers={renderers}
+          />
           {footerExtra}
         </>
       }

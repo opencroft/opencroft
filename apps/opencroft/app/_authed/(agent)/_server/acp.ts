@@ -11,6 +11,7 @@ import type { Presence, QueueMode } from 'agent-client/types'
 import type { WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import {
   cancelLocalImpl,
+  deliverQueueLocalImpl,
   ensureLocalSessionImpl,
   findTargetSessionImpl,
   forgetLocalSessionImpl,
@@ -172,6 +173,14 @@ export const cancelLocal = createServerFn({ method: 'POST', strict: { output: fa
 export const stopLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((sessionId: string) => sessionId)
   .handler(async ({ data: sessionId }): Promise<{ delivered: number }> => stopLocalImpl(sessionId))
+
+// Deliver everything waiting, now — the Unread section's divider. Distinct
+// from stopLocal, which is the reader's Stop and carries its own meaning:
+// this adds nothing, cancels nothing on its own and hands the queue over
+// exactly as a push would.
+export const deliverQueueLocal = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((sessionId: string) => sessionId)
+  .handler(async ({ data: sessionId }): Promise<void> => deliverQueueLocalImpl(sessionId))
 
 export const hasActiveTurn = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((sessionId: string) => sessionId)

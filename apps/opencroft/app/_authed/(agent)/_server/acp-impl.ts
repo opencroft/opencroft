@@ -534,6 +534,16 @@ export async function stopLocalImpl(sessionId: string): Promise<{ delivered: num
   return agentClient.stop(sessionId)
 }
 
+// Deliver everything waiting, now: the Unread section's divider, pressed. An
+// empty text under `push` is the engine's own "hand over what is held" case —
+// no new message rides along, and the framing is whatever the engine already
+// does for a hand-over. Nothing waiting is a no-op, so a double press costs
+// nothing. The queue snapshots it produces are what tell the UI what became
+// of the queue; there is no answer here worth returning.
+export async function deliverQueueLocalImpl(sessionId: string): Promise<void> {
+  await agentClient.prompt(sessionId, '', { queue: 'push', origin: { kind: 'system' } })
+}
+
 export async function cancelLocalImpl(sessionId: string): Promise<void> {
   await agentClient.cancel(sessionId)
 }

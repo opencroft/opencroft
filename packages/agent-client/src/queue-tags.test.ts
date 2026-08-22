@@ -142,7 +142,7 @@ test('the send time survives however long the delivery waited', () => {
 
 test('an uninterrupted delivery carries no note, at either size', () => {
   for (const messages of [[msg('Alice', 't1', 'one')], [msg('Alice', 't1', 'one'), msg('Bob', 't2', 'two')]]) {
-    const out = buildDelivery({ kind: 'messages', messages, interrupted: false })
+    const out = buildDelivery({ kind: 'messages', messages })
     assert.equal(out.includes('Your turn was interrupted'), false, `size ${messages.length}`)
     assert.equal(out.startsWith('<agent-message'), true, out)
   }
@@ -154,7 +154,7 @@ test('an interrupted delivery of ONE message still carries the note', () => {
   const out = buildDelivery({
     kind: 'messages',
     messages: [msg('Alice', 't1', 'do the other thing instead')],
-    interrupted: true,
+    note: 'queue-jump',
   })
   assert.equal(out.includes('Your turn was interrupted'), true)
 })
@@ -164,7 +164,7 @@ test('the note never reaches the transcript, at either size', () => {
   // That coupling is the only reason an agent-facing preface is invisible to
   // the reader — it is pinned here so a change to either side is caught.
   for (const messages of [[msg('Alice', 't1', 'only')], [msg('Alice', 't1', 'one'), msg('Bob', 't2', 'two')]]) {
-    const parts = decodeBatch(buildDelivery({ kind: 'messages', messages, interrupted: true }))
+    const parts = decodeBatch(buildDelivery({ kind: 'messages', messages, note: 'queue-jump' }))
     assert.deepEqual(parts, messages, `size ${messages.length}`)
   }
 })
@@ -175,7 +175,7 @@ test('there is no batch header or count anywhere in a delivery', () => {
   const out = buildDelivery({
     kind: 'messages',
     messages: [msg('Alice', 't1', 'one'), msg('Bob', 't2', 'two')],
-    interrupted: true,
+    note: 'queue-jump',
   })
   assert.equal(/\d+ messages delivered together/.test(out), false, out)
   assert.equal(out.includes('delivered together'), false, out)
@@ -185,7 +185,7 @@ test('the note reads exactly as specified, and no earlier draft survives', () =>
   // Pinned verbatim rather than by fragment: this text is deliberate,
   // it has been reworked twice, and a paraphrase creeping in during a refactor
   // is the failure worth catching.
-  const out = buildDelivery({ kind: 'messages', messages: [msg('Alice', 't1', 'only')], interrupted: true })
+  const out = buildDelivery({ kind: 'messages', messages: [msg('Alice', 't1', 'only')], note: 'queue-jump' })
   assert.equal(
     out.includes(
       'Your turn was interrupted to deliver the queued messages below together. ' +
@@ -210,15 +210,38 @@ test('the note keeps the reasoning it was reworded to carry', () => {
   // Three things the rewrite is FOR, asserted separately from the sentence so a
   // future edit that drops one is visible as the loss it is. Each matches the
   // construction carrying the property, not a word that happens to appear in it.
-  const out = buildDelivery({ kind: 'messages', messages: [msg('Alice', 't1', 'only')], interrupted: true })
+  const out = buildDelivery({ kind: 'messages', messages: [msg('Alice', 't1', 'only')], note: 'queue-jump' })
   assert.equal(out.includes('may or may not'), true, 'the agent should weigh it, not be told')
   assert.equal(out.includes('later messages supersede earlier ones'), true, 'how to read a contradictory queue')
   assert.equal(out.includes('continue from what you had already done'), true, 'not a start-over')
 })
 
+test('the High Attention note is one compact line, ahead of the tags and only that line', () => {
+  // High Attention delivers by interrupting, so the queue-jump note would
+  // repeat four clauses at the agent message after message. Its replacement is
+  // pinned the same way the queue-jump one is: the sentence itself, that it
+  // precedes the first tag (the parser is what keeps it out of the transcript),
+  // and that no queue-jump clause rides along.
+  const out = buildDelivery({ kind: 'messages', messages: [msg('Alice', 't1', 'only')], note: 'interrupt' })
+  assert.equal(
+    out.startsWith(
+      'Your turn was interrupted to deliver the incoming messages below. Read them, then continue from what you had.',
+    ),
+    true,
+    out,
+  )
+  assert.equal(
+    out.indexOf('<agent-message') > 0,
+    true,
+    'the note must come before the first tag, or the parser would render it as chat',
+  )
+  assert.equal(out.includes('may or may not'), false, 'the queue-jump reasoning must not ride along')
+})
+
 test('an empty delivery is empty whatever the flags say', () => {
-  assert.equal(buildDelivery({ kind: 'messages', messages: [], interrupted: true }), '')
-  assert.equal(buildDelivery({ kind: 'messages', messages: [], interrupted: false }), '')
+  assert.equal(buildDelivery({ kind: 'messages', messages: [], note: 'queue-jump' }), '')
+  assert.equal(buildDelivery({ kind: 'messages', messages: [], note: 'interrupt' }), '')
+  assert.equal(buildDelivery({ kind: 'messages', messages: [] }), '')
 })
 
 // ── system-issued sends are never tagged ──────────────────────────────────
