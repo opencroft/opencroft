@@ -422,6 +422,14 @@ export function useAgentCommandBar({
             lockedReason={lockedConfigOptions?.[FAST_MODE_CONFIG_ID]}
           />
         ) : null}
+        {/* Presence, immediately LEFT of the permission-mode dial: the two are
+            the session-level pair -- when the agent will get round to reading,
+            beside what it may do once it does. Beside the mode dial rather
+            than at the head of the cluster: a host that hides the approval
+            toggle (auto-approve being process-wide rather than per-session,
+            say) shows the mode dial as THE permission control, and a presence
+            out at the head reads as left of everything. */}
+        {presence ? <PresenceSelector presence={presence.value} onSelect={presence.onSelect} /> : null}
         {dial.modeValues.length > 0 ? (
           <ModeSelector
             options={dial.modeValues}
@@ -432,19 +440,7 @@ export function useAgentCommandBar({
         ) : null}
       </>
     ),
-    [dial, lockedConfigOptions],
-  )
-
-  // Presence, immediately LEFT of the approval shield rather than with the
-  // dials above: it and the shield are the session-level pair -- this one says
-  // when the agent will get round to reading, that one what it may do -- and
-  // the model/effort/mode pickers that used to sit between them bury a pair
-  // that reads better side by side. A memo of its own for the same reason as
-  // `controlsNode`: a presence change re-identifies this slot alone, not the
-  // whole bar node.
-  const approvalLeadingNode = useMemo(
-    () => (presence ? <PresenceSelector presence={presence.value} onSelect={presence.onSelect} /> : null),
-    [presence],
+    [dial, lockedConfigOptions, presence],
   )
 
   const autoApproveRef = useRef(onToggleAutoApprove)
@@ -536,7 +532,6 @@ export function useAgentCommandBar({
         leading={leadingBarContent}
         onStartIconClick={onStartIconClick}
         startIcon={startIcon}
-        approvalLeading={approvalLeadingNode}
         controls={controlsNode}
         configs={configs}
         onConfigChange={handleConfigChange}
@@ -568,7 +563,6 @@ export function useAgentCommandBar({
       leadingBarContent,
       onStartIconClick,
       startIcon,
-      approvalLeadingNode,
       controlsNode,
       configs,
       handleConfigChange,

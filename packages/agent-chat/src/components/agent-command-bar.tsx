@@ -92,13 +92,6 @@ export interface AgentCommandBarProps {
   // where the agent is fixed (a group-chat thread) and there is no session
   // picker to open.
   startIcon?: boolean
-  // Host slot: rendered immediately before the approval toggle, at the head of
-  // the row's fixed cluster -- for a control that belongs beside the toggle
-  // rather than after it (presence: when the agent will get round to reading,
-  // beside what it may do). Still first in the cluster when the toggle itself
-  // is hidden (`approval: false`), and `shrink-0` with it, so it never yields
-  // width to the left group.
-  approvalLeading?: ReactNode
   // Host slot: rendered in the action row before the settings button (right
   // after the approval shield) -- e.g. the per-setting icon buttons (model,
   // effort, mode) a host breaks out of `configs` to give its own control.
@@ -294,7 +287,6 @@ export function AgentCommandBar({
   leading,
   onStartIconClick,
   startIcon,
-  approvalLeading,
   controls,
   configs,
   onConfigChange,
@@ -452,8 +444,6 @@ export function AgentCommandBar({
         </div>
 
         <div className='flex shrink-0 items-center gap-1'>
-          {approvalLeading}
-
           {approval === false ? null : (
             <Button
               type='button'
