@@ -2237,13 +2237,21 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         if (mode !== 'push' || session.queue.length === 0) {
           return { interrupted: false }
         }
-        // A push means now, whatever the reading cadence says.
+        // A push means now, whatever the reading cadence says. The note is
+        // marked for both paths from here: this caller is typically the
+        // Unread heading's deliver button with nothing of its own to add, and
+        // the delivery it buys -- held messages leaving ahead of the cadence
+        // -- is exactly what the queue-jump wording exists to say. Marked
+        // before the drain/cancel for the same reason the message-push path
+        // marks before its interrupt: the note is consumed by the first
+        // message delivery (see dispatchRun), so it rides a drain, and an
+        // empty queue never reaches this line to leave one behind.
         session.bypassPresenceOnce = true
+        session.nextDeliveryNote = noteKind
         if (!holding) {
           await drainQueue(sessionId)
           return { interrupted: false }
         }
-        session.nextDeliveryNote = noteKind
         await cancelSession(sessionId)
         return { interrupted: true }
       }

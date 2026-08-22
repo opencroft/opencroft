@@ -1460,6 +1460,29 @@ test('a push with no text of its own delivers what is held and adds nothing', as
   await h.client.deleteSession(h.sessionId)
 })
 
+// The Unread heading's deliver button on an IDLE session: nothing to
+// interrupt, so the delivery itself is the only evidence the push leaves --
+// and it must still open with the queue-jump note, because held messages
+// leaving ahead of the cadence is what that note explains, however they left.
+test('a push with no text of its own, on an idle session, delivers with the queue-jump note', async () => {
+  const h = await setup()
+  h.client.setPresence(h.sessionId, { kind: 'custom', intervalMs: WINDOW_MS })
+  await h.client.prompt(h.sessionId, 'held', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  assert.deepEqual(deliveries(h), [], 'held for the window, nothing sent yet')
+
+  const { interrupted } = await h.client.prompt(h.sessionId, '', {
+    queue: 'push',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  assert.equal(interrupted, false, 'nothing was running to interrupt')
+  await settle()
+  assert.equal(h.promptCalls.length, 1)
+  const delivered = h.promptCalls[0]
+  assert.equal(delivered.startsWith('Your turn was interrupted'), true, delivered)
+  assert.deepEqual(partsOf(delivered), ['held'])
+  await h.client.deleteSession(h.sessionId)
+})
+
 test('a push with nothing held and nothing to add starts no turn', async () => {
   // The button pressed against a queue that drained between render and click.
   const h = await setup()
