@@ -4,10 +4,10 @@ import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { AlertTriangle, Copy } from 'lucide-react'
 
-import { Button } from '@/components/ui/button'
-import { NodeCard, NodeCardContent, NodeCardHeader } from '@/components/ui/nodes/node-card'
-import type { StatusVariant as IndicatorVariant } from '@/components/ui/utils/status-indicator'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Button } from 'ui/components/ui/button'
+import { NodeCard, NodeCardContent, NodeCardHeader } from 'ui/components/ui/nodes/node-card'
+import type { StatusVariant as IndicatorVariant } from 'ui/components/ui/utils/status-indicator'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from 'ui/components/ui/tooltip'
 
 // The frame's own status vocabulary, kept as it is because node authors already
 // write against it. The map to the indicator's palette is presentation, so it

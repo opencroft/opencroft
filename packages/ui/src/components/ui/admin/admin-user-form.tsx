@@ -2,16 +2,16 @@
 
 import { useId } from 'react'
 
-import { Button } from '@/components/ui/button'
-import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
+import { Button } from 'ui/components/ui/button'
+import { Field, FieldError, FieldGroup, FieldLabel } from 'ui/components/ui/field'
+import { Input } from 'ui/components/ui/input'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
+} from 'ui/components/ui/select'
 
 export type AdminUserFormMode = 'create' | 'edit'
 

@@ -2,10 +2,10 @@
 
 import { UserPlus, Users } from 'lucide-react'
 
-import { AgentAvatar } from '@/components/ui/media/agent-avatar'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
+import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
+import { Badge } from 'ui/components/ui/badge'
+import { Button } from 'ui/components/ui/button'
+import { cn } from 'ui/lib/utils'
 
 export interface AdminUser {
   id: string

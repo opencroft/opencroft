@@ -2,9 +2,9 @@
 
 import { User } from 'lucide-react'
 
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { StatusIndicator, type StatusVariant } from '@/components/ui/utils/status-indicator'
-import { cn } from '@/lib/utils'
+import { Avatar, AvatarFallback, AvatarImage } from 'ui/components/ui/avatar'
+import { StatusIndicator, type StatusVariant } from 'ui/components/ui/utils/status-indicator'
+import { cn } from 'ui/lib/utils'
 
 export type AgentAvatarSize = 'sm' | 'md' | 'lg'
 

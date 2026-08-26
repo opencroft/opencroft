@@ -4,8 +4,8 @@ import type { LucideIcon } from 'lucide-react'
 import type { CSSProperties, HTMLAttributes, ReactElement, ReactNode } from 'react'
 import { isValidElement, useEffect, useRef, useState } from 'react'
 
-import { StatusIndicator, type StatusVariant } from '@/components/ui/utils/status-indicator'
-import { cn } from '@/lib/utils'
+import { StatusIndicator, type StatusVariant } from 'ui/components/ui/utils/status-indicator'
+import { cn } from 'ui/lib/utils'
 
 // The bounds a canvas node is drawn within.
 //

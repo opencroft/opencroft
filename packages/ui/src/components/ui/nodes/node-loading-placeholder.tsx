@@ -1,7 +1,7 @@
 'use client'
 
-import { NodeCard, NodeCardContent, NodeCardHeader } from '@/components/ui/nodes/node-card'
-import { Skeleton } from '@/components/ui/skeleton'
+import { NodeCard, NodeCardContent, NodeCardHeader } from 'ui/components/ui/nodes/node-card'
+import { Skeleton } from 'ui/components/ui/skeleton'
 
 export interface NodeLoadingPlaceholderProps {
   /** The node's name. The graph carries it before the extension does, so this

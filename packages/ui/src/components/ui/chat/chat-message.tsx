@@ -1,8 +1,8 @@
 'use client';
 
 import React from 'react';
-import { TypingDots } from '@/components/ui/chat/typing-dots';
-import { cn } from '@/lib/utils';
+import { TypingDots } from 'ui/components/ui/chat/typing-dots';
+import { cn } from 'ui/lib/utils';
 
 export interface ChatMessageProps extends React.HTMLAttributes<HTMLDivElement> {
   text: string;

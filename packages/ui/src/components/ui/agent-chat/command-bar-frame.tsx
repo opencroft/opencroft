@@ -2,8 +2,8 @@
 
 import type { ReactNode } from 'react'
 
-import { NodeCard } from '@/components/ui/nodes/node-card'
-import { cn } from '@/lib/utils'
+import { NodeCard } from 'ui/components/ui/nodes/node-card'
+import { cn } from 'ui/lib/utils'
 
 export interface CommandBarFrameProps {
   /** The accent hairline and ring colour. Defaults to the primary accent every

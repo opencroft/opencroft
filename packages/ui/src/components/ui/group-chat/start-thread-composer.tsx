@@ -3,15 +3,15 @@
 import { type ReactNode } from 'react'
 import { Check, ChevronDown, Hash } from 'lucide-react'
 
-import { AgentAvatar } from '@/components/ui/media/agent-avatar'
+import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
 import { AgentCommandBar } from 'agent-chat/components/agent-command-bar'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import { cn } from '@/lib/utils'
+} from 'ui/components/ui/dropdown-menu'
+import { cn } from 'ui/lib/utils'
 
 // Declared here rather than imported from the thread list: it is three
 // structural fields, and a registry dependency taken on for a type alone would

@@ -2,9 +2,9 @@
 
 import type { ReactNode } from 'react'
 
-import { Button } from '@/components/ui/button'
-import { Field } from '@/components/ui/field'
-import { cn } from '@/lib/utils'
+import { Button } from 'ui/components/ui/button'
+import { Field } from 'ui/components/ui/field'
+import { cn } from 'ui/lib/utils'
 
 export type SocialProvider = 'apple' | 'google'
 

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
-import { AgentAvatar } from '@/components/ui/media/agent-avatar'
-import { cn } from '@/lib/utils'
+import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
+import { cn } from 'ui/lib/utils'
 
 export interface AdminUserEditProps {
   // Whose account is open. Always rendered in the header so the admin never

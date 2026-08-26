@@ -11,14 +11,14 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-} from '@/components/ui/command';
-import { Label } from '@/components/ui/label';
+} from 'ui/components/ui/command';
+import { Label } from 'ui/components/ui/label';
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from '@/components/ui/popover';
-import { cn } from '@/lib/utils';
+} from 'ui/components/ui/popover';
+import { cn } from 'ui/lib/utils';
 
 interface SearchableDropdownSubgroup {
   label: string;

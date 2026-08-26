@@ -1,5 +1,5 @@
 import { ReactNode } from 'react';
-import { cn } from '@/lib/utils';
+import { cn } from 'ui/lib/utils';
 import { Flex } from '../layout/flex';
 
 type Size = 'fixed' | 'fit' | 'fill';

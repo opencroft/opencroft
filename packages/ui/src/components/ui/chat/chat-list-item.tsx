@@ -3,15 +3,15 @@
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { Pencil, Square, Trash2, X } from 'lucide-react'
 
-import { AgentAvatar } from '@/components/ui/media/agent-avatar'
-import type { StatusVariant } from '@/components/ui/utils/status-indicator'
+import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
+import type { StatusVariant } from 'ui/components/ui/utils/status-indicator'
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
-} from '@/components/ui/context-menu'
-import { cn } from '@/lib/utils'
+} from 'ui/components/ui/context-menu'
+import { cn } from 'ui/lib/utils'
 
 export interface ChatListItemAction {
   label: string

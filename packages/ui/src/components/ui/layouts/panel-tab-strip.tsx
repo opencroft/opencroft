@@ -2,8 +2,8 @@
 
 import type { ComponentType } from 'react'
 
-import { Separator } from '@/components/ui/separator'
-import { cn } from '@/lib/utils'
+import { Separator } from 'ui/components/ui/separator'
+import { cn } from 'ui/lib/utils'
 
 export interface PanelTab {
   id: string

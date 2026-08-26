@@ -1,8 +1,8 @@
 import { Send } from 'lucide-react';
 
 import { Button } from 'ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import { Flex } from '@/components/ui/layout/flex';
+import { Textarea } from 'ui/components/ui/textarea';
+import { Flex } from 'ui/components/ui/layout/flex';
 
 export interface ChatInputProps {
   value: string;

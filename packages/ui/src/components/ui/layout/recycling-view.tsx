@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useMemo, useRef, useCallback, useEffect, useLayoutEffect, ReactNode } from 'react';
-import { ScrollArea } from '@/components/ui/layout/scroll-area';
-import { Spinner } from '@/components/ui/utils/spinner';
+import { ScrollArea } from 'ui/components/ui/layout/scroll-area';
+import { Spinner } from 'ui/components/ui/utils/spinner';
 
 interface RecyclingViewBaseProps<T> {
   items: T[];

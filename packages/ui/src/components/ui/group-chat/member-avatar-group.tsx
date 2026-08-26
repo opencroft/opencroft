@@ -1,7 +1,7 @@
 'use client'
 
-import { AgentAvatar } from '@/components/ui/media/agent-avatar'
-import { cn } from '@/lib/utils'
+import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
+import { cn } from 'ui/lib/utils'
 
 export interface MemberRef {
   kind: 'user' | 'agent'

@@ -1,8 +1,8 @@
 'use client'
 
-import { AgentAvatar } from '@/components/ui/media/agent-avatar'
-import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
+import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
+import { Button } from 'ui/components/ui/button'
+import { cn } from 'ui/lib/utils'
 
 export interface AccountAvatarProps {
   // Current avatar image; null/undefined or an empty string falls back to a

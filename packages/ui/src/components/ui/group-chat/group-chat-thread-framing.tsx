@@ -4,19 +4,19 @@ import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import { ChevronLeft } from 'lucide-react'
 
-import { AgentAvatar } from '@/components/ui/media/agent-avatar'
-import { cn } from '@/lib/utils'
+import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
+import { cn } from 'ui/lib/utils'
 
-import { CommandBarFrame } from '@/components/ui/agent-chat/command-bar-frame'
-import { Flex } from '@/components/ui/layout/flex'
+import { CommandBarFrame } from 'ui/components/ui/agent-chat/command-bar-frame'
+import { Flex } from 'ui/components/ui/layout/flex'
 // The flat shadcn path, not `ui/layout/scroll-area`. The kit stores component
 // files flat and the export composes the category folder on install, so a
 // nested path resolves in a consumer and NOT here -- which is why this screen's
 // preview rendered as an invalid element rather than as itself.
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { StickySection } from '@/components/ui/layouts/sticky-section'
-import { type Artifact, ArtifactPanel, ArtifactStrip } from '@/components/ui/group-chat/thread-artifacts'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from 'ui/components/ui/resizable'
+import { ScrollArea } from 'ui/components/ui/scroll-area'
+import { StickySection } from 'ui/components/ui/layouts/sticky-section'
+import { type Artifact, ArtifactPanel, ArtifactStrip } from 'ui/components/ui/group-chat/thread-artifacts'
 
 export interface GroupChatThreadFramingProps {
   /** The NAME of the group chat this thread belongs to -- not its topic. This

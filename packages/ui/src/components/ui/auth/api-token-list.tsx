@@ -2,9 +2,9 @@
 
 import { KeyRound } from 'lucide-react'
 
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
+import { Badge } from 'ui/components/ui/badge'
+import { Button } from 'ui/components/ui/button'
+import { cn } from 'ui/lib/utils'
 
 export interface ApiToken {
   id: string

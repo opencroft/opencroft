@@ -2,9 +2,9 @@
 
 import { useId } from 'react'
 
-import { Button } from '@/components/ui/button'
-import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
-import { Textarea } from '@/components/ui/textarea'
+import { Button } from 'ui/components/ui/button'
+import { Field, FieldError, FieldGroup, FieldLabel } from 'ui/components/ui/field'
+import { Textarea } from 'ui/components/ui/textarea'
 
 export interface GroupChatPinFormProps {
   text: string

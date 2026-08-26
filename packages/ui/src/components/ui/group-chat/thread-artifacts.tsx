@@ -2,8 +2,8 @@
 
 import { FileText, X } from 'lucide-react'
 import { Markdown } from 'agent-chat/components/markdown'
-import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
+import { Button } from 'ui/components/ui/button'
+import { cn } from 'ui/lib/utils'
 
 /**
  * A note an agent left on a thread.

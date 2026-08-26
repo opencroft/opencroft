@@ -2,9 +2,9 @@
 
 import { useId } from 'react'
 
-import { Button } from '@/components/ui/button'
-import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
+import { Button } from 'ui/components/ui/button'
+import { Field, FieldError, FieldGroup, FieldLabel } from 'ui/components/ui/field'
+import { Input } from 'ui/components/ui/input'
 
 export interface CreateGroupChatFormProps {
   name: string

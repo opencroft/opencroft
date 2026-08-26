@@ -19,14 +19,6 @@
   ],
   "tolerated": [
     {
-      "id": "packages/agent-chat/src/components/agent-command-bar.test.ts",
-      "reason": "The whole file fails to load. A component it imports resolves a path alias that does not exist from this workspace, so the import throws before any test runs. Tests in this file are inert rather than failing, which means adding one here proves nothing until the alias is fixed."
-    },
-    {
-      "id": "packages/agent-chat/src/components/chat-conversation.test.ts",
-      "reason": "The same unresolvable path alias as the file above, reached through the same imported component, with the same consequence: nothing in this file runs."
-    },
-    {
       "id": "apps/opencroft/app/_authed/(extension-runtime)/_server/git-exec.test.ts :: the old pattern (credential spliced into the URL) leaks into the live git-remote-https argv",
       "reason": "Reads the live process table to prove a credential never reaches a child process's argv, and the container it runs in has no process-listing binary, so the check cannot execute. It reports red for a reason unrelated to the security property it exists to protect, which is worse than not running at all.",
       "environment": "Fails only where a process-listing binary is absent; passes on a developer machine that has one."

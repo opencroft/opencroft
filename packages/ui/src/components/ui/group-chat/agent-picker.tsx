@@ -2,14 +2,14 @@
 
 import { Check, ChevronDown } from 'lucide-react'
 
-import { AgentAvatar } from '@/components/ui/media/agent-avatar'
+import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import { cn } from '@/lib/utils'
+} from 'ui/components/ui/dropdown-menu'
+import { cn } from 'ui/lib/utils'
 
 // Three structural fields. Declared here because this is the component that
 // renders them, so anything else needing the shape imports it from here rather

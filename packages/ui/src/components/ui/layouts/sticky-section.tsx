@@ -1,7 +1,7 @@
 'use client'
 
-import { Flex, type FlexProps } from '@/components/ui/layout/flex'
-import { cn } from '@/lib/utils'
+import { Flex, type FlexProps } from 'ui/components/ui/layout/flex'
+import { cn } from 'ui/lib/utils'
 
 export type StickySide = 'top' | 'bottom' | 'left' | 'right'
 export type StickyVariant = 'primary' | 'secondary' | 'background' | 'ghost'

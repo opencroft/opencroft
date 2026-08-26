@@ -1,7 +1,7 @@
-import { cn } from "@/lib/utils";
-import { Flex } from "@/components/ui/layout/flex";
-import { BackButton, useTitlebar } from "@/components/ui/layout/titlebar";
-import { ScrollContent, ScrollFooter, ScrollHeader, ScrollPage } from "@/components/ui/layout/scrollpage";
+import { cn } from "ui/lib/utils";
+import { Flex } from "ui/components/ui/layout/flex";
+import { BackButton, useTitlebar } from "ui/components/ui/layout/titlebar";
+import { ScrollContent, ScrollFooter, ScrollHeader, ScrollPage } from "ui/components/ui/layout/scrollpage";
 
 export interface MenuLayoutProps {
   isOpened: boolean,

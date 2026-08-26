@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useMemo } from "react"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useIsMobile } from "ui/hooks/use-mobile"
 import {
   Drawer,
   DrawerContent,
@@ -10,18 +10,18 @@ import {
   DrawerHeader,
   DrawerTitle,
   DrawerTrigger,
-} from "@/components/ui/drawer"
+} from "ui/components/ui/drawer"
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog"
-import { ScrollArea } from "@/components/ui/layout/scroll-area"
-import { RecyclingView } from "@/components/ui/layout/recycling-view"
-import { GridSize, gridSizeClasses } from "@/components/ui/layout/grid"
-import { cn } from "@/lib/utils"
+} from "ui/components/ui/dialog"
+import { ScrollArea } from "ui/components/ui/layout/scroll-area"
+import { RecyclingView } from "ui/components/ui/layout/recycling-view"
+import { GridSize, gridSizeClasses } from "ui/components/ui/layout/grid"
+import { cn } from "ui/lib/utils"
 
 // ---------------------------------------------------------------------------
 // PopupRecyclingContent internal renderer

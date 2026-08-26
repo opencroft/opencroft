@@ -2,10 +2,10 @@
 
 import { useId } from 'react'
 
-import { AuthSocialButtons, type SocialProvider } from '@/components/ui/auth/auth-social-buttons'
-import { Button } from '@/components/ui/button'
-import { Field, FieldError, FieldGroup, FieldLabel, FieldSeparator } from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
+import { AuthSocialButtons, type SocialProvider } from 'ui/components/ui/auth/auth-social-buttons'
+import { Button } from 'ui/components/ui/button'
+import { Field, FieldError, FieldGroup, FieldLabel, FieldSeparator } from 'ui/components/ui/field'
+import { Input } from 'ui/components/ui/input'
 
 export interface AuthLoginFormProps {
   email: string

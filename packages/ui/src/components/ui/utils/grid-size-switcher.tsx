@@ -1,14 +1,14 @@
 import { LayoutGrid } from 'lucide-react'
 import { useState } from 'react'
 
-import { Button } from '@/components/ui/button'
+import { Button } from 'ui/components/ui/button'
 // `GridSize` is owned by the grid module and imported here, never re-declared
 // and never re-exported: a grid size is a property of the grid, this is a
 // control over it, and the exhaustive `gridSizeClasses` map lives beside the
 // type. Re-exporting it would put two spellings of the same name in the
 // package barrel again, which is the ambiguity this import removes.
-import type { GridSize } from '@/components/ui/layout/grid'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import type { GridSize } from 'ui/components/ui/layout/grid'
+import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
 
 export interface GridSizeSwitcherProps {
   value: GridSize

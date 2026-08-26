@@ -8,9 +8,9 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
-} from '@/components/ui/context-menu'
-import { MemberAvatarGroup, type MemberRef } from '@/components/ui/group-chat/member-avatar-group'
-import { cn } from '@/lib/utils'
+} from 'ui/components/ui/context-menu'
+import { MemberAvatarGroup, type MemberRef } from 'ui/components/ui/group-chat/member-avatar-group'
+import { cn } from 'ui/lib/utils'
 
 export interface GroupChatListItem {
   id: string

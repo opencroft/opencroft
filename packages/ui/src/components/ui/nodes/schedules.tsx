@@ -14,21 +14,21 @@ import {
   XCircle,
 } from 'lucide-react'
 
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { Input } from '@/components/ui/input'
+import { Badge } from 'ui/components/ui/badge'
+import { Button } from 'ui/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/components/ui/collapsible'
+import { Input } from 'ui/components/ui/input'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
-import { Switch } from '@/components/ui/switch'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { cn } from '@/lib/utils'
+} from 'ui/components/ui/select'
+import { Separator } from 'ui/components/ui/separator'
+import { Switch } from 'ui/components/ui/switch'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from 'ui/components/ui/tabs'
+import { cn } from 'ui/lib/utils'
 
 // ── Public types ───────────────────────────────────────────────────
 // The component owns the editor UI state and the cron engine (build / validate

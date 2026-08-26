@@ -4,11 +4,11 @@ import type { ReactNode } from 'react'
 import { useId, useState } from 'react'
 import { Search } from 'lucide-react'
 
-import { AgentAvatar } from '@/components/ui/media/agent-avatar'
-import { Button } from '@/components/ui/button'
-import { FieldError } from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
-import { cn } from '@/lib/utils'
+import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
+import { Button } from 'ui/components/ui/button'
+import { FieldError } from 'ui/components/ui/field'
+import { Input } from 'ui/components/ui/input'
+import { cn } from 'ui/lib/utils'
 
 // The same MemberRef shape the phase-2 components render, and the same one for
 // both kinds: a person and an agent each arrive as {id, name, avatarUrl}, so

@@ -1,4 +1,4 @@
-import { cn } from '@/lib/utils';
+import { cn } from 'ui/lib/utils';
 
 export type FlexDirection = 'row' | 'row-reverse' | 'col' | 'col-reverse';
 export type JustifyContent = 'start' | 'end' | 'end-safe' | 'center' | 'center-safe' | 'between' | 'around' | 'evenly' | 'stretch' | 'baseline' | 'normal';

@@ -3,14 +3,14 @@
 import { useState, useRef, useEffect, type DragEvent, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react'
 import { ChevronDown, ChevronRight, Folder, FolderOpen, FolderPlus, Pencil, Trash2 } from 'lucide-react'
 
-import { ChatListItem, type ChatListItemAction, type ChatStatus } from '@/components/ui/chat/chat-list-item'
+import { ChatListItem, type ChatListItemAction, type ChatStatus } from 'ui/components/ui/chat/chat-list-item'
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
-} from '@/components/ui/context-menu'
-import { cn } from '@/lib/utils'
+} from 'ui/components/ui/context-menu'
+import { cn } from 'ui/lib/utils'
 
 export interface ChatListLeaf {
   id: string

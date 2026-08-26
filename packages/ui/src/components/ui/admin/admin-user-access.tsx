@@ -1,8 +1,8 @@
 'use client'
 
-import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
-import { cn } from '@/lib/utils'
+import { Button } from 'ui/components/ui/button'
+import { Switch } from 'ui/components/ui/switch'
+import { cn } from 'ui/lib/utils'
 
 export interface AdminUserAccessProps {
   // Whose account this is. Runs through every label so the admin can never act

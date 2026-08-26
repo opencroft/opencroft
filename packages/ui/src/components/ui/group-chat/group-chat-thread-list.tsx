@@ -1,7 +1,7 @@
 'use client'
 
-import { ChatListItem, type ChatStatus } from '@/components/ui/chat/chat-list-item'
-import { cn } from '@/lib/utils'
+import { ChatListItem, type ChatStatus } from 'ui/components/ui/chat/chat-list-item'
+import { cn } from 'ui/lib/utils'
 
 export interface AgentRef {
   nodeId: string

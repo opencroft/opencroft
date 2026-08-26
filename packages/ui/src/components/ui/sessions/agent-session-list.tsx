@@ -3,9 +3,9 @@
 import { Briefcase, MessageSquare, Plus, Search, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
-import { AgentAvatar } from '@/components/ui/media/agent-avatar'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
+import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/components/ui/dialog'
+import { Input } from 'ui/components/ui/input'
 
 export interface AgentJobRef {
   nodeId: string

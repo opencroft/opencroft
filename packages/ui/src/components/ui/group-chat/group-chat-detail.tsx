@@ -3,10 +3,10 @@
 import type { ReactNode } from 'react'
 import { ChevronLeft, Pencil } from 'lucide-react'
 
-import { CommandBarFrame } from '@/components/ui/agent-chat/command-bar-frame'
-import { MemberAvatarGroup, type MemberRef } from '@/components/ui/group-chat/member-avatar-group'
-import { StickySection } from '@/components/ui/layouts/sticky-section'
-import { cn } from '@/lib/utils'
+import { CommandBarFrame } from 'ui/components/ui/agent-chat/command-bar-frame'
+import { MemberAvatarGroup, type MemberRef } from 'ui/components/ui/group-chat/member-avatar-group'
+import { StickySection } from 'ui/components/ui/layouts/sticky-section'
+import { cn } from 'ui/lib/utils'
 
 export interface GroupChatDetailProps {
   /** Back out of this group chat -- to the group-chat list. Omit on a surface

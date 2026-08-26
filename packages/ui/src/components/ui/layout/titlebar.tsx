@@ -1,7 +1,7 @@
 'use client';
 
 import { Button } from 'ui/button';
-import { cn } from '@/lib/utils';
+import { cn } from 'ui/lib/utils';
 import { ArrowLeft } from 'lucide-react';
 import { createContext, useContext, ReactNode, useState, useEffect, DependencyList } from 'react';
 
