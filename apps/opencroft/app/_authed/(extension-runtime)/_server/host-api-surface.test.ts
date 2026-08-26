@@ -1,9 +1,9 @@
-// What an extension receives from the host is two enumerations that have to
-// agree: the object the host exports, and the generated shim the extension
-// actually imports. Nothing links them, so a name can be added to one and
-// missed in the other — and that failure is invisible from inside an
-// extension, which finds the capability `undefined` at runtime while its build
-// stays green.
+// What an extension receives from the host used to be two enumerations that
+// had to agree: the object the host exports, and the generated shim the
+// extension actually imports. The shim is now built from the object, so the
+// two cannot disagree — and the tests below are what holds that, by importing
+// the same objects the browser is handed and demanding every one of their
+// names back out of a real build.
 //
 // This exercises the real build, so the wiring is read out of the emitted
 // bundle rather than assumed from the source of the shim.
@@ -13,6 +13,16 @@ import os from 'node:os'
 import path from 'node:path'
 import test, { after } from 'node:test'
 
+// Statically, and deliberately -- do not make this a dynamic import inside a
+// test. The compiler loads this module on demand to read the API objects, and
+// its consumers include the extension dev loop, which runs it under bare `tsx`
+// rather than in the app server. Loading the app's whole client component tree
+// in that runtime is where that would break, and nothing else checks it: a
+// production build exercises a different bundler and a different graph. The
+// test runner is `tsx` too, so this import failing is how that would be found
+// -- which makes it load-bearing for a runtime rather than for the assertions
+// below, and invisible as such to anyone reading only what the tests assert.
+import { extensionHostApi, extensionUiApi } from '@/app/_authed/(extension-runtime)/_client/host'
 import type { ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-host-api-'))
@@ -52,8 +62,50 @@ test('an extension can read, set and clear a URL parameter through the host API'
   )
 
   // Forwarded off the host object rather than bundled from somewhere else or
-  // quietly resolved to nothing — reading the property is the shim's whole job.
-  assert.match(bundle, /\.useUrlParam/)
+  // quietly resolved to nothing — reading the name off the host is the shim's
+  // whole job. Asserted as the two facts that make it true, rather than as the
+  // shape of the emitted forward: minification renames every local, so a
+  // property name read off the host is the one thing that survives, and it is
+  // there only because the shim went looking for it.
+  assert.match(bundle, /globalThis\.__extHost/)
+  assert.match(bundle, /\buseUrlParam\b/)
+})
+
+// Import every name at once rather than one build per name: the failure being
+// guarded against is a name missing from the shim, and esbuild reports every
+// such name in one build, so a single probe names all of them at once.
+async function buildImportingEveryName(slug: string, specifier: string, names: string[]): Promise<void> {
+  const list = names.join(', ')
+  await buildProbe(
+    slug,
+    [`import { ${list} } from '${specifier}'`, '', `export const probe = [${list}]`, ''].join('\n'),
+  )
+}
+
+test('every capability on the host object is importable by name from @ext/host', async () => {
+  // Covers the whole object rather than a checked-in list of names, so a
+  // capability added to the host is covered by this test the moment it exists
+  // — which is the failure this suite was written for: three names were added
+  // to the host object, missed in a hand-kept export list, and every extension
+  // importing them the idiomatic way failed to build.
+  await buildImportingEveryName('host-surface', '@ext/host', Object.keys(extensionHostApi))
+})
+
+test('every component on the ui object is importable by name from @ext/ui', async () => {
+  await buildImportingEveryName('ui-surface', '@ext/ui', Object.keys(extensionUiApi))
+})
+
+test('a name @ext/host binds to the extension keeps its own shape', async () => {
+  // `createStorage` exists on the host object too, with the extension id as its
+  // first argument — the shim's takes only a namespace and supplies the id. A
+  // forward of the host key would satisfy the name and pass the surface test
+  // above while handing the namespace over as the extension id.
+  const bundle = await buildProbe(
+    'scoped-storage',
+    ["import { createStorage } from '@ext/host'", '', "export const probe = createStorage('notes')", ''].join('\n'),
+  )
+
+  assert.match(bundle, /createStorage\("local\/scoped-storage",/)
 })
 
 test('a name the host does not provide fails the build rather than becoming undefined at runtime', async () => {

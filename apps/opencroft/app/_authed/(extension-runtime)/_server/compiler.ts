@@ -170,6 +170,153 @@ async function findIconViolations(src: string, metafile: esbuild.Metafile): Prom
   return violations
 }
 
+interface HostApiNames {
+  host: string[]
+  ui: string[]
+}
+
+// The names the client shims export are read off the API objects the browser
+// is actually handed, not restated here. A hand-kept export list beside the
+// object it mirrors is two enumerations with nothing holding them together, so
+// a capability added to the object and missed in the list is unreachable
+// through the named import every other capability uses -- and the extension
+// that tries it fails to build on a name the host really does provide.
+//
+// Loaded on demand rather than imported at the top of this file, for two
+// reasons. The module is the client host, which reaches the app's server
+// actions and from there back into this compiler, so a static import would
+// close an import cycle. It also pulls in the app's whole component tree,
+// which a build that never resolves `@ext/host` or `@ext/ui` should not pay
+// for. One load serves every build in the process.
+let hostApiNames: Promise<HostApiNames> | null = null
+
+function loadHostApiNames(): Promise<HostApiNames> {
+  hostApiNames ??= import('@/app/_authed/(extension-runtime)/_client/host')
+    .then((host) => ({
+      host: bindableNames(host.extensionHostApi),
+      ui: bindableNames(host.extensionUiApi),
+    }))
+    // A rejected promise caches as readily as a resolved one, which would turn
+    // one transient failure into every build in the process failing with no
+    // way back. Dropping the reference costs the next build a reload.
+    .catch((error: unknown) => {
+      hostApiNames = null
+      throw error
+    })
+  return hostApiNames
+}
+
+// Names that are legal object keys and legal property accesses, but cannot be
+// bound: `const { <word> } = host` is a syntax error, and the shim is a module,
+// so it is always strict mode -- which is why the strict-mode-only reservations
+// and `eval`/`arguments` belong here alongside the unconditional keywords.
+// Listed rather than discovered by trying, so a key that cannot become a named
+// export leaves extension builds working and the capability reachable through
+// the default export, while the surface test -- which demands every key of the
+// object back out of a real build -- fails and says which name has no
+// idiomatic import.
+const RESERVED_WORDS = new Set([
+  'arguments',
+  'await',
+  'break',
+  'case',
+  'catch',
+  'class',
+  'const',
+  'continue',
+  'debugger',
+  'default',
+  'delete',
+  'do',
+  'else',
+  'enum',
+  'eval',
+  'export',
+  'extends',
+  'false',
+  'finally',
+  'for',
+  'function',
+  'if',
+  'implements',
+  'import',
+  'in',
+  'instanceof',
+  'interface',
+  'let',
+  'new',
+  'null',
+  'package',
+  'private',
+  'protected',
+  'public',
+  'return',
+  'static',
+  'super',
+  'switch',
+  'this',
+  'throw',
+  'true',
+  'try',
+  'typeof',
+  'var',
+  'void',
+  'while',
+  'with',
+  'yield',
+])
+
+// What `@ext/host` declares itself rather than forwarding off the host object,
+// because each is bound to the extension being built: `createStorage`
+// namespaces by extension id, `invoke` targets this extension's own actions.
+//
+// The declarations and the names excluded from the forwarded set are one list,
+// not two beside each other. A seventh name added here is excluded by
+// construction; kept as a separate set it would be forwarded as well, and a
+// duplicate binding is a syntax error that fails every extension build rather
+// than one name.
+function extensionScopedExports(extensionId: string): { name: string; code: string }[] {
+  const quoted = JSON.stringify(extensionId)
+  const under = (segment: string) => `(p) => {
+  const [scope, slug] = ${quoted}.split('/');
+  return '/api/ext/' + scope + '/' + slug + '/${segment}/' + String(p).replace(/^\\/+/, '');
+}`
+  return [
+    { name: 'extensionId', code: quoted },
+    { name: 'assetUrl', code: under('assets') },
+    { name: 'routeUrl', code: under('http') },
+    { name: 'invoke', code: `(name, ...args) => __host.callAction(${quoted}, name, args)` },
+    { name: 'dispatch', code: '(nodeId, actionId, params) => __host.callNodeAction(nodeId, actionId, params)' },
+    { name: 'createStorage', code: `(key) => __host.createStorage(${quoted}, key)` },
+  ]
+}
+
+function bindableNames(api: object): string[] {
+  return Object.keys(api).filter((name) => /^[A-Za-z_$][\w$]*$/.test(name) && !RESERVED_WORDS.has(name))
+}
+
+// `export const { a, b } = source` -- the same destructured re-export the react
+// shim below uses, wrapped so a few hundred component names stay readable in a
+// browser's view of the bundle.
+//
+// Every forwarded name lands in the shim's own top-level scope, so the shim's
+// locals are `__`-prefixed: an API key called `host` or `ui` would otherwise
+// redeclare one, and a duplicate binding is a syntax error that fails every
+// extension build rather than one name.
+function destructuredExports(names: string[], source: string): string {
+  const lines: string[] = []
+  let line = ' '
+  for (const name of names) {
+    if (line.length + name.length + 2 > 100) {
+      lines.push(line)
+      line = ' '
+    }
+    line += ` ${name},`
+  }
+  lines.push(line)
+  return `export const {\n${lines.join('\n')}\n} = ${source};`
+}
+
 function hostVirtualPlugin(side: 'client' | 'server', extensionId: string): esbuild.Plugin {
   return {
     name: 'ext-host-virtual',
@@ -205,9 +352,9 @@ function hostVirtualPlugin(side: 'client' | 'server', extensionId: string): esbu
           namespace: 'ext-host',
         }))
       }
-      build.onLoad({ filter: /.*/, namespace: 'ext-host' }, (args) => {
+      build.onLoad({ filter: /.*/, namespace: 'ext-host' }, async (args) => {
         if (side === 'client') {
-          return clientHostShim(args.path, extensionId)
+          return await clientHostShim(args.path, extensionId)
         }
         return serverHostShim(args.path)
       })
@@ -215,8 +362,7 @@ function hostVirtualPlugin(side: 'client' | 'server', extensionId: string): esbu
   }
 }
 
-function clientHostShim(specifier: string, extensionId: string): esbuild.OnLoadResult {
-  const quoted = JSON.stringify(extensionId)
+async function clientHostShim(specifier: string, extensionId: string): Promise<esbuild.OnLoadResult> {
   if (specifier === 'react') {
     return {
       contents: `
@@ -279,142 +425,53 @@ export const flushSync = (fn) => fn();
     }
   }
   if (specifier === '@ext/ui') {
+    const { ui: uiNames } = await loadHostApiNames()
     return {
       contents: `
-const api = globalThis.__extHost;
-if (!api) { throw new Error('Extension API not installed'); }
-const ui = api.ui;
-export const AgentAvatar = ui.AgentAvatar;
-export const Badge = ui.Badge;
-export const Button = ui.Button;
-export const Input = ui.Input;
-export const ControlledInput = ui.ControlledInput;
-export const Label = ui.Label;
-export const Flex = ui.Flex;
-export const ScrollArea = ui.ScrollArea;
-export const Select = ui.Select;
-export const SelectTrigger = ui.SelectTrigger;
-export const SelectContent = ui.SelectContent;
-export const SelectItem = ui.SelectItem;
-export const SelectValue = ui.SelectValue;
-export const Separator = ui.Separator;
-export const Textarea = ui.Textarea;
-export const ChatMessage = ui.ChatMessage;
-export const ChatInput = ui.ChatInput;
-export const Slider = ui.Slider;
-export const StatusIndicator = ui.StatusIndicator;
-export const Tooltip = ui.Tooltip;
-export const TooltipContent = ui.TooltipContent;
-export const TooltipProvider = ui.TooltipProvider;
-export const TooltipTrigger = ui.TooltipTrigger;
-export const Dialog = ui.Dialog;
-export const DialogClose = ui.DialogClose;
-export const DialogContent = ui.DialogContent;
-export const DialogDescription = ui.DialogDescription;
-export const DialogFooter = ui.DialogFooter;
-export const DialogHeader = ui.DialogHeader;
-export const DialogTitle = ui.DialogTitle;
-export const DialogTrigger = ui.DialogTrigger;
-export const CodeEditor = ui.CodeEditor;
-export const FileBrowser = ui.FileBrowser;
-export const FileManagerProvider = ui.FileManagerProvider;
-export const Terminal = ui.Terminal;
-export const InspectorTerminalBody = ui.InspectorTerminalBody;
-export const CommandBar = ui.CommandBar;
-export const CommandBarMenu = ui.CommandBarMenu;
-export const CommandBarMenuItem = ui.CommandBarMenuItem;
-export const Collapsible = ui.Collapsible;
-export const CollapsibleTrigger = ui.CollapsibleTrigger;
-export const CollapsibleContent = ui.CollapsibleContent;
-export const Switch = ui.Switch;
-export const Tabs = ui.Tabs;
-export const TabsList = ui.TabsList;
-export const TabsTrigger = ui.TabsTrigger;
-export const TabsContent = ui.TabsContent;
-export const Schedules = ui.Schedules;
-export default ui;
+const __api = globalThis.__extHost;
+if (!__api) { throw new Error('Extension API not installed'); }
+const __ui = __api.ui;
+${destructuredExports(uiNames, '__ui')}
+export default __ui;
 `,
       loader: 'js',
     }
   }
   if (specifier === '@opencroft/client') {
+    // `legacy` carries the same six extension-scoped names `@ext/host` exports,
+    // as properties instead of exports -- from the one list, so the two
+    // surfaces cannot come to disagree about what `createStorage` takes.
+    const scoped = extensionScopedExports(extensionId)
     return {
       contents: `
-const api = globalThis.__extHost;
-if (!api) { throw new Error('Extension API not installed'); }
-const host = api.host;
-const ui = api.ui;
-const assetUrl = (p) => {
-  const [scope, slug] = ${quoted}.split('/');
-  return '/api/ext/' + scope + '/' + slug + '/assets/' + String(p).replace(/^\\/+/, '');
-};
-const routeUrl = (p) => {
-  const [scope, slug] = ${quoted}.split('/');
-  return '/api/ext/' + scope + '/' + slug + '/http/' + String(p).replace(/^\\/+/, '');
-};
-export const Terminal = ui.Terminal;
+const __api = globalThis.__extHost;
+if (!__api) { throw new Error('Extension API not installed'); }
+const __host = __api.host;
+const __ui = __api.ui;
+export const Terminal = __ui.Terminal;
 export const legacy = {
-  ...host,
-  ...ui,
-  extensionId: ${quoted},
-  assetUrl,
-  routeUrl,
-  invoke: (name, ...args) => host.callAction(${quoted}, name, args),
-  dispatch: (nodeId, actionId, params) => host.callNodeAction(nodeId, actionId, params),
-  createStorage: (key) => host.createStorage(${quoted}, key),
+  ...__host,
+  ...__ui,
+${scoped.map((entry) => `  ${entry.name}: ${entry.code},`).join('\n')}
 };
 `,
       loader: 'js',
     }
   }
+  const { host: hostNames } = await loadHostApiNames()
+  const scoped = extensionScopedExports(extensionId)
+  const scopedNames = new Set(scoped.map((entry) => entry.name))
   return {
     contents: `
-const api = globalThis.__extHost;
-if (!api) { throw new Error('Extension API not installed'); }
-const host = api.host;
-export const React = host.React;
-export const defineExtension = host.defineExtension;
-export const NodeFrame = host.NodeFrame;
-export const useNodeAccent = host.useNodeAccent;
-export const NodeCard = host.NodeCard;
-export const NodeCardHeader = host.NodeCardHeader;
-export const NodeCardContent = host.NodeCardContent;
-export const NodeResizer = host.NodeResizer;
-export const InputHandle = host.InputHandle;
-export const OutputHandle = host.OutputHandle;
-export const useNodeContext = host.useNodeContext;
-export const inspectorIntent = host.inspectorIntent;
-export const useInspectorIntent = host.useInspectorIntent;
-export const useOverlay = host.useOverlay;
-export const useUrlParam = host.useUrlParam;
-export const useGraphNodes = host.useGraphNodes;
-export const useGraphEdges = host.useGraphEdges;
-export const useReactFlow = host.useReactFlow;
-export const useUpdateNodeInternals = host.useUpdateNodeInternals;
-export const Handle = host.Handle;
-export const Position = host.Position;
-export const createStorage = (key) => host.createStorage(${quoted}, key);
-export const extensionId = ${quoted};
-export const assetUrl = (p) => {
-  const [scope, slug] = ${quoted}.split('/');
-  return '/api/ext/' + scope + '/' + slug + '/assets/' + String(p).replace(/^\\/+/, '');
-};
-export const routeUrl = (p) => {
-  const [scope, slug] = ${quoted}.split('/');
-  return '/api/ext/' + scope + '/' + slug + '/http/' + String(p).replace(/^\\/+/, '');
-};
-export const icons = host.icons;
-export const toast = host.toast;
-export const invoke = (name, ...args) => host.callAction(${quoted}, name, args);
-export const dispatch = (nodeId, actionId, params) => host.callNodeAction(nodeId, actionId, params);
-export const createPortal = host.createPortal;
-export const getStream = host.getStream;
-export const subscribe = host.subscribe;
-export const broadcast = host.broadcast;
-export const useDockerContainers = host.useDockerContainers;
-export const useDockerSnapshotReceived = host.useDockerSnapshotReceived;
-export const useSeedDockerContainers = host.useSeedDockerContainers;
-export default host;
+const __api = globalThis.__extHost;
+if (!__api) { throw new Error('Extension API not installed'); }
+const __host = __api.host;
+${scoped.map((entry) => `export const ${entry.name} = ${entry.code};`).join('\n')}
+${destructuredExports(
+  hostNames.filter((name) => !scopedNames.has(name)),
+  '__host',
+)}
+export default __host;
 `,
     loader: 'js',
   }
