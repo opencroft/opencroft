@@ -38,9 +38,9 @@ export interface DbReadResult {
   truncated: boolean
   maxRows: number
   /**
-   * How many values had an email address removed from them. Beside
-   * `truncated` and for the same reason: a reader who cannot tell "this was
-   * empty" from "this was taken out" will report the first.
+   * How many email ADDRESSES were removed — two in one value count twice.
+   * Beside `truncated` and for the same reason: a reader who cannot tell
+   * "this was empty" from "this was taken out" will report the first.
    */
   redactions: number
 }
@@ -59,7 +59,26 @@ export interface DbReadResult {
 // with personal data removed on the way out.
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g
 
-/** Strip email addresses out of every value, and count what was stripped. */
+/**
+ * Strip email addresses out of every **string** value, and count how many
+ * ADDRESSES were removed — not how many values were touched, since two in one
+ * string count twice. The number is reported to a reader who will reason from
+ * it, which is the whole point of reporting it.
+ *
+ * A non-string value is returned untouched, and that is a real limit rather
+ * than a tidy one: an address inside a `jsonb` object or a `text[]` would
+ * survive.
+ *
+ * It closes nothing today, and the reason is a property rather than a tally —
+ * a tally rots the moment a column is added and is inherited as fact for years
+ * afterwards. As of 26.08.2026 the column types imported from
+ * `drizzle-orm/pg-core` are `text`, `timestamp`, `integer`, `bigint` and
+ * `boolean` in `schema.ts`, and `text`, `timestamp` and `boolean` in
+ * `auth-schema.ts`; neither file imports `json` or `jsonb`, and neither calls
+ * `.array()`. So no column can hold a non-string value at all, and
+ * `Setting.data` stores its JSON as `text` and is therefore scanned. The
+ * import line is both where that changes and where to look.
+ */
 export function redactEmails(rows: Record<string, unknown>[]): {
   rows: Record<string, unknown>[]
   redactions: number
@@ -112,6 +131,180 @@ export const DENIED_TABLES: ReadonlySet<string> = new Set(
 export class DbReadRefused extends Error {}
 
 /**
+ * Where a real statement separator sits, or -1 for none, or -2 when the text
+ * could not be read to the end.
+ *
+ * This exists because the plan guard only ever inspects the statement it
+ * explained, and nothing downstream guarantees that is the statement that
+ * runs: one driver refuses a chained statement at parse and the other accepts
+ * it, so the same input is safe on one deployment and not the other. A guard
+ * whose correctness depends on which driver is underneath is the defect, not
+ * the fix — so the second statement is refused here, before anything sees it.
+ *
+ * Only `;` separates statements in Postgres, so finding one outside every
+ * construct that can legitimately contain it is sufficient. The constructs
+ * are: line comments, block comments (which nest), single-quoted literals
+ * (where `''` is the escape), quoted identifiers, and dollar quoting.
+ *
+ * **The bias is deliberate.** Mis-reading the text as being INSIDE a literal
+ * would skip a real separator and fail open, so nothing here extends a
+ * literal on a guess: a backslash is not treated as an escape, because with
+ * `standard_conforming_strings` on it is not one, and treating it as one is
+ * exactly the mistake that would swallow a closing quote. Anything that
+ * cannot be read to the end returns -2 and is refused. Every uncertainty
+ * resolves to rejection.
+ */
+function isIdentifierChar(c: string | undefined): boolean {
+  return c !== undefined && /[A-Za-z0-9_$]/.test(c)
+}
+
+/**
+ * The index just past a single-quoted literal's closing quote, or -1 if it
+ * does not close. `''` is a doubled quote in either mode; `escapes` adds
+ * backslash escaping, which only `E'…'` has.
+ */
+function readSingleQuoted(sql: string, open: number, escapes: boolean): number {
+  let i = open + 1
+  while (i < sql.length) {
+    const c = sql[i]
+    if (escapes && c === '\\') {
+      i += 2
+      continue
+    }
+    if (c === "'") {
+      if (sql[i + 1] === "'") {
+        i += 2
+        continue
+      }
+      return i + 1
+    }
+    i += 1
+  }
+  return -1
+}
+
+export function findStatementBreak(sql: string): number {
+  const n = sql.length
+  let i = 0
+  while (i < n) {
+    const c = sql[i]
+
+    if (c === '-' && sql[i + 1] === '-') {
+      const nl = sql.indexOf('\n', i)
+      if (nl < 0) {
+        return -1
+      }
+      i = nl + 1
+      continue
+    }
+
+    if (c === '/' && sql[i + 1] === '*') {
+      let depth = 1
+      i += 2
+      while (i < n && depth > 0) {
+        if (sql[i] === '/' && sql[i + 1] === '*') {
+          depth += 1
+          i += 2
+        } else if (sql[i] === '*' && sql[i + 1] === '/') {
+          depth -= 1
+          i += 2
+        } else {
+          i += 1
+        }
+      }
+      if (depth > 0) {
+        return -2
+      }
+      continue
+    }
+
+    // `E'…'` turns backslash escapes ON, which is the entire purpose of the
+    // prefix and happens regardless of `standard_conforming_strings`. Read as
+    // a plain literal, `\'` inside one looks like a close followed by an open,
+    // and the lexer runs one quote out of phase for the rest of the statement
+    // — stepping over a real separator. Scoped to this construct and no
+    // further: in a plain literal a backslash is NOT an escape, and treating
+    // it as one there is the failure this whole approach avoids.
+    //
+    // Adjacency is required, and measured (26.08.2026): `E '…'` with a space
+    // or newline between is not an E-string at all, and neither is a quote
+    // following an identifier — `role'x'` is a type name and a plain literal.
+    // `U&'…'` is deliberately absent: its backslash introduces a unicode code
+    // point and does NOT escape a quote, so it reads as a plain literal here,
+    // which is what it is.
+    if ((c === 'E' || c === 'e') && sql[i + 1] === "'" && !isIdentifierChar(sql[i - 1])) {
+      const end = readSingleQuoted(sql, i + 1, true)
+      if (end < 0) {
+        return -2
+      }
+      i = end
+      continue
+    }
+
+    if (c === "'") {
+      const end = readSingleQuoted(sql, i, false)
+      if (end < 0) {
+        return -2
+      }
+      i = end
+      continue
+    }
+
+    if (c === '"') {
+      const quote = sql.indexOf('"', i + 1)
+      if (quote < 0) {
+        return -2
+      }
+      i = quote + 1
+      continue
+    }
+
+    if (c === '$') {
+      const tag = /^\$[A-Za-z_0-9]*\$/.exec(sql.slice(i))?.[0]
+      if (tag) {
+        const end = sql.indexOf(tag, i + tag.length)
+        if (end < 0) {
+          return -2
+        }
+        i = end + tag.length
+        continue
+      }
+      i += 1
+      continue
+    }
+
+    if (c === ';') {
+      return i
+    }
+    i += 1
+  }
+  return -1
+}
+
+/** The caller's statement with one trailing separator removed, if present. */
+export function withoutTrailingSemicolon(sql: string): string {
+  return sql.trim().replace(/;\s*$/, '')
+}
+
+/**
+ * Sound on any driver: one statement in, so the statement the planner
+ * described is the statement that runs.
+ */
+export function refuseIfChained(sql: string): void {
+  const where = findStatementBreak(withoutTrailingSemicolon(sql))
+  if (where === -2) {
+    throw new DbReadRefused(
+      'This statement could not be read to the end — an unterminated string, identifier or comment. It was not run.',
+    )
+  }
+  if (where >= 0) {
+    throw new DbReadRefused(
+      'Only one statement at a time: what the planner is asked about has to be what runs, and a second statement would not be checked.',
+    )
+  }
+}
+
+/**
  * Every relation a plan will touch. Postgres nests plans arbitrarily deep
  * (`Plans`, `Subplans`, CTEs), so this walks whatever it is given rather than
  * assuming a shape, and reads `Relation Name` wherever it appears.
@@ -134,6 +327,28 @@ export function relationsInPlan(plan: unknown, found: Set<string> = new Set()): 
     }
   }
   return found
+}
+
+/**
+ * Whether what came back is recognisably a query plan at all.
+ *
+ * Without this, an unrecognised shape — a string, a null, no rows — walks to
+ * an empty set, and an empty set is indistinguishable from "this plan touches
+ * nothing denied". The guard would pass and the read would proceed: wrong in
+ * the permissive direction, and silently, which is the one combination a
+ * guard must never have. Not observed on either driver; refusing is what makes
+ * it unable to happen rather than unlikely.
+ */
+export function looksLikePlan(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => looksLikePlan(item))
+  }
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+  return Object.entries(value as Record<string, unknown>).some(
+    ([key, nested]) => key === 'Plan' || looksLikePlan(nested),
+  )
 }
 
 /** The denied relations a plan touches, in the order they were found. */
@@ -165,7 +380,7 @@ export function clampMaxRows(requested: unknown): number {
  * credential surface in passing, and someone typing `) AS a;` is not passing.
  */
 export function boundedQuery(sql: string, maxRows: number): string {
-  return `SELECT * FROM (${sql.trim().replace(/;\s*$/, '')}) AS bounded_read LIMIT ${maxRows + 1}`
+  return `SELECT * FROM (${withoutTrailingSemicolon(sql)}) AS bounded_read LIMIT ${maxRows + 1}`
 }
 
 /**
@@ -184,6 +399,10 @@ export interface QueryRunner {
  * and neither needs a database to be wrong.
  */
 export async function runBoundedRead(runner: QueryRunner, request: DbReadRequest): Promise<DbReadResult> {
+  // Before anything else, and before any driver is involved: one statement in,
+  // so the statement the planner is asked about is the statement that runs.
+  refuseIfChained(request.sql)
+
   const maxRows = clampMaxRows(request.maxRows)
   const bounded = boundedQuery(request.sql, maxRows)
 
@@ -193,6 +412,11 @@ export async function runBoundedRead(runner: QueryRunner, request: DbReadRequest
   // Ask the planner what this will read before reading anything.
   const explained = await runner.execute(`EXPLAIN (FORMAT JSON) ${bounded}`)
   const plan = explained.rows.map((row) => Object.values(row)[0])
+  if (!looksLikePlan(plan)) {
+    throw new DbReadRefused(
+      'The database did not return a readable query plan, so what this statement reads could not be established and it was not run.',
+    )
+  }
   const refused = deniedRelations(plan)
   if (refused.length) {
     throw new DbReadRefused(

@@ -414,7 +414,7 @@ export const toolDefinitions = [
         sql: {
           type: 'string',
           description:
-            'One SELECT-shaped statement. It is wrapped as a subquery to apply the row cap — that is the cap, and not a guarantee about how many statements arrive.',
+            'One SELECT-shaped statement, and exactly one: a second is refused here rather than left to the driver, so that what the planner is asked about is what runs. A semicolon inside a literal, an identifier or a comment is not a second statement.',
         },
         maxRows: { type: 'number', description: 'Row cap (default 200, max 2000). Exceeding it sets `truncated`.' },
       },
