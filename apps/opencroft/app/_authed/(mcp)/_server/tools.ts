@@ -72,6 +72,7 @@ import {
   threadCompactStatusAsAgent,
 } from '@/app/_authed/(group-chats)/_server/model'
 import { recordAudit } from '@/app/_authed/(mcp)/_server/audit'
+import { DbReadRefused, runBoundedRead } from '@/app/_authed/(mcp)/_server/db-read'
 import { executeExtensionTool, getExtensionToolDefinitions } from '@/app/_authed/(mcp)/_server/extension-tools'
 import { skillToolDefinitions, skillToolHandlers } from '@/app/_authed/(mcp)/_server/skill-tools'
 import type { ToolCallerContext, ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
@@ -403,6 +404,23 @@ export const toolDefinitions = [
   },
 
   // ── Spaces ────────────────────────────────────────────────────────
+  {
+    name: 'db_read',
+    description:
+      "Run one read-only SQL statement against this instance's database and return the rows. For establishing what a migration or a backfill actually did, rather than inferring it from the fact that the app booted. Read-only is enforced by the transaction, not by inspecting the statement, so a write is refused wherever it would be performed. The tables holding credentials and session tokens are refused — which relations a statement reads is answered by the query planner, so a view or an alias does not get past it. Email addresses are removed from the values by their shape, and `redactions` counts what was removed. Results are capped and a truncated result says so: never read `truncated: false` or `redactions: 0` off a result you did not check. An agent's own account rows live in `user`, which is readable; the graph (spaces, nodes, agents) is NOT in the database — use find_nodes/get_nodes for those.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        sql: {
+          type: 'string',
+          description:
+            'One SELECT-shaped statement. It is wrapped as a subquery to apply the row cap — that is the cap, and not a guarantee about how many statements arrive.',
+        },
+        maxRows: { type: 'number', description: 'Row cap (default 200, max 2000). Exceeding it sets `truncated`.' },
+      },
+      required: ['sql'],
+    },
+  },
   {
     name: 'list_spaces',
     description: 'List all spaces. Each space is an independent graph.',
@@ -2715,6 +2733,38 @@ function buildHandlers(): Record<string, ToolHandler> {
         beforeIndex: typeof args.beforeIndex === 'number' ? args.beforeIndex : undefined,
       })
       return textResult(JSON.stringify(page, null, 2))
+    },
+
+    // ── db_read ─────────────────────────────────────────────────────
+    db_read: async (args) => {
+      const statement = typeof args.sql === 'string' ? args.sql.trim() : ''
+      if (!statement) {
+        fail(-32602, 'Missing required param: sql')
+      }
+      // Imported here rather than at module scope: `@opencroft/db` opens the
+      // database as a top-level await, and this module is loaded by paths that
+      // have no business starting it.
+      const { db } = await import('@opencroft/db')
+      const { sql: raw } = await import('drizzle-orm')
+      try {
+        const result = await db.transaction(async (tx) =>
+          runBoundedRead(
+            {
+              execute: async (text: string) => {
+                const r = await tx.execute(raw.raw(text))
+                return { rows: (r.rows ?? []) as Record<string, unknown>[] }
+              },
+            },
+            { sql: statement, maxRows: typeof args.maxRows === 'number' ? args.maxRows : undefined },
+          ),
+        )
+        return textResult(JSON.stringify(result, null, 2))
+      } catch (err) {
+        if (err instanceof DbReadRefused) {
+          fail(-32602, err.message)
+        }
+        throw err
+      }
     },
 
     // ── list_spaces ─────────────────────────────────────────────────
