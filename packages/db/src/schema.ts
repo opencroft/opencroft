@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import { bigint, boolean, index, integer, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
 
 import { authSchema, user } from './auth-schema'
@@ -183,6 +184,74 @@ export const apiToken = pgTable(
     uniqueIndex('ApiToken_tokenHash_key').on(t.tokenHash),
     index('ApiToken_agentName_idx').on(t.agentName),
     index('ApiToken_userId_idx').on(t.userId),
+  ],
+)
+
+// Every username ever held, by either kind of account. ONE TABLE, TWO KINDS
+// OF PRINCIPAL, DISCRIMINATED BY `principalType` — the same shape
+// `GroupChatMember` and `ApiToken` already use, and for the same reason.
+//
+// A username identifies an account. It is not a name and not a credential:
+// the display name stays editable and non-unique, the email stays the login.
+// Its grammar and the reserved `agent.` prefix live in the app's own username
+// module, which is the single place that rule is written down; this table
+// stores the result and enforces the two things a string cannot enforce about
+// itself — that it is unique, and that it is never reissued.
+//
+// ONE TABLE RATHER THAN A COLUMN ON EACH KIND OF ACCOUNT. A person is a row
+// in `user`; an agent is a node in a space graph's JSON with no relational
+// row at all. A column on each could not be indexed against the other, so
+// "one identifier space" would be a convention enforced by whichever code
+// path remembered — which is exactly what the reserved prefix exists to avoid
+// relying on. `agentNodeId` is not a foreign key for the same reason it is
+// not one on `GroupChatMember`.
+//
+// ROWS ARE NEVER DELETED, ONLY RETIRED. A row with `retiredAt` set is a
+// username the account used to hold: it still resolves to that same account,
+// so a reference already written into a transcript still lands on whoever
+// wrote it, and it can never be taken by anybody else, because the unique
+// index below covers retired rows too. Reissuing a freed handle would make an
+// old message's author silently become a different account, which is the
+// failure the whole identifier split exists to prevent.
+export const username = pgTable(
+  'Username',
+  {
+    id: text().primaryKey().notNull().$defaultFn(uuid),
+    username: text().notNull(),
+    // 'user' | 'agent' — see the table comment. Not an enum, matching the
+    // choice already made for ApiToken.subjectType and
+    // GroupChatMember.principalType.
+    principalType: text().notNull(),
+    userId: text().references(() => user.id, { onDelete: 'cascade' }),
+    agentNodeId: text(),
+    // Null while this is the account's current handle. Set when it is
+    // replaced, and never cleared.
+    retiredAt: timestamp({ withTimezone: true, mode: 'date' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // Across BOTH kinds and BOTH states. This single index is what makes the
+    // two identity spaces incapable of colliding and a freed handle
+    // incapable of being reissued.
+    uniqueIndex('Username_username_key').on(t.username),
+    // One CURRENT username per account, and the two mechanisms below split the
+    // job rather than one replacing the other.
+    //
+    // NULL-distinctness does the same half it does on the membership tables:
+    // an agent row's `userId` is null and a person row's `agentNodeId` is
+    // null, so each index constrains exactly the principal kind it names and
+    // is silently inert for the other.
+    //
+    // The PARTIAL predicate — the first in this schema, checked 2026-08-26 —
+    // does the half that trick cannot. Retired rows must repeat a principal
+    // freely, and `retiredAt` being nullable would make every current row
+    // distinct from every other rather than colliding, which is the opposite
+    // of what is wanted. Restricting the index to live rows is what turns
+    // "one per account" into something the database enforces.
+    uniqueIndex('Username_current_userId_key').on(t.userId).where(sql`${t.retiredAt} is null`),
+    uniqueIndex('Username_current_agentNodeId_key').on(t.agentNodeId).where(sql`${t.retiredAt} is null`),
+    index('Username_userId_idx').on(t.userId),
+    index('Username_agentNodeId_idx').on(t.agentNodeId),
   ],
 )
 
@@ -652,6 +721,7 @@ export type GroupChatThread = typeof groupChatThread.$inferSelect
 export type GroupChatSlugAlias = typeof groupChatSlugAlias.$inferSelect
 export type GroupChatThreadAlias = typeof groupChatThreadAlias.$inferSelect
 export type UsageRollupDay = typeof usageRollupDay.$inferSelect
+export type Username = typeof username.$inferSelect
 
 // Better Auth's tables, declared separately because their shape is the
 // library's contract rather than ours — re-exported here so drizzle-kit picks

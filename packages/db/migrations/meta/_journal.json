@@ -127,6 +127,13 @@
       "when": 1787290199299,
       "tag": "0017_spotty_stepford_cuckoos",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1787765157137,
+      "tag": "0018_skinny_may_parker",
+      "breakpoints": true
     }
   ]
 }

@@ -12,6 +12,7 @@ import { fileToAvatarDataUrl } from '@/app/_authed/(settings)/_lib/avatar-image'
 import {
   changeEmail,
   changePassword,
+  changeUsername,
   getAccount,
   type OwnAccount,
   updateAvatar,
@@ -59,6 +60,10 @@ function AccountSettingsForm({ account }: { account: OwnAccount }) {
 
   const [name, setName] = useState(account.name)
   const [nameError, setNameError] = useState<string>()
+  // Empty when the backfill has not reached this account yet, so the field
+  // reads as unset rather than showing a handle nobody holds.
+  const [username, setUsername] = useState(account.username ?? '')
+  const [usernameError, setUsernameError] = useState<string>()
   const [profileError, setProfileError] = useState<string>()
   const [savingProfile, setSavingProfile] = useState(false)
 
@@ -105,6 +110,7 @@ function AccountSettingsForm({ account }: { account: OwnAccount }) {
 
   const handleSaveProfile = async () => {
     setNameError(undefined)
+    setUsernameError(undefined)
     setProfileError(undefined)
     if (!name.trim()) {
       setNameError('A display name is required.')
@@ -113,6 +119,18 @@ function AccountSettingsForm({ account }: { account: OwnAccount }) {
     setSavingProfile(true)
     try {
       await updateProfile({ data: name.trim() })
+      // Only when it actually differs. Saving the same handle back would be a
+      // no-op in the store, but asking at all is a pointless round trip on
+      // every name change.
+      if (username !== (account.username ?? '')) {
+        const result = await changeUsername({ data: username.trim() })
+        if (!result.ok) {
+          // Under the username field rather than the whole-form slot: this is
+          // about the value in it, and the name beside it saved fine.
+          setUsernameError(result.message)
+          return
+        }
+      }
     } catch (error) {
       setProfileError(error instanceof Error ? error.message : 'The name could not be saved.')
     } finally {
@@ -180,6 +198,10 @@ function AccountSettingsForm({ account }: { account: OwnAccount }) {
         <AccountProfileForm
           name={name}
           onNameChange={setName}
+          username={username}
+          onUsernameChange={setUsername}
+          usernameHint='Lowercase letters, digits and dots. Changing it retires the old one for good — nobody else can ever take it.'
+          usernameError={usernameError}
           email={account.email}
           onRequestEmailChange={handleRequestEmailChange}
           onSubmit={handleSaveProfile}

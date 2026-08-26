@@ -63,6 +63,32 @@ async function preload(): Promise<void> {
   } catch (err) {
     console.error('[startup] extension auto-install failed', err)
   }
+  // Every account of either kind gets a username here, and it must run AFTER
+  // the spaces preload above: an agent is a node in a space graph, so the
+  // registry has to be loaded before this can see one to give a handle to.
+  //
+  // A reconciliation rather than a migration, because agents are created by
+  // editing a graph and there is no account-creation path to hook — so this
+  // is how "every account has a handle" becomes true again for one made since
+  // the last boot. Logged only when it did work, since the ordinary case is
+  // that it has nothing to do.
+  try {
+    const { ensureUsernames } = await import('@/app/_server/usernames')
+    const { assigned, failed } = await ensureUsernames()
+    if (assigned > 0) {
+      console.log(`[startup] assigned ${assigned} username(s)`)
+    }
+    if (failed > 0) {
+      // Said separately and loudly: these accounts came out of the pass with
+      // no handle, which is the one thing this step exists to prevent. A
+      // silent zero-assigned would read as "nothing to do".
+      console.error(`[startup] ${failed} account(s) could not be given a username`)
+    }
+  } catch (err) {
+    // Not fatal: an account without a handle renders unresolved, which is a
+    // designed state, and the next boot tries again.
+    console.error('[startup] username backfill failed', err)
+  }
   // Deliberately NOT try/caught like the steps above: a type-id collision
   // between two installed extensions means one of them cannot actually work
   // (something owns the type; the other's declaration is dead), and letting
