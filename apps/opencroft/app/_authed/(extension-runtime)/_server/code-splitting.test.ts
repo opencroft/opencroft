@@ -72,29 +72,50 @@ test('a concurrent reader of client.js can always resolve every chunk it imports
   const { id, manifest, dir } = await makeFixture('race-')
   const dist = distDir(dir)
 
+  // Published once first, so there is an entry on disk to be a reader OF. On a
+  // fresh fixture `client.js` does not exist until the build's last act, so a
+  // poller racing that build reads nothing at all on every pass and the
+  // chunk-resolution assertion never runs while anything is concurrent -- the
+  // guard below would then be counting a single read of a settled bundle.
+  // The invariant is about a REBUILD: an entry already being served while its
+  // replacement stages.
+  const published = await buildExtension(id, manifest)
+  assert.ok(published.success, JSON.stringify(published.errors))
+  await fs.writeFile(path.join(dir, 'src', 'big-module.ts'), bigModuleSource('rebuild-'))
+
   let sawStaging = false
   let checks = 0
+  const inspect = async () => {
+    const siblings = await fs.readdir(path.dirname(dist)).catch(() => [] as string[])
+    if (siblings.some((f) => f.includes('.building-'))) {
+      sawStaging = true
+    }
+    const code = await fs.readFile(path.join(dist, 'client.js'), 'utf-8').catch(() => null)
+    if (code === null) {
+      return
+    }
+    checks += 1
+    const imports = [...code.matchAll(/from *"(\.\/chunk-[^"]+)"/g)].map((m) => m[1])
+    for (const spec of imports) {
+      const chunkPath = path.join(dist, path.basename(spec))
+      const exists = await fs.readFile(chunkPath, 'utf-8').catch(() => null)
+      assert.ok(exists !== null, `client.js references ${spec}, which does not exist on disk yet`)
+    }
+  }
+
+  // Bounded by the build, not by a count of iterations: a fixed count is a
+  // guess about which of the two finishes first, and both guards below fail
+  // when it loses -- too few iterations and the poller stops before the build
+  // stages anything, too many and it spins after everything is published.
+  let building = true
   const poll = (async () => {
-    for (let i = 0; i < 1000; i += 1) {
-      const siblings = await fs.readdir(path.dirname(dist)).catch(() => [] as string[])
-      if (siblings.some((f) => f.includes('.building-'))) {
-        sawStaging = true
-      }
-      const code = await fs.readFile(path.join(dist, 'client.js'), 'utf-8').catch(() => null)
-      if (code === null) {
-        continue
-      }
-      checks += 1
-      const imports = [...code.matchAll(/from *"(\.\/chunk-[^"]+)"/g)].map((m) => m[1])
-      for (const spec of imports) {
-        const chunkPath = path.join(dist, path.basename(spec))
-        const exists = await fs.readFile(chunkPath, 'utf-8').catch(() => null)
-        assert.ok(exists !== null, `client.js references ${spec}, which does not exist on disk yet`)
-      }
+    while (building) {
+      await inspect()
     }
   })()
 
   const result = await buildExtension(id, manifest)
+  building = false
   await poll
 
   assert.ok(result.success, JSON.stringify(result.errors))

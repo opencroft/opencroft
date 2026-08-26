@@ -105,32 +105,61 @@ test('a concurrent reader never sees a partial client bundle or map', async () =
   const clientFile = distFile(id, 'client.js')
   const mapFile = distFile(id, 'client.js.map')
 
-  let sawTemp = false
+  // The client bundle is built into a staging directory beside `dist` and
+  // published by renaming out of it, so a build in progress is visible in
+  // dist's PARENT. Watching `dist` itself only ever catches the server
+  // bundle's and the stylesheet's own temp files, which are published by a
+  // different code path and say nothing about whether this test overlapped
+  // the client publish it exists to police.
+  const stagingParent = path.dirname(path.dirname(clientFile))
+
+  // Published once first, for the same reason the split suite's version does
+  // it: on a fresh fixture neither file exists until the build's last act, so
+  // a reader racing that build reads nothing on every pass and the assertions
+  // below never execute. What a partial read is possible DURING is a rebuild
+  // — a bundle already being served while its replacement stages.
+  const published = await buildExtension(id, manifest)
+  assert.ok(published.success, `first build failed: ${JSON.stringify(published.errors)}`)
+
+  let sawStaging = false
+  let reads = 0
+  const inspect = async () => {
+    const siblings = await fs.readdir(stagingParent).catch(() => [] as string[])
+    if (siblings.some((f) => f.includes('.building-'))) {
+      sawStaging = true
+    }
+    const code = await fs.readFile(clientFile, 'utf-8').catch(() => null)
+    if (code !== null) {
+      reads += 1
+      assert.ok(code.includes('atomic-'), 'a reader must never see a truncated prefix of the bundle')
+      assert.match(code, /sourceMappingURL=client\.js\.map\?v=\d+\n$/, 'must be a complete, well-formed bundle')
+    }
+    const map = await fs.readFile(mapFile, 'utf-8').catch(() => null)
+    if (map !== null) {
+      assert.doesNotThrow(() => JSON.parse(map), 'a reader must never see a truncated sourcemap')
+    }
+  }
+
+  // Bounded by the build, not by a count of iterations. A fixed count is a
+  // guess about which finishes first, and when the guess loses the poller has
+  // stopped before the build even reached its publish — leaving the guard
+  // below to fail a run that never got the chance to observe anything.
+  let building = true
   const poll = (async () => {
-    for (let i = 0; i < 500; i += 1) {
-      const entries = await fs.readdir(path.dirname(clientFile)).catch(() => [] as string[])
-      if (entries.some((f) => f.includes('.building-'))) {
-        sawTemp = true
-      }
-      const code = await fs.readFile(clientFile, 'utf-8').catch(() => null)
-      if (code !== null) {
-        assert.ok(code.includes('atomic-'), 'a reader must never see a truncated prefix of the bundle')
-        assert.match(code, /sourceMappingURL=client\.js\.map\?v=\d+\n$/, 'must be a complete, well-formed bundle')
-      }
-      const map = await fs.readFile(mapFile, 'utf-8').catch(() => null)
-      if (map !== null) {
-        assert.doesNotThrow(() => JSON.parse(map), 'a reader must never see a truncated sourcemap')
-      }
+    while (building) {
+      await inspect()
     }
   })()
 
   const result = await buildExtension(id, manifest)
+  building = false
   await poll
 
   assert.ok(result.success, `build failed: ${JSON.stringify(result.errors)}`)
+  assert.ok(reads > 0, 'the poller must have actually read the published bundle while the rebuild ran')
   assert.ok(
-    sawTemp,
-    'the poller must have actually observed the build in progress (temp file present) for this test to mean anything',
+    sawStaging,
+    'the poller must have actually observed the build in progress (staging directory present) for this test to mean anything',
   )
   const finalCode = await fs.readFile(clientFile, 'utf-8')
   assert.ok(
