@@ -26,6 +26,7 @@ import {
   selectLeftoverConfigs,
 } from './agent-command-bar-configs'
 import { AgentCommandBar, type ApprovalTitles, type CommandBarConfig } from './components/agent-command-bar'
+import { ChatEditBar } from './components/chat-edit-bar'
 import { ContextRing } from './components/context-ring'
 import { EffortSelector } from './components/effort-selector'
 import { FastModeToggle } from './components/fast-mode-toggle'
@@ -45,7 +46,7 @@ export type { ApprovalTitles }
 // without a wrapper.
 export type AgentCommandBarSession = Pick<
   AgentChatSession,
-  'sessionKey' | 'draft' | 'send' | 'waiting' | 'stop' | 'sending' | 'disabled'
+  'sessionKey' | 'draft' | 'send' | 'waiting' | 'stop' | 'sending' | 'disabled' | 'edit' | 'cancelEdit' | 'commitEdit'
 >
 
 // What a `controls` render prop is handed — the primitives it needs to wire
@@ -261,6 +262,13 @@ export function useAgentCommandBar({
 
   const onChangeText = useCallback((next: string) => {
     textRef.current = next
+    if (editRef.current) {
+      // An edit is not the session's resting draft. What is typed here belongs
+      // to a message being revised, and persisting it would overwrite whatever
+      // the reader had left unsent in this composer -- which they never chose
+      // to give up, and would have no way to get back.
+      return
+    }
     const key = sessionKeyRef.current
     pendingDraftRef.current = { key, text: next }
     if (draftDebounceRef.current) {
@@ -276,8 +284,14 @@ export function useAgentCommandBar({
     }, DRAFT_SAVE_DEBOUNCE_MS)
   }, [])
 
-  // Escape abandons what was typed without touching the stored draft.
+  // Escape abandons what was typed without touching the stored draft. Mid-edit
+  // it abandons the whole edit instead -- the same thing the bar's own X does,
+  // because "get me out of this" should not depend on where the pointer is.
   const onEscape = useCallback(() => {
+    if (editRef.current) {
+      cancelEditRef.current?.()
+      return
+    }
     textRef.current = ''
     setValue('')
   }, [])
@@ -456,17 +470,171 @@ export function useAgentCommandBar({
   // session switch whose draft happens to match the pre-send text still
   // resyncs the kit's buffer correctly (an unchanged `value` prop would
   // otherwise read as "nothing to sync" even though the session did change).
-  const onSend = useCallback((text: string) => {
-    sendRef.current(text)
-    if (draftDebounceRef.current) {
-      clearTimeout(draftDebounceRef.current)
-      draftDebounceRef.current = null
-    }
-    pendingDraftRef.current = null
-    onDraftChangeRef.current?.(sessionKeyRef.current, '')
-    textRef.current = ''
-    setValue('')
+  // ---- editing a delivered turn ----
+  //
+  // The per-message drafts live HERE, in the composer, and not in the session.
+  // This is where the typed text already is: keystrokes land in `textRef`, and
+  // paging between a turn's messages is exactly "put this one away, bring that
+  // one out". A session that owned the drafts would have to be told every
+  // keystroke to keep them, which is the churn this hook is built to avoid.
+  const edit = session.edit
+  const editRef = useRef(edit)
+  editRef.current = edit
+  const cancelEditRef = useRef(session.cancelEdit)
+  cancelEditRef.current = session.cancelEdit
+  const commitEditRef = useRef(session.commitEdit)
+  commitEditRef.current = session.commitEdit
+  // Which message of the turn is open, as a position in `edit.parts`. Mirrored
+  // into a ref because paging has to read it while it is also setting it, and
+  // a state updater is not a place to do the rest of that work from.
+  const [editPosition, setEditPosition] = useState(0)
+  const editPositionRef = useRef(0)
+  const editDraftsRef = useRef(new Map<number, string>())
+  const wasEditingRef = useRef(false)
+  // What the composer held before the edit opened. Leaving the mode puts it
+  // back: the reader's unsent text was never theirs to give up, and emptying
+  // the composer on cancel destroyed exactly the draft `onChangeText` refuses
+  // to overwrite while an edit is open.
+  const preEditTextRef = useRef('')
+
+  const loadEditPart = useCallback((text: string) => {
+    textRef.current = text
+    setValue(text)
+    textareaRef.current?.focus()
   }, [])
+
+  // Opening a turn seeds the drafts from what its messages actually said and
+  // opens the first of them. Leaving one restores the composer to whatever was
+  // in it beforehand -- what was there during the edit was a message being
+  // revised, and it is not the reader's resting draft to inherit.
+  //
+  // Keyed on WHICH turn is open rather than on the object, so a session that
+  // rebuilds `edit` each render does not reseed the drafts under the cursor.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see the comment above
+  useLayoutEffect(() => {
+    if (!edit) {
+      editDraftsRef.current = new Map()
+      if (wasEditingRef.current) {
+        wasEditingRef.current = false
+        textRef.current = preEditTextRef.current
+        setValue(preEditTextRef.current)
+      }
+      return
+    }
+    if (!wasEditingRef.current) {
+      preEditTextRef.current = textRef.current
+    }
+    wasEditingRef.current = true
+    editDraftsRef.current = new Map(edit.parts.map((part) => [part.index, part.text]))
+    editPositionRef.current = 0
+    setEditPosition(0)
+    loadEditPart(edit.parts[0]?.text ?? '')
+  }, [edit?.eventIndex, loadEditPart])
+
+  // Paging away is not discarding: what was typed into a message is held until
+  // the whole turn is committed or abandoned. That is the entire reason these
+  // drafts exist rather than the composer simply reloading each message.
+  const goToEditPart = useCallback(
+    (position: number) => {
+      const current = editRef.current
+      const target = current?.parts[position]
+      if (!current || !target) {
+        return
+      }
+      const leaving = current.parts[editPositionRef.current]
+      if (leaving) {
+        editDraftsRef.current.set(leaving.index, textRef.current)
+      }
+      editPositionRef.current = position
+      setEditPosition(position)
+      loadEditPart(editDraftsRef.current.get(target.index) ?? target.text)
+    },
+    [loadEditPart],
+  )
+
+  // Only the open message goes back, and only to what it originally said. The
+  // others are not on screen, and reverting work the reader cannot see would be
+  // the one undo they could not undo.
+  const resetEditPart = useCallback(() => {
+    const part = editRef.current?.parts[editPositionRef.current]
+    if (!part) {
+      return
+    }
+    editDraftsRef.current.set(part.index, part.text)
+    loadEditPart(part.text)
+  }, [loadEditPart])
+
+  // Commit every message at once, which is what the turn IS -- it was delivered
+  // as one thing and it is re-sent as one thing. `open` is the text the
+  // composer is handing over for the message currently in it; the rest come
+  // from the drafts paging put there.
+  //
+  // Unchanged messages are left out entirely rather than sent back as
+  // themselves: what did not change is not an edit, and the host re-sends the
+  // stored message for every position it is not given.
+  const commitOpenEdit = useCallback((open: string) => {
+    const current = editRef.current
+    if (!current) {
+      return
+    }
+    const drafts = editDraftsRef.current
+    const openPart = current.parts[editPositionRef.current]
+    if (openPart) {
+      drafts.set(openPart.index, open)
+    }
+    commitEditRef.current?.(
+      current.parts
+        .filter((part) => (drafts.get(part.index) ?? part.text) !== part.text)
+        .map((part) => ({ index: part.index, text: drafts.get(part.index) ?? part.text })),
+    )
+  }, [])
+
+  // Clamped rather than trusted: `parts` comes from the session and the
+  // position is this hook's, so a turn that changed under an open editor must
+  // not index past the end of it.
+  const editPart = edit ? edit.parts[Math.min(editPosition, edit.parts.length - 1)] : undefined
+  const editBarNode = useMemo(
+    () =>
+      edit && editPart ? (
+        <ChatEditBar
+          original={editPart.text}
+          index={Math.min(editPosition, edit.parts.length - 1)}
+          count={edit.parts.length}
+          onPrev={() => goToEditPart(editPosition - 1)}
+          onNext={() => goToEditPart(editPosition + 1)}
+          onReset={resetEditPart}
+          onCancel={() => cancelEditRef.current?.()}
+        />
+      ) : null,
+    [edit, editPart, editPosition, goToEditPart, resetEditPart],
+  )
+
+  const onSend = useCallback(
+    (text: string) => {
+      // Sending IS committing while a turn is open: the check button and this
+      // path are the same control, so Enter commits exactly as the button does.
+      //
+      // Nothing is cleared here on that path. A commit can be refused or fail,
+      // and the mode stays open until the host says it succeeded -- so the
+      // composer keeps the words, and leaving edit mode is what empties it (see
+      // the effect above). The stored draft is not touched either: it is the
+      // reader's unsent text, which an edit never became.
+      if (editRef.current) {
+        commitOpenEdit(text)
+        return
+      }
+      sendRef.current(text)
+      if (draftDebounceRef.current) {
+        clearTimeout(draftDebounceRef.current)
+        draftDebounceRef.current = null
+      }
+      pendingDraftRef.current = null
+      onDraftChangeRef.current?.(sessionKeyRef.current, '')
+      textRef.current = ''
+      setValue('')
+    },
+    [commitOpenEdit],
+  )
 
   const onSetConfigOptionRef = useRef(onSetConfigOption)
   onSetConfigOptionRef.current = onSetConfigOption
@@ -539,6 +707,8 @@ export function useAgentCommandBar({
         trailingControls={hostControls}
         sendError={sendError}
         onDismissSendError={onDismissSendError}
+        editBar={editBarNode}
+        submitMode={edit ? 'commit' : 'send'}
         approval={approval}
         autoApprove={autoApprove}
         onToggleAutoApprove={handleToggleAutoApprove}
@@ -570,6 +740,8 @@ export function useAgentCommandBar({
       hostControls,
       sendError,
       onDismissSendError,
+      editBarNode,
+      edit,
       approval,
       autoApprove,
       handleToggleAutoApprove,

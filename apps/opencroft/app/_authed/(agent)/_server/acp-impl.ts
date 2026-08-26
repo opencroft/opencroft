@@ -29,6 +29,7 @@ import { getSessionUser } from '@opencroft/auth/server'
 import { getRequest } from '@tanstack/react-start/server'
 import { supportsMidTurnInput } from 'agent-client'
 import { usableContextWindow } from 'agent-client/context-window'
+import { rebuildDelivery, splitDelivery } from 'agent-client/queue-tags'
 import type { AgentSelection, Presence, PromptOrigin, QueueMode } from 'agent-client/types'
 
 import type { PromptOriginInput } from '@/app/_authed/(agent)/_lib/prompt-origin'
@@ -50,6 +51,7 @@ import {
   installYoloModeEnforcement,
   modeLockedByYolo,
 } from '@/app/_authed/(agent)/_server/yolo-mode-enforcement'
+import { splitEnvelope, stripDeliveryStamp } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { type ContextUsage, toContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
@@ -432,6 +434,103 @@ export async function promptLocalImpl(data: {
     queue: data.queue,
     origin: await resolvePromptOrigin(data.origin),
   })
+}
+
+/**
+ * Commit an edited turn: fork the session at that turn, then re-send it with
+ * the reader's words and the transcript's own metadata.
+ *
+ * The split of responsibilities is the whole design. The browser sends WORDS,
+ * each tagged with the position of the message it replaces, and nothing else.
+ * Who wrote each message, when they wrote it, the note the delivery opened
+ * with, and the context this app attached on the way out are all read back
+ * here, from the delivered turn the engine already holds — never from the
+ * request. That is the same boundary `WirePromptOrigin` draws for an ordinary
+ * send, held for the same reason: a surface that can state authorship is a
+ * surface that can forge it, and these tags are what every later reader (and
+ * every replay) trusts for attribution.
+ *
+ * Positions rather than a full list, because the reader is only ever handed the
+ * messages that HAVE words: one made entirely of application context renders
+ * nothing, is not a stop in the editor, and must come back unchanged rather
+ * than be re-sent as whatever the array position beside it happened to hold.
+ *
+ * Returns null when the turn is not there to edit — a stale tab aimed at a
+ * session that has moved on gets a refusal, not somebody else's message with
+ * this reader's words committed onto it.
+ */
+export async function editTurnLocalImpl(data: {
+  tabKey: string
+  sessionId: string
+  eventIndex: number
+  edits: { index: number; text: string }[]
+}): Promise<{ sessionId: string } | null> {
+  // Read before the fork. Not because the fork disturbs it (it builds a new
+  // session and leaves this one's events alone), but because there is no reason
+  // to branch a conversation before knowing the edit can be built at all.
+  //
+  // The turn is named by its position in the event log, and the ordinal that
+  // rewinds to it comes back from the same read -- see `userTurnAt`. A count of
+  // user turns cannot cross this boundary: the browser holds a bounded tail of
+  // the conversation, so its count and this one are different numbers for the
+  // same turn as soon as anything has scrolled off.
+  const turn = agentClient.userTurnAt(data.sessionId, data.eventIndex)
+  if (!turn) {
+    return null
+  }
+  // The old delivery stamp goes; the re-delivery gets its own, which is what
+  // that stamp means. Everything else about the framing stays.
+  const original = stripDeliveryStamp(turn.text)
+  const { messages } = splitDelivery(original)
+  const texts = messages.map((message) => message.text)
+  for (const edit of data.edits) {
+    const current = texts[edit.index]
+    if (current === undefined) {
+      throw new Error(`Edited message ${edit.index} is not in a turn of ${texts.length}`)
+    }
+    // The reader's words go back behind the context they never saw. Dropping it
+    // would quietly strip a message of what it was sent with; regenerating it
+    // would attach today's canvas to a message sent from a different one.
+    texts[edit.index] = splitEnvelope(current).context + edit.text
+  }
+  const text = rebuildDelivery(original, texts)
+  const meta = await agentClient.forkSession(data.sessionId, turn.turnIndex)
+  if (!meta) {
+    return null
+  }
+  await adoptFork(data.tabKey, meta.id)
+  // Handed over verbatim, which is what `system` means here: `text` is already
+  // a finished delivery body — tags, and the interrupt note if the turn opened
+  // with one. A `message` send would tag it AGAIN, wrapping one new tag naming
+  // the editor around the old ones escaped into its body, which is exactly the
+  // flattening this change exists to remove. The entry carries no author
+  // because the authors are inside it.
+  //
+  // `wait` rather than `push` because nothing is being interrupted: the fork
+  // starts idle with an empty queue. It does not wait either — a system entry
+  // is never gated by Presence (see QueuedPrompt), so the cadence a reader set
+  // for incoming messages does not hold back their own edit.
+  await agentClient.prompt(meta.id, text, { queue: 'wait', origin: { kind: 'system' } })
+  return { sessionId: meta.id }
+}
+
+/**
+ * Point a tab at a fork it just made, in memory and durably.
+ *
+ * Shared by the plain fork and by an edit commit because they are the same
+ * event — a tab's conversation becoming a branch of itself — and the two
+ * drifting apart is how a remount would resume one of them as the original.
+ * A fork rewinds an already-prompted conversation, so it is never "new" for
+ * envelope purposes and always carries history.
+ */
+export async function adoptFork(tabKey: string, sessionId: string): Promise<void> {
+  tabSessions.set(tabKey, {
+    id: sessionId,
+    canFork: true,
+    canSteer: tabSessions.get(tabKey)?.canSteer ?? false,
+    everPrompted: true,
+  })
+  await writePersistedSession(tabKey, sessionId, true)
 }
 
 // Where `{ kind: 'reader' }` becomes a name — the trust boundary, sitting

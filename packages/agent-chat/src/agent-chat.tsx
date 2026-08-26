@@ -1,7 +1,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { useCallback, useMemo, useRef } from 'react'
+import { useCallback, useRef } from 'react'
 import { LogoLoader } from 'ui/components/ui/logo-loader'
 
 import { type Block, ChatConversation, type ChatConversationHandle } from './components/chat-conversation'
@@ -128,26 +128,13 @@ export function AgentChat({
   footerExtra,
 }: AgentChatProps) {
   const displayName = agentName ?? session.botName
-  // 0-based user-turn index per user block, so "fork from here" rewinds to it.
-  // Keyed by the block's position in `blocks` — the same position the kit
-  // component reports back through `onEditUser`.
-  const turnByBlock = useMemo(() => {
-    const map = new Map<number, number>()
-    let turn = -1
-    blocks.forEach((block, index) => {
-      if (block.kind === 'user') {
-        turn += 1
-        map.set(index, turn)
-      }
-    })
-    return map
-  }, [blocks])
-  const edit = session.canFork === true ? session.editMessage : undefined
-  const onEditUser = useMemo(
-    () =>
-      edit ? (absoluteIndex: number, text: UserText) => edit(turnByBlock.get(absoluteIndex) ?? 0, text) : undefined,
-    [edit, turnByBlock],
-  )
+  // Editing is keyed on the block's own id, which the host assigned and can
+  // resolve against its whole conversation. Nothing is derived from a position
+  // in `blocks` here: that array is a bounded tail, so a position in it is not
+  // an identity -- counting user blocks inside it produced an index that meant
+  // one turn in a freshly opened chat and a different, older one as soon as
+  // history had been loaded.
+  const onEditUser = session.canFork === true ? session.editMessage : undefined
 
   // Whether to fetch more history, and running the fetch, are the host's own
   // decision — this component only holds the reader's place while whatever

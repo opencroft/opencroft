@@ -2106,6 +2106,53 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       }
     },
 
+    /**
+     * A user turn as it was DELIVERED — tags, interrupt note and all — named
+     * by its absolute position in this session's event log, together with the
+     * turn ordinal that addresses the same turn for `forkSession`.
+     *
+     * Both, from one read, because they must agree. The event index is what a
+     * client can name safely: a chat opens on a bounded tail of its history,
+     * so a count of user turns means different turns on the two sides and an
+     * edit keyed that way lands on whichever message they happened to disagree
+     * about. The ordinal is what the rewind takes. Deriving one from the other
+     * anywhere else would be two derivations to keep in step.
+     *
+     * The text has to be read here, server-side, rather than sent up by
+     * whoever is editing: the tags carry authorship, and a surface that
+     * supplies them is a surface that can forge them (see this app's
+     * `WirePromptOrigin`, which exists to make that impossible for an ordinary
+     * send). The browser sends words; who said them comes from this.
+     *
+     * Null when the session is gone, the index is out of range, or the event
+     * there is not a user turn. Nothing is clamped or nearest-matched: an edit
+     * aimed at a turn that is no longer where it was would otherwise come back
+     * with a DIFFERENT turn's words and metadata, and commit the reader's edit
+     * against somebody else's message.
+     *
+     * NOTE for hosts with a `transformDeliveredPrompt`: what comes back is the
+     * TRANSFORMED text, because that is what was delivered and what the
+     * transcript replays. A host that re-delivers it is transforming it twice,
+     * so a transform that prepends (a timestamp, an envelope) needs its own
+     * inverse applied first — see this app's `stripDeliveryStamp`.
+     */
+    userTurnAt(sessionId: string, eventIndex: number): { text: string; turnIndex: number } | null {
+      const session = store.sessions.get(sessionId)
+      const event = session?.events[eventIndex]
+      if (!session || !event || event.kind !== 'user') {
+        return null
+      }
+      // The ordinal is how many user turns precede this one, which is exactly
+      // what findTurnBoundary's own index means.
+      let turnIndex = 0
+      for (let i = 0; i < eventIndex; i += 1) {
+        if (session.events[i].kind === 'user') {
+          turnIndex += 1
+        }
+      }
+      return { text: event.text, turnIndex }
+    },
+
     // Branch a session into a new one, rewound to a turn (dropFromTurn, 0-based;
     // defaults to the last turn). Only the native harness can do this (we own its
     // message store); ACP fork copies the whole session with no cutoff, so it's

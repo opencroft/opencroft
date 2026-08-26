@@ -1,5 +1,29 @@
 import type { PermissionOpt } from 'agent-client/types'
 
+import type { EditablePart } from './user-parts'
+
+/**
+ * A delivered turn, open for editing.
+ *
+ * `eventIndex` identifies the turn the way the host's own transcript does — an
+ * absolute position in the session's event log, not a count of user turns. A
+ * chat opens on a bounded tail of its history, so "the third user turn" means
+ * different turns to a client and to a server that holds all of it; an edit
+ * keyed that way rewrites whichever message the two happened to disagree on.
+ *
+ * `parts` are the messages a reader can actually change, each carrying the
+ * position it holds in the DELIVERED turn — which is not always its position
+ * in this array. A message made entirely of application context renders no
+ * words and is not a stop in the editor; the ones after it keep the delivery's
+ * own numbering, so a commit still lands on the message it was aimed at. The
+ * interrupt note is not in here either, for the same reason: it is nobody's
+ * message, and it is preserved by the host that puts the turn back together.
+ */
+export interface AgentChatEdit {
+  eventIndex: number
+  parts: readonly EditablePart[]
+}
+
 export interface PendingPermission {
   requestId: string
   title: string
@@ -61,9 +85,33 @@ export interface AgentChatSession {
   // same mode differently. Unset leaves modes classified by their id alone,
   // which is correct but less legible.
   adapterId?: string
-  // Rewind history to a user turn (0-based) and prefill its text for
-  // re-sending.
-  editMessage?: (turnIndex: number, text: string) => void
+  // OPEN a delivered user turn for editing, named by the block id the host
+  // gave it (see chat-conversation's `onEditUser`).
+  //
+  // The host resolves the id against its own transcript: it has the turn's
+  // text as delivered, which is what an edit has to work from, and it knows
+  // where the turn sits in the whole conversation rather than in the window
+  // currently loaded.
+  //
+  // It stages nothing in the composer. A turn can carry several messages, and
+  // putting the whole delivery in front of the reader means putting the tags
+  // that separate them there too — markup nobody typed. This starts the mode
+  // instead: `edit` below says what is open, and the composer holds one
+  // message of it at a time.
+  editMessage?: (blockId: string) => void
+  // The turn currently open for editing, if any.
+  edit?: AgentChatEdit
+  // Leave edit mode, dropping every pending edit in the turn.
+  cancelEdit?: () => void
+  // Commit the turn: re-send it with these words in place of the messages at
+  // these positions, everything else unchanged. Only the messages the reader
+  // actually changed need be listed, and each carries the position it
+  // replaces — the array's own order says nothing.
+  //
+  // Words only, never authorship: who sent each message and when is the
+  // transcript's, and a host resolves it from the stored turn rather than
+  // accepting it from whatever asked for the edit.
+  commitEdit?: (edits: { index: number; text: string }[]) => void
   // Composer draft staged by `editMessage`; the composer's own text syncs to
   // it when it changes. Distinct from a host's own persisted composer draft
   // (loaded once when the session opens) — this one stages an in-progress

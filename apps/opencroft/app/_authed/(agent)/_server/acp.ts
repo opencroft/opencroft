@@ -12,6 +12,7 @@ import type { WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import {
   cancelLocalImpl,
   deliverQueueLocalImpl,
+  editTurnLocalImpl,
   ensureLocalSessionImpl,
   findTargetSessionImpl,
   forgetLocalSessionImpl,
@@ -23,7 +24,7 @@ import {
   stopLocalSessionProcessImpl,
   tabSessions,
 } from '@/app/_authed/(agent)/_server/acp-impl'
-import { writePersistedConfigOption, writePersistedSession } from '@/app/_authed/(agent)/_server/acp-session-store'
+import { writePersistedConfigOption } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { modeLockedByYolo } from '@/app/_authed/(agent)/_server/yolo-mode-enforcement'
 import {
@@ -190,30 +191,26 @@ export const forgetLocalSession = createServerFn({ method: 'POST', strict: { out
   .inputValidator((tabKey: string) => tabKey)
   .handler(async ({ data: tabKey }): Promise<void> => forgetLocalSessionImpl(tabKey))
 
-// Branch the tab's session into a new one rewound to a user turn (0-based;
-// drops that turn and everything after). Re-point the tab at the fork so a
-// remount resumes the branch instead of re-creating the original.
-export const forkLocal = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { tabKey: string; sessionId: string; dropFromTurn: number }) => data)
-  .handler(async ({ data }): Promise<{ sessionId: string } | null> => {
-    const meta = await agentClient.forkSession(data.sessionId, data.dropFromTurn)
-    if (!meta) {
-      return null
-    }
-    // The fork keeps the same agent, so steering capability carries over. A
-    // fork rewinds an already-prompted conversation, so its session is never
-    // "new" for envelope purposes.
-    tabSessions.set(data.tabKey, {
-      id: meta.id,
-      canFork: true,
-      canSteer: tabSessions.get(data.tabKey)?.canSteer ?? false,
-      everPrompted: true,
-    })
-    // Re-point the durable pointer at the fork so a restart resumes the branch.
-    // A fork rewinds an already-prompted conversation, so it carries history.
-    await writePersistedSession(data.tabKey, meta.id, true)
-    return { sessionId: meta.id }
-  })
+// Commit an edited turn: rewind to it and re-send it with the reader's words.
+//
+// The turn is named by its position in the session's event log — the block id
+// the transcript already carries — and never by a count of user turns: the
+// browser holds a bounded tail of the conversation, so the two numberings
+// disagree the moment anything scrolls off, and an edit keyed on the count
+// rewrites whichever message they disagreed about.
+//
+// `edits` carries WORDS ONLY, each keyed by the position of the message it
+// replaces within that turn. Authorship, send times, the interrupt note and
+// this app's own context tags are read server-side from the delivered turn —
+// this wire cannot state them, exactly as it cannot state a sender on an
+// ordinary send (see WirePromptOrigin). Refuses with null when there is no user
+// turn at that index, and throws when an edit names a message the turn does not
+// have.
+export const editTurnLocal = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator(
+    (data: { tabKey: string; sessionId: string; eventIndex: number; edits: { index: number; text: string }[] }) => data,
+  )
+  .handler(async ({ data }): Promise<{ sessionId: string } | null> => editTurnLocalImpl(data))
 
 // Tab keys of chat sessions currently blocked on an unresolved permission
 // request, tab keys with a turn actively running, and tab keys with a live

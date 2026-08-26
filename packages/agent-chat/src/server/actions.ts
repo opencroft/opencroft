@@ -10,6 +10,7 @@ import {
   resolveSessionPermissions,
 } from 'agent-client/permissions'
 import type { AgentProfile, ProfilesFile } from 'agent-client/profiles'
+import { rebuildDelivery, splitDelivery } from 'agent-client/queue-tags'
 import type { AgentSelection, QueueMode, SessionMeta } from 'agent-client/types'
 
 import { getRuntime, type RoleRecord, resolveReaderName, type SkillRecord } from './runtime'
@@ -163,6 +164,56 @@ const _forkAgentSession = createServerFn({ method: 'POST' })
   )
 export const forkAgentSession = (sessionId: string, dropFromTurn?: number) =>
   _forkAgentSession({ data: { sessionId, dropFromTurn } })
+
+// Commit an edited turn: rewind to it and re-send it with the caller's words in
+// place of the messages at these positions.
+//
+// The words are the only thing this wire carries, and that absence is the same
+// mechanism `_sendAgentPrompt` relies on below. Authorship, send times and the
+// interrupt note are read back here from the delivered turn — a browser able to
+// supply the turn's text could state a tag naming anybody, and the tags are what
+// every reader and every replay trust for attribution.
+//
+// The turn is named by its position in the event log, never by a count of user
+// turns: a client showing a bounded tail of a conversation counts different
+// turns than a server holding all of it.
+//
+// Delivered as a `system` prompt because the rebuilt text is already a finished
+// delivery body: a message send would tag it again, wrapping the editor's name
+// around the old tags escaped into its body.
+//
+// CONSTRAINT for a host that configures `transformDeliveredPrompt`: this
+// re-delivers text that was ALREADY transformed (`userTurnAt` returns what the
+// agent received), so a transform runs over it twice. A transform that prepends
+// something — a timestamp, an envelope — needs its own inverse applied before
+// the rebuild, which this generic action cannot do for it. Hosts that transform
+// deliveries should use their own edit path (see this repo's app, which strips
+// its delivery stamp first) rather than this one.
+const _editAgentTurn = createServerFn({ method: 'POST' })
+  .inputValidator((data: { sessionId: string; eventIndex: number; edits: { index: number; text: string }[] }) => data)
+  .handler(async ({ data }): Promise<SessionMeta | null> => {
+    const agent = getRuntime().agent
+    const turn = agent.userTurnAt(data.sessionId, data.eventIndex)
+    if (!turn) {
+      return null
+    }
+    const texts = splitDelivery(turn.text).messages.map((message) => message.text)
+    for (const edit of data.edits) {
+      if (texts[edit.index] === undefined) {
+        throw new Error(`Edited message ${edit.index} is not in a turn of ${texts.length}`)
+      }
+      texts[edit.index] = edit.text
+    }
+    const text = rebuildDelivery(turn.text, texts)
+    const meta = await agent.forkSession(data.sessionId, turn.turnIndex)
+    if (!meta) {
+      return null
+    }
+    await agent.prompt(meta.id, text, { queue: 'wait', origin: { kind: 'system' } })
+    return meta
+  })
+export const editAgentTurn = (sessionId: string, eventIndex: number, edits: { index: number; text: string }[]) =>
+  _editAgentTurn({ data: { sessionId, eventIndex, edits } })
 
 // ---- Turn control ----
 

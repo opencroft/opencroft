@@ -87,6 +87,55 @@ function pad(n: number): string {
   return String(n).padStart(2, '0')
 }
 
+// One `<opencroft-*>` block at the very start of a message. Anchored, so a tag
+// quoted in the middle of a sentence is a sentence, not machinery.
+const LEADING_ENVELOPE_TAG = /^<opencroft-([a-z0-9-]+)>[\s\S]*?<\/opencroft-\1>[^\S\n]*\n?/i
+
+/**
+ * Split a delivered message into the context this app attached and the words
+ * the reader actually wrote.
+ *
+ * The inverse of what `composeEnvelope` and `wrapUserSelection` do, and it can
+ * be an inverse because both of them PREFIX: every `<opencroft-*>` part goes
+ * ahead of the message. The display side already relies on that when it strips
+ * them out of the bubble; this relies on it to put them back.
+ *
+ * Editing is what needs the two halves apart. What a reader edits is their own
+ * words — they never saw the context and never typed it — but the context is
+ * still true of the message they are re-sending, so it travels unchanged rather
+ * than being dropped or regenerated from a canvas they may have moved on from.
+ *
+ * A tag that somehow sits after the first word is left in `words`, where it
+ * reads as text. That matches the one thing this cannot do anything about: the
+ * reader was shown the message with such a tag stripped, so it is not in what
+ * they hand back, and there is nothing here to splice.
+ */
+export function splitEnvelope(text: string): { context: string; words: string } {
+  let rest = text
+  let context = ''
+  for (;;) {
+    const match = LEADING_ENVELOPE_TAG.exec(rest)
+    if (!match) {
+      return { context, words: rest }
+    }
+    context += match[0]
+    rest = rest.slice(match[0].length)
+  }
+}
+
+/**
+ * Drop a delivery stamp from the front of an already-delivered turn.
+ *
+ * `stampDeliveryTime` writes the moment the agent RECEIVED the turn, and it
+ * runs at the delivery chokepoint on the way back out — so a re-sent turn is
+ * stamped again, correctly, with the moment it is received this time. Carrying
+ * the old stamp forward would deliver two of them, the first one a lie about
+ * when this delivery happened.
+ */
+export function stripDeliveryStamp(text: string): string {
+  return text.replace(/^<opencroft-time>[\s\S]*?<\/opencroft-time>[^\S\n]*\n?/i, '')
+}
+
 // dd.mm.yyyy hh:mm:ss, UTC. The platform has no per-user timezone — agents
 // only ever see a server clock — so a bare UTC reading is the one that stays
 // correct regardless of which environment's clock produced it; there is

@@ -695,9 +695,20 @@ export interface ChatConversationProps {
   hasMoreHistory?: boolean
   loadingMoreHistory?: boolean
   onLoadOlder?: () => void
-  // Present only when editing is possible at all; called with the block's
-  // position in `blocks` so the host can resolve its own turn index.
-  onEditUser?: (absoluteIndex: number, text: UserText) => void
+  // Present only when editing is possible at all; called with the block's own
+  // `id` -- the host's identifier for it, handed straight back.
+  //
+  // The id and not a position, because a position is only meaningful inside
+  // the array it indexes, and `blocks` is a bounded tail of the conversation:
+  // a host that resolved a position against its own full history would land on
+  // a different turn as soon as anything scrolled off the top. The id is the
+  // host's own, so it means the same thing on both sides however much of the
+  // conversation is loaded.
+  //
+  // The turn's text is not passed either. The host has it -- unedited by
+  // whatever this component was handed for display -- and reading it there is
+  // what keeps an edit working on the same bytes the host will put back.
+  onEditUser?: (blockId: string) => void
   // Chains render expanded (full detail) by default instead of collapsed to
   // the last message.
   defaultExpanded?: boolean
@@ -796,7 +807,7 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
                   editDisabled={waiting}
                   onEdit={
                     onEditUser && section.user
-                      ? () => onEditUser(section.user!.absoluteIndex, section.user!.text)
+                      ? () => onEditUser(section.user!.id)
                       : undefined
                   }
                 />

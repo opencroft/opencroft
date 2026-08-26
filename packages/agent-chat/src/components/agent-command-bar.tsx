@@ -1,6 +1,6 @@
 'use client'
 
-import { Send, ShieldAlert, ShieldCheck, ShieldCog, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react'
+import { Check, Send, ShieldAlert, ShieldCheck, ShieldCog, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react'
 import type { KeyboardEvent, ReactNode, Ref } from 'react'
 import { Fragment, useRef, useState } from 'react'
 import { Button } from 'ui/components/ui/button'
@@ -127,6 +127,23 @@ export interface AgentCommandBarProps {
   // offered. (Contrast `configs`, where the feature is gated on the data the
   // host provides rather than on a callback.)
   onDismissSendError?: () => void
+  // Host slot: rendered directly above the composer, under `sendError`. For a
+  // strip that says something about the text currently in the input -- what is
+  // being edited, which of a turn's messages it is. Nearer the input than the
+  // error is, because it describes what is IN the input rather than what
+  // happened to the last thing that left it.
+  //
+  // A conditional slot that holds its position whether or not it renders, for
+  // the same reason `sendError` is one: see the structural rule in this
+  // component's doc comment.
+  editBar?: ReactNode
+  // What pressing send MEANS right now. `commit` swaps the icon to a check and
+  // says so -- an edit is committed by sending it, so it is the same control
+  // and the same handler, not a second button that appears beside it.
+  //
+  // Presentation only: the gate is unchanged, so a commit needs text in the
+  // composer exactly as a send does.
+  submitMode?: 'send' | 'commit'
   // Show the approval toggle at all. Default true; false removes it for a
   // composer where there is nothing to approve -- starting a thread sends one
   // message to an agent that has not been asked for a tool call yet, so a
@@ -294,6 +311,8 @@ export function AgentCommandBar({
   trailingControls,
   sendError,
   onDismissSendError,
+  editBar,
+  submitMode = 'send',
   approval,
   autoApprove = false,
   onToggleAutoApprove,
@@ -402,6 +421,8 @@ export function AgentCommandBar({
           ) : null}
         </div>
       ) : null}
+
+      {editBar ? <div className='min-w-0'>{editBar}</div> : null}
 
       <Textarea
         ref={textareaRef}
@@ -539,10 +560,10 @@ export function AgentCommandBar({
               // does name a button with no text, but weakly -- and these two
               // are now adjacent icons a press apart, one of which ends the
               // turn. Same shape as the settings button above.
-              title='Send'
-              aria-label='Send'
+              title={submitMode === 'commit' ? 'Commit edits' : 'Send'}
+              aria-label={submitMode === 'commit' ? 'Commit edits' : 'Send'}
             >
-              <Send className='size-4' />
+              {submitMode === 'commit' ? <Check className='size-4' /> : <Send className='size-4' />}
             </Button>
           ) : null}
 

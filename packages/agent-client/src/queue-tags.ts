@@ -241,3 +241,76 @@ export function decodeBatch(prompt: string): TaggedMessage[] {
 function finish(current: { sender: string; sentAt: string; body: string[] }): TaggedMessage {
   return { sender: current.sender, sentAt: current.sentAt, text: unescapeBody(current.body.join('\n')) }
 }
+
+/**
+ * A delivery taken apart for EDITING, which needs more than reading it does.
+ *
+ * - `messages` — the parts, exactly as `decodeBatch` reads them.
+ * - `prefix` — everything before the first tag, kept verbatim, newline and all.
+ * - `tagged` — whether the source carried tags at all.
+ *
+ * The prefix is why this exists beside `decodeBatch` rather than instead of it.
+ * `decodeBatch` DROPS those lines on purpose: they are the interrupt note,
+ * addressed to the agent, and a reader must never see them rendered as words
+ * somebody wrote. An editor needs the opposite — the note was part of the turn
+ * that was delivered, it is nobody's message and nobody's to change, so it has
+ * to come back on the other side untouched.
+ *
+ * `tagged` is the same kind of care for the other end of the format's history.
+ * Text written before tags existed decodes to a single part with no author and
+ * no time; re-encoding that would write `author="" datetime=""` into a
+ * transcript that never had a tag in it, inventing a structure to describe the
+ * absence of one. The flag is what lets a rebuild put such a turn back exactly
+ * as it found it.
+ */
+export interface SplitDelivery {
+  prefix: string
+  messages: TaggedMessage[]
+  tagged: boolean
+}
+
+export function splitDelivery(prompt: string): SplitDelivery {
+  const lines = prompt.split('\n')
+  const firstTag = lines.findIndex((line) => TAG_LINE.test(line))
+  if (firstTag === -1) {
+    return { prefix: '', messages: decodeBatch(prompt), tagged: false }
+  }
+  // Terminated with the newline that separated it from the first tag, so
+  // `prefix + encodeBatch(...)` reproduces the original byte for byte -- the
+  // blank line `buildDelivery` puts between the note and the body included.
+  const prefix = firstTag === 0 ? '' : `${lines.slice(0, firstTag).join('\n')}\n`
+  return { prefix, messages: decodeBatch(prompt), tagged: true }
+}
+
+/**
+ * Put an edited turn back together: the original's framing and metadata, the
+ * caller's words.
+ *
+ * Every part keeps the author and send time it was delivered with, because
+ * those are facts about who spoke and when, and an edit is not a claim about
+ * either. They come from `original` — the delivered text the transcript
+ * already holds — and never from the caller, which is the whole security
+ * property here: the surface that supplies the new words has no way to state
+ * whose words they were. A part whose text happens to contain tag syntax is
+ * escaped by `encodeBatch` exactly as any other body is, so an edit cannot
+ * forge a part either.
+ *
+ * A count mismatch throws rather than reconciling. There is no honest way to
+ * guess which part a missing text belonged to, and the failure it would
+ * otherwise produce — words re-attributed to the wrong sender — is exactly the
+ * one this function exists to make impossible. Callers hand back what they were
+ * given, or nothing.
+ */
+export function rebuildDelivery(original: string, texts: string[]): string {
+  const { prefix, messages, tagged } = splitDelivery(original)
+  if (texts.length !== messages.length) {
+    throw new Error(`Edited turn has ${texts.length} parts, the delivered turn has ${messages.length}`)
+  }
+  // Untagged in, untagged out. There is exactly one part in this case (see
+  // `decodeBatch`), and its text is the whole prompt -- so the edit replaces
+  // the whole prompt, which is what an untagged turn IS.
+  if (!tagged) {
+    return texts[0]
+  }
+  return prefix + encodeBatch(messages.map((message, index) => ({ ...message, text: texts[index] })))
+}

@@ -13,6 +13,7 @@ import {
   cancelAgentTurn,
   deleteAgentProfile,
   deleteAgentSession,
+  editAgentTurn,
   forkAgentSession,
   getAgentConfig,
   getAgentRoles,
@@ -29,7 +30,8 @@ import {
   setAgentMode,
   startAgentSession,
 } from './server/actions'
-import type { AgentChatSession, PendingAsk, PendingPermission } from './session'
+import type { AgentChatEdit, AgentChatSession, PendingAsk, PendingPermission } from './session'
+import { toEditableParts } from './user-parts'
 
 export interface UseAgentSessionOptions {
   // The SSE endpoint that streams a session's events (its `?sessionId=` is
@@ -285,8 +287,11 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
     resetSessionState()
   }, [sessionId, resetSessionState])
 
+  // Rewind the conversation to a user turn and continue from there. The branch
+  // replays the truncated transcript, which only the in-process harness can
+  // reconstruct.
   const fork = useCallback(
-    async (dropFromTurn: number, text?: string) => {
+    async (dropFromTurn: number) => {
       if (!sessionId) return
       try {
         const meta = await forkAgentSession(sessionId, dropFromTurn)
@@ -295,9 +300,6 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
           // transcript of the fork.
           setTurnActive(false)
           setSessionId(meta.id)
-          // Reinsert the forked message into the composer so it can be edited
-          // and resent from the fork point.
-          if (text !== undefined) setInput(text)
         }
       } catch (error) {
         toast.error('Failed to fork session', {
@@ -306,6 +308,87 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
       }
     },
     [sessionId],
+  )
+
+  // ---- editing a delivered turn ----
+  //
+  // Opening stages nothing in the composer: a turn can carry several messages,
+  // and putting the whole delivery in front of the reader means putting the
+  // tags that separate them there too. The composer takes them one at a time
+  // (see the command bar's own edit machinery), and the fork happens on commit,
+  // beside the rebuild, so an abandoned edit branches nothing.
+  const [edit, setEdit] = useState<AgentChatEdit | undefined>(undefined)
+
+  // The RAW delivered turn is what gets decoded, found by the block id the
+  // transcript handed back. Blocks carry the turn already rendered for display;
+  // decoding that instead would let a host's own stripper change how many
+  // messages the client thinks the turn has, and a commit would then write a
+  // body into the wrong one.
+  //
+  // The id a block carries is a fold counter, not a position in the event log,
+  // so it is turned into one here: which user turn this is among the folded
+  // messages, then which event that turn is. Sound only because this hook holds
+  // the whole stream -- `subscribe` replays from the first event and nothing
+  // here drops any of it. A paginated transcript could not do this, and would
+  // have to carry the event index on the message instead.
+  const startEdit = useCallback(
+    (blockId: string) => {
+      const userMessages = messages.filter((message) => message.kind === 'user')
+      const ordinal = userMessages.findIndex((message) => `u:${message.id}` === blockId)
+      const message = userMessages[ordinal]
+      const eventIndex = events.flatMap((event, index) => (event.kind === 'user' ? [index] : []))[ordinal]
+      if (!message || eventIndex === undefined) {
+        return
+      }
+      const parts = toEditableParts(message.text, (raw) => (raw.trim() ? raw : null))
+      if (parts.length === 0) {
+        return
+      }
+      setEdit({ eventIndex, parts })
+    },
+    [messages, events],
+  )
+
+  const cancelEdit = useCallback(() => setEdit(undefined), [])
+
+  // Words only. Who sent each message and when is resolved server-side from the
+  // delivered turn -- see editAgentTurn, and the same reasoning that keeps the
+  // sender off the ordinary send wire.
+  //
+  // The mode stays open until the server answers, so a refusal or a failure
+  // leaves the reader's words where they typed them instead of closing the bar
+  // on an edit that never happened.
+  const commitEdit = useCallback(
+    (edits: { index: number; text: string }[]) => {
+      const open = edit
+      if (!sessionId || !open) {
+        return
+      }
+      // Nothing changed: leaving the mode is the whole of it, rather than
+      // forking the conversation to re-run it unaltered.
+      if (edits.length === 0) {
+        setEdit(undefined)
+        return
+      }
+      editAgentTurn(sessionId, open.eventIndex, edits)
+        .then((meta) => {
+          if (!meta) {
+            toast.error('That message is no longer in this conversation', {
+              description: 'The edit was not applied.',
+            })
+            return
+          }
+          setEdit(undefined)
+          setTurnActive(false)
+          setSessionId(meta.id)
+        })
+        .catch((error: unknown) => {
+          toast.error('Failed to edit message', {
+            description: error instanceof Error ? error.message : String(error),
+          })
+        })
+    },
+    [edit, sessionId],
   )
 
   const send = useCallback(
@@ -423,7 +506,10 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
         // Rewinding replays the forked transcript, which only the in-process
         // harness can reconstruct.
         canFork: isNative && Boolean(sessionId),
-        editMessage: (turnIndex: number, text: string) => void fork(turnIndex, text),
+        editMessage: startEdit,
+        edit,
+        cancelEdit,
+        commitEdit,
         disabled: !sessionId && !canStart,
         permissions: pending.permissions,
         asks: pending.asks,
@@ -442,7 +528,10 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
       send,
       stop,
       isNative,
-      fork,
+      edit,
+      startEdit,
+      cancelEdit,
+      commitEdit,
       canStart,
       pending,
       respondPermissionText,

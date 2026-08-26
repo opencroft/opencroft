@@ -1,4 +1,4 @@
-import { decodeBatch } from 'agent-client/queue-tags'
+import { decodeBatch, splitDelivery } from 'agent-client/queue-tags'
 
 import type { ChatUserMessagePart, UserText } from './components/chat-turn'
 
@@ -38,5 +38,47 @@ export function toUserParts(prompt: string, render: (raw: string) => UserText | 
     }
     parts.push({ text, sender: message.sender || undefined, sentAt: message.sentAt || undefined })
   }
+  return parts
+}
+
+/** One message of a delivered turn, as something a reader can edit. */
+export interface EditablePart {
+  /**
+   * Where this message sits in the DELIVERED turn — not where it sits in this
+   * array. The two differ whenever a message renders no words of its own, and
+   * a commit is keyed by the delivery's own numbering, because that is the
+   * numbering the stored turn is in.
+   */
+  index: number
+  /** The words, as the reader saw them and will edit them. */
+  text: string
+}
+
+/**
+ * Read a delivered turn into the messages a reader can edit, each knowing where
+ * it came from.
+ *
+ * The sibling of `toUserParts`, and deliberately the same shape of thing: same
+ * decode, same host `render` seam. It differs in what it carries — positions
+ * rather than authors — because editing needs to say WHICH message changed and
+ * drawing does not.
+ *
+ * Two things are not pager stops here, for the same reason: they are not
+ * anybody's words. The interrupt note is dropped by the decode (it precedes the
+ * first tag, and `splitDelivery` keeps it apart so a commit can put it back
+ * untouched). A message that renders nothing — one that was entirely
+ * application context — is skipped, and skipping it is exactly why `index`
+ * exists: the parts after it keep the numbers the delivery gave them, so an
+ * edit still lands on the message it was aimed at.
+ */
+export function toEditableParts(prompt: string, render: (raw: string) => string | null): EditablePart[] {
+  const parts: EditablePart[] = []
+  splitDelivery(prompt).messages.forEach((message, index) => {
+    const text = render(message.text)
+    if (text === null) {
+      return
+    }
+    parts.push({ index, text })
+  })
   return parts
 }

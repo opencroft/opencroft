@@ -1,7 +1,9 @@
 'use client'
 
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
+import type { AgentChatEdit } from 'agent-chat/session'
 import { usePaginatedHistory } from 'agent-chat/use-paginated-history'
+import { toEditableParts } from 'agent-chat/user-parts'
 import { isTerminalToolStatus } from 'agent-client/fold'
 import { DEFAULT_PRESENCE } from 'agent-client/presence'
 import type { ChatEvent, PermissionOpt, Presence, QueuedPrompt, QueueMode } from 'agent-client/types'
@@ -9,15 +11,15 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 
 import type { AgentSession } from '@/app/_authed/(agent)/_components/agent-chat'
 import { type AcpStreamEvent, HISTORY_END_KIND } from '@/app/_authed/(agent)/_lib/acp-stream'
-import { headerFromWindow, type UserText } from '@/app/_authed/(agent)/_lib/build-blocks'
+import { headerFromWindow, type UserText, userText } from '@/app/_authed/(agent)/_lib/build-blocks'
 import type { ChatMessage, ChatPart } from '@/app/_authed/(agent)/_lib/messages'
 import { READER_ORIGIN, type WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import {
   cancelLocal,
   deliverQueueLocal,
+  editTurnLocal,
   ensureLocalSession,
   forgetLocalSession,
-  forkLocal,
   getSessionHistoryPageLocal,
   promptLocal,
   removeQueuedLocal,
@@ -353,6 +355,7 @@ export function useAcpSession(
   // without knowing who advertised it. Empty until the session resolves.
   const [adapterId, setAdapterId] = useState('')
   const [draft, setDraft] = useState<{ text: string; key: number } | undefined>(undefined)
+  const [edit, setEdit] = useState<AgentChatEdit | undefined>(undefined)
   const draftKey = useRef(0)
   const [sendError, setSendError] = useState<string | undefined>(undefined)
   const [sending, startSending] = useTransition()
@@ -675,34 +678,92 @@ export function useAcpSession(
     }
   }, [sessionId])
 
-  // Branch the session at a user turn (0-based). Switching to the fork's id
-  // reconnects the stream, replaying the rewound transcript.
-  const fork = useCallback(
-    (dropFromTurn: number) => {
-      if (!sessionId) {
+  // Edit a user message: open the turn named by its block id. Nothing is staged
+  // in the composer and nothing is forked yet -- a turn can carry several
+  // messages, and the composer takes them one at a time (see the command bar's
+  // own edit machinery). The fork happens on commit, server-side, together
+  // with rebuilding the turn.
+  //
+  // The RAW delivered text is what gets decoded, read from this hook's own
+  // messages rather than from the block. `Block.text` has already been through
+  // the app's tag stripper over the whole delivery, and that stripper can take
+  // a newline with it -- leaving the next `<agent-message …/>` no longer at the
+  // start of a line, so the client would decode fewer messages than the server
+  // and commit a body into the wrong one. Stripping happens per message here
+  // instead, which is what `toEditableParts`' render seam is for.
+  const editMessage = useCallback(
+    (blockId: string) => {
+      const message = folded.messages.find((m) => m.role === 'user' && `u:${m.id}` === blockId)
+      const raw = message?.parts.find((part) => part.type === 'text')
+      if (!message || !raw) {
         return
       }
-      forkLocal({ data: { tabKey, sessionId, dropFromTurn } })
-        .then((result) => {
-          if (result) {
-            setLocalWaiting(false)
-            setSessionId(result.sessionId)
-          }
-        })
-        .catch((error) => console.error('forkLocal failed', error))
+      const parts = toEditableParts(raw.text, userText)
+      // A turn with nothing editable in it -- every message was application
+      // context -- opens no editor rather than an empty one.
+      if (parts.length === 0) {
+        return
+      }
+      // `id` is the absolute position of this turn in the session's event log
+      // (see ChatMessage.id), which is the numbering the server indexes by.
+      setEdit({ eventIndex: message.id, parts })
     },
-    [sessionId, tabKey],
+    [folded.messages],
   )
 
-  // Edit a user message: rewind the session to that turn, then stage the
-  // message text as a draft for the composer to load and re-send.
-  const editMessage = useCallback(
-    (dropFromTurn: number, text: string) => {
-      fork(dropFromTurn)
-      draftKey.current += 1
-      setDraft({ text, key: draftKey.current })
+  const cancelEdit = useCallback(() => setEdit(undefined), [])
+
+  // Commit the open turn: the server rewinds to it and re-sends it with these
+  // words in place of the messages at these positions.
+  //
+  // Words only. Authorship, send times, the interrupt note and this app's own
+  // context tags are resolved server-side from the delivered turn -- this call
+  // cannot state them, for the same reason an ordinary send cannot state its
+  // sender.
+  //
+  // The mode stays OPEN until the server answers, and closes only on success.
+  // A refusal (the turn is no longer there) or a failure used to close the bar,
+  // empty the composer and report nothing, which lost the reader's words with
+  // nothing on screen to say so. Left open, the drafts are still in the
+  // composer where they were, and `sendError` says what happened -- the same
+  // pair a failed send uses.
+  const commitEdit = useCallback(
+    (edits: { index: number; text: string }[]) => {
+      const open = edit
+      if (!sessionId || !open) {
+        return
+      }
+      // Nothing changed: leaving the mode is the whole of it. Re-sending the
+      // turn unaltered would still fork the conversation and re-run it, which
+      // is a lot to do about a reader who opened an editor and thought better
+      // of it.
+      if (edits.length === 0) {
+        setEdit(undefined)
+        return
+      }
+      setSendError(undefined)
+      // Through the same transition an ordinary send uses, so `sending` covers
+      // the round trip and the composer's own button is disabled for it -- a
+      // second press cannot fork the conversation twice.
+      startSending(async () => {
+        try {
+          const result = await editTurnLocal({
+            data: { tabKey, sessionId, eventIndex: open.eventIndex, edits },
+          })
+          if (!result) {
+            setSendError('That message is no longer in this conversation, so the edit was not applied.')
+            return
+          }
+          setEdit(undefined)
+          setLocalWaiting(false)
+          setSessionId(result.sessionId)
+        } catch (error) {
+          console.error('editTurnLocal failed', error)
+          setSendError(sendFailureMessage(error))
+        }
+      })
     },
-    [fork],
+    [edit, sessionId, tabKey],
   )
 
   const resolvePermission = useCallback((requestId: string, optionId?: string) => {
@@ -800,6 +861,9 @@ export function useAcpSession(
       canFork,
       adapterId,
       editMessage,
+      edit,
+      cancelEdit,
+      commitEdit,
       draft,
       sendError,
       dismissSendError,
@@ -822,6 +886,9 @@ export function useAcpSession(
       canFork,
       adapterId,
       editMessage,
+      edit,
+      cancelEdit,
+      commitEdit,
       draft,
       sendError,
       dismissSendError,

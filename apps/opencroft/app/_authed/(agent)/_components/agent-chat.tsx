@@ -3,6 +3,7 @@
 import { ChainDot, Chained } from 'agent-chat/components/chain'
 import type { ChatTurnRenderers, DetailItem as KitDetailItem } from 'agent-chat/components/chat-turn'
 import { ThinkingBlock } from 'agent-chat/components/thinking-block'
+import type { AgentChatEdit } from 'agent-chat/session'
 import type { ComponentType } from 'react'
 
 import type { UserText } from '@/app/_authed/(agent)/_lib/build-blocks'
@@ -82,9 +83,22 @@ export interface AgentSession {
   // without knowing who advertised it. Unset for the dashboard placeholder
   // session, which has no agent behind it yet.
   adapterId?: string
-  // Rewind history to a user turn (0-based) and prefill its text for re-sending.
-  editMessage?: (turnIndex: number, text: string) => void
-  // Composer draft staged by editMessage; the input syncs to it when it changes.
+  // OPEN a delivered user turn for editing, named by the block id the host
+  // gave it (see chat-conversation's `onEditUser`). Stages nothing in the
+  // composer: a turn can carry several messages, and the composer takes them
+  // one at a time -- see `edit` below and the command bar's own edit
+  // machinery.
+  editMessage?: (blockId: string) => void
+  // The turn currently open for editing, if any.
+  edit?: AgentChatEdit
+  // Leave edit mode, dropping every pending edit in the turn.
+  cancelEdit?: () => void
+  // Commit the turn: re-send it with these words in place of the messages at
+  // these positions. Words only -- authorship and send times are resolved
+  // server-side from the stored turn, never stated here.
+  commitEdit?: (edits: { index: number; text: string }[]) => void
+  // Composer draft staged by the host (a send that failed puts its text back
+  // through this); the input syncs to it when it changes.
   draft?: { text: string; key: number }
   // Copy for a send that did not go through, shown by the composer. Set
   // together with the message being put back in the composer, so the reader is

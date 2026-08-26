@@ -167,6 +167,15 @@ function kinds(events: ChatEvent[]): string[] {
   return events.map((event) => event.kind)
 }
 
+// The session's OWN event log, which is what an event index names. A
+// subscriber's copy starts where it subscribed, so its positions are not these
+// positions -- the exact confusion `userTurnAt` exists to keep out of the wire.
+function sessionEvents(sessionId: string): ChatEvent[] {
+  const session = acpStore().sessions.get(sessionId) as { events: ChatEvent[] } | undefined
+  assert.ok(session, 'session must exist in the store')
+  return session.events
+}
+
 // ── reasoning effort defaults ──────────────────────────────────────────────
 
 const THOUGHT_LEVEL_OPTIONS = [
@@ -2544,4 +2553,46 @@ test('a harness that exits with no stderr falls back to the protocol error, not 
   } finally {
     restore()
   }
+})
+
+// -- reading a turn back, for editing --------------------------------------
+
+test('userTurnAt names a turn by event index, and reports the ordinal that rewinds to it', async () => {
+  // What an edit rebuilds from. It has to be the DELIVERED text -- tags and all
+  // -- because that is where each part's author and send time live, and an edit
+  // is not entitled to restate either.
+  //
+  // Event index, not turn ordinal: a chat opens on a bounded tail of its
+  // history, so "the second user turn" means different turns to a client and to
+  // this. The ordinal comes back with the text so the rewind and the read can
+  // never be computed from different reads.
+  const h = await setup()
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Alice' } })
+  await settle()
+  h.endTurn()
+  await settle()
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait', origin: { kind: 'message', sender: 'Bob' } })
+  await settle()
+
+  const userIndices = sessionEvents(h.sessionId).flatMap((event, index) => (event.kind === 'user' ? [index] : []))
+  assert.equal(userIndices.length, 2)
+
+  const first = h.client.userTurnAt(h.sessionId, userIndices[0])
+  assert.equal(first?.text, h.promptCalls[0], 'turn 0, as the agent received it')
+  assert.equal(first?.turnIndex, 0)
+  assert.equal(first?.text.startsWith('<agent-message'), true, 'the tags are the point, not the reader-facing text')
+
+  const second = h.client.userTurnAt(h.sessionId, userIndices[1])
+  assert.deepEqual(partsOf(second?.text ?? ''), ['second'])
+  assert.equal(second?.turnIndex, 1, 'the ordinal counts user turns, not events')
+  assert.notEqual(userIndices[1], 1, 'and the two numbering schemes really do differ here')
+
+  // Anything that is not a user turn at that exact index is null rather than
+  // the nearest one: a clamp would commit an edit against a different message
+  // than the one it was aimed at.
+  assert.equal(h.client.userTurnAt(h.sessionId, userIndices[1] + 1), null, 'an assistant event is not a turn')
+  assert.equal(h.client.userTurnAt(h.sessionId, 9999), null)
+  assert.equal(h.client.userTurnAt(h.sessionId, -1), null)
+  assert.equal(h.client.userTurnAt('no-such-session', userIndices[0]), null)
+  await h.client.deleteSession(h.sessionId)
 })

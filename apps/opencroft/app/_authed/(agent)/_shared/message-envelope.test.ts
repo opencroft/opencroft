@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { composeEnvelope, stampDeliveryTime, wrapUserSelection } from './message-envelope'
+import {
+  composeEnvelope,
+  splitEnvelope,
+  stampDeliveryTime,
+  stripDeliveryStamp,
+  wrapUserSelection,
+} from './message-envelope'
 
 const SYSTEM = { spaceName: 'Agents', spaceSlug: 'agents', selectedNodeId: 'script-node_1' }
 const SESSION_INIT = { jobContext: 'Triage tracker notifications.', instructions: ['Reply in English.', 'Be terse.'] }
@@ -112,4 +118,44 @@ test('a leading-slash message is passed through unstamped', () => {
   const now = new Date(Date.UTC(2026, 0, 5, 3, 4, 5))
   assert.equal(stampDeliveryTime('/compact', now), '/compact')
   assert.equal(stampDeliveryTime('  /reset', now), '  /reset')
+})
+
+// -- splitting a delivered message back apart, for editing ------------------
+
+test('splitEnvelope separates the context this app attached from the words', () => {
+  const message = '<opencroft-user-selection>node: db-1</opencroft-user-selection>\nrestart it please'
+  assert.deepEqual(splitEnvelope(message), {
+    context: '<opencroft-user-selection>node: db-1</opencroft-user-selection>\n',
+    words: 'restart it please',
+  })
+})
+
+test('splitEnvelope takes every leading context block, not just the first', () => {
+  const message =
+    '<opencroft-system>space: Ops</opencroft-system>\n<opencroft-task>deploy</opencroft-task>\nwhat is left?'
+  const { context, words } = splitEnvelope(message)
+  assert.equal(words, 'what is left?')
+  assert.equal(context + words, message, 'the two halves have to reassemble the message exactly')
+})
+
+test('a message with no context is all words', () => {
+  assert.deepEqual(splitEnvelope('just a message'), { context: '', words: 'just a message' })
+})
+
+test('a tag quoted mid-sentence is a sentence, not context', () => {
+  // Anchored matching. The reader was shown this text with nothing stripped out
+  // of the middle, so there is nothing here to splice back either.
+  const message = 'the format is <opencroft-task>like this</opencroft-task> apparently'
+  assert.deepEqual(splitEnvelope(message), { context: '', words: message })
+})
+
+test('stripDeliveryStamp removes the delivery time, and only from the front', () => {
+  const stamped = stampDeliveryTime('hello', new Date(Date.UTC(2026, 8, 7, 9, 2, 0)))
+  assert.equal(stripDeliveryStamp(stamped), 'hello')
+  assert.equal(stripDeliveryStamp('hello'), 'hello', 'nothing to strip is not an error')
+  // A re-sent turn is stamped again on the way out, with the moment it is
+  // received THIS time. Carrying the old one forward would deliver two of them,
+  // the first a lie about when this delivery happened.
+  const quoted = 'see <opencroft-time>01.01.2026 00:00:00</opencroft-time> in the log'
+  assert.equal(stripDeliveryStamp(quoted), quoted, 'only a leading stamp is a stamp')
 })
