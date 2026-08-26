@@ -82,10 +82,11 @@ delete env.TSX_TSCONFIG_PATH
 // A workspace-local tsconfig.test.json is the test runner's own answer to
 // rendering JSX: the shared tsconfig leaves the transform to the bundler
 // (`jsx: preserve`), which the runner has none of, so a component throws
-// `React is not defined` under its classic-transform fallback. tsx compiles
-// against whichever tsconfig TSX_TSCONFIG_PATH names instead of the nearest
-// one on disk, so this reaches only the runner -- the workspace's real
-// tsconfig.json, read by typecheck and the build, is untouched.
+// `React is not defined` under its classic-transform fallback. tsx loads one
+// tsconfig for the whole process -- this one when named, otherwise whatever it
+// finds searching up from the working directory -- so this reaches only the
+// runner, and the workspace's real tsconfig.json, read by typecheck and the
+// build, is untouched.
 if (existsSync('tsconfig.test.json')) {
   env.TSX_TSCONFIG_PATH = resolve('tsconfig.test.json')
 }

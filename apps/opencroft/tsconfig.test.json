@@ -9,14 +9,27 @@
   // source rather than a built boundary, so a shared component rendered under
   // this runner executes those files inside this program.
   //
-  // What listing them changes is NOT established, and the two claims that
-  // used to stand here are worse than absent. Removing this entry and
-  // rendering a ui component under this runner still rendered, so it settles
-  // nothing observable today. A separate measurement found that a file no
-  // `include` claims loses its compiler options rather than falling back to
-  // its own package's tsconfig, which is the reverse of what this comment
-  // asserted for years. Both questions are open. The entry is kept as the
-  // narrower, explicit behaviour -- not because its effect has been shown.
+  // What listing them changes: the JSX transform those files get. tsx loads
+  // exactly one tsconfig per process -- the one named here -- and asks it about
+  // each file it transforms. A file this `include` does not claim is handed to
+  // esbuild with NO tsconfig at all, not with its own package's: esbuild's
+  // defaults then apply, and its default for JSX is the classic
+  // React.createElement transform. (tsx builds a files-matcher from the single
+  // config it loaded and passes its result straight through as `tsconfigRaw`;
+  // for an unclaimed file that result is undefined.)
+  //
+  // So dropping this entry breaks most of what the entry claims. Measured by
+  // handing every file to esbuild's classic setting (26.08.2026): 121 of the
+  // 123 `.tsx` files under packages/ui/src emit React.createElement that way,
+  // and 69 of those 121 have no runtime binding named React to satisfy it --
+  // they fail with "React is not defined". Of the 58 flat components in
+  // components/ui, 11 are in that set (aspect-ratio, button-group, collapsible,
+  // empty, field, kbd, logo-loader, resizable, skeleton, sonner, spinner), and
+  // 10 of those 11 are re-exported through ext.ts, so an extension can reach
+  // them. skeleton and spinner name React.ComponentProps as a type only, which
+  // typechecks against the ambient namespace and leaves nothing in scope at run
+  // time. That is the case the automatic runtime exists for, and the one this
+  // entry protects.
   //
   // It has never been about how these files' imports resolve; the package
   // states that itself, by importing by package name.
