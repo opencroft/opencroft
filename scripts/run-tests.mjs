@@ -69,6 +69,16 @@ if (process.env.OPENCROFT_TEST_TAP) {
 args.push(...testFiles.map((f) => relative('.', f)))
 
 const env = { ...process.env }
+// Cleared before it can be set, because it is inherited like any other
+// variable: a caller with one exported decides what every workspace here
+// compiles against. That is not a matter of degree. A tsconfig from elsewhere
+// resolves path aliases this package cannot, so files that fail to load under
+// the package's own configuration load under someone else's and run different
+// code -- and a file the named tsconfig does not claim is compiled with no
+// tsconfig at all rather than with its own, losing settings the package
+// depends on. Which environment you start a test run from must not decide
+// what gets tested.
+delete env.TSX_TSCONFIG_PATH
 // A workspace-local tsconfig.test.json is the test runner's own answer to
 // rendering JSX: the shared tsconfig leaves the transform to the bundler
 // (`jsx: preserve`), which the runner has none of, so a component throws
