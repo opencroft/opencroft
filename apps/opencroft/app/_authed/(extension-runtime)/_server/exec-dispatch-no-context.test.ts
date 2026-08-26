@@ -29,8 +29,7 @@ async function freshSpaceWithEventAndScript(slug: string) {
         position: { x: 200, y: 0 },
         data: {
           language: 'node',
-          script:
-            "function handler(event) { return { status: 200, body: { ok: true, type: event && event.type } }; }",
+          script: 'function handler(event) { return { status: 200, body: { ok: true, type: event && event.type } }; }',
         },
       },
     ],

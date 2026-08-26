@@ -47,6 +47,40 @@ function distFile(extensionId: string, name: string): string {
   return path.join(root, slug, 'dist', name)
 }
 
+// Resolves once a build of this extension has reached the point of staging its
+// output, which is the observable proof that esbuild has already read the
+// source — so an edit made after this is genuinely an edit the running build
+// missed, rather than one it might still pick up.
+//
+// `settled` is what keeps this from waiting forever: if the build finishes
+// before any staging is seen, the caller is told the window was missed instead
+// of being left to hang or to assert against a race it never entered.
+//
+// The trade, named rather than hidden: this reads the directory continuously
+// for the whole compile, so it puts real I/O on a machine during a test about
+// behaviour under load. A delay between reads would cost less and reintroduce
+// a guess about how long the window is, which is the thing being removed.
+async function stagedOrSettled(extensionId: string, build: Promise<unknown>): Promise<'staged' | 'settled'> {
+  const parent = path.dirname(path.dirname(distFile(extensionId, 'client.js')))
+  let settled = false
+  const done = build.then(
+    () => {
+      settled = true
+    },
+    () => {
+      settled = true
+    },
+  )
+  while (!settled) {
+    const siblings = await fs.readdir(parent).catch(() => [] as string[])
+    if (siblings.some((entry) => entry.includes('.building-'))) {
+      return 'staged'
+    }
+  }
+  await done
+  return 'settled'
+}
+
 test('a burst of late arrivals shares one follow-up build, not one each', async () => {
   const { id, manifest } = await makeFixture(largeClientSource('dedup-'))
 
@@ -79,12 +113,23 @@ test('a source edit that lands mid-build is not lost to a late caller', async ()
 
   // `late` arrives synchronously behind `first`, so it is guaranteed to join
   // the same in-flight slot rather than race it — this test is about what
-  // happens next, not about winning that timing. The fixture is large enough
-  // that `first`'s own esbuild pass is still running tens of milliseconds in,
-  // which is when the edit below lands.
+  // happens next, not about winning that timing.
+  //
+  // The edit has to land inside a window: late enough that the running build
+  // has already read the source, early enough that the follow-up has not
+  // started. Ten milliseconds was a guess at the middle of it, and under load
+  // it lands too EARLY — while esbuild is still reading a four-megabyte source
+  // file, which then fails to parse mid-string and the whole build errors on
+  // "Unterminated string literal". Reproduced by running this file against a
+  // loaded machine: one failure in six.
+  //
+  // Waiting for the build to stage its output is that window's opening
+  // expressed as something observable — staged output is proof the source has
+  // already been read in full.
   const first = buildExtension(id, manifest)
   const late = buildExtension(id, manifest)
-  await new Promise((resolve) => setTimeout(resolve, 10))
+  const reached = await stagedOrSettled(id, first)
+  assert.equal(reached, 'staged', 'the first build finished before the edit could land, so nothing was raced')
   await fs.writeFile(srcFile, largeClientSource('after-'))
 
   const [firstResult, lateResult] = await Promise.all([first, late])

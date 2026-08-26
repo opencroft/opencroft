@@ -3,7 +3,6 @@ import path from 'node:path'
 
 import type { InstallAuth } from '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
 import { getSecretValue } from '@/app/_authed/(secrets-store)/_server/actions'
-
 import { runGit, withGitAuth } from './git-exec'
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -401,9 +400,15 @@ export async function autoInstallExtensions(): Promise<void> {
 
   console.log(`[extensions] auto-install: ${specs.length} extension(s) to check`)
 
-  const { listInstalledExtensions } = await import('@/app/_authed/(extension-editor)/_actions/installed-extensions-actions')
-  const { installExtensionFromUrl } = await import('@/app/_authed/(extension-editor)/_actions/installed-extensions-actions')
-  const { updateInstalledExtension } = await import('@/app/_authed/(extension-editor)/_actions/installed-extensions-actions')
+  const { listInstalledExtensions } = await import(
+    '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
+  )
+  const { installExtensionFromUrl } = await import(
+    '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
+  )
+  const { updateInstalledExtension } = await import(
+    '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
+  )
 
   const installed = await listInstalledExtensions()
   const installedMap = new Map(installed.map((r) => [r.id, r]))

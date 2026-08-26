@@ -9,6 +9,11 @@ import test from 'node:test'
 
 import { withSessionKeyLock } from './stream'
 
+// Delay inside the work the lock is given, not a wait for something to happen.
+// It makes a critical section long enough that interleaving would show up in
+// the recorded order, and the assertions are on that order -- a broken lock
+// interleaves whatever the duration is. Examined during a sweep for tests
+// bounded by a guess; this is not one.
 const tick = () => new Promise((resolve) => setTimeout(resolve, 5))
 
 test('two callers on one key run one after the other, not interleaved', async () => {

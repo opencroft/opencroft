@@ -33,6 +33,9 @@ interface TurnDeferred {
   resolve: (value: { stopReason: string }) => void
 }
 
+// Waits for a condition and gives up loudly, rather than sleeping for a length
+// of time and hoping. Examined during a sweep for tests bounded by a guess;
+// this is the shape those were changed INTO.
 async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (!predicate()) {
@@ -141,7 +144,10 @@ test('compact against an idle session returns immediately and runs to completion
 test('compact against a working session queues behind the turn without interrupting it', async () => {
   const h = await setupCompactableSession()
 
-  await agentClient.prompt(h.sessionId, 'ongoing work', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await agentClient.prompt(h.sessionId, 'ongoing work', {
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
   await waitFor(() => h.promptCalls.length > 0)
   assert.match(
     h.promptCalls[0] ?? '',
@@ -172,7 +178,10 @@ test('compact against a working session queues behind the turn without interrupt
 test('a second compact request while one is pending coalesces instead of double-firing', async () => {
   const h = await setupCompactableSession()
 
-  await agentClient.prompt(h.sessionId, 'ongoing work', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await agentClient.prompt(h.sessionId, 'ongoing work', {
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
   await waitFor(() => h.promptCalls.length > 0)
 
   const first = await requestCompactOnGraph(h.nodes, h.edges, h.sessionKey)

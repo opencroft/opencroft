@@ -101,22 +101,54 @@ test('a concurrent reader never sees a partial bundle', async () => {
 
   // Poll the file throughout the rewrite. Every observation must be a WHOLE
   // bundle — the pre-stamp one or the stamped one — never a prefix of either.
-  let reads = 0
+  // What the reader must be able to say afterwards is that it watched the file
+  // CHANGE. Counting reads cannot say that: the rewrite is a write to a temp
+  // and a rename, so every read returns a whole bundle whatever the timing,
+  // and a reader whose reads all landed before the rename passes the
+  // no-truncation assertion below having observed nothing of the rewrite it
+  // exists to police. Seeing both states is what makes it an observation --
+  // any torn read would have had to happen between them.
   let shortest = Number.POSITIVE_INFINITY
+  let sawUnstamped = false
+  let sawStamped = false
+  const observe = async () => {
+    const seen = await fs.readFile(js, 'utf-8').catch(() => null)
+    if (seen === null) {
+      return
+    }
+    shortest = Math.min(shortest, seen.length)
+    if (/client\.js\.map\?v=\d+\n$/.test(seen)) {
+      sawStamped = true
+    } else {
+      sawUnstamped = true
+    }
+  }
+
+  // Bounded by the rewrite, not by a count of iterations: a count is a guess
+  // about which of the two finishes first, and when it loses the reader has
+  // stopped before the rewrite began.
+  let rewriting = true
   const reader = (async () => {
-    for (let i = 0; i < 500; i += 1) {
-      const seen = await fs.readFile(js, 'utf-8').catch(() => null)
-      if (seen !== null) {
-        reads += 1
-        shortest = Math.min(shortest, seen.length)
-      }
+    while (rewriting) {
+      await observe()
     }
   })()
 
   await versionSourceMapLink(js)
+  rewriting = false
   await reader
+  // One read after the rewrite has resolved, because the read still in flight
+  // when the rename landed opened the file before it and returns the old
+  // contents -- so the loop alone can miss the change by exactly one read.
+  // Deterministic rather than hopeful: the function has returned, so the
+  // rename has happened, so this sees the stamped bundle or there isn't one.
+  await observe()
 
-  assert.ok(reads > 0, 'the reader must actually have observed the file')
+  // Both can fail, each for its own reason. Without the first the reader
+  // arrived after everything had already happened and watched nothing; without
+  // the second the rewrite never produced a stamped bundle at all.
+  assert.ok(sawUnstamped, 'the reader never saw the bundle before it was stamped, so it watched nothing change')
+  assert.ok(sawStamped, 'the rewrite never produced a stamped bundle')
   // Both valid states end with a sourceMappingURL line and contain the whole
   // body; a truncated read is shorter than the body alone.
   assert.ok(shortest > body.length, `saw a truncated bundle of ${shortest} bytes (body alone is ${body.length})`)

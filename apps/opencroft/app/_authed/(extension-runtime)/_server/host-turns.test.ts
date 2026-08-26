@@ -23,7 +23,10 @@ test('truncateText cuts long text with a marker but reports the original length'
 })
 
 test('turnStatus is finished on a normal end_turn', () => {
-  const events: ChatEvent[] = [{ kind: 'user', text: 'hi' }, { kind: 'turn_end', stopReason: 'end_turn' }]
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'hi' },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ]
   assert.equal(turnStatus(events, false), 'finished')
 })
 
@@ -41,7 +44,16 @@ test('turnStatus is interrupted on the synthetic "resumed" marker (restart cut t
 })
 
 test('turnStatus is interrupted when there is no terminal event at all (errored or process died)', () => {
-  assert.equal(turnStatus([{ kind: 'user', text: 'hi' }, { kind: 'error', message: 'boom' }], false), 'interrupted')
+  assert.equal(
+    turnStatus(
+      [
+        { kind: 'user', text: 'hi' },
+        { kind: 'error', message: 'boom' },
+      ],
+      false,
+    ),
+    'interrupted',
+  )
   assert.equal(turnStatus([{ kind: 'user', text: 'hi' }], false), 'interrupted')
 })
 
@@ -148,7 +160,14 @@ test('buildTurnSummary omits finalMessage for interrupted/in-progress turns', ()
   assert.equal(cancelled.status, 'interrupted')
   assert.equal('finalMessage' in cancelled, false)
 
-  const running = buildTurnSummary(0, [{ kind: 'user', text: 'hi' }, { kind: 'agent_message', text: 'partial' }], true)
+  const running = buildTurnSummary(
+    0,
+    [
+      { kind: 'user', text: 'hi' },
+      { kind: 'agent_message', text: 'partial' },
+    ],
+    true,
+  )
   assert.equal(running.status, 'in-progress')
   assert.equal('finalMessage' in running, false)
 })

@@ -35,6 +35,9 @@ interface TurnDeferred {
   resolve: (value: { stopReason: string }) => void
 }
 
+// Waits for a condition and gives up loudly, rather than sleeping for a length
+// of time and hoping. Examined during a sweep for tests bounded by a guess;
+// this is the shape those were changed INTO.
 async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (!predicate()) {
@@ -97,8 +100,14 @@ test('awaitDispatchedTurn resolves on the RESTORE turn, not a message that auto-
   // turn ('/compact', here just 'tracked turn') is running, so it auto-starts
   // the instant that turn settles — before performCompact ever gets to
   // dispatch the restore.
-  await agentClient.prompt(h.sessionId, 'tracked turn', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
-  await agentClient.prompt(h.sessionId, 'auto-drained ping', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } }) // queues behind the tracked turn
+  await agentClient.prompt(h.sessionId, 'tracked turn', {
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  await agentClient.prompt(h.sessionId, 'auto-drained ping', {
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  }) // queues behind the tracked turn
 
   // front: true, matching performCompact's actual restore dispatch —
   // this is what guarantees the restore becomes the very next thing delivered

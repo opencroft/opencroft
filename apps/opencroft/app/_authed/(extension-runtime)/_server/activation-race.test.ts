@@ -39,6 +39,12 @@ async function makeFixture(): Promise<{
   await fs.mkdir(path.join(dir, 'src'), { recursive: true })
   await fs.mkdir(path.join(dir, 'server'), { recursive: true })
   await fs.writeFile(path.join(dir, 'src', 'client.tsx'), 'export default {}\n')
+  // The sleep is inside the fixture extension's own load(), making the code
+  // under test slow on purpose so an overlapping activation has something to
+  // overlap. It is not this test waiting for anything: the callers below race
+  // because they are issued in one tick, and the assertions count load() calls
+  // rather than timing them. Examined during a sweep for tests bounded by a
+  // guess; this is not one.
   await fs.writeFile(
     path.join(dir, 'server', 'index.ts'),
     `import { promises as fs } from 'node:fs'

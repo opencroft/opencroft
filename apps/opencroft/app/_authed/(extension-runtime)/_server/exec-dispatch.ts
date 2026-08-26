@@ -18,8 +18,8 @@
 //      have always returned, scoped to that one target.
 
 import { invokeExtensionActionImpl } from '@/app/_authed/(extension-runtime)/_server/extension-action-impl'
-import { dispatchNodeActionImpl } from '@/app/_authed/(extension-runtime)/_server/node-actions-impl'
 import { getExtensionModule, loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
+import { dispatchNodeActionImpl } from '@/app/_authed/(extension-runtime)/_server/node-actions-impl'
 import { getStream } from '@/app/_authed/(extension-runtime)/_server/stream'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import { secrets } from '@/server/secrets'

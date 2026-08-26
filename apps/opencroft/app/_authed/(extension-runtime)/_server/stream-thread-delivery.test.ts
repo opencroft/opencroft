@@ -84,6 +84,9 @@ function reqAs(u: { cookie: string }): Request {
   return new Request('http://localhost:9999/', { headers: { cookie: u.cookie } })
 }
 
+// Waits for a condition and gives up loudly, rather than sleeping for a length
+// of time and hoping. Examined during a sweep for tests bounded by a guess;
+// this is the shape those were changed INTO.
 async function waitForPrompts(prompts: string[], count: number): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
     if (prompts.length >= count) {
@@ -207,7 +210,11 @@ test('a thread envelope refuses cleanly for an unknown thread reference — noth
         target,
         nodes,
         edges,
-        JSON.stringify({ message: 'nowhere to go', thread: 'no-such-chat:no-such-agent:no-such-thread', queue: 'wait' }),
+        JSON.stringify({
+          message: 'nowhere to go',
+          thread: 'no-such-chat:no-such-agent:no-such-thread',
+          queue: 'wait',
+        }),
       ),
     /not reachable/i,
   )
