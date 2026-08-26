@@ -34,8 +34,47 @@ test('tryParseJsonMessage requires a string message and coerces the rest', () =>
     title: undefined,
     session: undefined,
     queue: 'push',
+    sender: undefined,
     thread: undefined,
   })
+})
+
+// The whole-object comparisons above pin the shape; this is what makes the
+// shape mean something. Every optional field goes through one coercion, so
+// they are exercised together rather than a test per field: a value that is
+// not a non-empty string is dropped, and one that survives arrives trimmed.
+test('every optional field is trimmed, and dropped when it is not a non-empty string', () => {
+  assert.deepEqual(
+    tryParseJsonMessage(
+      '{"message":"hi","queue":"wait","agent":" alice ","job":" task ","key":" k ","title":" t ","session":" agent:alice:task ","sender":" alice "}',
+    ),
+    {
+      message: 'hi',
+      agent: 'alice',
+      job: 'task',
+      key: 'k',
+      title: 't',
+      session: 'agent:alice:task',
+      queue: 'wait',
+      sender: 'alice',
+      thread: undefined,
+    },
+  )
+
+  assert.deepEqual(
+    tryParseJsonMessage('{"message":"hi","queue":"wait","agent":"   ","job":7,"key":null,"sender":false,"thread":""}'),
+    {
+      message: 'hi',
+      agent: undefined,
+      job: undefined,
+      key: undefined,
+      title: undefined,
+      session: undefined,
+      queue: 'wait',
+      sender: undefined,
+      thread: undefined,
+    },
+  )
 })
 
 test('tryParseJsonMessage coerces a thread reference the same way as the other optional fields', () => {
@@ -47,6 +86,7 @@ test('tryParseJsonMessage coerces a thread reference the same way as the other o
     title: undefined,
     session: undefined,
     queue: 'wait',
+    sender: undefined,
     thread: 'dev:alice:standup',
   })
 })

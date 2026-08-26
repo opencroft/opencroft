@@ -1,4 +1,4 @@
-name: PR Checks
+name: Checks
 
 on:
   pull_request:
@@ -8,6 +8,14 @@ on:
       - opened
       - synchronize
       - reopened
+  # The same checks against the integration branch itself, so a merge that
+  # lands a failure is answered for by the commit that landed it. The
+  # pull_request run above is advisory -- nothing refuses a merge over a red
+  # one -- so without this the first sign of a red integration branch is
+  # someone else discovering it from inside an unrelated change, days later.
+  push:
+    branches:
+      - stage
   # A pull_request-triggered workflow can't trigger on the PR that introduces
   # it -- Actions discovers pull_request workflows from the target branch,
   # not the PR's own branch, so the very first PR carrying this file has
@@ -21,9 +29,14 @@ on:
 # anymore, and this instance's Actions runner has exactly one execution lane
 # for everything it serves. Racing a superseded run to completion anyway just
 # delays every other PR behind an answer nobody needs.
+#
+# A run against the integration branch is not superseded the same way: its
+# answer is about a commit that has already landed, and cancelling it would
+# move the blame for a breakage onto whoever merged next. Those queue instead,
+# keyed by ref so they never share a group with a PR's runs.
 concurrency:
-  group: pr-checks-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # First job on purpose: this is a scoped install, run exactly the way the
