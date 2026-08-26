@@ -16,7 +16,8 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "dev": "npm run dev -w @opencroft/app",
     "build": "npm run build -w @opencroft/app",
-    "start": "npm run start -w @opencroft/app"
+    "start": "npm run start -w @opencroft/app",
+    "check:baseline": "node scripts/check-baseline.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16"

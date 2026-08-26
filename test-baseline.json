@@ -1,0 +1,40 @@
+{
+  "$schema": "see scripts/check-baseline.mjs",
+  "$about": [
+    "Test failures this repository currently tolerates on its integration branch.",
+    "check-baseline.mjs reports a failure that is NOT listed here and ignores one that is,",
+    "so what this file costs is the only thing standing between a red test and silence.",
+    "",
+    "Every entry needs a `reason` that stands on its own: a reader must understand what is",
+    "broken and why it is tolerated without leaving this file. `ticket` may sit beside it to",
+    "say who owns the fix, never instead of it. `environment` marks a failure that depends on",
+    "where the suite runs, so it is not reported as something to delete on a machine where it",
+    "happens to pass.",
+    "",
+    "Nothing writes to this file automatically, and nothing should. Adding a line is a diff",
+    "someone reads, which is the whole mechanism: tolerating a failure stays possible and",
+    "stops being free.",
+    "",
+    "An entry reported STALE has started passing everywhere and should be deleted."
+  ],
+  "tolerated": [
+    {
+      "id": "packages/agent-chat/src/components/agent-command-bar.test.ts",
+      "reason": "The whole file fails to load. A component it imports resolves a path alias that does not exist from this workspace, so the import throws before any test runs. Tests in this file are inert rather than failing, which means adding one here proves nothing until the alias is fixed."
+    },
+    {
+      "id": "packages/agent-chat/src/components/chat-conversation.test.ts",
+      "reason": "The same unresolvable path alias as the file above, reached through the same imported component, with the same consequence: nothing in this file runs."
+    },
+    {
+      "id": "apps/opencroft/app/_authed/(extension-runtime)/_server/git-exec.test.ts :: the old pattern (credential spliced into the URL) leaks into the live git-remote-https argv",
+      "reason": "Reads the live process table to prove a credential never reaches a child process's argv, and the container it runs in has no process-listing binary, so the check cannot execute. It reports red for a reason unrelated to the security property it exists to protect, which is worse than not running at all.",
+      "environment": "Fails only where a process-listing binary is absent; passes on a developer machine that has one."
+    },
+    {
+      "id": "apps/opencroft/app/_authed/(extension-runtime)/_server/git-exec.test.ts :: withGitAuth keeps the credential out of the live git-remote-https argv",
+      "reason": "The other half of the same pair, reading the same live process table for the same reason and unable to run for the same one.",
+      "environment": "Fails only where a process-listing binary is absent; passes on a developer machine that has one."
+    }
+  ]
+}

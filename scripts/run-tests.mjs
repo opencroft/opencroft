@@ -42,6 +42,10 @@ for (const root of roots) {
 }
 
 testFiles.sort()
+// Read by check-baseline.mjs, which pairs one totals line against each suite
+// that had files to run -- a workspace with a test script and no test files
+// exits below without producing any. Reword this and that audit stops finding
+// what it counts, with nothing to fail the build.
 console.log(`Found ${testFiles.length} test files.\n`)
 
 if (testFiles.length === 0) {
@@ -54,7 +58,15 @@ const args = ['tsx']
 if (existsSync('scripts/test-setup.mjs')) {
   args.push('--import', './scripts/test-setup.mjs')
 }
-args.push('--test', '--test-concurrency=1', ...testFiles.map((f) => relative('.', f)))
+args.push('--test', '--test-concurrency=1')
+// Node picks its reporter from whether stdout is a terminal, so a caller that
+// captures this output gets one format interactively and another through a
+// pipe. check-baseline reads these results, so it asks for the machine-readable
+// one by name rather than depending on which side of that default it landed on.
+if (process.env.OPENCROFT_TEST_TAP) {
+  args.push('--test-reporter=tap', '--test-reporter-destination=stdout')
+}
+args.push(...testFiles.map((f) => relative('.', f)))
 
 const env = { ...process.env }
 // A workspace-local tsconfig.test.json is the test runner's own answer to
