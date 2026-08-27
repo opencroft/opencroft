@@ -13,6 +13,11 @@ import { requireSession } from '@/app/_server/require-session'
 // actual cause of a server OOM, independent of a separate wire-decode bug.
 export const INITIAL_HISTORY_RECORDS = 20
 
+// A frame that could not be prepared, so the chain knows to skip it rather
+// than enqueue whatever stood in for it. A symbol because it must not be
+// confusable with anything a real frame could be.
+const SKIP_FRAME = Symbol('skip-frame')
+
 export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
   server: {
     handlers: {
@@ -37,31 +42,40 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
             // sessions with the most to resolve.
             let inOrder = Promise.resolve()
             const send = (frame: unknown | Promise<unknown>) => {
-              inOrder = inOrder
-                .then(async () => {
-                  // Awaited OUTSIDE the try, deliberately. The catch below is
-                  // for one thing only, and putting anything that can reject in
-                  // front of it would silently widen what it swallows.
-                  const resolved = await frame
-                  try {
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify(resolved)}\n\n`))
-                  } catch {
-                    // The reader closed the connection. There is genuinely
-                    // nothing to do and nobody to tell.
-                  }
-                })
-                .catch((err) => {
-                  // Unreachable while frame preparation degrades instead of
-                  // rejecting, and here because a rejection would otherwise
-                  // poison the chain: every later frame's `.then` would be
-                  // skipped and the stream would go quiet with no error
-                  // anywhere. A backstop that says so beats a stream that
-                  // stops.
-                  console.error(
-                    '[acp stream] A frame could not be prepared; the stream may be short one event:',
-                    err instanceof Error ? err.message : String(err),
-                  )
-                })
+              // Handled WHERE THE PROMISE IS CREATED, not where the chain
+              // reaches it. A handler attached inside the chain is attached
+              // late -- a frame rejecting while an earlier one is still pending
+              // is an unhandled rejection first, and the default response to
+              // one of those is to exit the process. So the failure a late
+              // handler appears to protect against ("the stream goes quiet, and
+              // says so") is really "the server stops, silently". Attaching
+              // here is what makes the promise handled from the moment it
+              // exists.
+              //
+              // Unreachable today: frame preparation degrades rather than
+              // rejecting. It is here for whoever changes that.
+              const prepared = Promise.resolve(frame).catch((err) => {
+                console.error(
+                  '[acp stream] A frame could not be prepared; this event is skipped:',
+                  err instanceof Error ? err.message : String(err),
+                )
+                return SKIP_FRAME
+              })
+              inOrder = inOrder.then(async () => {
+                // Awaited OUTSIDE the try, deliberately. The catch below is for
+                // one thing only, and putting anything that can reject in front
+                // of it would silently widen what it swallows.
+                const resolved = await prepared
+                if (resolved === SKIP_FRAME) {
+                  return
+                }
+                try {
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(resolved)}\n\n`))
+                } catch {
+                  // The reader closed the connection. There is genuinely
+                  // nothing to do and nobody to tell.
+                }
+              })
             }
             unsubscribe = agentClient.subscribe(sessionId, (event) => send(withAuthors(event)), {
               fromIndex: window?.startIndex,
