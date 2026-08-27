@@ -32,6 +32,7 @@ import { usableContextWindow } from 'agent-client/context-window'
 import { rebuildDelivery, splitDelivery } from 'agent-client/queue-tags'
 import type { AgentSelection, Presence, PromptOrigin, QueueMode } from 'agent-client/types'
 
+import type { AuthoredRecordsWindow } from '@/app/_authed/(agent)/_lib/acp-stream'
 import type { PromptOriginInput } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import {
   deletePersistedConfigOptions,
@@ -45,6 +46,7 @@ import {
   writePersistedSession,
 } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import { withAuthors } from '@/app/_authed/(agent)/_server/attach-authors'
 import { queueStore } from '@/app/_authed/(agent)/_server/queue-store'
 import {
   forceBypassMode,
@@ -55,6 +57,7 @@ import { splitEnvelope, stripDeliveryStamp } from '@/app/_authed/(agent)/_shared
 import { type ContextUsage, toContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
+import { authorForPerson } from '@/app/_server/message-author'
 import { secrets } from '@/server/secrets'
 
 interface AgentNodeData {
@@ -515,6 +518,43 @@ export async function editTurnLocalImpl(data: {
 }
 
 /**
+ * A page of older history, with its messages' authors resolved.
+ *
+ * The same resolution the live stream applies, because this page holds the
+ * same messages the stream would have sent had its window reached back
+ * further. A message that shows its sender's face when it arrives live and not
+ * when it is paged back in is one message with two behaviours.
+ *
+ * The header is resolved too, for the same reason: it is the same message as
+ * the block that replaces it once the rest of its turn loads.
+ */
+export async function sessionHistoryPageImpl(
+  sessionId: string,
+  beforeIndex: number,
+  records: number,
+): Promise<AuthoredRecordsWindow | null> {
+  const window = agentClient.getRecordsWindow(sessionId, { beforeIndex, records })
+  if (!window) {
+    return null
+  }
+  const [events, header] = await Promise.all([
+    Promise.all(window.events.map(withAuthors)),
+    window.header ? withAuthors(window.header.event) : undefined,
+  ])
+  return {
+    ...window,
+    events,
+    // `satisfies` for the same reason the other conditional spreads carry one:
+    // a key spread into a literal is not checked against the literal's target
+    // type, so a misspelling here would compile and a partly-loaded turn's
+    // header would silently arrive without its authors.
+    ...(window.header && header
+      ? ({ header: { index: window.header.index, event: header } } satisfies Pick<AuthoredRecordsWindow, 'header'>)
+      : {}),
+  }
+}
+
+/**
  * Point a tab at a fork it just made, in memory and durably.
  *
  * Shared by the plain fork and by an edit commit because they are the same
@@ -551,7 +591,11 @@ async function resolvePromptOrigin(origin: PromptOriginInput): Promise<PromptOri
     // hook catches the failed send, restores the draft and shows the error.
     throw new Error('Sign in to send messages')
   }
-  return { kind: 'message', sender: user.name }
+  // The account's stored handle, not the name it is displayed under: the tag
+  // is durable text that outlives a rename, so what goes into it has to be the
+  // thing that does not change. What a reader sees is resolved from it when the
+  // message is drawn.
+  return { kind: 'message', sender: await authorForPerson(user.id) }
 }
 
 /**

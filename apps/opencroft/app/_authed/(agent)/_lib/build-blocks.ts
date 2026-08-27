@@ -2,8 +2,9 @@ import type { Block } from 'agent-chat/components/chat-conversation'
 import type { ChatUserMessagePart, DetailItem, UserText } from 'agent-chat/components/chat-turn'
 import type { ChatUnreadMessage } from 'agent-chat/components/chat-unread'
 import { toUserParts } from 'agent-chat/user-parts'
-import type { ChatEvent, QueuedPrompt } from 'agent-client/types'
+import type { QueuedPrompt } from 'agent-client/types'
 
+import type { AuthoredChatEvent, ResolvedAuthor } from '@/app/_authed/(agent)/_lib/acp-stream'
 import type { ChatMessage } from '@/app/_authed/(agent)/_lib/messages'
 
 // Re-exported rather than redeclared, same reasoning as `UserText` below: the
@@ -59,8 +60,14 @@ export function userText(raw: string): UserText | null {
 //
 // Null when the turn has no words at all — every message in it was system tags
 // and nothing else. That turn draws no bubble, exactly as before.
-function userTurn(raw: string): { text: UserText; parts: ChatUserMessagePart[] } | null {
-  const parts = toUserParts(raw, userText)
+function userTurn(
+  raw: string,
+  // The accounts this delivery's senders resolve to, as the message carried
+  // them. Passed straight through: this function decides what a turn is, not
+  // who anybody is.
+  authors?: Record<string, ResolvedAuthor>,
+): { text: UserText; parts: ChatUserMessagePart[] } | null {
+  const parts = toUserParts(raw, userText, authors)
   const text = userText(raw)
   return parts.length > 0 && text !== null ? { text, parts } : null
 }
@@ -92,15 +99,31 @@ const EMPTY_USER_TEXT = '' as UserText
 // a while after the render shape was renamed -- still assignable, so the
 // workspace typecheck stayed green while every waiting message drew blank
 // where its author goes.
-export function buildUnread(queue: readonly QueuedPrompt[]): ChatUnreadMessage[] {
-  return queue.map(
-    (entry): ChatUnreadMessage => ({
+export function buildUnread(
+  queue: readonly QueuedPrompt[],
+  // The accounts this snapshot's senders resolve to. Here for the same reason
+  // it is on a delivered turn: a message waiting to be read and the same
+  // message once it has been handed over are one message, and one of them
+  // showing a bare identifier while the other shows a face would be two.
+  authors?: Record<string, ResolvedAuthor>,
+): ChatUnreadMessage[] {
+  return queue.map((entry): ChatUnreadMessage => {
+    const author = entry.kind === 'message' ? entry.sender : undefined
+    const authorAccount = author ? authors?.[author] : undefined
+    return {
       id: entry.id,
       text: userText(entry.text) ?? EMPTY_USER_TEXT,
-      author: entry.kind === 'message' ? entry.sender : undefined,
+      author,
+      // `satisfies` rather than a bare spread. An optional key spread into a
+      // literal is NOT excess-property-checked against the literal's target
+      // type -- the key name sails through misspelled, which is how a field
+      // survived a rename here for ten hours behind a green typecheck. The
+      // annotation on the callback is what checks the rest of this object; it
+      // cannot reach inside a spread, so the spread carries its own.
+      ...(authorAccount ? ({ authorAccount } satisfies Pick<ChatUnreadMessage, 'authorAccount'>) : {}),
       sentAt: entry.kind === 'message' ? entry.sentAt : undefined,
-    }),
-  )
+    }
+  })
 }
 
 // The sticky header for a turn the loaded window starts inside — its own user
@@ -113,7 +136,7 @@ export function buildUnread(queue: readonly QueuedPrompt[]): ChatUnreadMessage[]
 // page — a regression fixed earlier. A header whose text is all tags must still
 // report its index, so "no words" and "no header" are deliberately different
 // things here.
-export function headerFromWindow(header?: { index: number; event: ChatEvent } | null): {
+export function headerFromWindow(header?: { index: number; event: AuthoredChatEvent } | null): {
   index: number
   parts: readonly ChatUserMessagePart[]
 } | null {
@@ -135,7 +158,10 @@ export function headerFromWindow(header?: { index: number; event: ChatEvent } | 
   // Empty parts, not a dropped header: `index` names the enclosing turn and is
   // what stops the leading details block being renamed by every mid-turn page.
   // "No words" and "no header" stay different things.
-  return { index: header.index, parts: userTurn(header.event.text)?.parts ?? [] }
+  // The header's own resolved accounts, for the same reason the reading itself
+  // is shared: a header and the block that replaces it are one message, so if
+  // only one of them could show a face they would be two behaviours again.
+  return { index: header.index, parts: userTurn(header.event.text, header.event.authors)?.parts ?? [] }
 }
 
 // `enclosingTurnId` names the turn the FIRST run of replies belongs to, for a
@@ -176,7 +202,7 @@ export function buildBlocks(messages: ChatMessage[], enclosingTurnId?: number): 
         if (p.type !== 'text') {
           continue
         }
-        const turn = userTurn(p.text || '')
+        const turn = userTurn(p.text || '', m.authors)
         if (turn === null) {
           continue
         }

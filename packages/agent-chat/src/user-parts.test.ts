@@ -11,7 +11,8 @@ import test from 'node:test'
 
 import { buildDelivery, type TaggedMessage } from 'agent-client/queue-tags'
 
-import { toEditableParts } from './user-parts'
+import type { UserText } from './components/chat-turn'
+import { toEditableParts, toUserParts } from './user-parts'
 
 const msg = (sender: string, sentAt: string, text: string): TaggedMessage => ({ sender, sentAt, text })
 const T1 = '2026-08-21T01:00:00.000Z'
@@ -80,6 +81,69 @@ test('the interrupt note is not a message and does not shift the numbering', () 
     false,
     'the note is nobody’s message and is never handed over as one',
   )
+})
+
+// ---------------------------------------------------------------------------
+// Who a message is from, and who that turns out to be
+// ---------------------------------------------------------------------------
+
+// The same rendering seam `toEditableParts` uses, wearing the brand that
+// `toUserParts` asks for. The brand exists so no renderer can be handed an
+// unstripped string; a test standing in for a host has to satisfy it too.
+const show = (raw: string): UserText | null => render(raw) as UserText | null
+
+test('a message carries the account its identifier resolves to, per message', () => {
+  // The reason resolution is per message rather than per turn: one delivery is
+  // not one person's words. Two senders in one turn must produce two faces.
+  const turn = buildDelivery({
+    kind: 'messages',
+    messages: [msg('ada', T1, 'first'), msg('bo', T2, 'second')],
+  })
+
+  const parts = toUserParts(turn, show, {
+    ada: { name: 'Ada L', avatarUrl: '/ada.png' },
+    bo: { name: 'Bo', avatarUrl: null },
+  })
+
+  assert.deepEqual(
+    parts.map((part) => part.authorAccount),
+    [
+      { name: 'Ada L', avatarUrl: '/ada.png' },
+      { name: 'Bo', avatarUrl: null },
+    ],
+  )
+})
+
+test('the identifier is kept beside the account it resolved to, not replaced by it', () => {
+  // `author` is what the delivery durably says; `authorAccount` is what that
+  // means today. Dropping the first would make the second unfalsifiable.
+  const turn = buildDelivery({ kind: 'messages', messages: [msg('ada', T1, 'first')] })
+
+  const [part] = toUserParts(turn, show, { ada: { name: 'Ada L' } })
+
+  assert.equal(part?.author, 'ada')
+  assert.deepEqual(part?.authorAccount, { name: 'Ada L' })
+})
+
+test('an identifier nothing resolves is left unresolved rather than given a placeholder', () => {
+  // Every message stamped before accounts had handles lands here, and so does
+  // one whose account has since been deleted. The header draws that state; a
+  // placeholder would turn "we do not know" into a picture of somebody.
+  const turn = buildDelivery({ kind: 'messages', messages: [msg('Alice', T1, 'first')] })
+
+  const [part] = toUserParts(turn, show, { ada: { name: 'Ada L' } })
+
+  assert.equal(part?.author, 'Alice')
+  assert.equal(part?.authorAccount, undefined)
+  assert.ok(!('authorAccount' in (part ?? {})), 'absent, not present and empty')
+})
+
+test('a host that resolves nothing at all gets exactly what it got before', () => {
+  // The optional argument has to be genuinely optional: a host with no notion
+  // of accounts passes nothing and its parts are unchanged.
+  const turn = buildDelivery({ kind: 'messages', messages: [msg('ada', T1, 'first')] })
+
+  assert.deepEqual(toUserParts(turn, show), [{ text: 'first', author: 'ada', sentAt: T1 }])
 })
 
 test('the host renders each message on its own, never the delivery as a whole', () => {

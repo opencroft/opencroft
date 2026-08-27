@@ -1,5 +1,5 @@
 import { db, user, username as usernames } from '@opencroft/db'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
 
 import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 import {
@@ -72,6 +72,39 @@ export async function resolveUsername(value: string): Promise<Principal | null> 
     .where(eq(usernames.username, value))
     .limit(1)
   return row ? toPrincipal(row) : null
+}
+
+/**
+ * The same question as `resolveUsername`, asked about many handles at once.
+ *
+ * One delivered turn can carry a dozen messages from a handful of senders, and
+ * a page of history several dozen — a query each would make what a reader sees
+ * depend on how much of the transcript they scrolled past. Handles that no
+ * account has ever held are simply absent from the result, which is the same
+ * answer `resolveUsername` gives as null.
+ */
+export async function resolveUsernames(values: string[]): Promise<Map<string, Principal>> {
+  const wanted = [...new Set(values)]
+  if (wanted.length === 0) {
+    return new Map()
+  }
+  const rows = await db
+    .select({
+      username: usernames.username,
+      principalType: usernames.principalType,
+      userId: usernames.userId,
+      agentNodeId: usernames.agentNodeId,
+    })
+    .from(usernames)
+    .where(inArray(usernames.username, wanted))
+  const found = new Map<string, Principal>()
+  for (const row of rows) {
+    const principal = toPrincipal(row)
+    if (principal) {
+      found.set(row.username, principal)
+    }
+  }
+  return found
 }
 
 /** The handle an account goes by now, or null if it has not been given one yet. */
@@ -212,6 +245,48 @@ export function claimUsername(
   }
   taken.add(candidate)
   return candidate
+}
+
+/**
+ * Make sure ONE person has a handle, at the moment something needs to name
+ * them.
+ *
+ * `ensureUsernames` below runs at startup, which covers every account that
+ * existed when the process began — and misses anyone who signs up afterwards.
+ * That gap is invisible until an identifier is required, and then it is total:
+ * a person who registered five minutes ago cannot be attributed at all, so
+ * their first message would be refused until the next restart.
+ *
+ * Hooked here rather than onto registration because the handle rules live in
+ * this application and the sign-up path lives in a package that must not know
+ * about them. Reconciling at the point of need is also what the startup pass
+ * already is — this is the same guarantee, asked about one account.
+ *
+ * Null when the account does not exist. Losing the insert race is not a
+ * failure: the account has a handle either way, which is all this promises, so
+ * the winner's row is re-read rather than guessed at.
+ */
+export async function ensureUsernameForUser(userId: string): Promise<string | null> {
+  const principal: Principal = { kind: 'user', id: userId }
+  const current = await currentUsername(principal)
+  if (current) {
+    return current
+  }
+  const [row] = await db.select({ name: user.name }).from(user).where(eq(user.id, userId)).limit(1)
+  if (!row) {
+    return null
+  }
+  const taken = new Set((await db.select({ username: usernames.username }).from(usernames)).map((r) => r.username))
+  const candidate = claimUsername(row.name, userId, 'user', taken)
+  try {
+    await db.insert(usernames).values({ username: candidate, principalType: 'user', userId, agentNodeId: null })
+    return candidate
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      return await currentUsername(principal)
+    }
+    throw error
+  }
 }
 
 /**

@@ -1,3 +1,5 @@
+import type { ResolvedAuthor } from '@/app/_authed/(agent)/_lib/acp-stream'
+
 export type ChatPart =
   | { type: 'text'; text: string }
   | { type: 'thinking'; text: string }
@@ -21,4 +23,16 @@ export interface ChatMessage {
   parts: ChatPart[]
   timestamp: number
   model?: string
+  // The accounts this turn's messages were stamped by, resolved by the server
+  // and carried here rather than looked up.
+  //
+  // It rides on the MESSAGE, not on a store beside it, so a turn renders the
+  // same way regardless of what else is loaded around it. A directory shared
+  // across the transcript would make the same message draw a face deep in the
+  // scroll and none at the top of it, with bugs that only reproduce at the
+  // depth the reporter happened to reach.
+  //
+  // Absent on an assistant message, and on a user turn whose senders resolve
+  // to nothing — which is every turn stamped before accounts had handles.
+  authors?: Record<string, ResolvedAuthor>
 }

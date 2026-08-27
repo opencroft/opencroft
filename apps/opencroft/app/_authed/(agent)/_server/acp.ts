@@ -5,9 +5,9 @@
 // bundle. A single plain exported function here has no stub and ships that tail
 // — see the header of acp-impl.ts, which is where plain implementations go.
 import { createServerFn } from '@tanstack/react-start'
-import type { RecordsWindow } from 'agent-client/pagination'
 import type { Presence, QueueMode } from 'agent-client/types'
 
+import type { AuthoredRecordsWindow } from '@/app/_authed/(agent)/_lib/acp-stream'
 import type { WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import {
   cancelLocalImpl,
@@ -19,6 +19,7 @@ import {
   hasActiveTurnImpl,
   type OpenedSession,
   promptLocalImpl,
+  sessionHistoryPageImpl,
   setPresenceLocalImpl,
   stopLocalImpl,
   stopLocalSessionProcessImpl,
@@ -256,8 +257,8 @@ const HISTORY_PAGE_RECORDS = 10
 export const getSessionHistoryPageLocal = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((data: { sessionId: string; beforeIndex: number }) => data)
   .handler(
-    async ({ data }): Promise<RecordsWindow | null> =>
-      agentClient.getRecordsWindow(data.sessionId, { beforeIndex: data.beforeIndex, records: HISTORY_PAGE_RECORDS }),
+    async ({ data }): Promise<AuthoredRecordsWindow | null> =>
+      sessionHistoryPageImpl(data.sessionId, data.beforeIndex, HISTORY_PAGE_RECORDS),
   )
 
 export const respondLocal = createServerFn({ method: 'POST', strict: { output: false } })

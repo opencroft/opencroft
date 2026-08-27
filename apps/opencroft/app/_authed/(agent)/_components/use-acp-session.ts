@@ -7,11 +7,16 @@ import { usePaginatedHistory } from 'agent-chat/use-paginated-history'
 import { toEditableParts } from 'agent-chat/user-parts'
 import { isTerminalToolStatus } from 'agent-client/fold'
 import { DEFAULT_PRESENCE } from 'agent-client/presence'
-import type { ChatEvent, PermissionOpt, Presence, QueuedPrompt, QueueMode } from 'agent-client/types'
+import type { PermissionOpt, Presence, QueuedPrompt, QueueMode } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 
 import type { AgentSession } from '@/app/_authed/(agent)/_components/agent-chat'
-import { type AcpStreamEvent, HISTORY_END_KIND } from '@/app/_authed/(agent)/_lib/acp-stream'
+import {
+  type AcpStreamEvent,
+  type AuthoredChatEvent,
+  HISTORY_END_KIND,
+  type ResolvedAuthor,
+} from '@/app/_authed/(agent)/_lib/acp-stream'
 import { headerFromWindow, userText } from '@/app/_authed/(agent)/_lib/build-blocks'
 import type { ChatMessage, ChatPart } from '@/app/_authed/(agent)/_lib/messages'
 import { READER_ORIGIN, type WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
@@ -129,6 +134,10 @@ export interface AcpSession {
   // Messages typed while a turn was in progress, held server-side awaiting
   // delivery — the latest 'queue' snapshot from the event stream.
   queue: QueuedMessage[]
+  // What that snapshot's senders resolve to, resolved by the server and
+  // carried with the snapshot. A waiting message and the same message once
+  // delivered must draw the same way, so both halves get the same resolution.
+  queueAuthors?: Record<string, ResolvedAuthor>
   // The session's agent-advertised config options (model/effort/mode/…) —
   // the latest 'config_options' snapshot. Empty for adapters that don't
   // advertise any.
@@ -170,6 +179,9 @@ export interface Folded {
   waiting: boolean
   // Server-held prompts awaiting delivery — the last 'queue' snapshot wins.
   queue: QueuedMessage[]
+  // What that snapshot's senders resolve to. Travels with the snapshot rather
+  // than being looked up, the same as a delivered turn's.
+  queueAuthors?: Record<string, ResolvedAuthor>
   // The last 'config_options' snapshot wins.
   configOptions: SessionConfigOption[]
   // The last 'presence' snapshot wins, same as the queue's.
@@ -184,7 +196,7 @@ export interface Folded {
 // "load older" prepend (which shifts every existing event's position within
 // `events`, but not its absolute index) never changes an already-rendered
 // message's id. See ChatMessage.id.
-export function fold(events: ChatEvent[], baseIndex: number): Folded {
+export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
   const messages: ChatMessage[] = []
   const tools = new Map<string, ToolPart>()
   const permissions = new Map<string, PendingPermission>()
@@ -192,6 +204,7 @@ export function fold(events: ChatEvent[], baseIndex: number): Folded {
   let assistant: ChatMessage | null = null
   let waiting = false
   let queue: QueuedMessage[] = []
+  let queueAuthors: Record<string, ResolvedAuthor> | undefined
   let configOptions: SessionConfigOption[] = []
   // Seeded with the engine's own default rather than a second copy of it, so
   // "what a session reads at until told otherwise" is stated in one place.
@@ -211,7 +224,19 @@ export function fold(events: ChatEvent[], baseIndex: number): Folded {
     switch (event.kind) {
       case 'user': {
         assistant = null
-        messages.push({ id, role: 'user', parts: [{ type: 'text', text: event.text }], timestamp: 0 })
+        messages.push({
+          id,
+          role: 'user',
+          parts: [{ type: 'text', text: event.text }],
+          timestamp: 0,
+          // Carried straight through from the event that brought this turn.
+          // Spread rather than assigned so a turn with nothing resolved has no
+          // field at all, which is what it looked like before this existed --
+          // and `satisfies`, because a key spread into a literal is not
+          // excess-property-checked against the literal's target, so a
+          // misspelling would compile and the field would never arrive.
+          ...(event.authors ? ({ authors: event.authors } satisfies Pick<ChatMessage, 'authors'>) : {}),
+        })
         waiting = true
         break
       }
@@ -274,8 +299,11 @@ export function fold(events: ChatEvent[], baseIndex: number): Folded {
         break
       }
       case 'queue': {
-        // Snapshots are complete, so the latest one IS the queue state.
+        // Snapshots are complete, so the latest one IS the queue state — and
+        // the accounts that came with the snapshot are that snapshot's, for the
+        // same reason.
         queue = event.items
+        queueAuthors = event.authors
         break
       }
       case 'config_options': {
@@ -313,6 +341,7 @@ export function fold(events: ChatEvent[], baseIndex: number): Folded {
     asks: [...asks.values()],
     waiting,
     queue,
+    queueAuthors,
     configOptions,
     presence,
     usage,
@@ -342,7 +371,7 @@ export function useAcpSession(
   openRef.current = openTransport ?? ensureLocalSessionTransport
   const open = useCallback((source: LocalSource) => openRef.current(source), [])
   const [sessionId, setSessionId] = useState<string | null>(null)
-  const [events, setEvents] = useState<ChatEvent[]>([])
+  const [events, setEvents] = useState<AuthoredChatEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [localWaiting, setLocalWaiting] = useState(false)
   const [canFork, setCanFork] = useState(false)
@@ -375,7 +404,7 @@ export function useAcpSession(
   // in flight (see acp-stream.ts), committed to `events` in one `setEvents` call
   // when the history_end marker arrives — so a long reopened session paints once
   // instead of one React state update (and one fold() re-run) per stored event.
-  const historyBufferRef = useRef<ChatEvent[]>([])
+  const historyBufferRef = useRef<AuthoredChatEvent[]>([])
   const replayingHistoryRef = useRef(true)
   // Absolute (server-side) index of `events[0]` — see fold()'s doc comment.
   // Set from the stream's history_end payload on every (re)connect; decremented
@@ -943,6 +972,7 @@ export function useAcpSession(
       permissions: folded.permissions,
       asks: folded.asks,
       queue: folded.queue,
+      queueAuthors: folded.queueAuthors,
       configOptions: folded.configOptions,
       presence: folded.presence,
       // A live event this connection has actually seen wins and stays won —
@@ -964,6 +994,7 @@ export function useAcpSession(
       folded.permissions,
       folded.asks,
       folded.queue,
+      folded.queueAuthors,
       folded.configOptions,
       folded.presence,
       folded.usage,

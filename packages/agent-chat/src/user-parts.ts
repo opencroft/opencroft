@@ -29,24 +29,46 @@ import type { ChatUserMessagePart, UserText } from './components/chat-turn'
  * because a blank author would otherwise render as a blank line where a name
  * should be.
  */
-export function toUserParts(prompt: string, render: (raw: string) => UserText | null): ChatUserMessagePart[] {
+export function toUserParts(
+  prompt: string,
+  render: (raw: string) => UserText | null,
+  // What each identifier in THIS delivery resolves to, resolved by the host and
+  // handed over with the delivery it belongs to.
+  //
+  // A map rather than a lookup function, and a per-delivery one rather than a
+  // directory: this is data that travelled with the item, so a part cannot
+  // acquire a different account depending on what the client happened to have
+  // loaded when it ran -- the load-dependent rendering the header rule exists
+  // to forbid. An identifier that is missing from it is left unresolved, which
+  // is a state the header draws, and is what every delivery stamped before
+  // accounts had handles falls into.
+  //
+  // Optional because a host with no notion of accounts has nothing to pass and
+  // should not have to say so.
+  accounts?: Record<string, { name: string; avatarUrl?: string | null }>,
+): ChatUserMessagePart[] {
   const parts: ChatUserMessagePart[] = []
   for (const message of decodeBatch(prompt)) {
     const text = render(message.text)
     if (text === null) {
       continue
     }
-    // `author` only. The account it resolves to is deliberately not set here:
-    // this reads a decoded delivery and has nothing to resolve one from, and a
-    // lookup at this point would make the part carry a different account
-    // depending on what the client happened to have loaded when it ran -- the
-    // same load-dependent rendering the header rule exists to forbid. The
-    // resolved account is attached server-side, on the event path.
-    //
     // The wire is unchanged: the tag attribute and the decoded message field
     // are both still `sender`. Only the rendered part renames, because what it
     // holds is the durable identifier rather than a display name.
-    parts.push({ text, author: message.sender || undefined, sentAt: message.sentAt || undefined })
+    const author = message.sender || undefined
+    const authorAccount = author ? accounts?.[author] : undefined
+    parts.push({
+      text,
+      author,
+      // `satisfies` rather than a bare spread. An optional key spread into a
+      // literal is NOT excess-property-checked against the literal's target
+      // type, so a misspelled key compiles and the field silently never
+      // reaches the component that reads it. The array's element type checks
+      // everything else here; it cannot reach inside a spread.
+      ...(authorAccount ? ({ authorAccount } satisfies Pick<ChatUserMessagePart, 'authorAccount'>) : {}),
+      sentAt: message.sentAt || undefined,
+    })
   }
   return parts
 }

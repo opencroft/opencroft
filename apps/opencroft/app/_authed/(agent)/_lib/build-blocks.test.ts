@@ -196,6 +196,30 @@ test('a waiting message that is nothing but tags keeps its row', () => {
   ])
 })
 
+test('a waiting message shows the account its identifier resolves to, not the identifier', () => {
+  // The regression this guards: once a send stamps a handle, a queue that did
+  // not resolve would show `ada` where it used to show a name. The waiting
+  // message and the delivered one are the same message and must draw alike.
+  const [message] = buildUnread([waiting('q1', 'ada', '2026-03-04T09:12:00.000Z', 'check the build first')], {
+    ada: { name: 'Ada Rivera', avatarUrl: '/ada.png' },
+  })
+
+  // `authorAccount` is the field UserMessageBubble branches on to draw an
+  // avatar at all -- asserting the whole returned object would only prove this
+  // function agrees with itself.
+  assert.deepEqual(message?.authorAccount, { name: 'Ada Rivera', avatarUrl: '/ada.png' })
+  assert.equal(message?.author, 'ada', 'and the durable identifier is kept beside it')
+})
+
+test('a waiting message whose identifier resolves to nothing is left unresolved', () => {
+  const [message] = buildUnread([waiting('q1', 'Alex Rivera', '2026-03-04T09:12:00.000Z', 'first')], {
+    ada: { name: 'Ada Rivera', avatarUrl: null },
+  })
+
+  assert.equal(message?.author, 'Alex Rivera')
+  assert.ok(!('authorAccount' in (message ?? {})), 'absent, not present and empty')
+})
+
 test('the queue renders in the order it is held in', () => {
   const built = buildUnread([
     waiting('q1', 'Alex Rivera', '2026-03-04T09:12:00.000Z', 'first'),

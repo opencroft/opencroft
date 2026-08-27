@@ -1,4 +1,43 @@
+import type { RecordsWindow } from 'agent-client/pagination'
 import type { ChatEvent } from 'agent-client/types'
+
+/** One account as a message header draws it, mirroring the server's own shape. */
+export interface ResolvedAuthor {
+  name: string
+  avatarUrl: string | null
+}
+
+/**
+ * A chat event with the accounts its messages were stamped by, resolved.
+ *
+ * The second app-private addition to this wire, and here for the same reason
+ * as the first: agent-client stores what was delivered, and what was delivered
+ * carries handles rather than names. Turning a handle into a face needs the
+ * database and the space graph, which is the host's business and not a
+ * package's, so the resolution is attached on the way out instead of being
+ * looked up on the way in.
+ *
+ * IT TRAVELS WITH THE EVENT, deliberately, rather than as a directory the
+ * client accumulates. A header must draw the same way wherever it appears, and
+ * a shared directory makes what a message shows depend on which other messages
+ * happen to have arrived — the same message with a face deep in a transcript
+ * and without one at the top of it.
+ *
+ * Absent on every kind but `user`, and absent there too when nothing resolved.
+ */
+export type AuthoredChatEvent = ChatEvent & { authors?: Record<string, ResolvedAuthor> }
+
+/**
+ * A page of older history, resolved the same way the live stream is.
+ *
+ * Named here rather than in the package because the resolution is the host's:
+ * `RecordsWindow` is what agent-client stored, this is what the app hands to a
+ * reader.
+ */
+export interface AuthoredRecordsWindow extends Omit<RecordsWindow, 'events' | 'header'> {
+  events: AuthoredChatEvent[]
+  header?: { index: number; event: AuthoredChatEvent }
+}
 
 // Wire-protocol addition private to the core app's SSE route (acp.stream.ts)
 // and its consumer (use-acp-session.ts). agent-client's `subscribe` replays a
@@ -23,7 +62,7 @@ export interface HistoryEndEvent {
   // Kept out of the replayed events deliberately (see RecordsWindow): the
   // client places it itself, which is what stops it repeating once paging
   // moves further up inside the same turn.
-  header?: { index: number; event: ChatEvent }
+  header?: { index: number; event: AuthoredChatEvent }
 }
 
 export function historyEndEvent(
@@ -31,7 +70,18 @@ export function historyEndEvent(
   hasMore: boolean,
   header?: HistoryEndEvent['header'],
 ): HistoryEndEvent {
-  return { kind: HISTORY_END_KIND, startIndex, hasMore, ...(header ? { header } : {}) }
+  // `satisfies` for the same reason the other conditional spreads carry one:
+  // the return annotation checks the keys written here and cannot reach inside
+  // a spread, so a misspelling would compile and the header would arrive
+  // without the authors it now carries. This frame and the history page's
+  // header are the same object on two paths, and a guard on one of them only
+  // is how the two come to differ silently.
+  return {
+    kind: HISTORY_END_KIND,
+    startIndex,
+    hasMore,
+    ...(header ? ({ header } satisfies Pick<HistoryEndEvent, 'header'>) : {}),
+  }
 }
 
-export type AcpStreamEvent = ChatEvent | HistoryEndEvent
+export type AcpStreamEvent = AuthoredChatEvent | HistoryEndEvent
