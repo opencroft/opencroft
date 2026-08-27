@@ -100,7 +100,7 @@ test('the window closes by reporting the count, so no occurrence is dropped', as
   await settle()
 
   assert.equal(reports.length, 2)
-  assert.match(reports[1]?.message ?? '', /^2 further messages were aimed at this thread not delivered/)
+  assert.match(reports[1]?.message ?? '', /^2 further messages aimed at this thread were not delivered/)
   assert.ok(reports[1]?.message.includes(REASON), 'the digest still says why')
 })
 
@@ -114,7 +114,7 @@ test('a single repeat is counted in the singular', async (t) => {
   t.mock.timers.tick(WINDOW_MS)
   await settle()
 
-  assert.match(reports[1]?.message ?? '', /^1 further message was aimed at this thread not delivered/)
+  assert.match(reports[1]?.message ?? '', /^1 further message aimed at this thread was not delivered/)
 })
 
 test('a window that saw nothing else closes without saying anything', async (t) => {

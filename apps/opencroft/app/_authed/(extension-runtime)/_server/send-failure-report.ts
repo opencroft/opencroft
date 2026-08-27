@@ -39,6 +39,13 @@
  * by reporting, never by forgetting: nothing that happened inside it is
  * dropped, which is the difference between collapsing repeats and suppressing
  * them.
+ *
+ * IT IS ALSO WHAT MAKES REPORTING EVERY FAILURE AFFORDABLE, and that is not a
+ * side effect to be optimised away later. A repeat inside the window
+ * increments a count and returns WITHOUT delivering, so a wiring failing every
+ * two seconds costs one delivery attempt per (node, reason) per window rather
+ * than one per failure. Remove the collapse and the widened guard becomes a
+ * message storm aimed at whatever thread is already having a bad day.
  */
 const DIGEST_WINDOW_MS = 5 * 60_000
 
@@ -109,9 +116,13 @@ function firstReport(failure: SendFailure): string {
 }
 
 function digestReport(failure: SendFailure, count: number): string {
-  const plural = count === 1 ? 'message was' : 'messages were'
+  // The verb stays out of this, so the sentence keeps its shape in both forms.
+  // Carrying "message was" / "messages were" as one unit put the verb before
+  // "aimed" and produced "messages were aimed at this thread not delivered".
+  const subject = count === 1 ? 'message' : 'messages'
+  const verb = count === 1 ? 'was' : 'were'
   return [
-    `${count} further ${plural} aimed at this thread not delivered, for the same reason.`,
+    `${count} further ${subject} aimed at this thread ${verb} not delivered, for the same reason.`,
     '',
     failure.reason,
     '',
