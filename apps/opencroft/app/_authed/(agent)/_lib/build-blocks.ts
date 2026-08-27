@@ -114,7 +114,13 @@ export function buildUnread(
       id: entry.id,
       text: userText(entry.text) ?? EMPTY_USER_TEXT,
       author,
-      ...(authorAccount ? { authorAccount } : {}),
+      // `satisfies` rather than a bare spread. An optional key spread into a
+      // literal is NOT excess-property-checked against the literal's target
+      // type -- the key name sails through misspelled, which is how a field
+      // survived a rename here for ten hours behind a green typecheck. The
+      // annotation on the callback is what checks the rest of this object; it
+      // cannot reach inside a spread, so the spread carries its own.
+      ...(authorAccount ? ({ authorAccount } satisfies Pick<ChatUnreadMessage, 'authorAccount'>) : {}),
       sentAt: entry.kind === 'message' ? entry.sentAt : undefined,
     }
   })

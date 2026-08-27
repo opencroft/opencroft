@@ -61,7 +61,12 @@ export function toUserParts(
     parts.push({
       text,
       author,
-      ...(authorAccount ? { authorAccount } : {}),
+      // `satisfies` rather than a bare spread. An optional key spread into a
+      // literal is NOT excess-property-checked against the literal's target
+      // type, so a misspelled key compiles and the field silently never
+      // reaches the component that reads it. The array's element type checks
+      // everything else here; it cannot reach inside a spread.
+      ...(authorAccount ? ({ authorAccount } satisfies Pick<ChatUserMessagePart, 'authorAccount'>) : {}),
       sentAt: message.sentAt || undefined,
     })
   }

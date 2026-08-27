@@ -231,8 +231,11 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
           timestamp: 0,
           // Carried straight through from the event that brought this turn.
           // Spread rather than assigned so a turn with nothing resolved has no
-          // field at all, which is what it looked like before this existed.
-          ...(event.authors ? { authors: event.authors } : {}),
+          // field at all, which is what it looked like before this existed --
+          // and `satisfies`, because a key spread into a literal is not
+          // excess-property-checked against the literal's target, so a
+          // misspelling would compile and the field would never arrive.
+          ...(event.authors ? ({ authors: event.authors } satisfies Pick<ChatMessage, 'authors'>) : {}),
         })
         waiting = true
         break

@@ -544,7 +544,13 @@ export async function sessionHistoryPageImpl(
   return {
     ...window,
     events,
-    ...(window.header && header ? { header: { index: window.header.index, event: header } } : {}),
+    // `satisfies` for the same reason the other conditional spreads carry one:
+    // a key spread into a literal is not checked against the literal's target
+    // type, so a misspelling here would compile and a partly-loaded turn's
+    // header would silently arrive without its authors.
+    ...(window.header && header
+      ? ({ header: { index: window.header.index, event: header } } satisfies Pick<AuthoredRecordsWindow, 'header'>)
+      : {}),
   }
 }
 
