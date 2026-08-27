@@ -36,7 +36,17 @@ export function toUserParts(prompt: string, render: (raw: string) => UserText | 
     if (text === null) {
       continue
     }
-    parts.push({ text, sender: message.sender || undefined, sentAt: message.sentAt || undefined })
+    // `author` only. The account it resolves to is deliberately not set here:
+    // this reads a decoded delivery and has nothing to resolve one from, and a
+    // lookup at this point would make the part carry a different account
+    // depending on what the client happened to have loaded when it ran -- the
+    // same load-dependent rendering the header rule exists to forbid. The
+    // resolved account is attached server-side, on the event path.
+    //
+    // The wire is unchanged: the tag attribute and the decoded message field
+    // are both still `sender`. Only the rendered part renames, because what it
+    // holds is the durable identifier rather than a display name.
+    parts.push({ text, author: message.sender || undefined, sentAt: message.sentAt || undefined })
   }
   return parts
 }

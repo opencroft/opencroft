@@ -7,6 +7,11 @@ import { Markdown } from './markdown'
 
 import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
 import { Button } from 'ui/components/ui/button'
+import {
+  CollapsingStickyHeader,
+  CollapsingStickyHeaderContent,
+  CollapsingStickyHeaderPinned,
+} from 'ui/components/ui/layouts/collapsing-sticky-header'
 import { cn } from 'ui/lib/utils'
 
 // The attribute the host's scroll restore uses to find a block again and
@@ -148,16 +153,31 @@ export function formatSentAt(at: Date, now: Date = new Date()): string {
 
 // One message inside a turn: its own words, and who sent them when.
 //
-// `sender` and `sentAt` are optional together: a prompt the application issued
-// on its own behalf has no author and no send time, and it is still rendered,
-// so that something waiting is never invisible.
+// `author` is the identifier the delivery carried; `authorAccount` is what that
+// identifier resolved to. They are separate fields because resolution can fail
+// and the header still has to render -- an identifier written before accounts
+// had them, or one whose account has since gone, leaves the message holding
+// text and nothing else. That case is a rendering state, not an error.
+//
+// THE RESOLVED ACCOUNT ARRIVES ON THE PART. This component never looks one up.
+// A header that consulted a cache or a directory would render differently
+// depending on how much of the conversation happened to be loaded around it --
+// the same message showing an avatar deep in a transcript and none at the top
+// of it, with bugs that reproduce only at the depth the reporter happened to
+// reach. One element, one behaviour: whatever it needs comes with the item it
+// renders.
+//
+// All three are optional together: a prompt the application issued on its own
+// behalf has no author and no send time, and it is still rendered, so that
+// something waiting is never invisible.
 //
 // `sentAt` is the SENT time and never the delivered one. Those are different
 // instants as soon as a message waits, and only the first is a fact about the
 // sender.
 export interface ChatUserMessagePart {
   text: UserText
-  sender?: string
+  author?: string
+  authorAccount?: { name: string; avatarUrl?: string | null }
   sentAt?: string
 }
 
@@ -185,22 +205,11 @@ export interface ChatUserMessageProps {
   // screen, and this is the only way to undo a send.
   onRemove?: () => void
   // Hold the top of the viewport while this turn's replies scroll underneath.
-  // Needs an opaque background, since replies pass behind it.
   //
-  // These classes belong on the OUTERMOST element, outside the rail: otherwise
-  // the avatar scrolls away while the message stays, and the background stops
-  // short of the rail so replies show through beside it.
-  //
-  // `z-1` is exact, not a round number, and both bounds are load-bearing:
-  //  - It must exceed the replies. Each one wraps its entries in a `relative`
-  //    box, and a positioned box with an automatic z-index sits at 0 and comes
-  //    later in the document -- so anything lower loses to it on tree order and
-  //    the replies paint over the header.
-  //  - It must not exceed the composer, which is also `z-1` and later in the
-  //    document still. Equal values are broken by tree order, so the composer
-  //    keeps painting over the header, which is what a raised value broke.
-  // No integer sits between those, which is why matching the composer rather
-  // than clearing it is the fix.
+  // The turn is then rendered twice by `CollapsingStickyHeader`: in full, and
+  // as the short strip it collapses to. That component owns the sticky
+  // geometry, the stacking order and the cross-fade between the two forms;
+  // what each form looks like stays here.
   sticky?: boolean
   renderers: ChatTurnRenderers
 }
@@ -215,132 +224,112 @@ export function ChatUserMessage({
   renderers,
 }: ChatUserMessageProps) {
   const { Chained } = renderers
-  return (
+
+  // Later messages supersede earlier ones -- the rule the agent is told to read
+  // a turn by -- so the last one is what stays behind as the header, and the
+  // earlier ones simply scroll away with everything else.
+  const earlier = parts.slice(0, -1)
+  const last = parts[parts.length - 1]
+
+  const avatar = <AgentAvatar size='md' />
+
+  const body = (
     // The same rail the replies below are rendered in, so both columns start at
     // the same left edge by construction rather than by a matched indent -- if
     // the rail's width changes, the two move together. The avatar has no source
     // yet and falls back to a person icon, which is the intended placeholder.
-    //
-    // The rail's own `py-2` is what spaces the message from the viewport edge
-    // once stuck, so the `pt-2 -mt-2` pair this used to carry is gone rather
-    // than added to: keeping both would have doubled the gap. Unstuck, that
-    // padding is the same rhythm every reply already has.
-    <div
-      // `container-type: scroll-state` makes this queryable as a stuck element.
-      // It applies no containment -- unlike the size container types, which add
-      // style and size containment plus an independent formatting context -- so
-      // it cannot disturb the header's box (CSS Conditional 5).
-      className={cn(sticky && 'sticky top-0 z-1 [container-type:scroll-state]')}
-      {...{ [BLOCK_ID_ATTR]: blockId }}
+    <Chained
+      // Pinned rather than duplicated. The avatar holds the container's edge
+      // while the message slides past it, so it is rendered once and never
+      // fades. Placed in the cross-fade instead it would appear out of nothing
+      // exactly as the message left, which is the kind of thing a reader sees
+      // even when they could not say what happened.
+      marker={sticky ? <CollapsingStickyHeaderPinned>{avatar}</CollapsingStickyHeaderPinned> : avatar}
+      lineAbove={false}
+      lineBelow={false}
+      align='start'
     >
-      {sticky && (
-        // The header's backing: fully opaque at its top edge, falling away to
-        // nothing at its bottom, so replies dissolve as they pass under it
-        // instead of being clipped at a line.
-        //
-        // Spanning the element is what lets the falloff be this long. A layer
-        // hanging BELOW the box -- the first approach -- could never exceed the
-        // gap to the next reply without tinting it in normal flow, which capped
-        // it at 12px. This one is entirely inside the box, so it cannot reach
-        // the reply at all and the cap doesn't apply.
-        //
-        // The fade runs the whole height rather than starting halfway down, so
-        // the gradient spans its own element the way the chat's bottom fade
-        // does. One construction, both ends.
-        //
-        // It costs no legibility even though it fades behind the message: the
-        // question sits in its own `bg-muted` bubble and the avatar in a
-        // `bg-muted` circle, both opaque in either theme, so nothing passes
-        // behind the text. What this layer backs is the gutter around them --
-        // the rail, and the strip beside the edit control -- and a reply showing
-        // through there as it passes is the accepted trade, not a defect. If it
-        // ever reads badly the answer is a different stop position, never a
-        // second opaque layer.
-        <div
-          aria-hidden
-          className='absolute inset-0 -z-1 pointer-events-none bg-linear-to-b from-background to-transparent'
-        />
-      )}
-
-      <Chained marker={<AgentAvatar size='md' />} lineAbove={false} lineBelow={false} align='start'>
-        <div className='flex items-start group w-full gap-1'>
-          {/* Three lines, but only while this turn is stuck to the top. That is
-              the whole of the problem: a question renders at its full height,
-              and because the header holds the top of the viewport while its own
-              replies scroll underneath, a tall one covers the answer it belongs
-              to. Read in its own place in the flow it costs nothing, so it is
-              left alone there.
-
-              The bound is on the TURN and not on each message in it. Clamping
-              per message would make a turn carrying three of them three times
-              too tall, and the header would cover exactly what clamping exists
-              to reveal. So a stuck turn shows its LAST message, clamped: later
-              messages supersede earlier ones, which is the rule the agent is
-              told to read the turn by, and it is the one worth keeping on
-              screen.
-
-              Expressed as "the earlier ones stand down" rather than as a height
-              on the group, because a line clamp is `-webkit-box` and that
-              display value cannot be put on a column of bordered bubbles
-              without destroying them. Leaving exactly one bubble stuck is also
-              what keeps the backing and the shadow correct: both are drawn
-              against a single rounded box.
-
-              Clamping only where it matters is what removes the need for any
-              expand control: the turn is already whole wherever the reader is
-              actually looking at it, and short again the moment it becomes a
-              header. Nothing to press, nothing to measure, no state.
-
-              A container query on the wrapper's own scroll-state, so it costs
-              no scroll listener and animates nothing -- the backing still spans
-              the wrapper's box and the rail still aligns the columns.
-
-              Where scroll-state queries are unsupported no query matches, so a
-              stuck turn is neither clamped nor reduced. Those are the same
-              browsers that already render no stuck shadow. */}
-          <div className='flex min-w-0 flex-1 flex-col gap-1.5'>
-            {parts.map((part, index) => (
-              // Keyed by position: a turn's parts are decoded from text that
-              // cannot change once it has been sent, so they never reorder and
-              // nothing is ever inserted between them. There is no id to key on
-              // instead -- a message carries an author and a time, not an
-              // identity.
-              <UserMessageBubble
-                key={index}
-                part={part}
-                sticky={sticky}
-                supersededWhenStuck={sticky === true && index < parts.length - 1}
-              />
+      <div className='flex items-start group w-full gap-1'>
+        <div className='flex min-w-0 flex-1 flex-col gap-1.5'>
+          {earlier.map((part, index) => (
+            // Keyed by position: a turn's parts are decoded from text that
+            // cannot change once it has been sent, so they never reorder and
+            // nothing is ever inserted between them. There is no id to key on
+            // instead -- a message carries an author and a time, not an
+            // identity.
+            <UserMessageBubble key={index} part={part} />
+          ))}
+          {last &&
+            (sticky ? (
+              // The last message is the one that hands over: its full form
+              // scrolls away like ordinary content, its opening three lines
+              // stay behind, and the two cross only in the final stretch. That
+              // wait is the point -- a message taller than the screen is read
+              // rather than shrunk out from under the reader.
+              <CollapsingStickyHeaderContent preview={<UserMessageBubble part={last} preview />}>
+                <UserMessageBubble part={last} />
+              </CollapsingStickyHeaderContent>
+            ) : (
+              <UserMessageBubble part={last} />
             ))}
-          </div>
-          {onEdit && (
-            <Button
-              type='button'
-              size='icon'
-              variant='ghost'
-              className='h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100'
-              title='Edit message'
-              disabled={editDisabled}
-              onClick={onEdit}
-            >
-              <Pencil className='size-3.5' />
-            </Button>
-          )}
-          {onRemove && (
-            <Button
-              type='button'
-              size='icon'
-              variant='ghost'
-              className='h-6 w-6 shrink-0'
-              title='Remove message'
-              onClick={onRemove}
-            >
-              <X className='size-3.5' />
-            </Button>
-          )}
         </div>
-      </Chained>
-    </div>
+        {onEdit && (
+          <Button
+            type='button'
+            size='icon'
+            variant='ghost'
+            className='h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100'
+            title='Edit message'
+            disabled={editDisabled}
+            onClick={onEdit}
+          >
+            <Pencil className='size-3.5' />
+          </Button>
+        )}
+        {onRemove && (
+          <Button
+            type='button'
+            size='icon'
+            variant='ghost'
+            className='h-6 w-6 shrink-0'
+            title='Remove message'
+            onClick={onRemove}
+          >
+            <X className='size-3.5' />
+          </Button>
+        )}
+      </div>
+    </Chained>
+  )
+
+  // Not stickable: a plain block in the flow, and nothing collapses.
+  if (!sticky) {
+    return <div {...{ [BLOCK_ID_ATTR]: blockId }}>{body}</div>
+  }
+
+  return (
+    <CollapsingStickyHeader
+      // Marks the block in the DOM so the host's load-older restore can find it
+      // again and measure how far it moved. It belongs on the outermost box,
+      // which is the header's reserved element in the flow -- not the box that
+      // moves.
+      {...{ [BLOCK_ID_ATTR]: blockId }}
+      // The backing: fully opaque at its top edge, falling away to nothing at
+      // its bottom, so replies dissolve as they pass under it instead of being
+      // clipped at a line. `bg-transparent` clears the header's own solid
+      // default first -- left in place it would sit behind the gradient and
+      // make the falloff opaque all the way down.
+      //
+      // It costs no legibility even though it fades behind the message: the
+      // question sits in its own `bg-muted` bubble and the avatar in a
+      // `bg-muted` circle, both opaque in either theme, so nothing passes
+      // behind the text. What this backs is the gutter around them -- the rail,
+      // and the strip beside the edit control -- and a reply showing through
+      // there as it passes is the accepted trade, not a defect.
+      className='bg-transparent bg-linear-to-b from-background to-transparent'
+    >
+      {body}
+    </CollapsingStickyHeader>
   )
 }
 
@@ -352,55 +341,66 @@ export function ChatUserMessage({
 // instead of two that drift apart.
 function UserMessageBubble({
   part,
-  sticky,
-  supersededWhenStuck,
+  preview,
 }: {
   part: ChatUserMessagePart
-  sticky?: boolean
-  // Stands down while the turn is stuck to the top, because a later message in
-  // the same turn supersedes it. See `ChatUserMessage` for why the turn is
-  // reduced to one message rather than clamped as a whole.
-  supersededWhenStuck: boolean
+  // True for the short form that stays behind once the turn has slid away: the
+  // same bubble, clamped to its opening lines. It is a second rendering rather
+  // than a state of the first, so neither one's height ever depends on how far
+  // the slide has gone.
+  preview?: boolean
 }) {
   return (
-    <div
-      className={cn(
-        'flex flex-col relative min-w-0 gap-1.5 rounded-md bg-muted border-1 p-2',
-        supersededWhenStuck && '[@container_scroll-state(stuck:top)]:hidden',
-      )}
-    >
-      {sticky && (
-        // The stuck message's shadow -- the command bar's, on the same opaque
+    <div className='flex flex-col relative min-w-0 gap-1.5 rounded-md bg-muted border-1 p-2'>
+      {preview && (
+        // The header form's shadow -- the command bar's, on the same opaque
         // rounded box the composer's card uses, so it floats on the gradient
         // rather than tracing a dissolving edge.
         //
-        // Its own layer, matching the bubble's box by being its child, because
-        // only opacity may animate: this appears and disappears repeatedly as
-        // each header pushes the previous one out during a single scroll, and a
-        // transitioned box-shadow would repaint every time. Behind the bubble's
-        // background, which hides nothing -- an outer shadow is drawn outside
-        // the border box.
-        //
-        // No support guard is needed. Where scroll-state queries are
-        // unavailable the declaration on the container is dropped and the query
-        // never matches, so this simply stays at opacity 0 and the header
-        // renders as it did before. Currently that means the shadow appears in
-        // Chromium only.
-        <div
-          aria-hidden
-          className='absolute inset-0 -z-1 rounded-md pointer-events-none shadow-lg shadow-black/50 opacity-0 transition-opacity duration-150 motion-reduce:transition-none [@container_scroll-state(stuck:top)]:opacity-100'
-        />
+        // Its own layer, matching the bubble's box by being its child, so it
+        // sits behind the bubble's background -- which hides nothing, since an
+        // outer shadow is drawn outside the border box. It needs no transition
+        // and no query: this form only exists as the thing left behind, and the
+        // header cross-fades the whole of it in.
+        <div aria-hidden className='absolute inset-0 -z-1 rounded-md pointer-events-none shadow-lg shadow-black/50' />
       )}
-      {(part.sender || part.sentAt) && (
+      {(part.author || part.authorAccount || part.sentAt) && (
         // Author on the left, send time on the right, above the words.
-        <div className='flex min-w-0 items-baseline justify-between gap-2'>
-          {part.sender ? (
-            <span className='min-w-0 truncate text-xs font-medium text-foreground'>{part.sender}</span>
+        //
+        // Centred rather than baseline-aligned: an avatar has no baseline to
+        // sit on, and one row that changes its alignment depending on whether
+        // the author resolved would be two layouts wearing one name.
+        <div className='flex min-w-0 items-center justify-between gap-2'>
+          {part.authorAccount ? (
+            <div className='flex min-w-0 items-center gap-1.5'>
+              <AgentAvatar avatar={part.authorAccount.avatarUrl ?? undefined} name={part.authorAccount.name} size='sm' />
+              <span className='min-w-0 truncate text-xs font-medium text-foreground'>{part.authorAccount.name}</span>
+            </div>
+          ) : part.author ? (
+            // Nothing resolved, so the message shows the text it actually
+            // holds. Muted and without an avatar -- the difference from a
+            // resolved author has to read as a state this design has, rather
+            // than as a picture that failed to load.
+            <span className='min-w-0 truncate text-xs font-medium text-muted-foreground'>{part.author}</span>
           ) : null}
           {part.sentAt ? <ChatMessageTime sentAt={part.sentAt} /> : null}
         </div>
       )}
-      <Markdown text={part.text} className='[@container_scroll-state(stuck:top)]:line-clamp-3' />
+      {/* Three lines in the header form, whole everywhere else. That is the
+          problem in one line: a question renders at its full height, and
+          because the turn holds the top of the viewport while its own replies
+          scroll underneath, a tall one covered the answer it belonged to. Read
+          in its own place in the flow it costs nothing, so it is left alone.
+
+          The clamp is UNCONDITIONAL on this form rather than a `scroll-state`
+          query on the live text. Those queries are Chromium-only, so everywhere
+          else a stuck turn was never clamped at all -- which is exactly the
+          case the bound exists for.
+
+          It sits on the markdown rather than on the bubble because a line clamp
+          is `-webkit-box`, and that display value cannot be put on a bordered
+          bubble without destroying it. */}
+      <Markdown text={part.text} className={preview ? 'line-clamp-3' : undefined} />
     </div>
   )
 }

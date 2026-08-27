@@ -228,14 +228,14 @@ test('an untagged message is one part, with no author and no send time', () => {
   // transcripts that get replayed. Absent, not blank: nothing is known about
   // who sent it, and inventing a value would be worse than admitting that.
   assert.deepEqual(partsOf(buildBlocks([userMessage(1, 'what changed?')])[0]), [
-    { text: 'what changed?', sender: undefined, sentAt: undefined },
+    { text: 'what changed?', author: undefined, sentAt: undefined },
   ])
 })
 
 test('a tagged message shows its words without the tag that carried them', () => {
   const raw = encodeBatch([sent('Alex Rivera', '2026-03-04T09:12:00.000Z', 'what changed?')])
   assert.deepEqual(partsOf(buildBlocks([userMessage(1, raw)])[0]), [
-    { text: 'what changed?', sender: 'Alex Rivera', sentAt: '2026-03-04T09:12:00.000Z' },
+    { text: 'what changed?', author: 'Alex Rivera', sentAt: '2026-03-04T09:12:00.000Z' },
   ])
 })
 
@@ -246,9 +246,9 @@ test('a turn that carried several messages keeps every author and every send tim
     sent('Sam Okonkwo', '2026-03-04T09:15:05.000Z', 'it runs fine on the smaller dataset'),
   ])
   assert.deepEqual(partsOf(buildBlocks([userMessage(1, raw)])[0]), [
-    { text: 'look at the nightly import job', sender: 'Alex Rivera', sentAt: '2026-03-04T09:12:00.000Z' },
-    { text: 'it started after the schema change', sender: 'Alex Rivera', sentAt: '2026-03-04T09:13:40.000Z' },
-    { text: 'it runs fine on the smaller dataset', sender: 'Sam Okonkwo', sentAt: '2026-03-04T09:15:05.000Z' },
+    { text: 'look at the nightly import job', author: 'Alex Rivera', sentAt: '2026-03-04T09:12:00.000Z' },
+    { text: 'it started after the schema change', author: 'Alex Rivera', sentAt: '2026-03-04T09:13:40.000Z' },
+    { text: 'it runs fine on the smaller dataset', author: 'Sam Okonkwo', sentAt: '2026-03-04T09:15:05.000Z' },
   ])
 })
 
@@ -291,7 +291,7 @@ test('the note on an interrupted delivery is not part of the conversation', () =
     messages: [sent('Alex Rivera', '2026-03-04T09:12:00.000Z', 'stop and read this')],
   })
   assert.deepEqual(partsOf(buildBlocks([userMessage(1, raw)])[0]), [
-    { text: 'stop and read this', sender: 'Alex Rivera', sentAt: '2026-03-04T09:12:00.000Z' },
+    { text: 'stop and read this', author: 'Alex Rivera', sentAt: '2026-03-04T09:12:00.000Z' },
   ])
 })
 
@@ -301,7 +301,7 @@ test('one message of a turn stripping to nothing costs that message its bubble, 
     sent('Sam Okonkwo', '2026-03-04T09:13:00.000Z', 'the one with words in it'),
   ])
   assert.deepEqual(partsOf(buildBlocks([userMessage(1, raw)])[0]), [
-    { text: 'the one with words in it', sender: 'Sam Okonkwo', sentAt: '2026-03-04T09:13:00.000Z' },
+    { text: 'the one with words in it', author: 'Sam Okonkwo', sentAt: '2026-03-04T09:13:00.000Z' },
   ])
 })
 
