@@ -2301,6 +2301,50 @@ test('an agent can send into a thread of a chat it is in, through the shared del
 
   assert.match(prompts[1] ?? '', /please review the change/, 'the message reaches the thread agent')
   assert.doesNotMatch(prompts[1] ?? '', / {2}please/, 'and is trimmed')
+
+  // WHAT THE READER GETS, not what the sender returned.
+  //
+  // The defect this pins was found in real use: an agent's message was
+  // stamped with its DISPLAY name. That is not a handle, so it resolved to
+  // nobody, and the message rendered as that text with no face -- for every
+  // agent, on every surface, which is the correct rendering of an author
+  // nobody holds applied to an author everybody holds.
+  //
+  // Asserting the tag rather than the call's own result is the point: the
+  // producer agreed with itself either way, and the header is what has to be
+  // able to look this up.
+  const { decodeBatch } = await import('agent-client/queue-tags')
+  const { resolveUsername } = await import('@/app/_server/usernames')
+  const stamped = decodeBatch(prompts[1] ?? '')[0]?.sender ?? ''
+  assert.notEqual(stamped, 'Agent Solo', 'a display name is free text and resolves to nobody')
+  assert.deepEqual(
+    await resolveUsername(stamped),
+    { kind: 'agent', id: 'agent-solo' },
+    'the stamp resolves to the agent that sent it',
+  )
+})
+
+test('an agent with no handle yet is given one when it sends, rather than being refused', async () => {
+  // The other half, and the rule that came out of the person-side version of
+  // this bug: a backfill without a hook on the creation path fixes the past and
+  // not the future. Agents are created by editing a space graph, so there is no
+  // sign-up to hook -- an agent added since the last restart has no handle at
+  // all, and stamping a handle it does not have would refuse its first message.
+  const owner = await makeUser('agent-handle-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'newly added agent')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-solo' })
+
+  const { currentUsername } = await import('@/app/_server/usernames')
+  const { authorForAgentNode } = await import('@/app/_server/message-author')
+
+  // A node id no backfill has ever seen.
+  const fresh = `agent-fresh-${crypto.randomUUID()}`
+  assert.equal(await currentUsername({ kind: 'agent', id: fresh }), null, 'starts with no handle')
+
+  const stamp = await authorForAgentNode(fresh, 'Fresh Agent')
+  assert.ok(stamp, 'a handle is claimed at the point of need')
+  assert.equal(await currentUsername({ kind: 'agent', id: fresh }), stamp, 'and it persists')
+  assert.equal(await authorForAgentNode(fresh, 'Fresh Agent'), stamp, 'asking twice claims once')
 })
 
 test('an agent cannot send into a thread of a chat it is not in, and cannot tell that from a bad reference', async () => {
@@ -2600,7 +2644,13 @@ test('deliverThreadFromNode resolves the same forms sendMessageInThreadAsAgent d
 
   const alwaysReachable = () => true
 
-  await model.deliverThreadFromNode('node-delivery-forms:agent-session:standup', 'by path', alwaysReachable, 'wait', 'Node')
+  await model.deliverThreadFromNode(
+    'node-delivery-forms:agent-session:standup',
+    'by path',
+    alwaysReachable,
+    'wait',
+    'Node',
+  )
   await waitForPrompts(prompts, 2)
   assert.match(prompts[1] ?? '', /by path/)
 

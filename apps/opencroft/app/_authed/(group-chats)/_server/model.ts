@@ -68,7 +68,7 @@ import { slug as slugify } from '@/app/_authed/(server)/_server/types'
 const UNAVAILABLE = 'Not available'
 
 import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
-import { authorForPerson } from '@/app/_server/message-author'
+import { authorForAgentNode, authorForPerson } from '@/app/_server/message-author'
 
 export type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
 // The refusal type lives in _shared/access-error.ts — dependency-free, so the
@@ -2227,7 +2227,12 @@ export async function sendMessageInThreadAsAgent(
     throw new Error('A message needs some text')
   }
   const row = await resolveThreadForAgent(agentNodeId, threadRef)
-  await deliverIntoThread(row, trimmed, { queue, sender: agentName })
+  // The agent's HANDLE, not the name it is addressed by. `agentName` is a
+  // display name -- free text, shared between accounts, changed by a rename --
+  // and a message stamped with one resolves to nobody when it is read, so it
+  // renders as that text with no face. The node id is already in hand one line
+  // above; this is the same stamp a person's send makes, from the other source.
+  await deliverIntoThread(row, trimmed, { queue, sender: await authorForAgentNode(agentNodeId, agentName) })
 }
 
 /**
