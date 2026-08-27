@@ -67,6 +67,7 @@ import { slug as slugify } from '@/app/_authed/(server)/_server/types'
 const UNAVAILABLE = 'Not available'
 
 import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
+import { authorForPerson } from '@/app/_server/message-author'
 
 export type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
 // The refusal type lives in _shared/access-error.ts — dependency-free, so the
@@ -1522,10 +1523,12 @@ export async function sendMessageInThread(
   if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
-  // The reader's own name, resolved from the session that is already required
+  // The reader's own handle, resolved from the session that is already required
   // above — the surface knows who is speaking, so it says so rather than
-  // pushing the question up to its caller.
-  await deliverIntoThread(row, text, { ...opts, sender: sessionUser.name })
+  // pushing the question up to its caller. The HANDLE and not the display name:
+  // the tag survives a session reload and a rename, so it has to carry the part
+  // that does not move.
+  await deliverIntoThread(row, text, { ...opts, sender: await authorForPerson(sessionUser.id) })
 }
 
 /** The columns every delivery path needs off a thread row. */

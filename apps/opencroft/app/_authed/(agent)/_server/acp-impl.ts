@@ -55,6 +55,7 @@ import { splitEnvelope, stripDeliveryStamp } from '@/app/_authed/(agent)/_shared
 import { type ContextUsage, toContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
+import { authorForPerson } from '@/app/_server/message-author'
 import { secrets } from '@/server/secrets'
 
 interface AgentNodeData {
@@ -551,7 +552,11 @@ async function resolvePromptOrigin(origin: PromptOriginInput): Promise<PromptOri
     // hook catches the failed send, restores the draft and shows the error.
     throw new Error('Sign in to send messages')
   }
-  return { kind: 'message', sender: user.name }
+  // The account's stored handle, not the name it is displayed under: the tag
+  // is durable text that outlives a rename, so what goes into it has to be the
+  // thing that does not change. What a reader sees is resolved from it when the
+  // message is drawn.
+  return { kind: 'message', sender: await authorForPerson(user.id) }
 }
 
 /**

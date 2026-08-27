@@ -14,16 +14,20 @@ process.env.DB_MIGRATIONS_DIR = join(import.meta.dirname, '..', '..', '..', '..'
 delete process.env.DATABASE_URL
 process.env.NODE_ENV = 'development'
 
-const { db, username: usernames } = await import('@opencroft/db')
+const { db, user, username: usernames } = await import('@opencroft/db')
+const { eq } = await import('drizzle-orm')
 const store = await import('./usernames')
-const { authorForSourceNode, UnattributableSendError } = await import('./message-author')
+const { authorForPerson, authorForSourceNode, UnattributableSendError } = await import('./message-author')
 
 after(async () => {
   await rm(workdir, { recursive: true, force: true })
 })
 
 beforeEach(async () => {
+  // Handles first: they point at the accounts, so the other order leaves the
+  // rows this deletes still referenced.
   await db.delete(usernames)
+  await db.delete(user)
 })
 
 const nodes = [
@@ -106,4 +110,42 @@ test('a node type nobody classified is refused, not assumed to be the system', a
   // would quietly make `system.` the bucket for everything unconsidered, and
   // an author nobody checked is worth exactly what a tool name is worth.
   await assert.rejects(() => authorForSourceNode('terminal-1', nodes), UnattributableSendError)
+})
+
+// ---------------------------------------------------------------------------
+// A person sending in their own name
+// ---------------------------------------------------------------------------
+
+test('a person is attributed by their stored handle, not by the name they are shown under', async () => {
+  // The whole reason the handle exists. A display name in the tag cannot be
+  // resolved back to an account: it is free text, it is not unique, and it
+  // moves. So the assertion is against the handle AND against the name, since
+  // stamping the name is the behaviour being replaced.
+  await db.insert(user).values({ id: 'person-1', name: 'Ada L', email: 'person-1@example.test', emailVerified: false })
+  await store.changeUsername({ kind: 'user', id: 'person-1' }, 'ada')
+
+  const author = await authorForPerson('person-1')
+
+  assert.equal(author, 'ada')
+  assert.notEqual(author, 'Ada L', 'the display name must not be what a message is stamped with')
+})
+
+test('a person keeps the handle their past messages were stamped with after a rename', async () => {
+  await db.insert(user).values({ id: 'person-2', name: 'Bo', email: 'person-2@example.test', emailVerified: false })
+  await store.changeUsername({ kind: 'user', id: 'person-2' }, 'bo')
+  await db.update(user).set({ name: 'Bo the Second' }).where(eq(user.id, 'person-2'))
+
+  // Renaming the account changes what a reader sees, never what was stamped:
+  // the stamp is the thing the rename is not allowed to move.
+  assert.equal(await authorForPerson('person-2'), 'bo')
+})
+
+test('a person with no handle is refused rather than stamped with their display name', async () => {
+  // Falling back to the display name is not a smaller version of working: a
+  // display name is free text, so it can be set to exactly somebody else's
+  // handle, and the message would then resolve to an account that never sent
+  // it. Refusing is surfaced to the sender; guessing is surfaced to nobody.
+  await db.insert(user).values({ id: 'person-3', name: 'alice', email: 'person-3@example.test', emailVerified: false })
+
+  await assert.rejects(() => authorForPerson('person-3'), UnattributableSendError)
 })
