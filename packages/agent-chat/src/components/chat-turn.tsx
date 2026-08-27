@@ -181,6 +181,14 @@ export interface ChatUserMessagePart {
   author?: string
   authorAccount?: { name: string; avatarUrl?: string | null }
   sentAt?: string
+  // A stable identity for this one message, where it has one.
+  //
+  // A message that has been sent does not: it is decoded out of a text that
+  // cannot change, so its position IS its identity. A message still waiting to
+  // be read does, because it can be taken back out of the middle of the turn it
+  // is waiting in -- which is both what the remove control needs to name and
+  // what stops React reusing the wrong row when one disappears.
+  id?: string
 }
 
 export interface ChatUserMessageProps {
@@ -202,10 +210,15 @@ export interface ChatUserMessageProps {
   parts: readonly ChatUserMessagePart[]
   editDisabled?: boolean
   onEdit?: () => void
-  // Take this message back before it is ever delivered. Its button is always
-  // visible rather than revealed on hover -- hover is not a route on a touch
-  // screen, and this is the only way to undo a send.
-  onRemove?: () => void
+  // Take one message back before it is ever delivered, named by its own id.
+  // Its button is always visible rather than revealed on hover -- hover is not
+  // a route on a touch screen, and this is the only way to undo a send.
+  //
+  // Per message rather than per turn, because a turn that is still waiting is
+  // the one case where its messages are still separable. The control appears
+  // beside each part that carries an id, so a turn whose parts have none --
+  // every turn already sent -- offers it nowhere.
+  onRemove?: (id: string) => void
   // Hold the top of the viewport while this turn's replies scroll underneath.
   //
   // The turn is then rendered twice by `CollapsingStickyHeader`: in full, and
@@ -264,6 +277,21 @@ export function ChatUserMessage({
       <span aria-hidden className='block size-8' />
     )
 
+  // The remove control for one message, where there is one to offer.
+  //
+  // Both conditions are the same condition seen from two sides: only a message
+  // that is still waiting can be taken back, and only a message that is still
+  // waiting carries the id to name it by. So this returns nothing for every
+  // part of every turn already in the transcript, without either side having to
+  // know which kind of turn it is in.
+  const removeFor = (part: ChatUserMessagePart) => {
+    const id = part.id
+    if (!onRemove || id === undefined) {
+      return undefined
+    }
+    return () => onRemove(id)
+  }
+
   const body = (
     // The same rail the replies below are rendered in, so both columns start at
     // the same left edge by construction rather than by a matched indent -- if
@@ -284,12 +312,15 @@ export function ChatUserMessage({
         // would indent every bubble by the rail's width and stop the question
         // lining up with the replies below it.
         //
-        // Keyed by position: a turn's parts are decoded from text that cannot
-        // change once it has been sent, so they never reorder and nothing is
-        // ever inserted between them. There is no id to key on instead -- a
-        // message carries an author and a time, not an identity.
-        <Chained key={index} marker={markerFor(part, index)} lineAbove={false} lineBelow={false} align='start'>
-          <UserMessageBubble part={part} />
+        // Keyed by the message's own id where it has one, and by position
+        // otherwise. A turn already sent is decoded from a text that cannot
+        // change, so nothing reorders and position IS identity; one still
+        // waiting can have a message taken out of its middle, and a positional
+        // key would then hand the removed row's state to its neighbour.
+        <Chained key={part.id ?? index} marker={markerFor(part, index)} lineAbove={false} lineBelow={false} align='start'>
+          <MessageRow onRemove={removeFor(part)}>
+            <UserMessageBubble part={part} />
+          </MessageRow>
         </Chained>
       ))}
       <Chained
@@ -310,48 +341,24 @@ export function ChatUserMessage({
         lineBelow={false}
         align='start'
       >
-      <div className='flex items-start group w-full gap-1'>
-        <div className='flex min-w-0 flex-1 flex-col gap-1.5'>
-          {last &&
-            (sticky ? (
-              // The last message is the one that hands over: its full form
-              // scrolls away like ordinary content, its opening three lines
-              // stay behind, and the two cross only in the final stretch. That
-              // wait is the point -- a message taller than the screen is read
-              // rather than shrunk out from under the reader.
-              <CollapsingStickyHeaderContent preview={<UserMessageBubble part={last} preview />}>
-                <UserMessageBubble part={last} />
-              </CollapsingStickyHeaderContent>
-            ) : (
+      {/* Edit belongs to the turn and so sits on the segment that ends it;
+          remove belongs to a message and so is asked for per part, here as
+          everywhere else. */}
+      <MessageRow onEdit={onEdit} editDisabled={editDisabled} onRemove={last ? removeFor(last) : undefined}>
+        {last &&
+          (sticky ? (
+            // The last message is the one that hands over: its full form
+            // scrolls away like ordinary content, its opening three lines
+            // stay behind, and the two cross only in the final stretch. That
+            // wait is the point -- a message taller than the screen is read
+            // rather than shrunk out from under the reader.
+            <CollapsingStickyHeaderContent preview={<UserMessageBubble part={last} preview />}>
               <UserMessageBubble part={last} />
-            ))}
-        </div>
-        {onEdit && (
-          <Button
-            type='button'
-            size='icon'
-            variant='ghost'
-            className='h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100'
-            title='Edit message'
-            disabled={editDisabled}
-            onClick={onEdit}
-          >
-            <Pencil className='size-3.5' />
-          </Button>
-        )}
-        {onRemove && (
-          <Button
-            type='button'
-            size='icon'
-            variant='ghost'
-            className='h-6 w-6 shrink-0'
-            title='Remove message'
-            onClick={onRemove}
-          >
-            <X className='size-3.5' />
-          </Button>
-        )}
-        </div>
+            </CollapsingStickyHeaderContent>
+          ) : (
+            <UserMessageBubble part={last} />
+          ))}
+      </MessageRow>
       </Chained>
     </>
   )
@@ -384,6 +391,56 @@ export function ChatUserMessage({
     >
       {body}
     </CollapsingStickyHeader>
+  )
+}
+
+// One message's row: its bubble, and the controls that act on it.
+//
+// Every part of every turn renders through this, so a message in the middle of
+// a turn and the one that ends it are the same row with the same geometry. They
+// used to be two shapes -- a bare bubble for the earlier ones, a bubble in a
+// flex column beside a control strip for the last -- which meant the width a
+// message got depended on its position in its own turn.
+function MessageRow({
+  onEdit,
+  editDisabled,
+  onRemove,
+  children,
+}: {
+  onEdit?: () => void
+  editDisabled?: boolean
+  onRemove?: () => void
+  children: ReactNode
+}) {
+  return (
+    <div className='flex items-start group w-full gap-1'>
+      <div className='flex min-w-0 flex-1 flex-col gap-1.5'>{children}</div>
+      {onEdit && (
+        <Button
+          type='button'
+          size='icon'
+          variant='ghost'
+          className='h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100'
+          title='Edit message'
+          disabled={editDisabled}
+          onClick={onEdit}
+        >
+          <Pencil className='size-3.5' />
+        </Button>
+      )}
+      {onRemove && (
+        <Button
+          type='button'
+          size='icon'
+          variant='ghost'
+          className='h-6 w-6 shrink-0'
+          title='Remove message'
+          onClick={onRemove}
+        >
+          <X className='size-3.5' />
+        </Button>
+      )}
+    </div>
   )
 }
 

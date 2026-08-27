@@ -102,17 +102,22 @@ export function ChatUnread({ messages, onRemove, onDeliver, renderers }: ChatUnr
   return (
     <div className='flex min-w-0 w-full flex-col gap-1'>
       <UnreadHeading onDeliver={onDeliver} />
-      {messages.map((message) => (
-        <ChatUserMessage
-          key={message.id}
-          // One waiting message is the one-part case of a turn. Passed through
-          // whole rather than restated field by field, so a field added to a
-          // message cannot be silently dropped on the way here.
-          parts={[message]}
-          onRemove={onRemove ? () => onRemove(message.id) : undefined}
-          renderers={renderers}
-        />
-      ))}
+      {/* ONE turn, not one per message.
+          
+          What is waiting will be handed over as a single turn, so it already
+          is one, and rendering it as several was the difference a reader could
+          see: the grouping rule compares a message with the one immediately
+          above it WITHIN the parts it is given, so a call per message made
+          every row a run of one and drew a face on all of them.
+          
+          Sharing a renderer is not sharing the context the renderer reasons
+          over. The rule lives in the input shape, so two call sites can hold
+          identical components and still disagree -- passing the queue whole is
+          what removes the second shape rather than correcting its output.
+          
+          Passed through as they are rather than restated field by field, so a
+          field added to a message cannot be silently dropped on the way here. */}
+      <ChatUserMessage parts={messages} onRemove={onRemove} renderers={renderers} />
     </div>
   )
 }
