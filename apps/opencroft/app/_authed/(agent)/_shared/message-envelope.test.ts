@@ -1,13 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import {
-  composeEnvelope,
-  splitEnvelope,
-  stampDeliveryTime,
-  stripDeliveryStamp,
-  wrapUserSelection,
-} from './message-envelope'
+import { composeEnvelope, splitEnvelope, stripDeliveryStamp, wrapUserSelection } from './message-envelope'
 
 const SYSTEM = { spaceName: 'Agents', spaceSlug: 'agents', selectedNodeId: 'script-node_1' }
 const SESSION_INIT = { jobContext: 'Triage tracker notifications.', instructions: ['Reply in English.', 'Be terse.'] }
@@ -100,25 +94,17 @@ test('wrapUserSelection passes a leading-slash message through untouched', () =>
   assert.equal(wrapUserSelection('  /reset', 'const x = 1'), '  /reset')
 })
 
-// ── stampDeliveryTime ─────────────────────────────────────────────────────
-
-test('stampDeliveryTime prefixes an opencroft-time tag in dd.mm.yyyy hh:mm:ss UTC', () => {
-  const now = new Date(Date.UTC(2026, 0, 5, 3, 4, 5))
-  const out = stampDeliveryTime('hello', now)
-  assert.equal(out, '<opencroft-time>05.01.2026 03:04:05</opencroft-time>\nhello')
-})
-
-test('stampDeliveryTime zero-pads single-digit fields', () => {
-  const now = new Date(Date.UTC(2026, 8, 7, 9, 2, 0))
-  const out = stampDeliveryTime('hello', now)
-  assert.match(out, /^<opencroft-time>07\.09\.2026 09:02:00<\/opencroft-time>\n/)
-})
-
-test('a leading-slash message is passed through unstamped', () => {
-  const now = new Date(Date.UTC(2026, 0, 5, 3, 4, 5))
-  assert.equal(stampDeliveryTime('/compact', now), '/compact')
-  assert.equal(stampDeliveryTime('  /reset', now), '  /reset')
-})
+// ── the delivery stamp, which nothing writes any more ─────────────────────
+//
+// What the three removed tests protected: that a `dd.mm.yyyy hh:mm:ss` prefix
+// was written at delivery, zero-padded, and skipped for a leading-slash
+// command. Nothing produces one now -- every message carries `datetime` on its
+// own tag instead, which is ISO 8601 with a zone rather than day-first without
+// one -- so there is no producer left to protect.
+//
+// The stripper is a different matter and keeps its test below. Turns delivered
+// before the removal still carry a stamp in the event log, so the strip is
+// about historical data rather than about anything this code writes.
 
 // -- splitting a delivered message back apart, for editing ------------------
 
@@ -150,12 +136,13 @@ test('a tag quoted mid-sentence is a sentence, not context', () => {
 })
 
 test('stripDeliveryStamp removes the delivery time, and only from the front', () => {
-  const stamped = stampDeliveryTime('hello', new Date(Date.UTC(2026, 8, 7, 9, 2, 0)))
+  // Written out rather than produced, because nothing produces one any more.
+  // This is what a turn delivered before the stamp was removed still looks
+  // like in the event log, and editing one re-delivers its text -- so without
+  // the strip it would go back out carrying the moment it was FIRST received.
+  const stamped = '<opencroft-time>07.09.2026 09:02:00</opencroft-time>\nhello'
   assert.equal(stripDeliveryStamp(stamped), 'hello')
   assert.equal(stripDeliveryStamp('hello'), 'hello', 'nothing to strip is not an error')
-  // A re-sent turn is stamped again on the way out, with the moment it is
-  // received THIS time. Carrying the old one forward would deliver two of them,
-  // the first a lie about when this delivery happened.
   const quoted = 'see <opencroft-time>01.01.2026 00:00:00</opencroft-time> in the log'
   assert.equal(stripDeliveryStamp(quoted), quoted, 'only a leading stamp is a stamp')
 })

@@ -6,7 +6,6 @@ import { readMcpServersForAgent } from '@/app/_authed/(agent)/_server/mcp-store'
 import { queueStore } from '@/app/_authed/(agent)/_server/queue-store'
 import { loadSkillDefs, skillBodyHandler } from '@/app/_authed/(agent)/_server/skill-store'
 import { opencroftLocalTools } from '@/app/_authed/(agent)/_server/tools-bridge'
-import { stampDeliveryTime } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { isYoloMode } from '@/app/_authed/(mcp)/_server/yolo'
 import { approvalStore } from '@/lib/approval-store'
 
@@ -94,6 +93,14 @@ export const agentClient = createAgentClient({
   skills: loadSkillDefs,
   skillHandler: skillBodyHandler,
   permissionHandler: resolvePermission,
-  transformDeliveredPrompt: (text) => stampDeliveryTime(text, new Date()),
+  // No `transformDeliveredPrompt`. A delivery-time stamp used to be prefixed
+  // here; it was removed because every message already carries `datetime` on
+  // its own tag, in ISO 8601 with an explicit zone, while the stamp was
+  // day-first and zoneless -- so of the two timestamps an agent received, the
+  // redundant one was the ambiguous one.
+  //
+  // The extension point itself stays in agent-client: it is a host-agnostic
+  // seam in a shared package, and this product no longer using it is not a
+  // reason to take it from one that might.
   onEvent: persistUsageOnTurnEnd,
 })

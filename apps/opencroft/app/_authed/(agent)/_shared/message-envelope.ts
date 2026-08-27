@@ -83,10 +83,6 @@ export function wrapUserSelection(message: string, content: string): string {
   return `<opencroft-user-selection>${trimmed}</opencroft-user-selection>\n${message}`
 }
 
-function pad(n: number): string {
-  return String(n).padStart(2, '0')
-}
-
 // One `<opencroft-*>` block at the very start of a message. Anchored, so a tag
 // quoted in the middle of a sentence is a sentence, not machinery.
 const LEADING_ENVELOPE_TAG = /^<opencroft-([a-z0-9-]+)>[\s\S]*?<\/opencroft-\1>[^\S\n]*\n?/i
@@ -126,36 +122,25 @@ export function splitEnvelope(text: string): { context: string; words: string } 
 /**
  * Drop a delivery stamp from the front of an already-delivered turn.
  *
- * `stampDeliveryTime` writes the moment the agent RECEIVED the turn, and it
- * runs at the delivery chokepoint on the way back out — so a re-sent turn is
- * stamped again, correctly, with the moment it is received this time. Carrying
- * the old stamp forward would deliver two of them, the first one a lie about
- * when this delivery happened.
+ * Nothing writes one any more, and this is not dead code because of it: a turn
+ * delivered before the stamp was removed still carries it in the event log, and
+ * editing that turn re-delivers its text. Without this strip it would go back
+ * out with a stamp naming the moment it was FIRST received — a lie about the
+ * delivery actually happening.
  */
 export function stripDeliveryStamp(text: string): string {
   return text.replace(/^<opencroft-time>[\s\S]*?<\/opencroft-time>[^\S\n]*\n?/i, '')
 }
 
-// dd.mm.yyyy hh:mm:ss, UTC. The platform has no per-user timezone — agents
-// only ever see a server clock — so a bare UTC reading is the one that stays
-// correct regardless of which environment's clock produced it; there is
-// nothing for an explicit label to disambiguate.
-function formatOpencroftTime(date: Date): string {
-  return `${pad(date.getUTCDate())}.${pad(date.getUTCMonth() + 1)}.${date.getUTCFullYear()} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`
-}
-
-// Stamps a message with the moment it is actually delivered to the agent.
-// Wired into agent-client's delivery chokepoint (deliverPrompt) rather than
-// called at compose time, so a message held behind a running turn carries the
-// time the agent received it, not the time it was sent — and a batch a queue
-// flush joins into one turn carries a single stamp, matching the one moment
-// it was actually delivered. A leading slash marks a command (same rule as
-// composeEnvelope above) and is passed through unstamped for the same
-// reason: a `/compact` a flush joins into a batch must still start with a
-// slash for the harness to recognize it.
-export function stampDeliveryTime(text: string, now: Date): string {
-  if (text.trim().startsWith('/')) {
-    return text
-  }
-  return `<opencroft-time>${formatOpencroftTime(now)}</opencroft-time>\n${text}`
-}
+// NOTHING PRODUCES A DELIVERY STAMP ANY MORE. It was a `dd.mm.yyyy hh:mm:ss`
+// prefix written at the delivery chokepoint, and it went because it was the
+// less readable of the two timestamps an agent received: day-first, so 07.08
+// could be either month, and zoneless, so its being UTC was inferred from
+// agreeing with the other rather than read from the value. Every message
+// already carries `datetime` on its own tag, in ISO 8601 with a zone.
+//
+// The stripper above stays, and is not dead code: turns delivered before the
+// removal are in the event log with the stamp still on them, and editing one
+// re-delivers its text. Without the strip, an edited old turn would go back
+// out with a stamp saying when it was FIRST received, which is a lie about
+// the delivery that is actually happening.
