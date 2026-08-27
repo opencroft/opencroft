@@ -1,5 +1,5 @@
 import { AGENT_NODE_TYPE } from '@/app/_authed/(agent)/_shared/agent-node-shape'
-import { currentUsername, ensureUsernameForUser } from '@/app/_server/usernames'
+import { currentUsername, ensureUsernameForAgent, ensureUsernameForUser } from '@/app/_server/usernames'
 
 /**
  * Who a message is from — one answer for both kinds of sender.
@@ -139,6 +139,36 @@ interface NodeLike {
  * system identifier would make that prefix mean "nobody worked out who sent
  * this", which is worth exactly as much as a tool's name.
  */
+/**
+ * The identifier an agent's own message is stamped with.
+ *
+ * The counterpart to `authorForPerson`, and deliberately the same shape: a
+ * stamp is a HANDLE, never a display name. A display name is free text that two
+ * accounts can share and that changes the moment somebody renames a node, so a
+ * message stamped with one cannot be resolved back to an account at all — it
+ * renders as the text it holds and shows no face, which is the state reserved
+ * for an author nobody holds.
+ *
+ * The two namespaces stay disjoint on purpose. People are held in the database
+ * and agents in the space graph, and the handle is the only thing they share:
+ * it is what a message carries, and which of the two sources answers for it is
+ * decided when the message is read, not when it is sent.
+ *
+ * It CLAIMS a handle when the agent has none, which is why it takes a display
+ * name to seed one from. That is only correct where the caller has named the
+ * agent it is sending as — the direct-send path does, a node fed into a run
+ * does not. `authorForSourceNode` therefore refuses instead of calling this.
+ */
+export async function authorForAgentNode(agentNodeId: string, displayName: string): Promise<string> {
+  const username = await ensureUsernameForAgent(agentNodeId, displayName)
+  if (!username) {
+    // An agent with no handle cannot be named, and naming it anything else
+    // would attribute its words to something that did not say them.
+    throw new UnattributableSendError(`This message has no sender: agent ${agentNodeId} has no username.`)
+  }
+  return username
+}
+
 export async function authorForSourceNode(sourceNodeId: string | undefined, nodes: NodeLike[]): Promise<string> {
   if (!sourceNodeId) {
     // Nothing fed this run -- fired directly, or by something that supplies no
@@ -151,6 +181,11 @@ export async function authorForSourceNode(sourceNodeId: string | undefined, node
   }
 
   if (source.type === AGENT_NODE_TYPE) {
+    // Deliberately NOT `authorForAgentNode`. That claims a handle when there is
+    // none, which is right where a caller has named the agent it is sending as,
+    // and wrong here: a node fed into a run may carry no name at all, and
+    // minting an identifier from nothing would put this agent's words under one
+    // nobody chose. On this path the refusal IS the design.
     const username = await currentUsername({ kind: 'agent', id: sourceNodeId })
     if (!username) {
       // An agent with no handle cannot be named, and naming it anything else

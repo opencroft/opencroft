@@ -290,6 +290,44 @@ export async function ensureUsernameForUser(userId: string): Promise<string | nu
 }
 
 /**
+ * Make sure ONE agent has a handle, at the moment something needs to name it.
+ *
+ * The counterpart to `ensureUsernameForUser`, and the gap it closes is WIDER
+ * for an agent than for a person, not narrower. The note below says agents have
+ * no account-creation path to hook because they are made by editing a space
+ * graph — which is true, and is exactly why the startup pass alone leaves an
+ * agent added since the last restart unable to be attributed at all. For a
+ * person that window opens at sign-up; for an agent it opens every time
+ * somebody drops a node on a canvas.
+ *
+ * The point of NEED is the hook, the same one a person's handle uses. The
+ * display name seeds the handle once and is never the stamp itself: it is free
+ * text that a rename changes, and a message must carry something that survives
+ * being renamed.
+ *
+ * Null when nothing could be claimed. Losing the insert race is not a failure —
+ * the agent has a handle either way, which is all this promises.
+ */
+export async function ensureUsernameForAgent(agentNodeId: string, displayName: string): Promise<string | null> {
+  const principal: Principal = { kind: 'agent', id: agentNodeId }
+  const current = await currentUsername(principal)
+  if (current) {
+    return current
+  }
+  const taken = new Set((await db.select({ username: usernames.username }).from(usernames)).map((r) => r.username))
+  const candidate = claimUsername(displayName, agentNodeId, 'agent', taken)
+  try {
+    await db.insert(usernames).values({ username: candidate, principalType: 'agent', userId: null, agentNodeId })
+    return candidate
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      return await currentUsername(principal)
+    }
+    throw error
+  }
+}
+
+/**
  * Make sure every account of either kind has a handle.
  *
  * Idempotent, and a reconciliation rather than a one-time migration on
