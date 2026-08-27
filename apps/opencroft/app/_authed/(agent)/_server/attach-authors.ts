@@ -1,7 +1,7 @@
 import { decodeBatch } from 'agent-client/queue-tags'
 import type { ChatEvent } from 'agent-client/types'
 
-import type { AuthoredChatEvent } from '@/app/_authed/(agent)/_lib/acp-stream'
+import type { AuthoredChatEvent, ResolvedAuthor } from '@/app/_authed/(agent)/_lib/acp-stream'
 import { authorsByIdentifier } from '@/app/_server/account-directory'
 
 /**
@@ -27,7 +27,31 @@ export async function withAuthors(event: ChatEvent): Promise<AuthoredChatEvent> 
   if (identifiers.length === 0) {
     return event
   }
-  const authors = await authorsByIdentifier(identifiers)
+  let authors: Record<string, ResolvedAuthor>
+  try {
+    authors = await authorsByIdentifier(identifiers)
+  } catch (err) {
+    // A LOOKUP THAT FAILS MUST NOT COST THE MESSAGE. Resolution reads the
+    // database and walks the space graph, and either can fail for reasons that
+    // have nothing to do with this turn -- so letting it reject would put the
+    // message's existence at the mercy of a directory being reachable.
+    //
+    // Degrading here rather than at each caller is what keeps the paths
+    // identical: rejecting would fail a whole history page loudly and drop one
+    // live frame silently, which is two behaviours for one cause, in the one
+    // module that exists so the paths cannot differ.
+    //
+    // The state it degrades to is one the header already draws: the message
+    // renders with the text it holds and no face, exactly as for a handle no
+    // account holds. Logged, because unresolvable-right-now and
+    // nobody-holds-this-handle look identical on screen and only one of them
+    // is a fault.
+    console.error(
+      '[chat authors] Could not resolve message authors; the turn is sent unauthored:',
+      err instanceof Error ? err.message : String(err),
+    )
+    return event
+  }
   // Absent rather than empty when nothing resolved: a turn written before
   // accounts had handles should look, on the wire, exactly as it did before
   // this field existed.
