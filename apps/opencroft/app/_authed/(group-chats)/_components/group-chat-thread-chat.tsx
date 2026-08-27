@@ -152,7 +152,7 @@ export function GroupChatThreadChat({
     [acp.session.messages, acp.session.historyHeader?.index],
   )
 
-  const unread = useMemo(() => buildUnread(acp.queue), [acp.queue])
+  const unread = useMemo(() => buildUnread(acp.queue, acp.queueAuthors), [acp.queue, acp.queueAuthors])
   // Memoized for the same reason as `unread`: it feeds the memoized command
   // bar, and a fresh object every render would rebuild it every render.
   const presence = useMemo(() => ({ value: acp.presence, onSelect: acp.setPresence }), [acp.presence, acp.setPresence])

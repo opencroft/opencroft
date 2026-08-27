@@ -99,15 +99,25 @@ const EMPTY_USER_TEXT = '' as UserText
 // a while after the render shape was renamed -- still assignable, so the
 // workspace typecheck stayed green while every waiting message drew blank
 // where its author goes.
-export function buildUnread(queue: readonly QueuedPrompt[]): ChatUnreadMessage[] {
-  return queue.map(
-    (entry): ChatUnreadMessage => ({
+export function buildUnread(
+  queue: readonly QueuedPrompt[],
+  // The accounts this snapshot's senders resolve to. Here for the same reason
+  // it is on a delivered turn: a message waiting to be read and the same
+  // message once it has been handed over are one message, and one of them
+  // showing a bare identifier while the other shows a face would be two.
+  authors?: Record<string, ResolvedAuthor>,
+): ChatUnreadMessage[] {
+  return queue.map((entry): ChatUnreadMessage => {
+    const author = entry.kind === 'message' ? entry.sender : undefined
+    const authorAccount = author ? authors?.[author] : undefined
+    return {
       id: entry.id,
       text: userText(entry.text) ?? EMPTY_USER_TEXT,
-      author: entry.kind === 'message' ? entry.sender : undefined,
+      author,
+      ...(authorAccount ? { authorAccount } : {}),
       sentAt: entry.kind === 'message' ? entry.sentAt : undefined,
-    }),
-  )
+    }
+  })
 }
 
 // The sticky header for a turn the loaded window starts inside — its own user

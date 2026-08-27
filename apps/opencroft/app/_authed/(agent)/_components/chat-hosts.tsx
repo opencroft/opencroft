@@ -423,7 +423,7 @@ export function LocalAgentHost({
   // Memoized for identity, not for cost: this feeds ChatHost's memoized
   // content, which is published into an overlay slot — a fresh array every
   // render would republish it every render.
-  const unread = useMemo(() => buildUnread(acp.queue), [acp.queue])
+  const unread = useMemo(() => buildUnread(acp.queue, acp.queueAuthors), [acp.queue, acp.queueAuthors])
   // Memoized for the same reason as `unread`: it feeds the memoized command
   // bar, and a fresh object every render would rebuild it every render.
   const presence = useMemo(() => ({ value: acp.presence, onSelect: acp.setPresence }), [acp.presence, acp.setPresence])

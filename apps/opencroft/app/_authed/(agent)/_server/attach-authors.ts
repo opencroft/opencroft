@@ -13,19 +13,17 @@ import { authorsByIdentifier } from '@/app/_server/account-directory'
  * the alternative, resolving in whichever route happened to be handling the
  * request, is how three routes come to disagree about who somebody is.
  *
- * Only `user` events carry authors: they are the only ones holding a delivered
- * batch, and an agent's own replies are already attributed by the session they
- * belong to.
+ * Two kinds carry authors, and they are the two a reader sees a sender on: a
+ * delivered turn, and the queue of messages waiting to be delivered. An
+ * agent's own replies are already attributed by the session they belong to.
+ *
+ * The queue is included because it is the SAME message a few seconds earlier.
+ * Resolving only the delivered half would make a waiting message show a bare
+ * handle and then acquire a face the moment it was handed over, which is one
+ * message drawing two ways.
  */
 export async function withAuthors(event: ChatEvent): Promise<AuthoredChatEvent> {
-  if (event.kind !== 'user') {
-    return event
-  }
-  // The senders this delivery actually names, read out of the delivery itself
-  // rather than out of anything about the session. A turn can carry messages
-  // from several people, which is the whole reason the header needs resolving
-  // per message rather than per turn.
-  const identifiers = decodeBatch(event.text).flatMap((message) => (message.sender ? [message.sender] : []))
+  const identifiers = identifiersIn(event)
   if (identifiers.length === 0) {
     return event
   }
@@ -34,4 +32,21 @@ export async function withAuthors(event: ChatEvent): Promise<AuthoredChatEvent> 
   // accounts had handles should look, on the wire, exactly as it did before
   // this field existed.
   return Object.keys(authors).length > 0 ? { ...event, authors } : event
+}
+
+/**
+ * The senders an event names, read out of the event itself.
+ *
+ * A delivered turn is decoded, because one delivery is not one person's words
+ * and the header resolves per message rather than per turn. A queue snapshot
+ * already holds its messages apart, so its senders are read off directly.
+ */
+function identifiersIn(event: ChatEvent): string[] {
+  if (event.kind === 'user') {
+    return decodeBatch(event.text).flatMap((message) => (message.sender ? [message.sender] : []))
+  }
+  if (event.kind === 'queue') {
+    return event.items.flatMap((item) => (item.kind === 'message' && item.sender ? [item.sender] : []))
+  }
+  return []
 }
