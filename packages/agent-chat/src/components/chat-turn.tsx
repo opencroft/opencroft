@@ -3,6 +3,8 @@
 import { Maximize2, Minimize2, Pencil, X } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
 import { useState } from 'react'
+// The type import back the other way is erased, so this is not a runtime cycle.
+import { facesInRun } from '../author-runs'
 import { Markdown } from './markdown'
 
 import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
@@ -231,34 +233,85 @@ export function ChatUserMessage({
   const earlier = parts.slice(0, -1)
   const last = parts[parts.length - 1]
 
-  const avatar = <AgentAvatar size='md' />
+  // Whether each message opens a new run, and so shows its sender's face.
+  // Computed for THIS delivery only: a turn is a batch, and a batch opens with
+  // a face whatever was said before it.
+  const faces = facesInRun(parts)
+
+  // The face for a message, or the space where one would be.
+  //
+  // TWO CONDITIONS, AND THE SECOND IS NOT A GUARD AGAINST A MISSING PROP. A
+  // face is drawn when the message opens a run AND there is an account to draw
+  // -- because `AgentAvatar` with nothing to show falls through to a generic
+  // person icon, and a person icon per sender change is a picture of somebody
+  // standing in for every message this application cannot identify. Unresolved
+  // has to stay visibly unresolved: the name renders as the text it holds and
+  // no face appears, which is the state the design already has for it.
+  //
+  // The population makes it concrete rather than theoretical: every author
+  // stamped before accounts had handles resolves to nothing, so gating on the
+  // run alone would put an anonymous face on the opening message of every run
+  // in every transcript already written.
+  //
+  // The blank is the avatar's own size rather than nothing, so a message
+  // inside a run sits at the same left edge as the one that opened it -- a run
+  // that shifted sideways as it went would read as a different kind of thing
+  // rather than as the same sender continuing.
+  const markerFor = (part: ChatUserMessagePart, index: number) =>
+    faces[index] && part.authorAccount ? (
+      <AgentAvatar avatar={part.authorAccount.avatarUrl ?? undefined} name={part.authorAccount.name} size='md' />
+    ) : (
+      <span aria-hidden className='block size-8' />
+    )
 
   const body = (
     // The same rail the replies below are rendered in, so both columns start at
     // the same left edge by construction rather than by a matched indent -- if
-    // the rail's width changes, the two move together. The avatar has no source
-    // yet and falls back to a person icon, which is the intended placeholder.
-    <Chained
-      // Pinned rather than duplicated. The avatar holds the container's edge
-      // while the message slides past it, so it is rendered once and never
-      // fades. Placed in the cross-fade instead it would appear out of nothing
-      // exactly as the message left, which is the kind of thing a reader sees
-      // even when they could not say what happened.
-      marker={sticky ? <CollapsingStickyHeaderPinned>{avatar}</CollapsingStickyHeaderPinned> : avatar}
-      lineAbove={false}
-      lineBelow={false}
-      align='start'
-    >
+    // the rail's width changes, the two move together.
+    //
+    // The sentence that used to end this comment -- that the avatar has no
+    // source and falls back to a person icon, which is the intended
+    // placeholder -- was true of the single avatar a turn used to carry, and
+    // stopped being true the moment there was one per sender change. A
+    // placeholder standing in for a whole turn is a layout decision; one per
+    // sender change is a claim about who spoke.
+    <>
+      {earlier.map((part, index) => (
+        // Each message is its own rail segment, because each one answers the
+        // avatar question for itself. The rail column is a fixed width OUTSIDE
+        // the content column, so a face can only sit in it by the message
+        // having a segment -- drawing them inside the content column instead
+        // would indent every bubble by the rail's width and stop the question
+        // lining up with the replies below it.
+        //
+        // Keyed by position: a turn's parts are decoded from text that cannot
+        // change once it has been sent, so they never reorder and nothing is
+        // ever inserted between them. There is no id to key on instead -- a
+        // message carries an author and a time, not an identity.
+        <Chained key={index} marker={markerFor(part, index)} lineAbove={false} lineBelow={false} align='start'>
+          <UserMessageBubble part={part} />
+        </Chained>
+      ))}
+      <Chained
+        // Pinned rather than duplicated, on the segment that hands over. The
+        // avatar holds the container's edge while the message slides past it,
+        // so it is rendered once and never fades. Placed in the cross-fade
+        // instead it would appear out of nothing exactly as the message left,
+        // which is the kind of thing a reader sees even when they could not
+        // say what happened.
+        marker={
+          sticky && last ? (
+            <CollapsingStickyHeaderPinned>{markerFor(last, parts.length - 1)}</CollapsingStickyHeaderPinned>
+          ) : last ? (
+            markerFor(last, parts.length - 1)
+          ) : null
+        }
+        lineAbove={false}
+        lineBelow={false}
+        align='start'
+      >
       <div className='flex items-start group w-full gap-1'>
         <div className='flex min-w-0 flex-1 flex-col gap-1.5'>
-          {earlier.map((part, index) => (
-            // Keyed by position: a turn's parts are decoded from text that
-            // cannot change once it has been sent, so they never reorder and
-            // nothing is ever inserted between them. There is no id to key on
-            // instead -- a message carries an author and a time, not an
-            // identity.
-            <UserMessageBubble key={index} part={part} />
-          ))}
           {last &&
             (sticky ? (
               // The last message is the one that hands over: its full form
@@ -298,8 +351,9 @@ export function ChatUserMessage({
             <X className='size-3.5' />
           </Button>
         )}
-      </div>
-    </Chained>
+        </div>
+      </Chained>
+    </>
   )
 
   // Not stickable: a plain block in the flow, and nothing collapses.
@@ -371,16 +425,18 @@ function UserMessageBubble({
         // sit on, and one row that changes its alignment depending on whether
         // the author resolved would be two layouts wearing one name.
         <div className='flex min-w-0 items-center justify-between gap-2'>
+          {/* A NAME, NEVER A FACE. There is already an avatar beside this
+              bubble, on the rail; a second one inside it is two pictures of
+              one sender, which is rejected outright.
+              Where the face goes is a rail question and is answered there.
+
+              The resolved name and the raw identifier keep their two states,
+              because they say different things: a name is somebody this
+              application knows, and an identifier is a message whose sender it
+              could not place -- an old tag, or an account since removed. */}
           {part.authorAccount ? (
-            <div className='flex min-w-0 items-center gap-1.5'>
-              <AgentAvatar avatar={part.authorAccount.avatarUrl ?? undefined} name={part.authorAccount.name} size='sm' />
-              <span className='min-w-0 truncate text-xs font-medium text-foreground'>{part.authorAccount.name}</span>
-            </div>
+            <span className='min-w-0 truncate text-xs font-medium text-foreground'>{part.authorAccount.name}</span>
           ) : part.author ? (
-            // Nothing resolved, so the message shows the text it actually
-            // holds. Muted and without an avatar -- the difference from a
-            // resolved author has to read as a state this design has, rather
-            // than as a picture that failed to load.
             <span className='min-w-0 truncate text-xs font-medium text-muted-foreground'>{part.author}</span>
           ) : null}
           {part.sentAt ? <ChatMessageTime sentAt={part.sentAt} /> : null}

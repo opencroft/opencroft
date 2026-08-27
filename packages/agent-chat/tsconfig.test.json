@@ -1,0 +1,25 @@
+{
+  // Read only by the test runner (scripts/run-tests.mjs, via TSX_TSCONFIG_PATH)
+  // -- never by typecheck or the build, which resolve tsconfig.json as normal.
+  //
+  // This package's own tsconfig already asks for the automatic runtime, so its
+  // own components render under the runner. What it does not do is CLAIM the
+  // ui package's files: `include` lists `src/**` only, and tsx loads exactly
+  // one tsconfig per process and asks it about every file it transforms. A
+  // file the config does not claim is handed to esbuild with no tsconfig at
+  // all rather than with its own package's, and esbuild's default for JSX is
+  // the classic React.createElement transform -- which needs a runtime binding
+  // named React that those files do not have.
+  //
+  // The mechanism is written up at length in the app workspace's own
+  // tsconfig.test.json, including the measurement behind it; it is not
+  // restated here, because one explanation that can go stale is better than
+  // two that can disagree.
+  //
+  // Observed here rather than assumed: rendering a shared avatar through this
+  // runner failed with "React is not defined" until this file existed, and
+  // passes with it. The components in this package that render no ui component
+  // never needed it, which is why the gap survived until something did.
+  "extends": "./tsconfig.json",
+  "include": ["src/**/*.ts", "src/**/*.tsx", "../ui/src/**/*.ts", "../ui/src/**/*.tsx"]
+}
