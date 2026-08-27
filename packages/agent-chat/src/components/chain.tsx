@@ -53,7 +53,13 @@ export function Chained({ marker, lineAbove, lineBelow, align = 'first-line', ch
           // rail still reads as one continuous line.
           <div className={cn('w-px shrink-0', lineAbove && 'bg-secondary')} style={{ height: FIRST_LINE_OFFSET }} />
         )}
-        <div className='shrink-0'>{marker}</div>
+        {/* `contents` generates no box, so the marker's containing block becomes
+            the rail column rather than a wrapper sized to hug it. That matters
+            for a marker that sticks: a sticky box cannot leave its containing
+            block, so inside a hugging wrapper it has nowhere to travel and does
+            nothing at all -- no error and no movement. The column stretches to
+            the segment's height, which is the travel a marker needs. */}
+        <div className='contents'>{marker}</div>
         <div className={cn('w-px flex-1', lineBelow && 'bg-secondary')} />
       </div>
       <div className='flex-1 min-w-0 py-2 self-start'>{children}</div>
