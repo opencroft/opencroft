@@ -234,7 +234,9 @@ export function FlowEditor() {
         type,
         position: { x: snap(menu.flow.x), y: snap(menu.flow.y) },
         data: def.defaultData(),
-        ...(isSection ? { style: { width: 400, height: 300 }, zIndex: -1 } : {}),
+        ...(isSection
+          ? ({ style: { width: 400, height: 300 }, zIndex: -1 } satisfies Pick<Node, 'style' | 'zIndex'>)
+          : {}),
       }
       setNodes((nds) => {
         const next = isSection ? [node, ...nds] : [...nds, node]

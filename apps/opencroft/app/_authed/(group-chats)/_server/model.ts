@@ -23,6 +23,7 @@ import {
 } from '@opencroft/db'
 import type { QueueMode } from 'agent-client/types'
 import { and, asc, eq, inArray } from 'drizzle-orm'
+import type { PgUpdateSetSource } from 'drizzle-orm/pg-core'
 
 import type { OpenedSession } from '@/app/_authed/(agent)/_server/acp-impl'
 import {
@@ -1880,7 +1881,17 @@ export async function renameThread(request: Request, threadId: string, title: st
     }
     await tx
       .update(groupChatThread)
-      .set({ title: trimmed, slug: nextSlug, ...(move ? { sessionKey: move.to } : {}) })
+      .set({
+        title: trimmed,
+        slug: nextSlug,
+        // A key that is not a column is dropped when the SET clause is built --
+        // it walks the table's columns, not this object -- so a typo here costs
+        // the write rather than raising anything. Naming the argument's own type
+        // is what makes it fail, since a spread is not checked against `.set()`.
+        ...(move
+          ? ({ sessionKey: move.to } satisfies Pick<PgUpdateSetSource<typeof groupChatThread>, 'sessionKey'>)
+          : {}),
+      })
       .where(eq(groupChatThread.id, threadId))
   })
   await settleSessionKeyMoves(moves)

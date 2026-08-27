@@ -34,7 +34,14 @@ const renderers = {
 } as unknown as ChatTurnRenderers
 
 function said(author: string, account?: { name: string; avatarUrl?: string | null }): ChatUserMessagePart {
-  return { text: 'the build is red' as UserText, author, ...(account ? { authorAccount: account } : {}) }
+  // The positive control depends on this key arriving. Spread into the literal
+  // it is not checked by the return annotation, so a rename here would leave
+  // every assertion below passing over a part that has no account at all.
+  return {
+    text: 'the build is red' as UserText,
+    author,
+    ...(account ? ({ authorAccount: account } satisfies Pick<ChatUserMessagePart, 'authorAccount'>) : {}),
+  }
 }
 
 // The avatar renders an `<Avatar>` box with a `<User>` icon inside it; the
