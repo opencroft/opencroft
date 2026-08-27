@@ -85,6 +85,13 @@ export function useAutoScroll<T>(
 
   // Follow new content only while pinned. Instant (not smooth): repeated
   // streaming updates would otherwise animate continuously and fight the user.
+  //
+  // `dependencies` is the caller's array, and re-running whenever it changes is the entire point of
+  // this effect. Nothing inside the body names it, so the exhaustive-deps rule reads it as an extra
+  // dependency and offers to remove it -- which would leave the hook following nothing at all. The
+  // suppression below has to be the LAST comment line before the effect: another line after it
+  // detaches it from the node and it silently stops applying.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-running on the caller's array is the point
   useEffect(() => {
     if (!isInitialMount.current && pinnedRef.current) {
       scrollToBottom('auto')

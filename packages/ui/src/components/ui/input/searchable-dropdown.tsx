@@ -1,49 +1,38 @@
-'use client';
+'use client'
 
-import { Check, ChevronsUpDown, X } from 'lucide-react';
-import * as React from 'react';
+import { Check, ChevronsUpDown, X } from 'lucide-react'
+import * as React from 'react'
 
-import { Button } from 'ui/button';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from 'ui/components/ui/command';
-import { Label } from 'ui/components/ui/label';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from 'ui/components/ui/popover';
-import { cn } from 'ui/lib/utils';
+import { Button } from 'ui/components/ui/button'
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from 'ui/components/ui/command'
+import { Label } from 'ui/components/ui/label'
+import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
+import { cn } from 'ui/lib/utils'
 
 interface SearchableDropdownSubgroup {
-  label: string;
-  options: string[];
+  label: string
+  options: string[]
 }
 
 interface SearchableDropdownGroup {
-  label: string;
-  options: string[];
-  color?: string;
-  subgroups?: SearchableDropdownSubgroup[];
+  label: string
+  options: string[]
+  color?: string
+  subgroups?: SearchableDropdownSubgroup[]
 }
 
 interface SearchableDropdownProps {
-  label?: string;
-  value: string;
-  onChange: (value: string) => void;
-  options?: string[];
-  optionColors?: Record<string, string>;
-  groups?: SearchableDropdownGroup[];
-  placeholder?: string;
-  className?: string;
-  keepOpenOnSelect?: boolean;
+  label?: string
+  value: string
+  onChange: (value: string) => void
+  options?: string[]
+  optionColors?: Record<string, string>
+  groups?: SearchableDropdownGroup[]
+  placeholder?: string
+  className?: string
+  keepOpenOnSelect?: boolean
   // Allow committing a typed value that isn't in the options list.
-  allowCustom?: boolean;
+  allowCustom?: boolean
 }
 
 export function SearchableDropdown({
@@ -58,56 +47,57 @@ export function SearchableDropdown({
   keepOpenOnSelect = false,
   allowCustom = false,
 }: SearchableDropdownProps) {
-  const [open, setOpen] = React.useState(false);
-  const [query, setQuery] = React.useState('');
+  const [open, setOpen] = React.useState(false)
+  const [query, setQuery] = React.useState('')
 
   const handleClear = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onChange('');
-  };
+    e.stopPropagation()
+    onChange('')
+  }
 
+  // One commit path for every route in, so a typed value and a picked one behave
+  // identically -- including re-selecting the current value to clear it.
   const commit = (next: string) => {
-    onChange(next === value ? '' : next);
+    onChange(next === value ? '' : next)
     if (!keepOpenOnSelect) {
-      setOpen(false);
+      setOpen(false)
     }
-  };
+  }
 
-  const trimmed = query.trim();
-  const showCustom =
-    allowCustom && trimmed.length > 0 && !options.includes(trimmed);
+  const trimmed = query.trim()
+  const showCustom = allowCustom && trimmed.length > 0 && !options.includes(trimmed)
 
   return (
     <div className={cn('grid gap-2', className)}>
       {label && <Label>{label}</Label>}
       <Popover open={open} onOpenChange={setOpen}>
-        <div className="relative">
+        <div className='relative'>
           <PopoverTrigger asChild>
             <Button
-              variant="outline"
-              role="combobox"
+              variant='outline'
+              role='combobox'
               aria-expanded={open}
-              aria-label="Select option"
+              aria-label='Select option'
               className={cn('w-full justify-between pr-10', !value && 'text-muted-foreground')}
             >
               {value || placeholder}
-              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+              <ChevronsUpDown className='ml-2 h-4 w-4 shrink-0 opacity-50' />
             </Button>
           </PopoverTrigger>
           {value && (
             <button
-              type="button"
+              type='button'
               onClick={handleClear}
-              className="absolute right-8 top-1/2 -translate-y-1/2 h-4 w-4 opacity-50 hover:opacity-100 transition-opacity"
-              aria-label="Clear selection"
+              className='absolute right-8 top-1/2 -translate-y-1/2 h-4 w-4 opacity-50 hover:opacity-100 transition-opacity'
+              aria-label='Clear selection'
             >
-              <X className="h-4 w-4" />
+              <X className='h-4 w-4' />
             </button>
           )}
         </div>
-        <PopoverContent className="w-auto min-w-[250px] max-w-[600px] p-0" align="start">
+        <PopoverContent className='w-auto min-w-[250px] max-w-[600px] p-0' align='start'>
           <Command defaultValue={value}>
-            <CommandInput placeholder="Search..." value={query} onValueChange={setQuery} />
+            <CommandInput placeholder='Search...' value={query} onValueChange={setQuery} />
             <CommandList>
               <CommandEmpty>No results found.</CommandEmpty>
               {showCustom && (
@@ -119,7 +109,7 @@ export function SearchableDropdown({
               )}
               {groups.length > 0 ? (
                 groups.flatMap((group) => {
-                  const items = [];
+                  const items = []
 
                   if (group.options.length > 0) {
                     items.push(
@@ -133,16 +123,11 @@ export function SearchableDropdown({
                             style={group.color ? { color: group.color } : {}}
                           >
                             {option}
-                            <Check
-                              className={cn(
-                                'ml-auto h-4 w-4',
-                                value === option ? 'opacity-100' : 'opacity-0'
-                              )}
-                            />
+                            <Check className={cn('ml-auto h-4 w-4', value === option ? 'opacity-100' : 'opacity-0')} />
                           </CommandItem>
                         ))}
-                      </CommandGroup>
-                    );
+                      </CommandGroup>,
+                    )
                   }
 
                   if (group.subgroups) {
@@ -159,19 +144,16 @@ export function SearchableDropdown({
                             >
                               {option}
                               <Check
-                                className={cn(
-                                  'ml-auto h-4 w-4',
-                                  value === option ? 'opacity-100' : 'opacity-0'
-                                )}
+                                className={cn('ml-auto h-4 w-4', value === option ? 'opacity-100' : 'opacity-0')}
                               />
                             </CommandItem>
                           ))}
-                        </CommandGroup>
-                      );
-                    });
+                        </CommandGroup>,
+                      )
+                    })
                   }
 
-                  return items;
+                  return items
                 })
               ) : (
                 <CommandGroup>
@@ -183,12 +165,7 @@ export function SearchableDropdown({
                       style={optionColors[option] ? { color: optionColors[option] } : {}}
                     >
                       {option}
-                      <Check
-                        className={cn(
-                          'ml-auto h-4 w-4',
-                          value === option ? 'opacity-100' : 'opacity-0'
-                        )}
-                      />
+                      <Check className={cn('ml-auto h-4 w-4', value === option ? 'opacity-100' : 'opacity-0')} />
                     </CommandItem>
                   ))}
                 </CommandGroup>
@@ -198,5 +175,5 @@ export function SearchableDropdown({
         </PopoverContent>
       </Popover>
     </div>
-  );
+  )
 }

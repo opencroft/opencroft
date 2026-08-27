@@ -2,6 +2,7 @@
 
 import { Loader2 } from 'lucide-react'
 import { useState } from 'react'
+
 import { Button } from 'ui/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
 import { cn } from 'ui/lib/utils'
@@ -15,11 +16,14 @@ export interface ContextRingProps {
   // "no window reported" as well as "nothing used"; the popover is what
   // distinguishes them, which is one more reason it exists.
   contextLimit: number
-  // Wall-clock time (ms since epoch) this figure was reported. Present ONLY
-  // on a last-known reading served for an offline session -- never on a live
-  // one (see ContextUsage in session-context-usage.ts, which this mirrors).
-  // Its presence dims the ring and adds a line to the popover naming when the
-  // reading is from; its absence is the ordinary, fully-opaque ring.
+  // Wall-clock time (ms since epoch) this figure was reported. Present ONLY on a
+  // last-known reading served for a session that is offline -- never on a live
+  // one. Its presence dims the ring and adds a line to the popover naming when
+  // the reading is from; its absence is the ordinary, fully-opaque ring.
+  //
+  // A reading with no `asOf` is therefore a claim about NOW, and one with an
+  // `asOf` is a claim about then. The component draws the difference rather than
+  // leaving a stale number looking current.
   asOf?: number
   // Where the ring stops being neutral, as PERCENTAGES -- the unit is in the
   // name because a fraction passed to a percentage prop fails silently: the
@@ -107,10 +111,10 @@ function trimTrailingZero(text: string): string {
   return text.endsWith('.0') ? text.slice(0, -2) : text
 }
 
-// "Reported just now" / "Reported 5m ago" / "Reported 3h ago", falling back
-// to a short date once it's more than a day stale -- same granularity the
-// app's own freshness copy uses elsewhere (see backup-settings.tsx), so a
-// stale reading reads the same way wherever one is shown.
+// "Reported just now" / "Reported 5m ago" / "Reported 3h ago", falling back to a
+// short date once it is more than a day stale. Minute-then-hour-then-date is the
+// granularity freshness copy usually wants: below a minute the exact figure is
+// noise, and past a day the elapsed count stops meaning anything to read.
 function formatAsOf(asOf: number): string {
   const diffMin = Math.round((Date.now() - asOf) / 60_000)
   if (diffMin < 1) return 'Reported just now'
@@ -173,17 +177,23 @@ export function ContextRing({
   const pct = Math.round(ratio * 100)
 
   const state = pct >= dangerAtPercent ? 'danger' : pct >= warnAtPercent ? 'warning' : 'default'
-  const stroke = state === 'danger' ? 'var(--destructive)' : state === 'warning' ? 'var(--warning)' : 'var(--primary)'
+  const stroke =
+    state === 'danger' ? 'var(--destructive)' : state === 'warning' ? 'var(--warning)' : 'var(--primary)'
 
   const radius = 9
   const circumference = 2 * Math.PI * radius
   const dash = circumference * ratio
 
-  const counts = hasLimit ? `${formatTokens(usedTokens)} / ${formatTokens(contextLimit)}` : formatTokens(usedTokens)
+  const counts = hasLimit
+    ? `${formatTokens(usedTokens)} / ${formatTokens(contextLimit)}`
+    : formatTokens(usedTokens)
   const label = hasLimit
     ? `Context usage: ${counts} (${pct}%)`
     : `Context usage: ${counts} used, window size not reported`
   const freshness = asOf ? formatAsOf(asOf) : null
+  // The freshness reaches the accessible name too: the dimming is the visual
+  // channel for it and a screen reader has no access to that one, so without
+  // this a last-known reading would be announced as a current one.
   const ariaLabel = compacting ? `${label} — compacting` : freshness ? `${label} — ${freshness}` : label
 
   return (
@@ -198,9 +208,9 @@ export function ContextRing({
             // the space the ring already occupied, so nothing around it moves.
             'relative inline-flex size-7 items-center justify-center rounded-full outline-none transition-colors',
             'hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring',
-            // A last-known reading, not a live one -- same de-emphasis weight
-            // a disabled-but-selectable row already uses elsewhere (see
-            // ChatListItem), reverting the instant a live reading replaces it.
+            // A last-known reading, not a live one. De-emphasis rather than a
+            // separate treatment, so it reads as the same control in a quieter
+            // state -- and it reverts the instant a live reading replaces it.
             asOf ? 'opacity-60' : null,
             className,
           )}
@@ -255,6 +265,8 @@ export function ContextRing({
           <span className='text-xs text-muted-foreground'>
             {hasLimit ? `${pct}% of the window used` : 'Window size not reported'}
           </span>
+          {/* Only on a last-known reading. The dimmed ring says something is
+              off about this figure; this is the line that says what. */}
           {freshness ? <span className='text-xs text-muted-foreground'>{freshness}</span> : null}
         </div>
         {onCompact || onClear ? (
