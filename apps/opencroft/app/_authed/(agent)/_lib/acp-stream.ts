@@ -70,7 +70,18 @@ export function historyEndEvent(
   hasMore: boolean,
   header?: HistoryEndEvent['header'],
 ): HistoryEndEvent {
-  return { kind: HISTORY_END_KIND, startIndex, hasMore, ...(header ? { header } : {}) }
+  // `satisfies` for the same reason the other conditional spreads carry one:
+  // the return annotation checks the keys written here and cannot reach inside
+  // a spread, so a misspelling would compile and the header would arrive
+  // without the authors it now carries. This frame and the history page's
+  // header are the same object on two paths, and a guard on one of them only
+  // is how the two come to differ silently.
+  return {
+    kind: HISTORY_END_KIND,
+    startIndex,
+    hasMore,
+    ...(header ? ({ header } satisfies Pick<HistoryEndEvent, 'header'>) : {}),
+  }
 }
 
 export type AcpStreamEvent = AuthoredChatEvent | HistoryEndEvent
