@@ -27,6 +27,23 @@
  */
 export const AGENT_USERNAME_PREFIX = 'agent.'
 
+/**
+ * The prefix that marks the application itself, and that no person may take.
+ *
+ * A message can genuinely originate from the system rather than from anybody:
+ * a webhook arriving, a schedule firing. Attributing one of those to a tool's
+ * name, or to an agent that did not send it, are both untrue, so the system
+ * gets an identifier of its own rather than borrowing somebody's.
+ *
+ * It is NOT a fallback for "we could not work out who sent this". An
+ * originator that cannot be established is a refusal, never this -- the moment
+ * this becomes the bucket for unknown senders, impersonation returns as
+ * attribution-by-omission and the field is worth exactly as much as a tool
+ * name. What follows the prefix names the KIND of trigger, so the record says
+ * which part of the application spoke.
+ */
+export const SYSTEM_USERNAME_PREFIX = 'system.'
+
 // Lowercase letters, digits and dots. Uppercase is not accepted at all rather
 // than folded, which is why uniqueness elsewhere is a plain comparison and
 // never a case-insensitive one.
@@ -51,6 +68,11 @@ export function isAgentUsername(value: string): boolean {
   return value.startsWith(AGENT_USERNAME_PREFIX)
 }
 
+/** Whether this username belongs to the application itself. */
+export function isSystemUsername(value: string): boolean {
+  return value.startsWith(SYSTEM_USERNAME_PREFIX)
+}
+
 /**
  * Is this a username the given kind of account may hold?
  *
@@ -68,7 +90,7 @@ export function checkUsername(value: string, kind: 'user' | 'agent'): UsernameCh
   if (!USERNAME_PATTERN.test(value)) {
     return { ok: false, refusal: 'bad-characters' }
   }
-  if (kind === 'user' && isAgentUsername(value)) {
+  if (kind === 'user' && (isAgentUsername(value) || isSystemUsername(value))) {
     return { ok: false, refusal: 'reserved-prefix' }
   }
   if (kind === 'agent' && value === AGENT_USERNAME_PREFIX) {

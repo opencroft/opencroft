@@ -51,6 +51,7 @@ import { mutateSettingData, withSettingLock } from '@/app/_authed/(settings)/_se
 import { getSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
+import { authorForSourceNode } from '@/app/_server/message-author'
 import { toastStore } from '@/lib/toast-store'
 import { cacheDir } from '@/server/cache'
 import { decrypt, encrypt } from '@/server/crypto'
@@ -578,7 +579,20 @@ export function splitIntoTurns(events: ChatEvent[], startIndex: number): { index
 }
 
 export interface HostSendMessageApi {
-  send(nodeId: string, payload: Record<string, unknown>): Promise<SendMessageDeliveryResult>
+  /**
+   * `sourceNodeId` is what fed THIS run -- the action context's input source,
+   * never a graph lookup of what is wired to the handle. It is what the message
+   * is attributed to, and a send whose source cannot be turned into an account
+   * is refused rather than attributed to the application.
+   *
+   * A seam: when the execution context carries an originator of its own this
+   * parameter goes away, and the call sites stop having to remember it.
+   */
+  send(
+    nodeId: string,
+    payload: Record<string, unknown>,
+    sourceNodeId: string | undefined,
+  ): Promise<SendMessageDeliveryResult>
   listAgents(nodeId: string): Promise<{ agent: string; jobs: string[] }[]>
   listSessions(nodeId: string, params: { agent?: string; job?: string }): Promise<SessionSummary[]>
   listTurns(nodeId: string, params: { sessionKey: string; turns?: number; beforeIndex?: number }): Promise<TurnsPage>
@@ -633,7 +647,7 @@ async function requireExistingSessionKey(
 }
 
 const sendMessageApi: HostSendMessageApi = {
-  async send(nodeId, payload) {
+  async send(nodeId, payload, sourceNodeId) {
     // Schema already requires `message` (see extension.json) — checked again
     // here since a caller can still pass one that resolves empty/non-string,
     // which would otherwise silently deliver the literal JSON payload as the
@@ -646,11 +660,15 @@ const sendMessageApi: HostSendMessageApi = {
     if (!found || found.node.type !== 'send-message') {
       throw new Error(`Send Message node not found: ${nodeId}`)
     }
+    // Established before anything is delivered, so an unattributable send
+    // fails instead of arriving with the wrong name on it.
+    const author = await authorForSourceNode(sourceNodeId, found.nodes)
     const result = await deliverToSendMessageNode(
       found.node as unknown as SendMessageNodeLike,
       found.nodes,
       found.edges,
       JSON.stringify(payload),
+      author,
     )
     if (!result) {
       throw new Error(

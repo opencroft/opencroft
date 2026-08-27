@@ -235,7 +235,10 @@ async function sendMessageSendAction(ctx: ActionCtx): Promise<HostSendMessageRes
   if (!message) {
     throw new Error('"message" is required and must be a non-empty string')
   }
-  return host.sendMessage.send(ctx.nodeId, ctx.params)
+  // What actually fed this run, from the action context rather than from the
+  // graph: several things can be wired to one handle and only the run knows
+  // which of them fired. That is what the message is attributed to.
+  return host.sendMessage.send(ctx.nodeId, ctx.params, ctx.inputSource('text-in')?.sourceNodeId)
 }
 
 function sendMessageListAgentsAction(ctx: ActionCtx): Promise<{ agent: string; jobs: string[] }[]> {

@@ -34,9 +34,32 @@ test('tryParseJsonMessage requires a string message and coerces the rest', () =>
     title: undefined,
     session: undefined,
     queue: 'push',
-    sender: undefined,
     thread: undefined,
   })
+})
+
+// What the removed `sender` field used to protect, and where that protection
+// lives now. It was a caller-supplied author, coerced like any other optional
+// field -- so the old tests pinned that it was trimmed and dropped when
+// unusable, which is exactly the wrong guarantee: an author the caller may
+// write is an author the caller may write wrongly. The parser no longer reads
+// it at all, and who a message is from is established by the send path from
+// what fed the run (see message-author). This pins the removal, so a future
+// "harmless" re-add is a failing test rather than a silent hole.
+test('a sender in the payload is ignored entirely — the wire cannot name an author', () => {
+  const parsed = tryParseJsonMessage('{"message":"hi","queue":"wait","sender":"agent.alice"}')
+  assert.ok(parsed)
+  assert.ok(!('sender' in parsed), 'not parsed, not carried, not renamed')
+  assert.deepEqual(Object.keys(parsed).sort(), [
+    'agent',
+    'job',
+    'key',
+    'message',
+    'queue',
+    'session',
+    'thread',
+    'title',
+  ])
 })
 
 // The whole-object comparisons above pin the shape; this is what makes the
@@ -46,7 +69,7 @@ test('tryParseJsonMessage requires a string message and coerces the rest', () =>
 test('every optional field is trimmed, and dropped when it is not a non-empty string', () => {
   assert.deepEqual(
     tryParseJsonMessage(
-      '{"message":"hi","queue":"wait","agent":" alice ","job":" task ","key":" k ","title":" t ","session":" agent:alice:task ","sender":" alice "}',
+      '{"message":"hi","queue":"wait","agent":" alice ","job":" task ","key":" k ","title":" t ","session":" agent:alice:task "}',
     ),
     {
       message: 'hi',
@@ -56,13 +79,12 @@ test('every optional field is trimmed, and dropped when it is not a non-empty st
       title: 't',
       session: 'agent:alice:task',
       queue: 'wait',
-      sender: 'alice',
       thread: undefined,
     },
   )
 
   assert.deepEqual(
-    tryParseJsonMessage('{"message":"hi","queue":"wait","agent":"   ","job":7,"key":null,"sender":false,"thread":""}'),
+    tryParseJsonMessage('{"message":"hi","queue":"wait","agent":"   ","job":7,"key":null,"thread":""}'),
     {
       message: 'hi',
       agent: undefined,
@@ -71,7 +93,6 @@ test('every optional field is trimmed, and dropped when it is not a non-empty st
       title: undefined,
       session: undefined,
       queue: 'wait',
-      sender: undefined,
       thread: undefined,
     },
   )
@@ -86,7 +107,6 @@ test('tryParseJsonMessage coerces a thread reference the same way as the other o
     title: undefined,
     session: undefined,
     queue: 'wait',
-    sender: undefined,
     thread: 'dev:alice:standup',
   })
 })

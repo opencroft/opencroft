@@ -129,7 +129,10 @@ export function tryParseJsonMessage(text: string): ParsedMessage | null {
     title: optStr(obj['title']),
     session: optStr(obj['session']),
     queue,
-    sender: optStr(obj['sender']),
+    // NO `sender`. Who a message is from is stamped by the send path, from
+    // what actually fed the run, and is never read from the payload: a field
+    // the caller writes is a field the caller can write wrongly, and an author
+    // nobody checked makes the avatar beside it a lie rather than a fact.
     thread: optStr(obj['thread']),
   }
 }

@@ -5,6 +5,7 @@ import {
   AGENT_USERNAME_PREFIX,
   checkUsername,
   isAgentUsername,
+  isSystemUsername,
   usernameFromDisplayName,
   usernameRefusalMessage,
 } from './username'
@@ -60,6 +61,19 @@ test('a person may hold "agent" itself, because it is not the prefix', () => {
   assert.equal(checkUsername('agent', 'user').ok, true)
   assert.equal(isAgentUsername('agent'), false)
   assert.equal(isAgentUsername('agent.alice'), true)
+})
+
+test('a person cannot take the system namespace either', () => {
+  // The application speaks for itself where a webhook or a schedule fired the
+  // message, so its prefix is reserved on the same terms as the agent one.
+  assert.deepEqual(checkUsername('system.webhook', 'user'), { ok: false, refusal: 'reserved-prefix' })
+  assert.equal(isSystemUsername('system.webhook'), true)
+  assert.equal(isSystemUsername('systematic'), false, 'the prefix carries its own dot')
+})
+
+test('a person may hold "system" itself, for the same reason as "agent"', () => {
+  assert.equal(checkUsername('system', 'user').ok, true)
+  assert.equal(isSystemUsername('system'), false)
 })
 
 test('the prefix alone identifies no agent', () => {

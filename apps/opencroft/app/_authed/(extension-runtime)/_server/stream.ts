@@ -41,6 +41,7 @@ import {
   type NodeLike as SmNodeLike,
   tryParseJsonMessage,
 } from '@/app/_authed/(extension-runtime)/_server/send-message-helpers'
+import { reportRefusal } from '@/app/_authed/(extension-runtime)/_server/send-refusal'
 import {
   type ContextUsage,
   compactionVerdict,
@@ -48,6 +49,7 @@ import {
 } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import { findExtensionHandle, type NodeMetadata } from '@/app/_authed/(extension-runtime)/_types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
+import { authorForSourceNode, SEND_MESSAGE_SYSTEM_AUTHOR, UnattributableSendError } from '@/app/_server/message-author'
 import type { StreamChunkPayload } from '@/lib/sse-events'
 import { toastStore } from '@/lib/toast-store'
 
@@ -309,12 +311,73 @@ async function persistToDownstreamSendMessages(
       continue
     }
     try {
-      await deliverToSendMessageNode(target, nodes, edges, text)
+      // `sourceNodeId` is the node whose stream produced this text -- what the
+      // run observed, not what the graph has wired to the handle.
+      const author = await authorForSourceNode(sourceNodeId, nodes)
+      await deliverToSendMessageNode(target, nodes, edges, text, author)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
+      // Unconditionally, and first. Whatever else a failure manages to reach,
+      // the log entry is the one report that cannot itself fail.
       console.error(`[send-message] Failed to send via node ${target.id}:`, msg)
+      if (err instanceof UnattributableSendError) {
+        await reportUnattributableSend(target, nodes, edges, text, msg)
+      }
     }
   }
+}
+
+/**
+ * Carry a refusal to the thread the refused message was aimed at.
+ *
+ * Only the refusal, deliberately. Every other failure on this path is still
+ * swallowed into the log above, and widening that is its own piece of work —
+ * this one exists because a refusal is the case where the log and the reader
+ * disagree about whether anything happened at all.
+ *
+ * The report travels through `deliverToSendMessageNode` like any other message
+ * from this node, so it inherits the same thread resolution and the same
+ * reachability authority, and cannot reach a thread an ordinary send could
+ * not. It cannot loop: the guard that refuses lives in the caller above, not
+ * in the delivery path this uses.
+ */
+async function reportUnattributableSend(
+  target: GraphNodeLike,
+  nodes: GraphNodeLike[],
+  edges: GraphEdgeLike[],
+  text: string,
+  reason: string,
+): Promise<void> {
+  let threadRef: string | undefined
+  try {
+    threadRef = tryParseJsonMessage(text)?.thread
+  } catch {
+    // A payload malformed enough to refuse parsing names no destination
+    // either, and the log line above already carries the refusal.
+    threadRef = undefined
+  }
+  if (!threadRef) {
+    // There is nowhere a person reads: the refused message named no thread, so
+    // the log IS the whole of what this refusal can say. Said out loud rather
+    // than left as an assumption, because a silent return here looks exactly
+    // like a report that was delivered.
+    console.error(`[send-message] Refusal on node ${target.id} named no thread; it is reported to this log only.`)
+    return
+  }
+  await reportRefusal({ nodeId: target.id, reason, threadRef }, async (thread, message) => {
+    try {
+      await deliverToSendMessageNode(
+        target,
+        nodes,
+        edges,
+        JSON.stringify({ thread, queue: 'wait', message }),
+        SEND_MESSAGE_SYSTEM_AUTHOR,
+      )
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`[send-message] Could not report a refusal into thread ${thread}:`, msg)
+    }
+  })
 }
 
 // Serialises work per session key. Deliveries for DIFFERENT keys still run
@@ -433,18 +496,6 @@ export type ThreadDeliveryResolver = (
 // this module with an empty resolvers array ("No agent/job resolved for
 // session"), while the UI ring's Compact button kept using the instance from
 // server boot. Applying the same fix here since the mechanism is identical.
-// globalThis-backed like compactJobs further down (and every other
-// server-lifetime singleton in this app — see globalForSpaces,
-// globalForReaper, globalForScheduler, globalForStartup): a plain
-// module-scoped array here silently resets to empty whenever Vite's dev SSR
-// gives this module a fresh instance because some other file that imports it
-// changed, while this registry's only writer (server/startup.ts's
-// once-per-process ensureServerStarted) never runs a second time to
-// repopulate it. Confirmed as the cause of a real failure: the
-// group_chat_compact MCP path resolved through a post-hot-reload instance of
-// this module with an empty resolvers array ("No agent/job resolved for
-// session"), while the UI ring's Compact button kept using the instance from
-// server boot. Applying the same fix here since the mechanism is identical.
 const globalForThreadDelivery = globalThis as unknown as {
   __THREAD_DELIVERY_RESOLVERS__?: ThreadDeliveryResolver[]
 }
@@ -477,6 +528,10 @@ export async function deliverToSendMessageNode(
   nodes: GraphNodeLike[],
   edges: GraphEdgeLike[],
   text: string,
+  // Who this message is from, already established by the caller from what fed
+  // the run. Required rather than optional: an optional author is an author
+  // that can be omitted, and this whole change exists because it was.
+  author: string,
 ): Promise<SendMessageDeliveryResult | null> {
   const parsed = tryParseJsonMessage(text)
   if (parsed?.thread) {
@@ -488,7 +543,7 @@ export async function deliverToSendMessageNode(
       isAgentNodeReachable(nodes as unknown as SmNodeLike[], edges as unknown as SmEdgeLike[], agentNodeId)
     let outcome: ThreadDeliveryOutcome = { status: 'not-found' }
     for (const resolver of threadDeliveryResolvers) {
-      outcome = await resolver(threadRef, parsed.message, isReachable, parsed.queue, parsed.sender ?? 'Send Message')
+      outcome = await resolver(threadRef, parsed.message, isReachable, parsed.queue, author)
       if (outcome.status !== 'not-found') {
         break
       }
@@ -499,7 +554,7 @@ export async function deliverToSendMessageNode(
     return { kind: 'thread', threadRef, status: outcome.status }
   }
 
-  const route = resolveRoute(text, target, nodes, edges)
+  const route = resolveRoute(text, target, nodes, edges, author)
   if (!route) {
     return null
   }
@@ -1126,6 +1181,7 @@ function resolveRoute(
   target: GraphNodeLike,
   nodes: GraphNodeLike[],
   edges: GraphEdgeLike[],
+  author: string,
 ): RouteResolution | null {
   const smNodes = nodes as unknown as SmNodeLike[]
   const smEdges = edges as unknown as SmEdgeLike[]
@@ -1166,15 +1222,11 @@ function resolveRoute(
   // state an intent with. That wire waits: it is the conservative half of the
   // choice, and the only place in this change where a value is assumed rather
   // than stated.
-  // Who the message is from: the sender the payload names, or the node
-  // speaking for itself. The `text-in` wire carries no payload at all, so it
-  // always takes the node's name — the same wire, and the same reason, as the
-  // `wait` default just above.
-  // The node's own display name is not carried on its data, so a node speaking
-  // for itself is attributed by node type. Named here rather than left blank so
-  // the transcript says something rather than nothing.
-  const nodeName = 'Send Message'
-  return { sessionKey, message, ctx, title, queue: parsed?.queue ?? 'wait', sender: parsed?.sender ?? nodeName }
+  // Who the message is from is NOT decided here. It is stamped by the caller
+  // from what actually fed the run and handed in, because only the run knows
+  // which of the things wired to this node fired it. This function sees the
+  // graph, and the graph cannot answer that question.
+  return { sessionKey, message, ctx, title, queue: parsed?.queue ?? 'wait', sender: author }
 }
 
 const g = globalThis as Record<string, unknown>

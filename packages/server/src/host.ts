@@ -106,7 +106,18 @@ export type HostSendMessageResult =
 
 /** Deliver through a SendMessage node's own path (session reuse/create, envelope composition) -- the same mechanism its `text-in` wiring uses. */
 export interface HostSendMessageApi {
-  send(nodeId: string, payload: Record<string, unknown>): Promise<HostSendMessageResult>
+  /**
+   * `sourceNodeId` is what fed THIS run, taken from the action context's input
+   * source rather than from a graph lookup: several things can be wired to one
+   * handle and only the run knows which of them fired. The message is
+   * attributed to it, and a send whose source cannot be turned into an account
+   * is refused rather than attributed to the application.
+   */
+  send(
+    nodeId: string,
+    payload: Record<string, unknown>,
+    sourceNodeId: string | undefined,
+  ): Promise<HostSendMessageResult>
   listAgents(nodeId: string): Promise<{ agent: string; jobs: string[] }[]>
   listSessions(nodeId: string, params: { agent?: string; job?: string }): Promise<HostSessionSummary[]>
   listTurns(
