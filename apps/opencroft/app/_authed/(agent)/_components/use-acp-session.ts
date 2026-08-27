@@ -1,6 +1,7 @@
 'use client'
 
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
+import type { ChatUserMessagePart } from 'agent-chat/components/chat-turn'
 import type { AgentChatEdit } from 'agent-chat/session'
 import { usePaginatedHistory } from 'agent-chat/use-paginated-history'
 import { toEditableParts } from 'agent-chat/user-parts'
@@ -11,7 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 
 import type { AgentSession } from '@/app/_authed/(agent)/_components/agent-chat'
 import { type AcpStreamEvent, HISTORY_END_KIND } from '@/app/_authed/(agent)/_lib/acp-stream'
-import { headerFromWindow, type UserText, userText } from '@/app/_authed/(agent)/_lib/build-blocks'
+import { headerFromWindow, userText } from '@/app/_authed/(agent)/_lib/build-blocks'
 import type { ChatMessage, ChatPart } from '@/app/_authed/(agent)/_lib/messages'
 import { READER_ORIGIN, type WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import {
@@ -437,7 +438,10 @@ export function useAcpSession(
   // Its `index` is not decoration: it is the identity of the leading details
   // block (see buildBlocks' `enclosingTurnId`). Without it that block is renamed
   // by every mid-turn page and the scroll restore loses its anchor.
-  const [historyHeader, setHistoryHeader] = useState<{ index: number; text: UserText | null } | null>(null)
+  const [historyHeader, setHistoryHeader] = useState<{
+    index: number
+    parts: readonly ChatUserMessagePart[]
+  } | null>(null)
   // Seeded from ensureLocalSession's own read of this session's context usage
   // (live if it has a process right now, else the last-known reading from
   // before it went offline). Shown until a live 'usage' event streams in over

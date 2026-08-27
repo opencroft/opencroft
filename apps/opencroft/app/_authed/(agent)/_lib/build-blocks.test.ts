@@ -122,11 +122,35 @@ test('a message that is nothing but tags has no words at all', () => {
   assert.equal(userText('   '), null)
 })
 
-test('the header and the bubble strip identically — that is the whole bug', () => {
-  const raw = `${REMINDER}what is this?`
-  const header = headerFromWindow({ index: 3, event: { kind: 'user', text: raw } })
-  const bubble = buildBlocks([userMessage(3, raw)])[0]
-  assert.equal(header?.text, bubble?.kind === 'user' ? bubble.text : undefined)
+// A delivered turn carrying two messages, each announced by the tag the queue
+// writes when it hands a batch over.
+const TWO_MESSAGE_TURN = [
+  '<agent-message author="Alex Rivera" datetime="2026-03-04T09:12:00.000Z"/>',
+  `${REMINDER}what is this?`,
+  '<agent-message author="Priya Raman" datetime="2026-03-04T09:13:40.000Z"/>',
+  'and this?',
+].join('\n')
+
+test('the header and the bubble are the same reading of the same turn', () => {
+  // Widened from a version that compared only the two stripped TEXTS. That one
+  // was written for this class -- a partly-loaded turn's header showing tags no
+  // other message showed -- and it held, while the identical failure recurred
+  // one field over: the header carried no author and no send time, and a turn
+  // of several messages read as a single blob with the tag lines still in it.
+  // Comparing the whole rendered header closes the seam instead of the
+  // instance, so a field added later cannot slip through the same gap.
+  const header = headerFromWindow({ index: 3, event: { kind: 'user', text: TWO_MESSAGE_TURN } })
+  const bubble = buildBlocks([userMessage(3, TWO_MESSAGE_TURN)])[0]
+  assert.deepEqual(header?.parts, bubble?.kind === 'user' ? bubble.parts : undefined)
+})
+
+test('a partly-loaded turn reports every message it carried, with author and send time', () => {
+  // The value, not just the agreement: two paths that are wrong in the same way
+  // satisfy the test above and this one catches that.
+  assert.deepEqual(headerFromWindow({ index: 3, event: { kind: 'user', text: TWO_MESSAGE_TURN } })?.parts, [
+    { text: 'what is this?', author: 'Alex Rivera', sentAt: '2026-03-04T09:12:00.000Z' },
+    { text: 'and this?', author: 'Priya Raman', sentAt: '2026-03-04T09:13:40.000Z' },
+  ])
 })
 
 // Nothing writes a delivery-time stamp any more, but turns delivered before it
@@ -152,7 +176,7 @@ function waiting(id: string, sender: string, sentAt: string, text: string): Queu
 test('a message waiting to be read keeps its author and its send time', () => {
   assert.deepEqual(
     buildUnread([waiting('q1', 'Alex Rivera', '2026-03-04T09:12:00.000Z', `${REMINDER}check the build first`)]),
-    [{ id: 'q1', text: 'check the build first', sender: 'Alex Rivera', sentAt: '2026-03-04T09:12:00.000Z' }],
+    [{ id: 'q1', text: 'check the build first', author: 'Alex Rivera', sentAt: '2026-03-04T09:12:00.000Z' }],
   )
 })
 
@@ -160,7 +184,7 @@ test('a system prompt waiting to be read has no author and no send time', () => 
   // Absent, not blank. Nobody sent it, and an empty name renders as a nameless
   // author rather than as no author at all.
   assert.deepEqual(buildUnread([{ id: 'q2', kind: 'system', text: '/compact' }]), [
-    { id: 'q2', text: '/compact', sender: undefined, sentAt: undefined },
+    { id: 'q2', text: '/compact', author: undefined, sentAt: undefined },
   ])
 })
 
@@ -168,7 +192,7 @@ test('a waiting message that is nothing but tags keeps its row', () => {
   // Empty words rather than a missing row: it is still being held and can
   // still be taken back, and a row nobody draws is one nobody can remove.
   assert.deepEqual(buildUnread([waiting('q3', 'Priya Raman', '2026-03-04T09:40:00.000Z', REMINDER)]), [
-    { id: 'q3', text: '', sender: 'Priya Raman', sentAt: '2026-03-04T09:40:00.000Z' },
+    { id: 'q3', text: '', author: 'Priya Raman', sentAt: '2026-03-04T09:40:00.000Z' },
   ])
 })
 
@@ -192,7 +216,7 @@ test('a header keeps its index even when its text strips to nothing', () => {
   // regression by way of a cosmetic rule.
   const header = headerFromWindow({ index: 42, event: { kind: 'user', text: REMINDER } })
   assert.equal(header?.index, 42)
-  assert.equal(header?.text, null, 'no words to show as a header')
+  assert.deepEqual(header?.parts, [], 'no messages to show as a header')
 })
 
 test('a window that starts at a turn boundary has no header at all', () => {

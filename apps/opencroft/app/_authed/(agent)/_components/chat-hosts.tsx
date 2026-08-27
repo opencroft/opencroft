@@ -181,7 +181,7 @@ function ChatHost({
           session={session}
           blocks={blocks}
           hasMessages={session.messages.length > 0}
-          historyHeaderText={session.historyHeader?.text}
+          historyHeaderParts={session.historyHeader?.parts}
           agentAvatar={activeAgent?.avatar}
           agentName={activeAgent?.name}
           defaultExpanded={defaultExpanded}

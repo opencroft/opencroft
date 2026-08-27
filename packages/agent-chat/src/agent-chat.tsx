@@ -6,7 +6,7 @@ import { LogoLoader } from 'ui/components/ui/logo-loader'
 
 import { type Block, ChatConversation, type ChatConversationHandle } from './components/chat-conversation'
 import { ChatEmptyState } from './components/chat-empty-state'
-import type { ChatTurnRenderers, DetailItem, UserText } from './components/chat-turn'
+import type { ChatTurnRenderers, ChatUserMessagePart, DetailItem, UserText } from './components/chat-turn'
 import { ChatUnread, type ChatUnreadMessage } from './components/chat-unread'
 import type { AgentChatSession } from './session'
 import { ThinkingIndicator } from './thinking-indicator'
@@ -59,7 +59,7 @@ export interface AgentChatProps {
   // The sticky header for a turn the loaded window starts inside (see
   // ChatConversation's own `historyHeaderText`) — the host resolves it
   // alongside `blocks`, from the same source.
-  historyHeaderText?: UserText | null
+  historyHeaderParts?: readonly ChatUserMessagePart[]
   emptyText?: string
   agentAvatar?: string
   agentName?: string
@@ -114,7 +114,7 @@ export function AgentChat({
   session,
   blocks,
   hasMessages,
-  historyHeaderText,
+  historyHeaderParts,
   emptyText,
   agentAvatar,
   agentName,
@@ -192,7 +192,7 @@ export function AgentChat({
       loading={session.loading}
       emptyText={emptyText}
       waiting={session.waiting}
-      historyHeaderText={historyHeaderText}
+      historyHeaderParts={historyHeaderParts}
       hasMoreHistory={session.hasMoreHistory === true}
       loadingMoreHistory={session.loadingMoreHistory === true}
       onLoadOlder={loadOlder}

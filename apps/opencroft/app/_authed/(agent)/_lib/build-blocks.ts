@@ -81,13 +81,26 @@ const EMPTY_USER_TEXT = '' as UserText
 //
 // A system prompt has no author and no send time, which is why the union is
 // read here rather than flattened: the fields are absent, not blank.
+//
+// `sender` on the way in, `author` on the way out: the queue is wire shape and
+// the message is render shape, and the two deliberately do not share a word.
+//
+// The callback's return type is annotated rather than left to inference, and
+// that annotation is the whole guard: only a literal with a declared target
+// gets excess-property checking, so writing the wire name here is a compile
+// error rather than a key nothing reads. Without it this returned `sender` for
+// a while after the render shape was renamed -- still assignable, so the
+// workspace typecheck stayed green while every waiting message drew blank
+// where its author goes.
 export function buildUnread(queue: readonly QueuedPrompt[]): ChatUnreadMessage[] {
-  return queue.map((entry) => ({
-    id: entry.id,
-    text: userText(entry.text) ?? EMPTY_USER_TEXT,
-    sender: entry.kind === 'message' ? entry.sender : undefined,
-    sentAt: entry.kind === 'message' ? entry.sentAt : undefined,
-  }))
+  return queue.map(
+    (entry): ChatUnreadMessage => ({
+      id: entry.id,
+      text: userText(entry.text) ?? EMPTY_USER_TEXT,
+      author: entry.kind === 'message' ? entry.sender : undefined,
+      sentAt: entry.kind === 'message' ? entry.sentAt : undefined,
+    }),
+  )
 }
 
 // The sticky header for a turn the loaded window starts inside — its own user
@@ -102,12 +115,27 @@ export function buildUnread(queue: readonly QueuedPrompt[]): ChatUnreadMessage[]
 // things here.
 export function headerFromWindow(header?: { index: number; event: ChatEvent } | null): {
   index: number
-  text: UserText | null
+  parts: readonly ChatUserMessagePart[]
 } | null {
   if (header?.event.kind !== 'user') {
     return null
   }
-  return { index: header.index, text: userText(header.event.text) }
+  // The SAME reading a loaded turn gets, through the same function -- not a
+  // second one that agrees with it. A header is one delivered prompt read back
+  // into the messages it carried, and how much of the turn happens to be in the
+  // window is not an input to that.
+  //
+  // This is the third time this seam has lost a guarantee the loaded path had.
+  // Twice it was patched by teaching this function to do the missing step --
+  // strip the tags, then parse them -- and each patch left two paths that
+  // agreed until the next field was added, at which point only one of them
+  // learned about it. Calling the same function is what makes a fourth
+  // impossible rather than unlikely.
+  //
+  // Empty parts, not a dropped header: `index` names the enclosing turn and is
+  // what stops the leading details block being renamed by every mid-turn page.
+  // "No words" and "no header" stay different things.
+  return { index: header.index, parts: userTurn(header.event.text)?.parts ?? [] }
 }
 
 // `enclosingTurnId` names the turn the FIRST run of replies belongs to, for a

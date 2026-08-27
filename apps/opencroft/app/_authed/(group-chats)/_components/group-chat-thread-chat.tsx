@@ -289,7 +289,7 @@ export function GroupChatThreadChat({
         session={acp.session}
         blocks={blocks}
         hasMessages={acp.session.messages.length > 0}
-        historyHeaderText={acp.session.historyHeader?.text}
+        historyHeaderParts={acp.session.historyHeader?.parts}
         agentAvatar={thread.agent.avatarUrl ?? undefined}
         agentName={thread.agent.name}
         defaultExpanded

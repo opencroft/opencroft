@@ -1,12 +1,15 @@
 'use client'
 
 import { ChainDot, Chained } from 'agent-chat/components/chain'
-import type { ChatTurnRenderers, DetailItem as KitDetailItem } from 'agent-chat/components/chat-turn'
+import type {
+  ChatTurnRenderers,
+  ChatUserMessagePart,
+  DetailItem as KitDetailItem,
+} from 'agent-chat/components/chat-turn'
 import { ThinkingBlock } from 'agent-chat/components/thinking-block'
 import type { AgentChatEdit } from 'agent-chat/session'
 import type { ComponentType } from 'react'
 
-import type { UserText } from '@/app/_authed/(agent)/_lib/build-blocks'
 import type { ChatMessage } from '@/app/_authed/(agent)/_lib/messages'
 import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { useProvided } from '@/app/_authed/(extension-runtime)/_client/provides'
@@ -136,7 +139,7 @@ export interface AgentSession {
   // The two are separately optional on purpose: a question made entirely of
   // system tags has no words to show as a header, but the turn it names is
   // still the one the leading block belongs to, so the index outlives the text.
-  historyHeader?: { index: number; text: UserText | null } | null
+  historyHeader?: { index: number; parts: readonly ChatUserMessagePart[] } | null
 }
 
 // ── Extension-provided chat-input controls (e.g. voice) ──────────────────────

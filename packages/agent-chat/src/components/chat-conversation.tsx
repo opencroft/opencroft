@@ -688,10 +688,15 @@ export interface ChatConversationProps {
   // and marks the last detail item as pending.
   waiting?: boolean
   // The turn the loaded window starts inside, when only part of that turn is
-  // loaded -- its own user message sits above the window, so the host hands
-  // its text over separately. Renders as an unstickied, non-editable header
-  // ahead of the first section.
-  historyHeaderText?: UserText | null
+  // loaded -- its own user message sits above the window, so the host hands it
+  // over separately. Renders as an unstickied, non-editable header ahead of the
+  // first section.
+  //
+  // The messages it carried, not its text: a header is the same object as the
+  // block that replaces it once the rest of the turn loads, so it is described
+  // the same way. Taking text here is what let a caller hand over one unparsed
+  // blob and get a header that disagreed with its own replacement.
+  historyHeaderParts?: readonly ChatUserMessagePart[]
   hasMoreHistory?: boolean
   loadingMoreHistory?: boolean
   onLoadOlder?: () => void
@@ -740,7 +745,7 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
     loading,
     emptyText,
     waiting,
-    historyHeaderText,
+    historyHeaderParts,
     hasMoreHistory,
     loadingMoreHistory,
     onLoadOlder,
@@ -816,19 +821,18 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
                 // inside a turn whose own `user` event is above it. Not
                 // editable -- the message it refers to isn't loaded.
                 //
-                // It arrives as one text rather than as the messages it was
-                // built from: the host has the words but not the delivery they
-                // were decoded out of. A turn that carried several therefore
-                // reads as one here, until the rest of it is loaded and the
-                // real block replaces it.
+                // It arrives as the messages it was built from, exactly as the
+                // block that will replace it does. This used to take one text
+                // instead, on the reasoning that the host had the words but not
+                // the delivery they were decoded out of -- which was not true:
+                // the host holds the whole delivered prompt and was simply
+                // discarding its structure on the way here. A turn carrying
+                // several messages therefore read as one, with its authors and
+                // send times missing, until the rest of it loaded.
                 sectionIndex === 0 &&
-                historyHeaderText != null && (
-                  <ChatUserMessage
-                    sticky
-                    renderers={renderers}
-                    blockId='u:header'
-                    parts={[{ text: historyHeaderText }]}
-                  />
+                historyHeaderParts != null &&
+                historyHeaderParts.length > 0 && (
+                  <ChatUserMessage sticky renderers={renderers} blockId='u:header' parts={historyHeaderParts} />
                 )
               )}
               {/* The control belongs to whatever is CURRENTLY the first section,
