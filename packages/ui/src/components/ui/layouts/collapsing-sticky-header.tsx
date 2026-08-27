@@ -294,12 +294,6 @@ export function CollapsingStickyHeader({
             top: -metrics.travel,
             '--collapse-progress': progress,
             '--collapse-fade': fade,
-            // How far this box has slid off the container's edge so far, in px.
-            // `Pinned` translates by it to stay put. Derived from the RAW
-            // progress rather than the reduced-motion one: this is position,
-            // not decoration, and snapping it would jump the avatar rather than
-            // spare anyone an animation.
-            '--collapse-slide': `${metrics.progress * metrics.travel}px`,
             ...style,
           } as React.CSSProperties
         }
@@ -318,21 +312,32 @@ export function CollapsingStickyHeader({
     cross-fade with a copy of itself, which is what happens to anything placed
     in both forms of a `Content` region.
 
-    It translates by exactly what the header has slid rather than using
-    `position: sticky`, and that is not a preference. A sticky box is confined
-    to its CONTAINING BLOCK, so it only works when whatever wraps it happens to
-    be taller than it is -- and a marker is very often handed to a layout that
-    wraps it in a box hugging its own size, where sticky silently does nothing
-    at all. A transform has no such dependency: it cancels the slide wherever
-    the part is placed, however deeply, and costs no layout.
+    It stays put with `position: sticky`, so the browser holds it against the
+    scrollport on the same frame it moves the header.
+
+    It used to cancel the slide with a transform driven by a measured scroll
+    offset, and that is what a reader could see: TWO THINGS POSITIONING ONE
+    ELEMENT. The header's slide is exact and pre-paint; a measured offset is a
+    frame late and quantised by the tolerance that keeps it from re-rendering
+    constantly. The residue between them reads as the marker travelling too far
+    and settling at offsets nothing accounts for. A second positioner that
+    agrees most of the time is worse than either alone, because the
+    disagreement is small enough to look like a mis-set constant.
+
+    IT NEEDS A CONTAINING BLOCK TALLER THAN ITSELF, which is what the transform
+    bought and this gives up. A sticky box cannot leave its containing block, so
+    a parent sized to hug this element gives it nowhere to travel and it does
+    nothing at all -- no error, no movement, no way to tell from the outside.
+    Place it directly in the column it should hold, never inside a wrapper that
+    hugs it.
 
     It does not reserve the space it moves into, so leave room below it in
     whatever column it sits in -- a rail's connecting line will pass behind it. */
 export function CollapsingStickyHeaderPinned({ className, style, ...props }: React.ComponentPropsWithoutRef<'div'>) {
   return (
     <div
-      className={cn('relative z-1', className)}
-      style={{ transform: 'translateY(var(--collapse-slide, 0px))', ...style }}
+      className={cn('sticky top-0 z-1', className)}
+      style={style}
       {...props}
     />
   )
