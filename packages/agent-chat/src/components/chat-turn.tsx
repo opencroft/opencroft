@@ -371,16 +371,18 @@ function UserMessageBubble({
         // sit on, and one row that changes its alignment depending on whether
         // the author resolved would be two layouts wearing one name.
         <div className='flex min-w-0 items-center justify-between gap-2'>
+          {/* A NAME, NEVER A FACE. There is already an avatar beside this
+              bubble, on the rail; a second one inside it is two pictures of
+              one sender, which is rejected outright.
+              Where the face goes is a rail question and is answered there.
+
+              The resolved name and the raw identifier keep their two states,
+              because they say different things: a name is somebody this
+              application knows, and an identifier is a message whose sender it
+              could not place -- an old tag, or an account since removed. */}
           {part.authorAccount ? (
-            <div className='flex min-w-0 items-center gap-1.5'>
-              <AgentAvatar avatar={part.authorAccount.avatarUrl ?? undefined} name={part.authorAccount.name} size='sm' />
-              <span className='min-w-0 truncate text-xs font-medium text-foreground'>{part.authorAccount.name}</span>
-            </div>
+            <span className='min-w-0 truncate text-xs font-medium text-foreground'>{part.authorAccount.name}</span>
           ) : part.author ? (
-            // Nothing resolved, so the message shows the text it actually
-            // holds. Muted and without an avatar -- the difference from a
-            // resolved author has to read as a state this design has, rather
-            // than as a picture that failed to load.
             <span className='min-w-0 truncate text-xs font-medium text-muted-foreground'>{part.author}</span>
           ) : null}
           {part.sentAt ? <ChatMessageTime sentAt={part.sentAt} /> : null}
