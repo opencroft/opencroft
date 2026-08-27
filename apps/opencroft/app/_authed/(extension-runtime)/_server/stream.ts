@@ -31,6 +31,7 @@ import { readSessions, upsertSession } from '@/app/_authed/(agent)/_server/agent
 import { hideSessionByDefault } from '@/app/_authed/(agent)/_server/chat-list-layout-store'
 import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { updateNodeData } from '@/app/_authed/(extension-runtime)/_server/node-data'
+import { reportSendFailure } from '@/app/_authed/(extension-runtime)/_server/send-failure-report'
 import {
   type AgentContext,
   buildSessionKey,
@@ -41,7 +42,6 @@ import {
   type NodeLike as SmNodeLike,
   tryParseJsonMessage,
 } from '@/app/_authed/(extension-runtime)/_server/send-message-helpers'
-import { reportRefusal } from '@/app/_authed/(extension-runtime)/_server/send-refusal'
 import {
   type ContextUsage,
   compactionVerdict,
@@ -49,7 +49,7 @@ import {
 } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import { findExtensionHandle, type NodeMetadata } from '@/app/_authed/(extension-runtime)/_types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
-import { authorForSourceNode, SEND_MESSAGE_SYSTEM_AUTHOR, UnattributableSendError } from '@/app/_server/message-author'
+import { authorForSourceNode, SEND_MESSAGE_SYSTEM_AUTHOR } from '@/app/_server/message-author'
 import type { StreamChunkPayload } from '@/lib/sse-events'
 import { toastStore } from '@/lib/toast-store'
 
@@ -320,28 +320,33 @@ async function persistToDownstreamSendMessages(
       // Unconditionally, and first. Whatever else a failure manages to reach,
       // the log entry is the one report that cannot itself fail.
       console.error(`[send-message] Failed to send via node ${target.id}:`, msg)
-      if (err instanceof UnattributableSendError) {
-        await reportUnattributableSend(target, nodes, edges, text, msg)
-      }
+      await reportFailedSend(target, nodes, edges, text, msg)
     }
   }
 }
 
 /**
- * Carry a refusal to the thread the refused message was aimed at.
+ * Carry a failed send to the thread the message was aimed at.
  *
- * Only the refusal, deliberately. Every other failure on this path is still
- * swallowed into the log above, and widening that is its own piece of work —
- * this one exists because a refusal is the case where the log and the reader
- * disagree about whether anything happened at all.
+ * EVERY failure caught above, not a chosen subset. Nothing on this path
+ * retries — one attempt per wiring, and reaching the catch means that message
+ * is gone — so every one of them ends in a message not arriving, and there is
+ * no recovered case that would be noise to report.
  *
  * The report travels through `deliverToSendMessageNode` like any other message
  * from this node, so it inherits the same thread resolution and the same
  * reachability authority, and cannot reach a thread an ordinary send could
- * not. It cannot loop: the guard that refuses lives in the caller above, not
- * in the delivery path this uses.
+ * not. It cannot loop: the delivery this uses is the one below, while the
+ * catch that calls it is in the loop above.
+ *
+ * THE ONE FAILURE IT CANNOT CARRY is a failure of the destination itself. If a
+ * message could not be delivered because its thread is unreachable, a report
+ * aimed at that same thread is unreachable for the same reason, and the log is
+ * again all there is. Named here rather than left to be discovered: it is the
+ * residue this change does not close, and closing it needs a destination that
+ * does not depend on the one that just failed.
  */
-async function reportUnattributableSend(
+async function reportFailedSend(
   target: GraphNodeLike,
   nodes: GraphNodeLike[],
   edges: GraphEdgeLike[],
@@ -353,18 +358,18 @@ async function reportUnattributableSend(
     threadRef = tryParseJsonMessage(text)?.thread
   } catch {
     // A payload malformed enough to refuse parsing names no destination
-    // either, and the log line above already carries the refusal.
+    // either, and the log line above already carries the failure.
     threadRef = undefined
   }
   if (!threadRef) {
-    // There is nowhere a person reads: the refused message named no thread, so
-    // the log IS the whole of what this refusal can say. Said out loud rather
-    // than left as an assumption, because a silent return here looks exactly
-    // like a report that was delivered.
-    console.error(`[send-message] Refusal on node ${target.id} named no thread; it is reported to this log only.`)
+    // There is nowhere a person reads: the message named no thread, so the log
+    // IS the whole of what this failure can say. Said out loud rather than left
+    // as an assumption, because a silent return here looks exactly like a
+    // report that was delivered.
+    console.error(`[send-message] Failure on node ${target.id} named no thread; it is reported to this log only.`)
     return
   }
-  await reportRefusal({ nodeId: target.id, reason, threadRef }, async (thread, message) => {
+  await reportSendFailure({ nodeId: target.id, reason, threadRef }, async (thread, message) => {
     try {
       await deliverToSendMessageNode(
         target,
@@ -375,7 +380,7 @@ async function reportUnattributableSend(
       )
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      console.error(`[send-message] Could not report a refusal into thread ${thread}:`, msg)
+      console.error(`[send-message] Could not report a failed send into thread ${thread}:`, msg)
     }
   })
 }
