@@ -105,7 +105,7 @@ function remap(payload: Payload, target?: { x: number; y: number }): { nodes: No
       id,
       position: { x: n.position.x + offset.x, y: n.position.y + offset.y },
       selected: true,
-      ...(n.parentId ? { parentId: idMap.get(n.parentId) ?? n.parentId } : {}),
+      ...(n.parentId ? ({ parentId: idMap.get(n.parentId) ?? n.parentId } satisfies Pick<Node, 'parentId'>) : {}),
     }
   })
   const edges = payload.edges

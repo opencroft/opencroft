@@ -3,6 +3,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   ListObjectsCommand,
+  type ListObjectsCommandInput,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
@@ -50,7 +51,7 @@ export async function listFiles(config: S3Config, path: string): Promise<FileEnt
     new ListObjectsCommand({
       Bucket: config.bucket,
       Delimiter: '/',
-      ...(prefix ? { Prefix: prefix } : {}),
+      ...(prefix ? ({ Prefix: prefix } satisfies Pick<ListObjectsCommandInput, 'Prefix'>) : {}),
     }),
   )
 

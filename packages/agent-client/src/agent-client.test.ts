@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
 
-import { createAgentClient, handleUpdate, type QueueStore } from './agent-client'
+import { type AgentClientOptions, createAgentClient, handleUpdate, type QueueStore } from './agent-client'
 import type { AgentConnection } from './connection'
 import { decodeBatch } from './queue-tags'
 import { buildSpawnConfig, findAdapter } from './resolve'
@@ -82,9 +82,16 @@ async function setup(
     model: 'test-model',
     apiKey: '',
     cwd: `/tmp/agent-client-test-${counter}`,
-    ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
-    ...(options.sessionKey ? { sessionKey: options.sessionKey } : {}),
-    ...(options.contextWindow !== undefined ? { contextWindow: options.contextWindow } : {}),
+    // A harness option that silently stops arriving turns every test that reads
+    // it green for the wrong reason, so the spreads are named the same way the
+    // production ones are.
+    ...(options.reasoningEffort
+      ? ({ reasoningEffort: options.reasoningEffort } satisfies Pick<AgentSelection, 'reasoningEffort'>)
+      : {}),
+    ...(options.sessionKey ? ({ sessionKey: options.sessionKey } satisfies Pick<AgentSelection, 'sessionKey'>) : {}),
+    ...(options.contextWindow !== undefined
+      ? ({ contextWindow: options.contextWindow } satisfies Pick<AgentSelection, 'contextWindow'>)
+      : {}),
   }
   const promptCalls: string[] = []
   const configOptionCalls: Array<{ sessionId: string; configId: string; value: unknown }> = []
@@ -131,9 +138,18 @@ async function setup(
     initialized: Promise.resolve(),
   })
   const client = createAgentClient({
-    ...(options.transformDeliveredPrompt ? { transformDeliveredPrompt: options.transformDeliveredPrompt } : {}),
-    ...(options.queueStore ? { queueStore: options.queueStore } : {}),
-    ...(options.loadPresence ? { loadPresence: options.loadPresence } : {}),
+    ...(options.transformDeliveredPrompt
+      ? ({ transformDeliveredPrompt: options.transformDeliveredPrompt } satisfies Pick<
+          AgentClientOptions,
+          'transformDeliveredPrompt'
+        >)
+      : {}),
+    ...(options.queueStore
+      ? ({ queueStore: options.queueStore } satisfies Pick<AgentClientOptions, 'queueStore'>)
+      : {}),
+    ...(options.loadPresence
+      ? ({ loadPresence: options.loadPresence } satisfies Pick<AgentClientOptions, 'loadPresence'>)
+      : {}),
   })
   const meta = await client.createSession(selection)
   const events: ChatEvent[] = []

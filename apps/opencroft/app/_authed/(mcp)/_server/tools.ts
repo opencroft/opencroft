@@ -99,6 +99,7 @@ import { withGraphConflictRetry } from '@/app/_authed/(space)/_server/graph-conf
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
 import { askUserStore } from '@/lib/ask-user-store'
+import type { SSEEvent } from '@/lib/sse-events'
 import { toastStore } from '@/lib/toast-store'
 import { secrets } from '@/server/secrets'
 
@@ -2530,7 +2531,7 @@ function buildHandlers(): Record<string, ToolHandler> {
         type: 'toast',
         message,
         toastType: type as 'info' | 'success' | 'warning' | 'error',
-        ...(spaceId ? { spaceId } : {}),
+        ...(spaceId ? ({ spaceId } satisfies Pick<SSEEvent, 'spaceId'>) : {}),
       })
       return textResult(`Toast sent: [${type}] ${message}`)
     },
