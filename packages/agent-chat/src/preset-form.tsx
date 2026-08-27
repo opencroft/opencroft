@@ -3,7 +3,7 @@
 import { AGENT_PROVIDERS } from 'agent-client/agent-providers'
 import type { AgentProfile } from 'agent-client/profiles'
 import { reasoningEfforts } from 'agent-client/reasoning'
-import { adaptersForProvider, findProvider } from 'agent-client/resolve'
+import { adaptersForProvider, findAdapter, findProvider } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
 import { Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { Button } from 'ui/components/ui/button'
@@ -116,7 +116,17 @@ export function AgentPresetForm({
   const provider = findProvider(selection.providerId)
   const adapters = adaptersForProvider(selection.providerId)
   const isCustomEndpoint = selection.providerId === 'openai-compatible'
-  const isNative = selection.adapterId === 'native'
+  // The adapter's KIND, not its id. These agree today because exactly one
+  // adapter carries `kind: 'native'` and happens to be spelled `native` too --
+  // but `native` is overloaded in this file's own vocabulary, since five
+  // adapters carry `protocol: 'native'` and are not the in-process harness. The
+  // agreement is a coincidence the next adapter can break.
+  //
+  // It matters more than it did. As a gate this only had to be conservative;
+  // it now also picks the context-window placeholder, which is a claim about
+  // what `knownContextWindow` will do with an empty field. That has to match
+  // that function exactly, and `findAdapter(...).kind` is the test it makes.
+  const isNative = findAdapter(selection.adapterId)?.kind === 'native'
   // Reasoning support: detected from the model for the native harness; for ACP
   // agents it's advertised at session start, so offer a generic scale.
   const reasoningOptions = isNative
@@ -305,33 +315,40 @@ export function AgentPresetForm({
         </Field>
       )}
 
-      {/* Only the in-process harness reads this: an agent reports its own
-          window over the protocol and is believed. Left empty, the endpoint is
-          asked — but most cannot answer. Neither the OpenAI nor the Anthropic
-          models route carries a context length, and a llama.cpp router reports
-          none until an instance is up, so for those this field is the only
-          source there is. A wrong value is worse than none, which is why
-          nothing is guessed from the model name to fill it. */}
-      {isNative && (
-        <Field>
-          <FieldLabel>Max context</FieldLabel>
-          <ControlledInput
-            type='number'
-            value={selection.contextWindow?.toString() ?? ''}
-            onValueChanged={(value) => {
-              const parsed = Number(value)
-              onSelectionChange({
-                contextWindow: value.trim() === '' || !Number.isInteger(parsed) || parsed <= 0 ? undefined : parsed,
-              })
-            }}
-            placeholder='Ask the endpoint'
-          />
-          <FieldDescription>
-            Tokens. Set this when the endpoint does not report a window — the context ring shows a bare token count
-            without one.
-          </FieldDescription>
-        </Field>
-      )}
+      {/* Shown for every harness, because a configured window is the FIRST
+          authority `knownContextWindow` consults and it does not ask which
+          adapter is in use. This used to be gated to the in-process harness,
+          on the premise that a bridged agent "reports its own window over the
+          protocol and is believed" — that premise no longer holds. A bridged
+          `size` is now withheld, since nothing in the protocol separates the
+          bridge's seeded family default from the corrected value that later
+          replaces it, so for a bridged session this field is the ONLY source
+          of a window there is. Gating it there left the one remedy unreachable
+          from the surface where the model is chosen.
+
+          Left empty, the endpoint is asked — but most cannot answer. Neither
+          the OpenAI nor the Anthropic models route carries a context length,
+          and a llama.cpp router reports none until an instance is up. A wrong
+          value is worse than none, which is why nothing is guessed from the
+          model name to fill it. */}
+      <Field>
+        <FieldLabel>Max context</FieldLabel>
+        <ControlledInput
+          type='number'
+          value={selection.contextWindow?.toString() ?? ''}
+          onValueChanged={(value) => {
+            const parsed = Number(value)
+            onSelectionChange({
+              contextWindow: value.trim() === '' || !Number.isInteger(parsed) || parsed <= 0 ? undefined : parsed,
+            })
+          }}
+          placeholder={isNative ? 'Ask the endpoint' : 'Unknown'}
+        />
+        <FieldDescription>
+          Tokens. Set this when the endpoint does not report a window — the context ring shows a bare token count
+          without one.
+        </FieldDescription>
+      </Field>
 
       {onSave && (
         <Flex row justify='end'>
