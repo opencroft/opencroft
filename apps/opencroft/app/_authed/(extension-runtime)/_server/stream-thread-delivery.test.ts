@@ -72,6 +72,37 @@ await db.insert(space).values({
   }),
 })
 
+// A SECOND space, for the one test that drives the STREAM rather than calling
+// the delivery directly. It needs what the others do not: the source-to-
+// send-message wiring in the graph the registry serves, because that is what
+// `persistToDownstreamSendMessages` walks to find where a completed stream
+// goes. Kept apart from the space above so nothing here changes what those
+// tests resolve.
+await db.insert(space).values({
+  slug: 'stream-failure-space',
+  name: 'Stream Failure Space',
+  data: JSON.stringify({
+    nodes: [
+      {
+        id: 'sf-agent',
+        type: 'agent',
+        data: { name: 'Stream Failure Agent', providerId: 'test-provider', adapterId: 'openclaw', model: 'test-model' },
+      },
+      // A classified trigger, so the author resolves and the failure under test
+      // is NOT the unattributable-sender refusal -- which is the whole point:
+      // the refusal already reached a reader before this change.
+      { id: 'sf-src', type: 'script-node', data: {} },
+      { id: 'sf-sm', type: 'send-message', data: {} },
+      { id: 'sf-job', type: 'agent-job', data: { name: 'Task', context: 'do the thing' } },
+    ],
+    edges: [
+      { source: 'sf-src', sourceHandle: 'stdout-out', target: 'sf-sm', targetHandle: 'text-in' },
+      // Reachability for the thread's agent, from this node's own graph.
+      { source: 'sf-job', target: 'sf-agent' },
+    ],
+  }),
+})
+
 async function makeUser(email: string): Promise<{ id: string; cookie: string }> {
   const { ensureAuth } = await import('@opencroft/auth/server')
   const result = await ensureAuth().api.signUpEmail({
@@ -103,8 +134,8 @@ async function waitForPrompts(prompts: string[], count: number): Promise<void> {
   throw new Error(`expected ${count} prompt(s) to reach the agent, saw ${prompts.length}`)
 }
 
-function seedAgentSessionConnection(connection: AgentConnection): void {
-  const workspaceSlug = slug('Agent Session')
+function seedAgentSessionConnection(connection: AgentConnection, agentName = 'Agent Session'): void {
+  const workspaceSlug = slug(agentName)
   const selection: AgentSelection = {
     providerId: 'test-provider',
     adapterId: 'openclaw',
@@ -330,4 +361,70 @@ test('an agent:job envelope still creates then reuses one stable session, unaffe
   assert.equal(second.sessionKey, first.sessionKey, 'the same stable session, not a second one')
   assert.equal(second.created, false, 'the second delivery reuses the session the first one created')
   await waitForPrompts(prompts, 2)
+})
+
+// ---------------------------------------------------------------------------
+// The catch reaches the reporter
+//
+// Every test above calls the delivery directly, so none of them exercises the
+// try/catch in the STREAM path -- and that catch is the whole of this change:
+// the guard limiting reports to one kind of failure was removed, and nothing
+// but reading the diff says the remaining path reaches the reporter at all.
+// Driving the stream is what makes narrowing it again go red rather than
+// silent.
+// ---------------------------------------------------------------------------
+
+test('a send that fails on the stream path reports into the thread it was aimed at', async () => {
+  const owner = await makeUser('stream-failure-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'stream failure reporting')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'sf-agent' })
+
+  const prompts: string[] = []
+  seedAgentSessionConnection(
+    {
+      newSession: async () => ({ sessionId: `stream-failure-${crypto.randomUUID()}` }),
+      prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+        prompts.push(params.prompt.map((b) => b.text ?? '').join(''))
+        return { stopReason: 'end_turn' }
+      },
+      resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+      cancel: async () => {},
+      setSessionConfigOption: async () => ({}),
+      closeSession: async () => ({}),
+    } as unknown as AgentConnection,
+    'Stream Failure Agent',
+  )
+
+  const started = await model.startThread(reqAs(owner), chat.id, 'sf-agent', 'opening message')
+  await waitForPrompts(prompts, 1)
+
+  // A failure that is NOT the unattributable-sender refusal: the payload names
+  // a thread and an agent at once, which the delivery rejects before either
+  // branch runs. The refusal already reached a reader before this change, so
+  // testing with one would leave the widening unexercised.
+  //
+  // The thread it names is reachable, deliberately. A failure OF the
+  // destination cannot be reported TO the destination -- that residue is named
+  // in the source -- so the case worth pinning is the one where the report can
+  // actually arrive.
+  const payload = JSON.stringify({
+    message: 'this text must not reach the thread',
+    thread: started.thread.sessionKey,
+    agent: 'sf-agent',
+    queue: 'wait',
+  })
+
+  const outgoing = stream.getStream<{ text: string; final: boolean }>('stream-failure-space', 'sf-src', 'stdout-out')
+  stream.broadcast(outgoing, { text: payload, final: true })
+
+  await waitForPrompts(prompts, 2)
+  const report = prompts[1] ?? ''
+  assert.match(report, /was not delivered/, 'a person reading the thread is told the send failed')
+  assert.match(report, /thread or an agent\/job session, not both/, 'and why, in the words the failure used')
+  assert.match(report, /sf-sm/, 'and which wiring to go and fix')
+  assert.doesNotMatch(
+    report,
+    /this text must not reach the thread/,
+    'the undelivered text is never carried: a report that quotes it has delivered it',
+  )
 })
