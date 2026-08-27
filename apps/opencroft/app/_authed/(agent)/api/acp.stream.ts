@@ -1,8 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { requireSession } from '@/app/_server/require-session'
 import { historyEndEvent } from '@/app/_authed/(agent)/_lib/acp-stream'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import { withAuthors } from '@/app/_authed/(agent)/_server/attach-authors'
+import { requireSession } from '@/app/_server/require-session'
 
 // How much history a cold (re)connect replays before switching to live events.
 // Generous enough that opening a chat rarely needs an immediate "load older"
@@ -27,30 +28,44 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
             const window = agentClient.getRecordsWindow(sessionId, { records: INITIAL_HISTORY_RECORDS })
-            unsubscribe = agentClient.subscribe(
-              sessionId,
-              (event) => {
+            // Resolving a message's authors reads the database, and `subscribe`
+            // hands events over synchronously — so frames are queued onto one
+            // promise chain rather than enqueued directly. The chain is what
+            // keeps them in order: without it a user event that has to wait for
+            // a lookup would arrive after replies that were emitted later, and
+            // the transcript would assemble itself wrongly for exactly the
+            // sessions with the most to resolve.
+            let inOrder = Promise.resolve()
+            const send = (frame: unknown | Promise<unknown>) => {
+              inOrder = inOrder.then(async () => {
                 try {
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(await frame)}\n\n`))
                 } catch {}
-              },
-              { fromIndex: window?.startIndex },
-            )
+              })
+            }
+            unsubscribe = agentClient.subscribe(sessionId, (event) => send(withAuthors(event)), {
+              fromIndex: window?.startIndex,
+            })
             // subscribe() replays only the bounded tail window synchronously before
             // it returns (or is a noop if the session doesn't exist), so every
-            // replayed event is already enqueued above by this point. Ship one more
+            // replayed event is already queued above by this point. Ship one more
             // frame marking the boundary (and the pagination cursor for "load
             // older") — the client batches everything before it into a single
             // render instead of one state update per replayed event.
-            try {
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify(
-                    historyEndEvent(window?.startIndex ?? 0, window?.hasMore ?? false, window?.header),
-                  )}\n\n`,
-                ),
-              )
-            } catch {}
+            //
+            // The header is resolved like any other user event: it is the same
+            // message as the block that replaces it once the rest of its turn
+            // loads, so it must not be the one message that draws differently.
+            send(
+              (async () =>
+                historyEndEvent(
+                  window?.startIndex ?? 0,
+                  window?.hasMore ?? false,
+                  window?.header
+                    ? { index: window.header.index, event: await withAuthors(window.header.event) }
+                    : undefined,
+                ))(),
+            )
           },
           cancel() {
             unsubscribe()

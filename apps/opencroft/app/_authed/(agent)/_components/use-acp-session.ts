@@ -7,11 +7,11 @@ import { usePaginatedHistory } from 'agent-chat/use-paginated-history'
 import { toEditableParts } from 'agent-chat/user-parts'
 import { isTerminalToolStatus } from 'agent-client/fold'
 import { DEFAULT_PRESENCE } from 'agent-client/presence'
-import type { ChatEvent, PermissionOpt, Presence, QueuedPrompt, QueueMode } from 'agent-client/types'
+import type { PermissionOpt, Presence, QueuedPrompt, QueueMode } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 
 import type { AgentSession } from '@/app/_authed/(agent)/_components/agent-chat'
-import { type AcpStreamEvent, HISTORY_END_KIND } from '@/app/_authed/(agent)/_lib/acp-stream'
+import { type AcpStreamEvent, type AuthoredChatEvent, HISTORY_END_KIND } from '@/app/_authed/(agent)/_lib/acp-stream'
 import { headerFromWindow, userText } from '@/app/_authed/(agent)/_lib/build-blocks'
 import type { ChatMessage, ChatPart } from '@/app/_authed/(agent)/_lib/messages'
 import { READER_ORIGIN, type WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
@@ -184,7 +184,7 @@ export interface Folded {
 // "load older" prepend (which shifts every existing event's position within
 // `events`, but not its absolute index) never changes an already-rendered
 // message's id. See ChatMessage.id.
-export function fold(events: ChatEvent[], baseIndex: number): Folded {
+export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
   const messages: ChatMessage[] = []
   const tools = new Map<string, ToolPart>()
   const permissions = new Map<string, PendingPermission>()
@@ -211,7 +211,16 @@ export function fold(events: ChatEvent[], baseIndex: number): Folded {
     switch (event.kind) {
       case 'user': {
         assistant = null
-        messages.push({ id, role: 'user', parts: [{ type: 'text', text: event.text }], timestamp: 0 })
+        messages.push({
+          id,
+          role: 'user',
+          parts: [{ type: 'text', text: event.text }],
+          timestamp: 0,
+          // Carried straight through from the event that brought this turn.
+          // Spread rather than assigned so a turn with nothing resolved has no
+          // field at all, which is what it looked like before this existed.
+          ...(event.authors ? { authors: event.authors } : {}),
+        })
         waiting = true
         break
       }
@@ -342,7 +351,7 @@ export function useAcpSession(
   openRef.current = openTransport ?? ensureLocalSessionTransport
   const open = useCallback((source: LocalSource) => openRef.current(source), [])
   const [sessionId, setSessionId] = useState<string | null>(null)
-  const [events, setEvents] = useState<ChatEvent[]>([])
+  const [events, setEvents] = useState<AuthoredChatEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [localWaiting, setLocalWaiting] = useState(false)
   const [canFork, setCanFork] = useState(false)
@@ -375,7 +384,7 @@ export function useAcpSession(
   // in flight (see acp-stream.ts), committed to `events` in one `setEvents` call
   // when the history_end marker arrives — so a long reopened session paints once
   // instead of one React state update (and one fold() re-run) per stored event.
-  const historyBufferRef = useRef<ChatEvent[]>([])
+  const historyBufferRef = useRef<AuthoredChatEvent[]>([])
   const replayingHistoryRef = useRef(true)
   // Absolute (server-side) index of `events[0]` — see fold()'s doc comment.
   // Set from the stream's history_end payload on every (re)connect; decremented

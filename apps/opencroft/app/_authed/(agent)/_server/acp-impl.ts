@@ -32,6 +32,7 @@ import { usableContextWindow } from 'agent-client/context-window'
 import { rebuildDelivery, splitDelivery } from 'agent-client/queue-tags'
 import type { AgentSelection, Presence, PromptOrigin, QueueMode } from 'agent-client/types'
 
+import type { AuthoredRecordsWindow } from '@/app/_authed/(agent)/_lib/acp-stream'
 import type { PromptOriginInput } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import {
   deletePersistedConfigOptions,
@@ -45,6 +46,7 @@ import {
   writePersistedSession,
 } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import { withAuthors } from '@/app/_authed/(agent)/_server/attach-authors'
 import { queueStore } from '@/app/_authed/(agent)/_server/queue-store'
 import {
   forceBypassMode,
@@ -513,6 +515,37 @@ export async function editTurnLocalImpl(data: {
   // for incoming messages does not hold back their own edit.
   await agentClient.prompt(meta.id, text, { queue: 'wait', origin: { kind: 'system' } })
   return { sessionId: meta.id }
+}
+
+/**
+ * A page of older history, with its messages' authors resolved.
+ *
+ * The same resolution the live stream applies, because this page holds the
+ * same messages the stream would have sent had its window reached back
+ * further. A message that shows its sender's face when it arrives live and not
+ * when it is paged back in is one message with two behaviours.
+ *
+ * The header is resolved too, for the same reason: it is the same message as
+ * the block that replaces it once the rest of its turn loads.
+ */
+export async function sessionHistoryPageImpl(
+  sessionId: string,
+  beforeIndex: number,
+  records: number,
+): Promise<AuthoredRecordsWindow | null> {
+  const window = agentClient.getRecordsWindow(sessionId, { beforeIndex, records })
+  if (!window) {
+    return null
+  }
+  const [events, header] = await Promise.all([
+    Promise.all(window.events.map(withAuthors)),
+    window.header ? withAuthors(window.header.event) : undefined,
+  ])
+  return {
+    ...window,
+    events,
+    ...(window.header && header ? { header: { index: window.header.index, event: header } } : {}),
+  }
 }
 
 /**

@@ -140,12 +140,36 @@ test('a person keeps the handle their past messages were stamped with after a re
   assert.equal(await authorForPerson('person-2'), 'bo')
 })
 
-test('a person with no handle is refused rather than stamped with their display name', async () => {
-  // Falling back to the display name is not a smaller version of working: a
-  // display name is free text, so it can be set to exactly somebody else's
-  // handle, and the message would then resolve to an account that never sent
-  // it. Refusing is surfaced to the sender; guessing is surfaced to nobody.
-  await db.insert(user).values({ id: 'person-3', name: 'alice', email: 'person-3@example.test', emailVerified: false })
+test('a person who has no handle yet is given one rather than refused', async () => {
+  // Somebody who signed up after this process started. The startup pass will
+  // never reach them, and refusing would mean a new account cannot speak until
+  // the next restart.
+  await db.insert(user).values({ id: 'person-3', name: 'Frank', email: 'person-3@example.test', emailVerified: false })
 
-  await assert.rejects(() => authorForPerson('person-3'), UnattributableSendError)
+  const author = await authorForPerson('person-3')
+
+  assert.equal(author, 'frank')
+  assert.equal(await store.currentUsername({ kind: 'user', id: 'person-3' }), 'frank', 'and it is stored, not derived')
+})
+
+test('the handle a person is given is never one somebody else already holds', async () => {
+  // The collision that makes a display-name fallback unsafe, met head-on: the
+  // new account is displayed under exactly an existing handle. It must not be
+  // handed that handle, because every message the other account ever sent
+  // would then be ambiguous.
+  await db.insert(user).values({ id: 'person-4', name: 'Ada', email: 'person-4@example.test', emailVerified: false })
+  await store.changeUsername({ kind: 'user', id: 'person-4' }, 'ada')
+  await db.insert(user).values({ id: 'person-5', name: 'Ada', email: 'person-5@example.test', emailVerified: false })
+
+  const author = await authorForPerson('person-5')
+
+  assert.notEqual(author, 'ada', 'the handle already belongs to somebody')
+  assert.equal(await authorForPerson('person-4'), 'ada', 'and the holder keeps it')
+})
+
+test('a message from an account that no longer exists is refused', async () => {
+  // The refusal nothing can repair. There is no display name to fall back to
+  // and no account to give a handle, so naming it anything would be an
+  // invention.
+  await assert.rejects(() => authorForPerson('person-gone'), UnattributableSendError)
 })

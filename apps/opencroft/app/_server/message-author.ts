@@ -1,5 +1,5 @@
 import { AGENT_NODE_TYPE } from '@/app/_authed/(agent)/_shared/agent-node-shape'
-import { currentUsername } from '@/app/_server/usernames'
+import { currentUsername, ensureUsernameForUser } from '@/app/_server/usernames'
 
 /**
  * Who a message is from — one answer for both kinds of sender.
@@ -98,15 +98,23 @@ export const SEND_MESSAGE_SYSTEM_AUTHOR = 'system.send-message'
  * account that never sent it. That is the same forgery the graph half above
  * refuses, arriving by a different door.
  *
- * Refuses for the same reason the agent branch does, and the caller surfaces
- * it: an account with no handle cannot be named, and there is nothing else
- * safe to fall back to. Every account is given one at startup, so reaching
- * this means something is wrong rather than something is new.
+ * A person who has none yet is GIVEN one here rather than refused. The startup
+ * pass covers everyone who existed when the process began and nobody who
+ * signed up after it, so refusing would mean a new account could not speak
+ * until the next restart — a rule about identifiers turning into an outage for
+ * exactly the people least able to explain it.
+ *
+ * The refusal that remains is the one nothing can repair: an account that is
+ * not there. There is deliberately no fall back to a display name, here or
+ * anywhere — it is free text, so it can be set to exactly somebody else's
+ * handle, and a message stamped with one would resolve to an account that
+ * never sent it. That is the same forgery the graph half refuses, arriving by
+ * a different door.
  */
 export async function authorForPerson(userId: string): Promise<string> {
-  const username = await currentUsername({ kind: 'user', id: userId })
+  const username = await ensureUsernameForUser(userId)
   if (!username) {
-    throw new UnattributableSendError('This message has no sender: your account has no username yet.')
+    throw new UnattributableSendError('This message has no sender: that account no longer exists.')
   }
   return username
 }
