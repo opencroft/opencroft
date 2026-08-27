@@ -35,6 +35,19 @@ test('the comparison is against the message above, not against everyone seen so 
   assert.deepEqual(faces, [true, true, true, true], 'every message begins a run when senders alternate')
 })
 
+test('a new turn always opens with a face, even when the same sender spoke last', () => {
+  // The case the batch-local rule gets wrong if a run is ever carried across
+  // calls. A turn is a delivery, and a delivery opens with its sender's face
+  // whatever came before it -- so this function must have no memory between
+  // one batch and the next, and starting the second sequence with the sender
+  // who ended the first is what proves it.
+  const firstTurn = facesInRun([said('alice'), said('alice')])
+  const secondTurn = facesInRun([said('alice'), said('alice')])
+
+  assert.deepEqual(firstTurn, [true, false])
+  assert.deepEqual(secondTurn, [true, false], 'the second turn opens with a face rather than continuing the run')
+})
+
 test('a single sender speaking throughout shows one face, at the top', () => {
   assert.deepEqual(facesInRun([said('alice'), said('alice'), said('alice')]), [true, false, false])
 })
