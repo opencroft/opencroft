@@ -122,8 +122,6 @@ export async function authorForPerson(userId: string): Promise<string> {
 interface NodeLike {
   id?: string
   type?: string
-  /** Only the display name, and only to seed a handle the first time one is claimed. */
-  data?: { name?: string }
 }
 
 /**
@@ -155,6 +153,11 @@ interface NodeLike {
  * and agents in the space graph, and the handle is the only thing they share:
  * it is what a message carries, and which of the two sources answers for it is
  * decided when the message is read, not when it is sent.
+ *
+ * It CLAIMS a handle when the agent has none, which is why it takes a display
+ * name to seed one from. That is only correct where the caller has named the
+ * agent it is sending as — the direct-send path does, a node fed into a run
+ * does not. `authorForSourceNode` therefore refuses instead of calling this.
  */
 export async function authorForAgentNode(agentNodeId: string, displayName: string): Promise<string> {
   const username = await ensureUsernameForAgent(agentNodeId, displayName)
@@ -178,7 +181,18 @@ export async function authorForSourceNode(sourceNodeId: string | undefined, node
   }
 
   if (source.type === AGENT_NODE_TYPE) {
-    return authorForAgentNode(sourceNodeId, source.data?.name ?? '')
+    // Deliberately NOT `authorForAgentNode`. That claims a handle when there is
+    // none, which is right where a caller has named the agent it is sending as,
+    // and wrong here: a node fed into a run may carry no name at all, and
+    // minting an identifier from nothing would put this agent's words under one
+    // nobody chose. On this path the refusal IS the design.
+    const username = await currentUsername({ kind: 'agent', id: sourceNodeId })
+    if (!username) {
+      // An agent with no handle cannot be named, and naming it anything else
+      // would attribute its words to something that did not say them.
+      throw new UnattributableSendError(`This message has no sender: agent ${sourceNodeId} has no username.`)
+    }
+    return username
   }
 
   const systemAuthor = SYSTEM_AUTHOR_BY_NODE_TYPE[source.type]
