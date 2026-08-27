@@ -238,14 +238,28 @@ export function ChatUserMessage({
   // a face whatever was said before it.
   const faces = facesInRun(parts)
 
-  // The face for a message, or the space where one would be. The blank is the
-  // avatar's own size rather than nothing, so a message inside a run sits at
-  // the same left edge as the one that opened it -- a run that shifted
-  // sideways as it went would read as a different kind of thing rather than as
-  // the same sender continuing.
+  // The face for a message, or the space where one would be.
+  //
+  // TWO CONDITIONS, AND THE SECOND IS NOT A GUARD AGAINST A MISSING PROP. A
+  // face is drawn when the message opens a run AND there is an account to draw
+  // -- because `AgentAvatar` with nothing to show falls through to a generic
+  // person icon, and a person icon per sender change is a picture of somebody
+  // standing in for every message this application cannot identify. Unresolved
+  // has to stay visibly unresolved: the name renders as the text it holds and
+  // no face appears, which is the state the design already has for it.
+  //
+  // The population makes it concrete rather than theoretical: every author
+  // stamped before accounts had handles resolves to nothing, so gating on the
+  // run alone would put an anonymous face on the opening message of every run
+  // in every transcript already written.
+  //
+  // The blank is the avatar's own size rather than nothing, so a message
+  // inside a run sits at the same left edge as the one that opened it -- a run
+  // that shifted sideways as it went would read as a different kind of thing
+  // rather than as the same sender continuing.
   const markerFor = (part: ChatUserMessagePart, index: number) =>
-    faces[index] ? (
-      <AgentAvatar avatar={part.authorAccount?.avatarUrl ?? undefined} name={part.authorAccount?.name} size='md' />
+    faces[index] && part.authorAccount ? (
+      <AgentAvatar avatar={part.authorAccount.avatarUrl ?? undefined} name={part.authorAccount.name} size='md' />
     ) : (
       <span aria-hidden className='block size-8' />
     )
@@ -253,8 +267,14 @@ export function ChatUserMessage({
   const body = (
     // The same rail the replies below are rendered in, so both columns start at
     // the same left edge by construction rather than by a matched indent -- if
-    // the rail's width changes, the two move together. The avatar has no source
-    // yet and falls back to a person icon, which is the intended placeholder.
+    // the rail's width changes, the two move together.
+    //
+    // The sentence that used to end this comment -- that the avatar has no
+    // source and falls back to a person icon, which is the intended
+    // placeholder -- was true of the single avatar a turn used to carry, and
+    // stopped being true the moment there was one per sender change. A
+    // placeholder standing in for a whole turn is a layout decision; one per
+    // sender change is a claim about who spoke.
     <>
       {earlier.map((part, index) => (
         // Each message is its own rail segment, because each one answers the
