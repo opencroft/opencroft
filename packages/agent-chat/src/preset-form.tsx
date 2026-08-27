@@ -3,7 +3,7 @@
 import { AGENT_PROVIDERS } from 'agent-client/agent-providers'
 import type { AgentProfile } from 'agent-client/profiles'
 import { reasoningEfforts } from 'agent-client/reasoning'
-import { adaptersForProvider, findProvider } from 'agent-client/resolve'
+import { adaptersForProvider, findAdapter, findProvider } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
 import { Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { Button } from 'ui/components/ui/button'
@@ -116,7 +116,17 @@ export function AgentPresetForm({
   const provider = findProvider(selection.providerId)
   const adapters = adaptersForProvider(selection.providerId)
   const isCustomEndpoint = selection.providerId === 'openai-compatible'
-  const isNative = selection.adapterId === 'native'
+  // The adapter's KIND, not its id. These agree today because exactly one
+  // adapter carries `kind: 'native'` and happens to be spelled `native` too --
+  // but `native` is overloaded in this file's own vocabulary, since five
+  // adapters carry `protocol: 'native'` and are not the in-process harness. The
+  // agreement is a coincidence the next adapter can break.
+  //
+  // It matters more than it did. As a gate this only had to be conservative;
+  // it now also picks the context-window placeholder, which is a claim about
+  // what `knownContextWindow` will do with an empty field. That has to match
+  // that function exactly, and `findAdapter(...).kind` is the test it makes.
+  const isNative = findAdapter(selection.adapterId)?.kind === 'native'
   // Reasoning support: detected from the model for the native harness; for ACP
   // agents it's advertised at session start, so offer a generic scale.
   const reasoningOptions = isNative
