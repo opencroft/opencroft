@@ -423,17 +423,52 @@ export async function getThread(request: Request, threadId: string): Promise<Gro
  * they are opening, and the honest default for "what is this chat about" is
  * what they just called it. Editing either one afterwards is what splits them.
  */
-export async function createGroupChat(request: Request, name: string, topic?: string): Promise<GroupChatSummary> {
+/** Options for `createGroupChat`. */
+export interface CreateGroupChatOptions {
+  /**
+   * The chat's slug, when the caller owns the address rather than deriving it
+   * from the name.
+   *
+   * A space's own chat is the case this exists for: the space finds its chat by
+   * looking up its OWN slug, so the two have to be the same string. Letting the
+   * name decide breaks that the moment a display name and a space slug differ,
+   * which they routinely do.
+   *
+   * A slug given here is CHECKED, never repaired. Slugifying it for the caller
+   * would be the one failure this seam must not have: the caller looks the chat
+   * up again by the address it passed in, so a slug quietly minted as something
+   * else surfaces much later as "no such chat" rather than as the bad argument
+   * it was, at a point where nothing connects the two.
+   */
+  slug?: string
+}
+
+// A caller-supplied slug is checked rather than repaired -- see
+// `CreateGroupChatOptions.slug` for why. A fault, not a refusal: the name path's
+// refusals are shown in a form, and this argument comes from code.
+function checkedSlug(slug: string): string {
+  if (!slug || slugify(slug) !== slug) {
+    throw new Error(`Not a usable group chat slug: ${JSON.stringify(slug)}`)
+  }
+  return slug
+}
+
+export async function createGroupChat(
+  request: Request,
+  name: string,
+  topic?: string,
+  options?: CreateGroupChatOptions,
+): Promise<GroupChatSummary> {
   const sessionUser = await requireSignedInUser(request)
   const trimmedName = name.trim()
   if (!trimmedName) {
     throw new Error('A group chat needs a name')
   }
   const trimmedTopic = topic?.trim() || trimmedName
-  // The slug comes from the name and is fixed from here: it goes into every
-  // session key this chat's threads are opened under, and a key that moves is
-  // a key that stops finding its session.
-  const chatSlug = slugify(trimmedName)
+  // The slug is fixed from here: it goes into every session key this chat's
+  // threads are opened under, and a key that moves is a key that stops finding
+  // its session. It comes from the name unless the caller owns the address.
+  const chatSlug = options?.slug === undefined ? slugify(trimmedName) : checkedSlug(options.slug)
   if (!chatSlug) {
     throw new GroupChatAccessError('slug-unusable', 'That name has no letters or numbers to build a name from')
   }
@@ -444,7 +479,16 @@ export async function createGroupChat(request: Request, name: string, topic?: st
     // the same instant both pass this and one loses at the constraint, which
     // surfaces as a fault rather than this refusal. Rare, and honest: a fault
     // is what an unexpected loss is.
-    throw new GroupChatAccessError('slug-taken', `A group chat named "${trimmedName}" already exists`)
+    // Two different sentences because there are two different callers. Someone
+    // naming a chat needs to hear about the name; something minting a chat at
+    // an address it already holds needs to hear about the address, which is the
+    // only part it chose.
+    throw new GroupChatAccessError(
+      'slug-taken',
+      options?.slug === undefined
+        ? `A group chat named "${trimmedName}" already exists`
+        : `A group chat already answers to "${chatSlug}"`,
+    )
   }
   return db.transaction(async (tx) => {
     // A LIVE CHAT OUTRANKS AN ALIAS, so taking this slug takes it outright: any

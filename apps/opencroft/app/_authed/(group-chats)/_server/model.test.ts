@@ -3645,3 +3645,159 @@ test('an empty first message is refused before a thread is created', async () =>
   const threads = await db.select().from(groupChatThread).where(eq(groupChatThread.groupChatId, chat.id))
   assert.equal(threads.length, 0, 'a refused start leaves no half-made thread behind')
 })
+
+// ---------------------------------------------------------------------------
+// Thread references: dots are what we hand out, colons are what we store, and
+// both resolve. The rule is ADDITIVE -- the stored form is tried exactly as
+// given first, and only a miss makes the dotted form worth converting. The last
+// two tests here are the ones that fail if that order is reversed or if the
+// dot/colon test is applied to the whole reference instead of its body.
+// ---------------------------------------------------------------------------
+
+test('a thread answers to the dotted form and to the colon form alike', async () => {
+  const owner = await makeUser('dotted-ref-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Dotted Refs')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-solo' })
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+
+  await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Standup' })
+  await waitForPrompts(prompts, 1)
+
+  await model.sendMessageInThreadAsAgent('Agent Solo', 'dotted-refs.agent-session.standup', 'by dots', 'wait')
+  await waitForPrompts(prompts, 2)
+  assert.match(prompts[1] ?? '', /by dots/)
+
+  // The deprecated spelling of the same address keeps working -- every
+  // reference written down before this change is in that form, and those are
+  // not ours to rewrite.
+  await model.sendMessageInThreadAsAgent('Agent Solo', 'dotted-refs:agent-session:standup', 'by colons', 'wait')
+  await waitForPrompts(prompts, 3)
+  assert.match(prompts[2] ?? '', /by colons/)
+})
+
+test('a dotted reference still resolves when it carries the stored prefix', async () => {
+  // The prefix contributes a colon of its own, so a dot/colon test applied to
+  // the WHOLE reference refuses to convert this one -- and refuses precisely
+  // the spelling the rule exists to accept. The test belongs on the body.
+  const owner = await makeUser('prefixed-dotted-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Prefixed Dots')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-solo' })
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+
+  await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Standup' })
+  await waitForPrompts(prompts, 1)
+
+  await model.sendMessageInThreadAsAgent(
+    'Agent Solo',
+    'group-chat:prefixed-dots.agent-session.standup',
+    'prefixed and dotted',
+    'wait',
+  )
+  await waitForPrompts(prompts, 2)
+  assert.match(prompts[1] ?? '', /prefixed and dotted/)
+})
+
+test('the ref handed out is the dotted form, and it is what the key says', async () => {
+  const owner = await makeUser('emitted-ref-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Emitted Refs')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-solo' })
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Standup' })
+  await waitForPrompts(prompts, 1)
+
+  assert.equal(
+    started.thread.sessionKey,
+    'group-chat:emitted-refs:agent-session:standup',
+    'storage is unchanged -- this is a display change, not a change of address',
+  )
+  assert.equal(model.threadRefFromSessionKey(started.thread.sessionKey), 'emitted-refs.agent-session.standup')
+
+  const chats = await model.listGroupChatsForAgentView('Agent Solo')
+  const mine = chats.find((c) => c.ref === chat.id)
+  assert.ok(mine)
+  assert.equal(mine.threads[0]?.ref, 'emitted-refs.agent-session.standup', 'the listing hands out the dotted form')
+})
+
+test('a stored key that contains a dot of its own is matched whole, not rewritten', async () => {
+  // This is why resolution is additive rather than a normalization pass. A key
+  // minted before slugs existed is an opaque string, and it can contain a dot;
+  // converting one on the way in turns a key that resolves today into one that
+  // does not, and the failure looks like a missing thread rather than like a
+  // rewritten address.
+  const owner = await makeUser('dotted-legacy-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Dotted Legacy')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-solo' })
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+
+  const storedKey = `group-chat:${chat.id}:agent-session:v1.2.3`
+  const [legacy] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-session',
+      sessionKey: storedKey,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(legacy)
+
+  await model.sendMessageInThreadAsAgent('Agent Solo', storedKey, 'to the dotted legacy key', 'wait')
+  await waitForPrompts(prompts, 1)
+  assert.match(prompts[0] ?? '', /to the dotted legacy key/)
+})
+
+// ---------------------------------------------------------------------------
+// The create seam: a caller that owns the address passes it in, rather than
+// hoping a display name slugifies to the same string.
+// ---------------------------------------------------------------------------
+
+test('a caller can mint a group chat at an address it chooses', async () => {
+  const owner = await makeUser('seam-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'A Name That Slugifies Differently', undefined, {
+    slug: 'my-space',
+  })
+  assert.equal(chat.slug, 'my-space', 'the caller owns the address here, and the name does not decide it')
+  assert.equal(chat.name, 'A Name That Slugifies Differently', 'and the name is untouched')
+
+  // The point of the seam: it is findable again by the address that was passed,
+  // which is the whole reason the caller supplies one.
+  const resolved = await model.resolveGroupChatBySlug(reqAs(owner), 'my-space')
+  assert.equal(resolved.state, 'member')
+  assert.ok(resolved.state === 'member')
+  assert.equal(resolved.chat.id, chat.id)
+})
+
+test('a slug that is not slug-shaped is refused, never repaired', async () => {
+  const owner = await makeUser('seam-refusal-owner@example.test')
+  await assert.rejects(
+    () => model.createGroupChat(reqAs(owner), 'Some Name', undefined, { slug: 'Not A Slug' }),
+    /Not a usable group chat slug/,
+    'repairing it would mint a chat at an address the caller never asked for',
+  )
+  await assert.rejects(() => model.createGroupChat(reqAs(owner), 'Some Name', undefined, { slug: '' }))
+})
+
+test('with no slug given, the name still decides', async () => {
+  const owner = await makeUser('seam-default-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), '  Seam Default Name  ')
+  assert.equal(chat.slug, 'seam-default-name')
+})
+
+test('an address already taken is refused in terms of the address', async () => {
+  const owner = await makeUser('seam-taken-owner@example.test')
+  await model.createGroupChat(reqAs(owner), 'First Holder', undefined, { slug: 'contested' })
+  const refusal = await captureRefusal(() =>
+    model.createGroupChat(reqAs(owner), 'Second Comer', undefined, { slug: 'contested' }),
+  )
+  assert.equal(refusal.code, 'slug-taken')
+  assert.match(refusal.message, /contested/, 'the caller chose the address, so the address is what it hears about')
+})
