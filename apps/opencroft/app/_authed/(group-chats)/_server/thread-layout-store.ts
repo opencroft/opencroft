@@ -1,3 +1,4 @@
+import { requireGroupChatMember } from '@/app/_authed/(group-chats)/_server/model'
 import { getSetting, upsertSettingCas } from '@/server/data'
 
 // Folder structure and order for ONE group chat's thread list.
@@ -58,6 +59,17 @@ function parseLayout(raw: string): ThreadLayout {
   }
 }
 
+/**
+ * Read the layout. The two below are the STORE: they take a chat id and touch
+ * the settings row, and they check nothing.
+ *
+ * Nothing reachable from the browser may call them. A layout is per chat, and
+ * the settings table is global, so an ungated write would let any signed-in
+ * person rearrange -- or fill with nonsense -- the thread list of a chat they
+ * are not in. The gated pair further down is what a server function calls;
+ * these stay exported because the concurrency behaviour is worth testing
+ * without a signed-in session to build first.
+ */
 export async function readThreadLayout(groupChatId: string): Promise<VersionedThreadLayout> {
   const row = await getSetting(settingId(groupChatId))
   if (!row) {
@@ -94,4 +106,34 @@ export async function writeThreadLayout(
 ): Promise<number | null> {
   const row = await upsertSettingCas(settingId(groupChatId), JSON.stringify(layout), expectedVersion)
   return row?.version ?? null
+}
+
+// ── Membership-gated, and the only pair a server function may call ───────
+//
+// Same split as artifacts.ts next door: the check lives with the data rather
+// than in the createServerFn wrapper, so a new caller cannot reach the rows by
+// skipping a layer.
+
+/** The layout of a chat the caller is a member of. */
+export async function getThreadLayout(request: Request, groupChatId: string): Promise<VersionedThreadLayout> {
+  await requireGroupChatMember(request, groupChatId)
+  return readThreadLayout(groupChatId)
+}
+
+/**
+ * Replace the layout of a chat the caller is a member of.
+ *
+ * `null` still means the version check refused it, and it means nothing about
+ * membership: a non-member gets the same refusal every other group-chat read
+ * gets, thrown, rather than a quiet null that a client would report as a lost
+ * race.
+ */
+export async function putThreadLayout(
+  request: Request,
+  groupChatId: string,
+  layout: ThreadLayout,
+  expectedVersion: number,
+): Promise<number | null> {
+  await requireGroupChatMember(request, groupChatId)
+  return writeThreadLayout(groupChatId, layout, expectedVersion)
 }

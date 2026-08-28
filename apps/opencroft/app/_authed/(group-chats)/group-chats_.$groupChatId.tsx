@@ -4,7 +4,6 @@ import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
 import { GroupChatDetail } from 'ui/group-chat/group-chat-detail'
-import { GroupChatThreadList } from 'ui/group-chat/group-chat-thread-list'
 import { ScrollPage } from 'ui/layout/scrollpage'
 
 import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
@@ -19,6 +18,7 @@ import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chat
 import { GroupChatMembersDialog } from '@/app/_authed/(group-chats)/_components/group-chat-members-dialog'
 import { GroupChatPinsPanel } from '@/app/_authed/(group-chats)/_components/group-chat-pins-panel'
 import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
+import { GroupChatThreadTree } from '@/app/_authed/(group-chats)/_components/group-chat-thread-tree'
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
 import { threadSessionKey } from '@/app/_authed/(group-chats)/_lib/thread-session-key'
@@ -26,6 +26,7 @@ import { useSafeBack } from '@/app/_authed/(group-chats)/_lib/use-safe-back'
 import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import {
   deleteGroupChatThread,
+  getGroupChatThreadLayout,
   getMyGroupChatView,
   listDirectoryUsersForPicker,
   listGroupChatThreadsView,
@@ -47,16 +48,18 @@ export const Route = createFileRoute('/_authed/(group-chats)/group-chats_/$group
       // reconcile instead of one to report.
       const chat = await getMyGroupChatView({ data: params.groupChatId })
       const threads = await listGroupChatThreadsView({ data: params.groupChatId })
-      // The picker's candidates, and the chat's pins. Loaded here rather than
-      // on opening anything so the panel and the actions are usable the
-      // moment the screen is: all three are membership-independent once the
-      // two reads above have already passed, so none of them can refuse.
-      const [directory, agents, pins] = await Promise.all([
+      // The picker's candidates, the chat's pins, and how its threads are
+      // arranged. Loaded here rather than on opening anything so the panel and
+      // the actions are usable the moment the screen is: all four are
+      // membership-independent once the two reads above have already passed,
+      // so none of them can refuse.
+      const [directory, agents, pins, layout] = await Promise.all([
         listDirectoryUsersForPicker(),
         listAgentNodes(),
         listMyGroupChatPins({ data: params.groupChatId }),
+        getGroupChatThreadLayout({ data: params.groupChatId }),
       ])
-      return { chat, threads, directory, agents, pins }
+      return { chat, threads, directory, agents, pins, layout }
     }),
   component: GroupChatDetailPage,
   errorComponent: GroupChatErrorState,
@@ -119,7 +122,7 @@ function GroupChatDetailPage() {
   if (data.refused) {
     return <GroupChatRefusal code={data.code} />
   }
-  const { chat, directory, agents, pins } = data
+  const { chat, directory, agents, pins, layout } = data
   const threadBeingRenamed = threads.find((t: GroupChatThreadEntry) => t.id === renameThreadId)
 
   return (
@@ -158,17 +161,11 @@ function GroupChatDetailPage() {
         pins={<GroupChatPinsPanel groupChatId={groupChatId} pins={pins} />}
         threads={
           threads.length > 0 ? (
-            <GroupChatThreadList
-              // `agentIsMember` is the server's fact; `disabled` is what this
-              // screen does with it. The mapping lives here rather than in
-              // the read model so a server type never carries a CSS state.
-              // `status` comes from the same shared activity poll the sidebar
-              // chat list reads, keyed on each thread's own session key.
-              threads={threads.map((t: GroupChatThreadEntry) => ({
-                ...t,
-                disabled: !t.agentIsMember,
-                status: threadStatusById.get(t.id),
-              }))}
+            <GroupChatThreadTree
+              groupChatId={groupChatId}
+              threads={threads}
+              statusById={threadStatusById}
+              layout={layout}
               onSelect={(threadId) => goToThread(threadId)}
               // The kit hands back the row id -- the THREAD id, not the session
               // key this has to act on. That split is deliberate on its side

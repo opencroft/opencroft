@@ -57,6 +57,8 @@ import {
   listGroupChatsForUserView,
   listThreadsInGroupChatView,
 } from '@/app/_authed/(group-chats)/_server/read-model'
+import type { ThreadLayout, VersionedThreadLayout } from '@/app/_authed/(group-chats)/_server/thread-layout-store'
+import { getThreadLayout, putThreadLayout } from '@/app/_authed/(group-chats)/_server/thread-layout-store'
 import type { DirectoryUser } from '@/app/_authed/(group-chats)/_server/user-directory'
 import { listDirectoryUsers } from '@/app/_authed/(group-chats)/_server/user-directory'
 import type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
@@ -79,6 +81,8 @@ export type {
   MemberPrincipal,
   MemberRef,
   StartThreadResult,
+  ThreadLayout,
+  VersionedThreadLayout,
 }
 
 /**
@@ -339,6 +343,33 @@ export const listGroupChatThreadsView = createServerFn({ method: 'GET', strict: 
     async ({ data: groupChatId }): Promise<GroupChatThreadEntry[]> =>
       listThreadsInGroupChatView(getRequest(), groupChatId),
   )
+
+// ── Thread folders ───────────────────────────────────────────────────────
+
+export const getGroupChatThreadLayout = createServerFn({ method: 'GET', strict: { output: false } })
+  .inputValidator((groupChatId: string) => groupChatId)
+  .handler(async ({ data: groupChatId }): Promise<VersionedThreadLayout> => getThreadLayout(getRequest(), groupChatId))
+
+/**
+ * Saved, or refused because someone else saved first.
+ *
+ * The refusal comes back as DATA and carries the layout that won, for the two
+ * reasons this file already returns refusals rather than throwing them: a
+ * thrown error crosses the boundary as a bare message, and this one has a
+ * payload the caller needs. There is nothing for the caller to do with "your
+ * write did not land" on its own — it has to show what did land instead.
+ */
+export type SaveThreadLayoutResult = { ok: true; version: number } | { ok: false; current: VersionedThreadLayout }
+
+export const saveGroupChatThreadLayout = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { groupChatId: string; layout: ThreadLayout; expectedVersion: number }) => data)
+  .handler(async ({ data }): Promise<SaveThreadLayoutResult> => {
+    const version = await putThreadLayout(getRequest(), data.groupChatId, data.layout, data.expectedVersion)
+    if (version === null) {
+      return { ok: false, current: await getThreadLayout(getRequest(), data.groupChatId) }
+    }
+    return { ok: true, version }
+  })
 
 // The people a member picker offers. Signed-in only; see user-directory.ts for
 // why this is its own function rather than a widened admin read.
