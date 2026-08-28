@@ -66,8 +66,8 @@ export function renderToolCall(item: Extract<KitDetailItem, { kind: 'tool' }>) {
 // `AgentChatSession` (adds `messages`/`historyHeader`, which the package
 // component deliberately does not take; see its own note on why). Consumers
 // that only render the transcript pass `blocks` built from `messages`
-// themselves (see `renderToolCall`'s siblings in chat-hosts.tsx and the
-// group-chat thread route); consumers that need the raw log directly (the
+// themselves (see `renderToolCall`'s siblings and the group-chat thread
+// route); consumers that need the raw log directly (the
 // voice input controls' `getMessages`) read `messages` off this type.
 export interface AgentSession {
   sessionKey: string

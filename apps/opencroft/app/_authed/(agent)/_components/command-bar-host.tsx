@@ -9,7 +9,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { AgentChatInputControls, type AgentSession } from '@/app/_authed/(agent)/_components/agent-chat'
 import { getAutoApprove, setAutoApprove } from '@/app/_authed/(approvals)/_server/actions'
-import { useOptionalOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 
 interface AgentCommandBarHostProps {
   session: AgentSession
@@ -22,12 +21,6 @@ interface AgentCommandBarHostProps {
   onBlur?: () => void
   /** Extra content rendered at the start of the command bar (left of sparkles icon). */
   leadingBarContent?: ReactNode
-  /** Rendered in the command-bar menu (e.g. a session picker shown on focus). The
-   * caller decides when it's non-null. */
-  focusMenu?: ReactNode
-  /** When set, the Sparkles start icon becomes a button that runs this (e.g. open
-   * the session picker). Must be stable — it feeds the memoized command bar. */
-  onStartIconClick?: () => void
   /** The session's agent-advertised config options (model/effort/mode/…). */
   configOptions?: SessionConfigOption[]
   /** Change one of the session's config options. Must be stable — it feeds the
@@ -53,10 +46,6 @@ interface AgentCommandBarHostProps {
    * with the session key so a flush during a session switch always targets the
    * session the text actually belongs to. */
   onDraftChange?: (key: string, text: string) => void
-  /** Render the bar inline (return it) instead of publishing to the canvas
-   *  overlay. For a standalone route with no OverlayProvider (a group-chat
-   *  thread). Default false (publish to overlay). */
-  inline?: boolean
   /** Show the sparkles start icon. Default true; false hides it where the agent
    *  is fixed (a group-chat thread) and there is no session picker. */
   startIcon?: boolean
@@ -88,14 +77,11 @@ const APPROVAL_TITLES = {
   off: 'Auto-approve OFF — MCP tool calls require approval (click to auto-approve)',
 }
 
-// This app's binding of the package's useAgentCommandBar: everything the kit
-// panel needs that neither the design-kit component nor the package hook can
-// know — the approval state behind two server calls, the extension-provided
-// input controls, and the overlay slot the bar is published into. The SAME
-// wrapper serves both mounts (the canvas overlay's ChatHost and the group-
-// chat thread route) — there is one composition path, not two, which is what
-// keeps a feature added here from needing to be re-added on the other
-// surface. `inline` is the only thing that differs between them.
+// This app's binding of the package's useAgentCommandBar: what neither the
+// design-kit component nor the package hook can know — the approval state
+// behind two server calls, and the extension-provided input controls. It
+// returns the bar for its caller to place; there is one composition path, so a
+// feature added here reaches every surface that mounts it.
 export function AgentCommandBarHost({
   session,
   agentNodeId,
@@ -104,8 +90,6 @@ export function AgentCommandBarHost({
   onFocus,
   onBlur,
   leadingBarContent,
-  focusMenu,
-  onStartIconClick,
   configOptions,
   onSetConfigOption,
   usage,
@@ -113,7 +97,6 @@ export function AgentCommandBarHost({
   onClear,
   savedDraft,
   onDraftChange,
-  inline = false,
   startIcon = true,
   sendError,
   onDismissSendError,
@@ -175,7 +158,6 @@ export function AgentCommandBarHost({
     onFocus,
     onBlur,
     leadingBarContent,
-    onStartIconClick,
     startIcon,
     configOptions,
     onSetConfigOption,
@@ -204,7 +186,5 @@ export function AgentCommandBarHost({
     presence,
   })
 
-  useOptionalOverlay({ menu: focusMenu ?? null, bar: barNode })
-
-  return inline ? barNode : null
+  return barNode
 }

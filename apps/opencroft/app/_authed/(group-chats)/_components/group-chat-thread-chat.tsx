@@ -142,7 +142,7 @@ export function GroupChatThreadChat({
   // resolves, and the reader sees an empty chat where their conversation was.
   // A thread's id never moves, so the server reads whatever key it has now.
   const openTransport = useCallback<OpenTransport>(() => openGroupChatThreadSession({ data: thread.id }), [thread.id])
-  const acp = useAcpSession(source, undefined, thread.agent.name, undefined, sendTransport, openTransport)
+  const acp = useAcpSession(source, thread.agent.name, sendTransport, openTransport)
 
   // Computed over the FULL message list, not the visible window: turn indices
   // (for edit/fork) must stay correct regardless of how much is rendered, and
@@ -168,8 +168,7 @@ export function GroupChatThreadChat({
     (threadId: string): Promise<CompactStatus> => getGroupChatThreadCompactStatus({ data: threadId }),
     [],
   )
-  // Mirrors the 1:1 chat's own requestCompact (chat-hosts.tsx): a genuine,
-  // non-access failure -- compactGroupChatThread only catches
+  // A genuine, non-access failure -- compactGroupChatThread only catches
   // GroupChatAccessError itself, so requestCompactOnGraph's own throws (no
   // live process for this session, or no standing-context resolver claimed
   // it) come through as an ordinary thrown error, not a `{ok:false, code}`
@@ -245,11 +244,9 @@ export function GroupChatThreadChat({
     }
   }, [acp.session.waiting])
 
-  // The composer reuses AgentCommandBarHost (the same component the 1:1 chat
-  // uses) with `inline` -- it renders the bar here instead of publishing to the
-  // dashboard overlay, which neither host surface has a provider for.
-  // startIcon is false: a thread is with one fixed agent, so there is no
-  // session picker.
+  // The composer is AgentCommandBarHost, which returns the bar for this
+  // component to place. startIcon is false: a thread is with one fixed agent,
+  // so there is no session picker.
   //
   // The host sends through `acp.session.send`, which inherits the transport
   // passed to useAcpSession: every message goes through
@@ -263,7 +260,6 @@ export function GroupChatThreadChat({
   // refusals, and the text is back in the composer to be copied or retried.
   const composer = (
     <AgentCommandBarHost
-      inline
       startIcon={false}
       session={acp.session}
       agentNodeId={thread.agent.nodeId}

@@ -82,9 +82,8 @@ function GroupChatDetailPage() {
   // collected and where a refusal has somewhere to be shown.
   const [renameThreadId, setRenameThreadId] = useState<string | null>(null)
 
-  // Same shared poll and derivation the sidebar chat list uses (see
-  // use-chat-list-nodes.ts's toLeaf) — one status vocabulary, one source,
-  // rather than a second mechanism invented for this screen. A thread's
+  // The shared session-activity poll, not a second mechanism invented for this
+  // screen — one status vocabulary, one source. A thread's
   // sessionKey is exactly the tab key that poll already reports on; nothing
   // about it is group-chat-specific.
   const threads = data.refused ? [] : data.threads

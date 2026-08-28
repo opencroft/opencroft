@@ -742,8 +742,8 @@ export type MemberPrincipal = { kind: 'user'; userId: string } | { kind: 'agent'
  * change if one is ever needed.
  *
  * An agent principal is validated against `listAgentNodesImpl()` — the plain
- * implementation in agents-impl.ts, the same source `ai-panel.tsx` populates
- * its agent picker from — so a group chat cannot be given a member that is
+ * implementation in agents-impl.ts, the same source the agent pickers are
+ * populated from — so a group chat cannot be given a member that is
  * not, in fact, an agent node that exists. Imported from agents-impl.ts
  * rather than agents.ts for two separate reasons: it avoids nesting one
  * `createServerFn` inside another's handler, and agents.ts must keep no
@@ -1058,8 +1058,8 @@ export function composePinReminder(texts: string[]): string {
 
 /**
  * The agent's OWN standing instructions — the `agent-instruction` nodes wired
- * into its `instructions-in` handle, the same ones a 1:1 chat delivers
- * (ai-panel.tsx) and a send-message node delivers (send-message-helpers.ts).
+ * into its `instructions-in` handle, the same ones a send-message node
+ * delivers (send-message-helpers.ts).
  *
  * A thread is an ordinary session with that agent, so it gets them too. Until
  * this existed, a group-chat thread was the ONE surface that dropped them:

@@ -14,12 +14,12 @@ import {
   useState,
 } from 'react'
 
-import type { CommandMode } from '@/app/_authed/(dashboard)/_canvas/canvas-command-bar'
+import { type CommandMode, NO_COMMAND_MODE } from '@/app/_authed/(dashboard)/_canvas/canvas-command-bar'
 import { recordManagerCall } from '@/app/_authed/(dashboard)/_canvas/ctrlg-debug'
 
 type Slot = 'header' | 'content' | 'menu' | 'bar'
 
-const BUILTIN_MODES: CommandMode[] = ['ai', 'search', 'find']
+const BUILTIN_MODES: CommandMode[] = [NO_COMMAND_MODE, 'search', 'find']
 
 /** How a slot is written, and where the overlay paints. Stable for the life of the provider. */
 export interface OverlaySlotControls {
@@ -110,14 +110,14 @@ function useOverlayState(): { controls: OverlaySlotControls; values: OverlaySlot
 /** Owns the overlay's mode and slot state; useOverlay() works below this provider. */
 export function OverlayProvider({ children }: { children: ReactNode }) {
   const { controls: slots, values } = useOverlayState()
-  const [mode, setModeState] = useState<CommandMode>('ai')
+  const [mode, setModeState] = useState<CommandMode>(NO_COMMAND_MODE)
   const [params, setParams] = useState<unknown>(null)
   const [focusTick, setFocusTick] = useState(0)
   const [commandFocused, setCommandFocused] = useState(false)
 
   // TEMPORARY: every mode transition funnels through this one
   // wrapped setter, regardless of caller (activate, dismiss, or a bare
-  // setMode from a consumer like resetToAI) -- so an unexplained transition
+  // setMode from a consumer resetting to rest) -- so an unexplained transition
   // shows up in the log even from a caller nobody suspected yet.
   const setMode = useCallback((next: CommandMode | ((prev: CommandMode) => CommandMode)) => {
     setModeState((prev) => {
@@ -143,8 +143,8 @@ export function OverlayProvider({ children }: { children: ReactNode }) {
     slots.setSlot('menu', null)
     // Extension modes live entirely in the overlay — leaving one active after a
     // dismiss keeps its launcher highlighted and its component mounted with a
-    // stale (cleared) content slot. Fall back to the default mode instead.
-    setMode((prev) => (BUILTIN_MODES.includes(prev) ? prev : 'ai'))
+    // stale (cleared) content slot. Fall back to the resting mode instead.
+    setMode((prev) => (BUILTIN_MODES.includes(prev) ? prev : NO_COMMAND_MODE))
 
     const focused = document.activeElement
     if (focused instanceof HTMLElement) {

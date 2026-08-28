@@ -348,14 +348,9 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
   }
 }
 
-// Title the agent self-reports at the very start of its first reply.
-const TITLE_TAG = /<opencroft-title>([\s\S]*?)<\/opencroft-title>/i
-
 export function useAcpSession(
   source: LocalSource,
-  transformOutgoing?: (text: string, isFirstMessage: boolean) => string,
   botName = 'assistant',
-  onTitle?: (title: string) => void,
   // Optional on purpose — see SendTransport. No argument, no behaviour change.
   sendTransport?: SendTransport,
   // Optional on purpose — see OpenTransport. No argument, no behaviour change.
@@ -411,39 +406,18 @@ export function useAcpSession(
   // as older pages are prepended by loadMoreHistory. Live-appended events don't
   // move events[0], so they never touch this.
   const baseIndexRef = useRef(0)
-  // Whether `ensureLocalSession` just created a brand-new ACP session for this
-  // tab (vs. resuming a tab-cache hit or a cold-start session/load) — the same
-  // authoritative signal the send-message path keys session-scoped envelope
-  // content off (see acp.ts / message-envelope.ts). Read inside callbacks to
-  // avoid stale closures.
-  const createdRef = useRef(false)
-  // Latched the moment deliver() hands off any message for this tab source, so
-  // two quick sends can't both see `createdRef.current` true and both claim
-  // "first" — attaching the title request twice and re-titling the chat on the
-  // second reply. Reset only when the tab source changes — a fork's sessionId
-  // swap must not clear it mid-conversation.
-  const deliveredOnceRef = useRef(false)
   // Outgoing prompts are serialized through this chain. The server assigns
   // queue/turn order by request arrival, so two concurrent promptLocal calls
   // could otherwise arrive reordered on the network and invert the messages.
   // Each link swallows its own failure so one failed send never blocks (or
   // reorders) the sends behind it.
   const sendChainRef = useRef<Promise<void>>(Promise.resolve())
-  // Armed only when we deliver a live first message (which carries the title
-  // request). This keeps auto-titling off history replay and later turns: a
-  // remounted hook starts disarmed, so reconnecting a session never re-titles.
-  const titleRequestedRef = useRef(false)
-  const transformRef = useRef(transformOutgoing)
-  transformRef.current = transformOutgoing
-  // Held in a ref for the same reason as transformRef above: `deliver` is
-  // memoised on [sessionId], and reading the transport straight from the
-  // parameter would put it in that dependency list. A host passing an inline
-  // arrow would then give `deliver` a new identity every render, and every
-  // callback built on it downstream with it.
+  // Held in a ref because `deliver` is memoised on [sessionId], and reading the
+  // transport straight from the parameter would put it in that dependency list.
+  // A host passing an inline arrow would then give `deliver` a new identity
+  // every render, and every callback built on it downstream with it.
   const transportRef = useRef(sendTransport)
   transportRef.current = sendTransport
-  const onTitleRef = useRef(onTitle)
-  onTitleRef.current = onTitle
   // sessionId is read through a ref (not closed over directly) so fetchPage's
   // identity doesn't need to change — and can't go stale — across renders.
   const sessionIdRef = useRef<string | null>(null)
@@ -490,7 +464,6 @@ export function useAcpSession(
     setCanFork(false)
     setCanSteer(false)
     setSeedUsage(undefined)
-    deliveredOnceRef.current = false
     sendChainRef.current = Promise.resolve()
     open({ agentNodeId, jobNodeId, tabKey })
       .then((result) => {
@@ -499,7 +472,6 @@ export function useAcpSession(
           setCanFork(result.canFork)
           setCanSteer(result.canSteer)
           setAdapterId(result.adapterId)
-          createdRef.current = result.created
           setSeedUsage(
             result.contextUsage
               ? {
@@ -578,49 +550,16 @@ export function useAcpSession(
 
   const folded = useMemo(() => fold(events, baseIndexRef.current), [events])
 
-  // Pull the self-reported title out of the first reply and apply it once. Gated
-  // on titleRequestedRef so it only fires for the live first turn — never on the
-  // replayed transcript of a reopened session or on any later message.
-  useEffect(() => {
-    if (!titleRequestedRef.current) {
-      return
-    }
-    const reply = folded.messages.find((m) => m.role === 'assistant')
-    if (!reply) {
-      return
-    }
-    const text = reply.parts.reduce((acc, part) => (part.type === 'text' ? acc + part.text : acc), '')
-    const match = text.match(TITLE_TAG)
-    if (!match) {
-      return
-    }
-    titleRequestedRef.current = false
-    const title = match[1].trim()
-    if (title) {
-      onTitleRef.current?.(title)
-    }
-  }, [folded.messages])
-
-  // The single seam where a message leaves the client (applies the outgoing
-  // transform, so it runs for every message — including ones the server will
-  // queue rather than deliver right away). The server owns the queue-vs-prompt
-  // decision, but NOT the order of concurrent requests — it queues by arrival —
-  // so requests are chained here to reach it in send order. `front` asks the
-  // server to queue ahead of anything already held.
+  // The single seam where a message leaves the client — it runs for every
+  // message, including ones the server will queue rather than deliver right
+  // away. The server owns the queue-vs-prompt decision, but NOT the order of
+  // concurrent requests — it queues by arrival — so requests are chained here
+  // to reach it in send order. `front` asks the server to queue ahead of
+  // anything already held.
   const deliver = useCallback(
     (value: string, opts: { front?: boolean; queue: QueueMode; origin: WirePromptOrigin }) => {
       if (!sessionId) {
         return
-      }
-      const transform = transformRef.current
-      const isFirst = createdRef.current && !deliveredOnceRef.current
-      deliveredOnceRef.current = true
-      // Transform at send time (not when the chain link runs): the chain
-      // preserves order, so "first" and the canvas context are decided the
-      // moment the user hit send.
-      const text = transform ? transform(value, isFirst) : value
-      if (isFirst) {
-        titleRequestedRef.current = true
       }
       setLocalWaiting(true)
       setSendError(undefined)
@@ -628,7 +567,7 @@ export function useAcpSession(
         try {
           await (transportRef.current ?? promptLocalTransport)({
             sessionId,
-            text,
+            text: value,
             front: opts.front,
             queue: opts.queue,
             origin: opts.origin,
@@ -643,10 +582,7 @@ export function useAcpSession(
           //
           // Two things have to happen instead. The failure gets copy the host
           // can render, and the text goes back into the composer so it is not
-          // lost. `value` is restored, not `text`: `text` has the outgoing
-          // transform applied (session-init envelope, canvas context), and
-          // putting that in front of the user would show them machinery they
-          // never typed.
+          // lost.
           setSendError(sendFailureMessage(error))
           draftKey.current += 1
           setDraft({ text: value, key: draftKey.current })

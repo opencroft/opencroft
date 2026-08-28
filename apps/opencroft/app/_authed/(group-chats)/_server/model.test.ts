@@ -84,7 +84,7 @@ after(async () => {
 // Seeded once, before any test runs (and before `addMember`'s first call to
 // `listAgentNodesImpl`, which loads and then caches the space registry for
 // the life of this process) — a real space graph with two real agent nodes,
-// the same shape `ai-panel.tsx` reads, rather than a mocked module.
+// the same shape the agent pickers read, rather than a mocked module.
 // Node-module namespace exports are non-configurable, so `mock.method`
 // cannot stand in for either `getSessionUser` or the agents module here
 // (confirmed: it throws "Cannot redefine property"); everything below is a

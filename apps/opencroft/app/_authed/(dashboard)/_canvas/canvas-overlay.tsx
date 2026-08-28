@@ -1,19 +1,14 @@
 'use client'
 
-import { useLocation } from '@tanstack/react-router'
 import * as lucideIcons from 'lucide-react'
 import { type LucideIcon, X } from 'lucide-react'
 import type * as React from 'react'
-import { useCallback, useContext, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { Flex } from 'ui/layout/flex'
-import { ScrollArea } from 'ui/scroll-area'
 
-import { useChatTabsMaybe } from '@/app/_authed/(agent)/_lib/chat-tabs-context'
-import { AiPanel } from '@/app/_authed/(dashboard)/_canvas/ai-panel'
-import type { CommandNodeEntry } from '@/app/_authed/(dashboard)/_canvas/canvas-command-bar'
+import { type CommandNodeEntry, NO_COMMAND_MODE } from '@/app/_authed/(dashboard)/_canvas/canvas-command-bar'
 import { CommandBar, CommandBarMenu } from '@/app/_authed/(dashboard)/_canvas/command-bar'
 import { recordBubbled, recordCaptured, recordRender } from '@/app/_authed/(dashboard)/_canvas/ctrlg-debug'
-import { InspectorContext } from '@/app/_authed/(dashboard)/_canvas/inspector-context'
 import {
   useOverlay,
   useOverlayBackIntercept,
@@ -28,9 +23,7 @@ import { cn } from '@/lib/utils'
 interface CanvasOverlayProps {
   nodes: CommandNodeEntry[]
   spaceName: string
-  spaceSlug: string
   selectedNodeId: string | null
-  mcpRequestsActive: boolean
   onFocusNode: (nodeId: string) => void
   onActiveChange?: (active: boolean) => void
   // Bumped once extension loading settles (see flow-editor.tsx) — commandModes
@@ -72,9 +65,7 @@ export function resolveShortcutCode(sc: CommandModeShortcut): string | undefined
 export function CanvasOverlay({
   nodes,
   spaceName,
-  spaceSlug,
   selectedNodeId,
-  mcpRequestsActive,
   onFocusNode,
   onActiveChange,
   extensionsVersion,
@@ -83,7 +74,6 @@ export function CanvasOverlay({
     mode,
     params: modeParams,
     focusTick,
-    commandFocused,
     slots,
     activate: activateMode,
     dismiss: dismissOverlay,
@@ -93,31 +83,11 @@ export function CanvasOverlay({
   // This is the surface that paints the slots, so it is the one place that
   // subscribes to their values — see useOverlaySlotValues.
   const slotValues = useOverlaySlotValues()
-  const searchParams = new URLSearchParams(useLocation({ select: (l) => l.searchStr }))
-  const chatParam = searchParams.get('chat') ?? null
-  const chatTabs = useChatTabsMaybe()
 
   const extensionModes = useMemo(() => {
     void extensionsVersion
     return extensionRegistry.allCommandModes()
   }, [extensionsVersion])
-
-  useEffect(() => {
-    if (!chatParam) {
-      return
-    }
-    activateMode('ai')
-  }, [chatParam, activateMode])
-
-  // The sidebar's "Chats" entry bumps listRequest to open the session list here;
-  // activating 'ai' surfaces it (docked in the inspector or as the focus overlay).
-  const listRequest = chatTabs?.listRequest ?? 0
-  useEffect(() => {
-    if (!listRequest) {
-      return
-    }
-    activateMode('ai')
-  }, [listRequest, activateMode])
 
   // Matched on `event.code` (the physical key), not `event.key` (the
   // character it produces) — on a non-QWERTY layout the same physical F/P/I
@@ -144,9 +114,9 @@ export function CanvasOverlay({
         return
       }
       const code = event.code
-      if (code === 'KeyF' || code === 'KeyP' || code === 'KeyI') {
+      if (code === 'KeyF' || code === 'KeyP') {
         event.preventDefault()
-        activateMode(code === 'KeyF' ? 'search' : code === 'KeyP' ? 'find' : 'ai')
+        activateMode(code === 'KeyF' ? 'search' : 'find')
         return
       }
       let matched: string | null = null
@@ -182,17 +152,9 @@ export function CanvasOverlay({
     return () => window.removeEventListener('keydown', onKey)
   }, [extensionModes, activateMode])
 
-  const resetToAI = useCallback(() => {
-    setMode('ai')
+  const resetMode = useCallback(() => {
+    setMode(NO_COMMAND_MODE)
   }, [setMode])
-
-  const { setNode: setInspectorNode } = useContext(InspectorContext)
-  // Only AiPanel's chat is relocated to the inspector; every other overlay mode
-  // (search, find, extension modes) keeps using the floating overlay. While the
-  // MCP Requests tab is selected, the content slot belongs to request views
-  // (e.g. diffs), so the chat must not claim it. In 'focused' chat mode the chat
-  // is also kept out of the inspector and rendered as the floating overlay.
-  const aiChatActive = chatTabs?.chatMode !== 'focused' && !mcpRequestsActive && mode === 'ai'
 
   // Notify parent when overlay content or header is active
   const prevActive = useRef(false)
@@ -206,26 +168,9 @@ export function CanvasOverlay({
 
   const overlayActive = !!(slotValues.content || slotValues.header)
 
-  const dismiss = useCallback(() => {
-    dismissOverlay()
-    // Closing the chat clears the active session; the provider then drops ?chat=.
-    chatTabs?.setActiveKey(chatTabs.fallbackKey)
-  }, [dismissOverlay, chatTabs])
+  const dismiss = dismissOverlay
 
   useOverlayBackIntercept(overlayActive, dismiss)
-
-  // Dock the chat conversation (content + header) into the node inspector panel
-  // instead of the floating overlay; the command bar input stays at the bottom.
-  useEffect(() => {
-    setInspectorNode(
-      aiChatActive && slotValues.content ? (
-        <InspectorChat header={slotValues.header} onClose={dismiss}>
-          {slotValues.content}
-        </InspectorChat>
-      ) : null,
-    )
-  }, [aiChatActive, slotValues.content, slotValues.header, setInspectorNode, dismiss])
-  useEffect(() => () => setInspectorNode(null), [setInspectorNode])
 
   const onOverlayMouseDown = useCallback(() => {
     dismiss()
@@ -252,18 +197,10 @@ export function CanvasOverlay({
   // ever painted shows up here, correlated against managerCalls's transition log.
   recordRender(mode, !!activeExtMode, overlayActive)
 
+  // Nothing at rest: the canvas carries no command surface of its own, and an
+  // id matching no registered extension paints nothing rather than falling
+  // back to a bar the reader never asked for.
   const activeMode = (() => {
-    if (mode === 'ai') {
-      return (
-        <AiPanel
-          spaceName={spaceName}
-          spaceSlug={spaceSlug}
-          selectedNodeId={selectedNodeId}
-          focused={commandFocused}
-          onFocusChange={setCommandFocused}
-        />
-      )
-    }
     if (mode === 'search' || mode === 'find') {
       return (
         <SearchFindBar
@@ -272,7 +209,7 @@ export function CanvasOverlay({
           focusTick={focusTick}
           onFocusNode={onFocusNode}
           onFocusChange={setCommandFocused}
-          onReset={resetToAI}
+          onReset={resetMode}
         />
       )
     }
@@ -286,21 +223,12 @@ export function CanvasOverlay({
           focusTick={focusTick}
           params={modeParams}
           onFocusNode={onFocusNode}
-          onClose={resetToAI}
+          onClose={resetMode}
           onFocusChange={setCommandFocused}
         />
       )
     }
-    return (
-      <SearchFindBar
-        mode='find'
-        nodes={nodes}
-        focusTick={focusTick}
-        onFocusNode={onFocusNode}
-        onFocusChange={setCommandFocused}
-        onReset={resetToAI}
-      />
-    )
+    return null
   })()
 
   return (
@@ -314,14 +242,14 @@ export function CanvasOverlay({
         onKeyDown={onOverlayKeyDown}
         className={cn(
           'absolute inset-0 z-10',
-          (slotValues.content && !aiChatActive) || slotValues.menu ? 'pointer-events-auto' : 'pointer-events-none',
+          slotValues.content || slotValues.menu ? 'pointer-events-auto' : 'pointer-events-none',
         )}
       >
         <div
           className={cn(
             'pointer-events-none absolute inset-0',
             'bg-background/80 transition-opacity duration-200',
-            slotValues.content && !aiChatActive ? 'opacity-100' : 'opacity-0',
+            slotValues.content ? 'opacity-100' : 'opacity-0',
           )}
         />
         <div className='absolute top-3 left-3 z-20'>
@@ -332,7 +260,7 @@ export function CanvasOverlay({
             onDeactivate={dismiss}
           />
         </div>
-        {slotValues.content && !aiChatActive && (
+        {slotValues.content && (
           <button
             type='button'
             title='Close overlay'
@@ -346,18 +274,18 @@ export function CanvasOverlay({
         )}
         <ChatArea>
           <ChatHeader fade={!!slotValues.content} onMouseDown={stopOverlayClose}>
-            {aiChatActive ? null : slotValues.header}
+            {slotValues.header}
           </ChatHeader>
           <ChatContent
             compact={!activeExtMode?.fullWidth}
             className={cn(
               'bg-background rounded-xl',
               'transition-opacity duration-200',
-              slotValues.content && !aiChatActive ? 'opacity-100' : 'opacity-0',
+              slotValues.content ? 'opacity-100' : 'opacity-0',
             )}
             onMouseDown={stopOverlayClose}
           >
-            {aiChatActive ? null : slotValues.content}
+            {slotValues.content}
           </ChatContent>
           <ChatBar compact fade={!!slotValues.content} onMouseDown={stopOverlayClose}>
             {slotValues.menu && <CommandBarMenu>{slotValues.menu}</CommandBarMenu>}
@@ -412,45 +340,5 @@ function ExtensionModeLaunchers({
         )
       })}
     </div>
-  )
-}
-
-// The active chat conversation, docked inside the node inspector panel.
-function InspectorChat({
-  header,
-  onClose,
-  children,
-}: {
-  header: React.ReactNode
-  onClose: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <Flex expanded className='w-full h-full min-h-0 bg-card'>
-      <Flex row align='center' className='gap-2 px-3 py-2 border-b shrink-0'>
-        {/* `header` carries the back control on the conversation page (page 2); it
-            is null on the list page (page 1), leaving just the title. */}
-        {header}
-        <span className='text-sm font-semibold flex-1 truncate'>Chat</span>
-        <button
-          type='button'
-          onClick={onClose}
-          className='size-6 inline-flex items-center justify-center rounded-md hover:bg-accent cursor-pointer'
-          aria-label='Close chat'
-        >
-          <X className='size-3.5' />
-        </button>
-      </Flex>
-      <ScrollArea
-        className={cn(
-          'flex-1 min-h-0',
-          '[&_[data-radix-scroll-area-viewport]>div]:!flex',
-          '[&_[data-radix-scroll-area-viewport]>div]:!flex-col',
-          '[&_[data-radix-scroll-area-viewport]>div]:!min-h-full',
-        )}
-      >
-        {children}
-      </ScrollArea>
-    </Flex>
   )
 }
