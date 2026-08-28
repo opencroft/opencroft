@@ -4,7 +4,6 @@ import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
 import { GroupChatDetail } from 'ui/group-chat/group-chat-detail'
-import { GroupChatThreadList } from 'ui/group-chat/group-chat-thread-list'
 import { ScrollPage } from 'ui/layout/scrollpage'
 
 import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
@@ -19,19 +18,24 @@ import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chat
 import { GroupChatMembersDialog } from '@/app/_authed/(group-chats)/_components/group-chat-members-dialog'
 import { GroupChatPinsPanel } from '@/app/_authed/(group-chats)/_components/group-chat-pins-panel'
 import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
+import { GroupChatThreadTree } from '@/app/_authed/(group-chats)/_components/group-chat-thread-tree'
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
 import { threadSessionKey } from '@/app/_authed/(group-chats)/_lib/thread-session-key'
+import { EMPTY_THREAD_LAYOUT } from '@/app/_authed/(group-chats)/_lib/thread-tree-layout'
 import { useSafeBack } from '@/app/_authed/(group-chats)/_lib/use-safe-back'
+import { useThreadLayout } from '@/app/_authed/(group-chats)/_lib/use-thread-layout'
 import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import {
   deleteGroupChatThread,
+  getGroupChatThreadLayout,
   getMyGroupChatView,
   listDirectoryUsersForPicker,
   listGroupChatThreadsView,
   listMyGroupChatPins,
 } from '@/app/_authed/(group-chats)/_server/actions'
 import { listAgentNodes } from '@/app/_authed/(space)/_server/agents'
+import { useGroupChatsSlot } from '@/app/_shell/group-chats-slot'
 
 // Inside one group chat: its topic, who is taking part, and its threads.
 //
@@ -47,16 +51,18 @@ export const Route = createFileRoute('/_authed/(group-chats)/group-chats_/$group
       // reconcile instead of one to report.
       const chat = await getMyGroupChatView({ data: params.groupChatId })
       const threads = await listGroupChatThreadsView({ data: params.groupChatId })
-      // The picker's candidates, and the chat's pins. Loaded here rather than
-      // on opening anything so the panel and the actions are usable the
-      // moment the screen is: all three are membership-independent once the
-      // two reads above have already passed, so none of them can refuse.
-      const [directory, agents, pins] = await Promise.all([
+      // The picker's candidates, the chat's pins, and how its threads are
+      // arranged. Loaded here rather than on opening anything so the panel and
+      // the actions are usable the moment the screen is: all four are
+      // membership-independent once the two reads above have already passed,
+      // so none of them can refuse.
+      const [directory, agents, pins, layout] = await Promise.all([
         listDirectoryUsersForPicker(),
         listAgentNodes(),
         listMyGroupChatPins({ data: params.groupChatId }),
+        getGroupChatThreadLayout({ data: params.groupChatId }),
       ])
-      return { chat, threads, directory, agents, pins }
+      return { chat, threads, directory, agents, pins, layout }
     }),
   component: GroupChatDetailPage,
   errorComponent: GroupChatErrorState,
@@ -98,6 +104,46 @@ function GroupChatDetailPage() {
 
   const goToThread = (threadId: string) =>
     navigate({ to: '/group-chats/$groupChatId/$threadId', params: { groupChatId, threadId } })
+
+  // The arrangement is owned here, not by either list, because the same one is
+  // drawn twice -- on this screen and in the sidebar -- and a copy in each
+  // would drift apart the first time either was dragged.
+  const { layout, persist } = useThreadLayout(groupChatId, data.refused ? EMPTY_THREAD_LAYOUT : data.layout)
+  const threadTree = (
+    <GroupChatThreadTree
+      threads={threads}
+      statusById={threadStatusById}
+      layout={layout}
+      onChange={persist}
+      onSelect={goToThread}
+      // The kit hands back the row id -- the THREAD id, not the session key
+      // this has to act on. That split is deliberate on its side (the kit knows
+      // nothing about session keys) and the mapping is already here:
+      // `sessionKey` rides on every list entry.
+      //
+      // Same server fn the sidebar chat list's own Stop process calls, so there
+      // is one way to stop a process, not two. Nothing is invalidated
+      // afterwards: the row's state comes from the shared activity poll, which
+      // reports the process gone on its next tick.
+      onStopProcess={(threadId) => {
+        const sessionKey = threadSessionKey(threads, threadId)
+        if (!sessionKey) {
+          return
+        }
+        stopProcessLocal({ data: sessionKey }).catch((err) => {
+          console.error('Failed to stop thread process', threadId, err)
+        })
+      }}
+      onRename={(threadId) => setRenameThreadId(threadId)}
+      onDelete={(threadId) => {
+        setDeleteError(undefined)
+        setDeleteTarget(threadId)
+      }}
+    />
+  )
+  // The same element in the sidebar. Everything it is built from is listed:
+  // the handlers close over `threads` and over state setters, which are stable.
+  useGroupChatsSlot(threads.length > 0 ? threadTree : null, [groupChatId, threads, threadStatusById, layout])
 
   const confirmDelete = async () => {
     if (!deleteTarget) {
@@ -156,46 +202,7 @@ function GroupChatDetailPage() {
           />
         }
         pins={<GroupChatPinsPanel groupChatId={groupChatId} pins={pins} />}
-        threads={
-          threads.length > 0 ? (
-            <GroupChatThreadList
-              // `agentIsMember` is the server's fact; `disabled` is what this
-              // screen does with it. The mapping lives here rather than in
-              // the read model so a server type never carries a CSS state.
-              // `status` comes from the same shared activity poll the sidebar
-              // chat list reads, keyed on each thread's own session key.
-              threads={threads.map((t: GroupChatThreadEntry) => ({
-                ...t,
-                disabled: !t.agentIsMember,
-                status: threadStatusById.get(t.id),
-              }))}
-              onSelect={(threadId) => goToThread(threadId)}
-              // The kit hands back the row id -- the THREAD id, not the session
-              // key this has to act on. That split is deliberate on its side
-              // (the kit knows nothing about session keys) and the mapping is
-              // already here: `sessionKey` rides on every list entry.
-              //
-              // Same server fn the sidebar chat list's own Stop process calls,
-              // so there is one way to stop a process, not two. Nothing is
-              // invalidated afterwards: the row's state comes from the shared
-              // activity poll, which reports the process gone on its next tick.
-              onStopProcess={(threadId) => {
-                const sessionKey = threadSessionKey(threads, threadId)
-                if (!sessionKey) {
-                  return
-                }
-                stopProcessLocal({ data: sessionKey }).catch((err) => {
-                  console.error('Failed to stop thread process', threadId, err)
-                })
-              }}
-              onRename={(threadId) => setRenameThreadId(threadId)}
-              onDelete={(threadId) => {
-                setDeleteError(undefined)
-                setDeleteTarget(threadId)
-              }}
-            />
-          ) : undefined
-        }
+        threads={threads.length > 0 ? threadTree : undefined}
         emptyState={
           <Empty className='py-8'>
             <EmptyHeader>
