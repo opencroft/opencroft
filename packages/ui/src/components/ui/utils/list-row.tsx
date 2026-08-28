@@ -1,10 +1,21 @@
 'use client'
 
-import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
+import type { ComponentPropsWithRef, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 
 import { cn } from 'ui/lib/utils'
 
-export interface ListRowProps {
+// Everything a plain `<div>` takes, on top of the row's own props. That is not
+// convenience. This row gets handed to `asChild` triggers -- a context menu
+// today, a tooltip or a dropdown as easily -- and such a trigger renders no
+// element of its own: it clones its child and injects onto it the handlers and
+// the ref its behaviour depends on. A child that names a fixed set of props and
+// spreads nothing drops them, and the trigger is then wired to nothing. No
+// error, no warning, and the menu simply never opens.
+//
+// `title`, `children` and `onSelect` are dropped from the inherited set: a div
+// names all three as well, with different meanings, and inheriting them would
+// let two definitions of the same prop disagree quietly.
+export interface ListRowProps extends Omit<ComponentPropsWithRef<'div'>, 'title' | 'children' | 'onSelect'> {
   // The first line. Truncates rather than wrapping, so a long title never
   // grows the row.
   title: ReactNode
@@ -35,6 +46,10 @@ export interface ListRowProps {
   // synthesise from a tap, so a host that uses this owes the row its tap: it
   // has to act on selection itself. That is why this is passed in rather than
   // done here -- whatever takes the click away answers for it.
+  //
+  // Named rather than left to the spread below because a trigger injects one of
+  // these too, and the two have to compose in this order. A trigger's `asChild`
+  // merge already does that composing before this component is called.
   onPointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void
   className?: string
 }
@@ -52,6 +67,10 @@ export interface ListRowProps {
 // Unconditional, deliberately: it used to be a per-list decision, and one of the
 // two lists had simply never made it.
 //
+// It renders one real element and puts everything it is given on it. A row that
+// is the child of an `asChild` trigger IS that trigger; anything it fails to
+// forward is a piece of the trigger's behaviour that silently does not exist.
+//
 // This is the TOP-LEVEL row. A row nested inside one -- smaller type, tighter
 // radius, less padding -- is a different thing at a different scale, and pulling
 // it onto this shell would make two things agree rather than make one thing
@@ -65,10 +84,23 @@ export function ListRow({
   disabled = false,
   onSelect,
   onPointerDown,
+  onClick,
+  onKeyDown,
+  style,
   className,
+  ref,
+  ...rest
 }: ListRowProps) {
   return (
     <div
+      // First, so that everything stated below wins over anything passed in:
+      // the role, the touch handling and the active treatment are this
+      // component's to decide, not a caller's. What this spread carries is
+      // everything a wrapping trigger injects that this file does not name --
+      // `onContextMenu`, the pointer handlers behind a touch long press,
+      // `data-state` -- and that is the whole reason it is here.
+      {...rest}
+      ref={ref}
       role='button'
       tabIndex={0}
       // Nothing reads this any more, and driving the background from the prop
@@ -78,12 +110,23 @@ export function ListRow({
       // nothing else to select on.
       data-active={active}
       aria-disabled={disabled}
-      style={{ touchAction: 'pan-y', WebkitTouchCallout: 'none', userSelect: 'none' }}
+      // A caller's style is merged UNDER the row's own, not over it: the touch
+      // rules above are unconditional by design, and letting a caller drop
+      // `touch-action` would restore the per-list gesture drift this component
+      // exists to end.
+      style={{ ...style, touchAction: 'pan-y', WebkitTouchCallout: 'none', userSelect: 'none' }}
       onPointerDown={onPointerDown}
-      onClick={() => onSelect?.()}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault()
+      // Composed, not replaced. A context-menu trigger injects neither of these,
+      // but a dropdown or tooltip trigger injects both -- and the row's own
+      // selection behaviour and the trigger's must each survive the other.
+      onClick={(event) => {
+        onClick?.(event)
+        onSelect?.()
+      }}
+      onKeyDown={(event) => {
+        onKeyDown?.(event)
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
           onSelect?.()
         }
       }}
