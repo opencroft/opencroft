@@ -2,8 +2,8 @@
 // in its own module rather than alongside the server-fn export in agents.ts.
 //
 // THAT SEPARATION IS LOAD-BEARING FOR THE CLIENT BUILD, not tidiness.
-// agents.ts is imported by browser components (ai-panel.tsx,
-// use-chat-list-nodes.ts). It survives there only because its sole export is
+// agents.ts is imported by browser components (the group-chat route and members
+// dialog, the embedded agent chat). It survives there only because its sole export is
 // a `createServerFn`: the client build replaces the handler with an RPC stub,
 // which leaves agents.ts's top-level imports unused and lets them — the
 // spaces registry, and `@opencroft/db`'s native driver tail behind it — drop

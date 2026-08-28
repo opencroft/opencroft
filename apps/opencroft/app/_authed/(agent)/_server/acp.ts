@@ -1,6 +1,6 @@
 // EVERY export in this file must stay a `createServerFn`. It is imported
-// directly by browser components (app-shell.tsx, ai-panel.tsx, the chat hooks),
-// so it sits in the client graph on every page, and only the client build's
+// directly by browser components (the group-chat thread route and the chat
+// hooks), so it sits in the client graph on every page, and only the client build's
 // stub substitution keeps its server-side import tail out of the browser
 // bundle. A single plain exported function here has no stub and ships that tail
 // — see the header of acp-impl.ts, which is where plain implementations go.

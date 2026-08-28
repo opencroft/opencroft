@@ -3,7 +3,7 @@
 //
 // This lives apart from acp.ts on purpose, and the separation is load-bearing
 // for the CLIENT BUILD, not just for tidiness. acp.ts is imported directly by
-// browser components (app-shell.tsx, ai-panel.tsx, the chat hooks), so it sits
+// browser components (the group-chat thread route and the chat hooks), so it sits
 // in the client graph on every page. It survives there only because every one
 // of its exports is a `createServerFn`: the client build replaces each with an
 // RPC stub, which leaves acp.ts's own top-level imports unused and lets them —

@@ -28,7 +28,6 @@ import {
 } from '@/app/_authed/(agent)/_server/acp-impl'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { readSessions, upsertSession } from '@/app/_authed/(agent)/_server/agent-sessions-store'
-import { hideSessionByDefault } from '@/app/_authed/(agent)/_server/chat-list-layout-store'
 import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { updateNodeData } from '@/app/_authed/(extension-runtime)/_server/node-data'
 import { reportSendFailure } from '@/app/_authed/(extension-runtime)/_server/send-failure-report'
@@ -582,10 +581,6 @@ export async function deliverToSendMessageNode(
       title: route.title,
       createdAt: Date.now(),
     }).catch(() => {})
-    // A dispatch-created session is registered but never activated by the
-    // user — the sidebar shows active chats, not existing ones, so
-    // it starts hidden.
-    await hideSessionByDefault(route.sessionKey).catch(() => {})
   }
 
   // Automated senders never include the selected-node/space system context

@@ -255,11 +255,6 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     [nodes, isMobile],
   )
   const selected = nodes.find((n) => n.selected && n.type !== 'comment') ?? null
-  // The MCP Requests browser tab is visible only when no node is selected and
-  // nothing overrides the inspector; the ask-user overlay is gated on it.
-  const mcpRequestsActive =
-    !selected && browserTab === 'mcp' && !inspector.inspectorNode && (!isMobile || mobileInspectorVisible)
-
   const commandNodes = useMemo<CommandNodeEntry[]>(() => {
     void extensionsVersion
     return nodes
@@ -1136,9 +1131,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
             <CanvasOverlay
               nodes={commandNodes}
               spaceName={spaceName}
-              spaceSlug={slug}
               selectedNodeId={selected?.id ?? null}
-              mcpRequestsActive={mcpRequestsActive}
               onFocusNode={focusNode}
               onActiveChange={isMobile ? setOverlayActive : undefined}
               extensionsVersion={extensionsVersion}

@@ -1,6 +1,6 @@
 // EVERY runtime export in this file must stay a `createServerFn`. It is
-// imported directly by browser components (ai-panel.tsx,
-// use-chat-list-nodes.ts), and survives in the client graph only because the
+// imported directly by browser components (the group-chat route and members
+// dialog, the embedded agent chat), and survives in the client graph only because the
 // client build can replace each server fn with an RPC stub and then drop this
 // file's top-level imports — including the native-dependent tail behind the
 // spaces registry.
