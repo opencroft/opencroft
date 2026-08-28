@@ -29,6 +29,16 @@ export const secrets: SecretsService = {
     const rows = await db.query.secret.findMany({ where: eq(secret.storeId, storeId), orderBy: asc(secret.createdAt) })
     return rows.map(toRecord)
   },
+  async listKeys(storeId) {
+    // Columns, not `toRecord`: nothing here decrypts, so no value exists to
+    // leak on any path that starts from this call.
+    const rows = await db.query.secret.findMany({
+      columns: { key: true },
+      where: eq(secret.storeId, storeId),
+      orderBy: asc(secret.createdAt),
+    })
+    return rows.map((r) => r.key)
+  },
   async listAll() {
     const rows = await db.query.secret.findMany({ orderBy: desc(secret.updatedAt) })
     return rows.map(toRecord)
