@@ -51,6 +51,12 @@ export interface AuthorRun {
  * whatever run it lands in and closes none: it has no face to draw, and it must
  * not break a run around it either, because nobody spoke.
  *
+ * Arriving FIRST it has no run to continue, so it opens one of its own, and the
+ * sender who follows it opens another. That is deliberate rather than a gap in
+ * the rule: absorbing the first real sender into the run an unauthored message
+ * opened would take that run's account from the message NOBODY sent, and the
+ * run would render with no face at all.
+ *
  * No memory between calls. A turn is a delivery, and a delivery opens with its
  * sender's face whatever was said before it.
  */

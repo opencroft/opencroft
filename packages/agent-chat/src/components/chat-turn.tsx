@@ -321,12 +321,21 @@ export function ChatUserMessage({
           // segment per message gives the face to the opening message alone and
           // leaves every message after it holding an avatar-sized blank.
           //
-          // Keyed by the opening message's own id where it has one, and by
-          // position otherwise. A turn already sent is decoded from a text that
-          // cannot change, so nothing reorders and position IS identity; one
-          // still waiting can have a message taken out of its middle, and a
-          // positional key would then hand the removed row's state to its
-          // neighbour.
+          // Keyed by the opening message's own id where it has one, and by the
+          // run's position otherwise. A turn already sent is decoded from a
+          // text that cannot change, so nothing reorders and position IS
+          // identity. One still waiting can have a message taken out of its
+          // middle, and a positional key would renumber every run after the
+          // hole; the id keeps the runs on either side of it matched to
+          // themselves.
+          //
+          // WHAT IT DOES NOT BUY, since this key is per RUN and the shape it
+          // replaced was per message: removing the message that OPENS a run
+          // changes that run's key, so the run remounts. Nothing is lost by
+          // that today because every row below is stateless. If one ever holds
+          // state of its own -- an open menu, a selection, a transition in
+          // flight -- this is where it would be dropped, and the key would have
+          // to become something that survives its own first message going away.
           <Chained
             key={run.parts[0].id ?? runIndex}
             // Pinned rather than duplicated: the face holds the container's top

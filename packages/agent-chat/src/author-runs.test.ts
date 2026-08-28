@@ -103,6 +103,22 @@ test('a message nobody sent still lets the next real change of author end the ru
   assert.deepEqual(shape([said('kim'), said(undefined), said('lee')]), [['kim', undefined], ['lee']])
 })
 
+test('a message nobody sent, arriving first, opens a run of its own', () => {
+  // The one case where an unauthored message does not continue a run: there is
+  // none to continue. The second assertion is the reason it must not be
+  // absorbed the other way either -- a run takes its account from the message
+  // that opened it, so folding the real sender into the unauthored run would
+  // draw that run from the message NOBODY sent, and the sender would lose their
+  // face.
+  const runs = authorRuns([said(undefined), withAccount('kim', 'Kim Alvarez')])
+
+  assert.deepEqual(
+    runs.map((run) => run.parts.map((part) => part.author)),
+    [[undefined], ['kim']],
+  )
+  assert.deepEqual(runs[1]?.account, { name: 'Kim Alvarez' }, 'the sender who follows keeps their own face')
+})
+
 test('a run carries the account of the message that opened it', () => {
   // What the face is drawn from. Taken from the opening message rather than
   // searched for across the run: every message in a run carries the same
