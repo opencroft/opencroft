@@ -152,10 +152,17 @@ test('the name after the prefix is trimmed, as the resolver trims it', () => {
 })
 
 // The prefix stands in for the WHOLE value, so it only counts at the start —
-// the resolver sends anything else as typed.
+// the resolver sends anything else as typed. Both fixtures put the prefix
+// mid-string, one with text after the name and one without: the second is the
+// one that fails if the name is ever extracted from wherever the prefix
+// happens to sit rather than from a fixed offset.
 test('a value merely containing the prefix later is not a reference', () => {
-  const nodes = [node('agent-1', { note: 'pass secret:SPEECH_KEY here' }, 'agent')]
-  assert.deepEqual(findSecretReferences(nodes, 'SPEECH_KEY'), [])
+  const trailing = [node('agent-1', { note: 'pass secret:SPEECH_KEY here' }, 'agent')]
+  assert.deepEqual(findSecretReferences(trailing, 'SPEECH_KEY'), [])
+  // Writing the whole header value out, scheme included, is the realistic way
+  // to land here. The resolver sends it literally, so it holds no secret.
+  const scheme = [node('agent-2', { ttsHeaders: [{ value: 'Bearer secret:SPEECH_KEY' }] }, 'agent')]
+  assert.deepEqual(findSecretReferences(scheme, 'SPEECH_KEY'), [])
 })
 
 test('the prefix with no name after it is not a reference', () => {
