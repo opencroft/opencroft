@@ -11,8 +11,10 @@ import {
   dropTabKeys,
   readLastKnownUsage,
   readPersistedConfigOptions,
+  readPersistedPresence,
   readPersistedSession,
   writePersistedConfigOption,
+  writePersistedPresence,
   writePersistedSession,
   writePersistedUsage,
 } from './acp-session-store'
@@ -66,6 +68,44 @@ test('copyTabKeys carries the pointer and the options onto the new key, leaving 
   assert.equal(await readPersistedSession(from), null)
   assert.deepEqual(await readPersistedConfigOptions(from), {})
   assert.equal((await readPersistedSession(to))?.id, sessionId, 'dropping the old key must not disturb the new one')
+})
+
+test('copyTabKeys carries the reading cadence, which decides whether messages wait at all', async () => {
+  // A cadence left behind does not merely go missing: nothing is found under the
+  // new key, so the engine keeps its own default of realtime, and a session its
+  // reader had set to hourly hands over everything it was holding at once. The
+  // reader is never told, because a reverted setting and a setting nobody chose
+  // look identical.
+  const from = `presence-src-${crypto.randomUUID()}`
+  const to = `presence-dst-${crypto.randomUUID()}`
+  await writePersistedPresence(from, { kind: 'hourly' })
+
+  await copyTabKeys([{ from, to }])
+  assert.deepEqual(await readPersistedPresence(to), { kind: 'hourly' })
+  assert.deepEqual(await readPersistedPresence(from), { kind: 'hourly' }, 'the old key holds until it is dropped')
+
+  await dropTabKeys([{ from, to }])
+  assert.equal(await readPersistedPresence(from), null)
+  assert.deepEqual(await readPersistedPresence(to), { kind: 'hourly' }, 'dropping must not disturb the new key')
+})
+
+test('a cadence set under the destination mid-rename survives the second copy', async () => {
+  // Same rule the pointer and the options get, for the same reason: after the
+  // rename commits the destination is the live address, so a reader who changes
+  // the cadence in that window has made the current choice.
+  const from = `presence-merge-src-${crypto.randomUUID()}`
+  const to = `presence-merge-dst-${crypto.randomUUID()}`
+  await writePersistedPresence(from, { kind: 'hourly' })
+  await copyTabKeys([{ from, to }])
+
+  await writePersistedPresence(to, { kind: 'realtime' })
+  await copyTabKeys([{ from, to }])
+
+  assert.deepEqual(
+    await readPersistedPresence(to),
+    { kind: 'realtime' },
+    'the second pass must not put the pre-rename cadence back over the reader’s newer choice',
+  )
 })
 
 test('a second copy never undoes what landed under the destination in between', async () => {

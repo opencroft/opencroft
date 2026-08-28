@@ -15,7 +15,7 @@ import { agentQueueEntry, db } from '@opencroft/db'
 import type { QueuedPrompt } from 'agent-client/types'
 import { eq } from 'drizzle-orm'
 
-import { queueStore, sweepRemovedEntries } from './queue-store'
+import { moveQueueEntries, queueStore, sweepRemovedEntries } from './queue-store'
 
 // A fresh key per test: these all run against one database and must not see
 // each other's rows. Entry ids are namespaced by it for the same reason — `id`
@@ -183,4 +183,34 @@ test('a removed entry is kept as a marked row until the sweep, which only ever t
   await sweepRemovedEntries(new Date(Date.now() + 60_000))
   assert.equal((await markedRow()).length, 0)
   assert.deepEqual(await texts(key), ['waiting'])
+})
+
+test('a rename carries the queue onto the new key instead of stranding it', async () => {
+  // A session key is derived from something renameable. Rows left under the old
+  // one are unreachable for good — every later call addresses the new key, so
+  // nothing can load, mark or clear them — and a message that was genuinely
+  // waiting is simply never delivered, with nothing reporting it.
+  const from = nextKey()
+  const to = nextKey()
+  await queueStore.append(from, message(from, 'a', 'still-waiting', '2026-01-01T00:00:00.000Z'), 'end')
+
+  await moveQueueEntries([{ from, to }])
+
+  assert.deepEqual(await texts(to), ['still-waiting'])
+  assert.deepEqual(await queueStore.load(from), [], 'nothing may answer under the retired key')
+})
+
+test('a rename carries a mark too, so a delivered entry stays delivered across it', async () => {
+  // The move must not resurrect anything: a row whose entry was already
+  // forgotten arrives under the new key still forgotten, rather than becoming a
+  // message the next open would deliver a second time.
+  const from = nextKey()
+  const to = nextKey()
+  await queueStore.append(from, message(from, 'a', 'already-delivered', '2026-01-01T00:00:00.000Z'), 'end')
+  await queueStore.append(from, message(from, 'b', 'still-waiting', '2026-01-01T00:01:00.000Z'), 'end')
+  await queueStore.remove(from, [entryId(from, 'a')])
+
+  await moveQueueEntries([{ from, to }])
+
+  assert.deepEqual(await texts(to), ['still-waiting'])
 })

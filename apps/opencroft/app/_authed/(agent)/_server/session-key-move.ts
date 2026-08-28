@@ -43,6 +43,7 @@
 import { tabSessions } from '@/app/_authed/(agent)/_server/acp-impl'
 import { copyTabKeys, dropTabKeys, type TabKeyMove } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import { moveQueueEntries } from '@/app/_authed/(agent)/_server/queue-store'
 import { renameCompactJobKey } from '@/app/_authed/(extension-runtime)/_server/stream'
 
 export type { TabKeyMove }
@@ -90,6 +91,13 @@ export async function settleSessionKeyMoves(moves: readonly TabKeyMove[]): Promi
   // agent has already been given.
   await copyTabKeys(real).catch((error) => {
     console.error('[session-key-move] failed to re-copy the durable entries before retiring the old keys', error)
+  })
+  // The durable queue is addressed by the same key and is NOT a settings row,
+  // so it moves on its own. Left behind, a message still waiting for the agent
+  // would be unreachable under a name nothing looks up again -- somebody's
+  // message, silently never delivered.
+  await moveQueueEntries(real).catch((error) => {
+    console.error('[session-key-move] failed to carry the durable queue onto the new keys', error)
   })
   for (const { from, to } of real) {
     // The in-process tab -> session pointer. Without this the reaper's unload

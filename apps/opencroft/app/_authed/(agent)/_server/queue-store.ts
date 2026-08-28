@@ -91,6 +91,29 @@ export async function sweepRemovedEntries(cutoff: Date): Promise<void> {
     .where(and(isNotNull(agentQueueEntry.removedAt), lt(agentQueueEntry.removedAt, cutoff)))
 }
 
+/**
+ * Carry everything filed under one session key onto another.
+ *
+ * A session key is derived from something renameable, so a rename re-mints it
+ * and every row under the old one has to move with it. Left behind they are
+ * unreachable for good: every later call addresses the new key, so they can
+ * never be loaded, marked or cleared again — and a queue that was genuinely
+ * waiting is silently dropped by the rename, which is a message somebody sent
+ * that nobody will ever receive.
+ *
+ * An update rather than a copy: there is nothing to resolve under the old key
+ * afterwards. Moving the row also carries its mark, so an entry that was
+ * already forgotten stays forgotten across a rename.
+ */
+export async function moveQueueEntries(moves: readonly { from: string; to: string }[]): Promise<void> {
+  for (const { from, to } of moves) {
+    if (!from || !to || from === to) {
+      continue
+    }
+    await db.update(agentQueueEntry).set({ sessionKey: to }).where(eq(agentQueueEntry.sessionKey, from))
+  }
+}
+
 export const queueStore: QueueStore = {
   async append(sessionKey, entry, placement) {
     await db
