@@ -1217,8 +1217,34 @@ export async function groupChatWakeSession(sessionKey: string): Promise<{ sessio
 // even by coincidence, and a reader who sees this prefix knows immediately
 // which registry a session belongs to without having to cross-reference
 // either table.
+const SESSION_KEY_PREFIX = 'group-chat:'
+
 function mintSessionKey(groupSlug: string, agentSlug: string, threadSlug: string): string {
-  return `group-chat:${groupSlug}:${agentSlug}:${threadSlug}`
+  return `${SESSION_KEY_PREFIX}${groupSlug}:${agentSlug}:${threadSlug}`
+}
+
+/**
+ * The readable address handed out for a stored key: no prefix, dots between the
+ * segments.
+ *
+ * DOTS ARE WHAT WE EMIT; COLONS ARE WHAT WE STORE. The two forms name the same
+ * thread and `resolveByKey` takes either, so this is a display choice rather
+ * than a change of address -- which is the only reason it can be made at all.
+ * Every reference already written down elsewhere is in the colon form, and
+ * those are not ours to rewrite.
+ *
+ * Switching the emitted form is safe because no tool schema promises one: they
+ * all declare a thread reference opaque, so a caller that stores what it is
+ * given and hands it back keeps working whichever form it received.
+ *
+ * A key with no prefix is returned untouched -- it is a pre-slug key, whose
+ * segments are ids rather than slugs and mean nothing taken apart.
+ */
+export function threadRefFromSessionKey(sessionKey: string): string {
+  if (!sessionKey.startsWith(SESSION_KEY_PREFIX)) {
+    return sessionKey
+  }
+  return sessionKey.slice(SESSION_KEY_PREFIX.length).replaceAll(':', '.')
 }
 
 interface SessionKeyParts {
@@ -2051,7 +2077,34 @@ export async function requireAgentNode(agentName: string): Promise<string> {
  * before slugs existed keeps working.
  */
 async function resolveByKey(ref: string): Promise<ThreadDeliveryTarget | null> {
-  const key = ref.startsWith('group-chat:') ? ref : `group-chat:${ref}`
+  // The stored form first, exactly as given. Whatever resolved before this
+  // function learned about dots still resolves, including a pre-slug key that
+  // happens to contain one -- those are matched as whole strings and must not
+  // be rewritten on the way in.
+  const asStored = await lookupStoredKey(ref.startsWith(SESSION_KEY_PREFIX) ? ref : `${SESSION_KEY_PREFIX}${ref}`)
+  if (asStored) {
+    return asStored
+  }
+  // Then the dotted form, converted back to what storage holds. Only when the
+  // body carries no colon of its own: a body that has one is already the stored
+  // shape or a legacy key, and rewriting either turns a key that resolves into
+  // one that does not.
+  //
+  // The test is on the BODY rather than on the whole reference, because the
+  // prefix contributes a colon -- checking the whole string would refuse to
+  // convert `group-chat:a.b.c`, which is the prefixed spelling of exactly the
+  // form this exists to accept.
+  //
+  // Both forms split unambiguously because every segment is `slugify` output,
+  // whose alphabet is `[a-z0-9-]` -- it can contain neither separator.
+  const body = ref.startsWith(SESSION_KEY_PREFIX) ? ref.slice(SESSION_KEY_PREFIX.length) : ref
+  if (body.includes(':') || !body.includes('.')) {
+    return null
+  }
+  return lookupStoredKey(`${SESSION_KEY_PREFIX}${body.replaceAll('.', ':')}`)
+}
+
+async function lookupStoredKey(key: string): Promise<ThreadDeliveryTarget | null> {
   const threadId = await threadIdForSessionKey(key)
   if (!threadId) {
     return null
@@ -2187,7 +2240,7 @@ export async function listGroupChatsForAgentView(agentName: string): Promise<Age
     threads: threads
       .filter((t) => t.groupChatId === chat.id)
       .map((t) => ({
-        ref: t.slug && t.sessionKey.startsWith('group-chat:') ? t.sessionKey.slice('group-chat:'.length) : t.id,
+        ref: t.slug && t.sessionKey.startsWith(SESSION_KEY_PREFIX) ? threadRefFromSessionKey(t.sessionKey) : t.id,
         title: t.title,
         agentNodeId: t.agentNodeId,
         createdAt: t.createdAt,
