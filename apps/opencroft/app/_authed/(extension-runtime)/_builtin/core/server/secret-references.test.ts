@@ -84,7 +84,11 @@ test('falls back to no name when the node has none', () => {
 // Stop dropping them and every node with a trailing newline in its secrets
 // field starts matching the empty key — which is what this pins.
 test('an empty or whitespace key finds nothing', () => {
-  const nodes = [node('app-1', { secrets: 'API_TOKEN' })]
+  // The trailing newline is the point of the fixture, not an accident of
+  // typing it: a field edited in a textarea usually has one, and the blank
+  // line it produces is exactly what an empty key would match if the parse
+  // stopped dropping blanks. Without it this test passes either way.
+  const nodes = [node('app-1', { secrets: 'API_TOKEN\n' })]
   assert.deepEqual(findSecretReferences(nodes, ''), [])
   assert.deepEqual(findSecretReferences(nodes, '   '), [])
 })
