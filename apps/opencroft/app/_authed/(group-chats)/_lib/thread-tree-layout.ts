@@ -2,7 +2,11 @@ import type { ChatListLeaf, ChatListNode } from 'ui/chat/chat-list'
 import type { ChatStatus } from 'ui/chat/chat-list-item'
 
 import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/read-model'
-import type { ThreadLayout, ThreadLayoutEntry } from '@/app/_authed/(group-chats)/_server/thread-layout-store'
+import type {
+  ThreadLayout,
+  ThreadLayoutEntry,
+  VersionedThreadLayout,
+} from '@/app/_authed/(group-chats)/_server/thread-layout-store'
 
 // Between the saved layout and the live threads.
 //
@@ -13,6 +17,14 @@ import type { ThreadLayout, ThreadLayoutEntry } from '@/app/_authed/(group-chats
 
 /** A thread's live process state, keyed by thread id. */
 export type ThreadStatusById = ReadonlyMap<string, ChatStatus>
+
+/**
+ * A chat nobody has arranged, at the version a first write expects.
+ *
+ * Also what a screen stands in with when its load refused, so the hooks that
+ * take a layout still run on every render rather than only when there is one.
+ */
+export const EMPTY_THREAD_LAYOUT: VersionedThreadLayout = { layout: { entries: [] }, version: 0 }
 
 /**
  * One thread as a row.

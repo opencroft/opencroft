@@ -22,7 +22,9 @@ import { GroupChatThreadTree } from '@/app/_authed/(group-chats)/_components/gro
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
 import { threadSessionKey } from '@/app/_authed/(group-chats)/_lib/thread-session-key'
+import { EMPTY_THREAD_LAYOUT } from '@/app/_authed/(group-chats)/_lib/thread-tree-layout'
 import { useSafeBack } from '@/app/_authed/(group-chats)/_lib/use-safe-back'
+import { useThreadLayout } from '@/app/_authed/(group-chats)/_lib/use-thread-layout'
 import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import {
   deleteGroupChatThread,
@@ -33,6 +35,7 @@ import {
   listMyGroupChatPins,
 } from '@/app/_authed/(group-chats)/_server/actions'
 import { listAgentNodes } from '@/app/_authed/(space)/_server/agents'
+import { useGroupChatsSlot } from '@/app/_shell/group-chats-slot'
 
 // Inside one group chat: its topic, who is taking part, and its threads.
 //
@@ -102,6 +105,46 @@ function GroupChatDetailPage() {
   const goToThread = (threadId: string) =>
     navigate({ to: '/group-chats/$groupChatId/$threadId', params: { groupChatId, threadId } })
 
+  // The arrangement is owned here, not by either list, because the same one is
+  // drawn twice -- on this screen and in the sidebar -- and a copy in each
+  // would drift apart the first time either was dragged.
+  const { layout, persist } = useThreadLayout(groupChatId, data.refused ? EMPTY_THREAD_LAYOUT : data.layout)
+  const threadTree = (
+    <GroupChatThreadTree
+      threads={threads}
+      statusById={threadStatusById}
+      layout={layout}
+      onChange={persist}
+      onSelect={goToThread}
+      // The kit hands back the row id -- the THREAD id, not the session key
+      // this has to act on. That split is deliberate on its side (the kit knows
+      // nothing about session keys) and the mapping is already here:
+      // `sessionKey` rides on every list entry.
+      //
+      // Same server fn the sidebar chat list's own Stop process calls, so there
+      // is one way to stop a process, not two. Nothing is invalidated
+      // afterwards: the row's state comes from the shared activity poll, which
+      // reports the process gone on its next tick.
+      onStopProcess={(threadId) => {
+        const sessionKey = threadSessionKey(threads, threadId)
+        if (!sessionKey) {
+          return
+        }
+        stopProcessLocal({ data: sessionKey }).catch((err) => {
+          console.error('Failed to stop thread process', threadId, err)
+        })
+      }}
+      onRename={(threadId) => setRenameThreadId(threadId)}
+      onDelete={(threadId) => {
+        setDeleteError(undefined)
+        setDeleteTarget(threadId)
+      }}
+    />
+  )
+  // The same element in the sidebar. Everything it is built from is listed:
+  // the handlers close over `threads` and over state setters, which are stable.
+  useGroupChatsSlot(threads.length > 0 ? threadTree : null, [groupChatId, threads, threadStatusById, layout])
+
   const confirmDelete = async () => {
     if (!deleteTarget) {
       return
@@ -122,7 +165,7 @@ function GroupChatDetailPage() {
   if (data.refused) {
     return <GroupChatRefusal code={data.code} />
   }
-  const { chat, directory, agents, pins, layout } = data
+  const { chat, directory, agents, pins } = data
   const threadBeingRenamed = threads.find((t: GroupChatThreadEntry) => t.id === renameThreadId)
 
   return (
@@ -159,40 +202,7 @@ function GroupChatDetailPage() {
           />
         }
         pins={<GroupChatPinsPanel groupChatId={groupChatId} pins={pins} />}
-        threads={
-          threads.length > 0 ? (
-            <GroupChatThreadTree
-              groupChatId={groupChatId}
-              threads={threads}
-              statusById={threadStatusById}
-              layout={layout}
-              onSelect={(threadId) => goToThread(threadId)}
-              // The kit hands back the row id -- the THREAD id, not the session
-              // key this has to act on. That split is deliberate on its side
-              // (the kit knows nothing about session keys) and the mapping is
-              // already here: `sessionKey` rides on every list entry.
-              //
-              // Same server fn the sidebar chat list's own Stop process calls,
-              // so there is one way to stop a process, not two. Nothing is
-              // invalidated afterwards: the row's state comes from the shared
-              // activity poll, which reports the process gone on its next tick.
-              onStopProcess={(threadId) => {
-                const sessionKey = threadSessionKey(threads, threadId)
-                if (!sessionKey) {
-                  return
-                }
-                stopProcessLocal({ data: sessionKey }).catch((err) => {
-                  console.error('Failed to stop thread process', threadId, err)
-                })
-              }}
-              onRename={(threadId) => setRenameThreadId(threadId)}
-              onDelete={(threadId) => {
-                setDeleteError(undefined)
-                setDeleteTarget(threadId)
-              }}
-            />
-          ) : undefined
-        }
+        threads={threads.length > 0 ? threadTree : undefined}
         emptyState={
           <Empty className='py-8'>
             <EmptyHeader>
