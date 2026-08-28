@@ -150,6 +150,16 @@ export interface AgentClientOptions {
  * the write loses that one message, where blocking the send would have made
  * every message wait for a disk.
  *
+ * The engine issues its calls for one session key strictly one after another,
+ * in the order it made them: a store never sees two engine writes for the same
+ * key in flight at once, and `load` is called only after every write already
+ * issued for that key has settled. Without that promise every store whose
+ * writes do any asynchronous work of its own would have to re-derive ordering
+ * for itself, and the one that didn't would let a remove overtake the append
+ * it was meant to erase — leaving a durable row for a message that was already
+ * delivered, to be replayed at the next open. Writes for DIFFERENT keys may
+ * still run concurrently.
+ *
  * Addressed by session KEY rather than session id: the id is per-process and a
  * restart mints a new one, so it cannot name the thing being restored into.
  * A session with no key is not persisted at all, because nothing could address
@@ -1349,12 +1359,32 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   }
 
   /**
+   * Durable-queue writes still in flight, per session key. The tail of a chain
+   * is the promise the NEXT write for that key starts after, and the thing a
+   * session open waits out before reading the store back (see
+   * restoreSessionState). Keyed by session KEY rather than by the session
+   * record, because the writes a reopen must not race were issued by the
+   * previous session object under the same key. Entries remove themselves once
+   * a chain has quiesced, so the map holds only keys with work outstanding.
+   */
+  const queueWrites = new Map<string, Promise<void>>()
+
+  /**
    * Run a durable-queue write without letting it touch the send path.
    *
    * Not awaited and never able to throw into a caller: durability is a
    * side-channel here. A store that is slow delays the copy, not the message,
    * and a store that is broken costs a queue that does not survive a restart —
    * which is where every host without one already is.
+   *
+   * Writes for one key run strictly in the order they were issued, each
+   * starting only after the previous one settled. Fired concurrently they
+   * would race inside the store: any store whose write does asynchronous work
+   * of its own can commit a remove before the append it was meant to erase,
+   * and the leftover row replays an already-delivered message at the next
+   * open. The engine is the one place the issue order is known, so the
+   * ordering is kept here rather than asked of every store. A failed write is
+   * logged and stepped over — it must not wedge the writes queued behind it.
    */
   function persist(session: SessionState, write: (store: QueueStore, key: string) => void | Promise<void>): void {
     const key = queueKey(session)
@@ -1362,13 +1392,20 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return
     }
     const store = options.queueStore
-    void (async () => {
+    const tail = queueWrites.get(key) ?? Promise.resolve()
+    const next = tail.then(async () => {
       try {
         await write(store, key)
       } catch (error) {
         console.error('[agent-client] durable queue write failed', error)
       }
-    })()
+    })
+    queueWrites.set(key, next)
+    void next.then(() => {
+      if (queueWrites.get(key) === next) {
+        queueWrites.delete(key)
+      }
+    })
   }
 
   /**
@@ -1416,6 +1453,18 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     const key = queueKey(session)
     if (!key) {
       return
+    }
+    // Writes issued for this key earlier in THIS process can still be in
+    // flight: a session is stopped and reopened without a restart, and the
+    // remove for its last delivery races the reopen. Reading before that
+    // remove lands would restore — and then redeliver — a message that was
+    // already handed over. So the read starts only once the chain has
+    // quiesced. Looped rather than awaited once, because a write chained
+    // while this waits extends the chain past the tail it grabbed.
+    for (let pending = queueWrites.get(key); pending; ) {
+      await pending
+      const tail = queueWrites.get(key)
+      pending = tail === pending ? undefined : tail
     }
     let restored: QueuedPrompt[]
     try {

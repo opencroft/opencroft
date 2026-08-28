@@ -1,0 +1,1 @@
+ALTER TABLE "AgentQueueEntry" ADD COLUMN "removedAt" timestamp with time zone;
