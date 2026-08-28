@@ -3,15 +3,19 @@
 // The engine's half is tested in agent-client with a fake store; what belongs
 // here is what only a database can get wrong: that queue ORDER survives a round
 // trip when it is not the order things arrived in, that the two kinds of entry
-// come back as themselves, and that one session's rows are not another's.
+// come back as themselves, that one session's rows are not another's — and
+// that the record/forget pair commutes, so a forgotten entry stays forgotten
+// whichever of the two writes lands last.
 import '@opencroft/db/test-env'
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { agentQueueEntry, db } from '@opencroft/db'
 import type { QueuedPrompt } from 'agent-client/types'
+import { eq } from 'drizzle-orm'
 
-import { queueStore } from './queue-store'
+import { moveQueueEntries, queueStore, sweepRemovedEntries } from './queue-store'
 
 // A fresh key per test: these all run against one database and must not see
 // each other's rows. Entry ids are namespaced by it for the same reason — `id`
@@ -134,4 +138,79 @@ test('positions are per session, so one queue cannot reorder another', async () 
 
 test('a key that was never used loads as an empty queue, not as an error', async () => {
   assert.deepEqual(await queueStore.load(nextKey()), [])
+})
+
+// ── the commutative half: a forgotten entry stays forgotten ───────────────
+
+test('a remove that lands before its append still wins', async () => {
+  // The engine issues the append first, but this store must not depend on
+  // that order surviving all the way to disk: whichever of the two writes
+  // lands last, the entry must not come back.
+  const key = nextKey()
+  const entry = message(key, 'a', 'delivered-before-recorded', '2026-01-01T00:00:00.000Z')
+  await queueStore.remove(key, [entry.id])
+  await queueStore.append(key, entry, 'end')
+  assert.deepEqual(await texts(key), [], 'the late append must not resurrect a forgotten entry')
+})
+
+test('appending the same entry twice records it once', async () => {
+  const key = nextKey()
+  const entry = message(key, 'a', 'once', '2026-01-01T00:00:00.000Z')
+  await queueStore.append(key, entry, 'end')
+  await queueStore.append(key, entry, 'end')
+  assert.deepEqual(await texts(key), ['once'])
+})
+
+test('a removed entry is kept as a marked row until the sweep, which only ever takes marked rows', async () => {
+  const key = nextKey()
+  await queueStore.append(key, message(key, 'a', 'delivered', '2026-01-01T00:00:00.000Z'), 'end')
+  await queueStore.append(key, message(key, 'b', 'waiting', '2026-01-01T00:01:00.000Z'), 'end')
+  await queueStore.remove(key, [entryId(key, 'a')])
+
+  // The forget is a marked row, not an absence — the row is what a late
+  // append conflicts with.
+  const markedRow = async () => await db.select().from(agentQueueEntry).where(eq(agentQueueEntry.id, entryId(key, 'a')))
+  const [marked] = await markedRow()
+  assert.ok(marked?.removedAt, 'removing marks the row rather than deleting it')
+
+  // A cutoff in the past leaves a fresh mark in place to keep blocking.
+  await sweepRemovedEntries(new Date(Date.now() - 60_000))
+  assert.equal((await markedRow()).length, 1)
+
+  // Even the most aggressive cutoff can only take marked rows: the message
+  // still waiting has no mark, whatever its age, so it is structurally out of
+  // the sweep's reach.
+  await sweepRemovedEntries(new Date(Date.now() + 60_000))
+  assert.equal((await markedRow()).length, 0)
+  assert.deepEqual(await texts(key), ['waiting'])
+})
+
+test('a rename carries the queue onto the new key instead of stranding it', async () => {
+  // A session key is derived from something renameable. Rows left under the old
+  // one are unreachable for good — every later call addresses the new key, so
+  // nothing can load, mark or clear them — and a message that was genuinely
+  // waiting is simply never delivered, with nothing reporting it.
+  const from = nextKey()
+  const to = nextKey()
+  await queueStore.append(from, message(from, 'a', 'still-waiting', '2026-01-01T00:00:00.000Z'), 'end')
+
+  await moveQueueEntries([{ from, to }])
+
+  assert.deepEqual(await texts(to), ['still-waiting'])
+  assert.deepEqual(await queueStore.load(from), [], 'nothing may answer under the retired key')
+})
+
+test('a rename carries a mark too, so a delivered entry stays delivered across it', async () => {
+  // The move must not resurrect anything: a row whose entry was already
+  // forgotten arrives under the new key still forgotten, rather than becoming a
+  // message the next open would deliver a second time.
+  const from = nextKey()
+  const to = nextKey()
+  await queueStore.append(from, message(from, 'a', 'already-delivered', '2026-01-01T00:00:00.000Z'), 'end')
+  await queueStore.append(from, message(from, 'b', 'still-waiting', '2026-01-01T00:01:00.000Z'), 'end')
+  await queueStore.remove(from, [entryId(from, 'a')])
+
+  await moveQueueEntries([{ from, to }])
+
+  assert.deepEqual(await texts(to), ['still-waiting'])
 })

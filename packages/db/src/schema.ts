@@ -661,8 +661,11 @@ export const groupChatThreadArtifact = pgTable(
 // turn a held [message, command, message] into one merged batch and drop the
 // command, which is a request somebody made being silently forgotten.
 //
-// `sender` and `sentAt` are null exactly when `kind` is 'system', which has
-// neither an author nor a meaningful send time.
+// `sender` and `sentAt` are null for a 'system' entry, which has neither an
+// author nor a meaningful send time — and for a row that is a MARK rather than
+// an entry (see `removedAt`), which never carried either. An entry row is the
+// one with `removedAt` null, so that is the column to read for "is this a
+// queued thing", never the presence of a sender.
 //
 // `position` orders the queue explicitly rather than ordering by `sentAt`: a
 // system row has no send time, and corrective guidance after a rejected
@@ -673,7 +676,9 @@ export const groupChatThreadArtifact = pgTable(
 export const agentQueueEntry = pgTable(
   'AgentQueueEntry',
   {
-    // The engine's own entry id, so a delivery deletes exactly what it took.
+    // The engine's own entry id, so a delivery forgets exactly what it took.
+    // Also what makes forgetting idempotent: the mark and the record of an
+    // entry are the same row, found by the same id, in either order.
     id: text().primaryKey().notNull(),
     sessionKey: text().notNull(),
     kind: text().notNull(),
@@ -682,6 +687,14 @@ export const agentQueueEntry = pgTable(
     sentAt: timestamp({ withTimezone: true, mode: 'date' }),
     position: integer().notNull(),
     createdAt: createdAt(),
+    // Set when the entry left the queue — delivered, or taken back by its
+    // sender. NULL means still waiting. A row is marked rather than deleted so
+    // that the two writes an entry's lifetime consists of commute: whichever
+    // of "record it" and "forget it" reaches the database last, a forgotten
+    // entry stays forgotten and can never be restored. Marked rows are skipped
+    // on load and erased by a sweep once they are old enough that no late
+    // write could still name them.
+    removedAt: timestamp({ withTimezone: true, mode: 'date' }),
   },
   (t) => [index('AgentQueueEntry_sessionKey_position_idx').on(t.sessionKey, t.position)],
 )

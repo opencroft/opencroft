@@ -5,11 +5,29 @@
 // the path a message takes to an agent — see QueueStore for why every call is
 // made after the in-memory queue has already changed, and why a failure here
 // costs durability rather than a message.
+//
+// An entry's lifetime is two writes — record it, forget it — and this store
+// makes the pair COMMUTATIVE per entry id: `remove` marks the row rather than
+// deleting it, and `append` refuses to overwrite an id that already exists.
+// Whichever of the two reaches the database last, a forgotten entry stays
+// forgotten. The engine already promises to issue the pair in order (see
+// QueueStore); this holds even if that ordering is ever lost on the way to
+// disk, because a replayed message costs a reader an already-answered prompt
+// where a resurrected one costs them a stale conversation days later.
 
 import { agentQueueEntry, db } from '@opencroft/db'
 import type { QueueStore } from 'agent-client/agent-client'
 import type { QueuedPrompt } from 'agent-client/types'
-import { and, asc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, eq, isNotNull, isNull, lt, sql } from 'drizzle-orm'
+
+/**
+ * How long a removed entry's marked row is kept before the sweep erases it.
+ *
+ * The mark exists to outlast any late `append` that could still name the same
+ * id; those trail their `remove` by milliseconds, so a day is orders of
+ * magnitude of margin while keeping the table no larger than a day's traffic.
+ */
+const REMOVED_ROW_TTL_MS = 24 * 60 * 60 * 1000
 
 /**
  * Where a new row goes, without reading the queue first.
@@ -20,7 +38,10 @@ import { and, asc, eq, inArray, sql } from 'drizzle-orm'
  * has to rewrite the rows already there, which is the write amplification a
  * table was chosen over a settings blob to avoid.
  *
- * An empty queue has no max or min, so both fall back to 0.
+ * An empty queue has no max or min, so both fall back to 0. Removed rows are
+ * deliberately left in the min/max: an extremum over a superset of the live
+ * queue still brackets it, so the new row still sorts before (or after) every
+ * waiting one, and the subquery stays a plain index walk.
  */
 function nextPosition(sessionKey: string, placement: 'front' | 'end') {
   return placement === 'front'
@@ -55,30 +76,96 @@ function toEntry(row: typeof agentQueueEntry.$inferSelect): QueuedPrompt | null 
   return null
 }
 
+/**
+ * Erase marked rows old enough that no late write could still name their id.
+ *
+ * Only rows with `removedAt` set are ever candidates — a waiting entry has
+ * none, whatever its age, so a message held for days by a reading cadence is
+ * structurally out of this delete's reach. Driven from `load` rather than a
+ * scheduler: every session open runs one, which is as often as anything could
+ * observe the difference.
+ */
+export async function sweepRemovedEntries(cutoff: Date): Promise<void> {
+  await db
+    .delete(agentQueueEntry)
+    .where(and(isNotNull(agentQueueEntry.removedAt), lt(agentQueueEntry.removedAt, cutoff)))
+}
+
+/**
+ * Carry everything filed under one session key onto another.
+ *
+ * A session key is derived from something renameable, so a rename re-mints it
+ * and every row under the old one has to move with it. Left behind they are
+ * unreachable for good: every later call addresses the new key, so they can
+ * never be loaded, marked or cleared again — and a queue that was genuinely
+ * waiting is silently dropped by the rename, which is a message somebody sent
+ * that nobody will ever receive.
+ *
+ * An update rather than a copy: there is nothing to resolve under the old key
+ * afterwards. Moving the row also carries its mark, so an entry that was
+ * already forgotten stays forgotten across a rename.
+ */
+export async function moveQueueEntries(moves: readonly { from: string; to: string }[]): Promise<void> {
+  for (const { from, to } of moves) {
+    if (!from || !to || from === to) {
+      continue
+    }
+    await db.update(agentQueueEntry).set({ sessionKey: to }).where(eq(agentQueueEntry.sessionKey, from))
+  }
+}
+
 export const queueStore: QueueStore = {
   async append(sessionKey, entry, placement) {
-    await db.insert(agentQueueEntry).values({
-      id: entry.id,
-      sessionKey,
-      kind: entry.kind,
-      sender: entry.kind === 'message' ? entry.sender : null,
-      text: entry.text,
-      sentAt: entry.kind === 'message' ? new Date(entry.sentAt) : null,
-      position: nextPosition(sessionKey, placement),
-      createdAt: new Date(),
-    })
+    await db
+      .insert(agentQueueEntry)
+      .values({
+        id: entry.id,
+        sessionKey,
+        kind: entry.kind,
+        sender: entry.kind === 'message' ? entry.sender : null,
+        text: entry.text,
+        sentAt: entry.kind === 'message' ? new Date(entry.sentAt) : null,
+        position: nextPosition(sessionKey, placement),
+        createdAt: new Date(),
+      })
+      // Idempotent per id, which is what makes the append/remove pair safe in
+      // either order: if the id is already here — including as a row `remove`
+      // marked first — this insert must not land a second, unmarked copy of a
+      // message that has already left the queue.
+      .onConflictDoNothing({ target: agentQueueEntry.id })
   },
 
   async remove(sessionKey, entryIds) {
     if (entryIds.length === 0) {
       return
     }
+    const removedAt = new Date()
+    // An upsert rather than a delete, so "forget this entry" holds whether or
+    // not the entry's own write has landed yet: an existing row is marked
+    // (whatever session key it sits under — the id says exactly which entry
+    // was meant), and a missing one gets a bare marked row that blocks its
+    // append from ever resurrecting it. The sweep erases the marks later.
     await db
-      .delete(agentQueueEntry)
-      .where(and(eq(agentQueueEntry.sessionKey, sessionKey), inArray(agentQueueEntry.id, entryIds)))
+      .insert(agentQueueEntry)
+      .values(
+        entryIds.map((id) => ({
+          id,
+          sessionKey,
+          kind: 'tombstone',
+          sender: null,
+          text: '',
+          sentAt: null,
+          position: 0,
+          createdAt: removedAt,
+          removedAt,
+        })),
+      )
+      .onConflictDoUpdate({ target: agentQueueEntry.id, set: { removedAt } })
   },
 
   async clear(sessionKey) {
+    // The key is being retired for good (see the interface), so marked rows go
+    // with it — nothing will ever load under this key again.
     await db.delete(agentQueueEntry).where(eq(agentQueueEntry.sessionKey, sessionKey))
   },
 
@@ -86,8 +173,14 @@ export const queueStore: QueueStore = {
     const rows = await db
       .select()
       .from(agentQueueEntry)
-      .where(eq(agentQueueEntry.sessionKey, sessionKey))
+      .where(and(eq(agentQueueEntry.sessionKey, sessionKey), isNull(agentQueueEntry.removedAt)))
       .orderBy(asc(agentQueueEntry.position))
+    // After the read rather than before it, so an open never waits on
+    // housekeeping. Not awaited for the same reason; a failed sweep only
+    // leaves marked rows for the next one.
+    void sweepRemovedEntries(new Date(Date.now() - REMOVED_ROW_TTL_MS)).catch((error) => {
+      console.error('[queue-store] sweep of removed queue rows failed', error)
+    })
     return rows.map(toEntry).filter((entry): entry is QueuedPrompt => entry !== null)
   },
 }

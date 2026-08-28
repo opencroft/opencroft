@@ -294,31 +294,77 @@ function withoutKeys<T>(store: Record<string, T>, moves: readonly TabKeyMove[]):
 }
 
 /**
+ * The destination wins for a cadence too, and for the same reason the options
+ * have their own rule: after the rename commits the destination is the live
+ * address, so a cadence set in that window is the reader's current choice and a
+ * second copy pass must not put the old one back over it.
+ */
+function keepDestinationPresence(incoming: Presence, existing: Presence | undefined): Presence {
+  return existing ?? incoming
+}
+
+interface MovableStore {
+  settingId: string
+  moved: (raw: Record<string, unknown>, moves: readonly TabKeyMove[]) => Record<string, unknown> | null
+  dropped: (raw: Record<string, unknown>, moves: readonly TabKeyMove[]) => Record<string, unknown> | null
+}
+
+/** One entry's worth of "this settings row is addressed by a session key". */
+function movable<T>(
+  settingId: string,
+  fromRaw: (raw: Record<string, unknown>) => Record<string, T>,
+  toRaw: (store: Record<string, T>) => Record<string, unknown>,
+  merge?: (incoming: T, existing: T | undefined) => T,
+): MovableStore {
+  return {
+    settingId,
+    moved: (raw, moves) => {
+      const next = movedEntries(fromRaw(raw), moves, merge)
+      return next ? toRaw(next) : null
+    },
+    dropped: (raw, moves) => {
+      const next = withoutKeys(fromRaw(raw), moves)
+      return next ? toRaw(next) : null
+    },
+  }
+}
+
+/**
+ * Every settings row addressed by a session key, in the order a move touches
+ * them.
+ *
+ * A list rather than a block of code per store, because THIS is the enumeration
+ * a move gets wrong. A store added anywhere else and not added here keeps
+ * answering under the old key and nothing reports it: the reader sees a setting
+ * that quietly reverted to its default. Adding an entry here is the whole change
+ * a new key-addressed row should need.
+ *
+ * ORDER IS LOAD-BEARING, and the pointer is deliberately last. It is what makes
+ * a key resolve to a conversation, so a copy interrupted part-way leaves the new
+ * key holding supporting state that nothing addresses yet — rather than a
+ * resolvable session that lost the settings its reader had chosen. `dropTabKeys`
+ * walks the same list backwards, so the pointer is the first thing the old key
+ * stops answering with.
+ */
+const KEY_ADDRESSED_STORES: readonly MovableStore[] = [
+  movable(CONFIG_OPTIONS_SETTING_ID, configOptionsStoreFromRaw, (options) => ({ options }), keepDestinationOptions),
+  movable(PRESENCE_SETTING_ID, presenceStoreFromRaw, (presence) => ({ presence }), keepDestinationPresence),
+  movable(SETTING_ID, storeFromRaw, (sessions) => ({ sessions }), keepPrompted),
+]
+
+/**
  * Point every `to` key at what its `from` key currently holds, leaving `from`
  * alone. Idempotent, so a retried rename is free.
- *
- * The config options are copied BEFORE the session pointer, and that order is
- * the one thing to preserve here: the pointer is what makes a key resolve to a
- * conversation, so a crash between the two rows leaves the new key holding
- * options nothing addresses yet, rather than a resolvable session that lost the
- * reasoning-effort override its reader had set.
  */
 export async function copyTabKeys(moves: readonly TabKeyMove[]): Promise<void> {
   if (moves.length === 0) {
     return
   }
-  await withSettingLock(CONFIG_OPTIONS_SETTING_ID, () =>
-    mutateSettingData(CONFIG_OPTIONS_SETTING_ID, (raw) => {
-      const next = movedEntries(configOptionsStoreFromRaw(raw), moves, keepDestinationOptions)
-      return next ? { options: next } : raw
-    }),
-  )
-  await withSettingLock(SETTING_ID, () =>
-    mutateSettingData(SETTING_ID, (raw) => {
-      const next = movedEntries(storeFromRaw(raw), moves, keepPrompted)
-      return next ? { sessions: next } : raw
-    }),
-  )
+  for (const store of KEY_ADDRESSED_STORES) {
+    await withSettingLock(store.settingId, () =>
+      mutateSettingData(store.settingId, (raw) => store.moved(raw, moves) ?? raw),
+    )
+  }
 }
 
 /** Forget every `from` key. The pointer goes first, mirroring `copyTabKeys`. */
@@ -326,18 +372,11 @@ export async function dropTabKeys(moves: readonly TabKeyMove[]): Promise<void> {
   if (moves.length === 0) {
     return
   }
-  await withSettingLock(SETTING_ID, () =>
-    mutateSettingData(SETTING_ID, (raw) => {
-      const next = withoutKeys(storeFromRaw(raw), moves)
-      return next ? { sessions: next } : raw
-    }),
-  )
-  await withSettingLock(CONFIG_OPTIONS_SETTING_ID, () =>
-    mutateSettingData(CONFIG_OPTIONS_SETTING_ID, (raw) => {
-      const next = withoutKeys(configOptionsStoreFromRaw(raw), moves)
-      return next ? { options: next } : raw
-    }),
-  )
+  for (const store of [...KEY_ADDRESSED_STORES].reverse()) {
+    await withSettingLock(store.settingId, () =>
+      mutateSettingData(store.settingId, (raw) => store.dropped(raw, moves) ?? raw),
+    )
+  }
 }
 
 // Durable last-known context usage per ACP session id. ACP has no way to ASK an

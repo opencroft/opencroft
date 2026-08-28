@@ -14,6 +14,7 @@ import { startDockerPsPoller } from '@/server/scheduler/docker-ps-poller'
 import { startEventScheduler } from '@/server/scheduler/event-scheduler'
 import { startIdleSessionReaper } from '@/server/scheduler/idle-session-reaper'
 import { startUsageRollupScheduler } from '@/server/scheduler/usage-rollup-scheduler'
+import { registerShutdownHandlers } from '@/server/shutdown'
 
 const globalForStartup = globalThis as unknown as { __opencroftStarted?: boolean }
 
@@ -28,6 +29,9 @@ export function ensureServerStarted(): void {
   }
   globalForStartup.__opencroftStarted = true
 
+  // Before the schedulers, so nothing can start writing into a process that has
+  // no way to release the database when it is asked to stop.
+  registerShutdownHandlers()
   startEventScheduler()
   startDockerPsPoller()
   startDbBackupScheduler()

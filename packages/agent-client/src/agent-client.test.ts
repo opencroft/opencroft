@@ -1741,29 +1741,72 @@ interface RecordedWrite {
   detail: string
 }
 
-function fakeStore(seed: QueuedPrompt[] = []) {
+type StoreOp = 'append' | 'remove' | 'clear' | 'load'
+
+// A genuinely asynchronous store double. Every call records itself when it
+// ARRIVES and applies its effect only when it RESOLVES — a call still in
+// flight has not happened yet as far as the rows are concerned. That gap is
+// the point: a synchronous double makes every ordering, latency and
+// interleaving question unobservable, so a suite over one stays green while a
+// concurrently-issued remove loses to its own append against a real store.
+// `hold` keeps every call of an op in flight until release() lands what has
+// arrived; failNext() makes an op's next call reject.
+function fakeStore(options: { hold?: StoreOp[] } = {}) {
   const writes: RecordedWrite[] = []
   const rows = new Map<string, QueuedPrompt[]>()
+  const held = new Set<StoreOp>(options.hold ?? [])
+  const failing = new Set<StoreOp>()
+  let inFlight: { op: StoreOp; land: () => void }[] = []
+  function perform<T>(op: StoreOp, apply: () => T): Promise<T> {
+    if (failing.delete(op)) {
+      return Promise.reject(new Error(`${op} refused by the test`))
+    }
+    if (held.has(op)) {
+      return new Promise((resolve) => inFlight.push({ op, land: () => resolve(apply()) }))
+    }
+    // Off this tick even when nothing holds it, like any real store.
+    return Promise.resolve().then(apply)
+  }
   const store: QueueStore = {
     append(key, entry, placement) {
       writes.push({ op: 'append', key, detail: `${placement}:${entry.text}` })
-      const list = rows.get(key) ?? []
-      rows.set(key, placement === 'front' ? [entry, ...list] : [...list, entry])
+      return perform('append', () => {
+        const list = rows.get(key) ?? []
+        rows.set(key, placement === 'front' ? [entry, ...list] : [...list, entry])
+      })
     },
     remove(key, ids) {
       writes.push({ op: 'remove', key, detail: ids.length === 0 ? '(none)' : String(ids.length) })
-      rows.set(
-        key,
-        (rows.get(key) ?? []).filter((entry) => !ids.includes(entry.id)),
-      )
+      return perform('remove', () => {
+        rows.set(
+          key,
+          (rows.get(key) ?? []).filter((entry) => !ids.includes(entry.id)),
+        )
+      })
     },
     clear(key) {
       writes.push({ op: 'clear', key, detail: '' })
-      rows.delete(key)
+      return perform('clear', () => {
+        rows.delete(key)
+      })
     },
-    load: (key) => rows.get(key) ?? [],
+    load: (key) => perform('load', () => [...(rows.get(key) ?? [])]),
   }
-  return { store, writes, rows, seed }
+  return {
+    store,
+    writes,
+    rows,
+    release(op: StoreOp) {
+      const landing = inFlight.filter((call) => call.op === op)
+      inFlight = inFlight.filter((call) => call.op !== op)
+      for (const call of landing) {
+        call.land()
+      }
+    },
+    failNext(op: StoreOp) {
+      failing.add(op)
+    },
+  }
 }
 
 function heldMessage(text: string, sentAt: string): QueuedPrompt {
@@ -1801,6 +1844,9 @@ test('the durable copy is told where a message went, not just that it arrived', 
     queue: 'wait',
     origin: { kind: 'message', sender: 'Reader' },
   })
+  // The copy is write-BEHIND: it catches up after the send rather than making
+  // the send wait for it.
+  await settle()
   assert.deepEqual(
     fake.rows.get('agent:test:durable-2')?.map((entry) => entry.text),
     ['corrective', 'ordinary'],
@@ -1855,6 +1901,102 @@ test('a session with no key writes nothing, because nothing could address it', a
   await h.client.prompt(h.sessionId, 'held', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
   await settle()
   assert.deepEqual(fake.writes, [])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a run that never reached the harness is still there to restore', async () => {
+  // The durable copy is what makes a message survive a process that dies, so
+  // it has to outlive every step that could still fail to hand the message
+  // over. Forgotten before the hand-over, a harness that cannot be reached
+  // loses the message outright: nothing holds it any more, in memory or on
+  // disk, and nobody is told it was the delivery that failed.
+  const fake = fakeStore()
+  const h = await setup('openclaw', { sessionKey: 'agent:test:handover-1', queueStore: fake.store })
+  const entry = acpStore().connections.get(h.connectionKey) as { initialized: Promise<unknown> }
+  const unreachable = Promise.reject(new Error('harness unreachable'))
+  // Attached before it is ever awaited, so the rejection this test installs on
+  // purpose is not also an unhandled one.
+  unreachable.catch(() => {})
+  entry.initialized = unreachable
+
+  await h.client.prompt(h.sessionId, 'never-arrived', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+
+  assert.deepEqual(
+    fake.rows.get('agent:test:handover-1')?.map((queued) => queued.text),
+    ['never-arrived'],
+    'a message that never reached the agent must still be waiting for the next open',
+  )
+  assert.equal(
+    h.events.some((event) => event.kind === 'error'),
+    true,
+    'and the failure is reported rather than swallowed',
+  )
+})
+
+test('a remove cannot overtake the append it was issued after', async () => {
+  // The store's append is still in flight when the message passes straight
+  // through and is delivered. Handed over concurrently, the remove runs
+  // against a table its append has not reached: the delete erases nothing,
+  // the insert then lands, and the leftover row replays an already-delivered
+  // message at the next open. So the engine must not hand the store the
+  // remove until the append it follows has settled.
+  const fake = fakeStore({ hold: ['append'] })
+  const h = await setup('openclaw', { sessionKey: 'agent:test:ordered-1', queueStore: fake.store })
+  await h.client.prompt(h.sessionId, 'straight-through', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  assert.deepEqual(
+    fake.writes.map((write) => write.op),
+    ['append'],
+    'the remove waits for the append it follows',
+  )
+  fake.release('append')
+  await settle()
+  assert.deepEqual(fake.writes.map((write) => write.op), ['append', 'remove'])
+  assert.deepEqual(fake.rows.get('agent:test:ordered-1'), [], 'nothing is left for the next open to replay')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('reopening a key does not restore a message whose remove is still in flight', async () => {
+  // A session can be stopped and reopened without a restart, and the remove
+  // for its last delivery can still be on its way to the store when the
+  // reopen reads the queue back. Reading past it would restore — and then
+  // redeliver — a message the agent already has.
+  const fake = fakeStore({ hold: ['remove'] })
+  const h = await setup('openclaw', { sessionKey: 'agent:test:reopen-1', queueStore: fake.store })
+  await h.client.prompt(h.sessionId, 'delivered-once', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  h.endTurn()
+  await settle()
+  assert.deepEqual(deliveries(h), [['delivered-once']])
+  // The host stops the process; the key and whatever is durable under it stay.
+  await h.client.deleteSession(h.sessionId)
+  const reopening = h.client.createSession(h.selection)
+  await settle()
+  fake.release('remove')
+  const meta = await reopening
+  await settle()
+  assert.deepEqual(deliveries(h), [['delivered-once']], 'delivered once means once')
+  await h.client.deleteSession(meta.id)
+})
+
+test('a failed write does not wedge the writes behind it', async () => {
+  // Ordered must not mean fragile: the chain steps over a write that failed,
+  // so one bad moment costs that one entry's durability rather than every
+  // write after it.
+  const fake = fakeStore()
+  fake.failNext('append')
+  const h = await setup('openclaw', { sessionKey: 'agent:test:ordered-2', queueStore: fake.store })
+  await h.client.prompt(h.sessionId, 'lost-to-the-copy', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await h.client.prompt(h.sessionId, 'still-recorded', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  assert.deepEqual(
+    fake.writes.map((write) => `${write.op} ${write.detail}`),
+    ['append end:lost-to-the-copy', 'remove 1', 'append end:still-recorded'],
+  )
+  assert.deepEqual(
+    fake.rows.get('agent:test:ordered-2')?.map((entry) => entry.text),
+    ['still-recorded'],
+  )
   await h.client.deleteSession(h.sessionId)
 })
 

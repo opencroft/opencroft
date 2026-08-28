@@ -150,6 +150,16 @@ export interface AgentClientOptions {
  * the write loses that one message, where blocking the send would have made
  * every message wait for a disk.
  *
+ * The engine issues its calls for one session key strictly one after another,
+ * in the order it made them: a store never sees two engine writes for the same
+ * key in flight at once, and `load` is called only after every write already
+ * issued for that key has settled. Without that promise every store whose
+ * writes do any asynchronous work of its own would have to re-derive ordering
+ * for itself, and the one that didn't would let a remove overtake the append
+ * it was meant to erase — leaving a durable row for a message that was already
+ * delivered, to be replayed at the next open. Writes for DIFFERENT keys may
+ * still run concurrently.
+ *
  * Addressed by session KEY rather than session id: the id is per-process and a
  * restart mints a new one, so it cannot name the thing being restored into.
  * A session with no key is not persisted at all, because nothing could address
@@ -1292,8 +1302,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   }
 
   /**
-   * Hand one run to the agent: take it out of the queue, drop the durable copy
-   * of it, and deliver it as a single prompt.
+   * Hand one run to the agent: take it out of the queue, deliver it as a single
+   * prompt, and drop the durable copy once it has actually been handed over.
    *
    * Entries are taken by ID rather than by position, because a run is not
    * always the head of the queue: a system entry that jumps a message run the
@@ -1302,16 +1312,6 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   function dispatchRun(sessionId: string, session: SessionState, run: QueuedPrompt[]): Promise<void> {
     const taken = new Set(run.map((entry) => entry.id))
     session.queue = (session.queue ?? []).filter((entry) => !taken.has(entry.id))
-    // Delivered, so the durable copy has nothing left to restore. Dropped after
-    // the hand-over rather than before it: a crash between the two replays the
-    // run, and a message arriving twice is recoverable where one that never
-    // arrives is not.
-    persist(session, (store, key) =>
-      store.remove(
-        key,
-        run.map((entry) => entry.id),
-      ),
-    )
     // Nothing to correct when nothing was ever announced: a message that passed
     // straight through was never shown as waiting, so it needs no clearing.
     if (session.queueAnnounced || session.queue.length > 0) {
@@ -1332,8 +1332,28 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // prompt had reached the harness — turning what used to be "delivered by
     // the time this resolves" into a race the caller cannot see. Drains from a
     // turn settlement have nobody waiting and keep discarding it.
-    return deliverPrompt(sessionId, text).catch((error: unknown) =>
-      emit(sessionId, { kind: 'error', message: errorMessage(error) }),
+    return deliverPrompt(sessionId, text).then(
+      () => {
+        // Only now: the durable copy is what makes a message survive a process
+        // that dies, so it must outlive every step that could still fail to
+        // hand the message over. Dropped before the hand-over, a harness that
+        // could not be reached lost the message outright — nothing held it any
+        // more, in memory or on disk. Dropped after, that same failure leaves
+        // the entry to be restored and delivered at the next open.
+        //
+        // The cost is a narrow window in the other direction: an entry is
+        // durable while the hand-over is in flight, so a session reopened in
+        // exactly that moment can deliver it twice. That is the trade this
+        // whole path is built on — a message arriving twice is recoverable
+        // where one that never arrives is not.
+        persist(session, (store, key) =>
+          store.remove(
+            key,
+            run.map((entry) => entry.id),
+          ),
+        )
+      },
+      (error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }),
     )
   }
 
@@ -1349,12 +1369,32 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   }
 
   /**
+   * Durable-queue writes still in flight, per session key. The tail of a chain
+   * is the promise the NEXT write for that key starts after, and the thing a
+   * session open waits out before reading the store back (see
+   * restoreSessionState). Keyed by session KEY rather than by the session
+   * record, because the writes a reopen must not race were issued by the
+   * previous session object under the same key. Entries remove themselves once
+   * a chain has quiesced, so the map holds only keys with work outstanding.
+   */
+  const queueWrites = new Map<string, Promise<void>>()
+
+  /**
    * Run a durable-queue write without letting it touch the send path.
    *
    * Not awaited and never able to throw into a caller: durability is a
    * side-channel here. A store that is slow delays the copy, not the message,
    * and a store that is broken costs a queue that does not survive a restart —
    * which is where every host without one already is.
+   *
+   * Writes for one key run strictly in the order they were issued, each
+   * starting only after the previous one settled. Fired concurrently they
+   * would race inside the store: any store whose write does asynchronous work
+   * of its own can commit a remove before the append it was meant to erase,
+   * and the leftover row replays an already-delivered message at the next
+   * open. The engine is the one place the issue order is known, so the
+   * ordering is kept here rather than asked of every store. A failed write is
+   * logged and stepped over — it must not wedge the writes queued behind it.
    */
   function persist(session: SessionState, write: (store: QueueStore, key: string) => void | Promise<void>): void {
     const key = queueKey(session)
@@ -1362,13 +1402,20 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return
     }
     const store = options.queueStore
-    void (async () => {
+    const tail = queueWrites.get(key) ?? Promise.resolve()
+    const next = tail.then(async () => {
       try {
         await write(store, key)
       } catch (error) {
         console.error('[agent-client] durable queue write failed', error)
       }
-    })()
+    })
+    queueWrites.set(key, next)
+    void next.then(() => {
+      if (queueWrites.get(key) === next) {
+        queueWrites.delete(key)
+      }
+    })
   }
 
   /**
@@ -1416,6 +1463,18 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     const key = queueKey(session)
     if (!key) {
       return
+    }
+    // Writes issued for this key earlier in THIS process can still be in
+    // flight: a session is stopped and reopened without a restart, and the
+    // remove for its last delivery races the reopen. Reading before that
+    // remove lands would restore — and then redeliver — a message that was
+    // already handed over. So the read starts only once the chain has
+    // quiesced. Looped rather than awaited once, because a write chained
+    // while this waits extends the chain past the tail it grabbed.
+    for (let pending = queueWrites.get(key); pending; ) {
+      await pending
+      const tail = queueWrites.get(key)
+      pending = tail === pending ? undefined : tail
     }
     let restored: QueuedPrompt[]
     try {
