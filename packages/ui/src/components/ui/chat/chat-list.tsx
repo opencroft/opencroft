@@ -1,15 +1,10 @@
 'use client'
 
 import { useState, useRef, useEffect, type DragEvent, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react'
-import { ChevronDown, ChevronRight, Folder, FolderOpen, FolderPlus, Pencil, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, Folder, FolderOpen, FolderPlus, Pencil } from 'lucide-react'
 
 import { ChatListItem, type ChatListItemAction, type ChatStatus } from 'ui/components/ui/chat/chat-list-item'
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from 'ui/components/ui/context-menu'
+import { RowContextMenu } from 'ui/components/ui/utils/row-context-menu'
 import { cn } from 'ui/lib/utils'
 
 export interface ChatListLeaf {
@@ -19,6 +14,11 @@ export interface ChatListLeaf {
   avatarUrl?: string | null
   status?: ChatStatus
   hasDraft?: boolean
+  // Dim the row without hiding it -- forwarded straight through to the row,
+  // which already draws this state. It has to be on the leaf because the row is
+  // rendered from in here: a host that hands over a tree has no other way to
+  // reach that prop.
+  disabled?: boolean
 }
 
 export interface ChatListFolderInput {
@@ -168,7 +168,7 @@ function initState(nodes: ChatListNode[], defaultFolderOpen: boolean): ListState
 // settle. Folder `open` is deliberately excluded: it is view state this
 // component owns, so a change to it is not an upstream change.
 function leafSignature(l: ChatListLeaf) {
-  return [l.id, l.title, l.description ?? '', l.avatarUrl ?? '', l.status ?? '', l.hasDraft ? 1 : 0]
+  return [l.id, l.title, l.description ?? '', l.avatarUrl ?? '', l.status ?? '', l.hasDraft ? 1 : 0, l.disabled ? 1 : 0]
 }
 
 function nodesSignature(nodes: ChatListNode[]): string {
@@ -792,6 +792,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
             avatarUrl={leaf.avatarUrl}
             status={leaf.status}
             hasDraft={leaf.hasDraft}
+            disabled={leaf.disabled}
             active={leaf.id === activeId}
             onSelect={onSelect}
             onRename={onRename}
@@ -862,19 +863,19 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
             className='min-w-0 flex-1 rounded-sm bg-background px-1 py-0.5 text-foreground outline-none ring-1 ring-ring'
           />
         ) : allowFolders ? (
-          <ContextMenu onOpenChange={handleMenuOpen}>
-            <ContextMenuTrigger asChild disabled={touchInput && menuArmed?.id !== fid}>{toggle}</ContextMenuTrigger>
-            <ContextMenuContent className='min-w-[8rem]' onClick={(e) => e.stopPropagation()}>
-              <ContextMenuItem onClick={() => startRename(fid, f.name)}>
-                <Pencil className='size-3' />
-                Rename
-              </ContextMenuItem>
-              <ContextMenuItem className='text-destructive focus:text-destructive' onClick={() => deleteFolder(fid)}>
-                <Trash2 className='size-3' />
-                Delete
-              </ContextMenuItem>
-            </ContextMenuContent>
-          </ContextMenu>
+          // The folder header's menu is the same component a chat row uses, so a
+          // folder and a chat are deleted through the same control rather than
+          // two that happen to match.
+          <RowContextMenu
+            entries={[
+              { label: 'Rename', icon: <Pencil className='size-3' />, onSelect: () => startRename(fid, f.name) },
+            ]}
+            onDelete={() => deleteFolder(fid)}
+            disabled={touchInput && menuArmed?.id !== fid}
+            onOpenChange={handleMenuOpen}
+          >
+            {toggle}
+          </RowContextMenu>
         ) : (
           toggle
         )
@@ -997,6 +998,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
             avatarUrl={leaf.avatarUrl}
             status={leaf.status}
             hasDraft={leaf.hasDraft}
+            disabled={leaf.disabled}
           />
         ) : null
         if (!content) return null
