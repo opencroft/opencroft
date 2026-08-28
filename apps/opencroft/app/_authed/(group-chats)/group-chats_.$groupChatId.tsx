@@ -35,7 +35,6 @@ import {
   listMyGroupChatPins,
 } from '@/app/_authed/(group-chats)/_server/actions'
 import { listAgentNodes } from '@/app/_authed/(space)/_server/agents'
-import { useGroupChatsSlot } from '@/app/_shell/group-chats-slot'
 
 // Inside one group chat: its topic, who is taking part, and its threads.
 //
@@ -105,9 +104,10 @@ function GroupChatDetailPage() {
   const goToThread = (threadId: string) =>
     navigate({ to: '/group-chats/$groupChatId/$threadId', params: { groupChatId, threadId } })
 
-  // The arrangement is owned here, not by either list, because the same one is
-  // drawn twice -- on this screen and in the sidebar -- and a copy in each
-  // would drift apart the first time either was dragged.
+  // The arrangement is owned here rather than inside the list, so the list
+  // stays presentational and every write goes through one hook, one store and
+  // one compare-and-swap guard. A refused write is answered by adopting the
+  // arrangement that won, which is state a presentational list cannot hold.
   const { layout, persist } = useThreadLayout(groupChatId, data.refused ? EMPTY_THREAD_LAYOUT : data.layout)
   const threadTree = (
     <GroupChatThreadTree
@@ -141,10 +141,6 @@ function GroupChatDetailPage() {
       }}
     />
   )
-  // The same element in the sidebar. Everything it is built from is listed:
-  // the handlers close over `threads` and over state setters, which are stable.
-  useGroupChatsSlot(threads.length > 0 ? threadTree : null, [groupChatId, threads, threadStatusById, layout])
-
   const confirmDelete = async () => {
     if (!deleteTarget) {
       return
