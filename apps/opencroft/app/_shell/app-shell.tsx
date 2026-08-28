@@ -27,7 +27,6 @@ import {
 
 import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
 import { DevBuildBadge } from '@/app/_components/dev-build-badge'
-import { GroupChatsSlotProvider, useGroupChatsSlotContent } from '@/app/_shell/group-chats-slot'
 import { RightSidebar } from '@/app/_shell/right-sidebar'
 import { SignOutItem } from '@/app/(auth)/_components/sign-out-item'
 
@@ -47,7 +46,6 @@ interface SidebarProps {
 function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarProps) {
   const pathname = useLocation({ select: (l) => l.pathname })
   const pinnedDashboards = dashboards.filter((d) => pinnedDashboardSlugs.includes(d.slug))
-  const groupChatsContent = useGroupChatsSlotContent()
 
   return (
     <Sidebar collapsible='icon'>
@@ -108,10 +106,6 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
-          {/* The open group chat's own threads, published by its screen. The
-              section is otherwise exactly as it was: a link, and nothing
-              underneath it anywhere else in the app. */}
-          {groupChatsContent ? <div className='px-2 pt-1'>{groupChatsContent}</div> : null}
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
@@ -146,21 +140,13 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
 export function AppShell({ pinnedSpaces, dashboards, pinnedDashboardSlugs, children }: Props) {
   return (
     <TitlebarProvider>
-      {/* Above both the sidebar and the page, because that is the pair it
-          connects: the page publishes, the sidebar renders. */}
-      <GroupChatsSlotProvider>
-        <SidebarProvider style={{ '--sidebar-width': '24rem' } as React.CSSProperties}>
-          <Suspense fallback={null}>
-            <AppSidebar
-              pinnedSpaces={pinnedSpaces}
-              dashboards={dashboards}
-              pinnedDashboardSlugs={pinnedDashboardSlugs}
-            />
-          </Suspense>
-          <main className='flex flex-col w-full h-dvh'>{children}</main>
-          <RightSidebar />
-        </SidebarProvider>
-      </GroupChatsSlotProvider>
+      <SidebarProvider style={{ '--sidebar-width': '24rem' } as React.CSSProperties}>
+        <Suspense fallback={null}>
+          <AppSidebar pinnedSpaces={pinnedSpaces} dashboards={dashboards} pinnedDashboardSlugs={pinnedDashboardSlugs} />
+        </Suspense>
+        <main className='flex flex-col w-full h-dvh'>{children}</main>
+        <RightSidebar />
+      </SidebarProvider>
     </TitlebarProvider>
   )
 }
