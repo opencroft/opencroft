@@ -69,6 +69,16 @@ function parseLayout(raw: string): ThreadLayout {
  * are not in. The gated pair further down is what a server function calls;
  * these stay exported because the concurrency behaviour is worth testing
  * without a signed-in session to build first.
+ *
+ * That sentence stays true AFTER the gate below, by a route the gate cannot
+ * reach: the generic settings writes take a caller-supplied id, carry no
+ * authorization of their own, and are callable endpoints regardless of which
+ * page links to them. Worse for this row than a plain overwrite -- the generic
+ * write does not touch `version`, so the next drag compare-and-swaps against a
+ * version that is stale without looking stale, succeeds, and clobbers with no
+ * refusal and no toast. The gate here closes the door this file opened; it
+ * cannot close one standing open beside it, and every other feature in that
+ * table has the same exposure. Not this module's to fix.
  */
 export async function readThreadLayout(groupChatId: string): Promise<VersionedThreadLayout> {
   const row = await getSetting(settingId(groupChatId))

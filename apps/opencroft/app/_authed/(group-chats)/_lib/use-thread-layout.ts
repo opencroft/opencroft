@@ -62,7 +62,12 @@ export function useThreadLayout(groupChatId: string, loaded: VersionedThreadLayo
           queued.current = null
           confirmedVersion.current = result.current.version
           setShown(result.current.layout)
-          toast('Someone else changed this list, so it has been refreshed.')
+          // "Someone else" would be a guess: the store records no author, so
+          // this cannot tell another member apart from the same person in a
+          // second tab, or from a write of our own whose response was lost.
+          // What IS true in every case that reaches here is that the list
+          // changed somewhere other than in front of this reader.
+          toast('This list changed elsewhere and has been refreshed.')
           return
         }
         confirmedVersion.current = result.version
