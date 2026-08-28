@@ -1,26 +1,30 @@
 'use client'
 
 import { type ReactNode } from 'react'
-import { Check, ChevronDown, Hash } from 'lucide-react'
+import { Hash } from 'lucide-react'
 
-import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
 import { AgentCommandBar } from 'agent-chat/components/agent-command-bar'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from 'ui/components/ui/dropdown-menu'
+import { AgentPicker, type AgentRef } from 'ui/components/ui/group-chat/agent-picker'
 import { cn } from 'ui/lib/utils'
 
-// Declared here rather than imported from the thread list: it is three
-// structural fields, and a registry dependency taken on for a type alone would
-// pull a whole component into an install that does not render one.
-export interface AgentRef {
-  nodeId: string
-  name: string
-  avatarUrl?: string | null
-}
+// The command bar comes from the agent-chat PACKAGE rather than from a
+// registry dependency, because it is not a sibling in this kit: it lives in
+// the agent-chat project, which installs into a different package.
+//
+// Declaring it as a cross-project registry dependency does resolve -- and
+// writes a second copy of the bar into this package, a ~580-line fork of the
+// composer every chat surface shares, which is the drift the kit exists to
+// prevent. A package specifier means one bar, installed once, imported by
+// whatever needs it; and the installed file then matches this source
+// byte-for-byte, so nothing has to be corrected by hand after an install.
+
+// Re-exported rather than redeclared. The shape belongs to the picker that
+// renders it, and two structurally identical declarations of one contract are
+// how the two drift apart. The note here used to argue the opposite -- that a
+// registry dependency taken on for a type alone drags in a component nothing
+// renders -- which stopped being true once the picker became what draws this
+// composer's own agent row.
+export type { AgentRef }
 
 export interface StartThreadComposerProps {
   // MEMBER agents only. An agent that is not a member is refused, so offering
@@ -119,44 +123,18 @@ export function StartThreadComposer({
     )
   }
 
-  const selected = agents.find((a) => a.nodeId === selectedAgentNodeId)
   const canName = Boolean(onTitleChange)
 
-  // Sized to the action row's own controls (h-7) rather than to a form field,
-  // because that is the row it is standing in.
+  // One control, not a copy of one: the same AgentPicker any other surface
+  // that addresses an agent renders. This markup used to live here inline,
+  // which is exactly why a second surface could only match it by copying it.
   const picker = (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type='button'
-          disabled={submitting}
-          className='inline-flex h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-md px-1.5 text-xs text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50'
-          title={selected ? `Thread with ${selected.name}` : 'Choose an agent'}
-        >
-          {selected ? (
-            <AgentAvatar avatar={selected.avatarUrl} name={selected.name} size='sm' />
-          ) : (
-            <span className='size-6' aria-hidden />
-          )}
-          <span className='max-w-32 truncate'>
-            {selected ? selected.name : <span className='text-muted-foreground'>Select agent</span>}
-          </span>
-          <ChevronDown className='size-3.5 shrink-0 text-muted-foreground' />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align='start' side='top' className='min-w-48'>
-        {agents.map((agent) => {
-          const isSelected = agent.nodeId === selectedAgentNodeId
-          return (
-            <DropdownMenuItem key={agent.nodeId} onSelect={() => onSelectAgent(agent.nodeId)} className='gap-2'>
-              <AgentAvatar avatar={agent.avatarUrl} name={agent.name} size='sm' />
-              <span className='min-w-0 flex-1 truncate'>{agent.name}</span>
-              {isSelected ? <Check className='size-3.5 shrink-0 text-primary' /> : null}
-            </DropdownMenuItem>
-          )
-        })}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <AgentPicker
+      agents={agents}
+      selectedAgentNodeId={selectedAgentNodeId}
+      onSelectAgent={onSelectAgent}
+      disabled={submitting}
+    />
   )
 
   return (
