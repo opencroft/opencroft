@@ -9,6 +9,7 @@ import { Flex } from 'ui/layout/flex'
 import { type CommandNodeEntry, NO_COMMAND_MODE } from '@/app/_authed/(dashboard)/_canvas/canvas-command-bar'
 import { CommandBar, CommandBarMenu } from '@/app/_authed/(dashboard)/_canvas/command-bar'
 import { recordBubbled, recordCaptured, recordRender } from '@/app/_authed/(dashboard)/_canvas/ctrlg-debug'
+import { ChatArea, ChatBar, ChatContent, ChatHeader } from '@/app/_authed/(dashboard)/_canvas/overlay-chrome'
 import {
   useOverlay,
   useOverlayBackIntercept,
@@ -17,7 +18,6 @@ import {
 import { SearchFindBar } from '@/app/_authed/(dashboard)/_canvas/search-find-bar'
 import type { CommandModeDefinition, CommandModeShortcut } from '@/app/_authed/(extension-runtime)/_client/host'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
-import { ChatArea, ChatBar, ChatContent, ChatHeader } from '@/components/experimental/chat'
 import { cn } from '@/lib/utils'
 
 interface CanvasOverlayProps {
