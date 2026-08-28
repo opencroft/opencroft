@@ -4,7 +4,7 @@ import { Maximize2, Minimize2, Pencil, X } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
 import { useState } from 'react'
 // The type import back the other way is erased, so this is not a runtime cycle.
-import { facesInRun } from '../author-runs'
+import { type AuthorRun, authorRuns } from '../author-runs'
 import { Markdown } from './markdown'
 
 import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
@@ -176,10 +176,21 @@ export function formatSentAt(at: Date, now: Date = new Date()): string {
 // `sentAt` is the SENT time and never the delivered one. Those are different
 // instants as soon as a message waits, and only the first is a fact about the
 // sender.
+// Who a message's stamped identifier resolved to.
+//
+// Named rather than written inline because a whole RUN of messages is drawn
+// under one of these, so the run and the message it came from have to be
+// talking about the same thing by construction rather than by two literals
+// that happen to match today.
+export interface ChatAuthorAccount {
+  name: string
+  avatarUrl?: string | null
+}
+
 export interface ChatUserMessagePart {
   text: UserText
   author?: string
-  authorAccount?: { name: string; avatarUrl?: string | null }
+  authorAccount?: ChatAuthorAccount
   sentAt?: string
   // A stable identity for this one message, where it has one.
   //
@@ -240,39 +251,36 @@ export function ChatUserMessage({
 }: ChatUserMessageProps) {
   const { Chained } = renderers
 
-  // Later messages supersede earlier ones -- the rule the agent is told to read
-  // a turn by -- so the last one is what stays behind as the header, and the
-  // earlier ones simply scroll away with everything else.
-  const earlier = parts.slice(0, -1)
-  const last = parts[parts.length - 1]
-
-  // Whether each message opens a new run, and so shows its sender's face.
+  // The turn's messages cut into runs of one sender, each of which gets ONE
+  // rail segment below.
+  //
   // Computed for THIS delivery only: a turn is a batch, and a batch opens with
   // a face whatever was said before it.
-  const faces = facesInRun(parts)
+  const runs = authorRuns(parts)
 
-  // The face for a message, or the space where one would be.
+  // The face for a run, or the space where one would be.
   //
-  // TWO CONDITIONS, AND THE SECOND IS NOT A GUARD AGAINST A MISSING PROP. A
-  // face is drawn when the message opens a run AND there is an account to draw
-  // -- because `AgentAvatar` with nothing to show falls through to a generic
-  // person icon, and a person icon per sender change is a picture of somebody
-  // standing in for every message this application cannot identify. Unresolved
-  // has to stay visibly unresolved: the name renders as the text it holds and
-  // no face appears, which is the state the design already has for it.
+  // THE ACCOUNT AND NOT THE IDENTIFIER, AND THAT IS NOT A GUARD AGAINST A
+  // MISSING PROP. A face is drawn only where the run's opening message resolved
+  // to an account -- because `AgentAvatar` with nothing to show falls through
+  // to a generic person icon, and a person icon per sender change is a picture
+  // of somebody standing in for every message this application cannot identify.
+  // Unresolved has to stay visibly unresolved: the name renders as the text it
+  // holds and no face appears, which is the state the design already has for
+  // it.
   //
   // The population makes it concrete rather than theoretical: every author
-  // stamped before accounts had handles resolves to nothing, so gating on the
-  // run alone would put an anonymous face on the opening message of every run
-  // in every transcript already written.
+  // stamped before accounts had handles resolves to nothing, so drawing a face
+  // per run regardless would put an anonymous face on every run in every
+  // transcript already written.
   //
-  // The blank is the avatar's own size rather than nothing, so a message
-  // inside a run sits at the same left edge as the one that opened it -- a run
-  // that shifted sideways as it went would read as a different kind of thing
-  // rather than as the same sender continuing.
-  const markerFor = (part: ChatUserMessagePart, index: number) =>
-    faces[index] && part.authorAccount ? (
-      <AgentAvatar avatar={part.authorAccount.avatarUrl ?? undefined} name={part.authorAccount.name} size='md' />
+  // The blank is the avatar's own size rather than nothing, so a run with no
+  // face sits at the same left edge as one with it -- a rail that changed width
+  // depending on whether the sender was known would read as a different kind of
+  // thing rather than as the same conversation continuing.
+  const markerFor = (run: AuthorRun) =>
+    run.account ? (
+      <AgentAvatar avatar={run.account.avatarUrl ?? undefined} name={run.account.name} size='md' />
     ) : (
       <span aria-hidden className='block size-8' />
     )
@@ -296,70 +304,90 @@ export function ChatUserMessage({
     // The same rail the replies below are rendered in, so both columns start at
     // the same left edge by construction rather than by a matched indent -- if
     // the rail's width changes, the two move together.
-    //
-    // The sentence that used to end this comment -- that the avatar has no
-    // source and falls back to a person icon, which is the intended
-    // placeholder -- was true of the single avatar a turn used to carry, and
-    // stopped being true the moment there was one per sender change. A
-    // placeholder standing in for a whole turn is a layout decision; one per
-    // sender change is a claim about who spoke.
     <>
-      {earlier.map((part, index) => (
-        // Each message is its own rail segment, because each one answers the
-        // avatar question for itself. The rail column is a fixed width OUTSIDE
-        // the content column, so a face can only sit in it by the message
-        // having a segment -- drawing them inside the content column instead
-        // would indent every bubble by the rail's width and stop the question
-        // lining up with the replies below it.
-        //
-        // Keyed by the message's own id where it has one, and by position
-        // otherwise. A turn already sent is decoded from a text that cannot
-        // change, so nothing reorders and position IS identity; one still
-        // waiting can have a message taken out of its middle, and a positional
-        // key would then hand the removed row's state to its neighbour.
-        <Chained key={part.id ?? index} marker={markerFor(part, index)} lineAbove={false} lineBelow={false} align='start'>
-          <MessageRow onRemove={removeFor(part)}>
-            <UserMessageBubble part={part} />
-          </MessageRow>
-        </Chained>
-      ))}
-      <Chained
-        // Pinned rather than duplicated, on the segment that hands over. The
-        // avatar holds the container's edge while the message slides past it,
-        // so it is rendered once and never fades. Placed in the cross-fade
-        // instead it would appear out of nothing exactly as the message left,
-        // which is the kind of thing a reader sees even when they could not
-        // say what happened.
-        marker={
-          sticky && last ? (
-            <CollapsingStickyHeaderPinned>{markerFor(last, parts.length - 1)}</CollapsingStickyHeaderPinned>
-          ) : last ? (
-            markerFor(last, parts.length - 1)
-          ) : null
-        }
-        lineAbove={false}
-        lineBelow={false}
-        align='start'
-      >
-      {/* Edit belongs to the turn and so sits on the segment that ends it;
-          remove belongs to a message and so is asked for per part, here as
-          everywhere else. */}
-      <MessageRow onEdit={onEdit} editDisabled={editDisabled} onRemove={last ? removeFor(last) : undefined}>
-        {last &&
-          (sticky ? (
-            // The last message is the one that hands over: its full form
-            // scrolls away like ordinary content, its opening three lines
-            // stay behind, and the two cross only in the final stretch. That
-            // wait is the point -- a message taller than the screen is read
-            // rather than shrunk out from under the reader.
-            <CollapsingStickyHeaderContent preview={<UserMessageBubble part={last} preview />}>
-              <UserMessageBubble part={last} />
-            </CollapsingStickyHeaderContent>
-          ) : (
-            <UserMessageBubble part={last} />
-          ))}
-      </MessageRow>
-      </Chained>
+      {runs.map((run, runIndex) => {
+        // Later messages supersede earlier ones -- the rule the agent is told
+        // to read a turn by -- so the last message of the last run is the one
+        // that stays behind as the header, and everything above it scrolls away
+        // with the rest of the content.
+        const isLastRun = runIndex === runs.length - 1
+        const marker = markerFor(run)
+        return (
+          // ONE SEGMENT PER RUN, NOT PER MESSAGE. The rail column is a fixed
+          // width OUTSIDE the content column and stretches to its segment's
+          // height, so a segment spanning the whole run is what gives the face
+          // both of the things it needs: a place in the rail that the messages
+          // below it share, and a column taller than itself to travel in. A
+          // segment per message gives the face to the opening message alone and
+          // leaves every message after it holding an avatar-sized blank.
+          //
+          // Keyed by the opening message's own id where it has one, and by
+          // position otherwise. A turn already sent is decoded from a text that
+          // cannot change, so nothing reorders and position IS identity; one
+          // still waiting can have a message taken out of its middle, and a
+          // positional key would then hand the removed row's state to its
+          // neighbour.
+          <Chained
+            key={run.parts[0].id ?? runIndex}
+            // Pinned rather than duplicated: the face holds the container's top
+            // edge while its own run scrolls under it, so it is rendered once
+            // and never fades. Placed in the cross-fade instead it would appear
+            // out of nothing exactly as the message left, which is the kind of
+            // thing a reader sees even when they could not say what happened.
+            //
+            // EVERY run's face, not only the last one's. The collapsing header
+            // slides the whole turn past the container's edge, so a face that
+            // let go the moment its own first message did would leave the rest
+            // of its run passing unattributed -- which is the same defect as
+            // drawing no face at all, arriving a scroll later.
+            //
+            // Only where the turn takes part in pinning: `sticky` is the caller
+            // saying this render holds the viewport's top edge, and a queue
+            // waiting below the transcript holds nothing.
+            marker={sticky ? <CollapsingStickyHeaderPinned>{marker}</CollapsingStickyHeaderPinned> : marker}
+            lineAbove={false}
+            lineBelow={false}
+            align='start'
+          >
+            {/* One voice speaking, so its messages stack at the bubble's own
+                internal rhythm rather than at the distance between segments.
+                That difference is what makes a run read as one block and the
+                space before the next run read as a change of speaker -- and it
+                is one value for both surfaces, so what is waiting to be read
+                and what has been read cannot space themselves differently. */}
+            <div className='flex min-w-0 flex-col gap-1.5'>
+              {run.parts.map((part, partIndex) => {
+                const handsOver = isLastRun && partIndex === run.parts.length - 1
+                return (
+                  // Edit belongs to the turn and so sits on the message that
+                  // ends it; remove belongs to a message and so is asked for
+                  // per part, here as everywhere else.
+                  <MessageRow
+                    key={part.id ?? partIndex}
+                    onEdit={handsOver ? onEdit : undefined}
+                    editDisabled={editDisabled}
+                    onRemove={removeFor(part)}
+                  >
+                    {handsOver && sticky ? (
+                      // The last message is the one that hands over: its full
+                      // form scrolls away like ordinary content, its opening
+                      // three lines stay behind, and the two cross only in the
+                      // final stretch. That wait is the point -- a message
+                      // taller than the screen is read rather than shrunk out
+                      // from under the reader.
+                      <CollapsingStickyHeaderContent preview={<UserMessageBubble part={part} preview />}>
+                        <UserMessageBubble part={part} />
+                      </CollapsingStickyHeaderContent>
+                    ) : (
+                      <UserMessageBubble part={part} />
+                    )}
+                  </MessageRow>
+                )
+              })}
+            </div>
+          </Chained>
+        )
+      })}
     </>
   )
 
