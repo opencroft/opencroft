@@ -406,9 +406,9 @@ export const listThreadArtifacts = createServerFn({ method: 'GET', strict: { out
   .inputValidator((threadId: string) => threadId)
   .handler(async ({ data: threadId }): Promise<ThreadArtifact[]> => listArtifactsForThread(getRequest(), threadId))
 
-// Save (or clear, with an empty string) a thread's composer draft. Fired on
-// the same debounce/flush schedule AgentCommandBarHost already drives for the
-// 1:1 chat -- see setDraft in use-agent-sessions.ts for the sibling call.
+// Save (or clear, with an empty string) a thread's composer draft, on the
+// debounce/flush schedule AgentCommandBarHost drives. The draft belongs to the
+// thread row, so it is stored here rather than against the session key.
 export const setGroupChatThreadDraft = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { threadId: string; draft: string }) => data)
   .handler(async ({ data }): Promise<void> => setThreadDraft(getRequest(), data.threadId, data.draft))

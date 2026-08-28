@@ -799,10 +799,10 @@ export function useAcpSession(
   // - Pending permission requests and the server-side prompt queue die with
   //   the session -- they belong to the deleted session's live process, which
   //   is gone, so there is nothing left to resume either into.
-  // - The composer draft SURVIVES: both the in-memory text and the persisted
-  //   per-tab entry live in use-agent-sessions.ts's own store, keyed by
-  //   tabKey and never touched here -- the draft belongs to the composer, not
-  //   to the session identity Clear is replacing.
+  // - The composer draft SURVIVES: the in-memory text belongs to the composer,
+  //   and persisting it is the host's business -- a group-chat thread stores it
+  //   on the thread row. Neither is touched here, because the draft belongs to
+  //   the composer, not to the session identity Clear is replacing.
   //
   // Returns the promise (rather than firing it and forgetting) so a caller's
   // in-flight guard -- see agent-chat's useClearControl -- can actually wait

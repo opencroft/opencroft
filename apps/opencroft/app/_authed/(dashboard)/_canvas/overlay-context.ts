@@ -113,6 +113,12 @@ export function OverlayProvider({ children }: { children: ReactNode }) {
   const [mode, setModeState] = useState<CommandMode>(NO_COMMAND_MODE)
   const [params, setParams] = useState<unknown>(null)
   const [focusTick, setFocusTick] = useState(0)
+  // Nothing reads `commandFocused` today: its one reader was the canvas chat
+  // surface, which is gone. The setter stays because it is published --
+  // `activate` calls it, and every extension command-mode component is handed
+  // it as `onFocusChange`, so removing it would change an extension-facing
+  // contract rather than delete dead code. Dead state, not a defect: whoever
+  // gives extensions a reason to report focus again has the value waiting.
   const [commandFocused, setCommandFocused] = useState(false)
 
   // TEMPORARY: every mode transition funnels through this one
