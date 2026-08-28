@@ -1904,6 +1904,36 @@ test('a session with no key writes nothing, because nothing could address it', a
   await h.client.deleteSession(h.sessionId)
 })
 
+test('a run that never reached the harness is still there to restore', async () => {
+  // The durable copy is what makes a message survive a process that dies, so
+  // it has to outlive every step that could still fail to hand the message
+  // over. Forgotten before the hand-over, a harness that cannot be reached
+  // loses the message outright: nothing holds it any more, in memory or on
+  // disk, and nobody is told it was the delivery that failed.
+  const fake = fakeStore()
+  const h = await setup('openclaw', { sessionKey: 'agent:test:handover-1', queueStore: fake.store })
+  const entry = acpStore().connections.get(h.connectionKey) as { initialized: Promise<unknown> }
+  const unreachable = Promise.reject(new Error('harness unreachable'))
+  // Attached before it is ever awaited, so the rejection this test installs on
+  // purpose is not also an unhandled one.
+  unreachable.catch(() => {})
+  entry.initialized = unreachable
+
+  await h.client.prompt(h.sessionId, 'never-arrived', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+
+  assert.deepEqual(
+    fake.rows.get('agent:test:handover-1')?.map((queued) => queued.text),
+    ['never-arrived'],
+    'a message that never reached the agent must still be waiting for the next open',
+  )
+  assert.equal(
+    h.events.some((event) => event.kind === 'error'),
+    true,
+    'and the failure is reported rather than swallowed',
+  )
+})
+
 test('a remove cannot overtake the append it was issued after', async () => {
   // The store's append is still in flight when the message passes straight
   // through and is delivered. Handed over concurrently, the remove runs

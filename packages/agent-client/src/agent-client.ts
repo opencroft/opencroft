@@ -1302,8 +1302,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   }
 
   /**
-   * Hand one run to the agent: take it out of the queue, drop the durable copy
-   * of it, and deliver it as a single prompt.
+   * Hand one run to the agent: take it out of the queue, deliver it as a single
+   * prompt, and drop the durable copy once it has actually been handed over.
    *
    * Entries are taken by ID rather than by position, because a run is not
    * always the head of the queue: a system entry that jumps a message run the
@@ -1312,16 +1312,6 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   function dispatchRun(sessionId: string, session: SessionState, run: QueuedPrompt[]): Promise<void> {
     const taken = new Set(run.map((entry) => entry.id))
     session.queue = (session.queue ?? []).filter((entry) => !taken.has(entry.id))
-    // Delivered, so the durable copy has nothing left to restore. Dropped after
-    // the hand-over rather than before it: a crash between the two replays the
-    // run, and a message arriving twice is recoverable where one that never
-    // arrives is not.
-    persist(session, (store, key) =>
-      store.remove(
-        key,
-        run.map((entry) => entry.id),
-      ),
-    )
     // Nothing to correct when nothing was ever announced: a message that passed
     // straight through was never shown as waiting, so it needs no clearing.
     if (session.queueAnnounced || session.queue.length > 0) {
@@ -1342,8 +1332,28 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // prompt had reached the harness — turning what used to be "delivered by
     // the time this resolves" into a race the caller cannot see. Drains from a
     // turn settlement have nobody waiting and keep discarding it.
-    return deliverPrompt(sessionId, text).catch((error: unknown) =>
-      emit(sessionId, { kind: 'error', message: errorMessage(error) }),
+    return deliverPrompt(sessionId, text).then(
+      () => {
+        // Only now: the durable copy is what makes a message survive a process
+        // that dies, so it must outlive every step that could still fail to
+        // hand the message over. Dropped before the hand-over, a harness that
+        // could not be reached lost the message outright — nothing held it any
+        // more, in memory or on disk. Dropped after, that same failure leaves
+        // the entry to be restored and delivered at the next open.
+        //
+        // The cost is a narrow window in the other direction: an entry is
+        // durable while the hand-over is in flight, so a session reopened in
+        // exactly that moment can deliver it twice. That is the trade this
+        // whole path is built on — a message arriving twice is recoverable
+        // where one that never arrives is not.
+        persist(session, (store, key) =>
+          store.remove(
+            key,
+            run.map((entry) => entry.id),
+          ),
+        )
+      },
+      (error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }),
     )
   }
 
