@@ -6,21 +6,45 @@ import type { GraphNodeRecord } from '@opencroft/server'
 // Which nodes on the graph name a secret, so that deleting one can refuse
 // rather than break whatever reads it.
 //
-// A node names the secrets it needs in its `secrets` field, one name per line.
-// That field and that parse are the host's: `resolveEnv` in
-// `_server/exec-dispatch.ts` injects from exactly this shape, and a node whose
-// `secrets` field is not a string is not resolvable there either — so a
-// non-string field is not a reference this misses, it is one nothing can
-// satisfy. The two have to move together: a second field that names a secret
-// becomes resolvable and referenced in the same change.
+// Three conventions name a secret in node data. Each is matched the way the
+// code that resolves it reads it, so a reference is seen exactly when
+// something can act on one:
+//
+//   1. `secrets`      — one name per line, injected as environment variables
+//                       by `resolveEnv` in `_server/exec-dispatch.ts`. A field
+//                       that is not a string is not a reference missed here:
+//                       resolveEnv cannot inject from one either, so nothing
+//                       is holding that name.
+//   2. `apiKeySecret` — exactly one name, matched VERBATIM rather than
+//                       trimmed, because the agent path resolves it verbatim.
+//                       A padded value resolves to nothing there, so it
+//                       references nothing here.
+//   3. `secret:NAME`  — standing in for a literal value, anywhere in the
+//                       node's data. This one is value-shaped rather than
+//                       field-shaped, so it is found without knowing which
+//                       field holds it — which is what lets it reach node
+//                       types owned by extensions this code knows nothing
+//                       about.
+//
+// What it cannot do is see a FOURTH convention: a node type naming a secret in
+// a field of its own that holds a bare name. Nothing here can discover that,
+// so an empty result means "nothing matched the three conventions above" and
+// never "nothing references this". The two have to stay distinct wherever the
+// result is reported, or a pass starts reading as a guarantee it is not.
 //
 // Nothing here resolves a value or asks whether the name exists. What matters
 // is what the graph SAYS it needs, because that is what breaks when the name
 // stops resolving.
 // ═══════════════════════════════════════════════════════════════════
 
-/** The node-data field naming the secrets a node needs, one per line. */
-const SECRET_REFERENCE_FIELD = 'secrets'
+/** Node-data field naming the secrets a node needs, one per line. */
+const SECRETS_FIELD = 'secrets'
+
+/** Node-data field holding exactly one secret name. */
+const API_KEY_SECRET_FIELD = 'apiKeySecret'
+
+/** Value prefix standing in for a literal value, anywhere in a node's data. */
+const SECRET_VALUE_PREFIX = 'secret:'
 
 /**
  * The parameter a caller passes to delete a secret that is still referenced.
@@ -43,27 +67,70 @@ export interface SecretDeleteRefusal {
   message: string
 }
 
-function referencedNames(data: Record<string, unknown>): string[] {
-  const field = data[SECRET_REFERENCE_FIELD]
-  if (typeof field !== 'string') {
-    return []
+/**
+ * Every string anywhere inside a value.
+ *
+ * Unbounded by design: node data is parsed from the graph's stored JSON, so it
+ * cannot contain a cycle, and a depth limit would silently stop finding
+ * references below it — a scan that quietly under-reports is the one failure
+ * this must not have.
+ */
+function* stringValues(value: unknown): Generator<string> {
+  if (typeof value === 'string') {
+    yield value
+    return
   }
-  return field
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean)
+  if (value === null || typeof value !== 'object') {
+    return
+  }
+  for (const entry of Object.values(value)) {
+    yield* stringValues(entry)
+  }
 }
 
-/** Every node whose `secrets` field names `key`, in the order the nodes were given. */
+/** Every secret name a node's data asks for, by any of the three conventions. */
+function referencedNames(data: Record<string, unknown>): Set<string> {
+  const names = new Set<string>()
+
+  const lines = data[SECRETS_FIELD]
+  if (typeof lines === 'string') {
+    for (const line of lines.split('\n')) {
+      const name = line.trim()
+      if (name) {
+        names.add(name)
+      }
+    }
+  }
+
+  const single = data[API_KEY_SECRET_FIELD]
+  if (typeof single === 'string' && single) {
+    names.add(single)
+  }
+
+  for (const value of stringValues(data)) {
+    if (!value.startsWith(SECRET_VALUE_PREFIX)) {
+      continue
+    }
+    const name = value.slice(SECRET_VALUE_PREFIX.length).trim()
+    if (name) {
+      names.add(name)
+    }
+  }
+
+  return names
+}
+
+/** Every node whose data names `key`, in the order the nodes were given. */
 export function findSecretReferences(nodes: GraphNodeRecord[], key: string): SecretReference[] {
-  // No guard for an empty key: `referencedNames` drops blank lines, so nothing
-  // it returns can equal '' and an empty key matches nothing on its own. The
-  // test that pins this is pinning that pair, not a branch.
+  // No guard for an empty key: every convention drops the empty name, so
+  // nothing `referencedNames` returns can equal '' and an empty key matches
+  // nothing on its own. The test that pins this is pinning that pair, not a
+  // branch.
   const wanted = key.trim()
   const found: SecretReference[] = []
   for (const node of nodes) {
     const data = node.data ?? {}
-    if (!referencedNames(data).includes(wanted)) {
+    if (!referencedNames(data).has(wanted)) {
       continue
     }
     const name = data.name

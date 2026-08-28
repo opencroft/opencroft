@@ -140,7 +140,7 @@
           "id": "delete",
           "label": "Delete Secret",
           "icon": "Trash2",
-          "description": "Delete a secret from this store by name. Refused, naming the nodes, while any node's `secrets` field still references it: they resolve it by name at their next deploy or run, and a container already running keeps the value it resolved at startup, so the break would not surface until then. Pass allowUnclean to delete it anyway and leave the reference dangling.",
+          "description": "Delete a secret from this store by name. Refused, naming the nodes, while any node still references it — through a `secrets` field, an `apiKeySecret` field, or a `secret:NAME` value anywhere in its data. Those nodes resolve the name at their next deploy, run or session start, and a container already running keeps the value it resolved at startup, so the break would not surface until then. A node type that names a secret some other way is not seen, so no refusal means nothing matched those three conventions rather than nothing references the name. Pass allowUnclean to delete it anyway and leave the reference dangling.",
           "inputSchema": {
             "type": "object",
             "properties": {

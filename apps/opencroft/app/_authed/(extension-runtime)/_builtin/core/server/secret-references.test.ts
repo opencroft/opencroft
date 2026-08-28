@@ -21,10 +21,13 @@ function refusalText(key: string, references: SecretReference[], override = fals
 }
 
 // ── findSecretReferences ─────────────────────────────────────────────────
-// The `secrets` field is a newline-separated list of names, matched whole:
-// this decides whether a delete is refused, so a near-miss in either direction
-// is a wrong answer with consequences — one silently breaks a service at its
-// next deploy, the other blocks a deletion nobody can explain.
+// Names are matched whole, and each convention is matched the way the code
+// that resolves it reads it. This decides whether a delete is refused, so a
+// near-miss in either direction is a wrong answer with consequences — one
+// silently breaks a service at its next deploy, the other blocks a deletion
+// nobody can explain.
+
+// ── convention 1: a `secrets` field, one name per line ───────────────────
 
 test('finds a node whose secrets field names the key', () => {
   const nodes = [node('app-1', { name: 'reporting-worker', secrets: 'REPORT_API_TOKEN' })]
@@ -95,6 +98,76 @@ test('an empty or whitespace key finds nothing', () => {
 
 test('an empty graph finds nothing', () => {
   assert.deepEqual(findSecretReferences([], 'API_TOKEN'), [])
+})
+
+// ── convention 2: an `apiKeySecret` field, exactly one name ──────────────
+// The highest-value reference on the graph: it is an agent's provider key, so
+// deleting it unnoticed takes that agent offline at its next session start.
+
+test('finds a node whose apiKeySecret names the key', () => {
+  const nodes = [node('agent-1', { name: 'writer', apiKeySecret: 'PROVIDER_KEY' }, 'agent')]
+  assert.deepEqual(
+    findSecretReferences(nodes, 'PROVIDER_KEY').map((r) => r.nodeId),
+    ['agent-1'],
+  )
+})
+
+// Matched verbatim rather than trimmed, because the agent path resolves it
+// verbatim: a padded value resolves to nothing there, so it holds nothing here.
+test('a padded apiKeySecret does not reference the untrimmed name', () => {
+  const nodes = [node('agent-1', { apiKeySecret: '  PROVIDER_KEY  ' }, 'agent')]
+  assert.deepEqual(findSecretReferences(nodes, 'PROVIDER_KEY'), [])
+})
+
+test('an empty apiKeySecret is not a reference', () => {
+  const nodes = [node('agent-1', { apiKeySecret: '' }, 'agent')]
+  assert.deepEqual(findSecretReferences(nodes, ''), [])
+})
+
+// ── convention 3: a `secret:NAME` value, anywhere in the data ────────────
+// Value-shaped rather than field-shaped, which is what lets it reach nodes
+// whose type this module knows nothing about.
+
+test('finds secret:NAME in a header value', () => {
+  const nodes = [node('agent-1', { ttsHeaders: [{ name: 'Authorization', value: 'secret:SPEECH_KEY' }] }, 'agent')]
+  assert.deepEqual(
+    findSecretReferences(nodes, 'SPEECH_KEY').map((r) => r.nodeId),
+    ['agent-1'],
+  )
+})
+
+test('finds secret:NAME on a node type this module does not know', () => {
+  const nodes = [
+    node('ext-1', { stages: [{ config: { headers: [{ value: 'secret:SPEECH_KEY' }] } }] }, 'some-extension-node'),
+  ]
+  assert.deepEqual(
+    findSecretReferences(nodes, 'SPEECH_KEY').map((r) => r.nodeId),
+    ['ext-1'],
+  )
+})
+
+test('the name after the prefix is trimmed, as the resolver trims it', () => {
+  const nodes = [node('agent-1', { ttsHeaders: [{ value: 'secret:  SPEECH_KEY  ' }] }, 'agent')]
+  assert.equal(findSecretReferences(nodes, 'SPEECH_KEY').length, 1)
+})
+
+// The prefix stands in for the WHOLE value, so it only counts at the start —
+// the resolver sends anything else as typed.
+test('a value merely containing the prefix later is not a reference', () => {
+  const nodes = [node('agent-1', { note: 'pass secret:SPEECH_KEY here' }, 'agent')]
+  assert.deepEqual(findSecretReferences(nodes, 'SPEECH_KEY'), [])
+})
+
+test('the prefix with no name after it is not a reference', () => {
+  const nodes = [node('agent-1', { ttsHeaders: [{ value: 'secret:' }] }, 'agent')]
+  assert.deepEqual(findSecretReferences(nodes, ''), [])
+})
+
+test('a node referencing by two conventions is reported once', () => {
+  const nodes = [
+    node('agent-1', { apiKeySecret: 'PROVIDER_KEY', ttsHeaders: [{ value: 'secret:PROVIDER_KEY' }] }, 'agent'),
+  ]
+  assert.equal(findSecretReferences(nodes, 'PROVIDER_KEY').length, 1)
 })
 
 // ── refuseSecretDelete ───────────────────────────────────────────────────
