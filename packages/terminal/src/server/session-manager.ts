@@ -305,8 +305,10 @@ export class SessionManager {
       scrollback: new ScrollbackBuffer(this.maxScrollbackBytes),
       attachedPeer: peer,
       createdAt: this.now(),
-      // A job starts detached: it is running, nobody is watching, and the detached TTL is what
-      // eventually reclaims one whose viewer never came back.
+      // A job starts detached: it is running and nobody is watching yet. The detached TTL is a
+      // backstop rather than the mechanism that reclaims it — `create` registers an exit callback
+      // that kills the session the moment the child closes, so a finished job is normally gone
+      // long before any TTL applies to it.
       detachedAt: peer ? null : this.now(),
       sessionKey: opts.sessionKey,
       persistent,

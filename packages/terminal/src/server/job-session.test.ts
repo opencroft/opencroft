@@ -33,6 +33,25 @@ test('a job does not echo what is written to its stdin — the reason it is not 
   assert.equal(watched.text(), 'started\r\n')
 })
 
+test('a job that fails to start ends like one that finished, and says why', async () => {
+  // The whole point: a spawn failure is an `'error'` event, and a ChildProcess with no listener
+  // for it raises an unhandled exception rather than swallowing it. `node:test` attributes that
+  // to whichever test is running, so this reddens against a handle that does not listen — the
+  // implementation it replaces IS the mutation, and no separate one is needed.
+  //
+  // It is also the event the caller cannot handle for itself: `startJobSession` returns a key,
+  // not the child, so a watcher would otherwise attach to a session that was never created and
+  // be told only that it does not exist, while the reason went nowhere a person can read.
+  const child = spawn('definitely-not-a-real-command-for-this-test')
+  const handle = pipedProcessHandle(child)
+  const watched = collect(handle)
+  await watched.done
+
+  assert.match(watched.text(), /ENOENT/, 'the reason reaches the watcher')
+  assert.match(watched.text(), /definitely-not-a-real-command-for-this-test/, 'and names what failed')
+  assert.equal(handle.isAlive(), false, 'and the job is over, so the manager can reclaim its slot')
+})
+
 test('output is line-ended for a terminal rather than for a pipe', async () => {
   // A pipe emits bare \n; xterm needs \r\n or every line starts where the previous one ended.
   const child = spawn('sh', ['-c', 'printf "one\\ntwo\\n"'])
@@ -90,7 +109,15 @@ function fakeHandle(): SessionHandle {
   }
 }
 
-/** A handle whose process has already exited — what a finished deploy leaves behind. */
+/**
+ * A handle whose process has already exited — what a finished deploy leaves behind.
+ *
+ * A constructed state, not one the real handle produces: `pipedProcessHandle` fires its exit
+ * callbacks on close, and `create` registers one that kills the session, so a real dead job is
+ * removed rather than left registered. This double's `onExit` is a no-op, which is the only
+ * reason a dead-but-registered session exists here at all. It is the right shape for testing the
+ * reclaim policy and the wrong shape for reasoning about what production leaves lying around.
+ */
 function deadHandle(): SessionHandle {
   return { ...fakeHandle(), isAlive: () => false }
 }

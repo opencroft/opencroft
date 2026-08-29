@@ -59,13 +59,51 @@ export interface JobSession {
  */
 export function pipedProcessHandle(child: ChildProcess): SessionHandle {
   let alive = true
+  let exited = false
   const exitFns: (() => void)[] = []
-  child.on('close', () => {
+  const dataFns: ((data: string) => void)[] = []
+  // Anything the job says before a watcher is listening. A spawn failure arrives on the tick
+  // after `spawn` returns, which can be before the manager has registered its callbacks — and
+  // the reason a job never started is the one message that must not be the one that is dropped.
+  let pending = ''
+
+  const emit = (text: string) => {
+    const forTerminal = text.replace(/\r?\n/g, '\r\n')
+    if (dataFns.length === 0) {
+      pending += forTerminal
+      return
+    }
+    for (const fn of dataFns) {
+      fn(forTerminal)
+    }
+  }
+
+  const finish = () => {
+    if (exited) {
+      return
+    }
+    exited = true
     alive = false
     for (const fn of exitFns) {
       fn()
     }
+  }
+
+  child.on('close', finish)
+
+  // A job that cannot start ends like a job that finished, and says why. Without this the
+  // `'error'` event has no listener, and Node raises an unhandled one rather than swallowing it:
+  // a command that is not on PATH, or a cwd that does not exist, takes the process down. The
+  // caller cannot fix that from outside — it is handed a key, not the child — so it belongs here.
+  child.on('error', (err: Error) => {
+    emit(`\n${err.message}\n`)
+    finish()
   })
+
+  // A child that dies before it reads its input makes the write fail, and an unhandled stream
+  // error is raised the same way. That is a race rather than a fault of the writer: the job is
+  // already ending, and its own `'close'` says so.
+  child.stdin?.on('error', () => {})
 
   return {
     onData(fn) {
@@ -73,11 +111,23 @@ export function pipedProcessHandle(child: ChildProcess): SessionHandle {
       // arrives whole instead of as two replacement characters.
       child.stdout?.setEncoding('utf8')
       child.stderr?.setEncoding('utf8')
-      const forward = (data: string) => fn(data.replace(/\r?\n/g, '\r\n'))
+      const forward = (data: string) => emit(data)
       child.stdout?.on('data', forward)
       child.stderr?.on('data', forward)
+      dataFns.push(fn)
+      if (pending) {
+        fn(pending)
+        pending = ''
+      }
     },
     onExit(fn) {
+      // Registering after the job has already ended still fires: a spawn failure can beat the
+      // manager to it, and a listener that arrives late must not wait forever for an event that
+      // has been and gone.
+      if (exited) {
+        fn()
+        return
+      }
       exitFns.push(fn)
     },
     write() {
@@ -113,6 +163,11 @@ export function startJobSession(opts: JobSessionOptions): JobSession {
     stdio: ['pipe', 'pipe', 'pipe'],
   })
 
+  // The handle is built before anything is written, because it is what installs the `'error'`
+  // listeners. Writing first would leave a window where a child that failed to spawn raises an
+  // unhandled stream error instead of becoming a job that ended and said why.
+  const handle = pipedProcessHandle(child)
+
   if (opts.stdin !== undefined) {
     child.stdin?.end(opts.stdin)
   } else {
@@ -122,6 +177,6 @@ export function startJobSession(opts: JobSessionOptions): JobSession {
   // 32 hex characters. The key is the whole authorisation to attach, so it is generated here and
   // never derived from anything a caller could also compute (a node id, a service name).
   const sessionKey = `job:${randomBytes(16).toString('hex')}`
-  const session = sessionManager.create(null, pipedProcessHandle(child), { sessionKey, kind: 'job' })
+  const session = sessionManager.create(null, handle, { sessionKey, kind: 'job' })
   return { sessionKey, sessionId: session.id }
 }
