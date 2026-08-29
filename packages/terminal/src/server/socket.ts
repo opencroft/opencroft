@@ -4,7 +4,8 @@ import * as pty from '@lydell/node-pty'
 
 import type { AttachPayload, ClientMessage, ConnectPayload, LocalPayload, WslPayload } from '../types'
 import { shellQuote } from './exec-util'
-import { type SessionHandle, SessionManager, type SocketPeer } from './session-manager'
+import { sessionManager } from './manager'
+import type { SessionHandle, SocketPeer } from './session-manager'
 import { type SshShell, shell as sshShell } from './ssh'
 
 export type { SocketPeer } from './session-manager'
@@ -92,7 +93,11 @@ function sshHandle(sh: SshShell): SessionHandle {
   }
 }
 
-const manager = new SessionManager()
+// The registry is shared with server-started jobs, so it lives in its own module — see
+// manager.ts. This file must never start a session on behalf of a client message beyond the
+// connect/local/wsl cases below; job-session.ts is deliberately not imported here, and a test
+// enforces that.
+const manager = sessionManager
 
 /**
  * Reconcile the manager's bookkeeping when sending a just-created session's `connected` reply

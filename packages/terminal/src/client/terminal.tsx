@@ -32,6 +32,18 @@ export interface TerminalProps {
    * for a "restart session" affordance. No-op on the initial render.
    */
   restartToken?: string | number
+  /**
+   * This terminal is displaying the output of something, not offering a shell to type into.
+   *
+   * A process that ends is then the ordinary end of the story rather than a fault: there is
+   * nothing wrong and nothing to reconnect to, so no disconnect notice, no reconnect button and
+   * no red end-of-stream line appear. Without this the same code path reports a completed run as
+   * a lost connection, which reads as broken.
+   *
+   * A failure to start is still shown — that is a different event from a stream ending, and one
+   * the reader can act on.
+   */
+  logView?: boolean
   onStatusChange?: (status: TerminalStatus) => void
 }
 
@@ -71,6 +83,7 @@ export function Terminal({
   fontSize = 12,
   sessionKey,
   restartToken,
+  logView,
   onStatusChange,
 }: TerminalProps) {
   const containerRef = React.useRef<HTMLDivElement>(null)
@@ -85,6 +98,8 @@ export function Terminal({
   readOnlyRef.current = readOnly
   const sessionKeyRef = React.useRef(sessionKey)
   sessionKeyRef.current = sessionKey
+  const logViewRef = React.useRef(logView)
+  logViewRef.current = logView
   const statusCallbackRef = React.useRef(onStatusChange)
   statusCallbackRef.current = onStatusChange
 
@@ -281,7 +296,11 @@ export function Terminal({
                 attemptingReattach = false
                 terminated = true
                 setStatus('disconnected')
-                term.write(`\r\n\x1b[31m[Disconnected: ${msg.payload.reason}]\x1b[0m\r\n`)
+                // A log view has reached the end of what it was showing. That is the expected
+                // end, so it is not announced as a fault — the output stays on screen as it is.
+                if (!logViewRef.current) {
+                  term.write(`\r\n\x1b[31m[Disconnected: ${msg.payload.reason}]\x1b[0m\r\n`)
+                }
                 return
               }
             } catch {
@@ -352,7 +371,7 @@ export function Terminal({
   return (
     <div className='relative flex flex-col h-full w-full bg-black p-2'>
       <div ref={containerRef} className='flex-1 min-h-0' />
-      {status !== 'connected' ? (
+      {status !== 'connected' && !(logView && status === 'disconnected') ? (
         <div className='absolute inset-0 flex items-center justify-center pointer-events-none'>
           <div className='flex flex-col items-center gap-2 px-3 py-2 rounded-md bg-black/70 text-xs text-muted-foreground pointer-events-auto'>
             <span>
