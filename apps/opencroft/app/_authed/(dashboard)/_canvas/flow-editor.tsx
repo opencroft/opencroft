@@ -1036,7 +1036,14 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       // instead of being drawn twice: the component already announces itself
       // to a screen reader, so a visible caption beside it was the only part
       // that differed from the chat.
-      <div className='flex h-full items-center justify-center'>
+      //
+      // `h-full w-full` is what the ready canvas below claims too, and both
+      // returns need it for the same reason: this component is rendered as a
+      // FLEX ITEM, so without an explicit size it is laid out at the width of
+      // whatever it contains. Centring inside a box the size of its own
+      // contents does nothing, which is how a correctly centred loader ends up
+      // against the left edge.
+      <div className='flex h-full w-full items-center justify-center'>
         <LogoLoader size={40} className='text-foreground' aria-label='Loading space' />
       </div>
     )
