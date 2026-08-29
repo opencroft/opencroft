@@ -3,6 +3,7 @@
 import { FlowEditor } from '@/app/_authed/(dashboard)/_canvas/flow-editor'
 import { OverlayProvider } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 import { SelectionProvider } from '@/app/_authed/(extension-runtime)/_client/selection-context'
+import { SpaceChatPanel } from '@/app/_authed/(space)/_components/space-chat-panel'
 import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
 
 interface Props {
@@ -20,7 +21,15 @@ export function SpaceCanvas({ slug, spaces }: Props) {
     // scope has to enclose both, and this is the nearest place that does.
     <SelectionProvider>
       <OverlayProvider>
-        <FlowEditor slug={slug} spaceName={spaceName} />
+        {/* The chat is a SIBLING of the editor and inside the selection scope:
+            beside it so the canvas keeps its own full-height layout, and inside
+            so a node selected on the canvas reaches the composer. */}
+        <div className='flex h-full min-h-0 w-full'>
+          <div className='min-w-0 flex-1'>
+            <FlowEditor slug={slug} spaceName={spaceName} />
+          </div>
+          <SpaceChatPanel slug={slug} spaceName={spaceName} />
+        </div>
       </OverlayProvider>
     </SelectionProvider>
   )

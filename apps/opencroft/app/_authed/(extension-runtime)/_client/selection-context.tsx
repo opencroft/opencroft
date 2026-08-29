@@ -22,6 +22,18 @@ export interface UserSelection {
   label: string
   /** What the agent receives when passing is on. */
   content: string
+  /**
+   * What makes this the SAME selection across republishes, when the publisher
+   * has such a notion. Optional, and absent means every publish is a new
+   * selection — which is the behaviour this had before the field existed.
+   *
+   * It exists for a publisher that republishes live content for one thing: a
+   * canvas node whose data changes on its own while it stays selected. Without
+   * it, each refresh reads as a fresh selection and resets `passEnabled`, so a
+   * reader who turned passing OFF has it turned back on by something they did
+   * not do — and the next message carries what they declined to send.
+   */
+  key?: string
 }
 
 export interface SelectionContextValue {
@@ -46,11 +58,20 @@ export function SelectionProvider({ children }: { children: ReactNode }) {
   const [passEnabled, setPassEnabled] = useState(true)
 
   const setSelection = useCallback((next: UserSelection | null) => {
-    setSelectionState(next)
-    // A fresh selection passes by default: setting one is the intent to use
-    // it, and inheriting a stale "off" from a previous selection would make
-    // the badge silently inert.
-    setPassEnabled(true)
+    setSelectionState((current) => {
+      // A fresh selection passes by default: setting one is the intent to use
+      // it, and inheriting a stale "off" from a previous selection would make
+      // the badge silently inert.
+      //
+      // A republish of the SAME selection is not a fresh one, and must leave
+      // the reader's choice alone. Only a keyed publisher can say the two
+      // apart; without a key every publish is fresh, exactly as before.
+      const sameThing = next !== null && current !== null && next.key !== undefined && next.key === current.key
+      if (!sameThing) {
+        setPassEnabled(true)
+      }
+      return next
+    })
   }, [])
   const clearSelection = useCallback(() => setSelectionState(null), [])
   const togglePass = useCallback(() => setPassEnabled((prev) => !prev), [])
