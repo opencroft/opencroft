@@ -3,7 +3,7 @@
 import { FlowEditor } from '@/app/_authed/(dashboard)/_canvas/flow-editor'
 import { OverlayProvider } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 import { SelectionProvider } from '@/app/_authed/(extension-runtime)/_client/selection-context'
-import { SpaceChatPanel } from '@/app/_authed/(space)/_components/space-chat-panel'
+import { SpaceChatDock } from '@/app/_authed/(space)/_components/space-chat-dock'
 import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
 
 interface Props {
@@ -21,18 +21,14 @@ export function SpaceCanvas({ slug, spaces }: Props) {
     // scope has to enclose both, and this is the nearest place that does.
     <SelectionProvider>
       <OverlayProvider>
-        {/* The chat is a SIBLING of the editor and inside the selection scope:
-            beside it so the canvas keeps its own full-height layout, and inside
-            so a node selected on the canvas reaches the composer. */}
-        {/* `relative` so the chat can COVER the canvas below the mobile
-            breakpoint, where docking beside it is a fight for width neither
-            side wins. */}
-        <div className='relative flex h-full min-h-0 w-full'>
-          <div className='min-w-0 flex-1'>
-            <FlowEditor slug={slug} spaceName={spaceName} />
-          </div>
-          <SpaceChatPanel slug={slug} spaceName={spaceName} />
-        </div>
+        {/* The chat ENCLOSES the editor rather than sitting after it, because
+            where it docks is a property of the pair: it can take the left edge,
+            the right, or the bottom, and only something holding both can put
+            them in that order. It stays inside the selection scope, which is
+            what lets a node selected on the canvas reach the composer. */}
+        <SpaceChatDock slug={slug} spaceName={spaceName}>
+          <FlowEditor slug={slug} spaceName={spaceName} />
+        </SpaceChatDock>
       </OverlayProvider>
     </SelectionProvider>
   )
