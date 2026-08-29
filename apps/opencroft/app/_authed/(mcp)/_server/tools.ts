@@ -70,6 +70,7 @@ import {
   sendMessageInThreadAsAgent,
   startThreadAsAgent,
   threadCompactStatusAsAgent,
+  threadRefFromSessionKey,
 } from '@/app/_authed/(group-chats)/_server/model'
 import { recordAudit } from '@/app/_authed/(mcp)/_server/audit'
 import { DbReadRefused, runBoundedRead } from '@/app/_authed/(mcp)/_server/db-read'
@@ -2678,15 +2679,11 @@ function buildHandlers(): Record<string, ToolHandler> {
         title: args.title as string | undefined,
       })
       // The ref, in the same shape group_chat_list hands out, so the caller can
-      // address the thread it just made without a second lookup.
-      //
-      // Sliced unconditionally: this thread was just minted by createThread,
-      // which builds every key through mintSessionKey, so the prefix is there
-      // by construction. A fallback for its absence would be unreachable, and
-      // reachable only in a world where the key is not what it claims to be --
-      // in which case handing back something else would be papering over that
-      // rather than addressing it.
-      const ref = thread.sessionKey.slice('group-chat:'.length)
+      // address the thread it just made without a second lookup. Built by the
+      // same function, so the two cannot drift into different spellings of the
+      // same thread -- which is the whole reason it is a function rather than a
+      // slice repeated here.
+      const ref = threadRefFromSessionKey(thread.sessionKey)
       return textResult(
         JSON.stringify(
           { ref, title: thread.title, sent: true, note: 'The reply lands in the thread, not here.' },
