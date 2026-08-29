@@ -24,7 +24,10 @@ export function SpaceCanvas({ slug, spaces }: Props) {
         {/* The chat is a SIBLING of the editor and inside the selection scope:
             beside it so the canvas keeps its own full-height layout, and inside
             so a node selected on the canvas reaches the composer. */}
-        <div className='flex h-full min-h-0 w-full'>
+        {/* `relative` so the chat can COVER the canvas below the mobile
+            breakpoint, where docking beside it is a fight for width neither
+            side wins. */}
+        <div className='relative flex h-full min-h-0 w-full'>
           <div className='min-w-0 flex-1'>
             <FlowEditor slug={slug} spaceName={spaceName} />
           </div>

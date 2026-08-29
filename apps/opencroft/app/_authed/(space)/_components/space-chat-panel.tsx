@@ -1,7 +1,9 @@
 'use client'
 
-import { MessagesSquare, PanelRightClose } from 'lucide-react'
+import { MessagesSquare, PanelRightClose, X } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { Button } from 'ui/button'
+import { useIsMobile } from 'ui/hooks/use-mobile'
 import { cn } from 'ui/lib/utils'
 
 import { EmbeddedAgentChat } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
@@ -27,7 +29,7 @@ interface Props {
 }
 
 /**
- * A space's chat, docked beside its canvas.
+ * A space's chat.
  *
  * It renders the SAME component an extension gets from the host API, not a
  * second implementation of a chat -- so the composer, the transcript, the
@@ -36,10 +38,63 @@ interface Props {
  *
  * It sits inside the canvas's selection scope on purpose: that is what lets
  * selecting a node on the canvas ride along with the next message.
+ *
+ * TWO CONTAINERS, ONE CHAT. On a wide screen it docks beside the canvas. Below
+ * the mobile breakpoint it covers the canvas instead, because a side panel
+ * there is a fight for width neither side can win -- the canvas becomes
+ * unusable and the chat is still too narrow to read. Only the container
+ * differs: the same component, the same open state, the same toggle.
+ *
+ * The covering container is a plain positioned element rather than the kit's
+ * Sheet, deliberately. Sheet is dialog-backed, and the chat opens a dialog of
+ * its own when it has to create the group -- nesting one inside the other is
+ * where focus traps fight, and this container needs to do nothing a div cannot.
  */
 export function SpaceChatPanel({ slug, spaceName }: Props) {
   // Per space, so opening the chat in one does not open it in every space.
   const [open, setOpen] = useLocalStorage<boolean>(`opencroft.space.${slug}.chatOpen`, false)
+  const isMobile = useIsMobile()
+
+  const chat = (
+    // `min-h-0` here and on every column above it: without it the chat's own
+    // scroller resolves its height against its content rather than the column,
+    // and the composer rides up under the last message instead of staying at
+    // the bottom -- the same trap the group-chat screen hit.
+    <EmbeddedAgentChat space={slug} id={SPACE_THREAD_ID} title={spaceName} className='min-h-0 flex-1' />
+  )
+
+  const header = (label: string, icon: ReactNode) => (
+    <div className='flex items-center justify-between gap-2 border-b px-2 py-1'>
+      <span className='truncate text-xs font-medium text-foreground'>{spaceName}</span>
+      <Button variant='ghost' size='icon' aria-label={label} title={label} onClick={() => setOpen(false)}>
+        {icon}
+      </Button>
+    </div>
+  )
+
+  if (isMobile) {
+    if (!open) {
+      // Floating rather than a strip down the edge: a closed panel must cost no
+      // width at all here, and the canvas is the whole screen.
+      return (
+        <Button
+          size='icon'
+          aria-label='Open chat'
+          title='Open chat'
+          className='absolute right-3 bottom-3 z-30 rounded-full shadow-md'
+          onClick={() => setOpen(true)}
+        >
+          <MessagesSquare className='size-4' />
+        </Button>
+      )
+    }
+    return (
+      <div className='absolute inset-0 z-30 flex min-h-0 flex-col bg-background'>
+        {header('Close chat', <X className='size-4' />)}
+        {chat}
+      </div>
+    )
+  }
 
   if (!open) {
     return (
@@ -52,18 +107,9 @@ export function SpaceChatPanel({ slug, spaceName }: Props) {
   }
 
   return (
-    <aside className={cn('flex w-96 shrink-0 flex-col border-l bg-background min-h-0')}>
-      <div className='flex items-center justify-between gap-2 border-b px-2 py-1'>
-        <span className='truncate text-xs font-medium text-foreground'>{spaceName}</span>
-        <Button variant='ghost' size='icon' aria-label='Close chat' title='Close chat' onClick={() => setOpen(false)}>
-          <PanelRightClose className='size-4' />
-        </Button>
-      </div>
-      {/* `min-h-0` on both this and the aside: without it the chat's own
-          scroller resolves its height against its content rather than the
-          column, and the composer rides up under the last message instead of
-          staying at the bottom -- the same trap the group-chat screen hit. */}
-      <EmbeddedAgentChat space={slug} id={SPACE_THREAD_ID} title={spaceName} className='min-h-0 flex-1' />
+    <aside className={cn('flex w-96 min-h-0 shrink-0 flex-col border-l bg-background')}>
+      {header('Close chat', <PanelRightClose className='size-4' />)}
+      {chat}
     </aside>
   )
 }
