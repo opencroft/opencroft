@@ -36,8 +36,8 @@ import { FlowContextMenu } from '@/app/_authed/(dashboard)/_canvas/flow-context-
 import '@/app/_authed/(dashboard)/_canvas/flow-editor.css'
 
 import { useIsMobile } from 'ui/hooks/use-mobile'
+import { LogoLoader } from 'ui/logo-loader'
 import { useSidebar } from 'ui/sidebar'
-import { Spinner } from 'ui/spinner'
 
 import { ExtensionsStateContext } from '@/app/_authed/(dashboard)/_canvas/extensions-ready-context'
 import { InspectorContext, useInspectorState } from '@/app/_authed/(dashboard)/_canvas/inspector-context'
@@ -1030,9 +1030,14 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
 
   if (!graphReady) {
     return (
-      <div className='flex flex-col items-center justify-center h-full gap-3 text-muted-foreground'>
-        <Spinner className='size-12' />
-        <p className='text-lg font-medium'>Loading space</p>
+      // The same mark, at the same size, that a chat shows while it loads --
+      // one loading visual for the product rather than one per surface. The
+      // wording the old caption carried moves onto the mark's own label
+      // instead of being drawn twice: the component already announces itself
+      // to a screen reader, so a visible caption beside it was the only part
+      // that differed from the chat.
+      <div className='flex h-full items-center justify-center'>
+        <LogoLoader size={40} className='text-foreground' aria-label='Loading space' />
       </div>
     )
   }
