@@ -2131,7 +2131,11 @@ test("a thread's contextUsage mirrors its session's own usage, the same source t
   const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message')
   await waitForPrompts(prompts, 1)
 
-  const expectedRef = started.thread.sessionKey.slice('group-chat:'.length)
+  // Through the function that produces it, not a slice spelled again here:
+  // this test is about usage, and re-stating the emitted format in it made
+  // it fail when that format changed. The format itself is pinned once, by
+  // the test that asserts the literal dotted string against a literal key.
+  const expectedRef = model.threadRefFromSessionKey(started.thread.sessionKey)
   const before = (await model.listGroupChatsForAgentView('Agent Session'))
     .find((c) => c.ref === chat.id)
     ?.threads.find((t) => t.ref === expectedRef)
@@ -3164,7 +3168,7 @@ test('renaming a chat re-keys every thread in it, and the live session comes wit
   // window anyone established, so none is shown.
   const view = (await model.listGroupChatsForAgentView('Agent Session'))
     .find((c) => c.ref === chat.id)
-    ?.threads.find((t) => t.ref === newKey.slice('group-chat:'.length))
+    ?.threads.find((t) => t.ref === model.threadRefFromSessionKey(newKey))
   assert.deepEqual(view?.contextUsage, { usedTokens: 4_321, contextLimit: null })
 
   // And a send lands in the session that was already there -- the whole point.
