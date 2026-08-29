@@ -538,10 +538,10 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
   // hand via `elementFromPoint`. What counts as a target depends on WHAT is
   // being dragged, exactly as it does for the mouse: a dragged folder only
   // reorders among folders, so only a folder header matches; a dragged item
-  // files into a folder (its header), moves out to the top level (the zone
-  // that only exists mid-drag-from-a-folder), or inserts before/after any
-  // row. Indices come from the DOM (`data-*-index`) so they always reflect
-  // the current render rather than a value captured at press-start.
+  // files into a folder (its header), moves out to the top level (the zone,
+  // on the drags where it renders at all), or inserts before/after any row.
+  // Indices come from the DOM (`data-*-index`) so they always reflect the
+  // current render rather than a value captured at press-start.
   const overAtPoint = (x: number, y: number, dragKind: 'item' | 'folder'): Over | null => {
     if (typeof document === 'undefined') return null
     const el = document.elementFromPoint(x, y) as HTMLElement | null
@@ -945,8 +945,23 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
 
       {state.itemOrder.map((id, i) => renderItem(id, 'items', i))}
 
-      {/* While dragging an item, surface a clear 'out of any folder' target. */}
-      {drag?.kind === 'item' && drag.from !== 'items' ? (
+      {/* An escape hatch, and only while there is no other way out of a folder.
+          A dragged chat reaches the top level two ways: here, or dropped
+          before/after a loose top-level chat. So the moment one loose chat
+          exists, this target is a second route to what the list already does,
+          and it goes.
+
+          With none it is the only route, which is why the test is on loose
+          chats rather than on the list being empty. Folders are pinned above
+          chats BY DESIGN: a folder header takes a chat into its folder, and
+          the gap between two folders is not a drop position at all. So a top
+          level of folders alone offers a chat nowhere to land, and without
+          this target every chat would be stuck in the folder it is in. The
+          pinning is deliberate -- not an asymmetry to tidy up in passing.
+
+          The source list needs no test of its own -- a chat dragged FROM the
+          top level is itself a loose chat, so the condition is already false. */}
+      {drag?.kind === 'item' && state.itemOrder.length === 0 ? (
         <div
           data-top-level-zone
           onDragOver={(e) => {
