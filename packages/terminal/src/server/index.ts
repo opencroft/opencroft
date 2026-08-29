@@ -1,5 +1,6 @@
 export * from '../types'
 export { getBackend, type TerminalBackend } from './backend'
+export { type JobSession, type JobSessionOptions, startJobSession } from './job-session'
 export { resolveKeyContent } from './keys'
 export { exec, homedir, readFile, spawn, spawnPipe } from './shell'
 export { type SocketPeer, terminalSocket } from './socket'

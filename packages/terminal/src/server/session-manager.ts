@@ -22,6 +22,16 @@ export interface SessionHandle {
 
 export type KillReason = 'explicit' | 'ttl' | 'evicted' | 'exit'
 
+/**
+ * What a session is for. `interactive` is a shell somebody is typing into; `job` is a command
+ * started by server code that a client may watch.
+ *
+ * The distinction exists to keep them out of each other's way: the two kinds have separate
+ * capacity, so no number of jobs can cost a person the terminal they have open. See
+ * `reserveSlot`.
+ */
+export type SessionKind = 'interactive' | 'job'
+
 export interface ManagedSession {
   id: string
   handle: SessionHandle
@@ -32,11 +42,19 @@ export interface ManagedSession {
   sessionKey?: string
   /** false ⇒ legacy client (no sessionKey): killed on socket close instead of detached. */
   persistent: boolean
+  kind: SessionKind
 }
 
 export const DETACHED_TTL_MS = 15 * 60 * 1000
 export const SWEEP_INTERVAL_MS = 30 * 1000
 export const MAX_SESSIONS = 20
+/**
+ * Jobs are capped separately from interactive sessions rather than sharing `MAX_SESSIONS`.
+ * A shared budget would make "someone's open terminal disappeared because a build started" a
+ * reachable state — a burst of deploys filling the pool, then evicting the oldest detached
+ * session to make room. Separate budgets make it unreachable rather than unlikely.
+ */
+export const MAX_JOB_SESSIONS = 10
 export const MAX_SCROLLBACK_BYTES = 512 * 1024
 
 /** Bounded byte ring buffer for scrollback replay — drops the oldest bytes once over cap. */
@@ -78,6 +96,8 @@ export interface SessionManagerOptions {
   detachedTtlMs?: number
   sweepIntervalMs?: number
   maxSessions?: number
+  /** Cap on server-started job sessions, counted separately from interactive ones. */
+  maxJobSessions?: number
   maxScrollbackBytes?: number
   /** Injectable clock, for TTL tests. */
   now?: () => number
@@ -109,6 +129,7 @@ export class SessionManager {
 
   private readonly detachedTtlMs: number
   private readonly maxSessions: number
+  private readonly maxJobSessions: number
   private readonly maxScrollbackBytes: number
   private readonly now: () => number
   private readonly log: (line: string) => void
@@ -117,6 +138,7 @@ export class SessionManager {
   constructor(opts: SessionManagerOptions = {}) {
     this.detachedTtlMs = opts.detachedTtlMs ?? DETACHED_TTL_MS
     this.maxSessions = opts.maxSessions ?? MAX_SESSIONS
+    this.maxJobSessions = opts.maxJobSessions ?? MAX_JOB_SESSIONS
     this.maxScrollbackBytes = opts.maxScrollbackBytes ?? MAX_SCROLLBACK_BYTES
     this.now = opts.now ?? (() => Date.now())
     this.log = opts.log ?? ((line: string) => console.log(`[terminal-session] ${line}`))
@@ -154,12 +176,34 @@ export class SessionManager {
     return undefined
   }
 
-  private reserveSlot(): { ok: true } | { ok: false; message: string } {
-    if (this.sessions.size < this.maxSessions) {
+  private countOfKind(kind: SessionKind): number {
+    let count = 0
+    for (const session of this.sessions.values()) {
+      if (session.kind === kind) {
+        count++
+      }
+    }
+    return count
+  }
+
+  /**
+   * Make room for one more session OF THIS KIND, counting and evicting only within that kind.
+   *
+   * The scoping is the whole point and is not an optimisation: a job must never be able to take
+   * capacity from, or evict, an interactive session. Someone watching a build start must not
+   * lose the shell they had open in another tab. Counting across both kinds would allow exactly
+   * that, and no amount of headroom would rule it out — only the separation does.
+   */
+  private reserveSlot(kind: SessionKind): { ok: true } | { ok: false; message: string } {
+    const limit = kind === 'job' ? this.maxJobSessions : this.maxSessions
+    if (this.countOfKind(kind) < limit) {
       return { ok: true }
     }
     let oldest: ManagedSession | undefined
     for (const session of this.sessions.values()) {
+      if (session.kind !== kind) {
+        continue
+      }
       if (session.detachedAt !== null && (!oldest || session.detachedAt < (oldest.detachedAt as number))) {
         oldest = session
       }
@@ -170,7 +214,7 @@ export class SessionManager {
     }
     return {
       ok: false,
-      message: `Session limit reached (${this.maxSessions} active); close another session and retry.`,
+      message: `Session limit reached (${limit} active); close another session and retry.`,
     }
   }
 
@@ -191,15 +235,33 @@ export class SessionManager {
         this.kill(existing.id, 'evicted', 'Session replaced by another connection')
       }
     }
-    const slot = this.reserveSlot()
+    const slot = this.reserveSlot('interactive')
     if (!slot.ok) {
       return { kind: 'refused', message: slot.message }
     }
     return { kind: 'create' }
   }
 
-  /** Register a freshly spawned session, attached to `peer` from the start. */
-  create(peer: SocketPeer, handle: SessionHandle, opts: { sessionKey?: string; id?: string } = {}): ManagedSession {
+  /**
+   * Reserve capacity for a server-started job, before spawning it. Jobs have no `prepareConnect`
+   * step of their own — nothing reattaches to a job that does not exist yet — so this is the
+   * whole admission check.
+   */
+  prepareJob(): { ok: true } | { ok: false; message: string } {
+    return this.reserveSlot('job')
+  }
+
+  /**
+   * Register a freshly spawned session, attached to `peer` from the start.
+   *
+   * `peer` is null for a session nobody is watching yet — a job started by server code, which a
+   * client attaches to later by key.
+   */
+  create(
+    peer: SocketPeer | null,
+    handle: SessionHandle,
+    opts: { sessionKey?: string; id?: string; kind?: SessionKind } = {},
+  ): ManagedSession {
     const id = opts.id ?? randomUUID()
     const persistent = !!opts.sessionKey
 
@@ -223,9 +285,12 @@ export class SessionManager {
       scrollback: new ScrollbackBuffer(this.maxScrollbackBytes),
       attachedPeer: peer,
       createdAt: this.now(),
-      detachedAt: null,
+      // A job starts detached: it is running, nobody is watching, and the detached TTL is what
+      // eventually reclaims one whose viewer never came back.
+      detachedAt: peer ? null : this.now(),
       sessionKey: opts.sessionKey,
       persistent,
+      kind: opts.kind ?? 'interactive',
     }
 
     handle.onData((data) => {
@@ -237,8 +302,10 @@ export class SessionManager {
     handle.onExit(() => this.kill(id, 'exit'))
 
     this.sessions.set(id, managed)
-    this.peerSession.set(peer, id)
-    this.log(`create id=${id} key=${opts.sessionKey ?? '-'} persistent=${persistent}`)
+    if (peer) {
+      this.peerSession.set(peer, id)
+    }
+    this.log(`create id=${id} key=${opts.sessionKey ?? '-'} persistent=${persistent} kind=${managed.kind}`)
     return managed
   }
 
