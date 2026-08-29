@@ -19,6 +19,7 @@ import {
 } from '@xyflow/react'
 import { SelectionMode } from '@xyflow/system'
 import '@xyflow/react/dist/style.css'
+
 import { Box, GripVertical, Move, PanelLeft } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -28,9 +29,9 @@ import { useSeedPendingRequests } from '@/app/_authed/(approvals)/_components/mc
 import { McpRequestNotifications } from '@/app/_authed/(approvals)/_components/mcp-request-notifications'
 import type { CommandNodeEntry } from '@/app/_authed/(dashboard)/_canvas/canvas-command-bar'
 import { CanvasOverlay } from '@/app/_authed/(dashboard)/_canvas/canvas-overlay'
-import { recordReloadClear, recordReloadSettled } from '@/app/_authed/(dashboard)/_canvas/ctrlg-debug'
 import { isCanvasMenuTouchTarget } from '@/app/_authed/(dashboard)/_canvas/canvas-touch-guard'
 import { CommentNode } from '@/app/_authed/(dashboard)/_canvas/comment-node'
+import { recordReloadClear, recordReloadSettled } from '@/app/_authed/(dashboard)/_canvas/ctrlg-debug'
 import { FlowContextMenu } from '@/app/_authed/(dashboard)/_canvas/flow-context-menu'
 import '@/app/_authed/(dashboard)/_canvas/flow-editor.css'
 
@@ -43,6 +44,7 @@ import { InspectorContext, useInspectorState } from '@/app/_authed/(dashboard)/_
 import { NodeContextMenu } from '@/app/_authed/(dashboard)/_canvas/node-context-menu'
 import { subscribeNodeDataUpdates } from '@/app/_authed/(dashboard)/_canvas/node-data-events'
 import { type BrowserTab, NodeInspector } from '@/app/_authed/(dashboard)/_canvas/node-inspector'
+import { nodeSelection } from '@/app/_authed/(dashboard)/_canvas/node-selection'
 import { graphNodeTypes, nodeTypesKey, typesFromKey } from '@/app/_authed/(dashboard)/_canvas/node-type-keys'
 import { buildNodeTypes } from '@/app/_authed/(dashboard)/_canvas/node-wrapper'
 import { useBackIntercept, useOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
@@ -52,6 +54,7 @@ import { useGraphEvents } from '@/app/_authed/(dashboard)/_canvas/use-graph-even
 import { installExtensionApi } from '@/app/_authed/(dashboard)/_extension-system/extension-api'
 import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
+import { useOptionalSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
 import { findExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
 import { fetchSpaceGraph, saveSpaceGraph } from '@/app/_authed/(space)/_components/space-client'
 import { useSSEEvents, useSSEEventsDispatch } from '@/app/_authed/(sse)/_lib/sse-events-store'
@@ -255,6 +258,31 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     [nodes, isMobile],
   )
   const selected = nodes.find((n) => n.selected && n.type !== 'comment') ?? null
+
+  // Hand the selected node to the surrounding selection scope, when there is
+  // one. A dashboard mounts none, and `useOptionalSelection` answering null
+  // there is the design rather than missing wiring -- the scope belongs to the
+  // surface, and only a space has a chat to read it.
+  //
+  // What is disclosed, and why it is narrow, lives in `nodeSelection` beside
+  // its own tests rather than here.
+  const selectionScope = useOptionalSelection()
+  const publishSelection = selectionScope?.setSelection
+  const selectedId = selected?.id ?? null
+  const selectedType = selected?.type ?? null
+  const selectedData = selected?.data
+
+  // Keyed on the parts rather than on `selected`, which is a fresh object on
+  // most renders: keying on it would republish an unchanged selection
+  // continuously.
+  useEffect(() => {
+    if (!publishSelection) {
+      return
+    }
+    publishSelection(
+      selectedId ? nodeSelection({ id: selectedId, type: selectedType ?? undefined, data: selectedData }) : null,
+    )
+  }, [publishSelection, selectedId, selectedType, selectedData])
   const commandNodes = useMemo<CommandNodeEntry[]>(() => {
     void extensionsVersion
     return nodes
