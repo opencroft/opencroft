@@ -90,9 +90,14 @@ function fakeHandle(): SessionHandle {
   }
 }
 
+/** A handle whose process has already exited — what a finished deploy leaves behind. */
+function deadHandle(): SessionHandle {
+  return { ...fakeHandle(), isAlive: () => false }
+}
+
 const peer = (): SocketPeer => ({ send() {} })
 
-test('a burst of jobs evicts only jobs, never the terminals somebody left open', () => {
+test('a burst of jobs never touches the terminals somebody left open', () => {
   const manager = new SessionManager({ maxSessions: 2, maxJobSessions: 2 })
   try {
     // Two interactive sessions, both detached — under one shared budget these are precisely the
@@ -105,15 +110,68 @@ test('a burst of jobs evicts only jobs, never the terminals somebody left open',
     manager.handleSocketClose(peerTwo)
 
     const jobs = []
-    for (let i = 0; i < 5; i++) {
-      assert.equal(manager.prepareJob().ok, true, 'each job finds room in its own pool')
+    for (let i = 0; i < 2; i++) {
+      assert.equal(manager.prepareJob().ok, true, 'jobs fill their own pool')
       jobs.push(manager.create(null, fakeHandle(), { sessionKey: `job-${i}`, kind: 'job' }))
     }
+    const third = manager.prepareJob()
 
-    assert.ok(manager.get(first.id), 'the first terminal survived five deploys')
-    assert.ok(manager.get(second.id), 'and so did the second')
-    const survivingJobs = jobs.filter((job) => manager.get(job.id)).length
-    assert.equal(survivingJobs, 2, 'the jobs evicted each other down to their own cap')
+    assert.equal(third.ok, false, 'a pool of running jobs refuses rather than killing one of them')
+    assert.ok(
+      jobs.every((job) => manager.get(job.id)),
+      'both running jobs are still running',
+    )
+    assert.ok(manager.get(first.id), 'and neither terminal was ever a candidate')
+    assert.ok(manager.get(second.id))
+  } finally {
+    manager.dispose()
+  }
+})
+
+test('a running job is not evicted to make room for another', () => {
+  // A job is created detached, because it starts before anyone is watching. That must not put it
+  // in the set eviction draws from: reclaiming a job means killing a deploy that is still going.
+  const manager = new SessionManager({ maxJobSessions: 1 })
+  try {
+    const running = manager.create(null, fakeHandle(), { sessionKey: 'job-running', kind: 'job' })
+    const refused = manager.prepareJob()
+
+    assert.equal(refused.ok, false, 'the pool refuses')
+    assert.ok(manager.get(running.id), 'and the deploy already in flight is untouched')
+  } finally {
+    manager.dispose()
+  }
+})
+
+test('a job whose process has exited IS reclaimable — the cap is a cap, not a wall', () => {
+  const manager = new SessionManager({ maxJobSessions: 1 })
+  try {
+    const finished = manager.create(null, deadHandle(), { sessionKey: 'job-finished', kind: 'job' })
+    assert.equal(manager.prepareJob().ok, true, 'a finished job is stale output, and gives way')
+    assert.equal(manager.get(finished.id), undefined, 'it was reclaimed')
+  } finally {
+    manager.dispose()
+  }
+})
+
+test('a running job survives the detached TTL', async () => {
+  // The TTL is about output nobody came back for, not about the process. A deploy nobody is
+  // watching is not abandoned — it is working. The control is what makes this a real check:
+  // an abandoned interactive session in the same manager must be swept, proving a sweep ran.
+  const manager = new SessionManager({ detachedTtlMs: 1, sweepIntervalMs: 5 })
+  try {
+    const abandonedPeer = peer()
+    const abandoned = manager.create(abandonedPeer, fakeHandle(), { sessionKey: 'terminal' })
+    manager.handleSocketClose(abandonedPeer)
+    const job = manager.create(null, fakeHandle(), { sessionKey: 'job-running', kind: 'job' })
+
+    const deadline = Date.now() + 2000
+    while (manager.get(abandoned.id) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+
+    assert.equal(manager.get(abandoned.id), undefined, 'a sweep ran and reclaimed the abandoned shell')
+    assert.ok(manager.get(job.id), 'and left the running job alone')
   } finally {
     manager.dispose()
   }

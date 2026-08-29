@@ -176,6 +176,23 @@ export class SessionManager {
     return undefined
   }
 
+  /**
+   * Whether a session may be reclaimed to make room, or aged out by the sweeper.
+   *
+   * Being detached is what marks an interactive shell as abandoned — nobody is typing into it,
+   * and killing it costs at most some scrollback. A job is different in the one way that matters:
+   * it is created detached, because it starts before anyone is watching, and reclaiming one means
+   * killing a deploy that is still running. So a job is reclaimable only once its process has
+   * exited, at which point it is what these policies were written for — stale output nobody came
+   * back for.
+   */
+  private isReclaimable(session: ManagedSession): boolean {
+    if (session.detachedAt === null) {
+      return false
+    }
+    return !(session.kind === 'job' && session.handle.isAlive())
+  }
+
   private countOfKind(kind: SessionKind): number {
     let count = 0
     for (const session of this.sessions.values()) {
@@ -204,7 +221,10 @@ export class SessionManager {
       if (session.kind !== kind) {
         continue
       }
-      if (session.detachedAt !== null && (!oldest || session.detachedAt < (oldest.detachedAt as number))) {
+      if (session.detachedAt === null || !this.isReclaimable(session)) {
+        continue
+      }
+      if (!oldest || session.detachedAt < (oldest.detachedAt as number)) {
         oldest = session
       }
     }
@@ -427,7 +447,7 @@ export class SessionManager {
         killed++
         continue
       }
-      if (session.detachedAt !== null && now - session.detachedAt > this.detachedTtlMs) {
+      if (session.detachedAt !== null && this.isReclaimable(session) && now - session.detachedAt > this.detachedTtlMs) {
         this.kill(session.id, 'ttl')
         killed++
       }
