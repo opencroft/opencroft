@@ -130,8 +130,23 @@ export function DockPanel({
     if (size === undefined || restoredFor.current === orientation) {
       return
     }
+    // Nothing to resize yet: leave the arrangement unmarked so a later render
+    // tries again. Marking it here would spend the single attempt this effect
+    // gets on a panel whose handle is not attached, and nothing would say so.
+    const panel = panelRef.current
+    if (!panel) {
+      return
+    }
+    // Marked BEFORE the resize, because resizing reports a new layout and a
+    // caller that stores what it is told feeds that value straight back here.
     restoredFor.current = orientation
-    panelRef.current?.resize(size)
+    // A PERCENTAGE STRING, NEVER THE BARE NUMBER. `resize` reads a number as
+    // PIXELS and an unsuffixed string as a percentage, while the layout this
+    // number was measured from is a percentage -- so handing it back unchanged
+    // asks for 34 pixels where the caller meant 34% of the surface. That is
+    // under any sane minimum, so the panel lands on its minimum every time and
+    // a remembered width looks exactly like one that was never stored.
+    panel.resize(`${size}%`)
   }, [size, orientation])
 
   const panelFirst = dock === 'left'
