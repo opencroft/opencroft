@@ -62,6 +62,16 @@ export interface EmbeddedAgentChatProps {
   space: string
   /** The thread slug this surface owns, one per member agent. */
   id: string
+  /**
+   * What to NAME the chat if this surface has to create it. The address is
+   * always `space`; this is only the display name, and it defaults to the slug
+   * when a host has no better one.
+   *
+   * A host that has both — a space knows its name and its slug — should pass
+   * it, because deriving the name from the slug puts "my-space" in front of a
+   * person where "My Space" was meant.
+   */
+  title?: string
   className?: string
 }
 
@@ -72,7 +82,7 @@ type EmbedPhase =
   | { phase: 'ready'; chat: GroupChatDetailView }
   | { phase: 'error'; message: string }
 
-export function EmbeddedAgentChat({ space, id, className }: EmbeddedAgentChatProps) {
+export function EmbeddedAgentChat({ space, id, title, className }: EmbeddedAgentChatProps) {
   const [state, setState] = useState<EmbedPhase>({ phase: 'loading' })
   // Bumped to reload after the create flow finishes — the cheapest way to go
   // from `missing` to `ready` through the same single load path.
@@ -126,7 +136,7 @@ export function EmbeddedAgentChat({ space, id, className }: EmbeddedAgentChatPro
         </div>
       )
     case 'missing':
-      return <CreateChatEmptyState space={space} className={className} onCreated={reload} />
+      return <CreateChatEmptyState space={space} title={title} className={className} onCreated={reload} />
     case 'ready':
       return <EmbeddedThread chat={state.chat} id={id} className={className} />
   }
@@ -345,13 +355,16 @@ function EmbedStartComposer({
 
 function CreateChatEmptyState({
   space,
+  title,
   className,
   onCreated,
 }: {
   space: string
+  title?: string
   className?: string
   onCreated: () => void
 }) {
+  const name = title ?? space
   const [open, setOpen] = useState(false)
   return (
     <div className={cn('flex h-full min-h-0 flex-col justify-center', className)}>
@@ -359,14 +372,14 @@ function CreateChatEmptyState({
         <EmptyHeader>
           <EmptyTitle>This chat does not exist</EmptyTitle>
           <EmptyDescription>
-            No group chat named “{space}” was found. Create it and pick who takes part.
+            No group chat named “{name}” was found. Create it and pick who takes part.
           </EmptyDescription>
         </EmptyHeader>
         <Button size='sm' onClick={() => setOpen(true)}>
-          Create “{space}”
+          Create “{name}”
         </Button>
       </Empty>
-      {open ? <CreateChatDialog space={space} onOpenChange={setOpen} onCreated={onCreated} /> : null}
+      {open ? <CreateChatDialog space={space} name={name} onOpenChange={setOpen} onCreated={onCreated} /> : null}
     </div>
   )
 }
@@ -380,10 +393,12 @@ function CreateChatEmptyState({
 // uses.
 function CreateChatDialog({
   space,
+  name,
   onOpenChange,
   onCreated,
 }: {
   space: string
+  name: string
   onOpenChange: (open: boolean) => void
   onCreated: () => void
 }) {
@@ -428,7 +443,14 @@ function CreateChatDialog({
     setError(undefined)
     setCreating(true)
     try {
-      const result = await createMyGroupChat({ data: space })
+      // The ADDRESS is passed explicitly rather than left to fall out of the
+      // name. This surface finds the chat again by `space`, so the two must be
+      // the same string, and they are only the same by luck when the name is
+      // slugified: two spaces both called "Docs" hold `docs` and `docs-2`, and
+      // the second would mint `docs`, be refused as taken, and never have a
+      // chat of its own. Passing both keeps the name readable and the address
+      // correct.
+      const result = await createMyGroupChat({ data: { name, slug: space } })
       if (!result.ok) {
         setError(groupChatAccessMessageForCode(result.code))
         return
@@ -465,7 +487,9 @@ function CreateChatDialog({
     <Dialog open onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Create “{space}”</DialogTitle>
+          {/* The NAME, not the address. A person is being asked to create
+              "My Space", not "my-space". */}
+          <DialogTitle>Create “{name}”</DialogTitle>
         </DialogHeader>
         <AddMemberPicker
           candidates={candidates}

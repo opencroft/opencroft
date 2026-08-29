@@ -145,12 +145,18 @@ export const getMyGroupChat = createServerFn({ method: 'GET', strict: { output: 
  */
 export type CreateGroupChatResult = { ok: true; chat: GroupChatSummary } | { ok: false; code: GroupChatAccessFailure }
 
+// `slug` is for a caller that owns the address rather than the name -- a space,
+// whose chat it has to be able to find again by its OWN slug. Without it the
+// address is whatever the display name slugifies to, which is the same string
+// only by luck: two spaces both called "Docs" are `docs` and `docs-2`, and the
+// second would mint `docs`, fail as taken, and never find a chat of its own.
+// The model refuses a slug that is not slug-shaped rather than repairing it.
 export const createMyGroupChat = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: string | { name: string; topic?: string }) => data)
+  .inputValidator((data: string | { name: string; topic?: string; slug?: string }) => data)
   .handler(async ({ data }): Promise<CreateGroupChatResult> => {
     const input = typeof data === 'string' ? { name: data } : data
     try {
-      return { ok: true, chat: await createGroupChat(getRequest(), input.name, input.topic) }
+      return { ok: true, chat: await createGroupChat(getRequest(), input.name, input.topic, { slug: input.slug }) }
     } catch (error) {
       if (error instanceof GroupChatAccessError) {
         return { ok: false, code: error.code }
