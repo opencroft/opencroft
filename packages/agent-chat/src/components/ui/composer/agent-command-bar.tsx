@@ -1,8 +1,9 @@
 'use client'
 
 import { Check, Send, ShieldAlert, ShieldCheck, ShieldCog, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react'
-import type { KeyboardEvent, ReactNode, Ref } from 'react'
 import { Fragment, useRef, useState } from 'react'
+import type { KeyboardEvent, ReactNode, Ref } from 'react'
+
 import { Button } from 'ui/components/ui/button'
 import {
   DropdownMenu,
@@ -95,6 +96,10 @@ export interface AgentCommandBarProps {
   // Host slot: rendered in the action row before the settings button (right
   // after the approval shield) -- e.g. the per-setting icon buttons (model,
   // effort, mode) a host breaks out of `configs` to give its own control.
+  //
+  // NOT the place for input controls a host provides (dictation, attachments):
+  // those go in `trailingControls`, after the settings button, so a host's
+  // input controls never sit ahead of the settings they control.
   controls?: ReactNode
   // Agent settings -- model, reasoning effort, anything else the host offers.
   // They collapse into a single icon button that opens a menu of pickers, so
@@ -171,9 +176,19 @@ export interface AgentCommandBarProps {
 }
 
 // Shared metrics for every control in the action row, exported so host slots
-// can match it without copying four class names and drifting from them.
+// can match them without copying class names and drifting from them.
+//
+// Two constants, because the row holds two shapes. A square icon control takes
+// `commandBarControlClass` whole. A variable-width one -- a labelled chip, a
+// picker -- can take only the height, and must NOT inherit the `shrink-0` with
+// it: a control with text in it is exactly the thing in this row that should
+// give up width when there is not enough, and the fixed-size ones are not.
+//
+// Both are 28px and they move together or not at all. Written out separately
+// rather than composed from a shared piece, because a constructed class name
+// is not a literal and would not render.
+export const commandBarControlHeight = 'h-7'
 export const commandBarControlClass = 'size-7 shrink-0'
-
 
 // The reset-contract decision behind the buffered `value` (see this
 // component's own doc comment): true when the `value` PROP has changed since
@@ -377,7 +392,9 @@ export function AgentCommandBar({
     // so Enter inserts a newline like in any other textarea; only fine-pointer
     // clients (mouse / physical keyboard) send on Enter. Read at event time --
     // the handler only runs client-side on interaction, so there's nothing to hydrate.
-    const isCoarsePointer = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches
+    const isCoarsePointer =
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(pointer: coarse)').matches
     if (event.key === 'Enter' && !event.shiftKey && !isCoarsePointer) {
       event.preventDefault()
       send()
@@ -461,7 +478,27 @@ export function AgentCommandBar({
             </span>
           )}
 
-          {configExtra ? <div className='shrink-0 px-1 text-xs text-muted-foreground'>{configExtra}</div> : null}
+          {/* BEFORE the settings button, not after. What is attached to the
+              next message reads ahead of the controls that configure it, and
+              the application settled on this order first -- the kit's copy had
+              it the other way and was the one that was wrong.
+
+              A FLEX ROW, NOT A BLOCK. This wrapper is where the action row's
+              own `items-center` and `gap-1` stopped: whatever a host put in the
+              slot was laid out as inline boxes aligned on their TEXT
+              BASELINES, so two slot children of different heights never shared
+              a centre line, and adjacent ones sat flush with none of the 4px
+              every other pair in the row has. Both were invisible from either
+              child's own source -- neither is wrong on its own.
+
+              AND IT SHRINKS, deliberately. Everything else in this cluster is a
+              fixed-size control, so while this wrapper was `shrink-0` there was
+              nothing in the cluster that could give: it overflowed instead, and
+              `overflow-hidden` clipped the right edge -- the last readout in the
+              slot vanished with nothing to say it had. Now the width comes out
+              of whichever slot child declares it may give, by carrying
+              `min-w-0`; a fixed-size readout keeps its size. */}
+          {configExtra ? <div className='flex min-w-0 items-center gap-1 text-xs text-muted-foreground'>{configExtra}</div> : null}
         </div>
 
         <div className='flex shrink-0 items-center gap-1'>

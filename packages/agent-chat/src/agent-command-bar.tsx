@@ -25,7 +25,7 @@ import {
   selectLeftoverBooleanOptions,
   selectLeftoverConfigs,
 } from './agent-command-bar-configs'
-import { AgentCommandBar, type ApprovalTitles, type CommandBarConfig } from './components/agent-command-bar'
+import { AgentCommandBar, type ApprovalTitles, type CommandBarConfig } from './components/ui/composer/agent-command-bar'
 import { ChatEditBar } from './components/chat-edit-bar'
 import { ContextRing } from './components/context-ring'
 import { EffortSelector } from './components/effort-selector'
