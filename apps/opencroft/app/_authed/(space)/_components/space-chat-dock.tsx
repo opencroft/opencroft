@@ -1,13 +1,21 @@
 'use client'
 
 import { MessagesSquare, X } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { type ReactNode, useEffect } from 'react'
 import { Button } from 'ui/button'
 import { useIsMobile } from 'ui/hooks/use-mobile'
 import { DockPanel, type DockSide } from 'ui/layouts/dock-panel'
 import { cn } from 'ui/lib/utils'
 
 import { EmbeddedAgentChat } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
+import {
+  CHAT_DOCK_DEFAULT,
+  CHAT_DOCK_KEY,
+  CHAT_OPEN_DEFAULT,
+  CHAT_OPEN_KEY,
+  CHAT_SIZE_KEY,
+  dropPerSpaceChatPreferences,
+} from '@/app/_authed/(space)/_components/space-chat-preferences'
 import { useLocalStorage } from '@/hooks/utils/use-local-storage'
 
 /**
@@ -65,17 +73,26 @@ interface Props {
  * the canvas stays in the tab order behind the cover, and Escape does not
  * close it.
  *
- * Where the panel sits and how wide it is are remembered PER SPACE and per
- * browser, so opening one space's chat does not open every space's, and a
- * width set here is not imposed on a colleague.
+ * Where the panel sits, how wide it is and whether it is open are remembered
+ * ONCE FOR THE BROWSER rather than per space, so the chat is where the reader
+ * left it whichever space they open. They stay local to the browser, so an
+ * arrangement chosen here is not imposed on a colleague.
  */
 export function SpaceChatDock({ slug, spaceName, children }: Props) {
-  const [open, setOpen] = useLocalStorage<boolean>(`opencroft.space.${slug}.chatOpen`, false)
-  const [dock, setDock] = useLocalStorage<DockSide>(`opencroft.space.${slug}.chatDock`, 'right')
+  const [open, setOpen] = useLocalStorage<boolean>(CHAT_OPEN_KEY, CHAT_OPEN_DEFAULT)
+  const [dock, setDock] = useLocalStorage<DockSide>(CHAT_DOCK_KEY, CHAT_DOCK_DEFAULT)
   // Undefined until one has been set, which is what tells the panel to keep its
   // own default rather than being resized to a remembered nothing.
-  const [size, setSize] = useLocalStorage<number | undefined>(`opencroft.space.${slug}.chatSize`, undefined)
+  const [size, setSize] = useLocalStorage<number | undefined>(CHAT_SIZE_KEY, undefined)
   const isMobile = useIsMobile()
+
+  // The per-space keys these three replaced are dropped, never read. Unguarded
+  // by any "already done" marker because the walk is self-clearing: once the old
+  // keys are gone it matches nothing, and a marker would be one more key living
+  // forever to save enumerating a store that holds a few dozen entries.
+  useEffect(() => {
+    dropPerSpaceChatPreferences(window.localStorage)
+  }, [])
 
   // `min-h-0` here and on every column above it: without it the chat's own
   // scroller resolves its height against its content rather than the column,
