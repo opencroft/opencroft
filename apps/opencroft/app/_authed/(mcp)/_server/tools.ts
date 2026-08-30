@@ -1368,10 +1368,11 @@ export interface ToolCallOptions {
   /** Call made by the internal agent: skip the MCP approval queue (the agent chat has its own permission flow). */
   internal?: boolean
   /**
-   * The agent name behind the caller's credential, when the surface resolved
-   * one. Only the HTTP surface can: it is the only entry point that sees a
-   * token. Absent everywhere else, and tools that need it refuse rather than
-   * guess — see `ToolCallerContext`.
+   * The agent name behind the caller, when the surface resolved one: the HTTP
+   * surface from the request's credential, the in-process bridge from the
+   * session's own bookkeeping. Absent from any surface that can assert
+   * neither, and tools that need it refuse rather than guess — see
+   * `ToolCallerContext`.
    */
   callerAgent?: string | null
 }
@@ -3646,14 +3647,19 @@ function buildHandlers(): Record<string, ToolHandler> {
 
     // ── call ─────────────────────────────────────────────────────────
     call: withApprovalRequired(
-      async (args) => {
+      async (args, caller) => {
         const nodeId = args.nodeId as string | undefined
         const action = args.action as string | undefined
         if (!nodeId || !action) {
           fail(-32602, 'Missing required params: nodeId, action')
         }
         const params = (args.params as Record<string, unknown> | undefined) ?? {}
-        const result = await dispatchNodeActionImpl({ nodeId, actionId: action, params })
+        // Handed over, never required. Most actions deploy a container or
+        // rotate a key and have no use for it, so `requireCallingAgent` here
+        // would close every one of them to a surface that cannot name its
+        // caller. An action that acts AS the caller refuses for itself, where
+        // the consequence of not knowing is known.
+        const result = await dispatchNodeActionImpl({ nodeId, actionId: action, params }, caller.agent ?? undefined)
         const text = result === undefined ? `Action ${action} completed.` : JSON.stringify(result, null, 2)
         return textResult(text)
       },

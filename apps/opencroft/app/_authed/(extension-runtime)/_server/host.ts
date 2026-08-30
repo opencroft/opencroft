@@ -49,9 +49,10 @@ import {
 import { getSetting, setSetting } from '@/app/_authed/(settings)/_server/actions'
 import { mutateSettingData, withSettingLock } from '@/app/_authed/(settings)/_server/settings-cas'
 import { getSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
+import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
-import { authorForSourceNode } from '@/app/_server/message-author'
+import { authorForSend } from '@/app/_server/message-author'
 import { toastStore } from '@/lib/toast-store'
 import { cacheDir } from '@/server/cache'
 import { decrypt, encrypt } from '@/server/crypto'
@@ -585,13 +586,19 @@ export interface HostSendMessageApi {
    * is attributed to, and a send whose source cannot be turned into an account
    * is refused rather than attributed to the application.
    *
-   * A seam: when the execution context carries an originator of its own this
-   * parameter goes away, and the call sites stop having to remember it.
+   * `callerAgent` is who INVOKED the action, and it answers a different
+   * question: not what produced this text, but who asked for it to be sent. It
+   * decides only when nothing fed the run -- the case a direct invocation is
+   * always in, and which is not the same fact as having no sender at all.
+   *
+   * A seam: when the execution context carries an originator of its own BOTH
+   * of these go away, and the call sites stop having to remember either.
    */
   send(
     nodeId: string,
     payload: Record<string, unknown>,
     sourceNodeId: string | undefined,
+    callerAgent?: string,
   ): Promise<SendMessageDeliveryResult>
   listAgents(nodeId: string): Promise<{ agent: string; jobs: string[] }[]>
   listSessions(nodeId: string, params: { agent?: string; job?: string }): Promise<SessionSummary[]>
@@ -647,7 +654,7 @@ async function requireExistingSessionKey(
 }
 
 const sendMessageApi: HostSendMessageApi = {
-  async send(nodeId, payload, sourceNodeId) {
+  async send(nodeId, payload, sourceNodeId, callerAgent) {
     // Schema already requires `message` (see extension.json) — checked again
     // here since a caller can still pass one that resolves empty/non-string,
     // which would otherwise silently deliver the literal JSON payload as the
@@ -662,7 +669,11 @@ const sendMessageApi: HostSendMessageApi = {
     }
     // Established before anything is delivered, so an unattributable send
     // fails instead of arriving with the wrong name on it.
-    const author = await authorForSourceNode(sourceNodeId, found.nodes)
+    //
+    // Both facts are handed over and `authorForSend` decides between them --
+    // see it for the order and for why the agent listing is a thunk rather
+    // than a list.
+    const author = await authorForSend({ sourceNodeId, callerAgent }, found.nodes, listAgentNodesImpl)
     const result = await deliverToSendMessageNode(
       found.node as unknown as SendMessageNodeLike,
       found.nodes,

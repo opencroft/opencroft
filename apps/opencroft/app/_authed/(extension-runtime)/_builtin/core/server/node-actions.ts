@@ -31,6 +31,7 @@ interface ActionCtx {
   ): { id: string; type?: string; position: { x: number; y: number }; data: Record<string, unknown> }[]
   output<T = unknown>(handleId: string): Stream<T>
   updateData(patch: Record<string, unknown>): void
+  callerAgent?: string
 }
 
 interface ScriptData {
@@ -278,7 +279,13 @@ async function sendMessageSendAction(ctx: ActionCtx): Promise<HostSendMessageRes
   // What actually fed this run, from the action context rather than from the
   // graph: several things can be wired to one handle and only the run knows
   // which of them fired. That is what the message is attributed to.
-  return host.sendMessage.send(ctx.nodeId, ctx.params, ctx.inputSource('text-in')?.sourceNodeId)
+  //
+  // And who invoked it, for the case where nothing fed it: an agent calling
+  // this action has no upstream node by definition, which is not the same as
+  // having no sender. Both are handed over and the host decides between them,
+  // because deciding here would put the rule in the one place that changes
+  // whenever somebody adds a node type.
+  return host.sendMessage.send(ctx.nodeId, ctx.params, ctx.inputSource('text-in')?.sourceNodeId, ctx.callerAgent)
 }
 
 function sendMessageListAgentsAction(ctx: ActionCtx): Promise<{ agent: string; jobs: string[] }[]> {

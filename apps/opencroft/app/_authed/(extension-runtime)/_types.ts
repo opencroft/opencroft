@@ -171,6 +171,17 @@ export interface NodeActionCtx {
   output<T = unknown>(handleId: string): Stream<T>
   /** Persist a patch to this node's stored data (e.g. assign a key). */
   updateData(patch: Record<string, unknown>): void
+  /**
+   * The agent that invoked this action, when the surface that dispatched it
+   * had one and could name it. Absent for a graph-driven run, where the
+   * question is not "who asked" but "what fed this" -- that is `inputSource`,
+   * and the two are never the same answer.
+   *
+   * A NAME, not a handle: what the dispatching surface resolved, unmodified.
+   * An action that needs a durable identifier turns it into one where the
+   * identifier is minted, so nothing here has to know what that costs.
+   */
+  callerAgent?: string
 }
 
 export interface NodeActionDescriptor {

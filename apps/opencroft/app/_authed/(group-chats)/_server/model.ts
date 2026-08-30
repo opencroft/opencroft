@@ -67,7 +67,7 @@ import { slug as slugify } from '@/app/_authed/(server)/_server/types'
 // operator, it belongs in a server-side log, never in what is returned.
 const UNAVAILABLE = 'Not available'
 
-import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
+import { agentNodesNamed, listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 import { authorForAgentNode, authorForPerson } from '@/app/_server/message-author'
 
 export type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
@@ -199,11 +199,13 @@ export async function listGroupChatsForUser(request: Request): Promise<GroupChat
  * `not-found`, the same code every other lookup in this file uses.
  */
 export async function listGroupChatsForAgent(agentName: string): Promise<GroupChatSummary[]> {
-  const trimmed = agentName.trim()
-  const nodes = await listAgentNodesImpl()
-  const match = nodes.find((n) => n.name === trimmed)
+  // First match, because agent names are a decided-unique namespace — the
+  // paragraph above, not a judgement made here. `agentNodesNamed` owns only
+  // how a name is compared, so this policy stays visible at the site that
+  // holds it.
+  const match = agentNodesNamed(await listAgentNodesImpl(), agentName)[0]
   if (!match) {
-    throw new GroupChatAccessError('not-found', `No agent named "${trimmed}" was found`)
+    throw new GroupChatAccessError('not-found', `No agent named "${agentName.trim()}" was found`)
   }
   return db
     .select({
@@ -2079,11 +2081,13 @@ export interface AgentGroupChatRef {
  * "you are in no group chats", which reads as an answer and is not one.
  */
 export async function requireAgentNode(agentName: string): Promise<string> {
-  const trimmed = agentName.trim()
-  const nodes = await listAgentNodesImpl()
-  const match = nodes.find((n) => n.name === trimmed)
+  // First match, for the same recorded reason `listGroupChatsForAgent` states:
+  // agent names are a decided-unique namespace. An attribution path refuses on
+  // a collision instead — a different policy over the same comparison, which is
+  // why `agentNodesNamed` supplies only the comparison.
+  const match = agentNodesNamed(await listAgentNodesImpl(), agentName)[0]
   if (!match) {
-    throw new GroupChatAccessError('not-found', `No agent named "${trimmed}" was found`)
+    throw new GroupChatAccessError('not-found', `No agent named "${agentName.trim()}" was found`)
   }
   return match.nodeId
 }

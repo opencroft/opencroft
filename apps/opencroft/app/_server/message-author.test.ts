@@ -17,7 +17,8 @@ process.env.NODE_ENV = 'development'
 const { db, user, username: usernames } = await import('@opencroft/db')
 const { eq } = await import('drizzle-orm')
 const store = await import('./usernames')
-const { authorForPerson, authorForSourceNode, UnattributableSendError } = await import('./message-author')
+const { authorForCallingAgent, authorForPerson, authorForSend, authorForSourceNode, UnattributableSendError } =
+  await import('./message-author')
 
 after(async () => {
   await rm(workdir, { recursive: true, force: true })
@@ -172,4 +173,108 @@ test('a message from an account that no longer exists is refused', async () => {
   // and no account to give a handle, so naming it anything would be an
   // invention.
   await assert.rejects(() => authorForPerson('person-gone'), UnattributableSendError)
+})
+
+// ---------------------------------------------------------------------------
+// An agent that invoked the action, rather than one that fed the run
+// ---------------------------------------------------------------------------
+
+const agents = [
+  { nodeId: 'agent-1', name: 'Alice' },
+  { nodeId: 'agent-9', name: 'Solo' },
+]
+
+test('a calling agent is attributed by the handle its node already holds', async () => {
+  await store.changeUsername({ kind: 'agent', id: 'agent-1' }, 'agent.alice')
+  assert.equal(await authorForCallingAgent('Alice', agents), 'agent.alice')
+})
+
+test('a calling agent is looked up by the name it is called, and stamped with what that resolves to', async () => {
+  // The two are deliberately different strings here, because a test where the
+  // name and the handle look alike passes whichever one the code stamps.
+  await store.changeUsername({ kind: 'agent', id: 'agent-9' }, 'not.the.display.name')
+
+  const author = await authorForCallingAgent('Solo', agents)
+
+  assert.equal(author, 'not.the.display.name')
+  assert.notEqual(author, 'Solo', 'the display name must not be what a message is stamped with')
+})
+
+test('a calling agent with no handle yet is given one, unlike one that merely fed a run', async () => {
+  // The difference `authorForAgentNode` exists for: here the caller NAMED the
+  // agent it is sending as, so there is something to seed a handle from. A
+  // node found in the graph carries no such statement, and that path still
+  // refuses -- pinned by the agent-with-no-handle test further up.
+  const author = await authorForCallingAgent('Alice', agents)
+
+  assert.equal(author, 'agent.alice')
+  assert.equal(await store.currentUsername({ kind: 'agent', id: 'agent-1' }), 'agent.alice', 'and it is stored')
+})
+
+test('a name matching no agent is refused', async () => {
+  await assert.rejects(() => authorForCallingAgent('Nobody', agents), UnattributableSendError)
+})
+
+test('a name matching two agents is refused as firmly as one matching none', async () => {
+  // A display name is free text and two nodes can carry one. Picking either
+  // would deliver the message as an agent that did not send it, so ambiguous
+  // and unknown are the same refusal.
+  const twins = [
+    { nodeId: 'agent-twin-a', name: 'Twin' },
+    { nodeId: 'agent-twin-b', name: 'Twin' },
+  ]
+  await assert.rejects(() => authorForCallingAgent('Twin', twins), UnattributableSendError)
+})
+
+// ---------------------------------------------------------------------------
+// Which of the two facts decides, and in which order
+// ---------------------------------------------------------------------------
+
+const noAgents = async () => {
+  throw new Error('the agent listing must not be reached on a path that has a source node')
+}
+
+test('a run with a source node is attributed to it, and never looks for a caller', async () => {
+  await store.changeUsername({ kind: 'agent', id: 'agent-1' }, 'agent.alice')
+
+  // The thunk throws if it is called at all: every webhook and every schedule
+  // takes this path, and none of them should pay for a registry walk.
+  assert.equal(await authorForSend({ sourceNodeId: 'webhook-1' }, nodes, noAgents), 'system.webhook')
+})
+
+test('a source node wins over a caller when somehow both are present', async () => {
+  // Where both exist the text has an origin of its own, and preferring the
+  // caller would attribute a forwarded message to whoever forwarded it.
+  assert.equal(
+    await authorForSend({ sourceNodeId: 'webhook-1', callerAgent: 'Alice' }, nodes, noAgents),
+    'system.webhook',
+  )
+})
+
+test('a run with no source node but an identified caller is attributed to that caller', async () => {
+  // The defect this whole change is about: an agent invoking the action
+  // directly has no upstream node by definition, and that is not the same
+  // fact as having no sender.
+  await store.changeUsername({ kind: 'agent', id: 'agent-1' }, 'agent.alice')
+
+  assert.equal(await authorForSend({ callerAgent: 'Alice' }, nodes, async () => agents), 'agent.alice')
+})
+
+test('a run with neither a source node nor a caller is still refused, in the same words', async () => {
+  // The refusal is not relaxed by any of this. Matching the message and not
+  // just the class, because widening it to cover the direct-invocation case is
+  // exactly the mistake this change must not make.
+  await assert.rejects(() => authorForSend({}, nodes, async () => agents), {
+    name: 'Error',
+    message: 'This message has no sender: nothing fed the node that sent it.',
+  })
+})
+
+test('a caller the surface could not name is refused like no caller at all', async () => {
+  // `undefined` is what a surface that resolved nobody hands over. It must not
+  // become a lookup for an agent named "undefined", and it must not become a
+  // reason to attribute anything.
+  await assert.rejects(() => authorForSend({ callerAgent: undefined }, nodes, async () => agents), {
+    message: 'This message has no sender: nothing fed the node that sent it.',
+  })
 })

@@ -91,6 +91,7 @@ function buildCtx(
   params: Record<string, unknown>,
   spaceId: string,
   pending: Record<string, unknown>,
+  callerAgent: string | undefined,
 ): NodeActionCtx {
   const data = node.data ?? {}
   const resolved = (data['__resolvedContexts'] as Record<string, ResolvedHandle> | undefined) ?? {}
@@ -179,6 +180,7 @@ function buildCtx(
     containingNodes,
     output,
     updateData,
+    callerAgent,
   }
 }
 
@@ -257,11 +259,29 @@ export async function listNodeActionsImpl(nodeId: string): Promise<NodeActionDes
 // version below: calling a createServerFn from inside another createServerFn's handler
 // is fragile, and a caller with no request context at all (a background scheduler tick)
 // can't use the wrapper regardless. exec-dispatch.ts uses this directly for that reason.
-export async function dispatchNodeActionImpl(data: {
-  nodeId: string
-  actionId: string
-  params?: Record<string, unknown>
-}): Promise<unknown> {
+export async function dispatchNodeActionImpl(
+  data: {
+    nodeId: string
+    actionId: string
+    params?: Record<string, unknown>
+  },
+  /**
+   * The agent behind this invocation, when the dispatching surface identified
+   * one. Asserted by that surface, never looked up here: a dispatch has
+   * exactly one caller and only the entry point it arrived through can say
+   * who -- an execution chain has no caller at all, and inferring one here
+   * would invent an author for a run nobody started.
+   *
+   * ITS OWN PARAMETER, and not a field of `data`, on purpose. `data` is what a
+   * caller sends, and the client-facing wrapper's `inputValidator` is an
+   * identity function with a type annotation on it -- nothing strips a key the
+   * browser added. As a field, a client could name any agent it liked and have
+   * a message delivered under that name; as a parameter, the forgery has
+   * nowhere to travel, because the surfaces that pass one are the surfaces
+   * that resolved it themselves.
+   */
+  callerAgent?: string,
+): Promise<unknown> {
   const { nodeId, actionId } = data
   const params = data.params ?? {}
   const found = await findNodeWithGraph(nodeId)
@@ -283,7 +303,7 @@ export async function dispatchNodeActionImpl(data: {
     throw new Error(`Extension ${owning.id} has no nodeAction "${typeId}.${actionId}"`)
   }
   const pending: Record<string, unknown> = {}
-  const ctx = buildCtx(found.graph, found.node, params, found.slug, pending)
+  const ctx = buildCtx(found.graph, found.node, params, found.slug, pending, callerAgent)
   await persistErrors(found, [])
   try {
     const result = await handler(ctx)

@@ -145,3 +145,28 @@ export async function listAgentNodesImpl(): Promise<AgentNodeRef[]> {
   }
   return out
 }
+
+/**
+ * Every agent in a listing that goes by `agentName` — the one comparison, in
+ * one place.
+ *
+ * IT ANSWERS THE COMPARISON AND NOTHING ELSE. What to do with the result is
+ * the caller's, and the callers genuinely differ: a membership lookup takes
+ * the first match because agent names are a decided-unique namespace, and an
+ * attribution refuses unless there is exactly one, because stamping a message
+ * with a name two nodes answer to would deliver it as an agent that did not
+ * send it. Folding either policy in here would push the other one out.
+ *
+ * What must NOT differ is how a name is matched. Trimming, and exact rather
+ * than normalised, are the two details that drift when they are retyped — and
+ * they drift silently, because each copy keeps agreeing with itself. Three
+ * call sites had written them out separately before this existed.
+ *
+ * Structural in its node type on purpose: a caller that holds the full listing
+ * gets its own entries back, and one that holds a narrower shape is not made
+ * to import a type it has no other use for.
+ */
+export function agentNodesNamed<T extends { name?: string }>(nodes: readonly T[], agentName: string): T[] {
+  const trimmed = agentName.trim()
+  return nodes.filter((node) => node.name === trimmed)
+}

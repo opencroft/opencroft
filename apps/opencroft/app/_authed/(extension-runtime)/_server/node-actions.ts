@@ -20,6 +20,15 @@ export const listNodeActions = createServerFn({ method: 'POST', strict: { output
 
 // Client-callable wrapper — see node-actions-impl.ts's dispatchNodeActionImpl for why
 // the plain implementation lives in its own module, separate from this file.
+//
+// NO CALLER IS PASSED, and there is nowhere in `data` to put one. The validator
+// below is an identity function carrying a type annotation, so a key the
+// browser adds is not removed by it — which is why the caller is a separate
+// PARAMETER of the implementation rather than a field of this payload. Anyone
+// tempted to fold it back in should read what that opens: this surface would
+// then let a client name any agent it liked and have a message delivered under
+// that name. What a person clicking a button is entitled to be attributed as
+// is their own account, which is a different question with a different answer.
 export const dispatchNodeAction = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { nodeId: string; actionId: string; params?: Record<string, unknown> }) => data)
   .handler(async ({ data }): Promise<unknown> => dispatchNodeActionImpl(data))

@@ -1,16 +1,19 @@
 import { AGENT_NODE_TYPE } from '@/app/_authed/(agent)/_shared/agent-node-shape'
+import { agentNodesNamed } from '@/app/_authed/(space)/_server/agents-impl'
 import { currentUsername, ensureUsernameForAgent, ensureUsernameForUser } from '@/app/_server/usernames'
 
 /**
- * Who a message is from — one answer for both kinds of sender.
+ * Who a message is from — one answer for every kind of sender.
  *
  * A GRAPH-DRIVEN message is attributed from what actually fed the run; a
- * PERSON'S message is attributed from the account that is signed in. They live
- * together because they produce the same thing: the durable identifier that
- * goes into the delivery, never a display name. A display name is not an
- * identity — two accounts can share one, and a rename silently reattributes
- * every message already written under it — so what is stamped is the handle,
- * and what a reader sees is whatever that handle resolves to now.
+ * PERSON'S message is attributed from the account that is signed in; an AGENT
+ * INVOKING AN ACTION is attributed from the identity the surface it called
+ * through had already established. They live together because they produce the
+ * same thing: the durable identifier that goes into the delivery, never a
+ * display name. A display name is not an identity — two accounts can share
+ * one, and a rename silently reattributes every message already written under
+ * it — so what is stamped is the handle, and what a reader sees is whatever
+ * that handle resolves to now.
  *
  * The graph half, in detail:
  *
@@ -169,6 +172,57 @@ export async function authorForAgentNode(agentNodeId: string, displayName: strin
   return username
 }
 
+/** What an entry of `listAgentNodesImpl`'s listing carries that matters here. */
+interface AgentNodeLike {
+  nodeId?: string
+  name?: string
+}
+
+/**
+ * The author identifier for a message an agent sends by invoking a node's
+ * action itself, rather than by feeding that node from the graph.
+ *
+ * THE THIRD DOOR, AND WHY IT IS NOT THE FIRST ONE WIDENED. `authorForSourceNode`
+ * asks what fed this run, and refuses when nothing did. A direct invocation is
+ * exactly that case -- and it is not the unattributable one. Nothing fed the
+ * node because somebody the platform had already authenticated invoked it, and
+ * the identity was sitting one frame up the call the whole time. So the
+ * refusal is not relaxed: a run with neither a source node nor a caller still
+ * reaches it, in the same words. What changes is that a run WITH a caller
+ * stops being counted among them.
+ *
+ * THE NAME IS ASSERTED BY THE SURFACE, never taken from a tool argument. It
+ * comes from the request's credential or from the calling session's own
+ * bookkeeping -- see `ToolCallerContext` -- so what arrives here is already an
+ * answer to "who is asking", and turning it into the durable handle a delivery
+ * carries is all that is left to do.
+ *
+ * `agents` is every agent node, not one space's graph. Who invoked an action
+ * is not a fact about wiring, and scoping the lookup to whichever space the
+ * node happens to sit in would refuse an agent for standing somewhere else.
+ *
+ * A NAME MATCHING NONE OR SEVERAL IS A REFUSAL, and the same one. A display
+ * name is free text that two agent nodes can share, so picking either would
+ * deliver a message as an agent that did not send it -- the forgery this
+ * module exists to prevent, arriving by a third door. To a sender who cannot
+ * be named, unknown and ambiguous are the same fact.
+ *
+ * That is this path's policy, not the comparison's. `agentNodesNamed` owns how
+ * a name is matched and says nothing about what to do with the answer: a
+ * membership lookup takes the first match, because agent names are a
+ * decided-unique namespace, and an attribution cannot -- being told a
+ * namespace is unique is not the same as a message being safe to stamp when it
+ * is not.
+ */
+export async function authorForCallingAgent(agentName: string, agents: AgentNodeLike[]): Promise<string> {
+  const matches = agentNodesNamed(agents, agentName)
+  const match = matches.length === 1 ? matches[0] : undefined
+  if (!match?.nodeId) {
+    throw new UnattributableSendError(`This message has no sender: no single agent is named "${agentName.trim()}".`)
+  }
+  return authorForAgentNode(match.nodeId, match.name ?? agentName.trim())
+}
+
 export async function authorForSourceNode(sourceNodeId: string | undefined, nodes: NodeLike[]): Promise<string> {
   if (!sourceNodeId) {
     // Nothing fed this run -- fired directly, or by something that supplies no
@@ -202,4 +256,36 @@ export async function authorForSourceNode(sourceNodeId: string | undefined, node
   throw new UnattributableSendError(
     `This message has no sender: a "${source.type}" node is neither an agent nor a known application trigger.`,
   )
+}
+
+/**
+ * Which of the two questions answers for this send, and in which order.
+ *
+ * There are two facts a send can carry and they are not the same one.
+ * `sourceNodeId` says what PRODUCED this text; `callerAgent` says who ASKED
+ * for it to go. A graph-fed run has the first and never the second; an action
+ * somebody invoked has the second and never the first; and a run with neither
+ * is the case the refusal was written for and still reaches it, from the same
+ * call, in the same words.
+ *
+ * THE SOURCE NODE DECIDES WHEREVER IT EXISTS, so no path that works today is
+ * re-decided by this. It is also the right order on its own terms: where both
+ * were somehow present, the text would have an origin of its own, and
+ * preferring the caller would attribute a forwarded message to whoever
+ * forwarded it.
+ *
+ * `agents` IS A THUNK, and that is not a style choice. Listing agent nodes
+ * walks every space in the registry, and the graph path -- the one every
+ * webhook and every schedule takes -- has no use for the answer. Taking the
+ * list would make each of those sends pay for a lookup none of them reads.
+ */
+export async function authorForSend(
+  origin: { sourceNodeId?: string; callerAgent?: string },
+  nodes: NodeLike[],
+  agents: () => Promise<AgentNodeLike[]>,
+): Promise<string> {
+  if (!origin.sourceNodeId && origin.callerAgent) {
+    return authorForCallingAgent(origin.callerAgent, await agents())
+  }
+  return authorForSourceNode(origin.sourceNodeId, nodes)
 }

@@ -112,11 +112,18 @@ export interface HostSendMessageApi {
    * handle and only the run knows which of them fired. The message is
    * attributed to it, and a send whose source cannot be turned into an account
    * is refused rather than attributed to the application.
+   *
+   * `callerAgent` is who INVOKED the action, from `ctx.callerAgent`, and it is
+   * consulted only when nothing fed the run -- an action a caller triggered
+   * directly has no upstream node by definition, and that is not the same fact
+   * as having no sender. Pass both and let the host choose; a run with neither
+   * is still refused.
    */
   send(
     nodeId: string,
     payload: Record<string, unknown>,
     sourceNodeId: string | undefined,
+    callerAgent?: string,
   ): Promise<HostSendMessageResult>
   listAgents(nodeId: string): Promise<{ agent: string; jobs: string[] }[]>
   listSessions(nodeId: string, params: { agent?: string; job?: string }): Promise<HostSessionSummary[]>
