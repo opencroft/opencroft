@@ -21,6 +21,32 @@ import { useLocalStorage } from '@/hooks/utils/use-local-storage'
  */
 const SPACE_THREAD_ID = 'main'
 
+// ONE ARRANGEMENT FOR THE PERSON, NOT ONE PER SPACE. Where the chat sits, how
+// wide it is and whether it is open follow the reader from space to space, so
+// opening a different space shows the chat where this browser left it.
+//
+// THREE POSITIONS IN TWO DAYS, and this is the only place a reader meets all
+// three: keyed per space on 29.08.2026, keyed once for the browser on
+// 30.08.2026, and then no legacy shape carried in the code at all. Each was the
+// intended design, so anyone who finds an instruction saying "per space" is
+// reading a superseded one and should not key these back to a slug.
+//
+// The old `opencroft.space.<slug>.chat*` entries are left exactly where they
+// lie, never read, deliberately. No fallback to them, no migration, and no
+// routine that goes looking for them to tidy up -- a cleanup pass would itself
+// be code written to service the old shape, which is the legacy being dropped.
+// Whatever those entries still hold is inert.
+//
+// Per browser rather than per account, because this is local storage -- the
+// arrangement does not follow the reader to another machine. That is inherent to
+// where it is stored, not a decision taken here.
+const CHAT_DOCK_KEY = 'opencroft.spaceChat.dock'
+const CHAT_OPEN_KEY = 'opencroft.spaceChat.open'
+const CHAT_SIZE_KEY = 'opencroft.spaceChat.size'
+
+const CHAT_DOCK_DEFAULT: DockSide = 'right'
+const CHAT_OPEN_DEFAULT = false
+
 /** Which edge a closed chat's rail sits on -- the one it will open from. */
 const RAIL_BORDER: Record<DockSide, string> = {
   left: 'border-r',
@@ -65,16 +91,17 @@ interface Props {
  * the canvas stays in the tab order behind the cover, and Escape does not
  * close it.
  *
- * Where the panel sits and how wide it is are remembered PER SPACE and per
- * browser, so opening one space's chat does not open every space's, and a
- * width set here is not imposed on a colleague.
+ * Where the panel sits, how wide it is and whether it is open are remembered
+ * ONCE FOR THE BROWSER rather than per space, so the chat is where the reader
+ * left it whichever space they open. They stay local to the browser, so an
+ * arrangement chosen here is not imposed on a colleague.
  */
 export function SpaceChatDock({ slug, spaceName, children }: Props) {
-  const [open, setOpen] = useLocalStorage<boolean>(`opencroft.space.${slug}.chatOpen`, false)
-  const [dock, setDock] = useLocalStorage<DockSide>(`opencroft.space.${slug}.chatDock`, 'right')
+  const [open, setOpen] = useLocalStorage<boolean>(CHAT_OPEN_KEY, CHAT_OPEN_DEFAULT)
+  const [dock, setDock] = useLocalStorage<DockSide>(CHAT_DOCK_KEY, CHAT_DOCK_DEFAULT)
   // Undefined until one has been set, which is what tells the panel to keep its
   // own default rather than being resized to a remembered nothing.
-  const [size, setSize] = useLocalStorage<number | undefined>(`opencroft.space.${slug}.chatSize`, undefined)
+  const [size, setSize] = useLocalStorage<number | undefined>(CHAT_SIZE_KEY, undefined)
   const isMobile = useIsMobile()
 
   // `min-h-0` here and on every column above it: without it the chat's own
