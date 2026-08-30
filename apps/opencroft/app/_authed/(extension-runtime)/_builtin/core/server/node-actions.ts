@@ -5,6 +5,7 @@ import { fireEvent } from './event'
 import { keyStoreCreateKey, keyStoreDeleteKey, keyStoreListKeys } from './key-store'
 import { openaiChat } from './openai'
 import { runScript, type ScriptResult } from './script'
+import { DELETE_OVERRIDE_PARAM, findSecretReferences, refuseSecretDelete } from './secret-references'
 import { type GenerateSecretResult, type SecretFormat, secretsStoreGenerate } from './secrets-store'
 import { acceptHostKey, type HostKeyStatus, installPublicKey, resolvePublicKey } from './ssh-setup'
 
@@ -200,25 +201,64 @@ async function keyStoreDeleteAction(ctx: ActionCtx): Promise<{ deleted: string }
 }
 
 // ── Secrets Store node actions ────────────────────────────────────────────
-// Agent-invokable. The generated value is never part of the result — only
-// the name and whether it was created or rotated.
+// Agent-invokable, and no action here returns a secret value: generate returns
+// the name and whether it was created or rotated, list returns names, delete
+// returns the name it removed. `listKeys` is the only store read any of them
+// makes, and it never decrypts — so there is no value in scope to return by
+// mistake, rather than one that each action has to remember to withhold.
+//
+// `secretKeys` on the node is a MIRROR of the store: what the canvas shows and
+// what every secret picker offers. Both write paths re-derive it from the store
+// rather than adding or removing the single name they touched — an increment is
+// only ever as correct as the mirror it starts from, while a re-derivation also
+// repairs drift that was already there.
 
-async function secretsStoreGenerateAction(ctx: ActionCtx): Promise<GenerateSecretResult> {
+function requireSecretName(ctx: ActionCtx): string {
   const name = typeof ctx.params.name === 'string' ? ctx.params.name.trim() : ''
   if (!name) {
     throw new Error('Secret name is required (params.name)')
   }
+  return name
+}
+
+async function syncSecretKeys(ctx: ActionCtx): Promise<string[]> {
+  const names = await host.secrets.listKeys(ctx.nodeId)
+  ctx.updateData({ secretKeys: names })
+  return names
+}
+
+async function secretsStoreGenerateAction(ctx: ActionCtx): Promise<GenerateSecretResult> {
+  const name = requireSecretName(ctx)
   const length = typeof ctx.params.length === 'number' ? ctx.params.length : undefined
   const format: SecretFormat | undefined = ctx.params.format === 'symbols' ? 'symbols' : undefined
   const result = await secretsStoreGenerate(ctx.nodeId, name, { length, format })
   // secretsStoreGenerate writes straight to the secrets table; without this,
   // a key created/rotated through this action (the only path MCP callers have)
   // never reaches the node's own secretKeys mirror.
-  const existingKeys = Array.isArray(ctx.data.secretKeys) ? (ctx.data.secretKeys as string[]) : []
-  if (!existingKeys.includes(result.name)) {
-    ctx.updateData({ secretKeys: [...existingKeys, result.name] })
-  }
+  await syncSecretKeys(ctx)
   return result
+}
+
+function secretsStoreListAction(ctx: ActionCtx): Promise<{ names: string[] }> {
+  return host.secrets.listKeys(ctx.nodeId).then((names) => ({ names }))
+}
+
+async function secretsStoreDeleteAction(ctx: ActionCtx): Promise<{ deleted: string; secretKeys: string[] }> {
+  const name = requireSecretName(ctx)
+  // Every reason to keep the secret is established before the one call that
+  // removes it. An absent name is refused rather than deleted for a second
+  // time: without this a typo, or a name that lives in a different store,
+  // reports a successful deletion having removed nothing.
+  if (!(await host.secrets.listKeys(ctx.nodeId)).includes(name)) {
+    throw new Error(`Secret "${name}" is not in this store`)
+  }
+  const references = findSecretReferences(await host.graph.listNodes(), name)
+  const refusal = refuseSecretDelete(name, references, ctx.params[DELETE_OVERRIDE_PARAM] === true)
+  if (refusal) {
+    throw new Error(refusal.message)
+  }
+  await host.secrets.delete(ctx.nodeId, name)
+  return { deleted: name, secretKeys: await syncSecretKeys(ctx) }
 }
 
 // ── Send Message node actions ─────────────────────────────────────────────
@@ -403,6 +443,8 @@ export const nodeActions = {
   },
   'core-secrets-store': {
     generate: secretsStoreGenerateAction,
+    list: secretsStoreListAction,
+    delete: secretsStoreDeleteAction,
   },
   'send-message': {
     send: sendMessageSendAction,

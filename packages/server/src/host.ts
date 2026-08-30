@@ -175,6 +175,14 @@ export interface HostSecretsApi {
   get(storeId: string, key: string): Promise<string | null>
   /** List the secrets in a store, oldest first. */
   list(storeId: string): Promise<SecretRecord[]>
+  /**
+   * List the key NAMES in a store, oldest first.
+   *
+   * Separate from `list` rather than derived from it: this one never decrypts,
+   * so a caller that must not handle values — an agent-invokable node action —
+   * cannot leak one by returning the wrong field.
+   */
+  listKeys(storeId: string): Promise<string[]>
   /** List every secret across all stores, most-recently-updated first. */
   listAll(): Promise<SecretRecord[]>
   /** Create or update a secret value. */
