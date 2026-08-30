@@ -54,10 +54,6 @@ interface AgentCommandBarHostProps {
    *  them to the kit's error slot. */
   sendError?: string
   onDismissSendError?: () => void
-  /** Rendered at the start of the config-extra cluster, before the context
-   *  ring — forwarded to the package hook's slot of the same name. Must be
-   *  identity-stable when nothing changed; it feeds the memoized bar. */
-  configExtraStart?: ReactNode
   /** Rendered in the composer's attachments row, directly above the composer —
    *  forwarded to the package hook's slot of the same name. Left out when there
    *  is nothing attached, and that is the caller's call to make: an element
@@ -107,7 +103,6 @@ export function AgentCommandBarHost({
   startIcon = true,
   sendError,
   onDismissSendError,
-  configExtraStart,
   attachments,
   presence,
 }: AgentCommandBarHostProps) {
@@ -190,7 +185,6 @@ export function AgentCommandBarHost({
     adapterId: session.adapterId,
     lockedConfigOptions: lockedConfigOptions,
     approvalTitles: APPROVAL_TITLES,
-    configExtraStart,
     attachments,
     presence,
   })

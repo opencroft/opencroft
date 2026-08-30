@@ -122,13 +122,6 @@ export interface UseAgentCommandBarOptions {
    *  host-specific fetch/request callbacks this hook has no business knowing
    *  — same reason `controls` is a render prop instead of built in here. */
   compact?: CompactRenderState
-  /** Host slot: rendered at the START of the config-extra cluster, before the
-   *  usage ring — for a host readout or control that belongs beside the ring
-   *  (same reasoning as the kit's own configExtra slot: a readout behind a
-   *  menu is a readout nobody reads). What it shows is the host's business;
-   *  this hook only places it. Must be identity-stable when nothing meaningful
-   *  changed — it feeds the memoized bar. */
-  configExtraStart?: ReactNode
   /** Host slot: the composer's attachments row — what goes out WITH the next
    *  message, forwarded to the kit component's slot of the same name. Nothing
    *  in this package knows what an attachment is; the row places whatever it
@@ -196,7 +189,6 @@ export function useAgentCommandBar({
   approvalTitles,
   compact,
   onClear,
-  configExtraStart,
   attachments,
   presence,
 }: UseAgentCommandBarOptions): ReactElement {
@@ -659,12 +651,11 @@ export function useAgentCommandBar({
 
   const configExtra = useMemo(() => {
     const booleanOptions = selectLeftoverBooleanOptions(configOptions)
-    if (!configExtraStart && !usage && booleanOptions.length === 0) {
+    if (!usage && booleanOptions.length === 0) {
       return null
     }
     return (
       <>
-        {configExtraStart}
         {usage ? (
           <ContextRing
             usedTokens={usage.used}
@@ -685,7 +676,7 @@ export function useAgentCommandBar({
         ) : null}
       </>
     )
-  }, [configOptions, usage, compact, onClear, configExtraStart])
+  }, [configOptions, usage, compact, onClear])
 
   // Memoized for element identity, not for render cost -- see this hook's own
   // doc comment on why identity stability is the whole point. Every entry
