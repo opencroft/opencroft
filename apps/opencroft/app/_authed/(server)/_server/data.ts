@@ -2,11 +2,23 @@ import { createServerFn } from '@tanstack/react-start'
 
 import { loadGraph } from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/actions'
 import { resolveServer } from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/server/actions'
-import { createDockerContext, detectOS, renameComposesFolder, renameDockerContext } from '@/app/_authed/(server)/_server/remote'
-import { getDockerFeature, getSshFeature, type Server, type ServerFeature, slug } from '@/app/_authed/(server)/_server/types'
-import { deleteSetting, getSetting, setSetting } from '@/app/_authed/(settings)/_server/actions'
+import {
+  createDockerContext,
+  detectOS,
+  renameComposesFolder,
+  renameDockerContext,
+} from '@/app/_authed/(server)/_server/remote'
+import {
+  getDockerFeature,
+  getSshFeature,
+  type Server,
+  type ServerFeature,
+  slug,
+} from '@/app/_authed/(server)/_server/types'
 import type { Setting } from '@/app/_authed/(settings)/_server/setting'
+import { getSettingImpl, setSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
 import * as sshConfig from '@/app/_authed/(ssh)/_server/ssh-config'
+import * as db from '@/server/data'
 
 const INDEX_KEY = 'servers'
 
@@ -19,11 +31,11 @@ interface ServerIndex {
 }
 
 export const getServers = createServerFn({ strict: { output: false } }).handler(async (): Promise<Server[]> => {
-  const index = (await getSetting({ data: INDEX_KEY })) as Setting<ServerIndex> | null
+  const index = (await getSettingImpl(INDEX_KEY)) as Setting<ServerIndex> | null
   const slugs = index?.data.slugs ?? []
   const results: Server[] = []
   for (const s of slugs) {
-    const row = (await getSetting({ data: serverKey(s) })) as Setting<Server> | null
+    const row = (await getSettingImpl(serverKey(s))) as Setting<Server> | null
     if (row) {
       results.push(row.data)
     }
@@ -61,18 +73,18 @@ export const saveServer = createServerFn({ method: 'POST', strict: { output: fal
     }
 
     // Save new data first before cleaning up old
-    await setSetting({ data: { id: serverKey(newSlug), data: server as unknown as Record<string, unknown> } })
+    await setSettingImpl({ id: serverKey(newSlug), data: server as unknown as Record<string, unknown> })
 
-    const index = (await getSetting({ data: INDEX_KEY })) as Setting<ServerIndex> | null
+    const index = (await getSettingImpl(INDEX_KEY)) as Setting<ServerIndex> | null
     const slugs = (index?.data.slugs ?? []).filter((s) => s !== oldSlug)
     if (!slugs.includes(newSlug)) {
       slugs.push(newSlug)
     }
-    await setSetting({ data: { id: INDEX_KEY, data: { slugs } } })
+    await setSettingImpl({ id: INDEX_KEY, data: { slugs } })
 
     // Clean up old resources after new data is safely persisted
     if (renamed) {
-      await deleteSetting({ data: serverKey(oldSlug) })
+      await db.deleteSetting(serverKey(oldSlug))
       await renameComposesFolder({ data: { oldSlug, newSlug } }).catch(() => {})
       await renameDockerContext({ data: oldSlug }).catch(() => {})
       await sshConfig.removeServer(oldSlug).catch(() => {})
@@ -91,11 +103,11 @@ export const deleteServer = createServerFn({ method: 'POST', strict: { output: f
   .inputValidator((name: string) => name)
   .handler(async ({ data: name }): Promise<void> => {
     const s = slug(name)
-    await deleteSetting({ data: serverKey(s) })
+    await db.deleteSetting(serverKey(s))
 
-    const index = (await getSetting({ data: INDEX_KEY })) as Setting<ServerIndex> | null
+    const index = (await getSettingImpl(INDEX_KEY)) as Setting<ServerIndex> | null
     if (index) {
-      await setSetting({ data: { id: INDEX_KEY, data: { slugs: (index.data.slugs ?? []).filter((x) => x !== s) } } })
+      await setSettingImpl({ id: INDEX_KEY, data: { slugs: (index.data.slugs ?? []).filter((x) => x !== s) } })
     }
 
     await sshConfig.removeServer(s).catch(() => {})

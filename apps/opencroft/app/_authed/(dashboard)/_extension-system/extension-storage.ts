@@ -1,6 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 
-import { getSetting, setSetting } from '@/app/_authed/(settings)/_server/actions'
+import { getSettingImpl, setSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
 
 const STORAGE_ID = 'app-dashboard-mvp-extension-storage'
 
@@ -11,12 +11,12 @@ function nsKey(extensionId: string, key: string): string {
 }
 
 async function readAll(): Promise<StorageMap> {
-  const setting = await getSetting({ data: STORAGE_ID })
+  const setting = await getSettingImpl(STORAGE_ID)
   return setting?.data ?? {}
 }
 
 async function writeAll(data: StorageMap): Promise<void> {
-  await setSetting({ data: { id: STORAGE_ID, data } })
+  await setSettingImpl({ id: STORAGE_ID, data })
 }
 
 export const extensionStorageGet = createServerFn({ method: 'POST', strict: { output: false } })

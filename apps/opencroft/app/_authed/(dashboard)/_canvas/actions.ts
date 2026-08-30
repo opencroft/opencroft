@@ -2,7 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 
 import { resolveGraphContexts } from '@/app/_authed/(extension-runtime)/_server/graph-context-resolver'
 import type { GraphSnapshot } from '@/app/_authed/(extension-runtime)/_server/host'
-import { getSetting, setSetting } from '@/app/_authed/(settings)/_server/actions'
+import { getSettingImpl, setSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
 
 const GRAPH_SETTING_ID = 'app-dashboard-mvp-graph'
 
@@ -12,7 +12,7 @@ export interface GraphData {
 }
 
 export const loadGraph = createServerFn({ strict: { output: false } }).handler(async (): Promise<GraphData> => {
-  const setting = (await getSetting({ data: GRAPH_SETTING_ID })) as { data: GraphData } | null
+  const setting = (await getSettingImpl(GRAPH_SETTING_ID)) as { data: GraphData } | null
   return setting?.data ?? { nodes: [], edges: [] }
 })
 
@@ -25,13 +25,11 @@ export const saveGraph = createServerFn({ method: 'POST', strict: { output: fals
       edges: data.edges as unknown as GraphSnapshot['edges'],
     }
     const resolved = await resolveGraphContexts(snapshot)
-    await setSetting({
+    await setSettingImpl({
+      id: GRAPH_SETTING_ID,
       data: {
-        id: GRAPH_SETTING_ID,
-        data: {
-          nodes: resolved.nodes as unknown as GraphData['nodes'],
-          edges: resolved.edges as unknown as GraphData['edges'],
-        },
+        nodes: resolved.nodes as unknown as GraphData['nodes'],
+        edges: resolved.edges as unknown as GraphData['edges'],
       },
     })
   })

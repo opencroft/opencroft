@@ -46,9 +46,8 @@ import {
   type GraphEdgeLike as SendMessageEdgeLike,
   type GraphNodeLike as SendMessageNodeLike,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
-import { getSetting, setSetting } from '@/app/_authed/(settings)/_server/actions'
 import { mutateSettingData, withSettingLock } from '@/app/_authed/(settings)/_server/settings-cas'
-import { getSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
+import { getSettingImpl, setSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
 import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
@@ -977,7 +976,7 @@ export interface ExtensionHost {
   }
   db: typeof db
   secrets: HostSecretsApi
-  settings: { get: typeof getSetting; set: typeof setSetting }
+  settings: { get: typeof hostGetSetting; set: typeof hostSetSetting }
   graph: HostGraphApi
   storage: ExtensionStorageApi
   /** Deliver a message through a SendMessage node's own path (session reuse/
@@ -1009,6 +1008,23 @@ export interface ExtensionHost {
   }
 }
 
+// The host's settings API is backed by the request-free impl, NOT the
+// createServerFn endpoints of the same name. Two trust surfaces share those
+// four functions: the HTTP endpoint, reachable by any browser with a matching
+// Origin and so gated to an administrator; and this host API, reachable only by
+// extension code an administrator installed, which is already the boundary. The
+// impl also carries no dependency on a request-scoped context, which the
+// endpoint's admin check does -- an extension may call these from a Nitro route
+// that never establishes one, where reading the request would throw. The `data`
+// call shape the endpoints used is preserved so extension code is unchanged.
+function hostGetSetting(opts: { data: string }) {
+  return getSettingImpl(opts.data)
+}
+
+function hostSetSetting(opts: { data: { id: string; data: Record<string, unknown> } }) {
+  return setSettingImpl(opts.data)
+}
+
 export function createHost(extensionId: string): ExtensionHost {
   return {
     extensionId,
@@ -1022,7 +1038,7 @@ export function createHost(extensionId: string): ExtensionHost {
     crypto: { encrypt, decrypt, randomToken, randomString },
     db,
     secrets,
-    settings: { get: getSetting, set: setSetting },
+    settings: { get: hostGetSetting, set: hostSetSetting },
     graph: graphApi,
     storage: storageApi(extensionId),
     sendMessage: sendMessageApi,

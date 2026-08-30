@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 
-import { getSetting, setSetting } from '@/app/_authed/(settings)/_server/actions'
 import type { Setting } from '@/app/_authed/(settings)/_server/setting'
+import { getSettingImpl, setSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
 
 const GRAPH_SETTING_ID = 'app-dashboard-graph'
 
@@ -11,12 +11,12 @@ export interface GraphData {
 }
 
 export const loadGraph = createServerFn({ strict: { output: false } }).handler(async (): Promise<GraphData> => {
-  const setting = (await getSetting({ data: GRAPH_SETTING_ID })) as Setting<GraphData> | null
+  const setting = (await getSettingImpl(GRAPH_SETTING_ID)) as Setting<GraphData> | null
   return setting?.data ?? { nodes: [], edges: [] }
 })
 
 export const saveGraph = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: GraphData) => data)
   .handler(async ({ data }): Promise<void> => {
-    await setSetting({ data: { id: GRAPH_SETTING_ID, data } })
+    await setSettingImpl({ id: GRAPH_SETTING_ID, data })
   })
