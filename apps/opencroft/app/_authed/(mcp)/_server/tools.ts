@@ -166,6 +166,19 @@ const SEARCH_INCLUDE_IGNORED_PARAM = {
  *   (a) it cannot mutate state by construction, and
  *   (b) its output cannot page a credential store wholesale.
  *
+ * READ (a) STRICTLY, because three entries here only just satisfy it. The
+ * remote reads do not read a file through an API that cannot write -- they
+ * COMPOSE A SHELL COMMAND. What makes them non-mutating is a conjunction that
+ * a future edit can break silently: no verb in the command writes, and every
+ * value interpolated into it is quoted. Neither half is enforced by anything;
+ * both are properties of the handlers as they stand.
+ *
+ * THAT NOW MATTERS TWICE OVER. Before this set existed those three prompted,
+ * so an unquoted interpolation added later would have been shown to somebody
+ * before it ran. They are auto-allowed now, and nobody will be asked. A change
+ * to how any of them builds its argv is therefore a change to this
+ * classification, whether or not the person making it opens this file.
+ *
  * A tool NOT listed is undeclared, which is not the same as "mutating". It
  * keeps whatever gate it already had, so forgetting a tool costs friction and
  * never safety -- the direction this has to fail in.
@@ -3521,6 +3534,21 @@ function buildHandlers(): Record<string, ToolHandler> {
     }),
 
     // ── read (remote) ────────────────────────────────────────────────
+    // ── remote_read / remote_glob / remote_grep ──────────────────────
+    //
+    // ALL THREE ARE AUTO-ALLOWED (see READ_ONLY_TOOLS), so a call reaches the
+    // remote shell without anyone being asked. What that rests on is a
+    // conjunction, not a guarantee the runtime enforces:
+    //
+    //   - no verb in the composed command writes -- `cat`, `find`, `grep`; and
+    //   - every value interpolated into it is quoted.
+    //
+    // Both hold in the three handlers below and neither is checked anywhere.
+    // Adding an unquoted interpolation, or a verb that can write, silently
+    // removes the property these tools were admitted on -- and, because they
+    // no longer prompt, removes it without anybody seeing the call. Changing
+    // how any of them builds its argv means revisiting READ_ONLY_TOOLS in the
+    // same change.
     remote_read: async (args) => {
       const filePath = args.path as string | undefined
       if (!filePath) {
