@@ -19,18 +19,22 @@ export const CHAT_SIZE_KEY = 'opencroft.spaceChat.size'
 export const CHAT_DOCK_DEFAULT: DockSide = 'right'
 export const CHAT_OPEN_DEFAULT = false
 
+// Written once the drop below has run, so that it never runs a second time in
+// this browser.
+export const PER_SPACE_DROPPED_KEY = 'opencroft.spaceChat.perSpaceKeysDropped'
+
 // The keys the three above replaced: one set per space, so a browser that has
 // visited a dozen spaces holds up to three dozen of them.
 const PER_SPACE_KEY = /^opencroft\.space\..+\.chat(Dock|Open|Size)$/
 
 // Only what the walk needs. `length` and `key` are how an unknown set of keys is
-// enumerated at all -- there is no prefix query -- and `removeItem` is the whole
-// mutation.
-type EnumerableStorage = Pick<Storage, 'key' | 'removeItem'> & { readonly length: number }
+// enumerated at all -- there is no prefix query -- `removeItem` is the mutation,
+// and the other two are the marker.
+type EnumerableStorage = Pick<Storage, 'getItem' | 'setItem' | 'key' | 'removeItem'> & { readonly length: number }
 
 /**
- * Delete every per-space chat preference this browser still holds, and report
- * which ones went.
+ * Delete every per-space chat preference this browser still holds -- ONCE, ever
+ * -- and report which ones went.
  *
  * NOTHING IS CARRIED OVER, AND THAT IS THE DECISION RATHER THAN AN OVERSIGHT.
  * The global setting starts at its default and the reader adjusts it once. There
@@ -39,11 +43,28 @@ type EnumerableStorage = Pick<Storage, 'key' | 'removeItem'> & { readonly length
  * keys dropped and reads it as forgetfulness would be reintroducing a behaviour
  * that was considered and turned down.
  *
+ * IT RUNS ONCE PER BROWSER AND THEN NEVER AGAIN, WHICH IS THE WHOLE POINT OF THE
+ * MARKER. The pattern owns a SHAPE of key rather than the keys that happen to
+ * exist today, so without an end this is not a migration at all but a permanent
+ * deletion rule. An implementation that later went back to storing these per
+ * space would write the obvious name -- the one that was here before -- and find
+ * its own writes erased every time the chat mounted, with nothing reporting why
+ * and the eraser sitting in a file it had no reason to open. The marker costs
+ * one entry; what it buys is the deletion stopping.
+ *
+ * THE WHOLE MODULE IS DISPOSABLE. After 31.10.2026 every browser that is ever
+ * going to run this has run it, and this function, its marker and its tests
+ * should be deleted outright rather than maintained.
+ *
  * Every key is collected before any is removed. Removing inside the walk shifts
  * each later index down by one, so the walk steps over the next key every time
  * and leaves roughly half of them behind -- and it would look like it worked.
  */
 export function dropPerSpaceChatPreferences(storage: EnumerableStorage): string[] {
+  if (storage.getItem(PER_SPACE_DROPPED_KEY) !== null) {
+    return []
+  }
+
   const stale: string[] = []
   for (let index = 0; index < storage.length; index++) {
     const key = storage.key(index)
@@ -54,5 +75,10 @@ export function dropPerSpaceChatPreferences(storage: EnumerableStorage): string[
   for (const key of stale) {
     storage.removeItem(key)
   }
+
+  // Marked whether or not anything was found. A browser with nothing to drop is
+  // precisely the one that must stop looking -- it is the browser a later
+  // per-space implementation would be writing into.
+  storage.setItem(PER_SPACE_DROPPED_KEY, 'true')
   return stale
 }

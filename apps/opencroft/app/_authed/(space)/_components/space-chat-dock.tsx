@@ -86,10 +86,11 @@ export function SpaceChatDock({ slug, spaceName, children }: Props) {
   const [size, setSize] = useLocalStorage<number | undefined>(CHAT_SIZE_KEY, undefined)
   const isMobile = useIsMobile()
 
-  // The per-space keys these three replaced are dropped, never read. Unguarded
-  // by any "already done" marker because the walk is self-clearing: once the old
-  // keys are gone it matches nothing, and a marker would be one more key living
-  // forever to save enumerating a store that holds a few dozen entries.
+  // The per-space keys these three replaced are dropped, never read -- at most
+  // once per browser, which the function marks for itself. The bound is not an
+  // optimisation: a deletion rule owns a shape of key rather than the keys that
+  // exist today, so one that ran forever would erase the writes of any later
+  // implementation that stored these per space again.
   useEffect(() => {
     dropPerSpaceChatPreferences(window.localStorage)
   }, [])
