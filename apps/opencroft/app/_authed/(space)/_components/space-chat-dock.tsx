@@ -1,21 +1,13 @@
 'use client'
 
 import { MessagesSquare, X } from 'lucide-react'
-import { type ReactNode, useEffect } from 'react'
+import type { ReactNode } from 'react'
 import { Button } from 'ui/button'
 import { useIsMobile } from 'ui/hooks/use-mobile'
 import { DockPanel, type DockSide } from 'ui/layouts/dock-panel'
 import { cn } from 'ui/lib/utils'
 
 import { EmbeddedAgentChat } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
-import {
-  CHAT_DOCK_DEFAULT,
-  CHAT_DOCK_KEY,
-  CHAT_OPEN_DEFAULT,
-  CHAT_OPEN_KEY,
-  CHAT_SIZE_KEY,
-  dropPerSpaceChatPreferences,
-} from '@/app/_authed/(space)/_components/space-chat-preferences'
 import { useLocalStorage } from '@/hooks/utils/use-local-storage'
 
 /**
@@ -28,6 +20,30 @@ import { useLocalStorage } from '@/hooks/utils/use-local-storage'
  * different threads and look like the same conversation.
  */
 const SPACE_THREAD_ID = 'main'
+
+// ONE ARRANGEMENT FOR THE PERSON, NOT ONE PER SPACE. Where the chat sits, how
+// wide it is and whether it is open follow the reader from space to space, so
+// opening a different space shows the chat where this browser left it.
+//
+// These were keyed per space until 30.08.2026 -- `opencroft.space.<slug>.chat*`
+// -- and per-space was itself asked for the day before that. The reversal is the
+// deliberate choice, so anyone who finds an older instruction saying "per space"
+// is reading the superseded one and should not key these back to a slug.
+//
+// The old keys are simply no longer read. There is deliberately no fallback to
+// them, no migration, and no routine that goes looking for them to tidy up:
+// code written to service the old shape is the legacy this was meant to drop,
+// and whatever those keys still hold is inert.
+//
+// Per browser rather than per account, because this is local storage -- the
+// arrangement does not follow the reader to another machine. That is inherent to
+// where it is stored, not a decision taken here.
+const CHAT_DOCK_KEY = 'opencroft.spaceChat.dock'
+const CHAT_OPEN_KEY = 'opencroft.spaceChat.open'
+const CHAT_SIZE_KEY = 'opencroft.spaceChat.size'
+
+const CHAT_DOCK_DEFAULT: DockSide = 'right'
+const CHAT_OPEN_DEFAULT = false
 
 /** Which edge a closed chat's rail sits on -- the one it will open from. */
 const RAIL_BORDER: Record<DockSide, string> = {
@@ -85,15 +101,6 @@ export function SpaceChatDock({ slug, spaceName, children }: Props) {
   // own default rather than being resized to a remembered nothing.
   const [size, setSize] = useLocalStorage<number | undefined>(CHAT_SIZE_KEY, undefined)
   const isMobile = useIsMobile()
-
-  // The per-space keys these three replaced are dropped, never read -- at most
-  // once per browser, which the function marks for itself. The bound is not an
-  // optimisation: a deletion rule owns a shape of key rather than the keys that
-  // exist today, so one that ran forever would erase the writes of any later
-  // implementation that stored these per space again.
-  useEffect(() => {
-    dropPerSpaceChatPreferences(window.localStorage)
-  }, [])
 
   // `min-h-0` here and on every column above it: without it the chat's own
   // scroller resolves its height against its content rather than the column,
