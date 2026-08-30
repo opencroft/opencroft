@@ -3534,7 +3534,8 @@ function buildHandlers(): Record<string, ToolHandler> {
     }),
 
     // ── read (remote) ────────────────────────────────────────────────
-    // ── remote_read / remote_glob / remote_grep ──────────────────────
+    //
+    // remote_read, remote_glob and remote_grep below.
     //
     // ALL THREE ARE AUTO-ALLOWED (see READ_ONLY_TOOLS), so a call reaches the
     // remote shell without anyone being asked. What that rests on is a
