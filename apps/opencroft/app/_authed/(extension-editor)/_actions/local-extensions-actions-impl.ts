@@ -8,8 +8,8 @@ import {
 } from '@/app/_authed/(extension-runtime)/_server/checkout-state'
 import { buildExtension } from '@/app/_authed/(extension-runtime)/_server/compiler'
 import { flushCache } from '@/app/_authed/(extension-runtime)/_server/loader'
-import { localExtRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
-import type { BuildResult, ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
+import { BUILD_PROVENANCE_FILE, localExtRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
+import type { BuildResult, CompileRefusal, ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
 
 const MANIFEST_FILE = 'extension.json'
 
@@ -24,6 +24,55 @@ export interface LocalExtensionRecord extends CheckoutState {
   manifest: ExtensionManifest
   files: Record<string, string>
   updatedAt: number
+  /**
+   * The commit the CURRENTLY BUILT bundle was produced from — what the instance
+   * is actually running. It can lag `sourceCommit` (the checkout's own HEAD)
+   * now that the auto-rebuild refuses a dirty or off-branch checkout instead of
+   * republishing it. Null when nothing has been built yet, or the build predates
+   * this being recorded.
+   */
+  builtCommit: string | null
+  /**
+   * Whether the bundle was built from a tree carrying uncommitted work — true
+   * for a `compile_extension(allowUnclean)`, where `builtCommit` names a commit
+   * whose tree is NOT what was built. Without this, that commit reads as an
+   * exact identity it does not have. Null when no build has recorded provenance.
+   */
+  builtDirty: boolean | null
+  /** The uncommitted paths that were on top of `builtCommit` at build time. */
+  builtDirtyPaths: string[]
+  /**
+   * Why the running bundle may lag the checkout: the refusal the automatic
+   * rebuild would raise for the checkout as it stands (dirty, or off its default
+   * branch), or null when a rebuild would proceed. Reading `builtCommit` against
+   * `sourceCommit` says the two differ; this says why they are being kept apart.
+   */
+  refusal: CompileRefusal | null
+}
+
+interface BuiltProvenance {
+  commit: string | null
+  dirty: boolean | null
+  dirtyPaths: string[]
+}
+
+// What a built bundle recorded about the tree it came from, or empty when no
+// build has recorded any. Kept inside `dist/`, which extension repos ignore, so
+// reading it never reflects on whether the checkout is clean.
+async function readBuiltProvenance(dir: string): Promise<BuiltProvenance> {
+  try {
+    const raw = await fs.readFile(path.join(dir, 'dist', BUILD_PROVENANCE_FILE), 'utf-8')
+    const parsed = JSON.parse(raw) as { commit?: unknown; dirty?: unknown; dirtyPaths?: unknown }
+    return {
+      commit: typeof parsed.commit === 'string' ? parsed.commit : null,
+      dirty: typeof parsed.dirty === 'boolean' ? parsed.dirty : null,
+      dirtyPaths: Array.isArray(parsed.dirtyPaths)
+        ? parsed.dirtyPaths.filter((p): p is string => typeof p === 'string')
+        : [],
+    }
+  } catch {
+    return { commit: null, dirty: null, dirtyPaths: [] }
+  }
 }
 
 function slugFromId(extensionId: string): string {
@@ -93,13 +142,23 @@ async function loadExtension(slug: string): Promise<LocalExtensionRecord | null>
   }
   const manifest = JSON.parse(manifestRaw) as ExtensionManifest
   const files = await listFilesRecursive(dir)
+  const checkout = await readCheckoutState(dir)
+  const built = await readBuiltProvenance(dir)
   return {
     id: `local/${slug}`,
     slug,
     manifest,
     files,
     updatedAt: await dirMtime(dir),
-    ...(await readCheckoutState(dir)),
+    ...checkout,
+    builtCommit: built.commit,
+    builtDirty: built.dirty,
+    builtDirtyPaths: built.dirtyPaths,
+    // The refusal the automatic rebuild would raise for this checkout as it
+    // stands — the reason the running bundle is held apart from the checkout.
+    // No override here: the record reports what the automatic path would do, and
+    // that path has no override.
+    refusal: refuseCompile(checkout, false),
   }
 }
 

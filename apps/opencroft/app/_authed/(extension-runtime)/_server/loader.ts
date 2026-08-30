@@ -4,6 +4,7 @@ import path from 'node:path'
 
 import type * as opencroft from '@opencroft/server'
 
+import { readCheckoutState, refuseCompile } from '@/app/_authed/(extension-runtime)/_server/checkout-state'
 import { buildExtension } from '@/app/_authed/(extension-runtime)/_server/compiler'
 import { createHost } from '@/app/_authed/(extension-runtime)/_server/host'
 import { listAllExtensionIds, readManifest } from '@/app/_authed/(extension-runtime)/_server/manifest'
@@ -159,6 +160,50 @@ async function ensureBuilt(extensionId: string, manifest: ExtensionManifest): Pr
   if (bundleMtime > 0 && bundleMtime >= srcMtime) {
     return
   }
+
+  // A rebuild here republishes whatever the registered checkout currently holds,
+  // and this path fires on ANY write into it -- an edit, a `git checkout`, a
+  // `git pull` -- with no explicit compile. `compile_extension` already refuses
+  // to publish a tree that carries uncommitted changes or sits on a branch other
+  // than its default; that refusal lived only on the manual door. The same check
+  // here is what stops an unreviewed branch deploying itself on the next load,
+  // which is exactly what the "never compile on the main instance" guidance was
+  // wrongly assumed to prevent.
+  //
+  // No override on this path, deliberately: the manual door takes `allowUnclean`
+  // because a person asked for that particular build. Nothing asked for this
+  // one, so there is no intent to honour -- a deliberate build of a branch is
+  // what `compile_extension` is for.
+  //
+  // Builtin extensions are exempt: they are compiled from the application's OWN
+  // source tree, not from an independently registered checkout, so reading their
+  // git state reads the app repo's -- dirty through all of development, and on
+  // whatever branch the app itself is deployed from. That state says nothing
+  // about an unreviewed extension parked in a dev checkout, which is the only
+  // thing this refusal is about; a builtin simply tracks the app it ships in.
+  const isRegisteredCheckout = extensionId.split('/')[0] !== 'builtin'
+  const refusal = isRegisteredCheckout ? refuseCompile(await readCheckoutState(extDir(extensionId)), false) : null
+  if (refusal) {
+    // Loud in BOTH directions. A silent refusal only trades an unnoticed deploy
+    // for an unnoticed stale bundle -- the same defect wearing the other coat --
+    // so the reason is logged and toasted whether or not a previous bundle
+    // survives to be served.
+    console.error(`[ext] ${extensionId} auto-rebuild refused: ${refusal.message}`)
+    toastStore.broadcast({
+      type: 'toast',
+      toastType: 'error',
+      message: `${extensionId} was not rebuilt. ${refusal.message}`,
+    })
+    const hasExistingBundle = serverMtime > 0 && clientMtime > 0
+    if (hasExistingBundle) {
+      return
+    }
+    // Nothing built to fall back on, and this tree may not be published
+    // automatically: fail loudly rather than silently building it anyway. Mirrors
+    // the no-bundle branch of the build-failure handling just below.
+    throw new Error(`Extension ${extensionId} was not built: ${refusal.message}`)
+  }
+
   const result = await buildExtension(extensionId, manifest)
   if (!result.success) {
     const summary = result.errors.map((e) => `${e.file}:${e.line ?? '?'}  ${e.message}`).join('\n')

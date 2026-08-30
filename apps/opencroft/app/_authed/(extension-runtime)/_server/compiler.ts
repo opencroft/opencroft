@@ -9,7 +9,8 @@ import { Scanner } from '@tailwindcss/oxide'
 import * as esbuild from 'esbuild'
 import * as lucideIcons from 'lucide-react'
 
-import { extDir, extDistDir, projectRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
+import { readCheckoutState } from '@/app/_authed/(extension-runtime)/_server/checkout-state'
+import { BUILD_PROVENANCE_FILE, extDir, extDistDir, projectRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
 import type { BuildResult, CompileError, ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
 
 // Resolve bundled (client) dependencies from every ancestor node_modules, so
@@ -1041,6 +1042,29 @@ async function buildExtensionNow(extensionId: string, manifest: ExtensionManifes
   const warnings = [...client.warnings, ...server.warnings]
   if (errors.length === 0) {
     errors.push(...(await compileClientCss(extensionId)))
+  }
+  if (errors.length === 0) {
+    // Record what this bundle was built from, so a reader can tell what the
+    // instance is RUNNING apart from what the checkout is now on -- the two
+    // diverge once the auto-rebuild refuses a dirty or off-branch checkout. The
+    // commit alone is not enough: a manual `compile_extension(allowUnclean)`
+    // builds a tree with uncommitted work on top, so the commit names a tree
+    // that is NOT what was built. The dirty flag and paths are recorded beside
+    // it, or the bundle would claim to be exactly a commit it is not. Read
+    // straight from the checkout at build time; best-effort, and never a build
+    // failure, because a directory that is not a git checkout still builds.
+    const state = await readCheckoutState(extDir(extensionId))
+    await fs
+      .writeFile(
+        path.join(extDistDir(extensionId), BUILD_PROVENANCE_FILE),
+        JSON.stringify({
+          commit: state.sourceCommit,
+          dirty: state.sourceDirty,
+          dirtyPaths: state.sourceDirtyPaths,
+          builtAt: Date.now(),
+        }),
+      )
+      .catch(() => {})
   }
   return {
     success: errors.length === 0,

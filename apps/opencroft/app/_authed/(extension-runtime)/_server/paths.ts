@@ -17,6 +17,15 @@ export const SIDECAR_FILE = 'installed.json'
  */
 export const BUILD_ARTIFACT_FILES = [SIDECAR_FILE, 'package-lock.json']
 
+/**
+ * Written into `dist/` by a successful build to record the commit the bundle was
+ * produced from — the commit the instance is actually RUNNING, which can now lag
+ * the checkout's own HEAD, because the auto-rebuild refuses a dirty or off-branch
+ * checkout rather than republishing it. Lives inside `dist/`, which extension
+ * repos ignore, so recording it never makes a checkout read dirty.
+ */
+export const BUILD_PROVENANCE_FILE = 'built.json'
+
 export function localExtRoot(): string {
   return process.env.OPENCROFT_LOCAL_EXTENSIONS ?? path.join(PROJECT_ROOT, 'data', 'extensions', 'local')
 }
