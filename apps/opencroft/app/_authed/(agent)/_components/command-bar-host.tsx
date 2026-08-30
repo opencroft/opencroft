@@ -58,12 +58,12 @@ interface AgentCommandBarHostProps {
    *  ring — forwarded to the package hook's slot of the same name. Must be
    *  identity-stable when nothing changed; it feeds the memoized bar. */
   configExtraStart?: ReactNode
-  /** Rendered in the composer's attachments row, between the composer and the
-   *  action row — forwarded to the package hook's slot of the same name. Left
-   *  out when there is nothing attached, and that is the caller's call to
-   *  make: an element that renders null still counts as content here and the
-   *  row would draw for it. Must be identity-stable when nothing changed; it
-   *  feeds the memoized bar. */
+  /** Rendered in the composer's attachments row, directly above the composer —
+   *  forwarded to the package hook's slot of the same name. Left out when there
+   *  is nothing attached, and that is the caller's call to make: an element
+   *  that renders null still counts as content here and the row would draw for
+   *  it. Must be identity-stable when nothing changed; it feeds the memoized
+   *  bar. */
   attachments?: ReactNode
   /** How often the session reads what is waiting for it, and how to change it —
    *  both from the session controller, forwarded straight to the package hook's

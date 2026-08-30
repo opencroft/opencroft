@@ -142,9 +142,15 @@ export interface AgentCommandBarProps {
   // the same reason `sendError` is one: see the structural rule in this
   // component's doc comment.
   editBar?: ReactNode
-  // Host slot: a row of its own between the composer and the action row --
-  // what is going out ATTACHED to the next message. A selection being carried
-  // along, a picked file, whatever a host attaches next.
+  // Host slot: a row of its own directly ABOVE the composer -- what is going
+  // out ATTACHED to the next message. A selection being carried along, a
+  // picked file, whatever a host attaches next.
+  //
+  // Above rather than below, because the panel is docked bottom and grows
+  // upward: a row appearing there leaves the composer where it was, and the
+  // same row below the composer would shove it up every time it appeared.
+  // See the slot's own comment in the markup, and the host-owns-the-anchor
+  // note in this component's doc comment for the one thing that can undo it.
   //
   // Arbitrary content, deliberately, and not one named thing: the row places
   // and spaces what it is given and knows nothing about it, so a second kind
@@ -245,11 +251,13 @@ export function shouldResyncBuffer(value: string, prevValue: string): boolean {
 // panel hold together at a phone width instead of squeezing the textarea to
 // nothing.
 //
-// **Between them sits the attachments row, and only while something occupies
-// it.** It carries what goes out WITH the next message rather than anything
-// about sending it, which is why it belongs against the composer instead of
-// among the controls. Empty, it renders nothing at all, so a composer with
-// nothing attached is still exactly the two rows it has always been.
+// **Above the composer sits the attachments row, and only while something
+// occupies it.** It carries what goes out WITH the next message. Above rather
+// than below because this panel is docked bottom and grows upward, so a row
+// appearing there leaves the composer exactly where it was -- the text being
+// typed does not move under the cursor. Empty, the row renders nothing at all,
+// so a composer with nothing attached is still exactly the two rows it has
+// always been.
 //
 // **Controlled, and it returns its own markup.** It holds no draft (nothing
 // survives a remount), no approval state and no knowledge of where it is
@@ -309,6 +317,15 @@ export function shouldResyncBuffer(value: string, prevValue: string): boolean {
 // `w-fit` / `inline-flex` on the way down -- derives its width FROM this panel,
 // and no class in here can clamp against a width its own content produced. If a
 // row runs off the screen, the broken link is above this component.
+//
+// **And the host owns the anchor.** This panel gets taller as the composer is
+// typed into and as the attachments row appears, and WHICH DIRECTION it grows
+// in is not its own to decide. A container that pins the panel's bottom edge --
+// a bottom-sticky dock, a column packing its children to the end -- grows it
+// upward, and that is what keeps the composer still while a row appears above
+// it. A top-anchored container grows it downward and moves the composer
+// instead. No class in here changes that and nothing in here can detect it, so
+// a host mounting this panel somewhere new owes it a bottom-anchored home.
 //
 // Enter sends on a fine-pointer client (Shift+Enter inserts a newline; on touch
 // there is no Shift key, so the button sends); Escape clears.
@@ -470,6 +487,46 @@ export function AgentCommandBar({
 
       {editBar ? <div className='min-w-0'>{editBar}</div> : null}
 
+      {/* What is going out with the next message, on its own row directly
+          above the composer.
+
+          ABOVE, and that is a behaviour rather than a preference. This panel
+          is docked to the bottom of its container, so it grows UPWARD: a row
+          added above the composer takes its height from the space above the
+          panel and leaves everything from the composer down exactly where it
+          was. The text being typed does not move under the cursor as something
+          is attached to it. The same row placed below the composer would push
+          the composer up by its own height every time it appeared, which is
+          the one thing this row was asked not to do.
+
+          It holds only while the HOST pins the panel's bottom edge -- see the
+          note on the host owning the anchor in this component's doc comment.
+          A top-anchored container grows this panel downward instead, and then
+          this row pushes the composer down and produces exactly the jump it
+          sits here to avoid. Nothing in this file can detect that or correct
+          it, and it looks right in a screenshot either way.
+
+          RENDERED ONLY WHEN OCCUPIED, and that is structural rather than tidy:
+          the column spaces its children with `gap-1`, and a gap is drawn
+          between rendered children -- so an always-present empty element would
+          add a strip of height to every composer that has nothing attached.
+          `null` produces no child, and therefore no gap.
+
+          Conditional and still safe for the composer below it, by the same
+          mechanism `sendError` and `editBar` already rely on: a ternary in a
+          fixed child position keeps every sibling's place in the child list,
+          so nothing around it is remounted as this appears and clears. See the
+          structural rule in this component's doc comment.
+
+          IT WRAPS rather than scrolling or clipping. Everything in this row is
+          something the user attached and can only detach from here, so a row
+          that could hide one of them fails at the only thing it does; the
+          panel standing a line taller is the cheaper cost -- and upward, so it
+          costs the transcript above rather than the composer. Children carry
+          `min-w-0` to shorten within a line, exactly as they do in the action
+          row. */}
+      {attachments ? <div className='flex min-w-0 flex-wrap items-center gap-1 px-1'>{attachments}</div> : null}
+
       <Textarea
         ref={textareaRef}
         value={buffered}
@@ -482,30 +539,6 @@ export function AgentCommandBar({
         autoFocus={autoFocus}
         className='max-h-60 min-h-8 w-full min-w-0 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:border-0 focus-visible:ring-0'
       />
-
-      {/* What is going out with the next message, on its own row between the
-          composer and the controls -- it describes the message rather than the
-          sending of it, and the action row is already the row that fills up.
-
-          RENDERED ONLY WHEN OCCUPIED, and that is structural rather than tidy:
-          the column spaces its children with `gap-1`, and a gap is drawn
-          between rendered children -- so an always-present empty element would
-          add a strip of height to every composer that has nothing attached.
-          `null` produces no child, and therefore no gap.
-
-          Conditional and still safe for the composer above it, by the same
-          mechanism `sendError` and `editBar` already rely on: a ternary in a
-          fixed child position keeps every sibling's place in the child list,
-          so nothing around it is remounted as this appears and clears. See the
-          structural rule in this component's doc comment.
-
-          IT WRAPS rather than scrolling or clipping. Everything in this row is
-          something the user attached and can only detach from here, so a row
-          that could hide one of them fails at the only thing it does; the
-          composer standing a line taller is the cheaper cost. Children carry
-          `min-w-0` to shorten within a line, exactly as they do in the action
-          row. */}
-      {attachments ? <div className='flex min-w-0 flex-wrap items-center gap-1 px-1'>{attachments}</div> : null}
 
       <div className='flex min-w-0 items-center gap-1 px-1'>
         <div className='flex min-w-0 flex-1 items-center gap-1 overflow-hidden'>

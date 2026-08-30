@@ -50,16 +50,38 @@ test('given nothing, the row is absent rather than empty', () => {
   assert.equal(filled.replace(row[0], ''), empty)
 })
 
-test('the row sits between the composer and the action row', () => {
+// The requirement behind the row's position, as close as static markup gets to
+// it. The panel is docked to the bottom of its container and grows upward, so
+// the composer stays put exactly as long as NOTHING BELOW IT CHANGES when the
+// row appears. Placing the row above the composer is what buys that; placing
+// it anywhere below would move the composer by the row's height every time
+// something was attached.
+//
+// This cannot see pixels, and the property it pins is not sufficient on its
+// own -- a top-anchored host would still move the composer, and no assertion
+// in this package can reach that. It is necessary, though, and it is the half
+// that lives in this file. See the host-owns-the-anchor note on the component.
+test('the row appearing changes nothing from the composer down', () => {
+  const empty = render()
   const filled = render(ATTACHED)
-  const composer = filled.indexOf('</textarea>')
+  const from = (markup: string) => {
+    const at = markup.indexOf('<textarea')
+    assert.notEqual(at, -1, `no composer found in:\n${markup}`)
+    return markup.slice(at)
+  }
+
+  assert.equal(from(filled), from(empty))
+})
+
+test('the row sits above the composer, not below it', () => {
+  const filled = render(ATTACHED)
   const attached = filled.indexOf(ATTACHED)
+  const composer = filled.indexOf('<textarea')
   const actionRow = filled.indexOf('aria-label="Send"')
 
-  assert.ok(composer >= 0 && attached >= 0 && actionRow >= 0, `missing landmark in:\n${filled}`)
-  assert.ok(composer < attached, 'the row must come after the composer, not above it')
-  // The defect this whole change exists to correct: the chip rendered among
-  // the send/settings controls because it was handed to a slot that lives
-  // there.
-  assert.ok(attached < actionRow, 'the row must come before the action row, not inside it')
+  assert.ok(attached >= 0 && composer >= 0 && actionRow >= 0, `missing landmark in:\n${filled}`)
+  assert.ok(attached < composer, 'the row must come before the composer, so the composer does not move')
+  // Belt and braces on the original defect: the chip rendered among the
+  // send/settings controls because it was handed to a slot that lives there.
+  assert.ok(composer < actionRow, 'the action row must stay last')
 })
