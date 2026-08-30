@@ -25,15 +25,17 @@ const SPACE_THREAD_ID = 'main'
 // wide it is and whether it is open follow the reader from space to space, so
 // opening a different space shows the chat where this browser left it.
 //
-// These were keyed per space until 30.08.2026 -- `opencroft.space.<slug>.chat*`
-// -- and per-space was itself asked for the day before that. The reversal is the
-// deliberate choice, so anyone who finds an older instruction saying "per space"
-// is reading the superseded one and should not key these back to a slug.
+// THREE POSITIONS IN TWO DAYS, and this is the only place a reader meets all
+// three: keyed per space on 29.08.2026, keyed once for the browser on
+// 30.08.2026, and then no legacy shape carried in the code at all. Each was the
+// intended design, so anyone who finds an instruction saying "per space" is
+// reading a superseded one and should not key these back to a slug.
 //
-// The old keys are simply no longer read. There is deliberately no fallback to
-// them, no migration, and no routine that goes looking for them to tidy up:
-// code written to service the old shape is the legacy this was meant to drop,
-// and whatever those keys still hold is inert.
+// The old `opencroft.space.<slug>.chat*` entries are left exactly where they
+// lie, never read, deliberately. No fallback to them, no migration, and no
+// routine that goes looking for them to tidy up -- a cleanup pass would itself
+// be code written to service the old shape, which is the legacy being dropped.
+// Whatever those entries still hold is inert.
 //
 // Per browser rather than per account, because this is local storage -- the
 // arrangement does not follow the reader to another machine. That is inherent to
