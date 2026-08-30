@@ -150,6 +150,74 @@ const SEARCH_INCLUDE_IGNORED_PARAM = {
   },
 }
 
+/**
+ * The tools that cannot change anything, declared rather than guessed.
+ *
+ * WHY A LIST HERE AND NOT A FLAG ON EACH DEFINITION. This is a security
+ * classification, and its value is that it can be reviewed as a whole: every
+ * admission is visible in one screen, next to the rule it was admitted under,
+ * and adding a name is a diff a reviewer cannot miss. Seventeen flags spread
+ * through nine hundred lines of definitions are the same information and a
+ * worse review surface. It sits beside `toolDefinitions` because that is the
+ * source it describes, and the test below keeps the two from drifting.
+ *
+ * THE ADMISSION CRITERION, and what a review checks each entry against. A tool
+ * belongs here only if BOTH hold:
+ *   (a) it cannot mutate state by construction, and
+ *   (b) its output cannot page a credential store wholesale.
+ *
+ * A tool NOT listed is undeclared, which is not the same as "mutating". It
+ * keeps whatever gate it already had, so forgetting a tool costs friction and
+ * never safety -- the direction this has to fail in.
+ *
+ * Deliberately absent, and each for a stated reason rather than an oversight:
+ *
+ *   db_read          -- fails (b). Its deny-list is derived from the auth
+ *                       schema alone, so the secrets table and the graph are
+ *                       both readable, and the graph holds credentials as
+ *                       plain values. Gated until that is closed, then
+ *                       re-evaluated -- including whether the settings table
+ *                       has to join the deny-list.
+ *   send_toast,      -- broadcast-only, so they persist nothing, but they act
+ *   focus_node,         on other people's screens. They fail (a) in the sense
+ *   comment_nodes,      that matters: a caller has an effect somebody else
+ *   uncomment_nodes     sees.
+ *   mcp_test         -- composes an arbitrary outbound request, headers
+ *                       included.
+ *   ask_user         -- interrupts a person.
+ *
+ * The three remote reads ARE here despite reading files this process cannot
+ * vet: their risk is disclosure rather than mutation, and a prompt does not
+ * defend against disclosure once it is the fortieth of the hour. What defends
+ * values is not storing them where a read finds them.
+ */
+export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
+  // Graph and space reads: return stored structure, write nothing.
+  'list_spaces',
+  'list_nodes',
+  'find_nodes',
+  'get_nodes',
+  'list_edges',
+  'list_actions',
+  // Extension and registry reads: manifests and listings, no install path.
+  'list_extensions',
+  'get_extension',
+  'registry_list',
+  // Group-chat reads: the caller's own memberships, a thread's turns, a
+  // compaction's progress. All scoped to the calling agent already.
+  'group_chat_list',
+  'group_chat_turns',
+  'group_chat_compact_status',
+  'artifact_list',
+  // Configuration read. Secret values are redacted by the handler itself, so
+  // this returns names and shapes rather than credentials.
+  'mcp_list',
+  // Remote filesystem reads. See the note above on why these are admitted.
+  'remote_read',
+  'remote_glob',
+  'remote_grep',
+])
+
 export const toolDefinitions = [
   // ── Toasts ────────────────────────────────────────────────────────
   {
@@ -3775,6 +3843,20 @@ function buildHandlers(): Record<string, ToolHandler> {
 }
 
 const handlers = buildHandlers()
+
+/**
+ * Whether this tool queues for approval on the external MCP surface.
+ *
+ * Exported so the OTHER classification can be checked against it. `withApprovalRequired`
+ * is a policy about a surface; `READ_ONLY_TOOLS` is a property of a tool. They
+ * are allowed to differ — that is the point of them being two things — but a
+ * tool in both is incoherent, and without a way to ask this question the
+ * contradiction lives in two files and is visible from neither.
+ */
+export function isApprovalGated(toolName: string): boolean {
+  const handler = handlers[toolName]
+  return handler !== undefined && getApprovalMeta(handler) !== undefined
+}
 
 function rejectionResult(reason: string): Record<string, unknown> {
   const text = reason

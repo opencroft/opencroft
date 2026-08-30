@@ -150,6 +150,18 @@ async function gateToolCall(
   input: unknown,
   toolCallId: string,
   access: PermissionValue,
+  // What the host declared this tool to be, carried into the permission
+  // request as the ACP tool kind.
+  //
+  // THIS HARNESS RUNS THE LOOP, so unlike an external agent it knows exactly
+  // which tool is being called and can say so. Leaving it out is what made
+  // every native tool call arrive with no kind at all, so a host gate keyed on
+  // kind could only ever prompt -- the tool was never classified, rather than
+  // classified wrongly.
+  //
+  // Undeclared stays undeclared: no kind is sent, and the host sees exactly
+  // what it saw before.
+  kind: 'read' | undefined,
   abortSignal?: AbortSignal,
 ): Promise<string | null> {
   const decision = toolPermissionDecision(gate.getMode(), access)
@@ -163,7 +175,7 @@ async function gateToolCall(
     Promise.resolve(
       gate.client.requestPermission({
         sessionId: gate.sessionId,
-        toolCall: { toolCallId, title: name, rawInput: input },
+        toolCall: { toolCallId, title: name, rawInput: input, ...(kind ? { kind } : {}) },
         options: [
           { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
           { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
@@ -203,8 +215,13 @@ async function buildToolset(
   gate: ToolGate,
   permissions: ResolvedPermissions | undefined,
   selection: AgentSelection,
-): Promise<{ toolset: ToolSet; close: () => Promise<void> }> {
+): Promise<{ toolset: ToolSet; close: () => Promise<void>; readOnlyTools: ReadonlySet<string> }> {
   const toolset: ToolSet = {}
+  // Which of this turn's tools the host declared read-only. Collected here
+  // because this is where the declarations are in hand, and read again when
+  // the turn reports a tool call, so the kind the gate saw and the kind the
+  // transcript shows are the same answer from the same source.
+  const readOnlyTools = new Set<string>()
 
   // Same caller the MCP server path resolves from a session token — here the
   // session's selection is already in hand, so it comes straight off it.
@@ -216,11 +233,15 @@ async function buildToolset(
     if (access === null) {
       continue
     }
+    if (local.readOnly) {
+      readOnlyTools.add(local.name)
+    }
     toolset[local.name] = tool({
       description: local.description,
       inputSchema: toolInputSchema(local.inputSchema),
       execute: async (input, { toolCallId, abortSignal }) => {
-        const denied = await gateToolCall(gate, local.name, input, toolCallId, access, abortSignal)
+        const kind = local.readOnly ? ('read' as const) : undefined
+        const denied = await gateToolCall(gate, local.name, input, toolCallId, access, kind, abortSignal)
         if (denied || abortSignal?.aborted) {
           return denied ?? 'Permission denied by user.'
         }
@@ -255,7 +276,18 @@ async function buildToolset(
     toolset[name] = {
       ...mcpTool,
       execute: async (input: unknown, callOptions) => {
-        const denied = await gateToolCall(gate, name, input, callOptions.toolCallId, 'Allow', callOptions.abortSignal)
+        // No kind: an external MCP server's tools are not the host's to
+        // classify, and this harness knows nothing about them beyond what the
+        // server advertised. Undeclared reaches the gate as undeclared.
+        const denied = await gateToolCall(
+          gate,
+          name,
+          input,
+          callOptions.toolCallId,
+          'Allow',
+          undefined,
+          callOptions.abortSignal,
+        )
         if (denied || callOptions.abortSignal?.aborted) {
           return denied ?? 'Permission denied by user.'
         }
@@ -264,7 +296,7 @@ async function buildToolset(
     }
   }
 
-  return { toolset, close: mcp.closeAll }
+  return { toolset, close: mcp.closeAll, readOnlyTools }
 }
 
 export interface NativeSession {
@@ -566,7 +598,7 @@ export function createNativeHarness(
       session.messages.push({ role: 'user', content: text })
 
       const gate: ToolGate = { sessionId, client, getMode: () => session.mode }
-      const { toolset, close } = await buildToolset(config, gate, session.permissions, selection)
+      const { toolset, close, readOnlyTools } = await buildToolset(config, gate, session.permissions, selection)
       // Reasoning effort goes to the OpenAI-compatible provider, keyed by the
       // provider name used in resolveModel (selection.providerId). 'off' is an
       // explicit "no preference" choice from the UI, not a literal effort value.
@@ -618,7 +650,12 @@ export function createNativeHarness(
                   sessionUpdate: 'tool_call',
                   toolCallId: part.toolCallId,
                   title: part.toolName,
-                  kind: 'other',
+                  // The same declaration the gate was given, so the transcript
+                  // and the permission decision cannot disagree about what a
+                  // call was. 'other' remains the answer for anything the host
+                  // did not classify -- unchanged from before, and still the
+                  // honest one: unknown, not known-to-write.
+                  kind: readOnlyTools.has(part.toolName) ? 'read' : 'other',
                   status: 'in_progress',
                   rawInput: part.input,
                 },

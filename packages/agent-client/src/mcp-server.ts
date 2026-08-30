@@ -14,6 +14,25 @@ export interface LocalTool {
   description: string
   inputSchema: ZodRawShape
   handler: (args: Record<string, unknown>) => Promise<ToolResult> | ToolResult
+  /**
+   * True when calling this tool cannot change any state.
+   *
+   * DECLARED BY THE HOST, because the host is the only party that knows. An
+   * agent sees a name, a description and a schema, and none of those say
+   * whether a call writes -- so an agent asked to classify a tool guesses, and
+   * a guess here is a permission decision made by whoever wrote the name.
+   *
+   * Absent means UNDECLARED, not "mutating". A host that has classified
+   * nothing gets exactly the behaviour it had before this field existed, and
+   * every consumer below treats the absence as "no information" rather than as
+   * an answer. That is the safe direction: an undeclared tool keeps whatever
+   * gate it already had.
+   *
+   * It is a property of the tool, never a policy about it. What a surface DOES
+   * with the answer -- prompt, allow, queue for approval -- belongs to that
+   * surface; two of them already disagree, and they are entitled to.
+   */
+  readOnly?: boolean
 }
 
 export type SkillsInput = SkillDef[] | (() => Promise<SkillDef[]>)
@@ -172,7 +191,22 @@ async function buildServer(
     }
     server.registerTool(
       tool.name,
-      { description: tool.description, inputSchema: tool.inputSchema },
+      {
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        // MCP's own vocabulary for this, so an agent on the other side of the
+        // protocol learns it the standard way rather than from anything
+        // bespoke. Emitted only when the host declared it: an absent
+        // annotation says nothing, while `readOnlyHint: false` would assert
+        // that the tool writes, which an undeclared tool has not told us.
+        //
+        // A HINT IS NOT A GUARANTEE THAT ANYONE READS IT. Whether a given
+        // agent maps this to a read-only tool kind is that agent's behaviour
+        // and not ours, so nothing here may be the only thing a permission
+        // decision rests on -- see the native harness, which sets the kind
+        // itself because it can.
+        ...(tool.readOnly === undefined ? {} : { annotations: { readOnlyHint: tool.readOnly } }),
+      },
       async (args) => toCallToolResult(await tool.handler(args)) as CallToolResult,
     )
   }
