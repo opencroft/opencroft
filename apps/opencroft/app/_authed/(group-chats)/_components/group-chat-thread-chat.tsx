@@ -67,10 +67,18 @@ interface GroupChatThreadChatProps {
   renderFrame?: (parts: ThreadChatParts) => ReactNode
 }
 
-// Rendered unconditionally in the composer slot: the badge shows nothing
-// unless a SelectionProvider with a live selection encloses this component,
-// so the plain thread route (no provider) is unchanged by it. Module-level
-// for identity stability — it feeds the memoized command bar.
+// The chip that rides in the composer's attachments row. It renders nothing
+// unless a SelectionProvider with a live selection encloses this component, so
+// the plain thread route (no provider) is unchanged by it. Module-level for
+// identity stability — it feeds the memoized command bar.
+//
+// Handed to the row only when there IS a selection, which is a second test of
+// the same condition and has to be. The row draws around whatever it is given,
+// and an element that renders null is still an element — so passing this one
+// unconditionally would put a strip of empty row under the composer at all
+// times, which is exactly what the row is built not to do. The two tests are
+// asking different questions: this one whether the row exists, the chip's own
+// whether there is a chip to draw in it.
 const SELECTION_BADGE = <SelectionBadge />
 
 export function GroupChatThreadChat({
@@ -275,7 +283,7 @@ export function GroupChatThreadChat({
       savedDraft={thread.draft ?? undefined}
       onDraftChange={onDraftChange}
       leadingBarContent={leadingBarContent}
-      configExtraStart={SELECTION_BADGE}
+      attachments={selectionScope?.selection ? SELECTION_BADGE : undefined}
     />
   )
 
