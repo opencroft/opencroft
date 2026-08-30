@@ -107,6 +107,14 @@ function referencedNames(data: Record<string, unknown>): Set<string> {
     names.add(single)
   }
 
+  // These two lines are load-bearing together, which is the part a test run will not tell you.
+  // The slice takes from a FIXED offset, so `startsWith` decides whether anything is extracted
+  // and never what — relax it to `includes` on its own and the extraction still misses, so every
+  // test stays green. Take the name from `indexOf(prefix)` on its own and, with `startsWith`
+  // still guarding, the index is always 0 and the two slices are identical, so every test stays
+  // green again. Change BOTH and `Bearer secret:SPEECH_KEY` starts resolving to a reference,
+  // which is the fixture that catches it. Measured, 30.08.2026: each mutation alone survives the
+  // suite; together they fail exactly one test.
   for (const value of stringValues(data)) {
     if (!value.startsWith(SECRET_VALUE_PREFIX)) {
       continue
