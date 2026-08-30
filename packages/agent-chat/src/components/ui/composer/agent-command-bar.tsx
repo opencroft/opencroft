@@ -142,6 +142,28 @@ export interface AgentCommandBarProps {
   // the same reason `sendError` is one: see the structural rule in this
   // component's doc comment.
   editBar?: ReactNode
+  // Host slot: a row of its own between the composer and the action row --
+  // what is going out ATTACHED to the next message. A selection being carried
+  // along, a picked file, whatever a host attaches next.
+  //
+  // Arbitrary content, deliberately, and not one named thing: the row places
+  // and spaces what it is given and knows nothing about it, so a second kind
+  // of attachment is a change at the host and none here.
+  //
+  // Given nothing it renders NO ELEMENT -- not an empty one. The column spaces
+  // its children, so an element that was always present would cost every
+  // composer a strip of empty height whether or not anything was attached.
+  // See the slot's own comment in the markup for why that is a layout
+  // requirement rather than tidiness.
+  //
+  // Which puts one obligation on the host, and it is the easy one to miss:
+  // **an element that renders null is not nothing.** Nothing in here can tell
+  // the two apart -- a slot holds an element, and whether that element draws
+  // anything is only known once it has been rendered, by which point this row
+  // has already been drawn around it. So a host with nothing attached passes
+  // `undefined`, rather than a component that will decide for itself that it
+  // has nothing to show.
+  attachments?: ReactNode
   // What pressing send MEANS right now. `commit` swaps the icon to a check and
   // says so -- an edit is committed by sending it, so it is the same control
   // and the same handler, not a second button that appears beside it.
@@ -213,15 +235,21 @@ export function shouldResyncBuffer(value: string, prevValue: string): boolean {
   return value !== prevValue
 }
 
-// The bottom panel of an agent chat: the composer, and an action row underneath
-// carrying every control and every host slot.
+// The bottom panel of an agent chat: the composer, an attachments row, and an
+// action row underneath carrying every control and every host slot.
 //
-// **Two rows, and the split is the point.** The composer owns the full width of
-// its own line, so a message is read on the width it was typed on rather than
-// through a gap between icon clusters. Everything else -- host slots, settings,
-// the approval toggle, send/stop -- sits on the row below, which is what lets
-// the panel hold together at a phone width instead of squeezing the textarea to
+// **The composer owns a full-width line of its own, and that split is the
+// point.** A message is read on the width it was typed on rather than through a
+// gap between icon clusters. Everything else -- host slots, settings, the
+// approval toggle, send/stop -- sits on the row below, which is what lets the
+// panel hold together at a phone width instead of squeezing the textarea to
 // nothing.
+//
+// **Between them sits the attachments row, and only while something occupies
+// it.** It carries what goes out WITH the next message rather than anything
+// about sending it, which is why it belongs against the composer instead of
+// among the controls. Empty, it renders nothing at all, so a composer with
+// nothing attached is still exactly the two rows it has always been.
 //
 // **Controlled, and it returns its own markup.** It holds no draft (nothing
 // survives a remount), no approval state and no knowledge of where it is
@@ -327,6 +355,7 @@ export function AgentCommandBar({
   sendError,
   onDismissSendError,
   editBar,
+  attachments,
   submitMode = 'send',
   approval,
   autoApprove = false,
@@ -453,6 +482,30 @@ export function AgentCommandBar({
         autoFocus={autoFocus}
         className='max-h-60 min-h-8 w-full min-w-0 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:border-0 focus-visible:ring-0'
       />
+
+      {/* What is going out with the next message, on its own row between the
+          composer and the controls -- it describes the message rather than the
+          sending of it, and the action row is already the row that fills up.
+
+          RENDERED ONLY WHEN OCCUPIED, and that is structural rather than tidy:
+          the column spaces its children with `gap-1`, and a gap is drawn
+          between rendered children -- so an always-present empty element would
+          add a strip of height to every composer that has nothing attached.
+          `null` produces no child, and therefore no gap.
+
+          Conditional and still safe for the composer above it, by the same
+          mechanism `sendError` and `editBar` already rely on: a ternary in a
+          fixed child position keeps every sibling's place in the child list,
+          so nothing around it is remounted as this appears and clears. See the
+          structural rule in this component's doc comment.
+
+          IT WRAPS rather than scrolling or clipping. Everything in this row is
+          something the user attached and can only detach from here, so a row
+          that could hide one of them fails at the only thing it does; the
+          composer standing a line taller is the cheaper cost. Children carry
+          `min-w-0` to shorten within a line, exactly as they do in the action
+          row. */}
+      {attachments ? <div className='flex min-w-0 flex-wrap items-center gap-1 px-1'>{attachments}</div> : null}
 
       <div className='flex min-w-0 items-center gap-1 px-1'>
         <div className='flex min-w-0 flex-1 items-center gap-1 overflow-hidden'>

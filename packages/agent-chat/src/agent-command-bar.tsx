@@ -129,6 +129,18 @@ export interface UseAgentCommandBarOptions {
    *  this hook only places it. Must be identity-stable when nothing meaningful
    *  changed — it feeds the memoized bar. */
   configExtraStart?: ReactNode
+  /** Host slot: the composer's attachments row — what goes out WITH the next
+   *  message, forwarded to the kit component's slot of the same name. Nothing
+   *  in this package knows what an attachment is; the row places whatever it
+   *  is given, and is not rendered at all when given nothing.
+   *
+   *  Which makes one thing the host's to get right: pass nothing when nothing
+   *  is attached, and an element that renders null does not count as nothing.
+   *  See the kit component's own comment on the slot — neither it nor this
+   *  hook can tell the two apart, and the difference is a strip of empty row
+   *  under every composer. Must be identity-stable when nothing meaningful
+   *  changed; it feeds the memoized bar. */
+  attachments?: ReactNode
   /** Discards the session and starts a fresh one, offered from the ring's
    *  popover. Omit to render the ring with no Clear button. */
   onClear?: () => void
@@ -185,6 +197,7 @@ export function useAgentCommandBar({
   compact,
   onClear,
   configExtraStart,
+  attachments,
   presence,
 }: UseAgentCommandBarOptions): ReactElement {
   // Lazy init so a session opened with an existing draft paints with it
@@ -708,6 +721,7 @@ export function useAgentCommandBar({
         sendError={sendError}
         onDismissSendError={onDismissSendError}
         editBar={editBarNode}
+        attachments={attachments}
         submitMode={edit ? 'commit' : 'send'}
         approval={approval}
         autoApprove={autoApprove}
@@ -741,6 +755,7 @@ export function useAgentCommandBar({
       sendError,
       onDismissSendError,
       editBarNode,
+      attachments,
       edit,
       approval,
       autoApprove,
