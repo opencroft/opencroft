@@ -2,19 +2,18 @@
 
 import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
-import { ChevronLeft } from 'lucide-react'
 
 import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
+import { BackButton } from 'ui/components/ui/utils/back-button'
 import { cn } from 'ui/lib/utils'
 
 import { CommandBarFrame } from 'ui/components/ui/agent-chat/command-bar-frame'
 import { Flex } from 'ui/components/ui/layout/flex'
-// The flat shadcn path, not `ui/layout/scroll-area`. The kit stores component
-// files flat and the export composes the category folder on install, so a
-// nested path resolves in a consumer and NOT here -- which is why this screen's
-// preview rendered as an invalid element rather than as itself.
+// The scroll area is the kit's own rather than the plain primitive -- the
+// declared registry dependency is what selects it, and where it lands in a
+// consumer is composed from that component's category, not written here.
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from 'ui/components/ui/resizable'
-import { ScrollArea } from 'ui/components/ui/scroll-area'
+import { ScrollArea } from 'ui/components/ui/layout/scroll-area'
 import { StickySection } from 'ui/components/ui/layouts/sticky-section'
 import { type Artifact, ArtifactPanel, ArtifactStrip } from 'ui/components/ui/group-chat/thread-artifacts'
 
@@ -31,7 +30,9 @@ export interface GroupChatThreadFramingProps {
    * side. A thread has exactly one agent -- unlike the group chat itself,
    * which can have several -- so this shows who, not how many. */
   agent?: { name: string; avatarUrl?: string | null }
-  /** Back out of the conversation -- to the thread list / group chat. */
+  /** Back out of the conversation -- to the thread list / group chat. Draws
+   * the shared BackButton: the deepest of three nesting surfaces, and the same
+   * control the two above it use rather than a matching one. */
   onBack?: () => void
   /** The conversation itself -- agent-chat/chat-conversation, reused not redrawn. */
   children: ReactNode
@@ -100,44 +101,46 @@ export function GroupChatThreadFraming({
   }, [])
   const conversation = (
     <>
-        {/* Forces Radix's own internal viewport wrapper (a div ScrollArea
-            inserts, not one in this file's own JSX) into a flex column filling
-            the full available height -- without it `Flex expanded justify='end'`
-            below has no flex-column ancestor to fill, and both (a) a short
-            conversation renders top-anchored with the composer floating right
-            after it instead of glued to the true bottom, and (b) StickySection
-            has nothing to stay pinned against. Same mechanism the 1:1 chat's
-            ChatArea uses, reused rather than re-implemented -- see that
-            component's own note on why this specific selector is the fix. */}
-        <ScrollArea className='min-h-0 flex-1 [&_[data-radix-scroll-area-viewport]>div]:!flex [&_[data-radix-scroll-area-viewport]>div]:!flex-col [&_[data-radix-scroll-area-viewport]>div]:!min-h-full'>
-          {/* Bottom-anchored, exactly like the 1:1 chat's ChatContent: with few
-              messages the conversation sits at the bottom of the viewport, not
-              the top, and scrolls up from there as it grows. No inner padded
-              Flex layer here (unlike ChatContent's) -- the conversation already
-              carries its own px-4 py-4, per this screen's own existing note
-              just below on why the scroll area itself stays unpadded. */}
-          <Flex expanded justify='end'>
-            {children}
-          </Flex>
-          {/* The footer dock: StickySection, the same sticky-bottom-with-fade
-              mechanism the 1:1 chat's ChatBar uses for its own composer.
-              Placed INSIDE the scroll area, not below it, so it overlays the
-              transcript as the reader scrolls -- a layout block here is
-              exactly the bug this replaces.
+      {/* Forces Radix's own internal viewport wrapper (a div ScrollArea
+          inserts, not one in this file's own JSX) into a flex column filling
+          the full available height -- without it `Flex expanded justify='end'`
+          below has no flex-column ancestor to fill, and both (a) a short
+          conversation renders top-anchored with the composer floating right
+          after it instead of glued to the true bottom, and (b) StickySection
+          has nothing to stay pinned against. Same mechanism the 1:1 chat's
+          ChatArea uses, reused rather than re-implemented -- see that
+          component's own note on why this specific selector is the fix. */}
+      <ScrollArea className='min-h-0 flex-1 [&_[data-radix-scroll-area-viewport]>div]:!flex [&_[data-radix-scroll-area-viewport]>div]:!flex-col [&_[data-radix-scroll-area-viewport]>div]:!min-h-full'>
+        {/* Bottom-anchored, exactly like the 1:1 chat's ChatContent: with few
+            messages the conversation sits at the bottom of the viewport, not
+            the top, and scrolls up from there as it grows. No inner padded Flex
+            layer here, unlike ChatContent's -- the conversation already carries
+            its own padding, for the same reason the header note gives for
+            leaving the scroll area itself unpadded. */}
+        <Flex expanded justify='end'>
+          {children}
+        </Flex>
+        {/* The footer dock: StickySection, the same sticky-bottom-with-fade
+            mechanism the 1:1 chat's ChatBar uses for its own composer. Placed
+            INSIDE the scroll area, not below it, so it overlays the transcript
+            as the reader scrolls -- a layout block here is exactly the bug this
+            replaces.
 
-              One inset layer, not two: StickySection's own `--flex-padding`
-              (0.5rem) is the only padding the composer gets. An earlier pass
-              added a second padded wrapper around CommandBarFrame to match the
-              1:1 chat's inset value exactly, but the 1:1 chat centers its
-              composer under a max-w-3xl cap and this screen runs full pane
-              width, so the same value read as too much here -- the product
-              call was to halve it, and the nearest preset step below one
-              `--flex-padding` layer is zero extra layers, not a smaller
-              constant. */}
-          <StickySection side='bottom' fade>
-            {composer ? <CommandBarFrame>{composer}</CommandBarFrame> : null}
-          </StickySection>
-        </ScrollArea>
+            One inset layer, not two: StickySection's own `--flex-padding`
+            (0.5rem) is the only padding the composer gets. The 1:1 chat centers
+            its composer under a max-w-3xl cap while this screen runs full pane
+            width, so the same value read as too much here.
+
+            An earlier pass added a second padded wrapper around the frame to
+            match the 1:1 chat's inset exactly, and it was rejected: the product
+            call was to HALVE it, and the nearest step below one `--flex-padding`
+            layer is zero extra layers rather than a smaller constant. This is a
+            settled decision, not an oversight -- if the composer reads tight,
+            that is the value to revisit, not this arrangement. */}
+        <StickySection side='bottom' fade>
+          {composer ? <CommandBarFrame>{composer}</CommandBarFrame> : null}
+        </StickySection>
+      </ScrollArea>
     </>
   )
 
@@ -149,16 +152,7 @@ export function GroupChatThreadFraming({
           no padding: the conversation inside it carries its own px-4 py-4, and
           adding more here would double it. */}
       <header className='flex shrink-0 items-center gap-2 border-b border-border px-4 py-2'>
-        {onBack ? (
-          <button
-            type='button'
-            onClick={onBack}
-            aria-label='Back'
-            className='inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring'
-          >
-            <ChevronLeft className='size-4' />
-          </button>
-        ) : null}
+        {onBack ? <BackButton onClick={onBack} /> : null}
         <div className='flex min-w-0 flex-1 flex-col overflow-hidden leading-tight'>
           <span className='truncate text-xs text-muted-foreground'>{groupChatName}</span>
           <span className='truncate text-sm font-medium text-foreground'>
@@ -183,9 +177,9 @@ export function GroupChatThreadFraming({
           <ArtifactStrip artifacts={artifacts} openId={openArtifactId} onOpen={(id) => onOpenArtifact?.(id)} />
         </div>
       ) : null}
-      {/* No direction prop: the group is a flex row by default and turns
-          vertical from its aria-orientation, so horizontal is simply the
-          default. */}
+      {/* No direction prop on the panel group below: it is a flex row by
+          default and turns vertical from its aria-orientation, so horizontal is
+          simply the default rather than an omission. */}
       {wide ? (
         <ResizablePanelGroup className='min-h-0 flex-1'>
           {/* `id` on both, because the artifact panel comes and goes: without
