@@ -1,15 +1,12 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { ChevronLeft, Trash2 } from 'lucide-react'
 
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from 'ui/components/ui/context-menu'
+import { BackButton } from 'ui/components/ui/utils/back-button'
+import { ListEmpty } from 'ui/components/ui/utils/list-empty'
+import { ListRow } from 'ui/components/ui/utils/list-row'
 import { MemberAvatarGroup, type MemberRef } from 'ui/components/ui/group-chat/member-avatar-group'
+import { RowContextMenu } from 'ui/components/ui/utils/row-context-menu'
 import { cn } from 'ui/lib/utils'
 
 export interface GroupChatListItem {
@@ -45,11 +42,20 @@ function threadLabel(n: number) {
   return `${n} ${n === 1 ? 'thread' : 'threads'}`
 }
 
-// A group-chat row. Same geometry and feel as the existing chat-list-item, with
-// the one difference that matters: a group chat is a *container* with several
-// members, so the leading element is a cluster of participant avatars rather
-// than a single one, and there is deliberately NO process status -- offline /
-// idle / working describe an agent process and mean nothing for a container.
+// A group-chat row. It IS the chat row's shell -- both draw ListRow, so the
+// geometry and the feel are the same object rather than two that match. What
+// this row contributes is what goes in the leading slot, and what deliberately
+// does not exist: a group chat is a *container* with several members, so the
+// leading element is a cluster of participant avatars rather than a single one,
+// and there is NO process status -- offline / idle / working describe an agent
+// process and mean nothing for a container.
+//
+// Moving onto the shared shell also brings this row the touch handling it did
+// not carry: the shell holds `touch-action: pan-y` and suppresses the native
+// long-press text behaviour, which is what leaves a long press free to reach
+// the context menu below. A chat row has had that for a while; this one had
+// none of it, on the same geometry.
+//
 // Name is the title; threadCount is the secondary line -- the topic is not
 // shown here at all, see the note in the docs.
 export function GroupChatListRow({
@@ -62,49 +68,24 @@ export function GroupChatListRow({
   onDelete,
 }: GroupChatListRowProps) {
   const row = (
-    <div
-      role='button'
-      tabIndex={0}
-      data-active={active}
-      onClick={() => onSelect?.(id)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault()
-          onSelect?.(id)
-        }
-      }}
-      className={cn(
-        'relative flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-left outline-none transition-colors',
-        'hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring data-[active=true]:bg-muted',
-      )}
-    >
-      <MemberAvatarGroup members={members} max={3} size='sm' />
-      <span className='flex min-w-0 flex-1 flex-col overflow-hidden leading-tight'>
-        <span className='truncate text-xs font-medium text-foreground'>{name}</span>
-        <span className='truncate text-xs text-muted-foreground'>{threadLabel(threadCount)}</span>
-      </span>
-    </div>
+    <ListRow
+      leading={<MemberAvatarGroup members={members} max={3} size='sm' />}
+      title={name}
+      secondary={threadLabel(threadCount)}
+      active={active}
+      onSelect={() => onSelect?.(id)}
+    />
   )
 
-  // No handler, no menu -- the row is returned exactly as it was before this
-  // existed, so a host that offers no delete pays nothing for the option.
-  if (!onDelete) {
-    return row
-  }
-
+  // The menu is row-context-menu, the same component ChatListItem's row uses.
+  // This used to be a copy of it, and the comment here used to say so -- the
+  // width, the click guard and the destructive Delete were maintained in two
+  // files that promised each other they matched.
+  //
+  // No handler, no menu: with `onDelete` omitted the menu component returns the
+  // row untouched, so a host that offers no delete pays nothing for the option.
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
-      {/* Same width, same stopPropagation and the same destructive item as
-          ChatListItem's menu: the click must not fall through to the row
-          underneath, which would open the very chat being deleted. */}
-      <ContextMenuContent className='min-w-[8rem]' onClick={(e) => e.stopPropagation()}>
-        <ContextMenuItem className='text-destructive focus:text-destructive' onClick={() => onDelete(id)}>
-          <Trash2 className='size-3' />
-          Delete
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
+    <RowContextMenu onDelete={onDelete ? () => onDelete(id) : undefined}>{row}</RowContextMenu>
   )
 }
 
@@ -113,8 +94,8 @@ export interface GroupChatListProps {
   activeId?: string
   onSelect?: (id: string) => void
   /** Back out of the group-chat section entirely -- to whatever surface it
-   * was opened from. Same affordance as GroupChatDetail's and
-   * GroupChatThreadFraming's, one level up from either. */
+   * was opened from. Draws the shared BackButton, so this is the same control
+   * GroupChatDetail and GroupChatThreadFraming draw, not a match for it. */
   onBack?: () => void
   // Where creating a group chat is reached from. Rendered above the rows and
   // kept whether the list has any or not -- see the note below.
@@ -149,24 +130,18 @@ export function GroupChatList({
     <div className={cn('flex w-full min-w-0 flex-col', className)}>
       {onBack || action ? (
         <div className='flex min-w-0 shrink-0 items-center gap-2 px-2 pb-1'>
-          {onBack ? (
-            <button
-              type='button'
-              onClick={onBack}
-              aria-label='Back'
-              className='inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring'
-            >
-              <ChevronLeft className='size-4' />
-            </button>
-          ) : null}
+          {onBack ? <BackButton onClick={onBack} /> : null}
           <div className='flex min-w-0 flex-1 items-center justify-end'>{action}</div>
         </div>
       ) : null}
 
+      {/* The default line is ListEmpty, a shared primitive from the
+          BaseComponents kit rather than a sentence spelled out here. Six lists
+          wrote their own before it existed and drifted five ways -- what varied
+          was never the words, which are the host's, but the padding, the type
+          size and whether it was centred at all. */}
       {chats.length === 0 ? (
-        emptyState ?? (
-          <p className='px-2 py-6 text-center text-xs text-muted-foreground'>No group chats yet.</p>
-        )
+        emptyState ?? <ListEmpty text='No group chats yet.' size='xs' />
       ) : (
         <div className='flex w-full min-w-0 flex-col gap-0.5'>
           {chats.map((chat) => (

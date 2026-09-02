@@ -1,9 +1,11 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { ChevronLeft, Pencil } from 'lucide-react'
+import { Pencil } from 'lucide-react'
 
+import { BackButton } from 'ui/components/ui/utils/back-button'
 import { CommandBarFrame } from 'ui/components/ui/agent-chat/command-bar-frame'
+import { ListEmpty } from 'ui/components/ui/utils/list-empty'
 import { MemberAvatarGroup, type MemberRef } from 'ui/components/ui/group-chat/member-avatar-group'
 import { StickySection } from 'ui/components/ui/layouts/sticky-section'
 import { cn } from 'ui/lib/utils'
@@ -11,7 +13,8 @@ import { cn } from 'ui/lib/utils'
 export interface GroupChatDetailProps {
   /** Back out of this group chat -- to the group-chat list. Omit on a surface
    * that has no "out" (there is none today, but the header should not assume
-   * one exists). Same affordance as GroupChatThreadFraming's, one level up. */
+   * one exists). Draws the shared BackButton, so this is literally the same
+   * control the list and the thread screen use rather than a matching one. */
   onBack?: () => void
   /** What this chat is called. The title, and what every other surface shows.
    * Renaming is pure presentation -- it reaches no agent. */
@@ -148,16 +151,7 @@ export function GroupChatDetail({
           rather than each having its own. */}
       <header className='flex shrink-0 flex-col gap-3 border-b border-border px-4 py-3'>
         <div className='flex min-w-0 items-center gap-3'>
-          {onBack ? (
-            <button
-              type='button'
-              onClick={onBack}
-              aria-label='Back'
-              className='inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring'
-            >
-              <ChevronLeft className='size-4' />
-            </button>
-          ) : null}
+          {onBack ? <BackButton onClick={onBack} /> : null}
           <div className='flex min-w-0 flex-1 flex-col items-start'>
             <h2 className='flex min-w-0 max-w-full text-base font-semibold text-foreground'>
               <HeaderLine onEdit={onEditName} label={`Rename group chat: ${name}`}>
@@ -229,10 +223,7 @@ export function GroupChatDetail({
               built (its content column carries px-4 py-4 inside the scroll
               area, not on it). */}
           <div className='flex-1 px-4 py-4'>
-            {threads ??
-              emptyState ?? (
-                <p className='py-6 text-center text-sm text-muted-foreground'>No threads yet.</p>
-              )}
+            {threads ?? emptyState ?? <ListEmpty text='No threads yet.' />}
           </div>
           {/* Inside the scroll region, not below it -- a sticky dock so the
               composer overlays the thread list as it scrolls, the same shape
