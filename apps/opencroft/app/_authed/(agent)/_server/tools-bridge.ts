@@ -2,7 +2,12 @@ import { jsonSchemaToZodShape } from 'agent-client/json-schema'
 import type { LocalTool, ToolsCaller } from 'agent-client/mcp-server'
 
 import { getExtensionToolDefinitions } from '@/app/_authed/(mcp)/_server/extension-tools'
-import { getAgentToolDefinitions, handleToolCall, toolDefinitions } from '@/app/_authed/(mcp)/_server/tools'
+import {
+  getAgentToolDefinitions,
+  handleToolCall,
+  READ_ONLY_TOOLS,
+  toolDefinitions,
+} from '@/app/_authed/(mcp)/_server/tools'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 
@@ -80,6 +85,16 @@ function toLocalTool(tool: ConvertedTool, callerAgent: string | null): LocalTool
     description: tool.description,
     inputSchema: tool.inputSchema,
     handler: (args) => callTool(tool.name, args, callerAgent),
+    // Declared here because this is the bridge: it is where opencroft's own
+    // tools become something an agent can see, and the classification is
+    // opencroft's to make.
+    //
+    // SET ONLY WHEN TRUE, never `false`. Absent means nobody classified this
+    // tool; `false` would assert that it writes, which is a claim the set does
+    // not make and cannot -- extension-contributed and dynamic graph tools
+    // pass through this same function, and their absence from the set says
+    // only that nobody has looked at them.
+    ...(READ_ONLY_TOOLS.has(tool.name) ? { readOnly: true } : {}),
   }
 }
 
