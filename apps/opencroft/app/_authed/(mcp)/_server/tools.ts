@@ -74,6 +74,7 @@ import {
 } from '@/app/_authed/(group-chats)/_server/model'
 import { recordAudit } from '@/app/_authed/(mcp)/_server/audit'
 import { DbReadRefused, runBoundedRead } from '@/app/_authed/(mcp)/_server/db-read'
+import { resolveExisting, resolveForUnset, resolveForWrite } from '@/app/_authed/(mcp)/_server/property-path'
 import { executeExtensionTool, getExtensionToolDefinitions } from '@/app/_authed/(mcp)/_server/extension-tools'
 import { skillToolDefinitions, skillToolHandlers } from '@/app/_authed/(mcp)/_server/skill-tools'
 import type { ToolCallerContext, ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
@@ -647,22 +648,25 @@ export const toolDefinitions = [
   {
     name: 'write_node_property',
     description:
-      'Overwrite a string property on a node by dot path (e.g. "script"). Preferred over update_nodes for multi-line strings.',
+      'Write a property on a node at a dot path (e.g. "script", or "schedules.0.enabled" — an array index is its own dot segment; brackets are ordinary key characters, never an index). The value is written as given: a JSON boolean stays a boolean, so flags actually turn off. Paths are strict — every segment before the last must already exist, nothing is created implicitly, and an unresolvable path is refused naming the failing segment. Pass unset: true (omitting value) to remove the property instead. Preferred over update_nodes for multi-line strings and anything nested.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         nodeId: { type: 'string', description: 'The unique node ID' },
-        path: { type: 'string', description: 'Dot path within node.data, e.g. "script".' },
-        value: { type: 'string', description: 'New string value.' },
+        path: { type: 'string', description: 'Dot path within node.data, e.g. "script" or "schedules.0.enabled".' },
+        value: {
+          description: 'New value, written exactly as given (string, number, boolean, null, object or array). Omit when unset is true.',
+        },
+        unset: { type: 'boolean', description: 'Remove the property at path instead of writing. The path must exist, and value must be omitted.' },
         ...SPACE_PARAM,
       },
-      required: ['nodeId', 'path', 'value'],
+      required: ['nodeId', 'path'],
     },
   },
   {
     name: 'edit_node_property',
     description:
-      "Replace an exact string inside a node's string property at a dot path. Preferred over update_nodes for targeted edits in multi-line strings. Fails if oldString is not unique unless replaceAll is true.",
+      "Replace an exact string inside a node's string property at a dot path (an array index is its own dot segment, e.g. \"schedules.0.cron\"). The path must resolve to an existing string — an unresolvable path is refused naming the failing segment. Preferred over update_nodes for targeted edits in multi-line strings. Fails if oldString is not unique unless replaceAll is true.",
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -1846,32 +1850,6 @@ function walkLeaves(value: unknown, path: string, out: Map<string, string>): voi
     return
   }
   out.set(path, String(value))
-}
-
-function getByPath(obj: Record<string, unknown>, path: string): unknown {
-  const parts = path.split('.')
-  let cur: unknown = obj
-  for (const p of parts) {
-    if (cur === null || typeof cur !== 'object') {
-      return undefined
-    }
-    cur = (cur as Record<string, unknown>)[p]
-  }
-  return cur
-}
-
-function setByPath(obj: Record<string, unknown>, path: string, value: unknown): void {
-  const parts = path.split('.')
-  let cur: Record<string, unknown> = obj
-  for (let i = 0; i < parts.length - 1; i++) {
-    const key = parts[i]
-    const next = cur[key]
-    if (next === null || typeof next !== 'object') {
-      cur[key] = {}
-    }
-    cur = cur[key] as Record<string, unknown>
-  }
-  cur[parts[parts.length - 1]] = value
 }
 
 function requireArray<T = unknown>(value: unknown, name: string): T[] {
@@ -3073,9 +3051,17 @@ function buildHandlers(): Record<string, ToolHandler> {
       async (args) => {
         const nodeId = args.nodeId as string | undefined
         const propPath = args.path as string | undefined
-        const value = args.value as string | undefined
-        if (!nodeId || !propPath || value === undefined) {
-          fail(-32602, 'Missing required params: nodeId, path, value')
+        // The value is written EXACTLY as it arrived — a JSON boolean stays a
+        // boolean. The string-only version of this could not turn a flag off:
+        // consumers gate on truthiness and the string "false" is truthy, so a
+        // disable written through here reported success and changed nothing.
+        const value = args.value as unknown
+        const unset = args.unset === true
+        if (!nodeId || !propPath) {
+          fail(-32602, 'Missing required params: nodeId, path')
+        }
+        if (unset === (value !== undefined)) {
+          fail(-32602, 'Pass either a value to write, or unset: true to remove the property — exactly one of the two')
         }
         const slug = await resolveSpace(args)
         await withGraphConflictRetry(slug, (graph) => {
@@ -3086,9 +3072,21 @@ function buildHandlers(): Record<string, ToolHandler> {
           if (!node.data) {
             node.data = {}
           }
-          setByPath(node.data, propPath, value)
+          // Strict resolution: an unresolvable path is refused naming the
+          // path, and nothing is created implicitly. The resolver this
+          // replaced manufactured an object for every missing segment, so any
+          // typo became a junk key and the call still answered success.
+          const target = unset ? resolveForUnset(node.data, propPath) : resolveForWrite(node.data, propPath)
+          if (!target.ok) {
+            fail(-32602, target.reason)
+          }
+          if (unset) {
+            delete (target.parent as Record<string, unknown>)[target.key as string]
+          } else {
+            ;(target.parent as Record<string, unknown>)[target.key as string] = value
+          }
         })
-        return textResult(`Property ${propPath} on ${nodeId} written.`)
+        return textResult(unset ? `Property ${propPath} on ${nodeId} removed.` : `Property ${propPath} on ${nodeId} written.`)
       },
       { view: 'write_node_property' },
     ),
@@ -3113,15 +3111,21 @@ function buildHandlers(): Record<string, ToolHandler> {
           if (!node) {
             fail(-32602, `Node not found: ${nodeId}`)
           }
-          const current = getByPath(node.data ?? {}, propPath)
+          // One resolution serves both the read and the write-back, so the
+          // slot that was checked is the slot that is written — and a path
+          // that does not resolve is refused by name instead of the old
+          // behaviour, where the read came back undefined ("not a string")
+          // while a later write would have invented the path.
+          const target = resolveExisting(node.data ?? {}, propPath)
+          if (!target.ok) {
+            fail(-32602, target.reason)
+          }
+          const current = (target.parent as Record<string, unknown>)[target.key as string]
           if (typeof current !== 'string') {
             fail(-32602, `Property ${propPath} is not a string`)
           }
           const updated = replaceExact(current, { oldString, newString, replaceAll }, 'property')
-          if (!node.data) {
-            node.data = {}
-          }
-          setByPath(node.data, propPath, updated)
+          ;(target.parent as Record<string, unknown>)[target.key as string] = updated
         })
         return textResult(`Property ${propPath} on ${nodeId} updated.`)
       },
