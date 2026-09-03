@@ -33,6 +33,18 @@ export type PathTarget =
 /** Canonical array index: no signs, no leading zeros, so "01" is a key, not index 1. */
 const INDEX_RE = /^(0|[1-9][0-9]*)$/
 
+/**
+ * Names that address the OBJECT MODEL rather than data. `"__proto__" in obj`
+ * is true of every plain object and yields an object, so it walks like a
+ * container — and a write through it lands on the global prototype of the
+ * running server, while a final-segment write sets the data object's own
+ * prototype: present in memory, absent from the saved JSON. That is the
+ * incident's exact shape one level down — behaviour that differs from what
+ * the stored data shows — so these refuse as reserved rather than resolving
+ * or reading as merely missing.
+ */
+const RESERVED_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype'])
+
 function refuse(path: string, detail: string): PathTarget {
   return { ok: false, reason: `Path "${path}" does not resolve: ${detail}` }
 }
@@ -69,6 +81,10 @@ function walkToParent(data: Record<string, unknown>, path: string): Walked | Pat
   if (path === '' || segments.some((s) => s === '')) {
     return refuse(path, 'it is empty or contains an empty segment')
   }
+  const reserved = segments.find((s) => RESERVED_SEGMENTS.has(s))
+  if (reserved !== undefined) {
+    return refuse(path, `"${reserved}" is a name of the object model itself, not of data, and cannot be read or written here`)
+  }
   let cur: unknown = data
   for (let i = 0; i < segments.length - 1; i++) {
     const seg = segments[i]
@@ -89,7 +105,9 @@ function walkToParent(data: Record<string, unknown>, path: string): Walked | Pat
       return refuse(path, `${at} is ${describe(cur)}, which has no properties`)
     }
     const record = cur as Record<string, unknown>
-    if (!(seg in record)) {
+    // Own property only: `in` walks the prototype chain, on which every name
+    // like `toString` "exists" for every object — and none of them is data.
+    if (!Object.hasOwn(record, seg)) {
       return refuse(
         path,
         `"${seg}" is not a property of ${at}. Nothing is created implicitly — write the containing object first if it is genuinely new.${bracketHint(seg)}`,
@@ -133,7 +151,7 @@ export function resolveExisting(data: Record<string, unknown>, path: string): Pa
   if (!target.ok) {
     return target
   }
-  if (!Array.isArray(target.parent) && !(String(target.key) in target.parent)) {
+  if (!Array.isArray(target.parent) && !Object.hasOwn(target.parent, String(target.key))) {
     const prefix = path.includes('.') ? `"${path.slice(0, path.lastIndexOf('.'))}"` : "the node's data"
     return refuse(path, `"${String(target.key)}" is not a property of ${prefix}.${bracketHint(String(target.key))}`)
   }

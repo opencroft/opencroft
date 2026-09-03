@@ -129,6 +129,29 @@ test('unset refuses an array element, which would renumber its neighbours', () =
   }
 })
 
+test('the object model’s own names are refused as segments, first, middle and last alike', () => {
+  const data = eventNode()
+  for (const path of ['__proto__.polluted', 'schedules.0.__proto__', '__proto__', 'constructor.prototype.polluted', 'prototype']) {
+    const target = resolveForWrite(data, path)
+    assert.equal(target.ok, false, `"${path}" must refuse`)
+    if (!target.ok) {
+      assert.match(target.reason, /object model/, `"${path}" is refused as reserved, not as merely missing`)
+    }
+  }
+  // The half that made this required rather than tidy: resolving through
+  // "__proto__" hands back Object.prototype itself, so a write lands on the
+  // global prototype of the running server and never appears in saved data.
+  assert.equal(({} as Record<string, unknown>).polluted, undefined, 'Object.prototype came through untouched')
+})
+
+test('existence means OWN property — names inherited from the prototype do not resolve', () => {
+  const data = eventNode()
+  const inherited = resolveExisting(data, 'toString')
+  assert.equal(inherited.ok, false, '"toString" is on every object via the chain and on none of them as data')
+  const through = resolveForWrite(data, 'toString.x')
+  assert.equal(through.ok, false, 'and it is not a container to walk through either')
+})
+
 test('an empty or broken path is refused whole', () => {
   assert.equal(resolveForWrite(eventNode(), '').ok, false)
   assert.equal(resolveForWrite(eventNode(), 'schedules..enabled').ok, false)
