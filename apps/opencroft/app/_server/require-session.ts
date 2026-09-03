@@ -1,4 +1,5 @@
 import { getSessionUser } from '@opencroft/auth/server'
+import { getRequest } from '@tanstack/react-start/server'
 
 // Shared session gate for the browser-driven API routes named in
 // __root.tsx's boundary comment. These are TanStack
@@ -31,4 +32,19 @@ export async function requireSession(request: Request): Promise<Response | null>
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
   return null
+}
+
+// Session gate for a createServerFn handler. A server function is its own
+// callable HTTP endpoint, reachable without going through the page that leads
+// to it, so the route-level gate in _authed.tsx does not cover it — a handler
+// that must not answer an anonymous caller awaits this first. Unlike
+// requireSession above, which a route handler calls with the request and
+// returns the 401 to, a server function has nowhere to return a Response, so
+// this THROWS one: the framework sends a thrown Response as the HTTP response
+// (start-server-core's server-functions-handler), which is what makes the
+// status a real 401 rather than a serialized error inside a 200.
+export async function requireSessionServerFn(): Promise<void> {
+  if (!(await getSessionUser(getRequest()))) {
+    throw Response.json({ error: 'Unauthorized' }, { status: 401 })
+  }
 }

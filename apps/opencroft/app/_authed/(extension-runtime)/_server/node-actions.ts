@@ -10,13 +10,17 @@ import {
   dispatchNodeActionImpl,
   listNodeActionsImpl,
 } from '@/app/_authed/(extension-runtime)/_server/node-actions-impl'
+import { requireSessionServerFn } from '@/app/_server/require-session'
 import type { NodeActionDescriptor } from '@/app/_authed/(extension-runtime)/_types'
 
 // Client-callable wrapper — see node-actions-impl.ts's listNodeActionsImpl for why
 // the plain implementation lives in its own module, separate from this file.
 export const listNodeActions = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((nodeId: string) => nodeId)
-  .handler(async ({ data: nodeId }): Promise<NodeActionDescriptor[]> => listNodeActionsImpl(nodeId))
+  .handler(async ({ data: nodeId }): Promise<NodeActionDescriptor[]> => {
+    await requireSessionServerFn()
+    return listNodeActionsImpl(nodeId)
+  })
 
 // Client-callable wrapper — see node-actions-impl.ts's dispatchNodeActionImpl for why
 // the plain implementation lives in its own module, separate from this file.
@@ -31,4 +35,7 @@ export const listNodeActions = createServerFn({ method: 'POST', strict: { output
 // is their own account, which is a different question with a different answer.
 export const dispatchNodeAction = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { nodeId: string; actionId: string; params?: Record<string, unknown> }) => data)
-  .handler(async ({ data }): Promise<unknown> => dispatchNodeActionImpl(data))
+  .handler(async ({ data }): Promise<unknown> => {
+    await requireSessionServerFn()
+    return dispatchNodeActionImpl(data)
+  })

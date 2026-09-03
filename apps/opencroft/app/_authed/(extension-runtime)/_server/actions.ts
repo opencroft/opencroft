@@ -11,6 +11,7 @@ import {
   listExtensionManifestsImpl,
 } from '@/app/_authed/(extension-runtime)/_server/extension-action-impl'
 import { ensureExtensionBuilt } from '@/app/_authed/(extension-runtime)/_server/loader'
+import { requireSessionServerFn } from '@/app/_server/require-session'
 import type { ExtensionManifestInfo } from '@/app/_authed/(extension-runtime)/_types'
 
 // Client-callable wrapper — used when the caller is genuinely client-side code (see
@@ -18,14 +19,21 @@ import type { ExtensionManifestInfo } from '@/app/_authed/(extension-runtime)/_t
 // request/response round trip this provides.
 export const invokeExtensionAction = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { extensionId: string; actionName: string; args: unknown[] }) => data)
-  .handler(async ({ data }): Promise<unknown> => invokeExtensionActionImpl(data))
+  .handler(async ({ data }): Promise<unknown> => {
+    await requireSessionServerFn()
+    return invokeExtensionActionImpl(data)
+  })
 
 export const listExtensionManifests = createServerFn({ strict: { output: false } }).handler(
-  async (): Promise<ExtensionManifestInfo[]> => listExtensionManifestsImpl(),
+  async (): Promise<ExtensionManifestInfo[]> => {
+    await requireSessionServerFn()
+    return listExtensionManifestsImpl()
+  },
 )
 
 export const rebuildExtension = createServerFn({ method: 'POST' })
   .inputValidator((extensionId: string) => extensionId)
   .handler(async ({ data: extensionId }): Promise<void> => {
+    await requireSessionServerFn()
     await ensureExtensionBuilt(extensionId)
   })
