@@ -1,4 +1,5 @@
 import {
+  type ActionAccess,
   activateLifecycleExtensions,
   clientBundleVersion,
   extensionHasClient,
@@ -35,6 +36,18 @@ export async function invokeExtensionActionImpl(data: {
     throw new Error(`Extension ${extensionId} has no action "${actionName}"`)
   }
   return fn(...args)
+}
+
+// The extension's declared authorization policy for one action, read from the
+// same module `invokeExtensionActionImpl` dispatches through so the two cannot
+// disagree about what an action is. Context-free like the impl above: the
+// enforcement that consumes this (`requireAdminServerFn`) runs at the
+// request-facing serverFn, the only layer with a request to identify the caller
+// from. An action the extension does not list is 'signed-in' — the interim
+// gate's behaviour, so adding this changes nothing until an action opts in.
+export async function getActionAccess(extensionId: string, actionName: string): Promise<ActionAccess> {
+  const mod = await getExtensionModule(extensionId)
+  return mod.actionAccess?.[actionName] ?? 'signed-in'
 }
 
 // Plain (non-server-fn) implementation of listExtensionManifests, for callers that

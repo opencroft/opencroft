@@ -7,11 +7,12 @@
 import { createServerFn } from '@tanstack/react-start'
 
 import {
+  getActionAccess,
   invokeExtensionActionImpl,
   listExtensionManifestsImpl,
 } from '@/app/_authed/(extension-runtime)/_server/extension-action-impl'
 import { ensureExtensionBuilt } from '@/app/_authed/(extension-runtime)/_server/loader'
-import { requireSessionServerFn } from '@/app/_server/require-session'
+import { requireAdminServerFn, requireSessionServerFn } from '@/app/_server/require-session'
 import type { ExtensionManifestInfo } from '@/app/_authed/(extension-runtime)/_types'
 
 // Client-callable wrapper — used when the caller is genuinely client-side code (see
@@ -21,6 +22,14 @@ export const invokeExtensionAction = createServerFn({ method: 'POST', strict: { 
   .inputValidator((data: { extensionId: string; actionName: string; args: unknown[] }) => data)
   .handler(async ({ data }): Promise<unknown> => {
     await requireSessionServerFn()
+    // Per-action authorization: an action the extension declared `admin` is
+    // refused for a signed-in non-admin here, at the request-facing entry —
+    // the only layer with a request to identify the caller from. Identity is
+    // derived from the request, never taken from `data`, so a caller cannot
+    // name itself. An undeclared action stays signed-in (the interim gate).
+    if ((await getActionAccess(data.extensionId, data.actionName)) === 'admin') {
+      await requireAdminServerFn()
+    }
     return invokeExtensionActionImpl(data)
   })
 

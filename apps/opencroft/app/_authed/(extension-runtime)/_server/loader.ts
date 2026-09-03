@@ -22,10 +22,14 @@ type ExtensionLifecycle = (context: opencroft.ExtensionContext) => void | Promis
 
 export type ExtensionToolHandlers = Record<string, (args: Record<string, unknown>) => Promise<unknown>>
 
+export type ActionAccess = 'signed-in' | 'admin'
+
 interface CachedModule {
   updatedAt: number
   manifest: ExtensionManifest
   actions: Record<string, (...args: unknown[]) => Promise<unknown>>
+  /** Per-action authorization policy declared by the extension alongside `actions`; an action it does not list is 'signed-in'. */
+  actionAccess?: Record<string, ActionAccess>
   exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
   nodeActions?: Record<string, Record<string, NodeActionHandler>>
   routes?: Record<string, ExtensionRouteHandler>
@@ -247,6 +251,7 @@ async function ensureBuilt(extensionId: string, manifest: ExtensionManifest): Pr
 
 interface ExtensionServerModule {
   actions?: Record<string, (...args: unknown[]) => Promise<unknown>>
+  actionAccess?: Record<string, ActionAccess>
   exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
   nodeActions?: Record<string, Record<string, NodeActionHandler>>
   routes?: Record<string, ExtensionRouteHandler>
@@ -255,6 +260,7 @@ interface ExtensionServerModule {
   unload?: ExtensionLifecycle
   default?: {
     actions?: Record<string, (...args: unknown[]) => Promise<unknown>>
+    actionAccess?: Record<string, ActionAccess>
     exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
     nodeActions?: Record<string, Record<string, NodeActionHandler>>
     routes?: Record<string, ExtensionRouteHandler>
@@ -310,6 +316,7 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
 
     const exported = mod.exports
     const actions = exported.actions ?? exported.default?.actions ?? {}
+    const actionAccess = exported.actionAccess ?? exported.default?.actionAccess ?? {}
     const exposeOutput = exported.exposeOutput ?? exported.default?.exposeOutput
     const nodeActions = exported.nodeActions ?? exported.default?.nodeActions
     const routes = exported.routes ?? exported.default?.routes
@@ -320,6 +327,7 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
       updatedAt: Date.now(),
       manifest,
       actions,
+      actionAccess,
       exposeOutput,
       nodeActions,
       routes,

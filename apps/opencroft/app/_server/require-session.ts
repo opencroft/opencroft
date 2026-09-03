@@ -1,4 +1,4 @@
-import { getSessionUser } from '@opencroft/auth/server'
+import { getSessionUser, requireAdminUser } from '@opencroft/auth/server'
 import { getRequest } from '@tanstack/react-start/server'
 
 // Shared session gate for the browser-driven API routes named in
@@ -46,5 +46,17 @@ export async function requireSession(request: Request): Promise<Response | null>
 export async function requireSessionServerFn(): Promise<void> {
   if (!(await getSessionUser(getRequest()))) {
     throw Response.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+}
+
+// The same seam for an admin-only server function: layered after
+// requireSessionServerFn by the request-facing dispatcher for an action an
+// extension declared `admin`. A signed-in non-admin is authenticated but not
+// authorized, so this is a 403, not a 401. `requireAdminUser` RETURNS the admin
+// or null rather than throwing, so the result must be acted on — a bare `await`
+// with the value dropped type-checks and gates nothing.
+export async function requireAdminServerFn(): Promise<void> {
+  if (!(await requireAdminUser(getRequest()))) {
+    throw Response.json({ error: 'Forbidden' }, { status: 403 })
   }
 }
