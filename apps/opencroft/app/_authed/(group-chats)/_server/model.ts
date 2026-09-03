@@ -69,6 +69,7 @@ const UNAVAILABLE = 'Not available'
 
 import { agentNodesNamed, listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 import { authorForAgentNode, authorForPerson } from '@/app/_server/message-author'
+import { isSleepMode } from '@/app/_authed/(mcp)/_server/sleep-mode'
 
 export type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
 // The refusal type lives in _shared/access-error.ts — dependency-free, so the
@@ -1673,7 +1674,10 @@ async function deliverIntoThread(
     jobNodeId: '',
     tabKey: row.sessionKey,
   })
-  const queued = hasActiveTurnImpl(opened.sessionId)
+  // Under Sleep Mode nothing is drained, so a message into an idle session is
+  // exactly as held as one behind a running turn — reporting it 'delivered'
+  // would tell an extension's sender the opposite of the truth.
+  const queued = hasActiveTurnImpl(opened.sessionId) || isSleepMode()
 
   // ONCE ON CHANGE. If the chat's standing context has moved on since this
   // thread was last told about it, this message carries the new one; otherwise

@@ -104,6 +104,7 @@ import { askUserStore } from '@/lib/ask-user-store'
 import type { SSEEvent } from '@/lib/sse-events'
 import { toastStore } from '@/lib/toast-store'
 import { secrets } from '@/server/secrets'
+import { isSleepMode } from '@/app/_authed/(mcp)/_server/sleep-mode'
 
 const SPACE_PARAM = {
   space: {
@@ -2709,7 +2710,14 @@ function buildHandlers(): Record<string, ToolHandler> {
         fail(-32602, 'Missing or invalid param: queue must be "wait" or "push"')
       }
       await sendMessageInThreadAsAgent(agent, thread, message, queue)
-      return textResult('Message sent into the thread. The reply lands in the thread, not here.')
+      // Sleep Mode holds every delivery, so an accepted message is not on its
+      // way anywhere yet. Saying so is kinder than letting the sender wait on
+      // a reply that cannot come until the instance wakes.
+      return textResult(
+        isSleepMode()
+          ? 'Message accepted and HELD: this instance is in Sleep Mode, so nothing is delivered to any agent until it wakes. The reply lands in the thread after that.'
+          : 'Message sent into the thread. The reply lands in the thread, not here.',
+      )
     },
 
     // ── group_chat_start_thread ─────────────────────────────────────

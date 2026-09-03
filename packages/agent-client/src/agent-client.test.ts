@@ -66,6 +66,7 @@ async function setup(
     sessionKey?: string
     queueStore?: QueueStore
     loadPresence?: (sessionKey: string) => Presence | undefined
+    shouldHoldDelivery?: () => boolean
     transformDeliveredPrompt?: (text: string) => string
     contextWindow?: number
     // Model a real ACP agent: cancelling ends the turn it was running, which
@@ -149,6 +150,9 @@ async function setup(
       : {}),
     ...(options.loadPresence
       ? ({ loadPresence: options.loadPresence } satisfies Pick<AgentClientOptions, 'loadPresence'>)
+      : {}),
+    ...(options.shouldHoldDelivery
+      ? ({ shouldHoldDelivery: options.shouldHoldDelivery } satisfies Pick<AgentClientOptions, 'shouldHoldDelivery'>)
       : {}),
   })
   const meta = await client.createSession(selection)
@@ -2753,4 +2757,102 @@ test('userTurnAt names a turn by event index, and reports the ordinal that rewin
   assert.equal(h.client.userTurnAt(h.sessionId, -1), null)
   assert.equal(h.client.userTurnAt('no-such-session', userIndices[0]), null)
   await h.client.deleteSession(h.sessionId)
+})
+
+
+// ── shouldHoldDelivery / resumeDelivery ─────────────────────────────────────
+//
+// The host's delivery gate: while it returns true nothing is drained to the
+// agent — idle sends, settle drains, system entries, restores — and a `push`
+// degrades to an ordinary enqueue instead of cancelling the running turn.
+// resumeDelivery() is the host's wake call.
+
+test('held idle sends stay queued and resumeDelivery drains them in order', async () => {
+  let held = true
+  const h = await setup('openclaw', { shouldHoldDelivery: () => held })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  assert.deepEqual(deliveries(h), [], 'nothing may reach the agent while held')
+  const announced = queueSnapshots(h.events)
+  assert.deepEqual(announced[announced.length - 1], ['first', 'second'], 'the held queue is announced, not silent')
+  held = false
+  h.client.resumeDelivery()
+  await settle()
+  assert.deepEqual(deliveries(h), [['first', 'second']], 'wake delivers what accumulated, in order, as one run')
+  h.endTurn()
+  await settle()
+})
+
+test('resumeDelivery while still held delivers nothing', async () => {
+  const h = await setup('openclaw', { shouldHoldDelivery: () => true })
+  await h.client.prompt(h.sessionId, 'waiting', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  h.client.resumeDelivery()
+  await settle()
+  assert.deepEqual(deliveries(h), [], 'each drain consults the gate; a wake call cannot bypass it')
+})
+
+test('push while held degrades to enqueue: the running turn is not cancelled and completes', async () => {
+  let held = false
+  const h = await setup('openclaw', { shouldHoldDelivery: () => held, cancelEndsTurn: true })
+  await h.client.prompt(h.sessionId, 'turn one', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  assert.deepEqual(deliveries(h), [['turn one']], 'precondition: a turn is running')
+  held = true
+  const result = await h.client.prompt(h.sessionId, 'urgent', {
+    queue: 'push',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  assert.equal(result.interrupted, false, 'a push while held interrupts nothing')
+  await settle()
+  assert.deepEqual(deliveries(h), [['turn one']], 'the running turn was not cancelled')
+  h.endTurn()
+  await settle()
+  assert.deepEqual(deliveries(h), [['turn one']], 'the settle drain is gated too')
+  held = false
+  h.client.resumeDelivery()
+  await settle()
+  assert.deepEqual(deliveries(h), [['turn one'], ['urgent']], 'the held push arrives after wake, un-dropped')
+  h.endTurn()
+  await settle()
+})
+
+test('a system entry is held like everything else', async () => {
+  let held = true
+  const h = await setup('openclaw', { shouldHoldDelivery: () => held })
+  await h.client.prompt(h.sessionId, '/compact', { queue: 'wait', origin: { kind: 'system' } })
+  await settle()
+  assert.deepEqual(deliveries(h), [], 'the system-entry fast-path sits below the gate, not above it')
+  held = false
+  h.client.resumeDelivery()
+  await settle()
+  assert.equal(h.promptCalls.length, 1, 'the system entry survives the hold and delivers on wake')
+  h.endTurn()
+  await settle()
+})
+
+test('a queue restored at session open stays held until the host wakes', async () => {
+  let held = true
+  const durable: QueuedPrompt[] = [
+    { id: 'held-1', kind: 'message', sender: 'Reader', sentAt: new Date().toISOString(), text: 'from before the restart' },
+  ]
+  const store: QueueStore = {
+    append: () => {},
+    remove: () => {},
+    clear: () => {},
+    load: () => durable,
+  }
+  const h = await setup('openclaw', {
+    sessionKey: `hold-restore-${counter}`,
+    queueStore: store,
+    shouldHoldDelivery: () => held,
+  })
+  await settle()
+  assert.deepEqual(deliveries(h), [], 'the restore drain consults the gate: boot comes back held, not flooding')
+  held = false
+  h.client.resumeDelivery()
+  await settle()
+  assert.deepEqual(deliveries(h), [['from before the restart']], 'the restored queue delivers on wake')
+  h.endTurn()
+  await settle()
 })

@@ -138,6 +138,15 @@ export interface AgentClientOptions {
   // happen. Returning undefined means "no cadence remembered" and leaves the
   // default in place.
   loadPresence?: (sessionKey: string) => Presence | undefined | Promise<Presence | undefined>
+  // Host gate over ALL queued delivery. Consulted at the top of every drain:
+  // while it returns true nothing is handed to any agent -- system entries
+  // included -- and a `push` degrades to an ordinary enqueue instead of
+  // interrupting the running turn, so a turn in flight always completes.
+  // Messages keep enqueuing (and persisting through queueStore) exactly as
+  // if a turn were running. When the gate reopens the host calls
+  // resumeDelivery() to drain every idle session; a session with a turn
+  // running drains at its own settlement, as always. Absent means never held.
+  shouldHoldDelivery?: () => boolean
 }
 
 /**
@@ -1266,6 +1275,18 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return undefined
     }
     const queue = session.queue ?? []
+    // The host's delivery gate sits above EVERYTHING in this function -- the
+    // system-entry fast-path included, because a hold in which "nothing is
+    // delivered" quietly exempted system entries would not be a hold. Held
+    // entries stay queued and durable exactly as behind a running turn;
+    // announcing them is what lets the host show what is waiting. Presence
+    // timers left armed are harmless: they re-enter here and meet the gate.
+    if (options.shouldHoldDelivery?.() === true) {
+      if (queue.length > 0) {
+        emitQueue(sessionId, queue)
+      }
+      return undefined
+    }
     const run = leadingRun(queue)
     if (run.length === 0) {
       clearPresenceTimer(session)
@@ -1659,6 +1680,20 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   }
 
   return {
+    /**
+     * Drain every idle session's queue -- the other half of
+     * shouldHoldDelivery, called by the host when its gate reopens. Sessions
+     * with a turn in flight are left to their own settlement drain, the same
+     * boundary every delivery already respects; each drain still consults the
+     * gate, so calling this while the gate is closed delivers nothing.
+     */
+    resumeDelivery(): void {
+      for (const [sessionId, session] of store.sessions) {
+        if ((session.activeTurns ?? 0) === 0 && (session.queue?.length ?? 0) > 0) {
+          void drainQueue(sessionId)
+        }
+      }
+    },
     // `usage` is composed in here rather than stored on `meta`, so the live
     // session state stays the single source of truth for it.
     listSessions(): SessionMeta[] {
@@ -2317,6 +2352,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // and the live turn picks it up as streaming input, so there is nothing to
       // batch and nothing worth interrupting.
       const holding = session.activeTurns > 0 && !supportsMidTurnInput(session.selection)
+      // Read once per call, next to the turn guard it modifies: while the host
+      // holds delivery, an interrupt buys nothing (the drain it exists to
+      // trigger is gated), so `push` must not end the running turn.
+      const deliveryHeld = options.shouldHoldDelivery?.() === true
 
       // High Attention decides the mode itself: everything sent while that
       // cadence is set goes now, with a stop for whatever turn is running. The
@@ -2353,6 +2392,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // message delivery (see dispatchRun), so it rides a drain, and an
         // empty queue never reaches this line to leave one behind.
         session.bypassPresenceOnce = true
+        if (holding && deliveryHeld) {
+          // Degrades to waiting: the held run goes when the gate reopens, no
+          // turn is cancelled, and no queue-jump note is left claiming a jump
+          // that never happened. The presence bypass above still stands -- the
+          // sender's "now" survives as "as soon as delivery resumes".
+          return { interrupted: false }
+        }
         session.nextDeliveryNote = noteKind
         if (!holding) {
           await drainQueue(sessionId)
@@ -2428,6 +2474,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       session.bypassPresenceOnce = true
       if (!holding) {
         await drainQueue(sessionId)
+        return { interrupted: false }
+      }
+      if (deliveryHeld) {
+        // Same degradation as the empty-push branch above: the message is
+        // already enqueued and durable, and interrupting the live turn would
+        // end it without delivering anything sooner.
         return { interrupted: false }
       }
       session.nextDeliveryNote = noteKind

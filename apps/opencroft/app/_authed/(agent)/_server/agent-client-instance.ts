@@ -8,6 +8,7 @@ import { loadSkillDefs, skillBodyHandler } from '@/app/_authed/(agent)/_server/s
 import { opencroftLocalTools } from '@/app/_authed/(agent)/_server/tools-bridge'
 import { isYoloMode } from '@/app/_authed/(mcp)/_server/yolo'
 import { approvalStore } from '@/lib/approval-store'
+import { isSleepMode, subscribeSleepMode } from '@/app/_authed/(mcp)/_server/sleep-mode'
 
 // Single shared agent-client engine for the opencroft app. Every ACP route and
 // the SSE stream import this one instance so they share the session store.
@@ -82,6 +83,11 @@ async function loadPresence(sessionKey: string) {
 }
 
 export const agentClient = createAgentClient({
+  // Sleep Mode's gate: while the instance is asleep no queue is drained to
+  // any agent — see (mcp)/_server/sleep-mode for why the flag is a
+  // per-instance marker file. The hook itself is host-agnostic; the policy
+  // stays here.
+  shouldHoldDelivery: isSleepMode,
   tools: opencroftLocalTools,
   loadMcpServers: readMcpServersForAgent,
   // Durable copy of the queue. Written behind the in-memory one and never read
@@ -103,4 +109,15 @@ export const agentClient = createAgentClient({
   // seam in a shared package, and this product no longer using it is not a
   // reason to take it from one that might.
   onEvent: persistUsageOnTurnEnd,
+})
+
+// Waking is the flag's only transition with work attached: every idle
+// session's held queue drains, in order, the moment sleep turns off — from
+// the toggle, or from an out-of-band marker removal the next time anything
+// reads the flag. Going to sleep needs nothing: the next drain attempt
+// consults the gate by itself.
+subscribeSleepMode((enabled) => {
+  if (!enabled) {
+    agentClient.resumeDelivery()
+  }
 })
