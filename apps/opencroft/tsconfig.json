@@ -9,6 +9,10 @@
     "paths": {
       "@/*": ["./*"]
     },
+    // A dependency-free *.test.ts imports its sibling module with an explicit
+    // .ts extension so `node --experimental-strip-types` can run it without the
+    // tool host. Allowed because noEmit is inherited from the base config.
+    "allowImportingTsExtensions": true,
     "types": ["vite/client", "node", "dom-navigation"]
   },
   "include": ["**/*.ts", "**/*.tsx"],

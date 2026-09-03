@@ -25,10 +25,13 @@
 // Pure and dependency-free so the rules are testable without the tool host —
 // the module these tools live in imports half the server.
 
+/** A path that could not be resolved, with the reason to surface to the caller. */
+type Refusal = { ok: false; reason: string }
+
 /** Where a path landed: the container to mutate and the key within it. */
 export type PathTarget =
   | { ok: true; parent: Record<string, unknown> | unknown[]; key: string | number }
-  | { ok: false; reason: string }
+  | Refusal
 
 /** Canonical array index: no signs, no leading zeros, so "01" is a key, not index 1. */
 const INDEX_RE = /^(0|[1-9][0-9]*)$/
@@ -45,7 +48,7 @@ const INDEX_RE = /^(0|[1-9][0-9]*)$/
  */
 const RESERVED_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype'])
 
-function refuse(path: string, detail: string): PathTarget {
+function refuse(path: string, detail: string): Refusal {
   return { ok: false, reason: `Path "${path}" does not resolve: ${detail}` }
 }
 
@@ -76,7 +79,7 @@ interface Walked {
   prefix: string
 }
 
-function walkToParent(data: Record<string, unknown>, path: string): Walked | PathTarget {
+function walkToParent(data: Record<string, unknown>, path: string): Walked | Refusal {
   const segments = path.split('.')
   if (path === '' || segments.some((s) => s === '')) {
     return refuse(path, 'it is empty or contains an empty segment')
@@ -124,7 +127,7 @@ function walkToParent(data: Record<string, unknown>, path: string): Walked | Pat
  */
 export function resolveForWrite(data: Record<string, unknown>, path: string): PathTarget {
   const walked = walkToParent(data, path)
-  if (!('parent' in walked)) {
+  if (!walked.ok) {
     return walked
   }
   const { parent, last, prefix } = walked
