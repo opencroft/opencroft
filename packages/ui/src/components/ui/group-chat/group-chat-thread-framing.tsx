@@ -101,16 +101,27 @@ export function GroupChatThreadFraming({
   }, [])
   const conversation = (
     <>
-      {/* Forces Radix's own internal viewport wrapper (a div ScrollArea
-          inserts, not one in this file's own JSX) into a flex column filling
-          the full available height -- without it `Flex expanded justify='end'`
-          below has no flex-column ancestor to fill, and both (a) a short
-          conversation renders top-anchored with the composer floating right
-          after it instead of glued to the true bottom, and (b) StickySection
-          has nothing to stay pinned against. Same mechanism the 1:1 chat's
-          ChatArea uses, reused rather than re-implemented -- see that
-          component's own note on why this specific selector is the fix. */}
-      <ScrollArea className='min-h-0 flex-1 [&_[data-radix-scroll-area-viewport]>div]:!flex [&_[data-radix-scroll-area-viewport]>div]:!flex-col [&_[data-radix-scroll-area-viewport]>div]:!min-h-full'>
+      {/* TWO wrappers sit between the scroll viewport and this file's JSX, and
+          both have to fill the viewport's height or the bottom anchoring below
+          stops working with nothing reporting it: Radix inserts one of its own
+          inside the viewport, and this scroll area wraps whatever it is given
+          in a flex column of its own. The selector forces the first into a
+          filling flex column; innerClassName makes the second grow inside it.
+          With either one missing, `Flex expanded justify='end'` has no ancestor
+          with a real height to fill, and both (a) a short conversation renders
+          top-anchored with the composer floating right after it instead of
+          glued to the true bottom, and (b) StickySection has nothing to stay
+          pinned against.
+
+          The plain primitive has only Radix's wrapper, so the selector alone is
+          enough there -- which is why the 1:1 chat's ChatArea, the same
+          mechanism reused rather than re-implemented, carries the selector and
+          no innerClassName. The difference is which scroll area is in play, not
+          the arrangement. */}
+      <ScrollArea
+        className='min-h-0 flex-1 [&_[data-radix-scroll-area-viewport]>div]:!flex [&_[data-radix-scroll-area-viewport]>div]:!flex-col [&_[data-radix-scroll-area-viewport]>div]:!min-h-full'
+        innerClassName='flex-1'
+      >
         {/* Bottom-anchored, exactly like the 1:1 chat's ChatContent: with few
             messages the conversation sits at the bottom of the viewport, not
             the top, and scrolls up from there as it grows. No inner padded Flex
