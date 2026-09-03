@@ -53,6 +53,7 @@ export * from './components/ui/layout/scroll-area'
 // Collision resolution: these names are exported from two files; pick the
 // canonical one explicitly (an explicit re-export overrides the ambiguous `export *`).
 export { ScrollArea } from './components/ui/layout/scroll-area'
+export { ScrollBar } from './components/ui/layout/scroll-area'
 export * from './components/ui/layout/scrollpage'
 export * from './components/ui/layout/titlebar'
 export * from './components/ui/media/agent-avatar'
