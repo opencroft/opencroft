@@ -1,14 +1,13 @@
-import { AdminActionError, requireAdminUser } from '@opencroft/auth/server'
 import { db, mcpAuditLog } from '@opencroft/db'
 import { createServerFn } from '@tanstack/react-start'
-import { getRequest } from '@tanstack/react-start/server'
 import { and, asc, desc, eq, type SQL } from 'drizzle-orm'
 
-import type { AuditStatus } from '@/app/_authed/(mcp)/_server/audit'
-import { getYoloModeInfo, setYoloMode as setYolo } from '@/app/_authed/(mcp)/_server/yolo'
-import { getSleepModeInfo, setSleepMode as setSleep } from '@/app/_authed/(mcp)/_server/sleep-mode'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
+import type { AuditStatus } from '@/app/_authed/(mcp)/_server/audit'
+import { getSleepModeInfo, setSleepMode as setSleep } from '@/app/_authed/(mcp)/_server/sleep-mode'
+import { getYoloModeInfo, setYoloMode as setYolo } from '@/app/_authed/(mcp)/_server/yolo'
+import { adminOnly } from '@/app/_authed/(settings)/_server/admin-middleware'
 
 export interface McpAuditEntry {
   id: string
@@ -52,6 +51,7 @@ function toEntry(row: {
 }
 
 export const listAuditEntries = createServerFn({ method: 'POST' })
+  .middleware([adminOnly])
   .inputValidator((query: AuditQuery = {}) => query)
   .handler(async ({ data: query }): Promise<McpAuditEntry[]> => {
     const conds: SQL[] = []
@@ -69,41 +69,33 @@ export const listAuditEntries = createServerFn({ method: 'POST' })
     return rows.map(toEntry)
   })
 
-export const listAuditTools = createServerFn().handler(async (): Promise<string[]> => {
-  const rows = await db.selectDistinct({ tool: mcpAuditLog.tool }).from(mcpAuditLog).orderBy(asc(mcpAuditLog.tool))
-  return rows.map((r) => r.tool)
-})
+export const listAuditTools = createServerFn()
+  .middleware([adminOnly])
+  .handler(async (): Promise<string[]> => {
+    const rows = await db.selectDistinct({ tool: mcpAuditLog.tool }).from(mcpAuditLog).orderBy(asc(mcpAuditLog.tool))
+    return rows.map((r) => r.tool)
+  })
 
-export const clearAuditLog = createServerFn().handler(async (): Promise<void> => {
-  await db.delete(mcpAuditLog)
-})
+export const clearAuditLog = createServerFn()
+  .middleware([adminOnly])
+  .handler(async (): Promise<void> => {
+    await db.delete(mcpAuditLog)
+  })
 
 // ── YOLO Mode ──────────────────────────────────────────────────────────────
 
-export const getYoloMode = createServerFn().handler(
-  async (): Promise<{ enabled: boolean; source: 'env' | 'runtime' }> => {
+export const getYoloMode = createServerFn()
+  .middleware([adminOnly])
+  .handler(async (): Promise<{ enabled: boolean; source: 'env' | 'runtime' }> => {
     return getYoloModeInfo()
-  },
-)
+  })
 
 export const updateYoloMode = createServerFn({ method: 'POST' })
+  .middleware([adminOnly])
   .inputValidator((enabled: boolean) => enabled)
   .handler(async ({ data: enabled }): Promise<void> => {
     setYolo(enabled)
   })
-
-
-// `requireAdminUser` RETURNS the admin or null — it does not throw — so the
-// result has to be acted on; a bare await with the value dropped type-checks
-// and gates nothing. Same guard as the settings CRUD functions. A serverFn is
-// a directly callable endpoint regardless of the page in front of it, and
-// Sleep Mode is an instance-control lever: ungated, any caller who can reach
-// the instance could hold every agent delivery.
-async function requireAdmin(): Promise<void> {
-  if (!(await requireAdminUser(getRequest()))) {
-    throw new AdminActionError('forbidden', 'Only an administrator can control sleep mode')
-  }
-}
 
 // ── Sleep Mode ─────────────────────────────────────────────────────────────
 
@@ -112,12 +104,16 @@ export interface SleepModeInfo {
   markerPath: string
 }
 
-export const getSleepMode = createServerFn().handler(async (): Promise<SleepModeInfo> => getSleepModeInfo())
+export const getSleepMode = createServerFn()
+  .middleware([adminOnly])
+  .handler(async (): Promise<SleepModeInfo> => getSleepModeInfo())
 
+// Sleep Mode is an instance-control lever: ungated, any caller who can reach
+// the instance could hold every agent delivery.
 export const updateSleepMode = createServerFn({ method: 'POST' })
+  .middleware([adminOnly])
   .inputValidator((enabled: boolean) => enabled)
   .handler(async ({ data: enabled }): Promise<SleepModeInfo> => {
-    await requireAdmin()
     setSleep(enabled)
     return getSleepModeInfo()
   })
@@ -137,11 +133,11 @@ export interface LiveSessionRow {
 // in work and one that stopped an hour ago. Status comes from the same
 // derivation every chat list uses (session-status.ts), off the same activity
 // sets, rather than a second reading that could disagree with it.
-export const listLiveSessions = createServerFn({ method: 'GET', strict: { output: false } }).handler(
-  async (): Promise<LiveSessionRow[]> => {
-    // Session keys and live activity are an instance map — admin-only, like
-    // the lever above them.
-    await requireAdmin()
+// Session keys and live activity are an instance map — admin-only, like the
+// lever above them.
+export const listLiveSessions = createServerFn({ method: 'GET', strict: { output: false } })
+  .middleware([adminOnly])
+  .handler(async (): Promise<LiveSessionRow[]> => {
     const keys = {
       pending: new Set(agentClient.pendingPermissionSessionKeys()),
       active: new Set(agentClient.activeSessionKeys()),
@@ -169,5 +165,4 @@ export const listLiveSessions = createServerFn({ method: 'GET', strict: { output
     }
     rows.sort((a, b) => b.lastActivityAt - a.lastActivityAt)
     return rows
-  },
-)
+  })
