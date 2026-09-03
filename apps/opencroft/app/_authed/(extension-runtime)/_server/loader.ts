@@ -5,7 +5,11 @@ import path from 'node:path'
 import type * as opencroft from '@opencroft/server'
 
 import { readCheckoutState, refuseCompile } from '@/app/_authed/(extension-runtime)/_server/checkout-state'
-import { buildExtension } from '@/app/_authed/(extension-runtime)/_server/compiler'
+import {
+  buildExtension,
+  CLIENT_ENTRY_CANDIDATES,
+  SERVER_ENTRY_CANDIDATES,
+} from '@/app/_authed/(extension-runtime)/_server/compiler'
 import { createHost } from '@/app/_authed/(extension-runtime)/_server/host'
 import { listAllExtensionIds, readManifest } from '@/app/_authed/(extension-runtime)/_server/manifest'
 import { extDir, extDistFile, projectRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
@@ -151,15 +155,37 @@ async function walkMtime(start: string): Promise<number> {
 }
 
 async function ensureBuilt(extensionId: string, manifest: ExtensionManifest): Promise<void> {
-  const serverBundle = extDistFile(extensionId, 'server.js')
-  const clientBundle = extDistFile(extensionId, 'client.js')
   const srcMtime = await sourceMtime(extensionId)
-  const serverMtime = await statMaybe(serverBundle)
-  const clientMtime = await statMaybe(clientBundle)
-  const bundleMtime = Math.min(serverMtime, clientMtime)
+  const serverMtime = await statMaybe(extDistFile(extensionId, 'server.js'))
+  const clientMtime = await statMaybe(extDistFile(extensionId, 'client.js'))
+
+  // Freshness is judged over the bundles this extension CAN have — the sides
+  // with an entry point. The compiler writes nothing for a side without one, so
+  // requiring both bundles (a missing file stats as 0, and min() then never
+  // clears the "is built at all" bar) made every one-sided extension
+  // permanently stale: rebuilt on every consultation, forever, with each
+  // rebuild's staging directory then read as an uncommitted change by whichever
+  // consultation overlapped it.
+  const expectedMtimes: number[] = []
+  if (manifest.main || (await hasEntry(extensionId, SERVER_ENTRY_CANDIDATES))) {
+    expectedMtimes.push(serverMtime)
+  }
+  if (await hasEntry(extensionId, CLIENT_ENTRY_CANDIDATES)) {
+    expectedMtimes.push(clientMtime)
+  }
+  // No entry on either side: a build would emit no bundle, so there is no
+  // staleness to measure and nothing to publish.
+  if (expectedMtimes.length === 0) {
+    return
+  }
+  const bundleMtime = Math.min(...expectedMtimes)
   if (bundleMtime > 0 && bundleMtime >= srcMtime) {
     return
   }
+  // Every expected side has a (possibly stale) bundle on disk — the fallback
+  // both the refusal and a failed build keep serving rather than leaving
+  // nothing.
+  const hasExistingBundle = expectedMtimes.every((mtime) => mtime > 0)
 
   // A rebuild here republishes whatever the registered checkout currently holds,
   // and this path fires on ANY write into it -- an edit, a `git checkout`, a
@@ -194,7 +220,6 @@ async function ensureBuilt(extensionId: string, manifest: ExtensionManifest): Pr
       toastType: 'error',
       message: `${extensionId} was not rebuilt. ${refusal.message}`,
     })
-    const hasExistingBundle = serverMtime > 0 && clientMtime > 0
     if (hasExistingBundle) {
       return
     }
@@ -212,7 +237,6 @@ async function ensureBuilt(extensionId: string, manifest: ExtensionManifest): Pr
       toastType: 'error',
       message: `${extensionId} build failed:\n${summary}`,
     })
-    const hasExistingBundle = serverMtime > 0 && clientMtime > 0
     if (hasExistingBundle) {
       console.error(`[ext] ${extensionId} rebuild failed, keeping previous bundle:\n${summary}`)
       return
@@ -397,7 +421,6 @@ export async function loadAllManifests(): Promise<ExtensionManifest[]> {
   return manifests
 }
 
-const CLIENT_ENTRIES = ['src/client.tsx', 'src/client.ts', 'src/index.tsx', 'src/index.ts']
 const LIFECYCLE_ENTRIES = ['extension.ts', 'extension.tsx']
 
 async function hasEntry(extensionId: string, names: string[]): Promise<boolean> {
@@ -412,7 +435,7 @@ async function hasEntry(extensionId: string, names: string[]): Promise<boolean> 
 
 /** Whether the extension ships a client bundle the browser should import. */
 export async function extensionHasClient(extensionId: string): Promise<boolean> {
-  return hasEntry(extensionId, CLIENT_ENTRIES)
+  return hasEntry(extensionId, CLIENT_ENTRY_CANDIDATES)
 }
 
 /** Activate every extension that exposes a lifecycle entry, so its `load` runs. */

@@ -155,3 +155,33 @@ test('a clean checkout on its default branch still builds', async () => {
   assert.equal(provenance.commit, head.trim(), 'the built bundle records the exact commit it was produced from')
   assert.equal(provenance.dirty, false, 'and that it was built from a clean tree')
 })
+
+test("a concurrent or crashed build's staging directory neither refuses nor wedges the rebuild", async () => {
+  const { id, distServer } = await makeFixture({ git: true, dirty: false, bundle: false })
+  const dir = path.dirname(path.dirname(distServer))
+
+  // What an overlapping consultation sees mid-build, and what a killed build
+  // leaves behind for every consultation after it: the compiler's own staging
+  // directory beside dist/. Neither is authored work, so neither may read as
+  // an uncommitted change.
+  const stale = path.join(dir, 'dist.building-4-2')
+  const fresh = path.join(dir, 'dist.building-5-3')
+  await fs.mkdir(stale)
+  await fs.writeFile(path.join(stale, 'client.js'), 'half-written')
+  const old = new Date('2020-01-01T00:00:00Z')
+  await fs.utimes(stale, old, old)
+  await fs.mkdir(fresh)
+
+  const { events, stop } = captureToasts()
+  try {
+    await ensureExtensionBuilt(id)
+  } finally {
+    stop()
+  }
+
+  assert.ok((await fs.readFile(distServer, 'utf-8')).length > 0, 'the rebuild goes ahead')
+  assert.ok(!events.some((event) => event.includes('was not rebuilt')), 'machinery output raises no refusal')
+  await assert.rejects(fs.stat(stale), 'a leftover from a dead attempt is swept, not left to accumulate')
+  // An attempt young enough to still be running is left alone.
+  await fs.stat(fresh)
+})

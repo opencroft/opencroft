@@ -22,6 +22,7 @@ import {
   readCheckoutState,
   refuseCompile,
 } from './checkout-state'
+import { isStagingArtifactPath, stagingName } from './paths'
 
 const execFileAsync = promisify(execFile)
 
@@ -105,6 +106,29 @@ test('a generated name deeper in the tree is an authored change, not build outpu
   const { sourcePaths, artifactPaths } = classifyDirtyEntries(' M src/fixtures/package-lock.json')
   assert.deepEqual(sourcePaths, ['src/fixtures/package-lock.json'])
   assert.deepEqual(artifactPaths, [])
+})
+
+test("the compiler's own staging directory is build machinery, not authored work", () => {
+  // The client build stages beside dist/ under a per-attempt name, so it is
+  // visible to git for exactly as long as a build is running — or forever, if
+  // that build was killed. Either way nobody authored it.
+  const { sourcePaths, artifactPaths } = classifyDirtyEntries('?? dist.building-100-123/\n')
+  assert.deepEqual(sourcePaths, [])
+  assert.deepEqual(artifactPaths, ['dist.building-100-123/'])
+})
+
+test('a staging-directory lookalike anywhere else stays an authored change', () => {
+  const { sourcePaths, artifactPaths } = classifyDirtyEntries(
+    '?? src/dist.building-1-2/\n?? dist.building-x-1/\n?? dist.building/\n',
+  )
+  assert.deepEqual(sourcePaths, ['src/dist.building-1-2/', 'dist.building-x-1/', 'dist.building/'])
+  assert.deepEqual(artifactPaths, [])
+})
+
+test('the discount matches the name the compiler actually stages under', () => {
+  // Pins the classifier to the naming scheme: if the staging name ever changes
+  // shape, this fails here rather than as refused rebuilds in production.
+  assert.ok(isStagingArtifactPath(`${path.basename(stagingName('dist', 7))}/`))
 })
 
 // ── refuseCompile ─────────────────────────────────────────────────────

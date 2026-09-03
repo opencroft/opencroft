@@ -1,6 +1,6 @@
 import type { CompileRefusal, CompileRefusalReason } from '../_types'
 import { runGit } from './git-exec'
-import { BUILD_ARTIFACT_FILES } from './paths'
+import { BUILD_ARTIFACT_FILES, isStagingArtifactPath } from './paths'
 
 /** The name of the parameter a caller passes to compile a checkout anyway. */
 export const COMPILE_OVERRIDE_PARAM = 'allowUnclean'
@@ -50,13 +50,15 @@ export function parseStatusLines(porcelain: string): StatusEntry[] {
  *
  * Matching is against the exact path from the checkout root, not the file name:
  * the generated files are written at the root, so a source file that happens to
- * share a name deeper in the tree stays an authored change.
+ * share a name deeper in the tree stays an authored change. The compiler's own
+ * staging directory is matched by shape instead — its name varies per attempt —
+ * and equally root-anchored (see isStagingArtifactPath).
  */
 export function classifyDirtyEntries(porcelain: string): { sourcePaths: string[]; artifactPaths: string[] } {
   const sourcePaths: string[] = []
   const artifactPaths: string[] = []
   for (const entry of parseStatusLines(porcelain)) {
-    if (BUILD_ARTIFACT_FILES.includes(entry.path)) {
+    if (BUILD_ARTIFACT_FILES.includes(entry.path) || isStagingArtifactPath(entry.path)) {
       artifactPaths.push(entry.path)
     } else {
       sourcePaths.push(entry.path)

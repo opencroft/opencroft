@@ -18,6 +18,37 @@ export const SIDECAR_FILE = 'installed.json'
 export const BUILD_ARTIFACT_FILES = [SIDECAR_FILE, 'package-lock.json']
 
 /**
+ * The name a build output is staged under while a compile is writing it —
+ * beside its final path (same device, so publishing is an atomic rename),
+ * unique per attempt so a leftover from a crashed build can never collide with
+ * a running one.
+ */
+export function stagingName(finalPath: string, attempt: number): string {
+  return `${finalPath}.building-${process.pid}-${attempt}`
+}
+
+const STAGING_SUFFIX = /\.building-\d+-\d+$/
+
+/** Whether a directory entry is one of `stagingName`'s per-attempt outputs. */
+export function isStagingName(name: string): boolean {
+  return STAGING_SUFFIX.test(name)
+}
+
+/**
+ * Whether a `git status` path is the client build's staging DIRECTORY — the one
+ * staging name that lands outside `dist/`, as its sibling at the checkout root.
+ * Extension repos ignore `dist/` but cannot ignore this (the name varies per
+ * attempt), so the dirty classification discounts it by shape: it is the build
+ * machinery's own write, visible for as long as a build runs — or forever, if
+ * that build was killed — and never authored work. Anchored to the root; a
+ * deeper path of the same shape stays an authored change.
+ */
+export function isStagingArtifactPath(statusPath: string): boolean {
+  const value = statusPath.endsWith('/') ? statusPath.slice(0, -1) : statusPath
+  return value.startsWith('dist.building-') && isStagingName(value)
+}
+
+/**
  * Written into `dist/` by a successful build to record the commit the bundle was
  * produced from — the commit the instance is actually RUNNING, which can now lag
  * the checkout's own HEAD, because the auto-rebuild refuses a dirty or off-branch

@@ -10,7 +10,14 @@ import * as esbuild from 'esbuild'
 import * as lucideIcons from 'lucide-react'
 
 import { readCheckoutState } from '@/app/_authed/(extension-runtime)/_server/checkout-state'
-import { BUILD_PROVENANCE_FILE, extDir, extDistDir, projectRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
+import {
+  BUILD_PROVENANCE_FILE,
+  extDir,
+  extDistDir,
+  isStagingName,
+  projectRoot,
+  stagingName,
+} from '@/app/_authed/(extension-runtime)/_server/paths'
 import type { BuildResult, CompileError, ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
 
 // Resolve bundled (client) dependencies from every ancestor node_modules, so
@@ -524,6 +531,16 @@ async function readDependencyNames(extensionId: string): Promise<string[]> {
   }
 }
 
+/**
+ * The entry points each side compiles from, in priority order (`manifest.main`
+ * overrides the server list). Exported so the loader's freshness check can ask
+ * the same question the compiler answers: which bundles CAN this extension
+ * have. A side with no entry produces no bundle, so requiring one would wait
+ * for a file that can never exist.
+ */
+export const SERVER_ENTRY_CANDIDATES = ['server/index.ts', 'server/index.tsx', 'extension.ts', 'extension.tsx']
+export const CLIENT_ENTRY_CANDIDATES = ['src/client.tsx', 'src/client.ts', 'src/index.tsx', 'src/index.ts']
+
 async function pickEntry(dir: string, candidates: string[]): Promise<string | null> {
   for (const name of candidates) {
     const file = path.join(dir, name)
@@ -669,8 +686,7 @@ async function compileServerSide(
   const outDir = extDistDir(extensionId)
   await fs.mkdir(outDir, { recursive: true })
 
-  const entries = ['server/index.ts', 'server/index.tsx', 'extension.ts', 'extension.tsx']
-  const entry = manifest.main ? path.join(src, manifest.main) : await pickEntry(src, entries)
+  const entry = manifest.main ? path.join(src, manifest.main) : await pickEntry(src, SERVER_ENTRY_CANDIDATES)
   if (!entry) {
     return { errors: [], warnings: [] }
   }
@@ -686,7 +702,7 @@ async function compileServerSide(
   // the target to keep it on the same device. Unique per attempt so a
   // leftover from a previous crashed build can never collide with this one.
   buildAttemptCounter += 1
-  const outfile = `${finalOutfile}.building-${process.pid}-${buildAttemptCounter}`
+  const outfile = stagingName(finalOutfile, buildAttemptCounter)
 
   // Server bundles must not inline the extension's own dependencies: native
   // modules (sharp, ffmpeg-static) break when bundled, and bundling JS that is
@@ -745,8 +761,7 @@ async function compileClientSide(
   const outDir = extDistDir(extensionId)
   await fs.mkdir(outDir, { recursive: true })
 
-  const entries = ['src/client.tsx', 'src/client.ts', 'src/index.tsx', 'src/index.ts']
-  const entry = await pickEntry(src, entries)
+  const entry = await pickEntry(src, CLIENT_ENTRY_CANDIDATES)
   if (!entry) {
     return { errors: [], warnings: [] }
   }
@@ -758,7 +773,7 @@ async function compileClientSide(
   // reasoning as the server side's temp file: same device, unique per attempt
   // so a leftover from a crashed build can never collide with this one.
   buildAttemptCounter += 1
-  const stagingDir = `${outDir}.building-${process.pid}-${buildAttemptCounter}`
+  const stagingDir = stagingName(outDir, buildAttemptCounter)
 
   // Declaring nothing here must change nothing about the build: an empty
   // list means clientStubPlugin registers zero onResolve matches and every
@@ -866,7 +881,7 @@ async function compileClientCss(extensionId: string): Promise<CompileError[]> {
   // atomic — a reader can catch it mid-write. Build to a temp name beside the
   // target and rename into place once ready.
   buildAttemptCounter += 1
-  const outfile = `${finalOutfile}.building-${process.pid}-${buildAttemptCounter}`
+  const outfile = stagingName(finalOutfile, buildAttemptCounter)
   try {
     const compiler = await compileTailwind(EXT_CSS_ENTRY, { base: projectRoot(), onDependency: () => {} })
     const scanner = new Scanner({ sources: [{ base: srcDir, pattern: '**/*', negated: false }] })
@@ -1023,7 +1038,42 @@ function startBuild(extensionId: string, manifest: ExtensionManifest): Promise<B
   return running
 }
 
+// A build finishes in seconds, so a staging entry this old belongs to an
+// attempt whose process died before its rename or cleanup could run. The dirty
+// classification already discounts it (see isStagingArtifactPath) so it blocks
+// nothing — but left in place it accumulates one directory per crashed attempt
+// and keeps the checkout reading as carrying build leftovers. Swept at the
+// start of the next build; anything younger is left alone, because it may be
+// another in-flight attempt's live staging.
+const STALE_STAGING_MS = 10 * 60 * 1000
+
+async function sweepStaleStaging(extensionId: string): Promise<void> {
+  const cutoff = Date.now() - STALE_STAGING_MS
+  for (const parent of [extDir(extensionId), extDistDir(extensionId)]) {
+    let names: string[]
+    try {
+      names = await fs.readdir(parent)
+    } catch {
+      continue
+    }
+    for (const name of names) {
+      if (!isStagingName(name)) {
+        continue
+      }
+      const full = path.join(parent, name)
+      try {
+        if ((await fs.stat(full)).mtimeMs < cutoff) {
+          await fs.rm(full, { recursive: true, force: true })
+        }
+      } catch {
+        // A racing rename or cleanup got to it first — fine either way.
+      }
+    }
+  }
+}
+
 async function buildExtensionNow(extensionId: string, manifest: ExtensionManifest): Promise<BuildResult> {
+  await sweepStaleStaging(extensionId)
   const installErrors = await ensureDependencies(extensionId)
   if (installErrors.length > 0) {
     return {
