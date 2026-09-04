@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { computeDueRuleIds, computeNextRunAt, type ScheduleRule } from './event-scheduler'
+import {
+  ARM_SCHEDULES_ENV,
+  computeDueRuleIds,
+  computeNextRunAt,
+  type ScheduleRule,
+  schedulesArmedAtBoot,
+} from './event-scheduler'
 
 function rule(overrides: Partial<ScheduleRule> = {}): ScheduleRule {
   return { id: 'r1', enabled: true, mode: 'cron', cron: '*/30 * * * *', ...overrides }
@@ -61,4 +67,30 @@ test('computeNextRunAt returns the next occurrence strictly after now', () => {
 
 test('computeNextRunAt returns undefined for an invalid expression, not a crash', () => {
   assert.equal(computeNextRunAt('not a cron', Date.now()), undefined)
+})
+
+// ── schedulesArmedAtBoot ─────────────────────────────────────────────────
+//
+// The default is the half that must not move: an instance saying nothing about
+// this behaves exactly as every instance did before the switch existed.
+
+test('an instance that says nothing arms its schedules', () => {
+  assert.equal(schedulesArmedAtBoot({}), true)
+  assert.equal(schedulesArmedAtBoot({ [ARM_SCHEDULES_ENV]: '' }), true)
+  assert.equal(schedulesArmedAtBoot({ [ARM_SCHEDULES_ENV]: '   ' }), true)
+})
+
+test('the spellings that turn it off, including the ones a person actually types', () => {
+  for (const value of ['false', 'FALSE', 'False', '0', 'no', ' no ']) {
+    assert.equal(schedulesArmedAtBoot({ [ARM_SCHEDULES_ENV]: value }), false, `"${value}" must disarm`)
+  }
+})
+
+test('an unrecognised value arms rather than refuses', () => {
+  // Read once at boot with nowhere to report a complaint to: an instance that
+  // stopped acting because of a typo would look exactly like the defect this
+  // change is about, so the ambiguous case fails towards working.
+  for (const value of ['true', 'yes', '1', 'flase', 'off']) {
+    assert.equal(schedulesArmedAtBoot({ [ARM_SCHEDULES_ENV]: value }), true, `"${value}" must arm`)
+  }
 })

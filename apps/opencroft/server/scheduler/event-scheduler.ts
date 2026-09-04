@@ -264,8 +264,40 @@ interface SchedulerHandle {
 
 const globalForScheduler = globalThis as unknown as { __EVENT_SCHEDULER__?: SchedulerHandle }
 
+/** The environment variable that decides whether this instance arms schedules. */
+export const ARM_SCHEDULES_ENV = 'OPENCROFT_ARM_SCHEDULES'
+
+/**
+ * Whether this instance should arm Event-node schedules at all.
+ *
+ * Unset means armed, so an instance that says nothing behaves exactly as it did
+ * before this switch existed — production is unchanged by the change itself.
+ * `false`, `0` or `no` (any case) turns arming off, for a build that must not
+ * act on its own: a release-candidate or staging instance is seeded from the
+ * same graph as the one people use, so without this every schedule in it fires
+ * there too and spends the work twice for a result nobody reads.
+ *
+ * Anything else arms rather than refuses. This is read once at boot with nowhere
+ * to report a complaint to, and an instance that silently stopped acting because
+ * of a typo would be indistinguishable from a schedule that simply never fired.
+ */
+export function schedulesArmedAtBoot(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = (env[ARM_SCHEDULES_ENV] ?? '').trim().toLowerCase()
+  return raw !== 'false' && raw !== '0' && raw !== 'no'
+}
+
 export function startEventScheduler(): void {
   if (globalForScheduler.__EVENT_SCHEDULER__) {
+    return
+  }
+  // Checked where schedules are ARMED, not inside the tick: a build that should
+  // not run them registers nothing, so its run history stays empty rather than
+  // filling with entries that declined to act — and no second caller of this
+  // function can arm them by going around the check. The mode is logged both
+  // ways, so which way an instance came up is readable from its boot output
+  // rather than inferred from nothing having happened.
+  if (!schedulesArmedAtBoot()) {
+    console.log(`[event-scheduler] not armed (${ARM_SCHEDULES_ENV} is off)`)
     return
   }
   windowStart = Date.now()
