@@ -227,9 +227,16 @@ async function dispatchToHandleAction(
   if (outgoing.length === 0) {
     return
   }
-  // Late import avoids a cycle: node-actions imports getStream from this module.
-  const [{ dispatchNodeAction }, { loadAllManifests }] = await Promise.all([
-    import('@/app/_authed/(extension-runtime)/_server/node-actions'),
+  // The request-context-free impl, NOT the `dispatchNodeAction` server function.
+  // Stream completion can run with no TanStack request context (a background
+  // scheduler tick reaches here via exec-dispatch). A createServerFn invoked
+  // in-process outside a request throws before its handler runs, so routing the
+  // downstream dispatch through the wrapper silently dropped it. Every other
+  // internal caller uses the impl for this reason (see exec-dispatch). Kept a
+  // late import: node-actions-impl imports getStream from this module, so a
+  // static import would cycle.
+  const [{ dispatchNodeActionImpl }, { loadAllManifests }] = await Promise.all([
+    import('@/app/_authed/(extension-runtime)/_server/node-actions-impl'),
     import('@/app/_authed/(extension-runtime)/_server/loader'),
   ])
   const metaByType = new Map<string, NodeMetadata>()
@@ -247,7 +254,7 @@ async function dispatchToHandleAction(
       continue
     }
     try {
-      await dispatchNodeAction({ data: { nodeId: target.id, actionId, params } })
+      await dispatchNodeActionImpl({ nodeId: target.id, actionId, params })
     } catch (err) {
       console.error(
         `[stream→${target.type}.${actionId}] dispatch failed:`,
