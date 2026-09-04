@@ -12,7 +12,8 @@
 // a shape decision.
 
 import { useRouter } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 'ui/dialog'
 import { AddMemberPicker, type MemberCandidate } from 'ui/group-chat/add-member-picker'
 import { MemberAvatarGroup } from 'ui/group-chat/member-avatar-group'
@@ -20,7 +21,12 @@ import { MemberAvatarGroup } from 'ui/group-chat/member-avatar-group'
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { memberActionRefusal } from '@/app/_authed/(group-chats)/_lib/member-action-refusal'
 import type { DirectoryUser, GroupChatWriteResult, MemberRef } from '@/app/_authed/(group-chats)/_server/actions'
-import { addGroupChatMember, removeGroupChatMember } from '@/app/_authed/(group-chats)/_server/actions'
+import {
+  addGroupChatMember,
+  listGroupChatMembers,
+  listSystemSenders,
+  removeGroupChatMember,
+} from '@/app/_authed/(group-chats)/_server/actions'
 import type { AgentNodeRef } from '@/app/_authed/(space)/_server/agents'
 
 interface Props {
@@ -59,6 +65,49 @@ export function GroupChatMembersDialog({ groupChatId, members, directory, agents
   const [open, setOpen] = useState(false)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string>()
+
+  // System senders — the per-chat grants that authorize automated pipelines
+  // (a schedule's script, the forge webhook) to deliver into this chat's
+  // threads. App-side composition rather than a third kind in the kit picker:
+  // these are not people to browse for, they are a short list of reserved
+  // identifiers, and widening the kit-tracked picker is its own kit-first
+  // change. Fetched on open because the loader's MemberRef view carries only
+  // user and agent members.
+  const [systemGrants, setSystemGrants] = useState<string[]>([])
+  const [systemSenders, setSystemSenders] = useState<string[]>([])
+  // biome-ignore lint/correctness/useExhaustiveDependencies(pending): not read in the body — a grant/revoke settling (pending true→false) is what re-fetches the list it just changed
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    let cancelled = false
+    void Promise.all([listGroupChatMembers({ data: groupChatId }), listSystemSenders()])
+      .then(([rows, senders]) => {
+        if (!cancelled) {
+          setSystemGrants(rows.flatMap((r) => (r.principalType === 'system' && r.systemId ? [r.systemId] : [])))
+          setSystemSenders(senders)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          // A list that failed to load and a chat with no grants render
+          // identically, and the difference is the whole point of the panel:
+          // "nothing is granted here" is what an operator acts on. Say which
+          // of the two this is instead of letting the empty state lie.
+          setSystemGrants([])
+          setSystemSenders([])
+          setError('Could not load this chat’s automated senders.')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, groupChatId, pending])
+
+  const ungrantedSenders = useMemo(
+    () => systemSenders.filter((id) => !systemGrants.includes(id)),
+    [systemSenders, systemGrants],
+  )
 
   // One pending flag for both, because the picker disables the whole list off
   // it: a second request while one is in flight would race the router
@@ -136,6 +185,58 @@ export function GroupChatMembersDialog({ groupChatId, members, directory, agents
           removing={pending}
           error={error}
         />
+        <div className='space-y-2 border-t pt-3'>
+          <div className='text-muted-foreground text-sm'>
+            Automated senders — a grant here is what lets a scheduled pipeline or webhook deliver into this chat's
+            threads.
+          </div>
+          {systemGrants.map((systemId) => (
+            <div key={systemId} className='flex items-center justify-between gap-2 text-sm'>
+              <span className='font-mono'>{systemId}</span>
+              <Button
+                variant='ghost'
+                size='sm'
+                disabled={pending}
+                onClick={() =>
+                  void run(
+                    () => removeGroupChatMember({ data: { groupChatId, principal: { kind: 'system', systemId } } }),
+                    'That grant could not be revoked.',
+                  )
+                }
+              >
+                Revoke
+              </Button>
+            </div>
+          ))}
+          {/* Offered, not typed. These identifiers are a closed set the server
+              derives from the same map that stamps them (listSystemSenders),
+              so what can be granted here is exactly what can send. A free-text
+              field is one keystroke from `system.scripts` — a grant that
+              authorizes nothing, reads in the list above as granted, and
+              leaves the pipeline failing with the message that asked for it.
+              The server still validates; this stops the mistake being
+              reachable rather than only reporting it. */}
+          {ungrantedSenders.length > 0 && (
+            <div className='flex flex-wrap items-center gap-2'>
+              {ungrantedSenders.map((systemId) => (
+                <Button
+                  key={systemId}
+                  variant='outline'
+                  size='sm'
+                  disabled={pending}
+                  onClick={() =>
+                    void run(
+                      () => addGroupChatMember({ data: { groupChatId, principal: { kind: 'system', systemId } } }),
+                      'That sender could not be granted.',
+                    )
+                  }
+                >
+                  Grant <span className='font-mono'>{systemId}</span>
+                </Button>
+              ))}
+            </div>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   )

@@ -90,6 +90,34 @@ export class UnattributableSendError extends Error {}
 export const SEND_MESSAGE_SYSTEM_AUTHOR = 'system.send-message'
 
 /**
+ * Every system identity this application can actually stamp a message with:
+ * the trigger identifiers above, plus the machinery's own voice.
+ *
+ * It exists because a grant must be checked against the POPULATION, not
+ * against the namespace. `isSystemUsername` asks only whether a string starts
+ * with `system.`, which is a shape — and a grant row for a shape nothing ever
+ * sends under authorizes nothing at all while displaying in the members list
+ * as granted, leaving the pipeline failing with the very message that told the
+ * operator to add it. `system.scripts` is one keystroke from `system.script`
+ * and is exactly that row.
+ *
+ * DERIVED, never restated. A hand-written copy of these strings is an
+ * allow-list, and an allow-list beside the thing it lists drifts silently in
+ * the same way the typo does — a trigger added above would be stampable but
+ * ungrantable, which is the identical failure wearing the other hat. Adding an
+ * entry to the map is the only edit either needs.
+ */
+export const SYSTEM_SENDER_IDS: ReadonlySet<string> = new Set([
+  ...Object.values(SYSTEM_AUTHOR_BY_NODE_TYPE),
+  SEND_MESSAGE_SYSTEM_AUTHOR,
+])
+
+/** Whether `value` names a system sender that exists — see SYSTEM_SENDER_IDS. */
+export function isKnownSystemSender(value: string): boolean {
+  return SYSTEM_SENDER_IDS.has(value)
+}
+
+/**
  * The author identifier for a message a signed-in person is sending.
  *
  * Their stored handle, never their display name. A display name in the tag
@@ -182,7 +210,7 @@ interface AgentNodeLike {
  * The author identifier for a message an agent sends by invoking a node's
  * action itself, rather than by feeding that node from the graph.
  *
- * THE THIRD DOOR, AND WHY IT IS NOT THE FIRST ONE WIDENED. `authorForSourceNode`
+ * THE THIRD DOOR, AND WHY IT IS NOT THE FIRST ONE WIDENED. `senderForSourceNode`
  * asks what fed this run, and refuses when nothing did. A direct invocation is
  * exactly that case -- and it is not the unattributable one. Nothing fed the
  * node because somebody the platform had already authenticated invoked it, and
@@ -214,16 +242,42 @@ interface AgentNodeLike {
  * namespace is unique is not the same as a message being safe to stamp when it
  * is not.
  */
-export async function authorForCallingAgent(agentName: string, agents: AgentNodeLike[]): Promise<string> {
+async function senderForCallingAgent(agentName: string, agents: AgentNodeLike[]): Promise<AttributedSender> {
   const matches = agentNodesNamed(agents, agentName)
   const match = matches.length === 1 ? matches[0] : undefined
   if (!match?.nodeId) {
     throw new UnattributableSendError(`This message has no sender: no single agent is named "${agentName.trim()}".`)
   }
-  return authorForAgentNode(match.nodeId, match.name ?? agentName.trim())
+  return {
+    author: await authorForAgentNode(match.nodeId, match.name ?? agentName.trim()),
+    principal: { kind: 'agent', agentNodeId: match.nodeId },
+  }
 }
 
-export async function authorForSourceNode(sourceNodeId: string | undefined, nodes: NodeLike[]): Promise<string> {
+/**
+ * The principal a membership gate checks a send against — WHICH agent node, or
+ * WHICH system identity, not just what the transcript will display. A person
+ * never appears here: people send through request-authenticated surfaces, and
+ * the node/tool paths this accompanies are exactly the ones with no request to
+ * authenticate.
+ */
+export type SendPrincipal = { kind: 'agent'; agentNodeId: string } | { kind: 'system'; systemId: string }
+
+/**
+ * Both halves of who a send is from: the username the transcript stamps, and
+ * the principal an authorization gate checks. One value, derived together, so
+ * the identity that is DISPLAYED and the identity that is AUTHORIZED cannot be
+ * computed by two code paths that drift apart.
+ */
+export interface AttributedSender {
+  author: string
+  principal: SendPrincipal
+}
+
+export async function senderForSourceNode(
+  sourceNodeId: string | undefined,
+  nodes: NodeLike[],
+): Promise<AttributedSender> {
   if (!sourceNodeId) {
     // Nothing fed this run -- fired directly, or by something that supplies no
     // source. Precisely the hole the system identifier must not fill.
@@ -246,12 +300,15 @@ export async function authorForSourceNode(sourceNodeId: string | undefined, node
       // would attribute its words to something that did not say them.
       throw new UnattributableSendError(`This message has no sender: agent ${sourceNodeId} has no username.`)
     }
-    return username
+    return { author: username, principal: { kind: 'agent', agentNodeId: sourceNodeId } }
   }
 
   const systemAuthor = SYSTEM_AUTHOR_BY_NODE_TYPE[source.type]
   if (systemAuthor) {
-    return systemAuthor
+    // The system identity is BOTH halves on purpose: what the transcript shows
+    // is exactly what a membership grant authorizes, so machine origin — and
+    // which machine — stays readable in the record and in the members list.
+    return { author: systemAuthor, principal: { kind: 'system', systemId: systemAuthor } }
   }
   throw new UnattributableSendError(
     `This message has no sender: a "${source.type}" node is neither an agent nor a known application trigger.`,
@@ -279,13 +336,13 @@ export async function authorForSourceNode(sourceNodeId: string | undefined, node
  * webhook and every schedule takes -- has no use for the answer. Taking the
  * list would make each of those sends pay for a lookup none of them reads.
  */
-export async function authorForSend(
+export async function senderForSend(
   origin: { sourceNodeId?: string; callerAgent?: string },
   nodes: NodeLike[],
   agents: () => Promise<AgentNodeLike[]>,
-): Promise<string> {
+): Promise<AttributedSender> {
   if (!origin.sourceNodeId && origin.callerAgent) {
-    return authorForCallingAgent(origin.callerAgent, await agents())
+    return senderForCallingAgent(origin.callerAgent, await agents())
   }
-  return authorForSourceNode(origin.sourceNodeId, nodes)
+  return senderForSourceNode(origin.sourceNodeId, nodes)
 }

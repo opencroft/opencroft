@@ -2634,10 +2634,16 @@ test('threadCompactStatusAsAgent is refused for a non-member the same way compac
 // contract in isolation, decoupled from any particular graph.
 // ---------------------------------------------------------------------------
 
+// The principal these node-driven deliveries are checked AS. Tests that expect
+// delivery grant it a member row in their chat; a test that omits the grant is
+// testing the refusal.
+const NODE_PRINCIPAL = { kind: 'system', systemId: 'system.schedule' } as const
+
 test('deliverThreadFromNode resolves the same forms sendMessageInThreadAsAgent does — readable ref, whole key, and id', async () => {
   const owner = await makeUser('node-forms-owner@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'node delivery forms')
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, NODE_PRINCIPAL)
 
   const prompts: string[] = []
   seedMockConnection(prompts)
@@ -2646,41 +2652,28 @@ test('deliverThreadFromNode resolves the same forms sendMessageInThreadAsAgent d
   })
   await waitForPrompts(prompts, 1)
 
-  const alwaysReachable = () => true
-
   await model.deliverThreadFromNode(
     'node-delivery-forms:agent-session:standup',
     'by path',
-    alwaysReachable,
+    NODE_PRINCIPAL,
     'wait',
     'Node',
   )
   await waitForPrompts(prompts, 2)
   assert.match(prompts[1] ?? '', /by path/)
 
-  await model.deliverThreadFromNode(started.thread.sessionKey, 'by key', alwaysReachable, 'wait', 'Node')
+  await model.deliverThreadFromNode(started.thread.sessionKey, 'by key', NODE_PRINCIPAL, 'wait', 'Node')
   await waitForPrompts(prompts, 3)
   assert.match(prompts[2] ?? '', /by key/)
 
-  await model.deliverThreadFromNode(started.thread.id, 'by id', alwaysReachable, 'wait', 'Node')
+  await model.deliverThreadFromNode(started.thread.id, 'by id', NODE_PRINCIPAL, 'wait', 'Node')
   await waitForPrompts(prompts, 4)
   assert.match(prompts[3] ?? '', /by id/)
 })
 
-test('deliverThreadFromNode reports not-found for an unresolvable reference without calling isReachable', async () => {
-  let called = false
-  const outcome = await model.deliverThreadFromNode(
-    'nothing:here:at-all',
-    'hello',
-    () => {
-      called = true
-      return true
-    },
-    'wait',
-    'Node',
-  )
+test('deliverThreadFromNode reports not-found for an unresolvable reference', async () => {
+  const outcome = await model.deliverThreadFromNode('nothing:here:at-all', 'hello', NODE_PRINCIPAL, 'wait', 'Node')
   assert.deepEqual(outcome, { status: 'not-found' })
-  assert.equal(called, false, 'a reference that resolves to nothing has no agent to check reachability for')
 })
 
 // THE CONVERGENCE ITSELF: deliverIntoThread
@@ -2700,6 +2693,7 @@ test('two concurrent deliveries into a brand-new thread session produce exactly 
   const owner = await makeUser('thread-race-owner@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'thread race')
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, NODE_PRINCIPAL)
   // Inserted directly, NOT via startThread: the point is a thread whose
   // session has never been opened, so both deliveries below race to open it.
   const [thread] = await db
@@ -2749,10 +2743,9 @@ test('two concurrent deliveries into a brand-new thread session produce exactly 
     initialized: Promise.resolve(),
   })
 
-  const alwaysReachable = () => true
   await Promise.all([
-    model.deliverThreadFromNode(thread.sessionKey, 'first', alwaysReachable, 'wait', 'Node'),
-    model.deliverThreadFromNode(thread.sessionKey, 'second', alwaysReachable, 'wait', 'Node'),
+    model.deliverThreadFromNode(thread.sessionKey, 'first', NODE_PRINCIPAL, 'wait', 'Node'),
+    model.deliverThreadFromNode(thread.sessionKey, 'second', NODE_PRINCIPAL, 'wait', 'Node'),
   ])
 
   assert.equal(
@@ -2763,25 +2756,107 @@ test('two concurrent deliveries into a brand-new thread session produce exactly 
   assert.equal(prompts.length, 2, 'and neither message may be dropped')
 })
 
-test('deliverThreadFromNode reports not-reachable and delivers nothing when the caller-supplied check says no', async () => {
-  const owner = await makeUser('node-unreachable-owner@example.test')
-  const chat = await model.createGroupChat(reqAs(owner), 'node unreachable')
+test('deliverThreadFromNode reports not-a-member and delivers nothing when the sender holds no row in the chat', async () => {
+  const owner = await makeUser('node-ungranted-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'node ungranted')
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
   const [thread] = await db
     .insert(groupChatThread)
     .values({
       groupChatId: chat.id,
       agentNodeId: 'agent-a',
-      sessionKey: `group-chat:${chat.id}:agent-a:node-unreachable-fixture`,
+      sessionKey: `group-chat:${chat.id}:agent-a:node-ungranted-fixture`,
       createdByUserId: owner.id,
     })
     .returning()
   assert.ok(thread)
 
-  // The predicate is authoritative and caller-supplied — this proves the seam
-  // itself, independent of any real graph or reachablePairs computation.
-  const outcome = await model.deliverThreadFromNode(thread.sessionKey, 'should not land', () => false, 'wait', 'Node')
-  assert.deepEqual(outcome, { status: 'not-reachable' })
+  // No grant for the sender in this chat: the member row IS the authorization,
+  // and a system-prefixed identity gets no free pass without one.
+  const outcome = await model.deliverThreadFromNode(
+    thread.sessionKey,
+    'should not land',
+    NODE_PRINCIPAL,
+    'wait',
+    'Node',
+  )
+  assert.deepEqual(outcome, { status: 'not-a-member' })
+})
+
+test('revoking a system grant ends its delivery — the row is the whole of the authorization', async () => {
+  const owner = await makeUser('node-revoke-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'node grant revocation')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, NODE_PRINCIPAL)
+
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message')
+  await waitForPrompts(prompts, 1)
+
+  const granted = await model.deliverThreadFromNode(
+    started.thread.sessionKey,
+    'while granted',
+    NODE_PRINCIPAL,
+    'wait',
+    'Node',
+  )
+  assert.notEqual(granted.status, 'not-a-member')
+  await waitForPrompts(prompts, 2)
+
+  await model.removeMember(reqAs(owner), chat.id, NODE_PRINCIPAL)
+  const revoked = await model.deliverThreadFromNode(
+    started.thread.sessionKey,
+    'after revocation',
+    NODE_PRINCIPAL,
+    'wait',
+    'Node',
+  )
+  assert.deepEqual(revoked, { status: 'not-a-member' })
+  assert.equal(prompts.length, 2, 'nothing was delivered after the grant was revoked')
+})
+
+test('a system grant is a listable member row, and only senders that exist qualify for one', async () => {
+  const owner = await makeUser('system-grant-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'system grants')
+
+  await model.addMember(reqAs(owner), chat.id, { kind: 'system', systemId: 'system.script' })
+  const withGrant = await model.listMembers(reqAs(owner), chat.id)
+  assert.ok(
+    withGrant.some((m) => m.principalType === 'system' && m.systemId === 'system.script'),
+    'the grant is a visible row, not a code-side allowance',
+  )
+
+  // An arbitrary string cannot become a grant.
+  await assert.rejects(
+    () => model.addMember(reqAs(owner), chat.id, { kind: 'system', systemId: 'not-a-system-name' }),
+    /No such system sender/,
+  )
+
+  // Nor can one that merely LOOKS like a sender. `system.scripts` is a
+  // keystroke from `system.script` and passes any namespace check, and a row
+  // for it would authorize nothing while reading as granted — leaving the
+  // pipeline failing with the very message that asked for the grant. What is
+  // checked is the population of identities the app can actually stamp, so
+  // the row cannot be a plausible-looking no-op.
+  await assert.rejects(
+    () => model.addMember(reqAs(owner), chat.id, { kind: 'system', systemId: 'system.scripts' }),
+    /No such system sender/,
+  )
+  const afterTypo = await model.listMembers(reqAs(owner), chat.id)
+  assert.equal(
+    afterTypo.some((m) => m.principalType === 'system' && m.systemId === 'system.scripts'),
+    false,
+    'the refused grant left no row behind to read as granted',
+  )
+
+  await model.removeMember(reqAs(owner), chat.id, { kind: 'system', systemId: 'system.script' })
+  const after = await model.listMembers(reqAs(owner), chat.id)
+  assert.equal(
+    after.some((m) => m.principalType === 'system'),
+    false,
+    'revoking deletes the row',
+  )
 })
 
 /** Seeds the agent-client store so 'Agent Session' resolves without spawning. */
@@ -3184,6 +3259,7 @@ test('an address a chat rename freed still reaches the same chat and the same th
   const chat = await model.createGroupChat(reqAs(owner), 'Old Chat Name')
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-solo' })
+  await model.addMember(reqAs(owner), chat.id, NODE_PRINCIPAL)
   const prompts: string[] = []
   seedMockConnection(prompts)
   const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Planning' })
@@ -3201,8 +3277,8 @@ test('an address a chat rename freed still reaches the same chat and the same th
   assert.equal(byOldSlug.chat.slug, 'new-chat-name', 'resolved through the old address, answered with the current one')
 
   // A message already addressed to the key the rename retired.
-  const outcome = await model.deliverThreadFromNode(oldKey, 'sent to the old address', () => true, 'wait', 'Node')
-  assert.equal(outcome.status === 'not-found' || outcome.status === 'not-reachable', false)
+  const outcome = await model.deliverThreadFromNode(oldKey, 'sent to the old address', NODE_PRINCIPAL, 'wait', 'Node')
+  assert.equal(outcome.status === 'not-found' || outcome.status === 'not-a-member', false)
   await waitForPrompts(prompts, 2)
   assert.match(prompts.at(-1) ?? '', /sent to the old address/)
 
@@ -3224,6 +3300,7 @@ test('renaming a thread moves its slug and its key, and keeps everything the thr
   const owner = await makeUser('thread-rekey-owner@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'Thread Renames')
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, NODE_PRINCIPAL)
   const prompts: string[] = []
   seedMockConnection(prompts)
   const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Standup' })
@@ -3246,8 +3323,8 @@ test('renaming a thread moves its slug and its key, and keeps everything the thr
   assert.equal(byOldSlug?.id, started.thread.id, 'the embed must find the same thread, not start an empty one')
 
   // And the key an agent may have written down.
-  const outcome = await model.deliverThreadFromNode(oldKey, 'to the old thread address', () => true, 'wait', 'Node')
-  assert.equal(outcome.status === 'not-found' || outcome.status === 'not-reachable', false)
+  const outcome = await model.deliverThreadFromNode(oldKey, 'to the old thread address', NODE_PRINCIPAL, 'wait', 'Node')
+  assert.equal(outcome.status === 'not-found' || outcome.status === 'not-a-member', false)
   await waitForPrompts(prompts, 2)
   assert.equal((await model.listThreadsInGroupChat(reqAs(owner), chat.id)).length, 1)
 })
@@ -3285,6 +3362,7 @@ test('a new thread taking a freed address wins it, and the alias for it stops re
   const owner = await makeUser('alias-outranked-owner@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'Reuse')
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, NODE_PRINCIPAL)
   const prompts: string[] = []
   seedMockConnection(prompts)
   const first = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Standup' })
@@ -3307,8 +3385,8 @@ test('a new thread taking a freed address wins it, and the alias for it stops re
     second.thread.id,
     'the thread holding the address now is the answer, not the one that used to',
   )
-  const outcome = await model.deliverThreadFromNode(freedKey, 'to whoever holds it now', () => true, 'wait', 'Node')
-  assert.equal(outcome.status === 'not-found' || outcome.status === 'not-reachable', false)
+  const outcome = await model.deliverThreadFromNode(freedKey, 'to whoever holds it now', NODE_PRINCIPAL, 'wait', 'Node')
+  assert.equal(outcome.status === 'not-found' || outcome.status === 'not-a-member', false)
   await waitForPrompts(prompts, 3)
   const aliases = await db.select().from(groupChatThreadAlias).where(eq(groupChatThreadAlias.sessionKey, freedKey))
   assert.equal(aliases.length, 0, 'the alias on a re-taken address is dropped, not merely outranked at read time')

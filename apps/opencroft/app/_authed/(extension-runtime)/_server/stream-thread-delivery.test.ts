@@ -1,6 +1,7 @@
-// Proves the send-message node's `thread` envelope field end to end:
-// reachability gated by THIS node's own graph wiring, refusal for an unknown
-// or unreachable thread, and that the
+// Proves the send-message node's `thread` envelope field end to end: delivery
+// gated on the SENDER holding a member row in the thread's chat — a system
+// sender by its explicit per-chat grant, an agent by its ordinary membership —
+// refusal for an unknown thread and for a sender with no row, and that the
 // agent:job envelope path — refactored to share resolveOrCreateSession with
 // the thread path — behaves exactly as it did before.
 //
@@ -38,10 +39,13 @@ delete process.env.DATABASE_URL
 process.env.NODE_ENV = 'development'
 
 // These suites are about routing and delivery, not about who a message is
-// from, so they pass an author that is already established -- the same thing
-// the entry points hand in. Authorship itself is covered in message-author's
+// from, so they pass a sender that is already established -- the same thing
+// the entry points hand in. Attribution itself is covered in message-author's
 // own tests and in the wire test below.
-const SENT_BY = 'system.schedule'
+const SENT_BY = {
+  author: 'system.schedule',
+  principal: { kind: 'system', systemId: 'system.schedule' },
+} as const
 
 const { db, space } = await import('@opencroft/db')
 const model = await import('@/app/_authed/(group-chats)/_server/model')
@@ -97,7 +101,8 @@ await db.insert(space).values({
     ],
     edges: [
       { source: 'sf-src', sourceHandle: 'stdout-out', target: 'sf-sm', targetHandle: 'text-in' },
-      // Reachability for the thread's agent, from this node's own graph.
+      // For the agent:job routing surface only — a thread delivery no longer
+      // reads this wiring; its authority is the sender's member row.
       { source: 'sf-job', target: 'sf-agent' },
     ],
   }),
@@ -156,17 +161,14 @@ function seedAgentSessionConnection(connection: AgentConnection, agentName = 'Ag
 
 // The send-message node's own graph, kept deliberately separate from the real
 // DB-backed space above EXCEPT for the agent node id: that one has to match
-// the real 'agent-session' node, both for reachability (isAgentNodeReachable
-// checks the DB thread row's agentNodeId against this graph, by id) and for
-// the agent:job envelope regression test below, whose route resolves an
-// agentNodeId that ensureLocalSessionImpl then looks up in the REAL space
-// registry — an invented id would fail there with "Agent node not found",
-// independent of anything under test. The job node's id is free to be
-// synthetic; nothing re-resolves it against the real registry. 'agent-session'
-// has a job wired to it here and is therefore reachable; 'agent-idle' has no
-// presence in this graph at all, so it is unreachable — the state a thread
-// pointed at an agent this node cannot otherwise route to would find itself
-// in.
+// the real 'agent-session' node for the agent:job envelope regression test
+// below, whose route resolves an agentNodeId that ensureLocalSessionImpl then
+// looks up in the REAL space registry — an invented id would fail there with
+// "Agent node not found", independent of anything under test. The job node's
+// id is free to be synthetic; nothing re-resolves it against the real
+// registry. A THREAD delivery reads none of this wiring any more: its
+// authority is the sender's member row in the thread's chat, granted and
+// revoked in the database, which is exactly what the tests below vary.
 const sendMessageNodeGraph = () => ({
   target: { id: 'sm1', type: 'send-message', data: {} },
   nodes: [
@@ -177,10 +179,15 @@ const sendMessageNodeGraph = () => ({
   edges: [{ source: 'j1', target: 'agent-session' }],
 })
 
-test('a thread envelope delivers when the thread agent is reachable from this node, and reports delivered', async () => {
+test('a thread envelope delivers when the sender holds a member row in the chat, and reports delivered', async () => {
   const owner = await makeUser('thread-deliver-owner@example.test')
-  const chat = await model.createGroupChat(reqAs(owner), 'reachable delivery')
+  const chat = await model.createGroupChat(reqAs(owner), 'granted delivery')
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  // The grant under test: the system sender is authorized by a real row in
+  // THIS chat, exactly the way any other member is. This delivery is the one
+  // that failed on every scheduled tick while the authority was the sending
+  // node's agent:job wiring.
+  await model.addMember(reqAs(owner), chat.id, { kind: 'system', systemId: SENT_BY.principal.systemId })
 
   const prompts: string[] = []
   seedAgentSessionConnection({
@@ -212,32 +219,122 @@ test('a thread envelope delivers when the thread agent is reachable from this no
   assert.match(prompts[1] ?? '', /the hourly pass has run/)
 })
 
-test('a thread envelope refuses cleanly when its agent is not reachable from this node', async () => {
-  const owner = await makeUser('thread-unreachable-owner@example.test')
-  const chat = await model.createGroupChat(reqAs(owner), 'unreachable delivery')
+test('a sender with no member row is refused in the same words as an unknown reference, with the cause out of band', async () => {
+  const owner = await makeUser('thread-ungranted-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'ungranted delivery')
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-idle' })
   const [thread] = await db
     .insert((await import('@opencroft/db')).groupChatThread)
     .values({
       groupChatId: chat.id,
       agentNodeId: 'agent-idle',
-      sessionKey: `group-chat:${chat.id}:agent-idle:unreachable-fixture`,
+      sessionKey: `group-chat:${chat.id}:agent-idle:ungranted-fixture`,
       createdByUserId: owner.id,
     })
     .returning()
   assert.ok(thread)
 
+  // No system grant in this chat: a system-prefixed author gets no free pass,
+  // which is the half that keeps this authority from quietly becoming a
+  // bypass. What the caller is TOLD, though, must be the same sentence it
+  // would get for a reference that resolves to nothing — one of this
+  // delivery's two callers is an agent invoking the node action over MCP, and
+  // a refusal that named the cause would let it sort thread references into
+  // real and invented.
   const { target, nodes, edges } = sendMessageNodeGraph()
+  const refuse = async (ref: string): Promise<Error> => {
+    try {
+      await stream.deliverToSendMessageNode(
+        target,
+        nodes,
+        edges,
+        JSON.stringify({ message: 'should not land', thread: ref, queue: 'wait' }),
+        SENT_BY,
+      )
+    } catch (err) {
+      assert.ok(err instanceof Error)
+      return err
+    }
+    throw new Error(`expected a refusal for ${ref}, got a delivery`)
+  }
+
+  const ungranted = await refuse(thread.sessionKey)
+  const unknown = await refuse('no-such-chat:no-such-agent:no-such-thread')
+
+  // The only thing that may differ between the two is the reference the caller
+  // handed in itself. Compared this way rather than against a literal so the
+  // test fails if the collapse is dropped, not if the wording is reworded —
+  // and the echoed reference is taken back out for the same reason, since what
+  // the caller already knows is not a disclosure.
+  const said = (err: Error, ref: string) => err.message.replace(ref, '<ref>')
+  assert.equal(
+    said(ungranted, thread.sessionKey),
+    said(unknown, 'no-such-chat:no-such-agent:no-such-thread'),
+    'a caller can tell a real thread from an invented one by the refusal it gets back',
+  )
+  assert.doesNotMatch(
+    said(ungranted, thread.sessionKey),
+    /member|grant|sender|system\./i,
+    'the cause reached the caller: membership, the grant or the sender is named in what it was told',
+  )
+
+  // The cause is not thrown away, it is carried out of band — and not as an
+  // own property, so a serializer reaching for the error's own keys on the way
+  // to the caller cannot pick it up either.
+  assert.ok(ungranted instanceof stream.ThreadDeliveryRefusal)
+  assert.match(ungranted.detail, /system\.schedule/)
+  assert.match(ungranted.detail, /grant/i)
+  assert.equal(Object.hasOwn(ungranted, 'detail'), false)
+})
+
+test('an agent sender answers to the same row: a member delivers, a non-member is refused', async () => {
+  const owner = await makeUser('thread-agent-sender-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'agent sender delivery')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const prompts: string[] = []
+  seedAgentSessionConnection({
+    newSession: async () => ({ sessionId: `agent-sender-${crypto.randomUUID()}` }),
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      prompts.push(params.prompt.map((b) => b.text ?? '').join(''))
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection)
+
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message')
+  await waitForPrompts(prompts, 1)
+
+  const { target, nodes, edges } = sendMessageNodeGraph()
+  const asMember = await stream.deliverToSendMessageNode(
+    target,
+    nodes,
+    edges,
+    JSON.stringify({ message: 'from a member agent', thread: started.thread.sessionKey, queue: 'wait' }),
+    { author: 'agent.session', principal: { kind: 'agent', agentNodeId: 'agent-session' } },
+  )
+  assert.equal(asMember?.kind, 'thread')
+  await waitForPrompts(prompts, 2)
+
   await assert.rejects(
     () =>
       stream.deliverToSendMessageNode(
         target,
         nodes,
         edges,
-        JSON.stringify({ message: 'should not land', thread: thread.sessionKey, queue: 'wait' }),
-        SENT_BY,
+        JSON.stringify({ message: 'from an outsider agent', thread: started.thread.sessionKey, queue: 'wait' }),
+        { author: 'agent.idle', principal: { kind: 'agent', agentNodeId: 'agent-idle' } },
       ),
-    /not reachable/i,
+    (err: Error) => {
+      // The same collapse as for a system sender: an agent asking about a
+      // thread it holds no row in learns nothing about whether it exists.
+      assert.match(err.message, /not available/i)
+      assert.doesNotMatch(err.message, /member|grant/i)
+      return true
+    },
   )
 })
 
@@ -256,7 +353,7 @@ test('a thread envelope refuses cleanly for an unknown thread reference — noth
         }),
         SENT_BY,
       ),
-    /not reachable/i,
+    /not available/i,
   )
 })
 
@@ -279,6 +376,7 @@ test('a message already queued behind a running turn reports queued, not deliver
   const owner = await makeUser('thread-queued-owner@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'queued delivery')
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'system', systemId: SENT_BY.principal.systemId })
 
   const prompts: string[] = []
   const firstPromptGate = Promise.withResolvers<void>()
@@ -378,6 +476,10 @@ test('a send that fails on the stream path reports into the thread it was aimed 
   const owner = await makeUser('stream-failure-owner@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'stream failure reporting')
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'sf-agent' })
+  // The failure REPORT is a delivery too, authored by the send-message
+  // machinery's own system identity — so it answers to the same member-row
+  // authority as the send it reports on, and needs its own grant here.
+  await model.addMember(reqAs(owner), chat.id, { kind: 'system', systemId: 'system.send-message' })
 
   const prompts: string[] = []
   seedAgentSessionConnection(
@@ -425,6 +527,60 @@ test('a send that fails on the stream path reports into the thread it was aimed 
   assert.doesNotMatch(
     report,
     /this text must not reach the thread/,
+    'the undelivered text is never carried: a report that quotes it has delivered it',
+  )
+})
+
+test('the cause collapsed out of the refusal is written down where a person reads it', async () => {
+  const owner = await makeUser('stream-detail-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'ungranted stream sender')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'sf-agent' })
+  // The REPORTER is granted; the SENDER is not. Two principals, two rows —
+  // and that is what makes this case reportable at all: a send refused for
+  // want of a grant can still be described, in the thread it was aimed at, by
+  // a reporter holding one of its own.
+  await model.addMember(reqAs(owner), chat.id, { kind: 'system', systemId: 'system.send-message' })
+
+  const prompts: string[] = []
+  seedAgentSessionConnection(
+    {
+      newSession: async () => ({ sessionId: `stream-detail-${crypto.randomUUID()}` }),
+      prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+        prompts.push(params.prompt.map((b) => b.text ?? '').join(''))
+        return { stopReason: 'end_turn' }
+      },
+      resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+      cancel: async () => {},
+      setSessionConfigOption: async () => ({}),
+      closeSession: async () => ({}),
+    } as unknown as AgentConnection,
+    'Stream Failure Agent',
+  )
+
+  const started = await model.startThread(reqAs(owner), chat.id, 'sf-agent', 'opening message')
+  await waitForPrompts(prompts, 1)
+
+  // `sf-src` is a script-node, so this send is authored `system.script` and
+  // holds no grant here — the live shape of the failure this fix started
+  // from, driven through the real stream path rather than by calling the
+  // delivery directly, because the point is where the cause ENDS UP.
+  const payload = JSON.stringify({
+    message: 'the hourly pass must not reach the thread',
+    thread: started.thread.sessionKey,
+    queue: 'wait',
+  })
+  const outgoing = stream.getStream<{ text: string; final: boolean }>('stream-failure-space', 'sf-src', 'stdout-out')
+  stream.broadcast(outgoing, { text: payload, final: true })
+
+  await waitForPrompts(prompts, 2)
+  const report = prompts[1] ?? ''
+  assert.match(report, /was not delivered/, 'a person reading the thread is told the send failed')
+  assert.match(report, /system\.script/, 'and which sender was refused — the half the caller is not told')
+  assert.match(report, /grant/i, 'and what to do about it')
+  assert.match(report, /sf-sm/, 'and which wiring to go and fix')
+  assert.doesNotMatch(
+    report,
+    /the hourly pass must not reach the thread/,
     'the undelivered text is never carried: a report that quotes it has delivered it',
   )
 })

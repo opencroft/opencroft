@@ -370,31 +370,39 @@ export const groupChat = pgTable(
   (t) => [uniqueIndex('GroupChat_slug_key').on(t.slug)],
 )
 
-// One row per member, agent or user. ONE TABLE, TWO KINDS OF PRINCIPAL,
-// DISCRIMINATED BY `principalType` — the same shape `ApiToken` already uses
-// for exactly the same reason: two membership-check code paths is how one of
-// them gets a bug the other's tests do not catch.
+// One row per member. ONE TABLE, THREE KINDS OF PRINCIPAL, DISCRIMINATED BY
+// `principalType` — the same shape `ApiToken` already uses for exactly the
+// same reason: two membership-check code paths is how one of them gets a bug
+// the other's tests do not catch.
 //
-//   'user'  userId is set (references user.id, cascades on delete),
-//           agentNodeId is null.
-//   'agent' agentNodeId is set (a graph node id, validated against
-//           listAgentNodes() at write time — see the model module), userId is
-//           null. Not a foreign key: agent nodes live in the space graph's own
-//           JSON, not a relational table this schema can reference.
+//   'user'   userId is set (references user.id, cascades on delete); the other
+//            id columns are null.
+//   'agent'  agentNodeId is set (a graph node id, validated against
+//            listAgentNodes() at write time — see the model module). Not a
+//            foreign key: agent nodes live in the space graph's own JSON, not
+//            a relational table this schema can reference.
+//   'system' systemId is set — a reserved `system.`-prefixed sender identifier
+//            (validated against isSystemUsername at write time). This is what
+//            authorizes an automated pipeline (a schedule's script, the forge
+//            webhook) to deliver into a chat's threads: the grant is a ROW,
+//            explicit, per-chat, listable and revocable, never a code-side
+//            exemption for the prefix — an allow-list in code is invisible in
+//            the members panel and unrevocable without a deploy, which is how
+//            an automated sender's authority goes unaccounted.
 //
 // Consistency between principalType and which id column is set is enforced
 // application-side, not by a CHECK constraint — the same choice already made
 // for ApiToken's subjectType/userId/agentName triple, so this does not
 // introduce a stricter pattern than the one beside it.
 //
-// The two unique indexes below rely on Postgres treating NULL as distinct
+// The per-kind unique indexes below rely on Postgres treating NULL as distinct
 // from every other NULL: the (groupChatId, userId) index only ever collides
 // for two rows that are BOTH real users with the same id, because every
-// agent row's userId is NULL and NULLs never equal each other. The
-// (groupChatId, agentNodeId) index works the same way in the other
-// direction. Each index constrains exactly the principal kind it names and
-// is silently inert for the other kind — which is what makes two indexes
-// sufficient without a partial-index syntax.
+// other kind's userId is NULL and NULLs never equal each other. The
+// (groupChatId, agentNodeId) and (groupChatId, systemId) indexes work the
+// same way for their kinds. Each index constrains exactly the principal kind
+// it names and is silently inert for the others — which is what makes one
+// index per kind sufficient without a partial-index syntax.
 export const groupChatMember = pgTable(
   'GroupChatMember',
   {
@@ -405,14 +413,17 @@ export const groupChatMember = pgTable(
     principalType: text().notNull(),
     userId: text().references(() => user.id, { onDelete: 'cascade' }),
     agentNodeId: text(),
+    systemId: text(),
     createdAt: createdAt(),
   },
   (t) => [
     uniqueIndex('GroupChatMember_groupChatId_userId_key').on(t.groupChatId, t.userId),
     uniqueIndex('GroupChatMember_groupChatId_agentNodeId_key').on(t.groupChatId, t.agentNodeId),
+    uniqueIndex('GroupChatMember_groupChatId_systemId_key').on(t.groupChatId, t.systemId),
     index('GroupChatMember_groupChatId_idx').on(t.groupChatId),
     index('GroupChatMember_userId_idx').on(t.userId),
     index('GroupChatMember_agentNodeId_idx').on(t.agentNodeId),
+    index('GroupChatMember_systemId_idx').on(t.systemId),
   ],
 )
 

@@ -64,6 +64,8 @@ import { listDirectoryUsers } from '@/app/_authed/(group-chats)/_server/user-dir
 import type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
 import { GroupChatAccessError } from '@/app/_authed/(group-chats)/_shared/access-error'
 import { slug as slugify } from '@/app/_authed/(server)/_server/types'
+import { SYSTEM_SENDER_IDS } from '@/app/_server/message-author'
+import { requireSessionServerFn } from '@/app/_server/require-session'
 
 // So no client file ever has a reason to name model.ts directly — the same
 // pattern agents.ts just adopted for agents-impl.ts. These are erased at
@@ -206,6 +208,32 @@ export const removeGroupChatMember = createServerFn({ method: 'POST', strict: { 
 export const listGroupChatMembers = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((groupChatId: string) => groupChatId)
   .handler(async ({ data: groupChatId }) => listMembers(getRequest(), groupChatId))
+
+/**
+ * The system senders a grant may name.
+ *
+ * Served rather than baked into the client so the members dialog offers
+ * exactly what `addMember` accepts — one derived set (`SYSTEM_SENDER_IDS`,
+ * built from the author map itself), read on both sides of the request. A copy
+ * in the client drifts the moment a trigger is added, and a free-text field
+ * drifts on a single keystroke: `system.scripts` is a grant that authorizes
+ * nothing, reads in the list as granted, and leaves the pipeline failing with
+ * the message that asked for it. Offering the population removes the mistake
+ * instead of reporting it.
+ *
+ * Not chat-scoped, so a session is the whole check — and it IS checked here: a
+ * server function is its own callable HTTP endpoint, reachable without going
+ * through the page that leads to it, so `_authed` is routing rather than a
+ * boundary. Every other export in this file gets the same answer from the
+ * model function it delegates to; this one has no model function, so it asks
+ * directly.
+ */
+export const listSystemSenders = createServerFn({ method: 'GET', strict: { output: false } }).handler(
+  async (): Promise<string[]> => {
+    await requireSessionServerFn()
+    return [...SYSTEM_SENDER_IDS].sort()
+  },
+)
 
 export const listGroupChatThreads = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((groupChatId: string) => groupChatId)

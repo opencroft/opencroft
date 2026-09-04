@@ -16,7 +16,7 @@ const REASON = 'This message has no sender: nothing fed the node that sent it.'
 
 // A failure that is not a refusal. The whole point of this widening is that
 // this one reaches a reader too, and it comes from a different layer entirely.
-const UNREACHABLE = 'Thread not reachable from this node: a-chat:an-agent:a-thread'
+const UNREACHABLE = 'Thread not available from this node: a-chat:an-agent:a-thread'
 
 function failureOn(nodeId: string, reason = REASON): SendFailure {
   return { nodeId, reason, threadRef: 'a-chat:an-agent:a-thread' }

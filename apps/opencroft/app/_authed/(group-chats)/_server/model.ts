@@ -67,9 +67,14 @@ import { slug as slugify } from '@/app/_authed/(server)/_server/types'
 // operator, it belongs in a server-side log, never in what is returned.
 const UNAVAILABLE = 'Not available'
 
-import { agentNodesNamed, listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
-import { authorForAgentNode, authorForPerson } from '@/app/_server/message-author'
 import { isSleepMode } from '@/app/_authed/(mcp)/_server/sleep-mode'
+import { agentNodesNamed, listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
+import {
+  authorForAgentNode,
+  authorForPerson,
+  isKnownSystemSender,
+  type SendPrincipal,
+} from '@/app/_server/message-author'
 
 export type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
 // The refusal type lives in _shared/access-error.ts — dependency-free, so the
@@ -121,22 +126,32 @@ async function requireSignedInUser(request: Request) {
   return sessionUser
 }
 
-async function isUserMember(groupChatId: string, userId: string): Promise<boolean> {
+// ONE membership question for every kind of principal: does a row exist. The
+// kind selects which id column identifies the member — representation, not a
+// different rule — so a system sender is checked by exactly the mechanism a
+// person or an agent is, and there is no branch anywhere that waves a kind
+// through without its row.
+async function isPrincipalMember(groupChatId: string, principal: MemberPrincipal): Promise<boolean> {
+  const byId =
+    principal.kind === 'user'
+      ? eq(groupChatMember.userId, principal.userId)
+      : principal.kind === 'agent'
+        ? eq(groupChatMember.agentNodeId, principal.agentNodeId)
+        : eq(groupChatMember.systemId, principal.systemId)
   const [row] = await db
     .select({ id: groupChatMember.id })
     .from(groupChatMember)
-    .where(and(eq(groupChatMember.groupChatId, groupChatId), eq(groupChatMember.userId, userId)))
+    .where(and(eq(groupChatMember.groupChatId, groupChatId), byId))
     .limit(1)
   return !!row
 }
 
+async function isUserMember(groupChatId: string, userId: string): Promise<boolean> {
+  return isPrincipalMember(groupChatId, { kind: 'user', userId })
+}
+
 async function isAgentMember(groupChatId: string, agentNodeId: string): Promise<boolean> {
-  const [row] = await db
-    .select({ id: groupChatMember.id })
-    .from(groupChatMember)
-    .where(and(eq(groupChatMember.groupChatId, groupChatId), eq(groupChatMember.agentNodeId, agentNodeId)))
-    .limit(1)
-  return !!row
+  return isPrincipalMember(groupChatId, { kind: 'agent', agentNodeId })
 }
 
 /**
@@ -780,7 +795,10 @@ export async function deleteGroupChat(request: Request, groupChatId: string): Pr
   }
 }
 
-export type MemberPrincipal = { kind: 'user'; userId: string } | { kind: 'agent'; agentNodeId: string }
+export type MemberPrincipal =
+  | { kind: 'user'; userId: string }
+  | { kind: 'agent'; agentNodeId: string }
+  | { kind: 'system'; systemId: string }
 
 /**
  * Add a member. Any existing member may add another — phase 1's answer to
@@ -797,6 +815,17 @@ export type MemberPrincipal = { kind: 'user'; userId: string } | { kind: 'agent'
  * plain exports at all or its native-dependent import tail reaches the
  * client bundle (see that file's header). A user principal is validated
  * against the `user` table for the same reason: existence, not just shape.
+ *
+ * A system principal is the explicit grant that lets an automated pipeline —
+ * a schedule's script, the forge webhook — deliver into this chat's threads.
+ * Validated against the identities this application can actually stamp a
+ * message with (`SYSTEM_SENDER_IDS`, derived from the author map itself), on
+ * the same principle as the two above: existence, not shape. Checking the
+ * `system.` namespace instead would accept `system.scripts` — a row that
+ * authorizes nothing, reads as granted in the members list, and leaves the
+ * pipeline failing with the message that asked for it. The row IS the
+ * authorization: per-chat, listable, revocable, and checked by the same
+ * membership lookup as everyone else.
  */
 export async function addMember(request: Request, groupChatId: string, principal: MemberPrincipal): Promise<void> {
   await requireGroupChatMember(request, groupChatId)
@@ -809,6 +838,17 @@ export async function addMember(request: Request, groupChatId: string, principal
     await db
       .insert(groupChatMember)
       .values({ groupChatId, principalType: 'agent', agentNodeId: principal.agentNodeId })
+      .onConflictDoNothing()
+    return
+  }
+
+  if (principal.kind === 'system') {
+    if (!isKnownSystemSender(principal.systemId)) {
+      throw new Error(`No such system sender: "${principal.systemId}"`)
+    }
+    await db
+      .insert(groupChatMember)
+      .values({ groupChatId, principalType: 'system', systemId: principal.systemId })
       .onConflictDoNothing()
     return
   }
@@ -841,6 +881,22 @@ export async function addMember(request: Request, groupChatId: string, principal
  */
 export async function removeMember(request: Request, groupChatId: string, principal: MemberPrincipal): Promise<void> {
   await requireGroupChatMember(request, groupChatId)
+
+  if (principal.kind === 'system') {
+    // Revoking the grant. Nothing to tear down: a system sender holds no
+    // sessions and owns no threads — the row was only ever its permission to
+    // deliver, and deleting the row ends exactly that.
+    await db
+      .delete(groupChatMember)
+      .where(
+        and(
+          eq(groupChatMember.groupChatId, groupChatId),
+          eq(groupChatMember.principalType, 'system'),
+          eq(groupChatMember.systemId, principal.systemId),
+        ),
+      )
+    return
+  }
 
   if (principal.kind === 'user') {
     const userMembers = await db
@@ -899,11 +955,19 @@ export async function removeMember(request: Request, groupChatId: string, princi
     )
 }
 
-/** Members of a group chat, agents and users together. Membership-gated. */
+/** Members of a group chat — users, agents and system senders together. Membership-gated. */
 export async function listMembers(
   request: Request,
   groupChatId: string,
-): Promise<Array<{ id: string; principalType: string; userId: string | null; agentNodeId: string | null }>> {
+): Promise<
+  Array<{
+    id: string
+    principalType: string
+    userId: string | null
+    agentNodeId: string | null
+    systemId: string | null
+  }>
+> {
   await requireGroupChatMember(request, groupChatId)
   return db
     .select({
@@ -911,6 +975,7 @@ export async function listMembers(
       principalType: groupChatMember.principalType,
       userId: groupChatMember.userId,
       agentNodeId: groupChatMember.agentNodeId,
+      systemId: groupChatMember.systemId,
     })
     .from(groupChatMember)
     .where(eq(groupChatMember.groupChatId, groupChatId))
@@ -2489,16 +2554,20 @@ export async function listThreadTurnsAsAgent(
 /**
  * Send into a thread from a send-message node's graph-driven envelope — the
  * third caller of the shared delivery path, distinct from both the ones
- * above. Neither a user session nor a calling agent's own membership is the
- * right gate here: a scheduled pipeline is asking on behalf of nobody in
- * particular, so what stands in for authorization is the send-message node's
- * OWN graph wiring — the same authority `reachablePairs` already grants the
- * agent:job routing path.
+ * above, and answering to the SAME authority: membership of whoever is
+ * sending. The principal is who actually fed the run — an agent node, or a
+ * system identity like a schedule's script or the forge webhook — and it must
+ * hold a member row in the resolved thread's chat, exactly as an agent
+ * calling `sendMessageInThreadAsAgent` must. A system sender is authorized by
+ * an explicit per-chat grant row (`principalType: 'system'`), added and
+ * revoked in the members list like any other member — never by a code-side
+ * exemption for the `system.` prefix, which would be an allow-list nothing
+ * can see or revoke.
  *
- * `isReachable` is that check, handed in by the caller rather than read here:
- * the graph belongs to the node doing the sending, and this module has no
- * business holding a copy of it. This function only resolves WHICH agent a
- * thread belongs to and asks; it does not decide the answer.
+ * This replaced a gate on the sending node's agent:job graph wiring — an
+ * authority borrowed from session ROUTING that no thread pipeline for a
+ * container-run agent could ever satisfy, so every scheduled tick failed
+ * while its schedule recorded success.
  *
  * Registered with stream.ts's thread-delivery registry at server startup
  * (registerThreadDeliveryResolver) rather than imported there directly — see
@@ -2508,7 +2577,7 @@ export async function listThreadTurnsAsAgent(
 export async function deliverThreadFromNode(
   threadRef: string,
   text: string,
-  isReachable: (agentNodeId: string) => boolean,
+  principal: SendPrincipal,
   queue: QueueMode,
   sender: string,
 ): Promise<ThreadDeliveryOutcome> {
@@ -2520,8 +2589,8 @@ export async function deliverThreadFromNode(
   if (!row) {
     return { status: 'not-found' }
   }
-  if (!isReachable(row.agentNodeId)) {
-    return { status: 'not-reachable' }
+  if (!(await isPrincipalMember(row.groupChatId, principal))) {
+    return { status: 'not-a-member' }
   }
   const { queued } = await deliverIntoThread(row, text, { queue, sender })
   return { status: queued ? 'queued' : 'delivered' }

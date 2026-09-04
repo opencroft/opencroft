@@ -17,8 +17,26 @@ process.env.NODE_ENV = 'development'
 const { db, user, username: usernames } = await import('@opencroft/db')
 const { eq } = await import('drizzle-orm')
 const store = await import('./usernames')
-const { authorForCallingAgent, authorForPerson, authorForSend, authorForSourceNode, UnattributableSendError } =
-  await import('./message-author')
+const {
+  authorForPerson,
+  isKnownSystemSender,
+  SEND_MESSAGE_SYSTEM_AUTHOR,
+  senderForSend,
+  senderForSourceNode,
+  UnattributableSendError,
+} = await import('./message-author')
+
+// The author-only projections these tests were written against. Kept as local
+// views over the real exports rather than rewritten into every assertion: the
+// attribution RULES under test did not change when the sender gained its
+// principal half, and the principal itself is asserted in its own tests below.
+const authorForSourceNode = async (
+  sourceNodeId: string | undefined,
+  sourceNodes: Parameters<typeof senderForSourceNode>[1],
+) => (await senderForSourceNode(sourceNodeId, sourceNodes)).author
+const authorForSend = async (...args: Parameters<typeof senderForSend>) => (await senderForSend(...args)).author
+const authorForCallingAgent = async (agentName: string, agents: { nodeId?: string; name?: string }[]) =>
+  (await senderForSend({ callerAgent: agentName }, [], async () => agents)).author
 
 after(async () => {
   await rm(workdir, { recursive: true, force: true })
@@ -277,4 +295,71 @@ test('a caller the surface could not name is refused like no caller at all', asy
   await assert.rejects(() => authorForSend({ callerAgent: undefined }, nodes, async () => agents), {
     message: 'This message has no sender: nothing fed the node that sent it.',
   })
+})
+
+// ---------------------------------------------------------------------------
+// The principal — what a membership gate checks — is derived with the author
+// ---------------------------------------------------------------------------
+
+test('a system source yields a system principal that IS its transcript identity', async () => {
+  // One identity, both halves: the members list authorizes exactly the name
+  // the transcript shows, so a granted sender and a displayed sender can
+  // never be two different things.
+  assert.deepEqual(await senderForSourceNode('scriptnode-1', nodes), {
+    author: 'system.script',
+    principal: { kind: 'system', systemId: 'system.script' },
+  })
+  assert.deepEqual(await senderForSourceNode('webhook-1', nodes), {
+    author: 'system.webhook',
+    principal: { kind: 'system', systemId: 'system.webhook' },
+  })
+})
+
+test('every system identity this module can stamp is one a grant may name', async () => {
+  // The coupling that makes a grant mean anything, and it has two failure
+  // directions. A trigger added to the author map but missing from the
+  // grantable set is stampable-but-ungrantable: a pipeline nobody can
+  // authorize. A name in the set that nothing stamps is grantable-but-unused:
+  // a row that reads as granted and authorizes nothing. Deriving one from the
+  // other closes both; this walks the fixture the attribution tests already
+  // use, rather than a list restated here, so it still fails if the
+  // derivation is replaced by a copy.
+  let stamped = 0
+  for (const node of nodes) {
+    const sender = await senderForSourceNode(node.id, nodes).catch(() => null)
+    if (sender?.principal.kind !== 'system') {
+      continue
+    }
+    stamped += 1
+    assert.ok(
+      isKnownSystemSender(sender.principal.systemId),
+      `${node.type} stamps ${sender.principal.systemId}, which no grant could name`,
+    )
+  }
+  assert.ok(stamped >= 5, `the sweep found only ${stamped} system senders — the fixture stopped covering them`)
+
+  // The machinery's own voice is not in that map, and it is the one sender the
+  // in-thread failure reporter needs a row for.
+  assert.equal(isKnownSystemSender(SEND_MESSAGE_SYSTEM_AUTHOR), true)
+
+  // The namespace is not the population: a near-miss of a real sender is not a
+  // sender, and neither is anything else wearing the prefix.
+  assert.equal(isKnownSystemSender('system.scripts'), false)
+  assert.equal(isKnownSystemSender('system.'), false)
+  assert.equal(isKnownSystemSender('agent.alice'), false)
+})
+
+test('an agent source yields an agent principal carrying its NODE id, not its handle', async () => {
+  // Membership rows are keyed by agent node id; the handle is display. A
+  // rename must not detach an agent from its grants.
+  await store.changeUsername({ kind: 'agent', id: 'agent-1' }, 'agent.alice')
+  assert.deepEqual(await senderForSourceNode('agent-1', nodes), {
+    author: 'agent.alice',
+    principal: { kind: 'agent', agentNodeId: 'agent-1' },
+  })
+})
+
+test('a calling agent yields an agent principal for the node its name resolved to', async () => {
+  const sender = await senderForSend({ callerAgent: 'Alice' }, [], async () => agents)
+  assert.deepEqual(sender.principal, { kind: 'agent', agentNodeId: 'agent-1' })
 })

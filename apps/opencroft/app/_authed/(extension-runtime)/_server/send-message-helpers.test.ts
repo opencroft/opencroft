@@ -3,7 +3,6 @@ import test from 'node:test'
 
 import {
   buildSessionKey,
-  isAgentNodeReachable,
   parseSessionKey,
   reachableAgentJobs,
   reachablePairKey,
@@ -206,11 +205,4 @@ test('reachablePairs is exactly the flattened agent::job set', () => {
   assert.ok(pairs.has(reachablePairKey('alice', 'task')))
   assert.ok(pairs.has(reachablePairKey('alice', 'review')))
   assert.equal(pairs.size, 2, 'an agent with no job edge contributes no pairs')
-})
-
-test('isAgentNodeReachable is true only for an agent with at least one job wired to it, checked by id', () => {
-  const { nodes, edges } = reachabilityGraph()
-  assert.equal(isAgentNodeReachable(nodes, edges, 'a1'), true)
-  assert.equal(isAgentNodeReachable(nodes, edges, 'a2'), false, 'present in the space but no job routes to it')
-  assert.equal(isAgentNodeReachable(nodes, edges, 'not-a-node-id'), false)
 })

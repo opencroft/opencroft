@@ -257,17 +257,3 @@ export function reachablePairKey(agent: string, job: string): string {
 export function reachablePairs(nodes: NodeLike[], edges: EdgeLike[]): Set<string> {
   return new Set(reachableAgentJobs(nodes, edges).flatMap((a) => a.jobs.map((j) => reachablePairKey(a.agent, j))))
 }
-
-/**
- * Whether an agent NODE (identified by id, not name) has at least one job
- * wired to it in this space — the same authority `reachablePairs` grants the
- * agent:job session path, checked by identity so a caller that only knows a
- * target's node id (a group-chat thread's agent) need not resolve its current
- * display name first. An agent present in the space with zero job edges is
- * not reachable: that is exactly the state that would produce no pairs at
- * all, so a thread send must not be allowed anything a session send could not
- * already reach.
- */
-export function isAgentNodeReachable(nodes: NodeLike[], edges: EdgeLike[], agentNodeId: string): boolean {
-  return (jobsByAgentNodeId(nodes, edges).get(agentNodeId)?.length ?? 0) > 0
-}

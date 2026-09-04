@@ -157,6 +157,12 @@ function toMemberRefs(
     } else if (row.userId) {
       out.push(users.get(row.userId) ?? missingUser(row.userId))
     }
+    // A 'system' grant row (a scheduled pipeline's or webhook's delivery
+    // authorization — see groupChatMember in the schema) carries neither id
+    // column and is not surfaced in this view yet: MemberRef feeds kit
+    // components typed to user | agent, and widening a kit-tracked component
+    // is its own kit-first change. The grant stays listable and revocable
+    // through listGroupChatMembers / removeGroupChatMember meanwhile.
   }
   return out
 }

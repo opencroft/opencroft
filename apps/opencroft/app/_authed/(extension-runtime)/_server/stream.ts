@@ -34,7 +34,6 @@ import { reportSendFailure } from '@/app/_authed/(extension-runtime)/_server/sen
 import {
   type AgentContext,
   buildSessionKey,
-  isAgentNodeReachable,
   parseSessionKey,
   resolveSessionOnGraph,
   type EdgeLike as SmEdgeLike,
@@ -48,7 +47,12 @@ import {
 } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import { findExtensionHandle, type NodeMetadata } from '@/app/_authed/(extension-runtime)/_types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
-import { authorForSourceNode, SEND_MESSAGE_SYSTEM_AUTHOR } from '@/app/_server/message-author'
+import {
+  type AttributedSender,
+  SEND_MESSAGE_SYSTEM_AUTHOR,
+  type SendPrincipal,
+  senderForSourceNode,
+} from '@/app/_server/message-author'
 import type { StreamChunkPayload } from '@/lib/sse-events'
 import { toastStore } from '@/lib/toast-store'
 
@@ -319,14 +323,18 @@ async function persistToDownstreamSendMessages(
     try {
       // `sourceNodeId` is the node whose stream produced this text -- what the
       // run observed, not what the graph has wired to the handle.
-      const author = await authorForSourceNode(sourceNodeId, nodes)
-      await deliverToSendMessageNode(target, nodes, edges, text, author)
+      const sender = await senderForSourceNode(sourceNodeId, nodes)
+      await deliverToSendMessageNode(target, nodes, edges, text, sender)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      // A thread refusal hands the caller one collapsed sentence and carries
+      // its cause separately; this is the server side, which is where the
+      // cause is meant to land. Anything else has only its message.
+      const reason =
+        err instanceof ThreadDeliveryRefusal ? err.detail : err instanceof Error ? err.message : String(err)
       // Unconditionally, and first. Whatever else a failure manages to reach,
       // the log entry is the one report that cannot itself fail.
-      console.error(`[send-message] Failed to send via node ${target.id}:`, msg)
-      await reportFailedSend(target, nodes, edges, text, msg)
+      console.error(`[send-message] Failed to send via node ${target.id}:`, reason)
+      await reportFailedSend(target, nodes, edges, text, reason)
     }
   }
 }
@@ -340,17 +348,20 @@ async function persistToDownstreamSendMessages(
  * no recovered case that would be noise to report.
  *
  * The report travels through `deliverToSendMessageNode` like any other message
- * from this node, so it inherits the same thread resolution and the same
- * reachability authority, and cannot reach a thread an ordinary send could
- * not. It cannot loop: the delivery this uses is the one below, while the
- * catch that calls it is in the loop above.
+ * from this node, so it answers to the same authority — but as ITSELF, under
+ * `system.send-message`, not under whoever's send failed. That is a different
+ * principal and therefore a different member row: a send refused for want of a
+ * grant can still be reported, provided the reporter holds one of its own.
+ * It cannot loop: the delivery this uses is the one below, while the catch
+ * that calls it is in the loop above.
  *
  * THE ONE FAILURE IT CANNOT CARRY is a failure of the destination itself. If a
- * message could not be delivered because its thread is unreachable, a report
- * aimed at that same thread is unreachable for the same reason, and the log is
- * again all there is. Named here rather than left to be discovered: it is the
- * residue this change does not close, and closing it needs a destination that
- * does not depend on the one that just failed.
+ * message could not be delivered because its thread does not resolve, a report
+ * aimed at that same thread does not resolve either, and the log is again all
+ * there is — as it is when the reporter has no grant in the chat. Named here
+ * rather than left to be discovered: it is the residue this change does not
+ * close, and closing it needs a destination that does not depend on the one
+ * that just failed.
  */
 async function reportFailedSend(
   target: GraphNodeLike,
@@ -377,13 +388,10 @@ async function reportFailedSend(
   }
   await reportSendFailure({ nodeId: target.id, reason, threadRef }, async (thread, message) => {
     try {
-      await deliverToSendMessageNode(
-        target,
-        nodes,
-        edges,
-        JSON.stringify({ thread, queue: 'wait', message }),
-        SEND_MESSAGE_SYSTEM_AUTHOR,
-      )
+      await deliverToSendMessageNode(target, nodes, edges, JSON.stringify({ thread, queue: 'wait', message }), {
+        author: SEND_MESSAGE_SYSTEM_AUTHOR,
+        principal: { kind: 'system', systemId: SEND_MESSAGE_SYSTEM_AUTHOR },
+      })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`[send-message] Could not report a failed send into thread ${thread}:`, msg)
@@ -469,28 +477,70 @@ export type SendMessageDeliveryResult =
   | { kind: 'thread'; threadRef: string; status: 'queued' | 'delivered' }
 
 /**
- * Resolve a thread reference against a running turn and this send-message
- * node's own graph wiring, and either deliver or refuse — the group-chat
+ * Resolve a thread reference and either deliver or refuse — the group-chat
  * counterpart to the agent:job path below. Registered by group-chats' own
  * server startup (registerThreadDeliveryResolver), NOT imported here: this
  * module knows nothing about group chats specifically, the same reason
  * StandingContextResolver exists rather than an import of group-chat code
  * (see registerStandingContextResolver above).
  *
- * The reachability predicate is passed IN rather than the resolver reading
- * the graph itself, because the graph belongs to the caller (this node's own
- * space) — a thread's target agent must be checked against the SAME
- * authority reachablePairs grants the agent:job path, and that authority is
- * a property of the node doing the sending, not of the thread being sent to.
+ * The authority is MEMBERSHIP OF THE SENDER: the principal — which agent
+ * node, or which system identity, actually fed this send — must hold a
+ * member row in the resolved thread's chat. The same single check every
+ * other way into a thread answers to, with a system sender authorized by an
+ * explicit per-chat grant row rather than by any property of the graph. The
+ * previous authority here was the agent:job wiring (isAgentNodeReachable),
+ * which no node-driven pipeline could ever satisfy for a container-run
+ * agent: every scheduled tick and webhook delivery failed as
+ * "not reachable" while the schedule recorded success.
  */
 export type ThreadDeliveryOutcome =
   | { status: 'queued' | 'delivered' }
   | { status: 'not-found' }
-  | { status: 'not-reachable' }
+  | { status: 'not-a-member' }
+
+/**
+ * The single refusal a thread delivery produces, whatever the cause.
+ *
+ * `message` is what the CALLER is told, and it is deliberately the same
+ * sentence for a reference that resolves to nothing and for a real thread the
+ * sender holds no grant in. Neither caller of the delivery below is
+ * necessarily an operator: one is the graph wiring, the other is
+ * `sendMessageApi.send`, whose `callerAgent` branch is an agent invoking the
+ * node action over MCP and which does not catch — the throw reaches it as
+ * written. A refusal naming the cause would let that agent sort thread
+ * references into real and invented, which is precisely the disclosure the
+ * group-chat lookups collapse into `UNAVAILABLE` (model.ts, above that
+ * constant: "if a future refusal needs detail for an operator, it belongs in a
+ * server-side log, never in what is returned").
+ *
+ * `detail` is that same refusal WITH its cause, for the server side alone —
+ * the log line, and the failure report delivered into the chat, both of which
+ * reach someone already inside it. It is a prototype getter over a private
+ * field rather than an own property, so a serializer reaching for the error's
+ * own keys cannot pick it up: the collapse then holds because of what the
+ * object is, not because every call site remembered to read `.message`.
+ *
+ * The outcome above keeps the two causes apart because the server side needs
+ * to know which one to write down. Only the caller's copy is collapsed.
+ */
+export class ThreadDeliveryRefusal extends Error {
+  readonly #detail: string
+  constructor(message: string, detail?: string) {
+    super(message)
+    this.name = 'ThreadDeliveryRefusal'
+    this.#detail = detail ?? message
+  }
+  /** The cause, for server-side reporting only — see the class header. */
+  get detail(): string {
+    return this.#detail
+  }
+}
+
 export type ThreadDeliveryResolver = (
   threadRef: string,
   text: string,
-  isReachable: (agentNodeId: string) => boolean,
+  principal: SendPrincipal,
   queue: QueueMode,
   sender: string,
 ) => Promise<ThreadDeliveryOutcome>
@@ -540,9 +590,11 @@ export async function deliverToSendMessageNode(
   edges: GraphEdgeLike[],
   text: string,
   // Who this message is from, already established by the caller from what fed
-  // the run. Required rather than optional: an optional author is an author
-  // that can be omitted, and this whole change exists because it was.
-  author: string,
+  // the run — the transcript author and the principal the membership gate
+  // checks, derived together (see AttributedSender). Required rather than
+  // optional: an optional sender is a sender that can be omitted, and this
+  // whole change exists because it was.
+  sender: AttributedSender,
 ): Promise<SendMessageDeliveryResult | null> {
   const parsed = tryParseJsonMessage(text)
   if (parsed?.thread) {
@@ -550,22 +602,39 @@ export async function deliverToSendMessageNode(
       throw new Error('A message may target a thread or an agent/job session, not both')
     }
     const threadRef = parsed.thread.trim()
-    const isReachable = (agentNodeId: string) =>
-      isAgentNodeReachable(nodes as unknown as SmNodeLike[], edges as unknown as SmEdgeLike[], agentNodeId)
     let outcome: ThreadDeliveryOutcome = { status: 'not-found' }
     for (const resolver of threadDeliveryResolvers) {
-      outcome = await resolver(threadRef, parsed.message, isReachable, parsed.queue, author)
+      outcome = await resolver(threadRef, parsed.message, sender.principal, parsed.queue, sender.author)
       if (outcome.status !== 'not-found') {
         break
       }
     }
-    if (outcome.status === 'not-found' || outcome.status === 'not-reachable') {
-      throw new Error(`Thread not reachable from this node: ${threadRef || '(empty)'}`)
+    // One sentence for both causes. It names only the reference the caller
+    // itself supplied, and "not available" rather than "not reachable"
+    // because reachability was the authority this change removed — what is
+    // being said now is that this node has nothing to deliver into, without
+    // saying which of the two reasons applies.
+    const refusal = `Thread not available from this node: ${threadRef || '(empty)'}`
+    if (outcome.status === 'not-found') {
+      throw new ThreadDeliveryRefusal(refusal)
+    }
+    if (outcome.status === 'not-a-member') {
+      // The cause travels as `detail`, which reaches the log and the in-thread
+      // failure report and stops there. It is worth carrying because the
+      // collapsed message alone is what let this path fail identically for a
+      // week whether the reference was wrong or the sender unauthorized —
+      // someone reading the report can act on this one by adding the row it
+      // names.
+      throw new ThreadDeliveryRefusal(
+        refusal,
+        `Sender ${sender.author} is not a member of that thread's chat (${threadRef}); ` +
+          `grant it membership there to authorize this delivery`,
+      )
     }
     return { kind: 'thread', threadRef, status: outcome.status }
   }
 
-  const route = resolveRoute(text, target, nodes, edges, author)
+  const route = resolveRoute(text, target, nodes, edges, sender.author)
   if (!route) {
     return null
   }

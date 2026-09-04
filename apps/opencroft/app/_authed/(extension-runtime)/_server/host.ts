@@ -51,7 +51,7 @@ import { getSettingImpl, setSettingImpl } from '@/app/_authed/(settings)/_server
 import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
-import { authorForSend } from '@/app/_server/message-author'
+import { senderForSend } from '@/app/_server/message-author'
 import { toastStore } from '@/lib/toast-store'
 import { cacheDir } from '@/server/cache'
 import { decrypt, encrypt } from '@/server/crypto'
@@ -669,16 +669,16 @@ const sendMessageApi: HostSendMessageApi = {
     // Established before anything is delivered, so an unattributable send
     // fails instead of arriving with the wrong name on it.
     //
-    // Both facts are handed over and `authorForSend` decides between them --
+    // Both facts are handed over and `senderForSend` decides between them --
     // see it for the order and for why the agent listing is a thunk rather
     // than a list.
-    const author = await authorForSend({ sourceNodeId, callerAgent }, found.nodes, listAgentNodesImpl)
+    const sender = await senderForSend({ sourceNodeId, callerAgent }, found.nodes, listAgentNodesImpl)
     const result = await deliverToSendMessageNode(
       found.node as unknown as SendMessageNodeLike,
       found.nodes,
       found.edges,
       JSON.stringify(payload),
-      author,
+      sender,
     )
     if (!result) {
       throw new Error(
