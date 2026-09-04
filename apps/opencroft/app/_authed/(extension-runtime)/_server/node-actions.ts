@@ -8,9 +8,10 @@ import { createServerFn } from '@tanstack/react-start'
 
 import {
   dispatchNodeActionImpl,
+  getNodeActionAccess,
   listNodeActionsImpl,
 } from '@/app/_authed/(extension-runtime)/_server/node-actions-impl'
-import { requireSessionServerFn } from '@/app/_server/require-session'
+import { requireAdminServerFn, requireSessionServerFn } from '@/app/_server/require-session'
 import type { NodeActionDescriptor } from '@/app/_authed/(extension-runtime)/_types'
 
 // Client-callable wrapper — see node-actions-impl.ts's listNodeActionsImpl for why
@@ -37,5 +38,13 @@ export const dispatchNodeAction = createServerFn({ method: 'POST', strict: { out
   .inputValidator((data: { nodeId: string; actionId: string; params?: Record<string, unknown> }) => data)
   .handler(async ({ data }): Promise<unknown> => {
     await requireSessionServerFn()
+    // Per-node-action admin gate, after the session gate: an action the owning
+    // extension declared `admin` in its `nodeActionAccess` is refused for a
+    // signed-in non-admin (a real 403). Identity comes from the request, never
+    // the payload. The Impl (dispatchNodeActionImpl) stays ungated — internal
+    // callers (exec-dispatch, the MCP tool path) reach it directly, not here.
+    if ((await getNodeActionAccess(data.nodeId, data.actionId)) === 'admin') {
+      await requireAdminServerFn()
+    }
     return dispatchNodeActionImpl(data)
   })

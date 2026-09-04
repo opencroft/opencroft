@@ -32,6 +32,8 @@ interface CachedModule {
   actionAccess?: Record<string, ActionAccess>
   exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
   nodeActions?: Record<string, Record<string, NodeActionHandler>>
+  /** Per-node-action authorization policy, keyed typeId then actionId, declared alongside `nodeActions`; an action it does not list is 'signed-in'. */
+  nodeActionAccess?: Record<string, Record<string, ActionAccess>>
   routes?: Record<string, ExtensionRouteHandler>
   tools?: ExtensionToolHandlers
   load?: ExtensionLifecycle
@@ -254,6 +256,7 @@ interface ExtensionServerModule {
   actionAccess?: Record<string, ActionAccess>
   exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
   nodeActions?: Record<string, Record<string, NodeActionHandler>>
+  nodeActionAccess?: Record<string, Record<string, ActionAccess>>
   routes?: Record<string, ExtensionRouteHandler>
   tools?: ExtensionToolHandlers
   load?: ExtensionLifecycle
@@ -263,6 +266,7 @@ interface ExtensionServerModule {
     actionAccess?: Record<string, ActionAccess>
     exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
     nodeActions?: Record<string, Record<string, NodeActionHandler>>
+    nodeActionAccess?: Record<string, Record<string, ActionAccess>>
     routes?: Record<string, ExtensionRouteHandler>
     tools?: ExtensionToolHandlers
     load?: ExtensionLifecycle
@@ -319,6 +323,7 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
     const actionAccess = exported.actionAccess ?? exported.default?.actionAccess ?? {}
     const exposeOutput = exported.exposeOutput ?? exported.default?.exposeOutput
     const nodeActions = exported.nodeActions ?? exported.default?.nodeActions
+    const nodeActionAccess = exported.nodeActionAccess ?? exported.default?.nodeActionAccess ?? {}
     const routes = exported.routes ?? exported.default?.routes
     const tools = exported.tools ?? exported.default?.tools
     const load = exported.load ?? exported.default?.load
@@ -330,6 +335,7 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
       actionAccess,
       exposeOutput,
       nodeActions,
+      nodeActionAccess,
       routes,
       tools,
       load,

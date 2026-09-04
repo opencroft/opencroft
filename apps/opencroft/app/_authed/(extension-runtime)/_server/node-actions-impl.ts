@@ -1,6 +1,6 @@
 import { resolveGraphContexts } from '@/app/_authed/(extension-runtime)/_server/graph-context-resolver'
 import type { GraphSnapshot } from '@/app/_authed/(extension-runtime)/_server/host'
-import { getExtensionModule, loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
+import { type ActionAccess, getExtensionModule, loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { getStream } from '@/app/_authed/(extension-runtime)/_server/stream'
 import type {
   ConnectedSource,
@@ -75,6 +75,46 @@ export async function findNodeWithGraph(nodeId: string): Promise<FoundNode | nul
     return { slug: summary.slug, graph, node }
   }
   return null
+}
+
+// The node's typeId from the live registry, without the context resolution
+// findNodeWithGraph does — the admin gate needs only the type to find the owning
+// extension's declared policy, not resolved inputs.
+async function findNodeTypeId(nodeId: string): Promise<string | undefined> {
+  const r = getSpacesRegistry()
+  await r.ensureLoaded()
+  for (const summary of r.list()) {
+    const space = r.getBySlug(summary.slug)
+    if (!space) {
+      continue
+    }
+    const node = (space.graph.nodes as unknown as GraphNodeLike[]).find((n) => n.id === nodeId)
+    if (node) {
+      return node.type
+    }
+  }
+  return undefined
+}
+
+// The extension-declared authorization policy for one NODE action, resolved the
+// same way dispatchNodeActionImpl resolves the handler (node -> typeId -> owning
+// extension) so the two cannot disagree about what an action is. Consumed by the
+// request-facing dispatchNodeAction serverFn — the only layer that can identify
+// the caller. An action the owning extension does not list is 'signed-in', so
+// this changes nothing until a node action opts in. The Impl stays ungated:
+// internal callers (exec-dispatch, the MCP tool path) never pass through here.
+export async function getNodeActionAccess(nodeId: string, actionId: string): Promise<ActionAccess> {
+  const typeId = await findNodeTypeId(nodeId)
+  if (!typeId) {
+    return 'signed-in'
+  }
+  const manifests = await loadAllManifests()
+  const owning = manifests.find((m) => m.nodes?.some((n) => n.typeId === typeId))
+  if (!owning) {
+    return 'signed-in'
+  }
+  const mod = await getExtensionModule(owning.id)
+  return mod.nodeActionAccess?.[typeId]?.[actionId] ?? 'signed-in'
 }
 
 function nodesAsLike(graph: GraphData): GraphNodeLike[] {
