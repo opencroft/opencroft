@@ -3,6 +3,7 @@
 // calls its own membership check. This file exists only to give the browser
 // something to call; see admin-users-actions.ts for the same split.
 
+import { AdminActionError, requireAdminUser } from '@opencroft/auth/server'
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 import type { QueueMode } from 'agent-client/types'
@@ -34,6 +35,7 @@ import {
   openThreadSession,
   removeMember,
   removePin,
+  migrateThreadSessionKeysImpl,
   renameGroupChat,
   renameThread,
   resolveGroupChatBySlug,
@@ -504,3 +506,18 @@ export const deleteMyGroupChat = createServerFn({ method: 'POST', strict: { outp
 export const clearGroupChatThread = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((threadId: string) => threadId)
   .handler(async ({ data: threadId }): Promise<void> => clearThread(getRequest(), threadId))
+
+
+// The one deliberate exception to this file's no-authorization rule, with the
+// same shape the settings CRUD guards use: re-keying every stored thread is an
+// instance-control lever, not a member operation, so no membership check in
+// the model can stand in for it. The helper returns the admin or null — the
+// result is acted on, never dropped.
+export const migrateThreadSessionKeys = createServerFn({ method: 'POST' })
+  .inputValidator((data: { apply?: boolean } = {}) => data)
+  .handler(async ({ data }) => {
+    if (!(await requireAdminUser(getRequest()))) {
+      throw new AdminActionError('forbidden', 'Only an administrator can migrate thread session keys')
+    }
+    return migrateThreadSessionKeysImpl({ apply: data.apply === true })
+  })

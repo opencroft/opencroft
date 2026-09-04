@@ -46,6 +46,7 @@ process.env.NODE_ENV = 'development'
 const {
   db,
   space,
+  agentQueueEntry: agentQueueEntryTable,
   groupChat,
   groupChatMember,
   groupChatPin,
@@ -2973,13 +2974,13 @@ test('a thread key reads as a channel path, and a named thread carries its title
 
   const named = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Code Review' })
   await waitForPrompts(prompts, 1)
-  assert.equal(named.thread.sessionKey, 'group-chat:key-shapes:agent-session:code-review')
+  assert.equal(named.thread.sessionKey, 'group-chat.key-shapes.agent-session.code-review')
 
   const adhoc = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'second')
   await waitForPrompts(prompts, 2)
   // Ad-hoc threads get a short hash: most threads mean nothing, and a number
   // would imply an order that means even less.
-  assert.match(adhoc.thread.sessionKey, /^group-chat:key-shapes:agent-session:[0-9a-f]{8}$/)
+  assert.match(adhoc.thread.sessionKey, /^group-chat\.key-shapes\.agent-session\.[0-9a-f]{8}$/)
 })
 
 test('a thread title whose slug is already taken for that agent is refused', async () => {
@@ -3048,10 +3049,10 @@ test('two threads sharing a slug in one chat are addressed apart by the agent in
   await waitForPrompts(promptsFirst, 1)
   await waitForPrompts(promptsSecond, 1)
 
-  assert.equal(first.thread.sessionKey, 'group-chat:ambiguous:agent-session:code-review')
+  assert.equal(first.thread.sessionKey, 'group-chat.ambiguous.agent-session.code-review')
   assert.equal(
     second.thread.sessionKey,
-    'group-chat:ambiguous:agent-session-two:code-review',
+    'group-chat.ambiguous.agent-session-two.code-review',
     'the same thread slug under a different agent is legal — the agent segment is what separates them',
   )
 
@@ -3203,7 +3204,7 @@ test('renaming a chat re-keys every thread in it, and the live session comes wit
   const retro = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'second', { title: 'Retro' })
   await waitForPrompts(prompts, 2)
   const oldKey = standup.thread.sessionKey
-  assert.equal(oldKey, 'group-chat:shipping-train:agent-session:standup')
+  assert.equal(oldKey, 'group-chat.shipping-train.agent-session.standup')
 
   // What a real session carries besides its transcript, and what a rename that
   // moved only the row would silently leave behind.
@@ -3217,11 +3218,11 @@ test('renaming a chat re-keys every thread in it, and the live session comes wit
   await model.renameGroupChat(reqAs(owner), chat.id, 'Delivery Train')
 
   // Every thread, not just the one that was looked at.
-  const newKey = 'group-chat:delivery-train:agent-session:standup'
+  const newKey = 'group-chat.delivery-train.agent-session.standup'
   assert.equal((await model.getThread(reqAs(owner), standup.thread.id)).sessionKey, newKey)
   assert.equal(
     (await model.getThread(reqAs(owner), retro.thread.id)).sessionKey,
-    'group-chat:delivery-train:agent-session:retro',
+    'group-chat.delivery-train.agent-session.retro',
   )
 
   // The durable pointer is the one that decides whether reopening finds the
@@ -3312,7 +3313,7 @@ test('renaming a thread moves its slug and its key, and keeps everything the thr
 
   const after = await model.getThread(reqAs(owner), started.thread.id)
   assert.equal(after.title, 'Daily Standup')
-  assert.equal(after.sessionKey, 'group-chat:thread-renames:agent-session:daily-standup')
+  assert.equal(after.sessionKey, 'group-chat.thread-renames.agent-session.daily-standup')
   assert.equal(after.draft, 'half-typed message', 'the draft is on the row and must survive the move')
   assert.equal((await sessionStore.readPersistedSession(after.sessionKey))?.id, started.sessionId)
   assert.equal(await sessionStore.readPersistedSession(oldKey), null)
@@ -3482,8 +3483,8 @@ test('a rename that would collide on the session key is refused before anything 
   await waitForPrompts(prompts, 2)
 
   // The two share an agent segment, so the mover's target IS the victim's key.
-  assert.equal(victim.thread.sessionKey, 'group-chat:twin-agents:twin-agent:alpha')
-  assert.equal(mover.thread.sessionKey, 'group-chat:twin-agents:twin-agent:beta')
+  assert.equal(victim.thread.sessionKey, 'group-chat.twin-agents.twin-agent.alpha')
+  assert.equal(mover.thread.sessionKey, 'group-chat.twin-agents.twin-agent.beta')
 
   const refusal = await captureRefusal(() => model.renameThread(reqAs(owner), mover.thread.id, 'Alpha'))
   assert.equal(refusal.code, 'slug-taken')
@@ -3612,7 +3613,7 @@ test('an agent starts a thread for a colleague who has none, and the first messa
   assert.equal(started.thread.agentNodeId, 'agent-session-2', 'the thread is addressed to the NAMED agent')
   assert.match(
     started.thread.sessionKey,
-    /^group-chat:agent-start-delegation:agent-session-two:/,
+    /^group-chat\.agent-start-delegation\.agent-session-two\./,
     'same session key shape a UI-created thread gets -- one mint, one format',
   )
 })
@@ -3632,9 +3633,9 @@ test('an agent-started thread is indistinguishable from a UI-started one', async
   })
 
   // Same title-to-slug rule on both paths, so the address reads the same way.
-  assert.match(byUser.thread.sessionKey, /:made-by-hand$/)
-  assert.match(byAgent.thread.sessionKey, /:made-by-agent$/)
-  const shapeOf = (key: string) => key.split(':').length
+  assert.match(byUser.thread.sessionKey, /\.made-by-hand$/)
+  assert.match(byAgent.thread.sessionKey, /\.made-by-agent$/)
+  const shapeOf = (key: string) => key.split('.').length
   assert.equal(shapeOf(byAgent.thread.sessionKey), shapeOf(byUser.thread.sessionKey))
 
   // The one field that legitimately differs, and it is provenance rather than
@@ -3796,8 +3797,8 @@ test('the ref handed out is the dotted form, and it is what the key says', async
 
   assert.equal(
     started.thread.sessionKey,
-    'group-chat:emitted-refs:agent-session:standup',
-    'storage is unchanged -- this is a display change, not a change of address',
+    'group-chat.emitted-refs.agent-session.standup',
+    'dots are stored AND emitted -- the ref below is the key minus its prefix, no conversion',
   )
   assert.equal(model.threadRefFromSessionKey(started.thread.sessionKey), 'emitted-refs.agent-session.standup')
 
@@ -3882,4 +3883,187 @@ test('an address already taken is refused in terms of the address', async () => 
   )
   assert.equal(refusal.code, 'slug-taken')
   assert.match(refusal.message, /contested/, 'the caller chose the address, so the address is what it hears about')
+})
+
+// ── the colon→dot key migration ──────────────────────────────────────────
+
+test('the migration moves a colon-era thread — row, queue, pointer, live registry — and aliases the old key', async () => {
+  const owner = await makeUser('mig-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'migration era')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  // The node-driven delivery below is authorized by membership, so the system
+  // sender holds an explicit member row like any other participant.
+  await model.addMember(reqAs(owner), chat.id, NODE_PRINCIPAL)
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening', { title: 'Legacy' })
+  await waitForPrompts(prompts, 1)
+
+  // Forge the colon era: the thread as a pre-migration database holds it.
+  // Every store is moved back by the same seams the forward move uses, so the
+  // starting state is exactly what the migration will find in the field.
+  const dotKey = started.thread.sessionKey
+  assert.match(dotKey, /^group-chat\.migration-era\.agent-session\.legacy$/, 'precondition: new mints are dot-form')
+  const colonKey = 'group-chat:migration-era:agent-session:legacy'
+  const pointer = await sessionStore.readPersistedSession(dotKey)
+  assert.ok(pointer, 'precondition: the thread has a durable pointer to move')
+  await db.update(groupChatThread).set({ sessionKey: colonKey }).where(eq(groupChatThread.id, started.thread.id))
+  await sessionStore.writePersistedSession(colonKey, pointer.id, pointer.prompted)
+  await sessionStore.deletePersistedSession(dotKey)
+  agentClient.renameSessionKey(dotKey, colonKey)
+  const { queueStore } = await import('@/app/_authed/(agent)/_server/queue-store')
+  await queueStore.append(
+    colonKey,
+    { id: 'mig-held-1', kind: 'message', sender: 'Reader', sentAt: new Date().toISOString(), text: 'held across the migration' },
+    'end',
+  )
+
+  // Counted across the migration rather than after it, because a delivered
+  // entry is MARKED rather than deleted — the opening message is still a row
+  // under the dot key, so what has to hold is that the two sides add up, not
+  // that the new key holds exactly the one entry this test appended.
+  const queuedBefore = {
+    dot: (await db.select().from(agentQueueEntryTable).where(eq(agentQueueEntryTable.sessionKey, dotKey))).length,
+    colon: (await db.select().from(agentQueueEntryTable).where(eq(agentQueueEntryTable.sessionKey, colonKey))).length,
+  }
+  assert.ok(queuedBefore.colon > 0, 'precondition: the colon key holds the entry that has to survive the move')
+
+  // Dry run: reports the move and the censuses, writes nothing.
+  const dry = await model.migrateThreadSessionKeysImpl({ apply: false })
+  assert.equal(dry.applied, false)
+  // The database is shared across this file's tests, so earlier fixtures'
+  // colon threads appear in the same report — scope to this test's own key.
+  assert.deepEqual(
+    dry.moves.filter((m) => m.from === colonKey).map((m) => ({ from: m.from, to: m.to })),
+    [{ from: colonKey, to: dotKey }],
+  )
+  assert.equal(
+    (await db.select().from(groupChatThread).where(eq(groupChatThread.id, started.thread.id)))[0]?.sessionKey,
+    colonKey,
+    'a dry run changes nothing',
+  )
+
+  // Apply.
+  const run = await model.migrateThreadSessionKeysImpl({ apply: true })
+  assert.equal(run.applied, true)
+  const mine = run.moves.find((m) => m.from === colonKey)
+  assert.ok(mine, 'the forged colon thread is among the moves')
+  assert.equal(mine.pointerMoved, true, 'the durable pointer answers under the new key')
+  // Not zero: the census counts every colon-PREFIXED key, and a key that is
+  // not four slug segments is deliberately left as found. Tying the two
+  // together is the stronger statement anyway — every colon key still stored
+  // is one this run named, rather than a count that happened to be zero.
+  assert.equal(
+    run.stores.threads.colon,
+    run.skipped.length,
+    'the only colon keys left are the ones the run reported leaving, with reasons',
+  )
+
+  // Store by store, read rather than inferred.
+  assert.equal(
+    (await db.select().from(groupChatThread).where(eq(groupChatThread.id, started.thread.id)))[0]?.sessionKey,
+    dotKey,
+  )
+  const held = await db.select().from(agentQueueEntryTable).where(eq(agentQueueEntryTable.sessionKey, dotKey))
+  assert.equal(held.length, queuedBefore.dot + queuedBefore.colon, 'everything that was under either key is under the new one, and nothing was dropped')
+  assert.ok(
+    held.some((e) => e.id === 'mig-held-1'),
+    'the held message moved with the key — by identity, since a count alone cannot tell which entries these are',
+  )
+  assert.deepEqual(
+    await db.select().from(agentQueueEntryTable).where(eq(agentQueueEntryTable.sessionKey, colonKey)),
+    [],
+    'nothing is left under the old key',
+  )
+  assert.equal((await sessionStore.readPersistedSession(dotKey))?.id, pointer.id)
+  assert.equal(await sessionStore.readPersistedSession(colonKey), null)
+  const [alias] = await db.select().from(groupChatThreadAlias).where(eq(groupChatThreadAlias.sessionKey, colonKey))
+  assert.equal(alias?.threadId, started.thread.id, 'the freed colon address is aliased, not dropped')
+
+  // The old spelling still delivers — through the alias, into the same session.
+  const before = agentClient.listSessions().length
+  const viaAlias = await model.deliverThreadFromNode(colonKey, 'addressed by the old spelling', NODE_PRINCIPAL, 'wait', 'Node')
+  // Named, because the two refusals a delivery can give are one sentence to
+  // the caller: without this, a sender that lost its grant and an address that
+  // resolves to nothing both surface here as a prompt that never arrives.
+  assert.equal(viaAlias.status === 'not-found' || viaAlias.status === 'not-a-member', false)
+  await waitForPrompts(prompts, 2)
+  assert.match(prompts[1] ?? '', /addressed by the old spelling/)
+  assert.equal(agentClient.listSessions().length, before, 'the alias lands in the same session, not a fresh one')
+
+  // Runs safely twice: the second pass finds nothing colon-shaped.
+  const again = await model.migrateThreadSessionKeysImpl({ apply: true })
+  assert.deepEqual(again.moves, [], 'the second run finds nothing colon-shaped left')
+  assert.equal(again.stores.threads.colon, again.skipped.length)
+})
+
+// The reference a surface hands out has to name the thread it came from, for
+// every shape the store actually HOLDS rather than only the ones minting
+// produces. Proven by where the delivery lands — a status says the lookup
+// found something, and the queue row says it found the right thing.
+test('every stored key shape survives the round trip out to a reference and back', async () => {
+  const owner = await makeUser('roundtrip-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Round Trip')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, NODE_PRINCIPAL)
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+
+  const shapes: Array<{ title: string; rekey: string | null }> = [
+    // As minted today.
+    { title: 'Minted', rekey: null },
+    // As the store held it before the migration.
+    { title: 'Colon', rekey: 'group-chat:round-trip:agent-session:colon-era' },
+    // Four colon segments, but the last carries a dot as DATA, so nothing may
+    // respell it in either direction.
+    { title: 'Dotted', rekey: 'group-chat:round-trip:agent-session:v1.2.3' },
+    // From before slugs existed: one opaque segment, no structure to convert.
+    { title: 'PreSlug', rekey: 'group-chat:0f83a1c2-before-slugs' },
+  ]
+
+  for (const { title, rekey } of shapes) {
+    const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening', { title })
+    if (rekey) {
+      await db.update(groupChatThread).set({ sessionKey: rekey }).where(eq(groupChatThread.id, started.thread.id))
+    }
+    const stored = rekey ?? started.thread.sessionKey
+    const ref = model.threadRefFromSessionKey(stored)
+    const marker = `round trip ${title}`
+    const outcome = await model.deliverThreadFromNode(ref, marker, NODE_PRINCIPAL, 'wait', 'Node')
+    assert.equal(
+      outcome.status === 'not-found' || outcome.status === 'not-a-member',
+      false,
+      `${title}: the reference this key emits (${ref}) resolved to nothing`,
+    )
+    const landed = await db.select().from(agentQueueEntryTable).where(eq(agentQueueEntryTable.sessionKey, stored))
+    assert.ok(
+      landed.some((entry) => entry.text.includes(marker)),
+      `${title}: the delivery resolved, but landed under a different key than ${stored}`,
+    )
+  }
+})
+
+test('the migration leaves a pre-slug key exactly as found, and says so', async () => {
+  const owner = await makeUser('mig-preslug-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'migration preslug')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening')
+  await waitForPrompts(prompts, 1)
+  // A key from before slugs: colon-prefixed, but its segments are ids, not a
+  // four-segment slug triple.
+  const preSlug = 'group-chat:0f83a1c2-legacy-id'
+  await db.update(groupChatThread).set({ sessionKey: preSlug }).where(eq(groupChatThread.id, started.thread.id))
+
+  const run = await model.migrateThreadSessionKeysImpl({ apply: true })
+  assert.ok(!run.moves.some((m) => m.from === preSlug), 'a pre-slug key is never among the moves')
+  const skip = run.skipped.find((entry) => entry.sessionKey === preSlug)
+  assert.ok(skip, 'the skip is reported, not silent')
+  assert.match(skip.reason, /left as found/)
+  assert.equal(
+    (await db.select().from(groupChatThread).where(eq(groupChatThread.id, started.thread.id)))[0]?.sessionKey,
+    preSlug,
+    'a working address is not broken to tidy a spelling',
+  )
 })
