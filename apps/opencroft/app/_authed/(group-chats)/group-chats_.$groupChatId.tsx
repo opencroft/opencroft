@@ -210,7 +210,17 @@ function GroupChatDetailPage() {
           </Empty>
         }
         composer={
-          <GroupChatStartThreadComposer groupChatId={groupChatId} members={chat.members} onThreadStarted={goToThread} />
+          <GroupChatStartThreadComposer
+            groupChatId={groupChatId}
+            members={chat.members}
+            // The invalidate lives here rather than in the composer: what
+            // follows a started thread (reload this route, navigate into it)
+            // is this screen's business, and the embedded surface reusing the
+            // composer has no route to invalidate.
+            onThreadStarted={(threadId) => {
+              void router.invalidate().then(() => goToThread(threadId))
+            }}
+          />
         }
       />
 

@@ -16,6 +16,7 @@ import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
 import * as uiKit from 'ui/ext'
+import { useIsMobile } from 'ui/hooks/use-mobile'
 
 import { CommandBar, CommandBarMenu, CommandBarMenuItem } from '@/app/_authed/(dashboard)/_canvas/command-bar'
 import { inspectorIntent, useInspectorIntent } from '@/app/_authed/(dashboard)/_canvas/inspector-intent'
@@ -23,6 +24,7 @@ import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/_authed/(dashbo
 import { NodeFrame, useNodeAccent } from '@/app/_authed/(dashboard)/_canvas/node-frame'
 import { useOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 import { useNodeContext } from '@/app/_authed/(dashboard)/_extension-system/use-node-context'
+import { ChatSelector } from '@/app/_authed/(extension-runtime)/_client/chat-selector'
 import { EmbeddedAgentChat } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { createSafeIcons } from '@/app/_authed/(extension-runtime)/_client/safe-icons'
@@ -372,11 +374,18 @@ export const extensionHostApi = {
   useDockerSnapshotReceived,
   useSeedDockerContainers,
   // The embeddable group-chat thread (props: `space` group-chat slug, `id`
-  // thread slug) and the scoped selection its composer reads — see
-  // embedded-agent-chat.tsx and selection-context.tsx.
+  // default thread slug, optional `thread` selection override), the header
+  // control that picks which conversation it shows, and the scoped selection
+  // its composer reads — see embedded-agent-chat.tsx, chat-selector.tsx and
+  // selection-context.tsx.
   EmbeddedAgentChat,
+  ChatSelector,
   SelectionProvider,
   useSelection,
+  // The kit's mobile-breakpoint hook, so an extension chat dock can swap its
+  // side-by-side arrangement for the full-screen cover on a small screen —
+  // the same signal the space's own chat dock reads.
+  useIsMobile,
 }
 
 export type { Stream, TextChunk }

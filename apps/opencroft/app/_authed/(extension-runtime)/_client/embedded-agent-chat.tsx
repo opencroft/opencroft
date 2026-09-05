@@ -13,28 +13,27 @@
 //                           picks users and agents; creation is the same
 //                           membership model the group-chats UI uses).
 //   - caller not a member → the same collapsed refusal the thread route shows.
-//   - no thread yet       → the kit's start-thread composer (its agent picker
-//                           doubles as this surface's picker); the first send
-//                           creates the thread through the membership-checked
-//                           startThread path, titled with `id` so the slug —
-//                           and so the session key's tail — reads as the id.
-//   - thread exists       → the shared assembly reattaches to it; the picker
-//                           moves into the composer's leading slot.
+//   - no thread yet       → the SAME start composer the group-chat screen's
+//                           footer renders (its agent picker doubles as this
+//                           surface's picker); the first send creates the
+//                           thread through the membership-checked startThread
+//                           path, titled with `id` so the slug — and so the
+//                           session key's tail — reads as the id.
+//   - thread exists       → the shared assembly reattaches to it. No agent
+//                           picker: the thread names its agent, and switching
+//                           conversations is the ChatSelector's job.
 
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { CommandBarFrame } from 'ui/agent-chat/command-bar-frame'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
 import { AddMemberPicker, type MemberCandidate } from 'ui/group-chat/add-member-picker'
-import { AgentPicker } from 'ui/group-chat/agent-picker'
-import { StartThreadComposer } from 'ui/group-chat/start-thread-composer'
-import { Spinner } from 'ui/spinner'
+import { LogoLoader } from 'ui/logo-loader'
 
-import { wrapUserSelection } from '@/app/_authed/(agent)/_shared/message-envelope'
-import { SelectionBadge } from '@/app/_authed/(extension-runtime)/_client/selection-badge'
-import { useOptionalSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
 import { GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
+import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
 import { GroupChatThreadChat } from '@/app/_authed/(group-chats)/_components/group-chat-thread-chat'
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
@@ -49,19 +48,30 @@ import {
   createMyGroupChat,
   findGroupChatEmbedThread,
   getGroupChatEmbedView,
+  getGroupChatThreadView,
   listDirectoryUsersForPicker,
-  startGroupChatThread,
 } from '@/app/_authed/(group-chats)/_server/actions'
 import type { AgentNodeRef } from '@/app/_authed/(space)/_server/agents'
 import { listAgentNodes } from '@/app/_authed/(space)/_server/agents'
 import { useLocalStorage } from '@/hooks/utils/use-local-storage'
 import { cn } from '@/lib/utils'
 
+/**
+ * Which conversation an embedded surface shows, when not its default thread:
+ * an EXISTING thread by its id (any thread of the chat, whatever agent it
+ * belongs to), or a NEW one — an id no thread carries yet, so the surface
+ * shows the start composer and the first send creates it. Produced by the
+ * ChatSelector beside the surface's dock controls.
+ */
+export type EmbeddedChatSelection = { threadId: string } | { newId: string }
+
 export interface EmbeddedAgentChatProps {
   /** The group chat's slug — the first segment of every thread session key. */
   space: string
-  /** The thread slug this surface owns, one per member agent. */
+  /** The DEFAULT thread slug this surface owns, one per member agent. */
   id: string
+  /** Override the shown conversation — see EmbeddedChatSelection. Unset = the default thread. */
+  thread?: EmbeddedChatSelection | null
   /**
    * What to NAME the chat if this surface has to create it. The address is
    * always `space`; this is only the display name, and it defaults to the slug
@@ -82,7 +92,7 @@ type EmbedPhase =
   | { phase: 'ready'; chat: GroupChatDetailView }
   | { phase: 'error'; message: string }
 
-export function EmbeddedAgentChat({ space, id, title, className }: EmbeddedAgentChatProps) {
+export function EmbeddedAgentChat({ space, id, thread, title, className }: EmbeddedAgentChatProps) {
   const [state, setState] = useState<EmbedPhase>({ phase: 'loading' })
   // Bumped to reload after the create flow finishes — the cheapest way to go
   // from `missing` to `ready` through the same single load path.
@@ -138,23 +148,60 @@ export function EmbeddedAgentChat({ space, id, title, className }: EmbeddedAgent
     case 'missing':
       return <CreateChatEmptyState space={space} title={title} className={className} onCreated={reload} />
     case 'ready':
-      return <EmbeddedThread chat={state.chat} id={id} className={className} />
+      return <EmbeddedThread chat={state.chat} id={id} selection={thread ?? undefined} className={className} />
   }
+}
+
+/**
+ * A stand-in the exact height of the command bar (its `min-h-8` textarea plus
+ * the `h-7` action row and the gap between them), inside the same frame and
+ * inset the real composer arrives in. Loading states render it so the footer's
+ * space is spent from the first frame — without it the loader centres on the
+ * full panel and JUMPS UP when the composer appears beneath it, which the
+ * group-chat screen (whose route loads everything before rendering) never
+ * shows.
+ */
+function ComposerSkeleton() {
+  return (
+    <div className='shrink-0 p-2'>
+      <CommandBarFrame>
+        <div aria-hidden className='h-16 w-full' />
+      </CommandBarFrame>
+    </div>
+  )
 }
 
 function CenteredSpinner({ className }: { className?: string }) {
   return (
     <div className={cn('flex h-full min-h-0 flex-col', className)}>
-      <div className='flex h-full min-h-24 items-center justify-center'>
-        <Spinner className='size-5 text-muted-foreground' />
+      <div className='flex min-h-24 flex-1 items-center justify-center'>
+        {/* Same size and color as the open thread's own loader (agent-chat),
+            which follows this one on the same panel — two different loaders
+            in sequence read as a glitch. */}
+        <LogoLoader size={40} className='text-foreground' />
       </div>
+      <ComposerSkeleton />
     </div>
   )
 }
 
 // ── The thread surface, once the chat resolved ───────────────────────────
 
-function EmbeddedThread({ chat, id, className }: { chat: GroupChatDetailView; id: string; className?: string }) {
+function EmbeddedThread({
+  chat,
+  id,
+  selection,
+  className,
+}: {
+  chat: GroupChatDetailView
+  id: string
+  selection?: EmbeddedChatSelection
+  className?: string
+}) {
+  // An explicit thread is shown as-is, whatever agent it belongs to; a new id
+  // replaces the default one on the ordinary find-or-start path.
+  const explicitThreadId = selection && 'threadId' in selection ? selection.threadId : null
+  const effectiveId = selection && 'newId' in selection ? selection.newId : id
   // MEMBER agents only: any other agent is refused by startThread, so
   // offering one would be offering a choice that cannot succeed.
   const memberAgents = useMemo(
@@ -185,14 +232,34 @@ function EmbeddedThread({ chat, id, className }: { chat: GroupChatDetailView; id
 
   // biome-ignore lint/correctness/useExhaustiveDependencies(threadTick): not read in the body — it exists to re-resolve the thread after the first send creates it
   useEffect(() => {
+    let cancelled = false
+    setThread(undefined)
+    setThreadError(undefined)
+    // A selected thread is loaded by its own id — no (agent, slug) mapping,
+    // because the selector offers every thread of the chat, not just the
+    // picked agent's.
+    if (explicitThreadId) {
+      getGroupChatThreadView({ data: explicitThreadId })
+        .then((entry) => {
+          if (!cancelled) {
+            setThread(entry)
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setThread(null)
+            setThreadError(failureMessage(error, 'This thread could not be loaded.'))
+          }
+        })
+      return () => {
+        cancelled = true
+      }
+    }
     if (!selectedAgent) {
       setThread(null)
       return
     }
-    let cancelled = false
-    setThread(undefined)
-    setThreadError(undefined)
-    findGroupChatEmbedThread({ data: { groupChatId: chat.id, agentNodeId: selectedAgent, id } })
+    findGroupChatEmbedThread({ data: { groupChatId: chat.id, agentNodeId: selectedAgent, id: effectiveId } })
       .then((entry) => {
         if (!cancelled) {
           setThread(entry)
@@ -207,19 +274,9 @@ function EmbeddedThread({ chat, id, className }: { chat: GroupChatDetailView; id
     return () => {
       cancelled = true
     }
-  }, [chat.id, selectedAgent, id, threadTick])
+  }, [chat.id, selectedAgent, effectiveId, explicitThreadId, threadTick])
 
   const onThreadStarted = useCallback(() => setThreadTick((tick) => tick + 1), [])
-
-  // The kit's own picker — the same control the start-thread composer renders
-  // in its leading slot, so the pre-thread and live composers cannot drift.
-  // Selecting another agent switches to THAT agent's thread for the same id
-  // (each agent maps to its own thread by design). Memoized because it feeds
-  // the memoized command bar through leadingBarContent.
-  const picker = useMemo(
-    () => <AgentPicker agents={memberAgents} selectedAgentNodeId={selectedAgent} onSelectAgent={setRememberedAgent} />,
-    [memberAgents, selectedAgent, setRememberedAgent],
-  )
 
   if (thread === undefined) {
     return <CenteredSpinner className={className} />
@@ -227,125 +284,52 @@ function EmbeddedThread({ chat, id, className }: { chat: GroupChatDetailView; id
   if (thread) {
     return (
       <div className={cn('flex h-full min-h-0 flex-col', className)}>
-        <GroupChatThreadChat thread={thread} leadingBarContent={picker} />
+        {/* No agent picker on an OPEN thread — a thread already names its
+            agent, and switching conversations is the ChatSelector's job. The
+            picker's one remaining home is the start composer below, where an
+            agent genuinely has to be chosen. */}
+        <GroupChatThreadChat thread={thread} />
       </div>
     )
   }
-  return (
-    <EmbedStartComposer
-      chat={chat}
-      id={id}
-      agents={memberAgents}
-      selectedAgentNodeId={selectedAgent}
-      onSelectAgent={setRememberedAgent}
-      loadError={threadError}
-      onStarted={onThreadStarted}
-      className={className}
-    />
-  )
-}
-
-// The pre-thread state: the kit's start-thread composer, whose own agent
-// picker is this surface's picker until a thread exists. No title field —
-// the thread is titled with `id`, fixed, so the slug (and the session key's
-// tail) reads as the id this surface was configured with.
-function EmbedStartComposer({
-  chat,
-  id,
-  agents,
-  selectedAgentNodeId,
-  onSelectAgent,
-  loadError,
-  onStarted,
-  className,
-}: {
-  chat: GroupChatDetailView
-  id: string
-  agents: Array<{ nodeId: string; name: string; avatarUrl: string | null }>
-  selectedAgentNodeId: string | null
-  onSelectAgent: (nodeId: string) => void
-  loadError?: string
-  onStarted: () => void
-  className?: string
-}) {
-  const [value, setValue] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | undefined>(loadError)
-
-  // The selection rides on the FIRST message too — it is a send like any
-  // other, only routed through startThread. Read at submit time; the badge
-  // above the composer is the same control the live composer shows beside
-  // its context ring (there is no ring yet without a session).
-  const selectionScope = useOptionalSelection()
-
-  // The composer clears itself (onValueChange('')) BEFORE onSubmit fires --
-  // the command bar's clear-on-send contract. `onSubmit` takes no text, so by
-  // the time it runs `value` may already read '' -- this mirrors the group-chat
-  // screen's own start composer, keeping the typed text to send and, on
-  // failure, to put back.
-  const [lastTyped, setLastTyped] = useState('')
-
-  const submit = async () => {
-    const text = lastTyped
-    if (!selectedAgentNodeId || !text.trim()) {
-      setError('Choose an agent and write a message.')
-      return
-    }
-    setError(undefined)
-    setSubmitting(true)
-    try {
-      const firstMessage =
-        selectionScope?.selection && selectionScope.passEnabled
-          ? wrapUserSelection(text.trim(), selectionScope.selection.content)
-          : text.trim()
-      const result = await startGroupChatThread({
-        data: { groupChatId: chat.id, agentNodeId: selectedAgentNodeId, firstMessage, title: id },
-      })
-      if (!result.ok) {
-        setValue(text)
-        setError(groupChatAccessMessageForCode(result.code))
-        return
-      }
-      onStarted()
-    } catch (e) {
-      setValue(text)
-      setError(failureMessage(e, 'The thread could not be started.'))
-    } finally {
-      setSubmitting(false)
-    }
+  if (explicitThreadId) {
+    // A selected thread that failed to load must not fall through to the
+    // start composer — that would offer to start the DEFAULT thread under a
+    // heading the reader did not choose.
+    return (
+      <Empty className={cn('h-full', className)}>
+        <EmptyHeader>
+          <EmptyTitle>This thread is not available</EmptyTitle>
+          <EmptyDescription>{threadError ?? 'It may have been deleted.'}</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    )
   }
-
+  // The pre-thread state: the same start composer the group-chat screen's
+  // footer renders, in the same CommandBarFrame every chat footer sits in —
+  // so this state looks like the composer the thread will have, not like a
+  // bare form. Configured for this surface: the thread is titled with the id
+  // (fixed, so the slug and the session key's tail read as the id), and the
+  // agent selection is the SAME state the live thread's picker switches, so
+  // the two controls cannot disagree.
   return (
     <div className={cn('flex h-full min-h-0 flex-col justify-end', className)}>
-      {/* The composer hugs its content and the slack sits above it. The kit's
-          StartThreadComposer root carries `flex-1` -- it fills the footer row
-          on the group-chat screen -- so as a flex child here it stretched to
-          full height and its own content sat at the TOP of that box, leaving
-          justify-end no free space to push against. `flex-none` puts the hug
-          back, and the wrapper stays shrink-0 so the slack lands above it. */}
-      <div className='flex shrink-0 flex-col gap-1 p-2'>
-        <SelectionBadge />
-        <StartThreadComposer
-          className='flex-none'
-          agents={agents}
-          selectedAgentNodeId={selectedAgentNodeId}
-          onSelectAgent={onSelectAgent}
-          value={value}
-          onValueChange={(next) => {
-            if (next !== '') {
-              setLastTyped(next)
-            }
-            setValue(next)
-            if (error) {
-              setError(undefined)
-            }
-          }}
-          onSubmit={() => void submit()}
-          submitting={submitting}
-          error={error}
-          onDismissError={() => setError(undefined)}
-          placeholder={selectedAgentNodeId ? undefined : 'Choose an agent to start'}
-        />
+      {/* shrink-0 so the frame hugs its content and the slack lands above it;
+          the selection badge renders INSIDE the frame, by the composer itself,
+          in the same place the live composer's attachments slot puts it. */}
+      <div className='shrink-0 p-2'>
+        <CommandBarFrame>
+          <GroupChatStartThreadComposer
+            groupChatId={chat.id}
+            members={chat.members}
+            fixedTitle={effectiveId}
+            selectedAgentNodeId={selectedAgent}
+            onSelectAgent={setRememberedAgent}
+            loadError={threadError}
+            placeholder={selectedAgent ? undefined : 'Choose an agent to start'}
+            onThreadStarted={onThreadStarted}
+          />
+        </CommandBarFrame>
       </div>
     </div>
   )
