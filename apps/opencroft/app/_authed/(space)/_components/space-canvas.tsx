@@ -2,9 +2,20 @@
 
 import { FlowEditor } from '@/app/_authed/(dashboard)/_canvas/flow-editor'
 import { OverlayProvider } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
+import { ChatDock } from '@/app/_authed/(extension-runtime)/_client/chat-dock'
 import { SelectionProvider } from '@/app/_authed/(extension-runtime)/_client/selection-context'
-import { SpaceChatDock } from '@/app/_authed/(space)/_components/space-chat-dock'
 import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
+
+/**
+ * The thread slug every space surface addresses. One per member agent, chosen
+ * in the chat's own picker -- so the full reference is
+ * `{space-slug}.{agent}.main`.
+ *
+ * A constant rather than configuration: a space has ONE chat surface, and
+ * letting anything pick the thread would let two surfaces in the same space
+ * address different threads and look like the same conversation.
+ */
+const SPACE_THREAD_ID = 'main'
 
 interface Props {
   slug: string
@@ -22,13 +33,15 @@ export function SpaceCanvas({ slug, spaces }: Props) {
     <SelectionProvider>
       <OverlayProvider>
         {/* The chat ENCLOSES the editor rather than sitting after it, because
-            where it docks is a property of the pair: it can take the left edge,
-            the right, or the bottom, and only something holding both can put
-            them in that order. It stays inside the selection scope, which is
-            what lets a node selected on the canvas reach the composer. */}
-        <SpaceChatDock slug={slug} spaceName={spaceName}>
+            its docked arrangements split the pair between them, and only
+            something holding both can put them in that order. It stays inside
+            the selection scope, which is what lets a node selected on the
+            canvas reach the composer. The chat surface itself -- launcher,
+            docks, floating window, mobile cover -- is the same ChatDock every
+            extension gets from the host API. */}
+        <ChatDock space={slug} id={SPACE_THREAD_ID} title={spaceName} chatName={spaceName}>
           <FlowEditor slug={slug} spaceName={spaceName} />
-        </SpaceChatDock>
+        </ChatDock>
       </OverlayProvider>
     </SelectionProvider>
   )

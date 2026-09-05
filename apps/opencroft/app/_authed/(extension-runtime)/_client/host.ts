@@ -24,6 +24,7 @@ import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/_authed/(dashbo
 import { NodeFrame, useNodeAccent } from '@/app/_authed/(dashboard)/_canvas/node-frame'
 import { useOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 import { useNodeContext } from '@/app/_authed/(dashboard)/_extension-system/use-node-context'
+import { ChatDock } from '@/app/_authed/(extension-runtime)/_client/chat-dock'
 import { ChatSelector } from '@/app/_authed/(extension-runtime)/_client/chat-selector'
 import { EmbeddedAgentChat } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
@@ -382,6 +383,11 @@ export const extensionHostApi = {
   ChatSelector,
   SelectionProvider,
   useSelection,
+  // The whole chat surface around the embedded thread: the corner launcher,
+  // the three docks plus the floating window, the mobile cover and its Back
+  // behaviour — one component shared with the space canvas, so an extension
+  // mounts this instead of arranging the pieces itself. See chat-dock.tsx.
+  ChatDock,
   // The kit's mobile-breakpoint hook, so an extension chat dock can swap its
   // side-by-side arrangement for the full-screen cover on a small screen —
   // the same signal the space's own chat dock reads.

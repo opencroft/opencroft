@@ -72,8 +72,9 @@ export interface DockPanelProps {
   /** Which edge the panel occupies. */
   dock: DockSide
   /** Reports the edge chosen in the switch. The value is the caller's, and so
-   *  is any persistence of it. */
-  onDockChange: (side: DockSide) => void
+   *  is any persistence of it. Omitted when the caller drives the position
+   *  through its own control -- no switch is drawn then. */
+  onDockChange?: (side: DockSide) => void
   /** The panel's share of the surface as a percentage, for a caller that
    *  remembers one. Applied once per arrangement rather than continuously, so
    *  it can arrive late -- which it will, since a caller that renders on the
@@ -163,7 +164,7 @@ export function DockPanel({
         <span className='truncate text-xs text-muted-foreground'>{title}</span>
         <div className='flex shrink-0 items-center gap-0.5'>
           {actions}
-          <DockSideSwitch dock={dock} onDockChange={onDockChange} />
+          {onDockChange ? <DockSideSwitch dock={dock} onDockChange={onDockChange} /> : null}
         </div>
       </div>
       <div className='flex min-h-0 flex-1 flex-col'>{panel}</div>

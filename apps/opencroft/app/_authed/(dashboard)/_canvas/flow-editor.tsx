@@ -1134,9 +1134,13 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
                     />
                   )
                 })()}
-              {/* Mobile overlay toolbar */}
+              {/* Mobile overlay toolbar. Stacked ABOVE the chat launcher in
+                  the bottom right corner, centred on it, and fixed for the
+                  same reason the launcher is: they belong to the viewport.
+                  An open chat covers the viewport at a higher z, which is
+                  what hides these while it is up. */}
               {isMobile && !overlayActive && (
-                <div className='absolute top-3 left-3 z-40 flex flex-col gap-2'>
+                <div className='fixed right-6 bottom-20 z-40 flex flex-col items-center gap-2'>
                   <button
                     type='button'
                     className='size-10 flex items-center justify-center rounded-lg bg-background/80 backdrop-blur border shadow-sm active:bg-accent'
