@@ -458,6 +458,7 @@ const __host = __api.host;
 const __ui = __api.ui;
 export const Terminal = __ui.Terminal;
 export const SecretSelector = __ui.SecretSelector;
+export const TerminalSelector = __ui.TerminalSelector;
 export const legacy = {
   ...__host,
   ...__ui,

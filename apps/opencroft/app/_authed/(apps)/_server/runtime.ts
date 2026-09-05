@@ -9,7 +9,7 @@
 
 import { promises as fs } from 'node:fs'
 
-import type { AppActionMeta, AppEntry } from '@opencroft/core'
+import type { AppActionMeta, AppEntry, AppHandle } from '@opencroft/core'
 import { db, spaceApp } from '@opencroft/db'
 import type { AppInstanceContext, AppServerHooks } from '@opencroft/server'
 import { asc, eq } from 'drizzle-orm'
@@ -114,7 +114,11 @@ export async function handleInstanceRemoved(row: SpaceAppRow): Promise<void> {
  */
 export async function handleInstanceRecreated(row: SpaceAppRow, params: string): Promise<SpaceAppRow> {
   await handleInstanceRemoved(row)
-  const [updated] = await db.update(spaceApp).set({ params, updatedAt: new Date() }).where(eq(spaceApp.id, row.id)).returning()
+  const [updated] = await db
+    .update(spaceApp)
+    .set({ params, updatedAt: new Date() })
+    .where(eq(spaceApp.id, row.id))
+    .returning()
   await handleInstanceAdded(updated)
   return updated
 }
@@ -174,6 +178,111 @@ export async function listSpaceAppInfos(spaceSlug?: string): Promise<SpaceAppInf
     })
   }
   return infos
+}
+
+/**
+ * One live handle of one App instance — the App analogue of a node's
+ * `HandleInfo`, addressed as `<instanceId>/<handleId>`. Only sources exist:
+ * an App consumes contexts through its parameters, not through edges.
+ */
+export interface AppHandleInfo {
+  instanceId: string
+  spaceSlug: string
+  appSlug: string
+  /** The App's title — what a picker shows in the node-name position. */
+  title: string
+  /** The live id; for a dynamic declaration, an expanded runtime id. */
+  handleId: string
+  /** The manifest id — the prefix form for a dynamic declaration. */
+  declaredId: string
+  contextType: string
+  label?: string
+  dynamic: boolean
+}
+
+/**
+ * Every live handle every App instance exposes, with dynamic declarations
+ * expanded through the extension's `listHandles` hook. Uncached for the same
+ * reason node handle discovery is: expansion asks each App what exists right
+ * now. One instance failing to expand is logged and skipped, not fatal.
+ */
+export async function listAppHandles(contextType?: string): Promise<AppHandleInfo[]> {
+  const rows = await db.query.spaceApp.findMany({ orderBy: asc(spaceApp.createdAt) })
+  if (rows.length === 0) {
+    return []
+  }
+  const r = await registry()
+  const slugById = new Map(r.list().map((s) => [s.id, s.slug]))
+  const provided = await getProvided<AppEntry>('apps')
+  const results: AppHandleInfo[] = []
+  for (const row of rows) {
+    const entry = provided.find((p) => p.extensionId === row.extensionId && p.value.slug === row.appSlug)?.value
+    const declared = (entry?.handles ?? []).filter(
+      (handle) => contextType === undefined || handle.contextType === contextType,
+    )
+    if (declared.length === 0) {
+      continue
+    }
+    const base = {
+      instanceId: row.id,
+      spaceSlug: slugById.get(row.spaceId) ?? '',
+      appSlug: row.appSlug,
+      title: entry?.title ?? row.appSlug,
+    }
+    let liveIds: string[] = []
+    if (declared.some((handle) => handle.dynamic)) {
+      try {
+        const hooks = await hooksFor(row.extensionId, row.appSlug)
+        liveIds = (await hooks?.listHandles?.(await instanceContext(row))) ?? []
+      } catch (error) {
+        console.error(`[apps] listHandles failed for ${row.extensionId}/${row.appSlug} (${row.id})`, error)
+        continue
+      }
+    }
+    for (const handle of declared) {
+      if (!handle.dynamic) {
+        results.push({ ...base, ...handleFields(handle, handle.id) })
+        continue
+      }
+      for (const liveId of liveIds.filter((id) => id.startsWith(handle.id))) {
+        results.push({ ...base, ...handleFields(handle, liveId) })
+      }
+    }
+  }
+  return results
+}
+
+function handleFields(handle: AppHandle, liveId: string) {
+  return {
+    handleId: liveId,
+    declaredId: handle.id,
+    contextType: handle.contextType,
+    label: handle.label,
+    dynamic: Boolean(handle.dynamic),
+  }
+}
+
+/**
+ * The context value behind `<instanceId>/<handleId>`, via the extension's
+ * `getHandleContext` hook. Undefined when the id is no App instance, the App
+ * declares no handles, or the hook does not recognize the handle — callers
+ * fall through to (or from) node resolution on it.
+ */
+export async function resolveAppHandleContext(
+  instanceId: string,
+  handleId: string,
+): Promise<{ value: Record<string, unknown>; spaceSlug: string } | undefined> {
+  const row = await db.query.spaceApp.findFirst({ where: eq(spaceApp.id, instanceId) })
+  if (!row) {
+    return undefined
+  }
+  const hooks = await hooksFor(row.extensionId, row.appSlug)
+  if (!hooks?.getHandleContext) {
+    return undefined
+  }
+  const ctx = await instanceContext(row)
+  const value = await hooks.getHandleContext(ctx, handleId)
+  return value ? { value, spaceSlug: ctx.spaceSlug } : undefined
 }
 
 /** Dispatch one App action against one instance — the `app_call` MCP tool's code path. */

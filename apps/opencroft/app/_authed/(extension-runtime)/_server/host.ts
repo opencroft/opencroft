@@ -275,6 +275,25 @@ const graphApi: HostGraphApi = {
         }
       }
     }
+    // App instances expose handles too (addressed as <instanceId>/<handleId>),
+    // and only as sources — an App consumes contexts through its parameters.
+    if (filter?.role === undefined || filter.role === 'source') {
+      const { listAppHandles } = await import('@/app/_authed/(apps)/_server/runtime')
+      for (const handle of await listAppHandles(filter?.contextType)) {
+        results.push({
+          nodeId: handle.instanceId,
+          spaceSlug: handle.spaceSlug,
+          typeId: `app:${handle.appSlug}`,
+          nodeName: handle.title,
+          handleId: handle.handleId,
+          declaredId: handle.declaredId,
+          contextType: handle.contextType,
+          role: 'source',
+          label: handle.label,
+          dynamic: handle.dynamic,
+        })
+      }
+    }
     return results
   },
   async updateNode(nodeId, patch) {
@@ -323,6 +342,13 @@ const graphApi: HostGraphApi = {
       return true
     })
   },
+}
+
+// The same enumeration the per-extension host hands to server modules, exported
+// for the app's own callers (the terminal-target picker's server fn) — one
+// discovery, not a second implementation of it.
+export function listGraphHandles(filter?: ListHandlesFilter): Promise<HandleInfo[]> {
+  return graphApi.listHandles(filter)
 }
 
 // Locate a `send-message` node and its OWN space's full node/edge list — every
@@ -863,6 +889,13 @@ const sendMessageApi: HostSendMessageApi = {
 async function getTerminalContext(nodeId: string, handleId: string): Promise<TerminalContext> {
   const node = await graphApi.getNode(nodeId)
   if (!node?.type) {
+    // Not a graph node — an App instance's handle uses the same target syntax
+    // with the instance id in the node position.
+    const { resolveAppHandleContext } = await import('@/app/_authed/(apps)/_server/runtime')
+    const appHandle = await resolveAppHandleContext(nodeId, handleId)
+    if (appHandle) {
+      return appHandle.value as TerminalContext
+    }
     throw new Error(`Node not found: ${nodeId}`)
   }
   const { listExtensionManifestsImpl } = await import('@/app/_authed/(extension-runtime)/_server/extension-action-impl')

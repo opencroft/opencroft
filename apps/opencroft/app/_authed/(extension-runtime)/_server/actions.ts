@@ -11,9 +11,10 @@ import {
   invokeExtensionActionImpl,
   listExtensionManifestsImpl,
 } from '@/app/_authed/(extension-runtime)/_server/extension-action-impl'
+import { listGraphHandles } from '@/app/_authed/(extension-runtime)/_server/host'
 import { ensureExtensionBuilt } from '@/app/_authed/(extension-runtime)/_server/loader'
-import { requireAdminServerFn, requireSessionServerFn } from '@/app/_server/require-session'
 import type { ExtensionManifestInfo } from '@/app/_authed/(extension-runtime)/_types'
+import { requireAdminServerFn, requireSessionServerFn } from '@/app/_server/require-session'
 
 // Client-callable wrapper — used when the caller is genuinely client-side code (see
 // _client/host.ts) or a plain HTTP route handler, both of which need the real
@@ -45,4 +46,32 @@ export const rebuildExtension = createServerFn({ method: 'POST' })
   .handler(async ({ data: extensionId }): Promise<void> => {
     await requireSessionServerFn()
     await ensureExtensionBuilt(extensionId)
+  })
+
+/** One pickable terminal source, for the TerminalSelector. */
+export interface TerminalTargetOption {
+  /** "node-id/handle-id" — the form every terminal-taking action accepts. */
+  target: string
+  /** Display name: the node, qualified by what distinguishes this handle on it. */
+  title: string
+  spaceSlug: string
+}
+
+export const listTerminalTargets = createServerFn({ strict: { output: false } })
+  .inputValidator((data: { spaceSlug?: string }) => data)
+  .handler(async ({ data }): Promise<TerminalTargetOption[]> => {
+    await requireSessionServerFn()
+    const handles = await listGraphHandles({ role: 'source', contextType: 'terminal-context' })
+    return handles
+      .filter((handle) => !data.spaceSlug || handle.spaceSlug === data.spaceSlug)
+      .map((handle) => {
+        // A dynamic handle's declared id is a prefix; the expanded remainder
+        // (a container name, a worktree) is what tells its siblings apart.
+        const detail = handle.dynamic ? handle.handleId.slice(handle.declaredId.length) : handle.label
+        return {
+          target: `${handle.nodeId}/${handle.handleId}`,
+          title: detail ? `${handle.nodeName} · ${detail}` : handle.nodeName,
+          spaceSlug: handle.spaceSlug,
+        }
+      })
   })

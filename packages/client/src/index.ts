@@ -5,10 +5,9 @@
  * full ported `@ext/host` + `@ext/ui` surface under `legacy` for migration. The
  * runtime is injected by the host; these are the type declarations.
  */
+import type { AppEntry } from '@opencroft/core'
 import type { TerminalProps } from '@opencroft/terminal/client'
 import type { ComponentType, FC } from 'react'
-
-import type { AppEntry } from '@opencroft/core'
 
 export * from '@opencroft/core'
 export type { TerminalConfig, TerminalProps, TerminalStatus } from '@opencroft/terminal/client'
@@ -35,6 +34,25 @@ export interface SecretSelectorProps {
  */
 export declare const SecretSelector: FC<SecretSelectorProps>
 
+export interface TerminalSelectorProps {
+  /** "node-id/handle-id" of the selected terminal source, or '' for none. */
+  value?: string
+  onChange: (value: string) => void
+  /** Limit the choices to one space's nodes; omit to offer every space. */
+  spaceSlug?: string
+  /** Offer an explicit "None" choice (reported as ''). */
+  allowNone?: boolean
+  placeholder?: string
+  disabled?: boolean
+}
+
+/**
+ * Pick one terminal-context SOURCE handle from the graph. The value is the
+ * "node-id/handle-id" target string every terminal-taking host API accepts
+ * (`host.terminal.getContext`, the remote file tools).
+ */
+export declare const TerminalSelector: FC<TerminalSelectorProps>
+
 /** Props the host passes to an App's component when rendering it in a space. */
 export interface AppComponentProps {
   /** Which added instance is being rendered — matches the server hooks' `instanceId`. */
@@ -50,6 +68,8 @@ export interface AppComponentProps {
  * `onChange`; the host owns the dialog, the submit button, and persistence.
  */
 export interface AppFormProps {
+  /** The space the instance is being added to (or lives in, when editing). */
+  spaceSlug: string
   params: Record<string, string>
   onChange: (params: Record<string, string>) => void
 }

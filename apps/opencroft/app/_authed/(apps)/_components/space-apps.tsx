@@ -221,6 +221,7 @@ export function SpaceApps({ spaceSlug, apps, initialInstances }: Props) {
           </DialogHeader>
           {CustomForm && form ? (
             <CustomForm
+              spaceSlug={spaceSlug}
               params={form.values}
               onChange={(values) => setForm((s) => (s ? { ...s, values, error: undefined } : s))}
             />

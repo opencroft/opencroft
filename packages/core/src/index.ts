@@ -45,6 +45,20 @@ export interface AppActionMeta {
 }
 
 /**
+ * A context SOURCE one instance of an App exposes, addressable as
+ * `<instanceId>/<handleId>` everywhere a node's `<nodeId>/<handleId>` target
+ * is accepted. A `dynamic` entry's id is a PREFIX; the live ids are asked of
+ * the server module's `apps[slug].listHandles`, and each handle's value of
+ * `apps[slug].getHandleContext`.
+ */
+export interface AppHandle {
+  id: string
+  contextType: string
+  label?: string
+  dynamic?: boolean
+}
+
+/**
  * An App an extension contributes via `provides.apps` in its manifest. Users
  * add Apps to a space; the values they enter for `parameters` are stored per
  * space. The React component rendering the App lives in the client bundle —
@@ -58,6 +72,8 @@ export interface AppEntry {
   icon?: string
   parameters?: AppParameter[]
   actions?: AppActionMeta[]
+  /** Context sources instances of this App expose (e.g. a terminal per worktree). */
+  handles?: AppHandle[]
 }
 
 /** A node contributed by an extension. */

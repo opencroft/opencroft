@@ -34,6 +34,7 @@ import {
   subscribe,
   type TextChunk,
 } from '@/app/_authed/(extension-runtime)/_client/stream'
+import { TerminalSelector } from '@/app/_authed/(extension-runtime)/_client/terminal-selector'
 import { invokeExtensionAction } from '@/app/_authed/(extension-runtime)/_server/actions'
 import { dispatchNodeAction } from '@/app/_authed/(extension-runtime)/_server/node-actions'
 import type { ExtensionContextType, ExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
@@ -328,6 +329,7 @@ export const extensionUiApi = {
   FileManagerProvider,
   SecretSelector,
   Terminal,
+  TerminalSelector,
   // Pre-@opencroft/terminal name for already-compiled extensions.
   InspectorTerminalBody: Terminal,
   CommandBar,

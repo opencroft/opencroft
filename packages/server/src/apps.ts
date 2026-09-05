@@ -48,6 +48,21 @@ export interface AppServerHooks {
   onUnload?: (ctx: AppInstanceContext) => void | Promise<void>
   /** Agent-invokable actions of this App, keyed by the manifest's action id. */
   actions?: Record<string, AppActionHandler>
+  /**
+   * Live ids for the App's `dynamic` handles (declared beside the App entry in
+   * the manifest — `AppHandle` in `@opencroft/core`). Called on every handle
+   * discovery, uncached, so the list tracks what actually exists right now.
+   */
+  listHandles?: (ctx: AppInstanceContext) => string[] | Promise<string[]>
+  /**
+   * The context value behind one of the App's handles. The handle is
+   * addressed as `<instanceId>/<handleId>` wherever node targets are
+   * accepted. Return undefined for an id this App does not expose.
+   */
+  getHandleContext?: (
+    ctx: AppInstanceContext,
+    handleId: string,
+  ) => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>
 }
 
 /** The `apps` export of an extension's server module, keyed by App slug. */

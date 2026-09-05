@@ -23,7 +23,7 @@ import {
   getApprovalMeta,
   withApprovalRequired,
 } from '@/app/_authed/(approvals)/_server/with-approval'
-import { callAppAction, listSpaceAppInfos } from '@/app/_authed/(apps)/_server/runtime'
+import { callAppAction, listSpaceAppInfos, resolveAppHandleContext } from '@/app/_authed/(apps)/_server/runtime'
 import {
   type InstallAuth,
   installExtensionFromUrl,
@@ -2067,6 +2067,14 @@ export async function resolveTerminalContext(
   const localExtCtx = await resolveLocalExtensionContext(ep)
   if (localExtCtx) {
     return { ctx: localExtCtx, slug: ep.handle }
+  }
+
+  // An App instance's handle uses the same "<id>/<handle>" syntax with the
+  // instance id in the node position. Checked before graph resolution — a
+  // miss costs one primary-key read.
+  const appHandle = await resolveAppHandleContext(ep.nodeId, ep.handle)
+  if (appHandle) {
+    return { ctx: appHandle.value, slug: appHandle.spaceSlug }
   }
 
   const { node, slug } = await findNodeAcrossSpaces(ep.nodeId)
