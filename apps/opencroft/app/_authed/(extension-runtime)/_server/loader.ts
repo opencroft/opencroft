@@ -36,6 +36,8 @@ interface CachedModule {
   nodeActionAccess?: Record<string, Record<string, ActionAccess>>
   routes?: Record<string, ExtensionRouteHandler>
   tools?: ExtensionToolHandlers
+  /** Per-App server lifecycle hooks, keyed by App slug — see `AppsExport` in `@opencroft/server`. */
+  apps?: opencroft.AppsExport
   load?: ExtensionLifecycle
   unload?: ExtensionLifecycle
   context: opencroft.ExtensionContext
@@ -259,6 +261,7 @@ interface ExtensionServerModule {
   nodeActionAccess?: Record<string, Record<string, ActionAccess>>
   routes?: Record<string, ExtensionRouteHandler>
   tools?: ExtensionToolHandlers
+  apps?: opencroft.AppsExport
   load?: ExtensionLifecycle
   unload?: ExtensionLifecycle
   default?: {
@@ -269,6 +272,7 @@ interface ExtensionServerModule {
     nodeActionAccess?: Record<string, Record<string, ActionAccess>>
     routes?: Record<string, ExtensionRouteHandler>
     tools?: ExtensionToolHandlers
+    apps?: opencroft.AppsExport
     load?: ExtensionLifecycle
     unload?: ExtensionLifecycle
   }
@@ -326,6 +330,7 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
     const nodeActionAccess = exported.nodeActionAccess ?? exported.default?.nodeActionAccess ?? {}
     const routes = exported.routes ?? exported.default?.routes
     const tools = exported.tools ?? exported.default?.tools
+    const apps = exported.apps ?? exported.default?.apps
     const load = exported.load ?? exported.default?.load
     const unload = exported.unload ?? exported.default?.unload
     return {
@@ -338,6 +343,7 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
       nodeActionAccess,
       routes,
       tools,
+      apps,
       load,
       unload,
       context: reg.context,

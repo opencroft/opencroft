@@ -1,7 +1,7 @@
 'use client'
 
 import { Link, useRouter } from '@tanstack/react-router'
-import { Download, Pencil, Pin, Plus, Trash2, Upload } from 'lucide-react'
+import { Download, Pencil, Pin, Plus, Settings, Trash2, Upload } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from 'ui/dialog'
@@ -11,6 +11,7 @@ import { ScrollContent, ScrollHeader, ScrollPage } from 'ui/layout/scrollpage'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'ui/table'
 import { Toggle } from 'ui/toggle'
 
+import { SpaceIcon } from '@/app/_authed/(space)/_components/space-icon'
 import {
   createSpace,
   deleteSpace,
@@ -165,7 +166,12 @@ export function SpacesTable({ initialSpaces }: Props) {
             {spaces.map((space) => (
               <TableRow key={space.id}>
                 <TableCell>
-                  <Link to='/space/$slug' params={{ slug: space.slug }} className='font-medium hover:underline'>
+                  <Link
+                    to='/space/$slug'
+                    params={{ slug: space.slug }}
+                    className='flex items-center gap-2 font-medium hover:underline'
+                  >
+                    <SpaceIcon icon={space.icon} className='size-6' />
                     {space.name}
                   </Link>
                 </TableCell>
@@ -190,6 +196,11 @@ export function SpacesTable({ initialSpaces }: Props) {
                     >
                       <Pin />
                     </Toggle>
+                    <Link to='/space/$slug/settings' params={{ slug: space.slug }}>
+                      <Button variant='ghost' size='icon' aria-label='Space settings'>
+                        <Settings />
+                      </Button>
+                    </Link>
                     <Button variant='ghost' size='icon' onClick={() => handleExport(space.slug)}>
                       <Download />
                     </Button>

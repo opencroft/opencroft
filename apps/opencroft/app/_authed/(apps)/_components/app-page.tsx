@@ -1,0 +1,41 @@
+'use client'
+
+import type { AppDefinition } from '@opencroft/client'
+import { Suspense } from 'react'
+import { Flex } from 'ui/layout/flex'
+import { Spinner } from 'ui/utils/spinner'
+
+import type { SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
+import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
+import { useProvided } from '@/app/_authed/(extension-runtime)/_client/provides'
+
+// The App's React component lives in the extension's client bundle, so it is
+// resolved from the `apps` provider once extensions have loaded — the same
+// split (and the same Suspense reasoning) as the dashboard page. The
+// component owns the whole pane; title/description are navigation labels.
+export function AppPage({ spaceSlug, instance }: { spaceSlug: string; instance: SpaceAppInstance }) {
+  const { items, loaded } = useProvided<AppDefinition>('apps', loadAllExtensions)
+  const definition = items.find((entry) => entry.slug === instance.appSlug)
+  const Body = definition?.component
+  return (
+    <Flex expanded className='min-h-0'>
+      {Body ? (
+        <Suspense
+          fallback={
+            <Flex expanded align='center' justify='center'>
+              <Spinner className='size-5 text-muted-foreground' />
+            </Flex>
+          }
+        >
+          <Body instanceId={instance.id} spaceSlug={spaceSlug} params={instance.params} />
+        </Suspense>
+      ) : (
+        loaded && (
+          <Flex expanded align='center' justify='center'>
+            <p className='text-sm text-muted-foreground'>This app has no client component.</p>
+          </Flex>
+        )
+      )}
+    </Flex>
+  )
+}

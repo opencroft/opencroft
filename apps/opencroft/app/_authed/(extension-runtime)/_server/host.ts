@@ -4,7 +4,8 @@ import { promises as fsPromises } from 'node:fs'
 import nodeOs from 'node:os'
 import nodePath from 'node:path'
 
-import { db } from '@opencroft/db'
+import { db, spaceApp } from '@opencroft/db'
+import { asc, eq } from 'drizzle-orm'
 import type { HostSecretsApi } from '@opencroft/server'
 import type { ExecOptions, ExecResult, ServerConfig, TerminalContext } from '@opencroft/terminal'
 import {
@@ -46,6 +47,7 @@ import {
   type GraphEdgeLike as SendMessageEdgeLike,
   type GraphNodeLike as SendMessageNodeLike,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
+import { appInstanceDataDir } from '@/app/_authed/(apps)/_server/instance-paths'
 import { mutateSettingData, withSettingLock } from '@/app/_authed/(settings)/_server/settings-cas'
 import { getSettingImpl, setSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
 import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
@@ -979,6 +981,8 @@ export interface ExtensionHost {
   settings: { get: typeof hostGetSetting; set: typeof hostSetSetting }
   graph: HostGraphApi
   storage: ExtensionStorageApi
+  /** The calling extension's own added App instances (see `provides.apps`). */
+  apps: HostAppsApi
   /** Deliver a message through a SendMessage node's own path (session reuse/
    *  create, envelope composition, hidden-by-default registration) — the same
    *  mechanism its `text-in` wiring uses, not a parallel implementation. */
@@ -1025,6 +1029,47 @@ function hostSetSetting(opts: { data: { id: string; data: Record<string, unknown
   return setSettingImpl(opts.data)
 }
 
+/** One added App instance, as reported to the providing extension. */
+export interface HostAppInstance {
+  instanceId: string
+  appSlug: string
+  spaceSlug: string
+  params: Record<string, string>
+  /** Absolute path of the instance's private data directory. */
+  dataDir: string
+}
+
+export interface HostAppsApi {
+  /** The calling extension's added App instances, oldest first; optionally one App's only. */
+  listInstances(appSlug?: string): Promise<HostAppInstance[]>
+}
+
+// Read from the database rather than the (apps) runtime's in-memory load
+// state: an extension server module can be re-evaluated at any time (source
+// edit, rebuild), and this answer must not depend on which process events it
+// happened to witness.
+function appsApi(extensionId: string): HostAppsApi {
+  return {
+    listInstances: async (appSlug) => {
+      const rows = await db.query.spaceApp.findMany({
+        where: eq(spaceApp.extensionId, extensionId),
+        orderBy: asc(spaceApp.createdAt),
+      })
+      const spaces = await db.query.space.findMany({ columns: { id: true, slug: true } })
+      const slugById = new Map(spaces.map((s) => [s.id, s.slug]))
+      return rows
+        .filter((row) => !appSlug || row.appSlug === appSlug)
+        .map((row) => ({
+          instanceId: row.id,
+          appSlug: row.appSlug,
+          spaceSlug: slugById.get(row.spaceId) ?? '',
+          params: JSON.parse(row.params) as Record<string, string>,
+          dataDir: appInstanceDataDir(extensionId, row.id),
+        }))
+    },
+  }
+}
+
 export function createHost(extensionId: string): ExtensionHost {
   return {
     extensionId,
@@ -1041,6 +1086,7 @@ export function createHost(extensionId: string): ExtensionHost {
     settings: { get: hostGetSetting, set: hostSetSetting },
     graph: graphApi,
     storage: storageApi(extensionId),
+    apps: appsApi(extensionId),
     sendMessage: sendMessageApi,
     events: {
       broadcast: (name, payload) => {

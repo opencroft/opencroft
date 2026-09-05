@@ -55,6 +55,8 @@ export const space = pgTable(
     name: text().notNull(),
     data: text().default('{"nodes":[],"edges":[]}').notNull(),
     pinned: boolean().default(false).notNull(),
+    /** Small square image as a base64 data URL, like `user.image`; null = no icon. */
+    icon: text(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -80,6 +82,26 @@ export const spaceSlugAlias = pgTable(
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex('SpaceSlugAlias_slug_key').on(t.slug), index('SpaceSlugAlias_spaceId_idx').on(t.spaceId)],
+)
+
+// An instance of an App (provided by an extension) the user added to a space,
+// with the parameter values they entered. The row id is the instance identity:
+// the same App can be added to a space several times with different params.
+export const spaceApp = pgTable(
+  'SpaceApp',
+  {
+    id: text().primaryKey().notNull().$defaultFn(uuid),
+    spaceId: text()
+      .notNull()
+      .references(() => space.id, { onDelete: 'cascade' }),
+    extensionId: text().notNull(),
+    appSlug: text().notNull(),
+    /** JSON object: parameter id -> value the user entered. */
+    params: text().default('{}').notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('SpaceApp_spaceId_idx').on(t.spaceId)],
 )
 
 export const mcpAuditLog = pgTable(
@@ -714,6 +736,7 @@ export const schema = {
   setting,
   secret,
   space,
+  spaceApp,
   spaceSlugAlias,
   mcpAuditLog,
   apiToken,

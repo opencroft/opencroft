@@ -457,6 +457,7 @@ if (!__api) { throw new Error('Extension API not installed'); }
 const __host = __api.host;
 const __ui = __api.ui;
 export const Terminal = __ui.Terminal;
+export const SecretSelector = __ui.SecretSelector;
 export const legacy = {
   ...__host,
   ...__ui,

@@ -148,6 +148,27 @@
       "when": 1788530649895,
       "tag": "0020_round_shadowcat",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1788553800531,
+      "tag": "0021_purple_amphibian",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1788557948882,
+      "tag": "0022_messy_moondragon",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1788569394448,
+      "tag": "0023_stiff_cardiac",
+      "breakpoints": true
     }
   ]
 }

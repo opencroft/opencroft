@@ -221,6 +221,8 @@ export interface ExtensionServerHost {
   graph: HostGraphApi
   storage: ExtensionStorageApi
   secrets: HostSecretsApi
+  /** The calling extension's own added App instances (see `AppsExport` in this package). */
+  apps: HostAppsApi
   sendMessage: HostSendMessageApi
   execContext: HostExecContextApi
   /**
@@ -243,6 +245,21 @@ export interface ExtensionServerHost {
   }
 }
 
+/** One added App instance, as reported to the providing extension. */
+export interface HostAppInstance {
+  instanceId: string
+  appSlug: string
+  spaceSlug: string
+  params: Record<string, string>
+  /** Absolute path of the instance's private data directory. */
+  dataDir: string
+}
+
+export interface HostAppsApi {
+  /** The calling extension's added App instances, oldest first; optionally one App's only. */
+  listInstances(appSlug?: string): Promise<HostAppInstance[]>
+}
+
 declare const host: ExtensionServerHost
 export default host
 
@@ -258,6 +275,7 @@ export declare const settings: ExtensionServerHost['settings']
 export declare const graph: ExtensionServerHost['graph']
 export declare const storage: ExtensionServerHost['storage']
 export declare const secrets: ExtensionServerHost['secrets']
+export declare const apps: ExtensionServerHost['apps']
 export declare const sendMessage: ExtensionServerHost['sendMessage']
 export declare const execContext: ExtensionServerHost['execContext']
 export declare const events: ExtensionServerHost['events']

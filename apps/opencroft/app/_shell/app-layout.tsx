@@ -14,9 +14,8 @@ export async function AppLayout({
     listDashboards(),
     listPinnedDashboards(),
   ])
-  const pinnedSpaces = spaces.filter((s) => s.pinned)
   return (
-    <AppShell pinnedSpaces={pinnedSpaces} dashboards={dashboards} pinnedDashboardSlugs={pinnedDashboardSlugs}>
+    <AppShell spaces={spaces} dashboards={dashboards} pinnedDashboardSlugs={pinnedDashboardSlugs}>
       {children}
     </AppShell>
   )

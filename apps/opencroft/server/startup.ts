@@ -67,6 +67,14 @@ async function preload(): Promise<void> {
   } catch (err) {
     console.error('[startup] extension auto-install failed', err)
   }
+  // After the spaces preload (an instance context names its space's slug) and
+  // after auto-install (the hooks live in extension server modules).
+  try {
+    const { startSpaceApps } = await import('@/app/_authed/(apps)/_server/runtime')
+    await startSpaceApps()
+  } catch (err) {
+    console.error('[startup] space apps load failed', err)
+  }
   // Every account of either kind gets a username here, and it must run AFTER
   // the spaces preload above: an agent is a node in a space graph, so the
   // registry has to be loaded before this can see one to give a handle to.

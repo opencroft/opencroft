@@ -39,6 +39,7 @@ import { dispatchNodeAction } from '@/app/_authed/(extension-runtime)/_server/no
 import type { ExtensionContextType, ExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
 import { FileBrowser } from '@/app/_authed/(filemanager)/_components/file-browser'
 import { FileManagerProvider } from '@/app/_authed/(filemanager)/_components/filemanager-provider'
+import { SecretSelector } from '@/app/_authed/(secrets-store)/_components/secret-selector'
 import {
   useDockerContainers,
   useDockerSnapshotReceived,
@@ -325,6 +326,7 @@ export const extensionUiApi = {
   ControlledInput,
   FileBrowser,
   FileManagerProvider,
+  SecretSelector,
   Terminal,
   // Pre-@opencroft/terminal name for already-compiled extensions.
   InspectorTerminalBody: Terminal,

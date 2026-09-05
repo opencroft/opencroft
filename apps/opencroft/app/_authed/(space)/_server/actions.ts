@@ -15,6 +15,7 @@ import {
   renameSpaceImpl,
   saveSpaceGraphImpl,
   setActiveSpaceSlugImpl,
+  setSpaceIconImpl,
   setSpacePinnedImpl,
 } from '@/app/_authed/(space)/_server/actions-impl'
 import type { GraphData, SpaceExport, SpaceSummary } from '@/app/_authed/(space)/_server/types'
@@ -92,6 +93,28 @@ export const setSpacePinned = createServerFn({ method: 'POST', strict: { output:
   .handler(async ({ data }): Promise<SpaceSummary | null> => {
     await requireSession()
     return setSpacePinnedImpl(data)
+  })
+
+// Same contract as an account avatar (packages/auth updateOwnAvatar): a small,
+// self-contained image data URL or null to clear. The client re-encodes to a
+// small square before sending; this cap is the server's own say, not a copy of
+// the client's.
+const MAX_ICON_CHARS = 64 * 1024
+const ICON_DATA_URL = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/
+
+export const setSpaceIcon = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { slug: string; icon: string | null }) => data)
+  .handler(async ({ data }): Promise<SpaceSummary | null> => {
+    await requireSession()
+    if (data.icon !== null) {
+      if (!ICON_DATA_URL.test(data.icon)) {
+        throw new Error('A space icon must be a PNG, JPEG or WebP image.')
+      }
+      if (data.icon.length > MAX_ICON_CHARS) {
+        throw new Error('That image is too large to store. Choose a smaller one.')
+      }
+    }
+    return setSpaceIconImpl(data)
   })
 
 export const exportSpace = createServerFn({ strict: { output: false } })

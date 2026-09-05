@@ -7,7 +7,49 @@
 
 import { closeDb } from '@opencroft/db'
 
-const globalForShutdown = globalThis as unknown as { __opencroftShutdownRegistered?: boolean }
+const globalForShutdown = globalThis as unknown as {
+  __opencroftShutdownRegistered?: boolean
+  __opencroftShutdownSteps?: Array<() => Promise<void>>
+}
+
+/**
+ * Register work to run when the process is asked to stop, BEFORE the database
+ * is released — so a step may still write. Steps run in registration order;
+ * a failing step is logged and does not block the others or the exit.
+ * Idempotence is the caller's concern. On the same global as the registered
+ * flag, for the same reason: dev-server module reloads must not fork the list.
+ */
+export function registerShutdownStep(step: () => Promise<void>): void {
+  const steps = (globalForShutdown.__opencroftShutdownSteps ??= [])
+  steps.push(step)
+}
+
+// Bounded for the same reason releaseDatabase is: a hung step is a reason to
+// exit late, never a reason not to exit.
+const STEPS_TIMEOUT_MS = 5_000
+
+async function runShutdownSteps(): Promise<void> {
+  const all = (async () => {
+    for (const step of globalForShutdown.__opencroftShutdownSteps ?? []) {
+      try {
+        await step()
+      } catch (error) {
+        console.error('[shutdown] step failed', error)
+      }
+    }
+  })()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([
+    all,
+    new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        console.error(`[shutdown] steps did not finish within ${STEPS_TIMEOUT_MS}ms; continuing`)
+        resolve()
+      }, STEPS_TIMEOUT_MS)
+    }),
+  ])
+  clearTimeout(timer)
+}
 
 // Signals a supervisor uses to ask for a stop: SIGTERM from a container runtime,
 // SIGINT from a terminal. Both mean the same thing here.
@@ -61,6 +103,7 @@ export function registerShutdownHandlers(): void {
   for (const signal of STOP_SIGNALS) {
     process.once(signal, () => {
       void (async () => {
+        await runShutdownSteps()
         await releaseDatabase()
         // Explicit, and it is the reason this handler cannot simply do its work
         // and return: registering ANY listener for these signals replaces the

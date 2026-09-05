@@ -23,6 +23,7 @@ import {
   getApprovalMeta,
   withApprovalRequired,
 } from '@/app/_authed/(approvals)/_server/with-approval'
+import { callAppAction, listSpaceAppInfos } from '@/app/_authed/(apps)/_server/runtime'
 import {
   type InstallAuth,
   installExtensionFromUrl,
@@ -214,6 +215,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'get_nodes',
   'list_edges',
   'list_actions',
+  'list_apps',
   // Extension and registry reads: manifests and listings, no install path.
   'list_extensions',
   'get_extension',
@@ -1242,6 +1244,40 @@ export const toolDefinitions = [
         },
       },
       required: ['nodeId', 'action'],
+    },
+  },
+
+  // ── Apps ────────────────────────────────────────────────────────────
+  {
+    name: 'list_apps',
+    description:
+      'List the App instances added to a space — an App is an extension-provided application a user adds to a space with its own parameters and private data. Each entry names the instance (instanceId), its App, its space, the parameter values it was added with, and the actions it exposes (with input schemas). Use this to discover which instance to target before app_call.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        space: {
+          type: 'string',
+          description: 'Space slug. Omit to target the currently active space. Pass "*" to list every space.',
+        },
+      },
+    },
+  },
+  {
+    name: 'app_call',
+    description:
+      'Invoke an action on one App instance. The action runs server-side in the providing extension, scoped to that instance (its parameters and private data). Use list_apps first to discover instances and their action IDs.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        instanceId: { type: 'string', description: 'App instance ID from list_apps.' },
+        action: { type: 'string', description: 'Action ID from the instance’s actions list.' },
+        params: {
+          type: 'object',
+          description: 'Parameters for the action. Shape is the action’s inputSchema.',
+          additionalProperties: true,
+        },
+      },
+      required: ['instanceId', 'action'],
     },
   },
 
@@ -3773,6 +3809,35 @@ function buildHandlers(): Record<string, ToolHandler> {
         return textResult(text)
       },
       { view: 'call' },
+    ),
+
+    // ── list_apps ────────────────────────────────────────────────────
+    list_apps: async (args) => {
+      const space = args.space === '*' ? undefined : await resolveSpace(args)
+      const infos = await listSpaceAppInfos(space)
+      return textResult(JSON.stringify(infos, null, 2))
+    },
+
+    // ── app_call ─────────────────────────────────────────────────────
+    app_call: withApprovalRequired(
+      async (args, caller) => {
+        const instanceId = args.instanceId as string | undefined
+        const action = args.action as string | undefined
+        if (!instanceId || !action) {
+          fail(-32602, 'Missing required params: instanceId, action')
+        }
+        const params = (args.params as Record<string, unknown> | undefined) ?? {}
+        // Caller handed over, never required — same reasoning as `call` above.
+        const result = await callAppAction(instanceId, action, params, caller.agent ?? undefined)
+        const text =
+          result === undefined
+            ? `Action ${action} completed.`
+            : typeof result === 'string'
+              ? result
+              : JSON.stringify(result, null, 2)
+        return textResult(text)
+      },
+      { view: 'app_call' },
     ),
 
     // ── ask_user ──────────────────────────────────────────────────────────

@@ -52,6 +52,7 @@ export function toSummary(runtime: SpaceRuntime): SpaceSummary {
     slug: runtime.slug,
     name: runtime.name,
     pinned: runtime.pinned,
+    icon: runtime.icon,
     createdAt: runtime.createdAt.toISOString(),
     updatedAt: runtime.updatedAt.toISOString(),
   }
@@ -190,6 +191,15 @@ export async function deleteSpaceImpl(slug: string): Promise<boolean> {
 export async function setSpacePinnedImpl(data: { slug: string; pinned: boolean }): Promise<SpaceSummary | null> {
   const r = await registry()
   const runtime = await r.setPinned(data.slug, data.pinned)
+  if (!runtime) {
+    return null
+  }
+  return toSummary(runtime)
+}
+
+export async function setSpaceIconImpl(data: { slug: string; icon: string | null }): Promise<SpaceSummary | null> {
+  const r = await registry()
+  const runtime = await r.setIcon(data.slug, data.icon)
   if (!runtime) {
     return null
   }

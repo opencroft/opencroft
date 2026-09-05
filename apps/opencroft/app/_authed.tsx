@@ -61,16 +61,16 @@ export const Route = createFileRoute('/_authed')({
       listDashboards(),
       listPinnedDashboards(),
     ])
-    return { pinnedSpaces: spaces.filter((s) => s.pinned), dashboards, pinnedDashboardSlugs }
+    return { spaces, dashboards, pinnedDashboardSlugs }
   },
   component: AuthedLayout,
 })
 
 function AuthedLayout() {
-  const { pinnedSpaces, dashboards, pinnedDashboardSlugs } = Route.useLoaderData()
+  const { spaces, dashboards, pinnedDashboardSlugs } = Route.useLoaderData()
   return (
     <SSEProvider>
-      <AppShell pinnedSpaces={pinnedSpaces} dashboards={dashboards} pinnedDashboardSlugs={pinnedDashboardSlugs}>
+      <AppShell spaces={spaces} dashboards={dashboards} pinnedDashboardSlugs={pinnedDashboardSlugs}>
         <Outlet />
       </AppShell>
     </SSEProvider>

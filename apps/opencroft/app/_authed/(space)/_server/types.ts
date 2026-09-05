@@ -8,6 +8,8 @@ export interface SpaceSummary {
   slug: string
   name: string
   pinned: boolean
+  /** Small square image as a base64 data URL; null = no icon (render the default). */
+  icon: string | null
   createdAt: string
   updatedAt: string
 }

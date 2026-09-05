@@ -18,6 +18,7 @@ interface SpaceRuntime {
   name: string
   graph: GraphData
   pinned: boolean
+  icon: string | null
   createdAt: Date
   updatedAt: Date
 }
@@ -89,6 +90,7 @@ class SpacesRegistry {
         name: row.name,
         graph: parseGraph(row.data),
         pinned: row.pinned,
+        icon: row.icon,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       }
@@ -134,6 +136,7 @@ class SpacesRegistry {
       name: row.name,
       graph,
       pinned: row.pinned,
+      icon: row.icon,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     }
@@ -150,6 +153,7 @@ class SpacesRegistry {
         slug: s.slug,
         name: s.name,
         pinned: s.pinned,
+        icon: s.icon,
         createdAt: s.createdAt.toISOString(),
         updatedAt: s.updatedAt.toISOString(),
       }))
@@ -226,6 +230,19 @@ class SpacesRegistry {
     const runtime = this.spaces.get(id)!
     const [row] = await db.update(space).set({ pinned }).where(eq(space.id, id)).returning()
     runtime.pinned = row.pinned
+    runtime.updatedAt = row.updatedAt
+    return runtime
+  }
+
+  /** Set the space's icon (a small data URL), or clear it with `null`. */
+  async setIcon(slug: string, icon: string | null): Promise<SpaceRuntime | null> {
+    const id = this.idFor(slug)
+    if (!id) {
+      return null
+    }
+    const runtime = this.spaces.get(id)!
+    const [row] = await db.update(space).set({ icon }).where(eq(space.id, id)).returning()
+    runtime.icon = row.icon
     runtime.updatedAt = row.updatedAt
     return runtime
   }

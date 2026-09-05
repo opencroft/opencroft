@@ -3,9 +3,8 @@
 import type { DashboardMeta } from '@opencroft/dashboards'
 import { DashboardsSidebarSection } from '@opencroft/dashboards/client'
 import { Link, useLocation } from '@tanstack/react-router'
-import { ChevronRight, MessagesSquare, Network, Puzzle, SettingsIcon } from 'lucide-react'
+import { MessagesSquare, Puzzle, SettingsIcon } from 'lucide-react'
 import { Suspense } from 'react'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/collapsible'
 import { TitlebarProvider } from 'ui/layout/titlebar'
 import {
   Sidebar,
@@ -14,36 +13,33 @@ import {
   SidebarGroup,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
   SidebarProvider,
   SidebarRail,
   SidebarTrigger,
 } from 'ui/sidebar'
 
+import { SpaceSidebarSection } from '@/app/_authed/(space)/_components/space-selector'
 import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
 import { DevBuildBadge } from '@/app/_components/dev-build-badge'
 import { RightSidebar } from '@/app/_shell/right-sidebar'
 import { SignOutItem } from '@/app/(auth)/_components/sign-out-item'
 
 interface Props {
-  pinnedSpaces: SpaceSummary[]
+  spaces: SpaceSummary[]
   dashboards: DashboardMeta[]
   pinnedDashboardSlugs: string[]
   children: React.ReactNode
 }
 
 interface SidebarProps {
-  pinnedSpaces: SpaceSummary[]
+  spaces: SpaceSummary[]
   dashboards: DashboardMeta[]
   pinnedDashboardSlugs: string[]
 }
 
-function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarProps) {
+function AppSidebar({ spaces, dashboards, pinnedDashboardSlugs }: SidebarProps) {
   const pathname = useLocation({ select: (l) => l.pathname })
   const pinnedDashboards = dashboards.filter((d) => pinnedDashboardSlugs.includes(d.slug))
 
@@ -53,42 +49,7 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
         <SidebarTrigger />
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarMenu>
-            <Collapsible defaultOpen className='group/collapsible'>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip='Spaces' isActive={pathname === '/spaces'}>
-                  <Link to='/spaces'>
-                    <Network />
-                    <span>Spaces</span>
-                  </Link>
-                </SidebarMenuButton>
-                {pinnedSpaces.length > 0 && (
-                  <>
-                    <CollapsibleTrigger asChild>
-                      <SidebarMenuAction>
-                        <ChevronRight className='transition-transform group-data-[state=open]/collapsible:rotate-90' />
-                      </SidebarMenuAction>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                      <SidebarMenuSub>
-                        {pinnedSpaces.map((space) => (
-                          <SidebarMenuSubItem key={space.id}>
-                            <SidebarMenuSubButton asChild isActive={pathname === `/space/${space.slug}`}>
-                              <Link to='/space/$slug' params={{ slug: space.slug }}>
-                                <span>{space.name}</span>
-                              </Link>
-                            </SidebarMenuSubButton>
-                          </SidebarMenuSubItem>
-                        ))}
-                      </SidebarMenuSub>
-                    </CollapsibleContent>
-                  </>
-                )}
-              </SidebarMenuItem>
-            </Collapsible>
-          </SidebarMenu>
-        </SidebarGroup>
+        <SpaceSidebarSection spaces={spaces} />
         <DashboardsSidebarSection dashboards={pinnedDashboards} />
         {/*
           A group chat belongs to its members, not to a space, so this section
@@ -137,12 +98,12 @@ function AppSidebar({ pinnedSpaces, dashboards, pinnedDashboardSlugs }: SidebarP
   )
 }
 
-export function AppShell({ pinnedSpaces, dashboards, pinnedDashboardSlugs, children }: Props) {
+export function AppShell({ spaces, dashboards, pinnedDashboardSlugs, children }: Props) {
   return (
     <TitlebarProvider>
       <SidebarProvider style={{ '--sidebar-width': '24rem' } as React.CSSProperties}>
         <Suspense fallback={null}>
-          <AppSidebar pinnedSpaces={pinnedSpaces} dashboards={dashboards} pinnedDashboardSlugs={pinnedDashboardSlugs} />
+          <AppSidebar spaces={spaces} dashboards={dashboards} pinnedDashboardSlugs={pinnedDashboardSlugs} />
         </Suspense>
         <main className='flex flex-col w-full h-dvh'>{children}</main>
         <RightSidebar />

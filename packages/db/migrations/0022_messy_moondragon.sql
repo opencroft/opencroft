@@ -1,0 +1,1 @@
+DROP INDEX "SpaceApp_spaceId_extensionId_appSlug_key";
