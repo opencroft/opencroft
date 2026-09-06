@@ -1,5 +1,3 @@
-import { promises as fs } from 'node:fs'
-
 import { getSessionUser } from '@opencroft/auth/server'
 import type { AppEntry } from '@opencroft/core'
 import { db, spaceApp } from '@opencroft/db'
@@ -7,10 +5,9 @@ import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 import { and, asc, eq } from 'drizzle-orm'
 
-import { appInstanceDataDir } from '@/app/_authed/(apps)/_server/instance-paths'
 import {
+  addSpaceAppImpl,
   appUpdatesInPlace,
-  handleInstanceAdded,
   handleInstanceBeforeRemoved,
   handleInstanceRemoved,
   handleInstanceUpdated,
@@ -118,23 +115,7 @@ export const addSpaceApp = createServerFn({ method: 'POST', strict: { output: fa
   )
   .handler(async ({ data }): Promise<SpaceAppInstance> => {
     await requireSession()
-    const spaceId = await resolveSpaceId(data.spaceSlug)
-    const app = await findApp(data.extensionId, data.appSlug)
-    if (!app) {
-      throw new Error(`No extension provides app: ${data.extensionId}/${data.appSlug}`)
-    }
-    const params = collectParams(app, data.params)
-    const [row] = await db
-      .insert(spaceApp)
-      .values({ spaceId, extensionId: data.extensionId, appSlug: data.appSlug, params: JSON.stringify(params) })
-      .returning()
-    try {
-      await handleInstanceAdded(row)
-    } catch (error) {
-      await db.delete(spaceApp).where(eq(spaceApp.id, row.id))
-      await fs.rm(appInstanceDataDir(row.extensionId, row.id), { recursive: true, force: true })
-      throw error
-    }
+    const row = await addSpaceAppImpl(data.spaceSlug, data.extensionId, data.appSlug, data.params)
     return toInstance(row)
   })
 

@@ -267,9 +267,87 @@ async function unloadAllInstances(): Promise<void> {
 }
 
 /**
+ * One App as the catalog reports it to agents: what can be added, and the
+ * parameters an add takes. Compact by design — this is what
+ * `app_find` prints into an agent's context.
+ */
+export interface AppCatalogEntry {
+  extensionId: string
+  appSlug: string
+  title: string
+  description?: string
+  parameters: Array<{ id: string; label: string; required?: boolean; description?: string }>
+}
+
+/** Every App any extension provides — what an `app_add` can instantiate. */
+export async function listAppCatalog(): Promise<AppCatalogEntry[]> {
+  const provided = await getProvided<AppEntry>('apps')
+  return provided.map(({ extensionId, value }) => ({
+    extensionId,
+    appSlug: value.slug,
+    title: value.title,
+    description: value.description,
+    parameters: (value.parameters ?? []).map((spec) => ({
+      id: spec.id,
+      label: spec.label,
+      required: spec.required,
+      description: spec.description,
+    })),
+  }))
+}
+
+/**
+ * Add one App instance to a space — the session-free core the addSpaceApp
+ * server function and the `app_add` MCP tool share. Parameter values are
+ * kept only for parameters the App declares, trimmed, empty values dropped;
+ * declared `required` parameters must be non-empty. The instance is only
+ * kept if the App accepts it: a throwing onAdded/onLoad hook rolls the row
+ * and its data directory back and rethrows.
+ */
+export async function addSpaceAppImpl(
+  spaceSlug: string,
+  extensionId: string,
+  appSlug: string,
+  input?: Record<string, string>,
+): Promise<SpaceAppRow> {
+  const r = await registry()
+  const space = r.getBySlug(spaceSlug)
+  if (!space) {
+    throw new Error(`Unknown space: ${spaceSlug}`)
+  }
+  const provided = await getProvided<AppEntry>('apps')
+  const entry = provided.find((p) => p.extensionId === extensionId && p.value.slug === appSlug)?.value
+  if (!entry) {
+    throw new Error(`No extension provides app: ${extensionId}/${appSlug}`)
+  }
+  const params: Record<string, string> = {}
+  for (const spec of entry.parameters ?? []) {
+    const value = input?.[spec.id]?.trim() ?? ''
+    if (spec.required && !value) {
+      throw new Error(`Missing required parameter: ${spec.label}`)
+    }
+    if (value) {
+      params[spec.id] = value
+    }
+  }
+  const [row] = await db
+    .insert(spaceApp)
+    .values({ spaceId: space.id, extensionId, appSlug, params: JSON.stringify(params) })
+    .returning()
+  try {
+    await handleInstanceAdded(row)
+  } catch (error) {
+    await db.delete(spaceApp).where(eq(spaceApp.id, row.id))
+    await fs.rm(appInstanceDataDir(row.extensionId, row.id), { recursive: true, force: true })
+    throw error
+  }
+  return row
+}
+
+/**
  * One instance as the MCP surface reports it to agents: identity, the space
  * it lives in, its parameter values, and the actions its App declares in the
- * manifest. Compact by design — this is what `list_apps` prints into an
+ * manifest. Compact by design — this is what `app_list` prints into an
  * agent's context.
  */
 export interface SpaceAppInfo {
