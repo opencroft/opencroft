@@ -6,6 +6,7 @@ import {
   callAppAction,
   listAppCatalog,
   listSpaceAppInfos,
+  removeSpaceAppImpl,
   transferSpaceAppImpl,
 } from '@/app/_authed/(apps)/_server/runtime'
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
@@ -74,19 +75,32 @@ export const definitions = [
   {
     name: 'app_add',
     description:
-      'Add an App instance to a space. The same App can be added many times with different parameter values — each add is a new instance. Declared required parameters must be non-empty; an add the App refuses (a throwing hook) rolls back whole. Adding the builtin/core "graph" App creates a new graph in the space — its address comes back in the result. See app_find for what can be added.',
+      'Add an App instance to a space. Every instance is NAMED: its slug is derived from the name once, must be free in the space (a taken slug is refused — pick a different name), and with the space forms the instance address <space>.<slug>. The same App can be added many times under different names. Declared required parameters must be non-empty; an add the App refuses (a throwing hook) rolls back whole. Adding the builtin/core "graph" App creates a new graph in the space at that same address. See app_find for what can be added.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         space: { type: 'string', description: 'Space slug. Omit to target the currently active space.' },
         extensionId: { type: 'string', description: 'The providing extension — see app_find.' },
         appSlug: { type: 'string', description: 'The App within that extension — see app_find.' },
+        name: { type: 'string', description: 'The instance name; its slug (and so its address) derives from it.' },
         params: {
           type: 'object',
           description: 'Parameter values by parameter id, as declared in the catalog entry.',
         },
       },
-      required: ['extensionId', 'appSlug'],
+      required: ['extensionId', 'appSlug', 'name'],
+    },
+  },
+  {
+    name: 'app_remove',
+    description:
+      'Remove an App instance from its space, with whatever data it owns — removing a Graph instance removes its graph and every node on it. The App can refuse (e.g. a Graph that is its space’s default while other graphs remain); a refusal leaves the instance whole. Use app_list to find the instanceId.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        instanceId: { type: 'string', description: 'The App instance to remove — see app_list.' },
+      },
+      required: ['instanceId'],
     },
   },
 ]
@@ -157,29 +171,38 @@ export const handlers: Record<string, ToolHandler> = {
   app_add: withApprovalRequired(async (args) => {
     const extensionId = args.extensionId as string | undefined
     const appSlug = args.appSlug as string | undefined
-    if (!extensionId || !appSlug) {
-      fail(-32602, 'Missing required params: extensionId, appSlug')
+    const name = args.name as string | undefined
+    if (!extensionId || !appSlug || !name) {
+      fail(-32602, 'Missing required params: extensionId, appSlug, name')
     }
     // A graph address is accepted on the space part, like everywhere else,
     // but an instance is added to the SPACE — the graph suffix is dropped.
     const { spaceSlug } = parseGraphAddress(await resolveSpace(args))
     const params = (args.params as Record<string, string> | undefined) ?? {}
-    const row = await addSpaceAppImpl(spaceSlug, extensionId, appSlug, params)
-    const registry = getSpacesRegistry()
-    const graph = registry.graphByInstance(row.id)
-    const createdGraphAddress = graph ? `${spaceSlug}.${graph.slug}` : undefined
+    const row = await addSpaceAppImpl(spaceSlug, extensionId, appSlug, name, params)
     return textResult(
       JSON.stringify(
         {
           instanceId: row.id,
           space: spaceSlug,
           app: `${extensionId}/${appSlug}`,
+          name: row.name,
+          address: `${spaceSlug}.${row.slug}`,
           params: JSON.parse(row.params) as Record<string, string>,
-          createdGraphAddress,
         },
         null,
         2,
       ),
     )
+  }),
+
+  // ── app_remove ───────────────────────────────────────────────────
+  app_remove: withApprovalRequired(async (args) => {
+    const instanceId = args.instanceId as string | undefined
+    if (!instanceId) {
+      fail(-32602, 'Missing required param: instanceId')
+    }
+    const removed = await removeSpaceAppImpl(instanceId)
+    return textResult(JSON.stringify({ instanceId, removed }, null, 2))
   }),
 }

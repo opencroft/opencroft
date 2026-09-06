@@ -19,6 +19,7 @@ import { appInstanceDataDir } from '@/app/_authed/(apps)/_server/instance-paths'
 import { getExtensionModule } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { getProvided } from '@/app/_authed/(extension-runtime)/_server/provides'
 import { registry } from '@/app/_authed/(space)/_server/actions-impl'
+import { instanceSlugFor } from '@/app/_authed/(space)/_server/slug'
 import { GRAPH_APP_EXTENSION_ID, GRAPH_APP_SLUG } from '@/app/_authed/(space)/_server/types'
 import { registerShutdownStep } from '@/server/shutdown'
 
@@ -62,6 +63,8 @@ async function instanceContext(row: SpaceAppRow): Promise<AppInstanceContext> {
   return {
     instanceId: row.id,
     spaceSlug: space?.slug ?? '',
+    name: row.name,
+    slug: row.slug,
     params: JSON.parse(row.params) as Record<string, string>,
     dataDir: appInstanceDataDir(row.extensionId, row.id),
   }
@@ -191,6 +194,14 @@ export async function appUpdatesInPlace(extensionId: string, appSlug: string): P
  * throwing hook rolls the row back and rethrows, so a refused transfer
  * leaves the instance exactly where it was. Session-free by design -- the
  * space-settings UI and the MCP surface both land here.
+ *
+ * The SLUG survives when the target has it free. When it clashes, the
+ * instance takes its DONOR SPACE's name and slug instead -- an instance
+ * called "Default" arriving beside the target's own default is
+ * disambiguated by where it came from, which is the one meaningful name a
+ * transfer can derive -- and a further clash falls back to a numbered
+ * suffix. The hook's context reads the resolved name and slug, so an App
+ * mirroring them into its own data (the Graph App) follows along.
  */
 export async function transferSpaceAppImpl(instanceId: string, targetSpaceSlug: string): Promise<void> {
   const r = await registry()
@@ -206,16 +217,34 @@ export async function transferSpaceAppImpl(instanceId: string, targetSpaceSlug: 
     return
   }
   const previousSpace = r.list().find((s) => s.id === row.spaceId)
+  const targetRows = await db.query.spaceApp.findMany({ where: eq(spaceApp.spaceId, target.id) })
+  const taken = new Set(targetRows.map((sibling) => sibling.slug))
+  let slug = row.slug
+  let name = row.name
+  if (taken.has(slug)) {
+    slug = previousSpace?.slug ?? slug
+    name = previousSpace?.name ?? name
+    if (taken.has(slug)) {
+      let i = 2
+      while (taken.has(`${slug}-${i}`)) {
+        i += 1
+      }
+      slug = `${slug}-${i}`
+    }
+  }
   const [moved] = await db
     .update(spaceApp)
-    .set({ spaceId: target.id, updatedAt: new Date() })
+    .set({ spaceId: target.id, slug, name, updatedAt: new Date() })
     .where(eq(spaceApp.id, row.id))
     .returning()
   try {
     const hooks = await hooksFor(row.extensionId, row.appSlug)
     await hooks?.onTransferred?.(await instanceContext(moved), previousSpace?.slug ?? '')
   } catch (error) {
-    await db.update(spaceApp).set({ spaceId: row.spaceId }).where(eq(spaceApp.id, row.id))
+    await db
+      .update(spaceApp)
+      .set({ spaceId: row.spaceId, slug: row.slug, name: row.name })
+      .where(eq(spaceApp.id, row.id))
     throw error
   }
   const loaded = loadedInstances().get(row.id)
@@ -297,17 +326,33 @@ export async function listAppCatalog(): Promise<AppCatalogEntry[]> {
 }
 
 /**
+ * Thrown by `addSpaceAppImpl` when the name slugifies onto an instance the
+ * space already has. A refusal rather than a silent suffix: the slug is the
+ * instance's public address, and handing back a suffixed one would leave it
+ * answering to an address nobody named.
+ */
+export class AppSlugTakenError extends Error {
+  constructor(readonly address: string) {
+    super(`An app already answers to "${address}" in this space. Pick a different name.`)
+    this.name = 'AppSlugTakenError'
+  }
+}
+
+/**
  * Add one App instance to a space — the session-free core the addSpaceApp
- * server function and the `app_add` MCP tool share. Parameter values are
- * kept only for parameters the App declares, trimmed, empty values dropped;
- * declared `required` parameters must be non-empty. The instance is only
- * kept if the App accepts it: a throwing onAdded/onLoad hook rolls the row
- * and its data directory back and rethrows.
+ * server function and the `app_add` MCP tool share. Every instance is NAMED:
+ * the name is required, and its slug — derived once, here — must be free in
+ * the space (AppSlugTakenError otherwise). Parameter values are kept only
+ * for parameters the App declares, trimmed, empty values dropped; declared
+ * `required` parameters must be non-empty. The instance is only kept if the
+ * App accepts it: a throwing onAdded/onLoad hook rolls the row and its data
+ * directory back and rethrows.
  */
 export async function addSpaceAppImpl(
   spaceSlug: string,
   extensionId: string,
   appSlug: string,
+  name: string,
   input?: Record<string, string>,
 ): Promise<SpaceAppRow> {
   const r = await registry()
@@ -319,6 +364,15 @@ export async function addSpaceAppImpl(
   const entry = provided.find((p) => p.extensionId === extensionId && p.value.slug === appSlug)?.value
   if (!entry) {
     throw new Error(`No extension provides app: ${extensionId}/${appSlug}`)
+  }
+  const trimmedName = name.trim()
+  if (!trimmedName) {
+    throw new Error('Every app instance needs a name')
+  }
+  const slug = instanceSlugFor(trimmedName)
+  const siblings = await db.query.spaceApp.findMany({ where: eq(spaceApp.spaceId, space.id) })
+  if (siblings.some((sibling) => sibling.slug === slug)) {
+    throw new AppSlugTakenError(`${space.slug}.${slug}`)
   }
   const params: Record<string, string> = {}
   for (const spec of entry.parameters ?? []) {
@@ -332,7 +386,7 @@ export async function addSpaceAppImpl(
   }
   const [row] = await db
     .insert(spaceApp)
-    .values({ spaceId: space.id, extensionId, appSlug, params: JSON.stringify(params) })
+    .values({ spaceId: space.id, extensionId, appSlug, name: trimmedName, slug, params: JSON.stringify(params) })
     .returning()
   try {
     await handleInstanceAdded(row)
@@ -345,6 +399,55 @@ export async function addSpaceAppImpl(
 }
 
 /**
+ * Remove one instance — the session-free core the removeSpaceApp server
+ * function and the `app_remove` MCP tool share. The App's beforeRemoved veto
+ * runs first, against an untouched instance, and propagates; after it the
+ * teardown (unload, onRemoved, data directory, row) goes through whatever
+ * happens. Returns false when the instance does not exist.
+ */
+export async function removeSpaceAppImpl(instanceId: string): Promise<boolean> {
+  const row = await db.query.spaceApp.findFirst({ where: eq(spaceApp.id, instanceId) })
+  if (!row) {
+    return false
+  }
+  await handleInstanceBeforeRemoved(row)
+  await handleInstanceRemoved(row)
+  await db.delete(spaceApp).where(eq(spaceApp.id, row.id))
+  return true
+}
+
+/**
+ * Rename one instance: the display name only — the slug is an address, fixed
+ * at creation, and never moves with the label. Apps that mirror the name into
+ * data they own (the Graph App's graph row) react through onRenamed.
+ */
+export async function renameSpaceAppImpl(instanceId: string, name: string): Promise<SpaceAppRow> {
+  const trimmedName = name.trim()
+  if (!trimmedName) {
+    throw new Error('Every app instance needs a name')
+  }
+  const row = await db.query.spaceApp.findFirst({ where: eq(spaceApp.id, instanceId) })
+  if (!row) {
+    throw new Error(`Unknown app instance: ${instanceId}`)
+  }
+  if (row.name === trimmedName) {
+    return row
+  }
+  const [updated] = await db
+    .update(spaceApp)
+    .set({ name: trimmedName, updatedAt: new Date() })
+    .where(eq(spaceApp.id, row.id))
+    .returning()
+  const hooks = await hooksFor(row.extensionId, row.appSlug)
+  await hooks?.onRenamed?.(await instanceContext(updated), row.name)
+  const loaded = loadedInstances().get(row.id)
+  if (loaded) {
+    loaded.ctx = await instanceContext(updated)
+  }
+  return updated
+}
+
+/**
  * One instance as the MCP surface reports it to agents: identity, the space
  * it lives in, its parameter values, and the actions its App declares in the
  * manifest. Compact by design — this is what `app_list` prints into an
@@ -354,6 +457,10 @@ export interface SpaceAppInfo {
   instanceId: string
   extensionId: string
   appSlug: string
+  /** The instance's own name — what the user called it, not the App's title. */
+  name: string
+  /** The instance's slug — with `space` it forms the public address `<space>.<slug>`. */
+  slug: string
   title: string
   description?: string
   space: string
@@ -378,6 +485,8 @@ export async function listSpaceAppInfos(spaceSlug?: string): Promise<SpaceAppInf
       instanceId: row.id,
       extensionId: row.extensionId,
       appSlug: row.appSlug,
+      name: row.name,
+      slug: row.slug,
       title: entry?.title ?? row.appSlug,
       description: entry?.description,
       space,

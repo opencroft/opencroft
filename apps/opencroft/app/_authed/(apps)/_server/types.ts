@@ -21,6 +21,10 @@ export interface SpaceAppInstance {
   id: string
   extensionId: string
   appSlug: string
+  /** The instance's display name — required, editable; the slug does not follow it. */
+  name: string
+  /** The instance's slug — unique in the space, fixed at creation; `<space>.<slug>` is its address. */
+  slug: string
   params: Record<string, string>
   createdAt: string
   updatedAt: string

@@ -93,6 +93,13 @@ export const spaceSlugAlias = pgTable(
 // An instance of an App (provided by an extension) the user added to a space,
 // with the parameter values they entered. The row id is the instance identity:
 // the same App can be added to a space several times with different params.
+//
+// Every instance carries a NAME (required, human-facing) and a SLUG derived
+// from it once, at creation -- the instance's public address within its
+// space, unique there, in the same grammar graphs use: <space>.<slug>.
+// Renaming changes only the name; the slug never moves with it (an address
+// outlives its label). A transfer may re-slug on collision in the target
+// space, through the same resolution graphs established.
 export const spaceApp = pgTable(
   'SpaceApp',
   {
@@ -102,12 +109,14 @@ export const spaceApp = pgTable(
       .references(() => space.id, { onDelete: 'cascade' }),
     extensionId: text().notNull(),
     appSlug: text().notNull(),
+    name: text().default('').notNull(),
+    slug: text().default('').notNull(),
     /** JSON object: parameter id -> value the user entered. */
     params: text().default('{}').notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index('SpaceApp_spaceId_idx').on(t.spaceId)],
+  (t) => [index('SpaceApp_spaceId_idx').on(t.spaceId), uniqueIndex('SpaceApp_spaceId_slug_key').on(t.spaceId, t.slug)],
 )
 
 // A graph within a space -- the nodes and edges one canvas draws. Every graph

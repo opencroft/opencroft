@@ -183,6 +183,13 @@
       "when": 1788640569091,
       "tag": "0025_soft_natasha_romanoff",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1788717730172,
+      "tag": "0026_breezy_karma",
+      "breakpoints": true
     }
   ]
 }

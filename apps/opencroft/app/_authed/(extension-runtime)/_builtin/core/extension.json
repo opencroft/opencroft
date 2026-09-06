@@ -1,7 +1,7 @@
 {
   "id": "builtin/core",
   "name": "Core",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Core node catalog — infrastructure + storage + windows + scripts + api routes",
   "provides": {
     "apps": [
@@ -9,15 +9,7 @@
         "slug": "graph",
         "title": "Graph",
         "description": "A node graph canvas. Every graph in a space is one instance of this app; each is addressed as <space>.<graph>, and the space's own page shows its default graph. Removing the instance removes the graph and everything on it.",
-        "icon": "Workflow",
-        "parameters": [
-          {
-            "id": "name",
-            "label": "Name",
-            "required": true,
-            "description": "The graph's display name. Its address slug is derived from it once, at creation, and never changes — a later rename only changes what people read."
-          }
-        ]
+        "icon": "Workflow"
       }
     ]
   },

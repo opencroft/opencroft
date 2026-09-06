@@ -8,9 +8,9 @@ import { and, asc, eq } from 'drizzle-orm'
 import {
   addSpaceAppImpl,
   appUpdatesInPlace,
-  handleInstanceBeforeRemoved,
-  handleInstanceRemoved,
   handleInstanceUpdated,
+  removeSpaceAppImpl,
+  renameSpaceAppImpl,
   transferAllSpaceAppsImpl,
   transferSpaceAppImpl,
 } from '@/app/_authed/(apps)/_server/runtime'
@@ -67,6 +67,8 @@ function toInstance(row: typeof spaceApp.$inferSelect): SpaceAppInstance {
     id: row.id,
     extensionId: row.extensionId,
     appSlug: row.appSlug,
+    name: row.name,
+    slug: row.slug,
     params: JSON.parse(row.params) as Record<string, string>,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -111,12 +113,37 @@ export const listSpaceApps = createServerFn({ strict: { output: false } })
  */
 export const addSpaceApp = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator(
-    (data: { spaceSlug: string; extensionId: string; appSlug: string; params?: Record<string, string> }) => data,
+    (data: {
+      spaceSlug: string
+      extensionId: string
+      appSlug: string
+      name: string
+      params?: Record<string, string>
+    }) => data,
   )
   .handler(async ({ data }): Promise<SpaceAppInstance> => {
     await requireSession()
-    const row = await addSpaceAppImpl(data.spaceSlug, data.extensionId, data.appSlug, data.params)
+    const row = await addSpaceAppImpl(data.spaceSlug, data.extensionId, data.appSlug, data.name, data.params)
     return toInstance(row)
+  })
+
+/**
+ * Rename one instance in place: display name only — the slug is an address
+ * and never moves. Never recreates, whatever the App's update mode; an App
+ * mirroring the name into its own data follows through onRenamed.
+ */
+export const renameSpaceApp = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { spaceSlug: string; instanceId: string; name: string }) => data)
+  .handler(async ({ data }): Promise<SpaceAppInstance> => {
+    await requireSession()
+    const spaceId = await resolveSpaceId(data.spaceSlug)
+    const row = await db.query.spaceApp.findFirst({
+      where: and(eq(spaceApp.id, data.instanceId), eq(spaceApp.spaceId, spaceId)),
+    })
+    if (!row) {
+      throw new Error(`Unknown app instance: ${data.instanceId}`)
+    }
+    return toInstance(await renameSpaceAppImpl(data.instanceId, data.name))
   })
 
 /**
@@ -191,11 +218,5 @@ export const removeSpaceApp = createServerFn({ method: 'POST', strict: { output:
     if (!row) {
       return false
     }
-    // The App's veto, before anything is touched: a throw surfaces to the
-    // caller and the instance stays whole (e.g. the Graph App refusing to
-    // remove the space's default graph).
-    await handleInstanceBeforeRemoved(row)
-    await handleInstanceRemoved(row)
-    await db.delete(spaceApp).where(eq(spaceApp.id, row.id))
-    return true
+    return removeSpaceAppImpl(row.id)
   })

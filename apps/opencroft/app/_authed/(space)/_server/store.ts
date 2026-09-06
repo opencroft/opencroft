@@ -112,12 +112,6 @@ function parseGraph(data: string): GraphData {
   }
 }
 
-/** A graph's slug from its display name; 'graph' when nothing survives slugify. */
-function graphSlugFor(name: string): string {
-  const base = slugify(name)
-  return base === 'space' ? 'graph' : base
-}
-
 class SpacesRegistry {
   private spaces = new Map<string, SpaceRuntime>()
   private bySlug = new Map<string, string>()
@@ -230,7 +224,8 @@ class SpacesRegistry {
             spaceId: row.id,
             extensionId: GRAPH_APP_EXTENSION_ID,
             appSlug: GRAPH_APP_SLUG,
-            params: JSON.stringify({ name: DEFAULT_GRAPH_NAME }),
+            name: DEFAULT_GRAPH_NAME,
+            slug: DEFAULT_GRAPH_SLUG,
           })
           .returning()
         const [graphRow] = await tx
@@ -280,7 +275,8 @@ class SpacesRegistry {
           spaceId: spaceRow.id,
           extensionId: GRAPH_APP_EXTENSION_ID,
           appSlug: GRAPH_APP_SLUG,
-          params: JSON.stringify({ name: DEFAULT_GRAPH_NAME }),
+          name: DEFAULT_GRAPH_NAME,
+          slug: DEFAULT_GRAPH_SLUG,
         })
         .returning()
       const [createdGraph] = await tx
@@ -442,17 +438,17 @@ class SpacesRegistry {
 
   /**
    * A graph for a Graph App instance -- the onAdded hook's job. The slug is
-   * the name's, fixed for the graph's whole life; a taken slug is refused so
-   * the add flow rolls the instance back rather than owning a graph it did
-   * not create (two instances on one graph would double-own it, and the
-   * first removal would take the data out from under the survivor).
+   * the INSTANCE's (minted by the platform from the name, unique among the
+   * space's instances), so a graph's address and its instance's address are
+   * one address. A taken slug is still refused defensively: it would mean
+   * a graph exists whose instance is gone, and owning it would double-own
+   * its data.
    */
-  async createGraph(spaceSlug: string, name: string, instanceId: string): Promise<GraphRuntime> {
+  async createGraph(spaceSlug: string, name: string, slug: string, instanceId: string): Promise<GraphRuntime> {
     const owner = this.getBySlug(spaceSlug)
     if (!owner) {
       throw new Error(`Space not found: ${spaceSlug}`)
     }
-    const slug = graphSlugFor(name)
     if (owner.graphs.has(slug)) {
       throw new GraphSlugTakenError(`${owner.slug}.${slug}`)
     }
@@ -519,24 +515,19 @@ class SpacesRegistry {
 
   /**
    * Follow an App-instance transfer: the platform has already moved the
-   * spaceApp row, and this moves the graph the instance owns with it -- the
-   * Graph App's onTransferred hook. The graph keeps its identity (row id,
-   * instance, node ids) and gets an address under the target space.
-   *
-   * The SLUG survives when the target has it free. When it clashes, the
-   * graph takes its DONOR SPACE's name and slug instead -- a graph called
-   * "Default" arriving beside the target's own default is disambiguated by
-   * where it came from, which is the one meaningful name a transfer can
-   * derive -- and a further clash falls back to a numbered suffix, as
-   * creation does. The instance's name parameter is rewritten alongside so
-   * its settings form reads what the graph is now called.
+   * spaceApp row -- and already resolved the instance's slug and name for
+   * the target space (keep when free, else donor space's name, else a
+   * numbered suffix) -- and this moves the graph the instance owns with it,
+   * mirroring that resolved slug and name onto the graph row so the two
+   * stay one address. The graph keeps its identity (row id, instance, node
+   * ids) throughout -- the Graph App's onTransferred hook.
    *
    * Transferring a space's DEFAULT graph is allowed only when it is that
    * space's ONLY graph -- the donor gets a fresh empty default in its place,
    * so a bare `<space>` address never stops resolving. With other graphs
    * present the default has to be re-pointed first, same as removal.
    */
-  async transferGraphByInstance(instanceId: string, previousSpaceSlug: string): Promise<GraphRef> {
+  async transferGraphByInstance(instanceId: string, _previousSpaceSlug: string): Promise<GraphRef> {
     const graph = this.graphsByInstance.get(instanceId)
     if (!graph) {
       throw new Error(`No graph behind instance: ${instanceId}`)
@@ -547,25 +538,19 @@ class SpacesRegistry {
     }
     const row = await db.query.spaceApp.findFirst({ where: eq(spaceApp.id, instanceId) })
     const target = row ? this.spaces.get(row.spaceId) : null
-    if (!target) {
+    if (!row || !target) {
       throw new Error(`Target space not found for instance: ${instanceId}`)
     }
     if (target.id === source.id) {
       return { space: target, graph }
     }
-    let slug = graph.slug
-    let name = graph.name
+    const slug = row.slug
+    const name = row.name
     if (target.graphs.has(slug)) {
-      const donor = this.getBySlug(previousSpaceSlug)
-      slug = donor?.slug ?? previousSpaceSlug
-      name = donor?.name ?? previousSpaceSlug
-      if (target.graphs.has(slug)) {
-        let i = 2
-        while (target.graphs.has(`${slug}-${i}`)) {
-          i += 1
-        }
-        slug = `${slug}-${i}`
-      }
+      // Cannot happen while every graph slug mirrors its instance slug (the
+      // platform just verified the instance slug free) -- refusing beats
+      // silently double-addressing two graphs.
+      throw new GraphSlugTakenError(`${target.slug}.${slug}`)
     }
     const isDefault = source.defaultGraphSlug === graph.slug
     if (isDefault && source.graphs.size > 1) {
@@ -577,10 +562,6 @@ class SpacesRegistry {
         .set({ spaceId: target.id, slug, name })
         .where(eq(spaceGraph.id, graph.id))
         .returning()
-      await tx
-        .update(spaceApp)
-        .set({ params: JSON.stringify({ name }) })
-        .where(eq(spaceApp.id, instanceId))
       graph.updatedAt = moved.updatedAt
       if (!isDefault) {
         return null
@@ -591,7 +572,8 @@ class SpacesRegistry {
           spaceId: source.id,
           extensionId: GRAPH_APP_EXTENSION_ID,
           appSlug: GRAPH_APP_SLUG,
-          params: JSON.stringify({ name: DEFAULT_GRAPH_NAME }),
+          name: DEFAULT_GRAPH_NAME,
+          slug: DEFAULT_GRAPH_SLUG,
         })
         .returning()
       const [fresh] = await tx

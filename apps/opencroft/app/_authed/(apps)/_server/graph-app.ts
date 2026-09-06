@@ -6,23 +6,25 @@
 // their lifecycle talks to the spaces registry directly rather than through
 // an extension sandbox that cannot see it.
 //
-// One instance = one graph. onAdded creates it (a name that slugifies onto an
-// existing graph is refused, which rolls the instance back), onUpdated
-// renames it in place -- the slug is an address and never moves -- and
-// onRemoved deletes it with the instance. beforeRemoved vetoes removing the
-// graph a bare `<space>` address resolves to: the default has to be pointed
-// at another graph first.
+// One instance = one graph, and one address: the graph carries the
+// INSTANCE's name and slug (the platform mints the slug from the name at add
+// time and keeps it unique per space). onAdded creates the graph under that
+// slug, onRenamed follows the instance's rename -- the slug is an address
+// and never moves -- onTransferred follows a move (the platform has already
+// re-resolved the slug for the target space), and onRemoved deletes the
+// graph with the instance. beforeRemoved vetoes removing the graph a bare
+// `<space>` address resolves to: the default has to be pointed at another
+// graph first.
 
 import type { AppServerHooks } from '@opencroft/server'
 
 import { registry } from '@/app/_authed/(space)/_server/actions-impl'
 import { DefaultGraphRemovalError } from '@/app/_authed/(space)/_server/store'
-import { DEFAULT_GRAPH_NAME } from '@/app/_authed/(space)/_server/types'
 
 export const graphAppHooks: AppServerHooks = {
   async onAdded(ctx) {
     const r = await registry()
-    await r.createGraph(ctx.spaceSlug, ctx.params.name?.trim() || DEFAULT_GRAPH_NAME, ctx.instanceId)
+    await r.createGraph(ctx.spaceSlug, ctx.name, ctx.slug, ctx.instanceId)
   },
   async beforeRemoved(ctx) {
     const r = await registry()
@@ -39,9 +41,9 @@ export const graphAppHooks: AppServerHooks = {
     const r = await registry()
     await r.removeGraphByInstance(ctx.instanceId)
   },
-  async onUpdated(ctx) {
+  async onRenamed(ctx) {
     const r = await registry()
-    await r.renameGraphByInstance(ctx.instanceId, ctx.params.name?.trim() || DEFAULT_GRAPH_NAME)
+    await r.renameGraphByInstance(ctx.instanceId, ctx.name)
   },
   async onTransferred(ctx, previousSpaceSlug) {
     const r = await registry()

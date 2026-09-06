@@ -1066,6 +1066,10 @@ export interface HostAppInstance {
   instanceId: string
   appSlug: string
   spaceSlug: string
+  /** The instance's display name — the host's field, required at add time. */
+  name: string
+  /** The instance's slug — unique in its space; `<spaceSlug>.<slug>` is its address. */
+  slug: string
   params: Record<string, string>
   /** Absolute path of the instance's private data directory. */
   dataDir: string
@@ -1095,6 +1099,8 @@ function appsApi(extensionId: string): HostAppsApi {
           instanceId: row.id,
           appSlug: row.appSlug,
           spaceSlug: slugById.get(row.spaceId) ?? '',
+          name: row.name,
+          slug: row.slug,
           params: JSON.parse(row.params) as Record<string, string>,
           dataDir: appInstanceDataDir(extensionId, row.id),
         }))

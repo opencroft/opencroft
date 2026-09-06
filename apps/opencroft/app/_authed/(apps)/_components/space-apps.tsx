@@ -21,11 +21,18 @@ import { Label } from 'ui/label'
 import { Flex } from 'ui/layout/flex'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from 'ui/tabs'
 
-import { addSpaceApp, listSpaceApps, removeSpaceApp, updateSpaceApp } from '@/app/_authed/(apps)/_server/actions'
+import {
+  addSpaceApp,
+  listSpaceApps,
+  removeSpaceApp,
+  renameSpaceApp,
+  updateSpaceApp,
+} from '@/app/_authed/(apps)/_server/actions'
 import type { AppMeta, SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
 import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { useProvided } from '@/app/_authed/(extension-runtime)/_client/provides'
 import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
+import { instanceSlugFor } from '@/app/_authed/(space)/_server/slug'
 
 interface Props {
   spaceSlug: string
@@ -34,11 +41,13 @@ interface Props {
   initialInstances: SpaceAppInstance[]
 }
 
-/** The add/edit dialog's subject: which App, the values typed so far, and — when editing — which instance. */
+/** The add/edit dialog's subject: which App, the name and values typed so far, and — when editing — which instance. */
 interface FormState {
   app: AppMeta
+  /** The instance's name — the host's field, required for every App. */
+  name: string
   values: Record<string, string>
-  /** Present when editing an existing instance; saving RECREATES it. */
+  /** Present when editing an existing instance. */
   instanceId?: string
   /** Why the last submit was refused, shown under the form. */
   error?: string
@@ -52,6 +61,13 @@ function paramsSummary(instance: SpaceAppInstance, meta: AppMeta | undefined): s
     .join(' · ')
 }
 
+/** Whether the edited values differ from what the instance holds — trimmed, since the server trims on save. */
+function paramsChanged(values: Record<string, string>, instance: SpaceAppInstance | undefined): boolean {
+  const before = instance?.params ?? {}
+  const keys = new Set([...Object.keys(values), ...Object.keys(before)])
+  return [...keys].some((key) => (values[key] ?? '').trim() !== (before[key] ?? ''))
+}
+
 export function SpaceApps({ spaceSlug, apps, initialInstances }: Props) {
   const [instances, setInstances] = useState<SpaceAppInstance[]>(initialInstances)
   // Which pane is showing: the space's installed apps, or the catalog to add
@@ -60,9 +76,10 @@ export function SpaceApps({ spaceSlug, apps, initialInstances }: Props) {
   const [search, setSearch] = useState('')
   const [form, setForm] = useState<FormState | null>(null)
   const [saving, setSaving] = useState(false)
-  // Editing recreates the instance (its stored data is deleted) — that is
-  // confirmed explicitly, not implied by a Save button. Apps whose server
-  // module updates in place skip the confirmation: nothing is lost there.
+  // Editing PARAMETERS recreates the instance (its stored data is deleted) —
+  // that is confirmed explicitly, not implied by a Save button. Apps whose
+  // server module updates in place skip the confirmation, and a pure rename
+  // never recreates at all: the name is the host's field, edited in place.
   const [confirmOpen, setConfirmOpen] = useState(false)
   // The extensions' client halves, for Apps that ship a custom parameter
   // form. Matched by slug, like dashboards match their components.
@@ -79,39 +96,35 @@ export function SpaceApps({ spaceSlug, apps, initialInstances }: Props) {
     setInstances(await listSpaceApps({ data: spaceSlug }))
   }
 
-  async function submit(app: AppMeta, values: Record<string, string>) {
-    await addSpaceApp({
-      data: { spaceSlug, extensionId: app.extensionId, appSlug: app.slug, params: values },
-    })
+  /** Every add opens the form — the name is required whatever the App declares. */
+  function handlePick(app: AppMeta) {
+    setForm({ app, name: '', values: {} })
   }
 
-  /** Picking an App with parameters opens the form; one without them is added right away. */
-  async function handlePick(app: AppMeta) {
-    const definition = definitions.find((d) => d.slug === app.slug)
-    if ((app.parameters?.length ?? 0) > 0 || definition?.form) {
-      setForm({ app, values: {} })
-      return
-    }
-    await submit(app, {})
-    await refresh()
-    setTab('installed')
-  }
+  const editedInstance = form?.instanceId ? instances.find((instance) => instance.id === form.instanceId) : undefined
 
   async function handleSubmit() {
     if (!form || saving) {
       return
     }
-    if (form.instanceId && !form.app.updatesInPlace) {
-      setConfirmOpen(true)
+    const name = form.name.trim()
+    if (!name) {
+      setForm((s) => (s ? { ...s, error: 'Every app needs a name.' } : s))
       return
     }
     if (form.instanceId) {
-      await handleUpdateInPlace()
+      if (paramsChanged(form.values, editedInstance) && !form.app.updatesInPlace) {
+        setConfirmOpen(true)
+        return
+      }
+      await handleSaveEdit()
       return
     }
     setSaving(true)
     try {
-      await submit(form.app, form.values)
+      await addSpaceApp({
+        data: { spaceSlug, extensionId: form.app.extensionId, appSlug: form.app.slug, name, params: form.values },
+      })
     } catch (error) {
       setForm((s) => (s ? { ...s, error: error instanceof Error ? error.message : String(error) } : s))
       return
@@ -125,20 +138,27 @@ export function SpaceApps({ spaceSlug, apps, initialInstances }: Props) {
 
   async function handleRecreate() {
     setConfirmOpen(false)
-    await handleUpdateInPlace()
+    await handleSaveEdit()
   }
 
-  // One save path for both edit flavours — whether it recreates or updates in
-  // place is the server's routing (handleInstanceUpdated), not the client's.
-  async function handleUpdateInPlace() {
+  // One save path for an edit: the rename (always in place) and, when values
+  // actually differ, the parameter update — whether THAT recreates or updates
+  // in place is the server's routing (handleInstanceUpdated), not the client's.
+  async function handleSaveEdit() {
     if (!form?.instanceId || saving) {
       return
     }
     setSaving(true)
     try {
-      await updateSpaceApp({
-        data: { spaceSlug, instanceId: form.instanceId, params: form.values },
-      })
+      const name = form.name.trim()
+      if (name && name !== editedInstance?.name) {
+        await renameSpaceApp({ data: { spaceSlug, instanceId: form.instanceId, name } })
+      }
+      if (paramsChanged(form.values, editedInstance)) {
+        await updateSpaceApp({
+          data: { spaceSlug, instanceId: form.instanceId, params: form.values },
+        })
+      }
     } catch (error) {
       setForm((s) => (s ? { ...s, error: error instanceof Error ? error.message : String(error) } : s))
       return
@@ -155,6 +175,15 @@ export function SpaceApps({ spaceSlug, apps, initialInstances }: Props) {
   }
 
   const CustomForm = form ? definitions.find((d) => d.slug === form.app.slug)?.form : undefined
+  // What the form's address line reads: the minted slug when editing, a live
+  // preview of what the typed name will mint when adding.
+  const formSlug = form
+    ? editedInstance
+      ? editedInstance.slug
+      : form.name.trim()
+        ? instanceSlugFor(form.name)
+        : '…'
+    : ''
 
   return (
     <Flex withGaps className='w-full'>
@@ -175,10 +204,9 @@ export function SpaceApps({ spaceSlug, apps, initialInstances }: Props) {
                 const meta = apps.find(
                   (app) => app.extensionId === instance.extensionId && app.slug === instance.appSlug,
                 )
-                const definition = definitions.find((d) => d.slug === instance.appSlug)
                 const Icon = resolveIcon(meta?.icon)
                 const summary = paramsSummary(instance, meta)
-                const editable = meta && ((meta.parameters?.length ?? 0) > 0 || definition?.form)
+                const subtitle = [meta?.title ?? instance.appSlug, summary].filter(Boolean).join(' · ')
                 return (
                   <Flex key={instance.id} row withGaps align='center' className='w-full rounded-md border p-3'>
                     <Link
@@ -188,19 +216,24 @@ export function SpaceApps({ spaceSlug, apps, initialInstances }: Props) {
                     >
                       <Icon className='size-5 shrink-0 text-muted-foreground' />
                       <Flex className='min-w-0 flex-1'>
-                        <span className='font-medium'>{meta?.title ?? instance.appSlug}</span>
-                        <span className='truncate text-xs text-muted-foreground'>
-                          {summary || (meta?.description ?? `${instance.extensionId}/${instance.appSlug}`)}
-                        </span>
+                        <span className='font-medium'>{instance.name}</span>
+                        <span className='truncate text-xs text-muted-foreground'>{subtitle}</span>
                       </Flex>
                     </Link>
-                    {editable && (
+                    {meta && (
                       <Button
                         variant='ghost'
                         size='icon'
-                        aria-label='Edit parameters'
-                        title='Edit parameters'
-                        onClick={() => setForm({ app: meta, values: { ...instance.params }, instanceId: instance.id })}
+                        aria-label='Edit'
+                        title='Edit'
+                        onClick={() =>
+                          setForm({
+                            app: meta,
+                            name: instance.name,
+                            values: { ...instance.params },
+                            instanceId: instance.id,
+                          })
+                        }
                       >
                         <Pencil />
                       </Button>
@@ -258,6 +291,15 @@ export function SpaceApps({ spaceSlug, apps, initialInstances }: Props) {
           <DialogHeader>
             <DialogTitle>{form?.app.title}</DialogTitle>
           </DialogHeader>
+          <Flex withGaps className='w-full'>
+            <Label htmlFor='app-instance-name'>Name *</Label>
+            <Input
+              id='app-instance-name'
+              autoFocus={!form?.instanceId}
+              value={form?.name ?? ''}
+              onChange={(e) => setForm((s) => (s ? { ...s, name: e.target.value, error: undefined } : s))}
+            />
+          </Flex>
           {CustomForm && form ? (
             <CustomForm
               spaceSlug={spaceSlug}
@@ -287,12 +329,18 @@ export function SpaceApps({ spaceSlug, apps, initialInstances }: Props) {
               ))}
             </Flex>
           )}
+          {/* The instance's address, minted from the name once at creation.
+              A live preview while adding; the settled, immovable fact while
+              editing — a rename deliberately does not change it. */}
+          <p className='text-xs text-muted-foreground'>
+            Address: {spaceSlug}.{formSlug}
+          </p>
           {form?.error && <p className='text-sm text-destructive'>{form.error}</p>}
           <DialogFooter>
             <Button variant='ghost' onClick={() => setForm(null)}>
               Cancel
             </Button>
-            <Button onClick={handleSubmit} disabled={saving}>
+            <Button onClick={handleSubmit} disabled={saving || !form?.name.trim()}>
               {saving ? 'Saving…' : form?.instanceId ? 'Save' : 'Add'}
             </Button>
           </DialogFooter>

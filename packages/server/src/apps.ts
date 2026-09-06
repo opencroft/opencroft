@@ -11,6 +11,15 @@ export interface AppInstanceContext {
   instanceId: string
   /** Slug of the space the instance was added to. */
   spaceSlug: string
+  /** The instance's display name — required at add time, editable later. */
+  name: string
+  /**
+   * The instance's slug: derived from the name once, at creation, unique
+   * within the space — with the space it forms the instance's public address,
+   * `<space>.<slug>`. A rename never moves it; a transfer may re-slug it on
+   * collision in the target space.
+   */
+  slug: string
   /** The parameter values the user entered, keyed by parameter id. */
   params: Record<string, string>
   /**
@@ -59,8 +68,17 @@ export interface AppServerHooks {
    */
   onUpdated?: (ctx: AppInstanceContext, previousParams: Record<string, string>) => void | Promise<void>
   /**
+   * React to the instance being renamed. The name is the host's field, edited
+   * in place — `ctx.name` already reads the new one, the slug has not moved —
+   * so this exists only for an App that mirrors the name into data it owns
+   * (the Graph App's graph row). Most Apps need nothing here.
+   */
+  onRenamed?: (ctx: AppInstanceContext, previousName: string) => void | Promise<void>
+  /**
    * Follow the instance to another space. Called after the host moved the
-   * instance's row — `ctx.spaceSlug` is already the TARGET space — so the
+   * instance's row — `ctx.spaceSlug` is already the TARGET space, and
+   * `ctx.slug`/`ctx.name` already read what slug-collision resolution decided
+   * for the new space — so the
    * App relocates whatever space-scoped data it owns; a throw here rolls the
    * move back and surfaces to the caller. The private data directory is keyed
    * by instance, not space, and needs nothing done.

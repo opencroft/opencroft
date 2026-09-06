@@ -46,7 +46,7 @@ export function SidebarApps({ spaceSlug }: { spaceSlug: string }) {
       {instances.map((instance) => {
         const meta = apps.find((app) => app.extensionId === instance.extensionId && app.slug === instance.appSlug)
         const Icon = resolveIcon(meta?.icon)
-        const label = instance.params.name || meta?.title || instance.appSlug
+        const label = instance.name || meta?.title || instance.appSlug
         return (
           <SidebarMenuSubItem key={instance.id}>
             <SidebarMenuSubButton asChild isActive={pathname === `/space/${spaceSlug}/app/${instance.id}`}>
