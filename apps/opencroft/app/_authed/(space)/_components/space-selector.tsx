@@ -1,7 +1,7 @@
 'use client'
 
 import { Link, useLocation, useRouter } from '@tanstack/react-router'
-import { Check, ChevronDown, Ellipsis, List, Pin, PinOff, Settings } from 'lucide-react'
+import { Check, ChevronDown, Ellipsis, Pin, PinOff, Settings } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Button } from 'ui/button'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from 'ui/command'
@@ -21,8 +21,9 @@ function slugFromPath(pathname: string): string | null {
 
 /**
  * The sidebar's space section: a selector for the current space (searchable
- * dropdown — pinned spaces when the query is empty, matches otherwise), a
- * "…" menu (all spaces / pin / settings), and the current space's Apps.
+ * dropdown — pinned spaces when the query is empty, matches otherwise, with a
+ * More footer leading to the full spaces page), a "…" menu (pin / settings),
+ * and the current space's Apps.
  */
 export function SpaceSidebarSection({ spaces }: { spaces: SpaceSummary[] }) {
   const pathname = useLocation({ select: (l) => l.pathname })
@@ -89,7 +90,11 @@ export function SpaceSidebarSection({ spaces }: { spaces: SpaceSummary[] }) {
                     <CommandEmpty>No spaces found.</CommandEmpty>
                     <CommandGroup>
                       {shown.map((space) => (
-                        <CommandItem key={space.id} value={`${space.name} ${space.slug}`} onSelect={() => select(space)}>
+                        <CommandItem
+                          key={space.id}
+                          value={`${space.name} ${space.slug}`}
+                          onSelect={() => select(space)}
+                        >
                           <SpaceIcon icon={space.icon} className='size-5' />
                           {space.name}
                           <Check className={`ml-auto ${space.slug === slug ? 'opacity-100' : 'opacity-0'}`} />
@@ -98,6 +103,20 @@ export function SpaceSidebarSection({ spaces }: { spaces: SpaceSummary[] }) {
                     </CommandGroup>
                   </CommandList>
                 </Command>
+                <div className='border-t p-1'>
+                  <Button
+                    asChild
+                    variant='ghost'
+                    size='sm'
+                    className='w-full justify-center'
+                    onClick={() => {
+                      setOpen(false)
+                      setQuery('')
+                    }}
+                  >
+                    <Link to='/spaces'>More</Link>
+                  </Button>
+                </div>
               </PopoverContent>
             </Popover>
             <DropdownMenu>
@@ -107,12 +126,6 @@ export function SpaceSidebarSection({ spaces }: { spaces: SpaceSummary[] }) {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent side='bottom' align='end'>
-                <DropdownMenuItem asChild>
-                  <Link to='/spaces'>
-                    <List />
-                    All spaces
-                  </Link>
-                </DropdownMenuItem>
                 <DropdownMenuItem disabled={!current} onClick={togglePin}>
                   {current?.pinned ? <PinOff /> : <Pin />}
                   {current?.pinned ? 'Unpin space' : 'Pin space'}

@@ -1,7 +1,7 @@
 'use client'
 
 import { Link, useRouter } from '@tanstack/react-router'
-import { Download, Pencil, Pin, Plus, Settings, Trash2, Upload } from 'lucide-react'
+import { Download, Pin, Plus, Settings, Trash2, Upload } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from 'ui/dialog'
@@ -17,21 +17,12 @@ import {
   deleteSpace,
   importSpace,
   listSpaces,
-  renameSpace,
   setSpacePinned,
 } from '@/app/_authed/(space)/_server/actions'
 import type { SpaceExport, SpaceSummary } from '@/app/_authed/(space)/_server/types'
 
 interface Props {
   initialSpaces: SpaceSummary[]
-}
-
-interface RenameState {
-  slug: string
-  name: string
-  /** Why the last attempt was refused, shown under the input. Cleared on every
-   *  keystroke -- the reader is answering the refusal by typing. */
-  error?: string
 }
 
 function formatDate(value: string) {
@@ -43,7 +34,6 @@ export function SpacesTable({ initialSpaces }: Props) {
   const [spaces, setSpaces] = useState<SpaceSummary[]>(initialSpaces)
   const [newOpen, setNewOpen] = useState(false)
   const [newName, setNewName] = useState('')
-  const [renameState, setRenameState] = useState<RenameState | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
   async function refresh() {
@@ -60,39 +50,6 @@ export function SpacesTable({ initialSpaces }: Props) {
     setNewName('')
     await refresh()
     router.navigate({ to: `/space/${space.slug}` })
-  }
-
-  async function handleRename() {
-    if (!renameState) {
-      return
-    }
-    const name = renameState.name.trim()
-    if (!name) {
-      return
-    }
-    // Renaming moves the space's address, so it can be refused -- another space
-    // already holds the one this name would take. The refusal comes back as
-    // data (see RenameSpaceResult) and is shown here rather than thrown away,
-    // because the alternative is a dialog that closes on a rename that did not
-    // happen.
-    const result = await renameSpace({ data: { slug: renameState.slug, name } })
-    if (!result.ok) {
-      setRenameState((s) =>
-        s
-          ? {
-              ...s,
-              error:
-                result.code === 'slug-taken'
-                  ? 'Another space already answers to that name. Pick a different one.'
-                  : 'That space could not be found.',
-            }
-          : s,
-      )
-      return
-    }
-    setRenameState(null)
-    await refresh()
-    router.invalidate()
   }
 
   async function handleDelete(slug: string) {
@@ -155,7 +112,6 @@ export function SpacesTable({ initialSpaces }: Props) {
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
-              <TableHead className='w-12' />
               <TableHead>Slug</TableHead>
               <TableHead>Updated</TableHead>
               <TableHead>Created</TableHead>
@@ -174,15 +130,6 @@ export function SpacesTable({ initialSpaces }: Props) {
                     <SpaceIcon icon={space.icon} className='size-6' />
                     {space.name}
                   </Link>
-                </TableCell>
-                <TableCell>
-                  <Button
-                    variant='ghost'
-                    size='icon'
-                    onClick={() => setRenameState({ slug: space.slug, name: space.name })}
-                  >
-                    <Pencil />
-                  </Button>
                 </TableCell>
                 <TableCell className='text-muted-foreground'>{space.slug}</TableCell>
                 <TableCell className='text-muted-foreground'>{formatDate(space.updatedAt)}</TableCell>
@@ -243,31 +190,6 @@ export function SpacesTable({ initialSpaces }: Props) {
               Cancel
             </Button>
             <Button onClick={handleCreate}>Create</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={!!renameState} onOpenChange={(open) => !open && setRenameState(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Rename space</DialogTitle>
-          </DialogHeader>
-          <Input
-            autoFocus
-            value={renameState?.name ?? ''}
-            onChange={(e) => setRenameState((s) => (s ? { ...s, name: e.target.value, error: undefined } : s))}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                handleRename()
-              }
-            }}
-          />
-          {renameState?.error ? <p className='text-sm text-destructive'>{renameState.error}</p> : null}
-          <DialogFooter>
-            <Button variant='ghost' onClick={() => setRenameState(null)}>
-              Cancel
-            </Button>
-            <Button onClick={handleRename}>Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

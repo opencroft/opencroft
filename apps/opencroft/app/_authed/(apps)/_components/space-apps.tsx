@@ -2,7 +2,7 @@
 
 import type { AppDefinition } from '@opencroft/client'
 import { Link } from '@tanstack/react-router'
-import { Pencil, Plus, Trash2 } from 'lucide-react'
+import { Pencil, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import {
   AlertDialog,
@@ -19,6 +19,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Input } from 'ui/input'
 import { Label } from 'ui/label'
 import { Flex } from 'ui/layout/flex'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from 'ui/tabs'
 
 import { addSpaceApp, listSpaceApps, removeSpaceApp, updateSpaceApp } from '@/app/_authed/(apps)/_server/actions'
 import type { AppMeta, SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
@@ -53,15 +54,26 @@ function paramsSummary(instance: SpaceAppInstance, meta: AppMeta | undefined): s
 
 export function SpaceApps({ spaceSlug, apps, initialInstances }: Props) {
   const [instances, setInstances] = useState<SpaceAppInstance[]>(initialInstances)
-  const [pickerOpen, setPickerOpen] = useState(false)
+  // Which pane is showing: the space's installed apps, or the catalog to add
+  // from. Controlled so a completed add lands the reader back on Installed.
+  const [tab, setTab] = useState<'installed' | 'add'>('installed')
+  const [search, setSearch] = useState('')
   const [form, setForm] = useState<FormState | null>(null)
   const [saving, setSaving] = useState(false)
   // Editing recreates the instance (its stored data is deleted) — that is
-  // confirmed explicitly, not implied by a Save button.
+  // confirmed explicitly, not implied by a Save button. Apps whose server
+  // module updates in place skip the confirmation: nothing is lost there.
   const [confirmOpen, setConfirmOpen] = useState(false)
   // The extensions' client halves, for Apps that ship a custom parameter
   // form. Matched by slug, like dashboards match their components.
   const { items: definitions } = useProvided<AppDefinition>('apps', loadAllExtensions)
+
+  const query = search.trim().toLowerCase()
+  const catalog = query
+    ? apps.filter((app) =>
+        [app.title, app.description ?? '', app.slug].some((text) => text.toLowerCase().includes(query)),
+      )
+    : apps
 
   async function refresh() {
     setInstances(await listSpaceApps({ data: spaceSlug }))
@@ -76,21 +88,25 @@ export function SpaceApps({ spaceSlug, apps, initialInstances }: Props) {
   /** Picking an App with parameters opens the form; one without them is added right away. */
   async function handlePick(app: AppMeta) {
     const definition = definitions.find((d) => d.slug === app.slug)
-    setPickerOpen(false)
     if ((app.parameters?.length ?? 0) > 0 || definition?.form) {
       setForm({ app, values: {} })
       return
     }
     await submit(app, {})
     await refresh()
+    setTab('installed')
   }
 
   async function handleSubmit() {
     if (!form || saving) {
       return
     }
-    if (form.instanceId) {
+    if (form.instanceId && !form.app.updatesInPlace) {
       setConfirmOpen(true)
+      return
+    }
+    if (form.instanceId) {
+      await handleUpdateInPlace()
       return
     }
     setSaving(true)
@@ -104,13 +120,20 @@ export function SpaceApps({ spaceSlug, apps, initialInstances }: Props) {
     }
     setForm(null)
     await refresh()
+    setTab('installed')
   }
 
   async function handleRecreate() {
+    setConfirmOpen(false)
+    await handleUpdateInPlace()
+  }
+
+  // One save path for both edit flavours — whether it recreates or updates in
+  // place is the server's routing (handleInstanceUpdated), not the client's.
+  async function handleUpdateInPlace() {
     if (!form?.instanceId || saving) {
       return
     }
-    setConfirmOpen(false)
     setSaving(true)
     try {
       await updateSpaceApp({
@@ -135,84 +158,100 @@ export function SpaceApps({ spaceSlug, apps, initialInstances }: Props) {
 
   return (
     <Flex withGaps className='w-full'>
-      <Flex row withGaps align='center' justify='between' className='w-full'>
-        <h2 className='text-base font-semibold'>Apps</h2>
-        <Button size='sm' onClick={() => setPickerOpen(true)} disabled={apps.length === 0}>
-          <Plus /> Add app
-        </Button>
-      </Flex>
+      <h2 className='text-base font-semibold'>Apps</h2>
 
-      {instances.length === 0 ? (
-        <p className='text-sm text-muted-foreground'>No apps added yet.</p>
-      ) : (
-        <Flex withGaps className='w-full'>
-          {instances.map((instance) => {
-            const meta = apps.find((app) => app.extensionId === instance.extensionId && app.slug === instance.appSlug)
-            const definition = definitions.find((d) => d.slug === instance.appSlug)
-            const Icon = resolveIcon(meta?.icon)
-            const summary = paramsSummary(instance, meta)
-            const editable = meta && ((meta.parameters?.length ?? 0) > 0 || definition?.form)
-            return (
-              <Flex key={instance.id} row withGaps align='center' className='w-full rounded-md border p-3'>
-                <Link
-                  to='/space/$slug/app/$instanceId'
-                  params={{ slug: spaceSlug, instanceId: instance.id }}
-                  className='flex min-w-0 flex-1 items-center gap-3 hover:opacity-80'
-                >
-                  <Icon className='size-5 shrink-0 text-muted-foreground' />
-                  <Flex className='min-w-0 flex-1'>
-                    <span className='font-medium'>{meta?.title ?? instance.appSlug}</span>
-                    <span className='truncate text-xs text-muted-foreground'>
-                      {summary || (meta?.description ?? `${instance.extensionId}/${instance.appSlug}`)}
-                    </span>
-                  </Flex>
-                </Link>
-                {editable && (
-                  <Button
-                    variant='ghost'
-                    size='icon'
-                    onClick={() => setForm({ app: meta, values: { ...instance.params }, instanceId: instance.id })}
-                  >
-                    <Pencil />
-                  </Button>
-                )}
-                <Button variant='ghost' size='icon' onClick={() => handleRemove(instance)}>
-                  <Trash2 />
-                </Button>
-              </Flex>
-            )
-          })}
-        </Flex>
-      )}
+      <Tabs value={tab} onValueChange={(next) => setTab(next as 'installed' | 'add')} className='w-full'>
+        <TabsList>
+          <TabsTrigger value='installed'>Installed</TabsTrigger>
+          <TabsTrigger value='add'>Add</TabsTrigger>
+        </TabsList>
 
-      <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add app</DialogTitle>
-          </DialogHeader>
-          <Flex withGaps className='w-full'>
-            {apps.map((app) => {
-              const Icon = resolveIcon(app.icon)
-              return (
-                <button
-                  key={`${app.extensionId}/${app.slug}`}
-                  type='button'
-                  className='flex w-full items-center gap-3 rounded-md border p-3 text-left hover:bg-accent'
-                  onClick={() => handlePick(app)}
-                >
-                  <Icon className='size-5 shrink-0 text-muted-foreground' />
-                  <Flex className='min-w-0 flex-1'>
-                    <span className='font-medium'>{app.title}</span>
-                    {app.description && (
-                      <span className='truncate text-xs text-muted-foreground'>{app.description}</span>
+        <TabsContent value='installed'>
+          {instances.length === 0 ? (
+            <p className='text-sm text-muted-foreground'>No apps added yet.</p>
+          ) : (
+            <Flex withGaps className='w-full'>
+              {instances.map((instance) => {
+                const meta = apps.find(
+                  (app) => app.extensionId === instance.extensionId && app.slug === instance.appSlug,
+                )
+                const definition = definitions.find((d) => d.slug === instance.appSlug)
+                const Icon = resolveIcon(meta?.icon)
+                const summary = paramsSummary(instance, meta)
+                const editable = meta && ((meta.parameters?.length ?? 0) > 0 || definition?.form)
+                return (
+                  <Flex key={instance.id} row withGaps align='center' className='w-full rounded-md border p-3'>
+                    <Link
+                      to='/space/$slug/app/$instanceId'
+                      params={{ slug: spaceSlug, instanceId: instance.id }}
+                      className='flex min-w-0 flex-1 items-center gap-3 hover:opacity-80'
+                    >
+                      <Icon className='size-5 shrink-0 text-muted-foreground' />
+                      <Flex className='min-w-0 flex-1'>
+                        <span className='font-medium'>{meta?.title ?? instance.appSlug}</span>
+                        <span className='truncate text-xs text-muted-foreground'>
+                          {summary || (meta?.description ?? `${instance.extensionId}/${instance.appSlug}`)}
+                        </span>
+                      </Flex>
+                    </Link>
+                    {editable && (
+                      <Button
+                        variant='ghost'
+                        size='icon'
+                        aria-label='Edit parameters'
+                        title='Edit parameters'
+                        onClick={() => setForm({ app: meta, values: { ...instance.params }, instanceId: instance.id })}
+                      >
+                        <Pencil />
+                      </Button>
                     )}
+                    <Button
+                      variant='ghost'
+                      size='icon'
+                      aria-label='Remove'
+                      title='Remove'
+                      onClick={() => handleRemove(instance)}
+                    >
+                      <Trash2 />
+                    </Button>
                   </Flex>
-                </button>
-              )
-            })}
+                )
+              })}
+            </Flex>
+          )}
+        </TabsContent>
+
+        <TabsContent value='add'>
+          <Flex withGaps className='w-full'>
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder='Search apps…' />
+            {catalog.length === 0 ? (
+              <p className='text-sm text-muted-foreground'>
+                {apps.length === 0 ? 'No apps available.' : 'No apps match the search.'}
+              </p>
+            ) : (
+              catalog.map((app) => {
+                const Icon = resolveIcon(app.icon)
+                return (
+                  <button
+                    key={`${app.extensionId}/${app.slug}`}
+                    type='button'
+                    className='flex w-full items-center gap-3 rounded-md border p-3 text-left hover:bg-accent'
+                    onClick={() => handlePick(app)}
+                  >
+                    <Icon className='size-5 shrink-0 text-muted-foreground' />
+                    <Flex className='min-w-0 flex-1'>
+                      <span className='font-medium'>{app.title}</span>
+                      {app.description && (
+                        <span className='truncate text-xs text-muted-foreground'>{app.description}</span>
+                      )}
+                    </Flex>
+                  </button>
+                )
+              })
+            )}
           </Flex>
-        </DialogContent>
-      </Dialog>
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={!!form} onOpenChange={(open) => !open && setForm(null)}>
         <DialogContent>
