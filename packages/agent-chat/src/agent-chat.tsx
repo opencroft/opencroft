@@ -170,7 +170,7 @@ export function AgentChat({
   const panelState = session.loading ? (
     <LogoLoader size={40} className='text-foreground' />
   ) : !hasMessages && (unread?.length ?? 0) === 0 ? (
-    <ChatEmptyState text={emptyText ?? 'no messages yet'} />
+    <ChatEmptyState text={emptyText ?? 'No messages yet'} />
   ) : null
 
   if (panelState) {

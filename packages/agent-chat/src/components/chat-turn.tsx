@@ -109,13 +109,24 @@ export interface ChatTurnRenderers {
 // Rendered in the transcript's own flow rather than pinned above it, so on a
 // conversation too short to scroll it sits with the content instead of at the
 // top of an empty scroll area.
+//
+// Dressed as the same centred divider the unread heading wears: both mark a
+// boundary in the transcript (history beyond this point / messages not read
+// yet), so they share one visual language instead of one being a divider and
+// the other a stray button.
 export function ChatLoadOlderButton({ loading, onLoadOlder }: { loading: boolean; onLoadOlder: () => void }) {
   return (
-    <div className='flex justify-center w-full py-1'>
-      <Button variant='ghost' size='sm' disabled={loading} onClick={onLoadOlder}>
-        {loading ? 'loading…' : 'load older messages'}
-      </Button>
-    </div>
+    <Button
+      type='button'
+      variant='ghost'
+      className='h-auto w-full gap-2 px-0 py-1 text-xs font-medium text-muted-foreground'
+      disabled={loading}
+      onClick={onLoadOlder}
+    >
+      <span className='h-px min-w-6 flex-1 bg-border' />
+      {loading ? 'Loading…' : 'Load Older Messages'}
+      <span className='h-px min-w-6 flex-1 bg-border' />
+    </Button>
   )
 }
 

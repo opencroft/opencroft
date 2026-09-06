@@ -1,6 +1,6 @@
 'use client'
 
-import { MessageSquare } from 'lucide-react'
+import { MessageCircleDashed } from 'lucide-react'
 
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from 'ui/components/ui/empty'
 
@@ -12,11 +12,12 @@ export interface ChatEmptyStateProps {
 }
 
 /**
- * What a conversation with nothing in it looks like, on the Empty family: the
- * mark in its tile, the host's sentence as the title. The space is doing the
- * work -- an empty conversation is mostly whitespace, and a placeholder that
- * fills it loudly is worse than the bare text it replaced -- so the mark is
- * quiet and the sentence stands as the whole of it.
+ * What a conversation with nothing in it looks like, on the Empty family: a
+ * bare quiet mark, the host's sentence under it. The space is doing the work
+ * -- an empty conversation is mostly whitespace, and a placeholder that fills
+ * it loudly is worse than the bare text it replaced -- so no tile behind the
+ * icon and no heading type on the sentence: both sit in the muted foreground,
+ * at body size.
  *
  * Presentation only, and deliberately not the whole empty state: centring the
  * placeholder in the panel is the layout the host performs around the
@@ -28,10 +29,10 @@ export function ChatEmptyState({ text }: ChatEmptyStateProps) {
   return (
     <Empty>
       <EmptyHeader>
-        <EmptyMedia variant='icon'>
-          <MessageSquare />
+        <EmptyMedia>
+          <MessageCircleDashed className='size-5 text-muted-foreground' />
         </EmptyMedia>
-        <EmptyTitle>{text}</EmptyTitle>
+        <EmptyTitle className='text-sm font-normal text-muted-foreground'>{text}</EmptyTitle>
       </EmptyHeader>
     </Empty>
   )

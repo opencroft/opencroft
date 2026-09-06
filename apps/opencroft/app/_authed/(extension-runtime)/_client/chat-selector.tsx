@@ -1,10 +1,10 @@
 'use client'
 
-import { MessagesSquare, SquarePen } from 'lucide-react'
+import { MessageCircleMore, SquarePen } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
+import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from 'ui/command'
 import { GroupChatThreadList } from 'ui/group-chat/group-chat-thread-list'
-import { Input } from 'ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/popover'
 import { Spinner } from 'ui/spinner'
 
@@ -129,34 +129,43 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
           title='Choose a chat'
           className={className}
         >
-          <MessagesSquare />
+          <MessageCircleMore />
         </Button>
       </PopoverTrigger>
-      <PopoverContent side='bottom' align='end' className='w-72 p-2'>
-        <div className='flex w-full flex-col gap-2'>
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder='Search chats…' className='h-8' />
-          <Button variant='outline' size='sm' className='justify-start' onClick={() => pick({ newId: newChatId() })}>
-            <SquarePen /> New chat
-          </Button>
-          {threads === null ? (
-            <div className='flex justify-center py-3'>
-              <Spinner className='size-4 text-muted-foreground' />
-            </div>
-          ) : error ? (
-            <p className='px-1 py-2 text-xs text-muted-foreground'>{error}</p>
-          ) : shown.length === 0 ? (
-            <p className='px-1 py-2 text-xs text-muted-foreground'>
-              {query.trim() ? 'No chats match the search.' : 'No chats yet.'}
-            </p>
-          ) : (
-            <GroupChatThreadList
-              threads={items}
-              activeId={activeThreadId}
-              onSelect={(id) => pick({ threadId: id })}
-              className='max-h-72 overflow-y-auto'
-            />
-          )}
-        </div>
+      <PopoverContent side='bottom' align='end' className='w-72 p-0'>
+        {/* The same Command dress the space selector's menu wears — borderless
+            search on a divider, flat rows — so the two header menus read as one
+            family. Filtering stays this component's own (the query narrows
+            `shown` before rendering), hence shouldFilter off. */}
+        <Command shouldFilter={false}>
+          <CommandInput value={query} onValueChange={setQuery} placeholder='Search chats…' />
+          <CommandList>
+            <CommandGroup>
+              <CommandItem onSelect={() => pick({ newId: newChatId() })}>
+                <SquarePen />
+                New chat
+              </CommandItem>
+            </CommandGroup>
+            {threads === null ? (
+              <div className='flex justify-center py-3'>
+                <Spinner className='size-4 text-muted-foreground' />
+              </div>
+            ) : error ? (
+              <p className='px-3 py-2 text-xs text-muted-foreground'>{error}</p>
+            ) : shown.length === 0 ? (
+              <p className='px-3 py-2 text-xs text-muted-foreground'>
+                {query.trim() ? 'No chats match the search.' : 'No chats yet.'}
+              </p>
+            ) : (
+              <GroupChatThreadList
+                threads={items}
+                activeId={activeThreadId}
+                onSelect={(id) => pick({ threadId: id })}
+                className='max-h-72 overflow-y-auto p-1'
+              />
+            )}
+          </CommandList>
+        </Command>
       </PopoverContent>
     </Popover>
   )

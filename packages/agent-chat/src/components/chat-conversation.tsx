@@ -785,7 +785,7 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
         <div className='text-sm text-muted-foreground'>loading…</div>
       ) : !hasMessages && !hasUndelivered ? (
         <div className='flex flex-1 items-center justify-center'>
-          <ChatEmptyState text={emptyText ?? 'no messages yet'} />
+          <ChatEmptyState text={emptyText ?? 'No messages yet'} />
         </div>
       ) : (
         <>

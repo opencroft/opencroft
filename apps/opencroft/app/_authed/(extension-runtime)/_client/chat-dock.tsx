@@ -160,6 +160,11 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
   // deliberately not persisted: a fresh page starts on the default.
   const [chatSelection, setChatSelection] = useState<EmbeddedChatSelection>()
 
+  // Whether the group chat actually exists (and is visible to the caller).
+  // Until it does there is nothing to switch between, so the headers keep the
+  // ChatSelector off instead of offering a chooser over a chat-to-be.
+  const [chatReady, setChatReady] = useState(false)
+
   // The window's arrangement DURING a drag, so the store is written once per
   // gesture rather than per pointer move -- the same contract the docked
   // panel's onSizeChange keeps.
@@ -236,7 +241,14 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
   // and the composer rides up under the last message instead of staying at
   // the bottom -- the same trap the group-chat screen hit.
   const chat = (
-    <EmbeddedAgentChat space={space} id={id} thread={chatSelection} title={chatName} className='min-h-0 flex-1' />
+    <EmbeddedAgentChat
+      space={space}
+      id={id}
+      thread={chatSelection}
+      title={chatName}
+      onChatAvailable={setChatReady}
+      className='min-h-0 flex-1'
+    />
   )
 
   const surface = <div className='flex min-h-0 min-w-0 flex-1'>{children}</div>
@@ -256,7 +268,9 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
         title={title}
         actions={
           <>
-            <ChatSelector space={space} selection={chatSelection} onChange={setChatSelection} size='icon' />
+            {chatReady && (
+              <ChatSelector space={space} selection={chatSelection} onChange={setChatSelection} size='icon' />
+            )}
             <ModeMenu mode={mode} onModeChange={setMode} />
             {closeButton('icon')}
           </>
@@ -288,7 +302,9 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
       <div className='flex items-center justify-between gap-2 border-b px-3 py-2'>
         <span className='truncate text-sm font-medium text-foreground'>{title}</span>
         <div className='flex items-center gap-1'>
-          <ChatSelector space={space} selection={chatSelection} onChange={setChatSelection} size='icon-sm' />
+          {chatReady && (
+            <ChatSelector space={space} selection={chatSelection} onChange={setChatSelection} size='icon-sm' />
+          )}
           {closeButton('icon-sm')}
         </div>
       </div>
@@ -314,7 +330,9 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
       >
         <span className='truncate text-xs text-muted-foreground'>{title}</span>
         <div onPointerDown={(e) => e.stopPropagation()} className='flex shrink-0 items-center gap-0.5'>
-          <ChatSelector space={space} selection={chatSelection} onChange={setChatSelection} size='icon' />
+          {chatReady && (
+            <ChatSelector space={space} selection={chatSelection} onChange={setChatSelection} size='icon' />
+          )}
           <ModeMenu mode={mode} onModeChange={setMode} />
           {closeButton('icon')}
         </div>

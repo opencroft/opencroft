@@ -23,12 +23,13 @@
 //                           picker: the thread names its agent, and switching
 //                           conversations is the ChatSelector's job.
 
+import { MessageCirclePlus } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CommandBarFrame } from 'ui/agent-chat/command-bar-frame'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from 'ui/empty'
 import { AddMemberPicker, type MemberCandidate } from 'ui/group-chat/add-member-picker'
 import { LogoLoader } from 'ui/logo-loader'
 
@@ -82,6 +83,13 @@ export interface EmbeddedAgentChatProps {
    * person where "My Space" was meant.
    */
   title?: string
+  /**
+   * Reports whether the chat RESOLVED: true only when it exists and the caller
+   * can see it, false while loading and when it is missing, refused or failed.
+   * A host uses it to hide controls that only mean something against an
+   * existing chat — the ChatSelector beside the dock buttons.
+   */
+  onChatAvailable?: (available: boolean) => void
   className?: string
 }
 
@@ -92,7 +100,7 @@ type EmbedPhase =
   | { phase: 'ready'; chat: GroupChatDetailView }
   | { phase: 'error'; message: string }
 
-export function EmbeddedAgentChat({ space, id, thread, title, className }: EmbeddedAgentChatProps) {
+export function EmbeddedAgentChat({ space, id, thread, title, onChatAvailable, className }: EmbeddedAgentChatProps) {
   const [state, setState] = useState<EmbedPhase>({ phase: 'loading' })
   // Bumped to reload after the create flow finishes — the cheapest way to go
   // from `missing` to `ready` through the same single load path.
@@ -102,11 +110,13 @@ export function EmbeddedAgentChat({ space, id, thread, title, className }: Embed
   useEffect(() => {
     let cancelled = false
     setState({ phase: 'loading' })
+    onChatAvailable?.(false)
     getGroupChatEmbedView({ data: space })
       .then((view) => {
         if (cancelled) {
           return
         }
+        onChatAvailable?.(view.state === 'ok')
         if (view.state === 'missing') {
           setState({ phase: 'missing' })
         } else if (view.state === 'refused') {
@@ -123,7 +133,7 @@ export function EmbeddedAgentChat({ space, id, thread, title, className }: Embed
     return () => {
       cancelled = true
     }
-  }, [space, loadTick])
+  }, [space, loadTick, onChatAvailable])
 
   const reload = useCallback(() => setLoadTick((tick) => tick + 1), [])
 
@@ -352,15 +362,21 @@ function CreateChatEmptyState({
   const [open, setOpen] = useState(false)
   return (
     <div className={cn('flex h-full min-h-0 flex-col justify-center', className)}>
+      {/* No internals in the copy — no "group chat", no slug, no name in
+          quotes. The reader opened the chat of THIS space; whose chat it is
+          goes without saying, and who takes part is the next step's dialog,
+          not this sentence. The bare muted mark matches the reworked
+          "No messages yet" placeholder — same family, no tile. */}
       <Empty className='py-8'>
         <EmptyHeader>
-          <EmptyTitle>This chat does not exist</EmptyTitle>
-          <EmptyDescription>
-            No group chat named “{name}” was found. Create it and pick who takes part.
-          </EmptyDescription>
+          <EmptyMedia>
+            <MessageCirclePlus className='size-6 text-muted-foreground' />
+          </EmptyMedia>
+          <EmptyTitle>Start a chat</EmptyTitle>
+          <EmptyDescription>This space has no chat yet.</EmptyDescription>
         </EmptyHeader>
         <Button size='sm' onClick={() => setOpen(true)}>
-          Create “{name}”
+          Create chat
         </Button>
       </Empty>
       {open ? <CreateChatDialog space={space} name={name} onOpenChange={setOpen} onCreated={onCreated} /> : null}
