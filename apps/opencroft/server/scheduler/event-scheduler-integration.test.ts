@@ -9,13 +9,30 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
-
 import { MAX_HISTORY, processDueEvents, type RunHistoryEntry, type ScheduleRule } from './event-scheduler'
 
+// The space's nodes across its graphs -- the created space keeps everything on
+// its default graph, but the lookup should not care.
+function nodesOf(slug: string): Record<string, unknown>[] {
+  const space = getSpacesRegistry().getBySlug(slug)
+  return space ? [...space.graphs.values()].flatMap((g) => g.graph.nodes) : []
+}
+
+// The default graph's own updatedAt: graph writes land on the graph row now,
+// so this is the timestamp a fired (or not-fired) rule does or does not move.
+function graphUpdatedAt(slug: string): number | undefined {
+  const space = getSpacesRegistry().getBySlug(slug)
+  return space?.graphs.get(space.defaultGraphSlug)?.updatedAt.getTime()
+}
+
 function schedulesOf(slug: string, eventId: string): ScheduleRule[] {
-  return (getSpacesRegistry().getBySlug(slug)?.graph.nodes.find((n) => (n as { id: string }).id === eventId) as {
-    data?: { schedules?: ScheduleRule[] }
-  })?.data?.schedules ?? []
+  return (
+    (
+      nodesOf(slug).find((n) => (n as { id: string }).id === eventId) as {
+        data?: { schedules?: ScheduleRule[] }
+      }
+    )?.data?.schedules ?? []
+  )
 }
 
 // dispatchExecutionContext resolves a node by id alone, searching every space
@@ -37,7 +54,7 @@ async function freshSpaceWithEventAndScript(slug: string, schedules: ScheduleRul
         position: { x: 200, y: 0 },
         data: {
           language: 'node',
-          script: "function handler(event) { return { status: 200, body: { ok: true } }; }",
+          script: 'function handler(event) { return { status: 200, body: { ok: true } }; }',
         },
       },
     ],
@@ -47,14 +64,20 @@ async function freshSpaceWithEventAndScript(slug: string, schedules: ScheduleRul
 }
 
 function historyOf(slug: string, eventId: string): RunHistoryEntry[] {
-  return (getSpacesRegistry().getBySlug(slug)?.graph.nodes.find((n) => (n as { id: string }).id === eventId) as {
-    data?: { runHistory?: RunHistoryEntry[] }
-  })?.data?.runHistory ?? []
+  return (
+    (
+      nodesOf(slug).find((n) => (n as { id: string }).id === eventId) as {
+        data?: { runHistory?: RunHistoryEntry[] }
+      }
+    )?.data?.runHistory ?? []
+  )
 }
 
 test('processDueEvents fires a due rule, persists success, and broadcasts once', async () => {
   const slug = `scheduler-fire-${crypto.randomUUID()}`
-  const eventId = await freshSpaceWithEventAndScript(slug, [{ id: 'r1', enabled: true, mode: 'cron', cron: '* * * * *' }])
+  const eventId = await freshSpaceWithEventAndScript(slug, [
+    { id: 'r1', enabled: true, mode: 'cron', cron: '* * * * *' },
+  ])
 
   const windowStart = Date.now() - 65_000 // a whole minute back, guaranteed to have a due slot
   await processDueEvents(windowStart, Date.now())
@@ -78,31 +101,35 @@ test('processDueEvents does not touch the graph when nothing is due', async () =
     // Fires once a year on Jan 1st — guaranteed not due in any short test window.
     { id: 'r1', enabled: true, mode: 'cron', cron: '0 0 1 1 *' },
   ])
-  const before = getSpacesRegistry().getBySlug(slug)?.updatedAt.getTime()
+  const before = graphUpdatedAt(slug)
 
   const now = Date.now()
   await processDueEvents(now - 5_000, now)
 
-  const after = getSpacesRegistry().getBySlug(slug)?.updatedAt.getTime()
+  const after = graphUpdatedAt(slug)
   assert.equal(after, before, 'updatedAt must not change when no rule fired — no write, no broadcast')
   assert.deepEqual(historyOf(slug, eventId), [])
 })
 
 test('processDueEvents ignores a disabled rule even when its slot is due', async () => {
   const slug = `scheduler-disabled-${crypto.randomUUID()}`
-  const eventId = await freshSpaceWithEventAndScript(slug, [{ id: 'r1', enabled: false, mode: 'cron', cron: '* * * * *' }])
-  const before = getSpacesRegistry().getBySlug(slug)?.updatedAt.getTime()
+  const eventId = await freshSpaceWithEventAndScript(slug, [
+    { id: 'r1', enabled: false, mode: 'cron', cron: '* * * * *' },
+  ])
+  const before = graphUpdatedAt(slug)
 
   await processDueEvents(Date.now() - 65_000, Date.now())
 
-  const after = getSpacesRegistry().getBySlug(slug)?.updatedAt.getTime()
+  const after = graphUpdatedAt(slug)
   assert.equal(after, before)
   assert.deepEqual(historyOf(slug, eventId), [])
 })
 
 test('processDueEvents caps run history at MAX_HISTORY, newest first', async () => {
   const slug = `scheduler-cap-${crypto.randomUUID()}`
-  const eventId = await freshSpaceWithEventAndScript(slug, [{ id: 'r1', enabled: true, mode: 'cron', cron: '* * * * *' }])
+  const eventId = await freshSpaceWithEventAndScript(slug, [
+    { id: 'r1', enabled: true, mode: 'cron', cron: '* * * * *' },
+  ])
 
   // No inter-iteration delay: each fire gets its own identity (fireId), not
   // one derived from Date.now(), so back-to-back calls landing in the same
@@ -122,7 +149,9 @@ test('processDueEvents caps run history at MAX_HISTORY, newest first', async () 
 // by chance -- drives the clock instead of racing it.
 test('processDueEvents records two separate fires that land in the same millisecond as two separate history entries', async () => {
   const slug = `scheduler-same-ms-${crypto.randomUUID()}`
-  const eventId = await freshSpaceWithEventAndScript(slug, [{ id: 'r1', enabled: true, mode: 'cron', cron: '* * * * *' }])
+  const eventId = await freshSpaceWithEventAndScript(slug, [
+    { id: 'r1', enabled: true, mode: 'cron', cron: '* * * * *' },
+  ])
 
   const frozenNow = Date.now()
   const realDateNow = Date.now
@@ -135,7 +164,11 @@ test('processDueEvents records two separate fires that land in the same millisec
   }
 
   const history = historyOf(slug, eventId)
-  assert.equal(history.length, 2, 'two genuinely separate fires must both be recorded, even when Date.now() reads identically for both')
+  assert.equal(
+    history.length,
+    2,
+    'two genuinely separate fires must both be recorded, even when Date.now() reads identically for both',
+  )
 })
 
 test('processDueEvents records a failed dispatch as an error entry, not a crash', async () => {

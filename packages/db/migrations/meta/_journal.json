@@ -169,6 +169,20 @@
       "when": 1788569394448,
       "tag": "0023_stiff_cardiac",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1788639302091,
+      "tag": "0024_colossal_scrambler",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1788640569091,
+      "tag": "0025_soft_natasha_romanoff",
+      "breakpoints": true
     }
   ]
 }

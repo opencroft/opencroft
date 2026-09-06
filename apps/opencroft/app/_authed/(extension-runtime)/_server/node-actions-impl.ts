@@ -1,6 +1,10 @@
 import { resolveGraphContexts } from '@/app/_authed/(extension-runtime)/_server/graph-context-resolver'
 import type { GraphSnapshot } from '@/app/_authed/(extension-runtime)/_server/host'
-import { type ActionAccess, getExtensionModule, loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
+import {
+  type ActionAccess,
+  getExtensionModule,
+  loadAllManifests,
+} from '@/app/_authed/(extension-runtime)/_server/loader'
 import { getStream } from '@/app/_authed/(extension-runtime)/_server/stream'
 import type {
   ConnectedSource,
@@ -38,7 +42,9 @@ interface ResolvedHandle {
 }
 
 export interface FoundNode {
+  /** The owning SPACE's slug -- what stream keys and action contexts carry. */
   slug: string
+  /** The space's whole wiring across its graphs, context-resolved. */
   graph: GraphData
   node: GraphNodeLike
 }
@@ -53,28 +59,24 @@ export interface FoundNode {
 export async function findNodeWithGraph(nodeId: string): Promise<FoundNode | null> {
   const r = getSpacesRegistry()
   await r.ensureLoaded()
-  for (const summary of r.list()) {
-    const space = r.getBySlug(summary.slug)
-    if (!space) {
-      continue
-    }
-    const hasNode = space.graph.nodes.some((n) => (n as unknown as GraphNodeLike).id === nodeId)
-    if (!hasNode) {
-      continue
-    }
-    const snapshot: GraphSnapshot = {
-      nodes: space.graph.nodes as unknown as GraphSnapshot['nodes'],
-      edges: space.graph.edges as unknown as GraphSnapshot['edges'],
-    }
-    const resolved = await resolveGraphContexts(snapshot)
-    const graph = {
-      nodes: resolved.nodes as unknown as GraphData['nodes'],
-      edges: resolved.edges as unknown as GraphData['edges'],
-    }
-    const node = graph.nodes.find((n) => (n as unknown as GraphNodeLike).id === nodeId) as unknown as GraphNodeLike
-    return { slug: summary.slug, graph, node }
+  const ref = r.findByNode(nodeId)
+  if (!ref) {
+    return null
   }
-  return null
+  // The node's whole SPACE, across its graphs: action inputs resolve over
+  // the space's wiring, and which canvas the node sits on does not narrow it.
+  const graphs = [...ref.space.graphs.values()]
+  const snapshot: GraphSnapshot = {
+    nodes: graphs.flatMap((g) => g.graph.nodes) as unknown as GraphSnapshot['nodes'],
+    edges: graphs.flatMap((g) => g.graph.edges) as unknown as GraphSnapshot['edges'],
+  }
+  const resolved = await resolveGraphContexts(snapshot)
+  const graph = {
+    nodes: resolved.nodes as unknown as GraphData['nodes'],
+    edges: resolved.edges as unknown as GraphData['edges'],
+  }
+  const node = graph.nodes.find((n) => (n as unknown as GraphNodeLike).id === nodeId) as unknown as GraphNodeLike
+  return { slug: ref.space.slug, graph, node }
 }
 
 // The node's typeId from the live registry, without the context resolution
@@ -83,17 +85,9 @@ export async function findNodeWithGraph(nodeId: string): Promise<FoundNode | nul
 async function findNodeTypeId(nodeId: string): Promise<string | undefined> {
   const r = getSpacesRegistry()
   await r.ensureLoaded()
-  for (const summary of r.list()) {
-    const space = r.getBySlug(summary.slug)
-    if (!space) {
-      continue
-    }
-    const node = (space.graph.nodes as unknown as GraphNodeLike[]).find((n) => n.id === nodeId)
-    if (node) {
-      return node.type
-    }
-  }
-  return undefined
+  const ref = r.findByNode(nodeId)
+  const node = (ref?.graph.graph.nodes as unknown as GraphNodeLike[] | undefined)?.find((n) => n.id === nodeId)
+  return node?.type
 }
 
 // The extension-declared authorization policy for one NODE action, resolved the
@@ -231,19 +225,23 @@ async function persistErrors(found: FoundNode, errors: string[]): Promise<void> 
   if (!space) {
     return
   }
-  const node = space.graph.nodes.find((n) => (n as unknown as GraphNodeLike).id === found.node.id) as unknown as
-    | GraphNodeLike
-    | undefined
-  if (!node) {
+  // Whichever of the space's graphs actually stores the node.
+  for (const graph of space.graphs.values()) {
+    const node = graph.graph.nodes.find((n) => (n as unknown as GraphNodeLike).id === found.node.id) as unknown as
+      | GraphNodeLike
+      | undefined
+    if (!node) {
+      continue
+    }
+    const data = (node.data ??= {})
+    if (errors.length > 0) {
+      data[ERRORS_KEY] = errors
+    } else {
+      delete data[ERRORS_KEY]
+    }
+    await r.saveGraph(`${space.slug}.${graph.slug}`, graph.graph)
     return
   }
-  const data = (node.data ??= {})
-  if (errors.length > 0) {
-    data[ERRORS_KEY] = errors
-  } else {
-    delete data[ERRORS_KEY]
-  }
-  await r.saveGraph(found.slug, space.graph)
 }
 
 // Persist a data patch produced by a node action (via ctx.updateData) back to
@@ -255,14 +253,18 @@ async function persistData(found: FoundNode, patch: Record<string, unknown>): Pr
   if (!space) {
     return
   }
-  const node = space.graph.nodes.find((n) => (n as unknown as GraphNodeLike).id === found.node.id) as unknown as
-    | GraphNodeLike
-    | undefined
-  if (!node) {
+  // Whichever of the space's graphs actually stores the node.
+  for (const graph of space.graphs.values()) {
+    const node = graph.graph.nodes.find((n) => (n as unknown as GraphNodeLike).id === found.node.id) as unknown as
+      | GraphNodeLike
+      | undefined
+    if (!node) {
+      continue
+    }
+    node.data = { ...(node.data ?? {}), ...patch }
+    await r.saveGraph(`${space.slug}.${graph.slug}`, graph.graph)
     return
   }
-  node.data = { ...(node.data ?? {}), ...patch }
-  await r.saveGraph(found.slug, space.graph)
 }
 
 // Plain (non-server-fn) implementation — see extension-action-impl.ts's

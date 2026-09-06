@@ -82,9 +82,12 @@ async function findNodeGraph(nodeId: string): Promise<{ nodes: GraphNodeLike[]; 
     if (!space) {
       continue
     }
-    const nodes = space.graph.nodes as unknown as GraphNodeLike[]
+    // The node's whole SPACE, across its graphs -- reachability is
+    // space-scoped, whichever canvas the node was drawn on.
+    const spaceGraphs = [...space.graphs.values()]
+    const nodes = spaceGraphs.flatMap((g) => g.graph.nodes) as unknown as GraphNodeLike[]
     if (nodes.some((n) => n.id === nodeId)) {
-      return { nodes, edges: space.graph.edges as unknown as GraphEdgeLike[] }
+      return { nodes, edges: spaceGraphs.flatMap((g) => g.graph.edges) as unknown as GraphEdgeLike[] }
     }
   }
   return null

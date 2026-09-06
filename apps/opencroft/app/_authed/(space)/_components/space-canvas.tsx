@@ -4,7 +4,6 @@ import { FlowEditor } from '@/app/_authed/(dashboard)/_canvas/flow-editor'
 import { OverlayProvider } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 import { ChatDock } from '@/app/_authed/(extension-runtime)/_client/chat-dock'
 import { SelectionProvider } from '@/app/_authed/(extension-runtime)/_client/selection-context'
-import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
 
 /**
  * The thread slug every space surface addresses. One per member agent, chosen
@@ -18,12 +17,19 @@ import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
 const SPACE_THREAD_ID = 'main'
 
 interface Props {
+  /** The space's slug -- the chat's address and the default graph's. */
   slug: string
-  spaces: SpaceSummary[]
+  spaceName: string
+  /**
+   * The graph address this canvas draws and saves: `<space>.<graph>`. Unset =
+   * the bare space slug, which the server resolves to the space's default
+   * graph -- the space's own page passes nothing, a Graph App instance's view
+   * passes its instance's graph.
+   */
+  graph?: string
 }
 
-export function SpaceCanvas({ slug, spaces }: Props) {
-  const spaceName = spaces.find((s) => s.slug === slug)?.name ?? slug
+export function SpaceCanvas({ slug, spaceName, graph }: Props) {
   return (
     // The selection scope is mounted HERE rather than inside the editor,
     // because it is a property of this surface and not of the editor: the same
@@ -36,11 +42,10 @@ export function SpaceCanvas({ slug, spaces }: Props) {
             its docked arrangements split the pair between them, and only
             something holding both can put them in that order. It stays inside
             the selection scope, which is what lets a node selected on the
-            canvas reach the composer. The chat surface itself -- launcher,
-            docks, floating window, mobile cover -- is the same ChatDock every
-            extension gets from the host API. */}
+            canvas reach the composer. The chat is the SPACE's, whichever of
+            its graphs this canvas draws -- one conversation per space. */}
         <ChatDock space={slug} id={SPACE_THREAD_ID} title={spaceName} chatName={spaceName}>
-          <FlowEditor slug={slug} spaceName={spaceName} />
+          <FlowEditor slug={graph ?? slug} spaceName={spaceName} />
         </ChatDock>
       </OverlayProvider>
     </SelectionProvider>

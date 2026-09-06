@@ -8,6 +8,12 @@ import type { AppEntry } from '@opencroft/core'
  */
 export interface AppMeta extends AppEntry {
   extensionId: string
+  /**
+   * The App's server module reacts to parameter edits in place (onUpdated):
+   * saving new values keeps the instance and its data, so the edit UI can
+   * skip the recreate warning.
+   */
+  updatesInPlace?: boolean
 }
 
 /** An App added to a space, with the parameter values the user entered. */

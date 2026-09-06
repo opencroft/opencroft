@@ -27,6 +27,7 @@ import { useNodeContext } from '@/app/_authed/(dashboard)/_extension-system/use-
 import { ChatDock } from '@/app/_authed/(extension-runtime)/_client/chat-dock'
 import { ChatSelector } from '@/app/_authed/(extension-runtime)/_client/chat-selector'
 import { EmbeddedAgentChat } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
+import { GraphCanvas } from '@/app/_authed/(extension-runtime)/_client/graph-canvas'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { createSafeIcons } from '@/app/_authed/(extension-runtime)/_client/safe-icons'
 import { SelectionProvider, useSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
@@ -388,6 +389,10 @@ export const extensionHostApi = {
   // behaviour — one component shared with the space canvas, so an extension
   // mounts this instead of arranging the pieces itself. See chat-dock.tsx.
   ChatDock,
+  // The full canvas surface behind a Graph App instance (prop: `instanceId`)
+  // — the builtin extension's Graph App component renders this and nothing
+  // else. See graph-canvas.tsx.
+  GraphCanvas,
   // The kit's mobile-breakpoint hook, so an extension chat dock can swap its
   // side-by-side arrangement for the full-screen cover on a small screen —
   // the same signal the space's own chat dock reads.

@@ -118,17 +118,18 @@ async function findSpaceWithNode(
 ): Promise<{ slug: string; nodes: ExecDispatchNode[]; edges: ExecDispatchEdge[] } | null> {
   const registry = getSpacesRegistry()
   await registry.ensureLoaded()
-  for (const summary of registry.list()) {
-    const runtime = registry.getBySlug(summary.slug)
-    if (!runtime) {
-      continue
-    }
-    const nodes = runtime.graph.nodes as unknown as ExecDispatchNode[]
-    if (nodes.some((n) => n.id === nodeId)) {
-      return { slug: summary.slug, nodes, edges: runtime.graph.edges as unknown as ExecDispatchEdge[] }
-    }
+  const ref = registry.findByNode(nodeId)
+  if (!ref) {
+    return null
   }
-  return null
+  // The node's whole SPACE, across its graphs: exec wiring is space-scoped,
+  // like every other reachability rule here.
+  const graphs = [...ref.space.graphs.values()]
+  return {
+    slug: ref.space.slug,
+    nodes: graphs.flatMap((g) => g.graph.nodes) as unknown as ExecDispatchNode[],
+    edges: graphs.flatMap((g) => g.graph.edges) as unknown as ExecDispatchEdge[],
+  }
 }
 
 async function hasHandleAction(typeId: string | undefined): Promise<boolean> {

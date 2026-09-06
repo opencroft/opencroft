@@ -1,13 +1,22 @@
+import type { AppComponentProps } from '@opencroft/client'
 import { legacy } from '@opencroft/client'
-const { defineExtension } = legacy
+
+const { defineExtension, GraphCanvas } = legacy
+
+// The Graph App's client half is ONE host component: the same canvas surface
+// the space's own page draws, pointed at this instance's graph. No defensive
+// read -- this bundle ships with the host that exposes it, always in sync.
+function GraphAppView({ instanceId }: AppComponentProps) {
+  return <GraphCanvas instanceId={instanceId} />
+}
 
 import { AgentInspector, AgentNode, AgentProfileTab } from './nodes/agent'
+import { AgentSpeechRecognitionTab } from './nodes/agent-asr'
 import { AgentInstructionInspector, AgentInstructionNode } from './nodes/agent-instruction'
 import { AgentJobInspector, AgentJobNode } from './nodes/agent-job'
 import { AgentMcpTab } from './nodes/agent-mcp'
-import { AgentSpeechRecognitionTab } from './nodes/agent-asr'
-import { AgentSpeechTab } from './nodes/agent-speech'
 import { AgentSkillsTab } from './nodes/agent-skills'
+import { AgentSpeechTab } from './nodes/agent-speech'
 import { AGENT_TOOL_HANDLES, AgentToolInspector, AgentToolNode, agentToolExposeOutput } from './nodes/agent-tool'
 import { API_ROUTE_HANDLES, ApiRouteInspector, ApiRouteNode, apiRouteExposeOutput } from './nodes/api-route'
 import { EVENT_HANDLES, EventInspector, EventNode, eventExposeOutput } from './nodes/event'
@@ -59,6 +68,21 @@ export default defineExtension({
     { id: 'agent-job', label: 'Agent Job', color: 'oklch(0.7 0.17 60)' },
     { id: 'agent-instruction', label: 'Agent Instruction', color: 'oklch(0.72 0.16 180)' },
   ],
+  // The HOST-registered Graph App: metadata and parameters live in
+  // extension.json (the server reads provides from the manifest), the server
+  // hooks are host code (see the apps runtime's hostAppHooks), and only the
+  // component ships from here.
+  provides: {
+    apps: [
+      {
+        slug: 'graph',
+        title: 'Graph',
+        description: 'A node graph canvas — one instance per graph in a space.',
+        icon: 'Workflow',
+        component: GraphAppView as unknown as never,
+      },
+    ],
+  },
   nodes: [
     {
       typeId: 'localhost',

@@ -86,7 +86,8 @@ async function resolveAgentConfigs(agentSlugs: Set<string>): Promise<Map<string,
     if (!space) {
       continue
     }
-    for (const node of space.graph.nodes as { type?: string; data?: Record<string, unknown> }[]) {
+    const spaceNodes = [...space.graphs.values()].flatMap((g) => g.graph.nodes)
+    for (const node of spaceNodes as { type?: string; data?: Record<string, unknown> }[]) {
       if (!isAgentNode(node)) {
         continue
       }

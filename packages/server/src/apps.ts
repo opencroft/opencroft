@@ -43,7 +43,29 @@ export type AppActionHandler = (ctx: AppActionContext, params: Record<string, un
  */
 export interface AppServerHooks {
   onAdded?: (ctx: AppInstanceContext) => void | Promise<void>
+  /**
+   * The App's chance to REFUSE a removal before any teardown starts: a throw
+   * here surfaces to the caller and nothing is unloaded or deleted. Distinct
+   * from `onRemoved`, whose failures are logged and cannot keep the instance
+   * -- by the time it runs, the removal is already happening.
+   */
+  beforeRemoved?: (ctx: AppInstanceContext) => void | Promise<void>
   onRemoved?: (ctx: AppInstanceContext) => void | Promise<void>
+  /**
+   * React to a parameter edit IN PLACE. An App that provides this keeps its
+   * instance (and whatever data it owns) across the edit; without it the host
+   * falls back to recreating the instance — unload, onRemoved, data directory
+   * deleted, onAdded against the new values.
+   */
+  onUpdated?: (ctx: AppInstanceContext, previousParams: Record<string, string>) => void | Promise<void>
+  /**
+   * Follow the instance to another space. Called after the host moved the
+   * instance's row — `ctx.spaceSlug` is already the TARGET space — so the
+   * App relocates whatever space-scoped data it owns; a throw here rolls the
+   * move back and surfaces to the caller. The private data directory is keyed
+   * by instance, not space, and needs nothing done.
+   */
+  onTransferred?: (ctx: AppInstanceContext, previousSpaceSlug: string) => void | Promise<void>
   onLoad?: (ctx: AppInstanceContext) => void | Promise<void>
   onUnload?: (ctx: AppInstanceContext) => void | Promise<void>
   /** Agent-invokable actions of this App, keyed by the manifest's action id. */

@@ -46,7 +46,8 @@ async function allConnectionNodeConfigs(): Promise<McpServerConfig[]> {
     if (!space) {
       continue
     }
-    for (const node of space.graph.nodes as McpConnectionNodeShape[]) {
+    const spaceNodes = [...space.graphs.values()].flatMap((g) => g.graph.nodes)
+    for (const node of spaceNodes as McpConnectionNodeShape[]) {
       if (node.type !== 'mcp-connection' || !node.data?.name) {
         continue
       }

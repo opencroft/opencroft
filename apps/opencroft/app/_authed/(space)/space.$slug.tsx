@@ -24,6 +24,7 @@ export const Route = createFileRoute('/_authed/(space)/space/$slug')({
 function SpacePage() {
   const { slug } = Route.useParams()
   const { spaces } = Route.useLoaderData()
+  const spaceName = spaces.find((s) => s.slug === slug)?.name ?? slug
   return (
     <div className='h-full w-full'>
       <ReactFlowProvider>
@@ -31,7 +32,8 @@ function SpacePage() {
             chat overlay included — can resolve node names. Surfaces without a
             canvas simply do not have it, and degrade to bare node ids. */}
         <CanvasNodesProvider>
-          <SpaceCanvas slug={slug} spaces={spaces} />
+          {/* No graph address: the space's page shows its DEFAULT graph. */}
+          <SpaceCanvas slug={slug} spaceName={spaceName} />
         </CanvasNodesProvider>
       </ReactFlowProvider>
     </div>

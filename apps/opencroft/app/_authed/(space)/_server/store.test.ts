@@ -7,12 +7,17 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import { GraphConflictError, getSpacesRegistry, SpaceSlugTakenError } from './store'
+import { GraphConflictError, getSpacesRegistry, type SpaceRuntime, SpaceSlugTakenError } from './store'
 
 async function freshSpace(slug: string) {
   const registry = getSpacesRegistry()
   await registry.ensureLoaded()
   return registry.create(slug, slug, { nodes: [], edges: [] })
+}
+
+// The graph a bare space address resolves to -- what these tests write.
+function defaultGraph(space: SpaceRuntime) {
+  return space.graphs.get(space.defaultGraphSlug)!
 }
 
 // A timestamp that can never equal a row's real `updatedAt`, used to force the
@@ -25,16 +30,16 @@ test('saveGraph without expectedUpdatedAt overwrites unconditionally (backward c
   const graph = { nodes: [{ id: 'a', type: 'x', position: { x: 0, y: 0 }, data: {} }], edges: [] }
   const result = await registry.saveGraph(space.slug, graph)
   assert.ok(result)
-  assert.deepEqual(result.graph.nodes, graph.nodes)
+  assert.deepEqual(result.graph.graph.nodes, graph.nodes)
 })
 
 test('saveGraph with the current expectedUpdatedAt succeeds', async () => {
   const registry = getSpacesRegistry()
   const space = await freshSpace(`store-test-match-${crypto.randomUUID()}`)
   const graph = { nodes: [{ id: 'a', type: 'x', position: { x: 0, y: 0 }, data: {} }], edges: [] }
-  const result = await registry.saveGraph(space.slug, graph, space.updatedAt.toISOString())
+  const result = await registry.saveGraph(space.slug, graph, defaultGraph(space).updatedAt.toISOString())
   assert.ok(result)
-  assert.deepEqual(result.graph.nodes, graph.nodes)
+  assert.deepEqual(result.graph.graph.nodes, graph.nodes)
 })
 
 test('saveGraph with a stale expectedUpdatedAt throws GraphConflictError and leaves the stored graph untouched', async () => {
@@ -43,13 +48,13 @@ test('saveGraph with a stale expectedUpdatedAt throws GraphConflictError and lea
   const rejectedGraph = { nodes: [{ id: 'should-not-land', type: 'x', position: { x: 0, y: 0 }, data: {} }], edges: [] }
   await assert.rejects(() => registry.saveGraph(space.slug, rejectedGraph, NEVER_MATCHES), GraphConflictError)
   const current = registry.getBySlug(space.slug)
-  assert.deepEqual(current?.graph.nodes, [])
+  assert.deepEqual(current ? defaultGraph(current).graph.nodes : null, [])
 })
 
 test('saveGraph rejects a writer whose version predates a real concurrent write, without losing the winner', async () => {
   const registry = getSpacesRegistry()
   const space = await freshSpace(`store-test-race-${crypto.randomUUID()}`)
-  const staleVersion = space.updatedAt.toISOString()
+  const staleVersion = defaultGraph(space).updatedAt.toISOString()
   // Guarantee the winner's write lands in a later millisecond than staleVersion —
   // updatedAt is millisecond-precision (see the trade-off comment in saveGraph),
   // so without this the two writes could tie and this assertion would be flaky.
@@ -64,7 +69,7 @@ test('saveGraph rejects a writer whose version predates a real concurrent write,
   await assert.rejects(() => registry.saveGraph(space.slug, loser, staleVersion), GraphConflictError)
 
   const current = registry.getBySlug(space.slug)
-  assert.deepEqual(current?.graph.nodes, winner.nodes)
+  assert.deepEqual(current ? defaultGraph(current).graph.nodes : null, winner.nodes)
 })
 
 // ---------------------------------------------------------------------------
@@ -200,7 +205,8 @@ test('every slug-addressed operation reaches a space through an address a rename
   const graph = { nodes: [{ id: 'saved', type: 'x', position: { x: 0, y: 0 }, data: {} }], edges: [] }
   const saved = await registry.saveGraph(freed, graph)
   assert.ok(saved, 'saveGraph must resolve a freed address')
-  assert.deepEqual(registry.getBySlug(renamed.slug)?.graph.nodes, graph.nodes)
+  const afterSave = registry.getBySlug(renamed.slug)
+  assert.deepEqual(afterSave ? defaultGraph(afterSave).graph.nodes : null, graph.nodes)
 
   const pinned = await registry.setPinned(freed, true)
   assert.equal(pinned?.pinned, true, 'setPinned must resolve a freed address')

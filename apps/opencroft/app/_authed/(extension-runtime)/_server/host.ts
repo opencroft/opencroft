@@ -5,7 +5,6 @@ import nodeOs from 'node:os'
 import nodePath from 'node:path'
 
 import { db, spaceApp } from '@opencroft/db'
-import { asc, eq } from 'drizzle-orm'
 import type { HostSecretsApi } from '@opencroft/server'
 import type { ExecOptions, ExecResult, ServerConfig, TerminalContext } from '@opencroft/terminal'
 import {
@@ -19,12 +18,14 @@ import {
 } from '@opencroft/terminal/server'
 import { foldEvents, isSnapshotEvent } from 'agent-client/fold'
 import type { ChatEvent } from 'agent-client/types'
+import { asc, eq } from 'drizzle-orm'
 
 import { forgetLocalSessionImpl, stopLocalSessionProcessImpl } from '@/app/_authed/(agent)/_server/acp-impl'
 import { readLastKnownUsage } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { deleteSession as deleteSessionEntry, readSessions } from '@/app/_authed/(agent)/_server/agent-sessions-store'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
+import { appInstanceDataDir } from '@/app/_authed/(apps)/_server/instance-paths'
 import {
   dispatchExecutionContext,
   type ExecDispatchSummary,
@@ -47,7 +48,6 @@ import {
   type GraphEdgeLike as SendMessageEdgeLike,
   type GraphNodeLike as SendMessageNodeLike,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
-import { appInstanceDataDir } from '@/app/_authed/(apps)/_server/instance-paths'
 import { mutateSettingData, withSettingLock } from '@/app/_authed/(settings)/_server/settings-cas'
 import { getSettingImpl, setSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
 import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
@@ -99,35 +99,32 @@ export interface GraphSnapshot {
   edges: GraphEdgeRecord[]
 }
 
-async function loadAllSpaces(): Promise<{ slug: string; graph: GraphData }[]> {
-  const r = getSpacesRegistry()
-  await r.ensureLoaded()
-  return r.list().map((s) => {
-    const space = r.getBySlug(s.slug)!
-    return { slug: s.slug, graph: space.graph }
-  })
+// One entry per GRAPH, not per space: nodes live on graphs now, and anything
+// enumerating them has to see every canvas of every space.
+interface GraphEntry {
+  /** The graph's address (`<space>.<graph>`) -- what saveGraph takes. */
+  address: string
+  spaceSlug: string
+  graph: GraphData
 }
 
-function findNodeAcrossSpaces(
-  spaces: { slug: string; graph: GraphData }[],
-  nodeId: string,
-): { slug: string; node: GraphNodeRecord } | null {
-  for (const s of spaces) {
-    const node = s.graph.nodes.find((n) => (n as { id?: string }).id === nodeId)
-    if (node) {
-      return { slug: s.slug, node: node as unknown as GraphNodeRecord }
-    }
-  }
-  return null
+async function loadAllGraphs(): Promise<GraphEntry[]> {
+  const r = getSpacesRegistry()
+  await r.ensureLoaded()
+  return r.listGraphs().map((ref) => ({
+    address: r.addressOf(ref),
+    spaceSlug: ref.space.slug,
+    graph: ref.graph.graph,
+  }))
 }
 
 async function readGraph(): Promise<GraphSnapshot> {
-  const spaces = await loadAllSpaces()
+  const graphs = await loadAllGraphs()
   const nodes: GraphNodeRecord[] = []
   const edges: GraphEdgeRecord[] = []
-  for (const s of spaces) {
-    nodes.push(...(s.graph.nodes as unknown as GraphNodeRecord[]))
-    edges.push(...(s.graph.edges as unknown as GraphEdgeRecord[]))
+  for (const g of graphs) {
+    nodes.push(...(g.graph.nodes as unknown as GraphNodeRecord[]))
+    edges.push(...(g.graph.edges as unknown as GraphEdgeRecord[]))
   }
   return { nodes, edges }
 }
@@ -135,18 +132,12 @@ async function readGraph(): Promise<GraphSnapshot> {
 async function writeNodePatch(nodeId: string, mutate: (graph: GraphData) => boolean): Promise<void> {
   const r = getSpacesRegistry()
   await r.ensureLoaded()
-  for (const summary of r.list()) {
-    const space = r.getBySlug(summary.slug)
-    if (!space) {
-      continue
-    }
-    if (!space.graph.nodes.some((n) => (n as { id?: string }).id === nodeId)) {
-      continue
-    }
-    if (mutate(space.graph)) {
-      await r.saveGraph(summary.slug, space.graph)
-    }
+  const ref = r.findByNode(nodeId)
+  if (!ref) {
     return
+  }
+  if (mutate(ref.graph.graph)) {
+    await r.saveGraph(r.addressOf(ref), ref.graph.graph)
   }
 }
 
@@ -198,8 +189,11 @@ const graphApi: HostGraphApi = {
     return (await readGraph()).nodes
   },
   async getNode(nodeId) {
-    const spaces = await loadAllSpaces()
-    return findNodeAcrossSpaces(spaces, nodeId)?.node ?? null
+    const r = getSpacesRegistry()
+    await r.ensureLoaded()
+    const ref = r.findByNode(nodeId)
+    const node = ref?.graph.graph.nodes.find((n) => (n as { id?: string }).id === nodeId)
+    return (node as unknown as GraphNodeRecord) ?? null
   },
   async listNodesByType(typeId) {
     const graph = await readGraph()
@@ -219,7 +213,7 @@ const graphApi: HostGraphApi = {
     const { buildNodeTypeHandles, expandDynamicHandles, findDockerExtensionId } = await import(
       '@/app/_authed/(extension-runtime)/_server/node-handles'
     )
-    const [spaces, manifests] = await Promise.all([loadAllSpaces(), listExtensionManifestsImpl()])
+    const [graphs, manifests] = await Promise.all([loadAllGraphs(), listExtensionManifestsImpl()])
     const byType = buildNodeTypeHandles(manifests)
     const dockerExtensionId = findDockerExtensionId(manifests)
     const wanted = (handle: { role: string; contextType: string }) =>
@@ -227,15 +221,15 @@ const graphApi: HostGraphApi = {
       (filter?.contextType === undefined || handle.contextType === filter.contextType)
 
     const results: HandleInfo[] = []
-    for (const space of spaces) {
-      for (const raw of space.graph.nodes as unknown as GraphNodeRecord[]) {
+    for (const entry of graphs) {
+      for (const raw of entry.graph.nodes as unknown as GraphNodeRecord[]) {
         const typeId = raw.type
         if (!typeId) {
           continue
         }
         const declared = byType.get(typeId)?.handles ?? []
         const nodeName = (raw.data?.name as string) || typeId
-        const base = { nodeId: raw.id, spaceSlug: space.slug, typeId, nodeName }
+        const base = { nodeId: raw.id, spaceSlug: entry.spaceSlug, typeId, nodeName }
 
         const matching = declared.filter(wanted)
         // Expansion costs a docker.ps per node, so do it once and only when a
@@ -320,15 +314,16 @@ const graphApi: HostGraphApi = {
     const r = getSpacesRegistry()
     await r.ensureLoaded()
     const summaries = r.list()
+    // The active space's DEFAULT graph: a bare space slug resolves there.
     const target = (await r.getActiveSlug()) || summaries[0]?.slug
-    if (!target) {
+    const ref = target ? r.resolveGraph(target) : null
+    if (!ref) {
       throw new Error('No space available')
     }
-    const space = r.getBySlug(target)!
     const id = crypto.randomUUID()
     const node: GraphNodeRecord = { id, type: typeId, data, position }
-    space.graph.nodes.push(node as unknown as Record<string, unknown>)
-    await r.saveGraph(target, space.graph)
+    ref.graph.graph.nodes.push(node as unknown as Record<string, unknown>)
+    await r.saveGraph(r.addressOf(ref), ref.graph.graph)
     return node
   },
   async deleteNode(nodeId) {
@@ -360,19 +355,23 @@ export function listGraphHandles(filter?: ListHandlesFilter): Promise<HandleInfo
 async function findSendMessageNode(
   nodeId: string,
 ): Promise<{ node: GraphNodeRecord; nodes: SendMessageNodeLike[]; edges: SendMessageEdgeLike[] } | null> {
-  const spaces = await loadAllSpaces()
-  const found = findNodeAcrossSpaces(spaces, nodeId)
+  const r = getSpacesRegistry()
+  await r.ensureLoaded()
+  const found = r.findByNode(nodeId)
   if (!found) {
     return null
   }
-  const space = spaces.find((s) => s.slug === found.slug)
-  if (!space) {
+  const node = found.graph.graph.nodes.find((n) => (n as { id?: string }).id === nodeId)
+  if (!node) {
     return null
   }
+  // The whole SPACE's wiring, across its graphs: the reachability rule is
+  // space-scoped, and which canvas a node was drawn on does not narrow it.
+  const graphs = [...found.space.graphs.values()]
   return {
-    node: found.node,
-    nodes: space.graph.nodes as unknown as SendMessageNodeLike[],
-    edges: space.graph.edges as unknown as SendMessageEdgeLike[],
+    node: node as unknown as GraphNodeRecord,
+    nodes: graphs.flatMap((g) => g.graph.nodes) as unknown as SendMessageNodeLike[],
+    edges: graphs.flatMap((g) => g.graph.edges) as unknown as SendMessageEdgeLike[],
   }
 }
 

@@ -1,26 +1,58 @@
-import { db, space, spaceSlugAlias } from '@opencroft/db'
+import { db, space, spaceApp, spaceGraph, spaceSlugAlias } from '@opencroft/db'
 import { and, asc, eq, inArray } from 'drizzle-orm'
 
 import { slugify } from '@/app/_authed/(space)/_server/slug'
 import {
   ACTIVE_SPACE_SETTING_ID,
+  DEFAULT_GRAPH_NAME,
+  DEFAULT_GRAPH_SLUG,
   DEFAULT_SPACE_NAME,
   DEFAULT_SPACE_SLUG,
+  GRAPH_APP_EXTENSION_ID,
+  GRAPH_APP_SLUG,
   type GraphData,
   LEGACY_GRAPH_SETTING_ID,
+  parseGraphAddress,
   type SpaceSummary,
 } from '@/app/_authed/(space)/_server/types'
 import { getSetting, upsertSetting } from '@/server/data'
+
+/**
+ * One graph of a space: what one canvas draws. Owned by exactly one Graph App
+ * instance -- the instance is the door to it in the UI, and removing the
+ * instance removes the graph (see removeGraphByInstance).
+ */
+interface GraphRuntime {
+  id: string
+  spaceId: string
+  /** The graph's own slug; the full address is `<space-slug>.<slug>`. */
+  slug: string
+  name: string
+  /** The Graph App instance this graph belongs to. */
+  instanceId: string
+  graph: GraphData
+  createdAt: Date
+  updatedAt: Date
+}
 
 interface SpaceRuntime {
   id: string
   slug: string
   name: string
-  graph: GraphData
+  /** This space's graphs, keyed by their graph slug. */
+  graphs: Map<string, GraphRuntime>
+  /** Which graph a bare `<space>` address resolves to. */
+  defaultGraphSlug: string
   pinned: boolean
   icon: string | null
   createdAt: Date
   updatedAt: Date
+}
+
+/** A resolved graph address: the space and the graph within it. */
+interface GraphRef {
+  space: SpaceRuntime
+  graph: GraphRuntime
 }
 
 const EMPTY_GRAPH: GraphData = { nodes: [], edges: [] }
@@ -45,9 +77,30 @@ export class SpaceSlugTakenError extends Error {
 // stored row — another writer (a different browser tab, or an MCP tool
 // call) persisted a newer graph in between this caller's load and save.
 export class GraphConflictError extends Error {
-  constructor(readonly slug: string) {
-    super(`Space "${slug}" was modified concurrently`)
+  constructor(readonly address: string) {
+    super(`Graph "${address}" was modified concurrently`)
     this.name = 'GraphConflictError'
+  }
+}
+
+// Thrown by `createGraph` when the name slugifies onto a graph the space
+// already has. A refusal for the same reason a space rename refuses: handing
+// back a suffixed slug would leave an instance pointing at an address nobody
+// named.
+export class GraphSlugTakenError extends Error {
+  constructor(readonly address: string) {
+    super(`A graph already answers to "${address}"`)
+    this.name = 'GraphSlugTakenError'
+  }
+}
+
+// Thrown by `removeGraphByInstance` for the graph a bare `<space>` address
+// resolves to. Removing it would leave the space's own canvas with nothing to
+// draw; the default has to be pointed at another graph first.
+export class DefaultGraphRemovalError extends Error {
+  constructor(readonly address: string) {
+    super(`"${address}" is the space's default graph; make another graph the default before removing it`)
+    this.name = 'DefaultGraphRemovalError'
   }
 }
 
@@ -59,6 +112,12 @@ function parseGraph(data: string): GraphData {
   }
 }
 
+/** A graph's slug from its display name; 'graph' when nothing survives slugify. */
+function graphSlugFor(name: string): string {
+  const base = slugify(name)
+  return base === 'space' ? 'graph' : base
+}
+
 class SpacesRegistry {
   private spaces = new Map<string, SpaceRuntime>()
   private bySlug = new Map<string, string>()
@@ -67,6 +126,7 @@ class SpacesRegistry {
   // slug always wins, and `list()` and every availability check must see only
   // the live ones.
   private aliasBySlug = new Map<string, string>()
+  private graphsByInstance = new Map<string, GraphRuntime>()
   private loaded = false
   private loadPromise: Promise<void> | null = null
 
@@ -88,7 +148,8 @@ class SpacesRegistry {
         id: row.id,
         slug: row.slug,
         name: row.name,
-        graph: parseGraph(row.data),
+        graphs: new Map(),
+        defaultGraphSlug: row.defaultGraphSlug,
         pinned: row.pinned,
         icon: row.icon,
         createdAt: row.createdAt,
@@ -97,6 +158,23 @@ class SpacesRegistry {
       this.spaces.set(row.id, runtime)
       this.bySlug.set(row.slug, row.id)
     }
+    for (const row of await db.query.spaceGraph.findMany({ orderBy: asc(spaceGraph.createdAt) })) {
+      const owner = this.spaces.get(row.spaceId)
+      if (!owner) {
+        continue
+      }
+      this.registerGraph(owner, {
+        id: row.id,
+        spaceId: row.spaceId,
+        slug: row.slug,
+        name: row.name,
+        instanceId: row.instanceId,
+        graph: parseGraph(row.data),
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      })
+    }
+    await this.migrateGraphlessSpaces(rows)
     for (const alias of await db.query.spaceSlugAlias.findMany()) {
       this.aliasBySlug.set(alias.slug, alias.spaceId)
     }
@@ -123,23 +201,121 @@ class SpacesRegistry {
     })
   }
 
+  /**
+   * THE ONE-TIME GRAPH MIGRATION. A space from before graphs were rows holds
+   * its whole graph in `space.data` and has no SpaceGraph rows; each such
+   * space gets its legacy graph as a "default" graph, owned by a Graph App
+   * instance created alongside it -- so the migrated graph is exactly what a
+   * hand-added graph is, with nothing special about it but its slug.
+   *
+   * Idempotent by its guard: a space with ANY graph rows is left alone, and
+   * `space.data` itself is never written -- it stays inert, per the same
+   * no-cleanup rule every retired storage shape here follows.
+   *
+   * The instance row is inserted directly rather than through the app-add
+   * flow: onAdded's job is creating the graph row, which this migration is
+   * itself doing. The instance's data directory appears when the apps
+   * runtime first loads it, as with any instance restored from the table.
+   */
+  private async migrateGraphlessSpaces(rows: (typeof space.$inferSelect)[]): Promise<void> {
+    for (const row of rows) {
+      const runtime = this.spaces.get(row.id)
+      if (!runtime || runtime.graphs.size > 0) {
+        continue
+      }
+      const created = await db.transaction(async (tx) => {
+        const [instance] = await tx
+          .insert(spaceApp)
+          .values({
+            spaceId: row.id,
+            extensionId: GRAPH_APP_EXTENSION_ID,
+            appSlug: GRAPH_APP_SLUG,
+            params: JSON.stringify({ name: DEFAULT_GRAPH_NAME }),
+          })
+          .returning()
+        const [graphRow] = await tx
+          .insert(spaceGraph)
+          .values({
+            spaceId: row.id,
+            instanceId: instance.id,
+            slug: DEFAULT_GRAPH_SLUG,
+            name: DEFAULT_GRAPH_NAME,
+            data: row.data,
+          })
+          .returning()
+        return graphRow
+      })
+      this.registerGraph(runtime, {
+        id: created.id,
+        spaceId: created.spaceId,
+        slug: created.slug,
+        name: created.name,
+        instanceId: created.instanceId,
+        graph: parseGraph(created.data),
+        createdAt: created.createdAt,
+        updatedAt: created.updatedAt,
+      })
+    }
+  }
+
+  private registerGraph(owner: SpaceRuntime, graph: GraphRuntime): void {
+    owner.graphs.set(graph.slug, graph)
+    this.graphsByInstance.set(graph.instanceId, graph)
+  }
+
   private async createInternal(name: string, slug: string, graph: GraphData): Promise<SpaceRuntime> {
     // A live space outranks an alias, so taking this slug takes it outright.
     await this.dropAliases([slug])
-    const [row] = await db
-      .insert(space)
-      .values({ name, slug, data: JSON.stringify(graph) })
-      .returning()
+    // The space, its default graph and the Graph App instance owning it are
+    // one creation: a space without a default graph has a canvas address that
+    // resolves to nothing.
+    const { row, graphRow } = await db.transaction(async (tx) => {
+      const [spaceRow] = await tx
+        .insert(space)
+        .values({ name, slug, data: JSON.stringify(EMPTY_GRAPH) })
+        .returning()
+      const [instanceRow] = await tx
+        .insert(spaceApp)
+        .values({
+          spaceId: spaceRow.id,
+          extensionId: GRAPH_APP_EXTENSION_ID,
+          appSlug: GRAPH_APP_SLUG,
+          params: JSON.stringify({ name: DEFAULT_GRAPH_NAME }),
+        })
+        .returning()
+      const [createdGraph] = await tx
+        .insert(spaceGraph)
+        .values({
+          spaceId: spaceRow.id,
+          instanceId: instanceRow.id,
+          slug: DEFAULT_GRAPH_SLUG,
+          name: DEFAULT_GRAPH_NAME,
+          data: JSON.stringify(graph),
+        })
+        .returning()
+      return { row: spaceRow, graphRow: createdGraph }
+    })
     const runtime: SpaceRuntime = {
       id: row.id,
       slug: row.slug,
       name: row.name,
-      graph,
+      graphs: new Map(),
+      defaultGraphSlug: row.defaultGraphSlug,
       pinned: row.pinned,
       icon: row.icon,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     }
+    this.registerGraph(runtime, {
+      id: graphRow.id,
+      spaceId: graphRow.spaceId,
+      slug: graphRow.slug,
+      name: graphRow.name,
+      instanceId: graphRow.instanceId,
+      graph,
+      createdAt: graphRow.createdAt,
+      updatedAt: graphRow.updatedAt,
+    })
     this.spaces.set(runtime.id, runtime)
     this.bySlug.set(runtime.slug, runtime.id)
     return runtime
@@ -177,6 +353,46 @@ class SpacesRegistry {
   }
 
   /**
+   * THE ONE PLACE a graph address becomes a graph: `<space>` is the space's
+   * default graph, `<space>.<graph>` a named one. The space part resolves
+   * through the same alias fallback every space lookup gets.
+   */
+  resolveGraph(address: string): GraphRef | null {
+    const { spaceSlug, graphSlug } = parseGraphAddress(address)
+    const owner = this.getBySlug(spaceSlug)
+    if (!owner) {
+      return null
+    }
+    const graph = owner.graphs.get(graphSlug ?? owner.defaultGraphSlug)
+    return graph ? { space: owner, graph } : null
+  }
+
+  /** Every graph of every space, for the whole-graph consumers (search, MCP listings). */
+  listGraphs(): GraphRef[] {
+    const refs: GraphRef[] = []
+    for (const s of this.spaces.values()) {
+      for (const graph of s.graphs.values()) {
+        refs.push({ space: s, graph })
+      }
+    }
+    return refs
+  }
+
+  graphsOf(spaceSlug: string): GraphRuntime[] {
+    const owner = this.getBySlug(spaceSlug)
+    return owner ? [...owner.graphs.values()] : []
+  }
+
+  graphByInstance(instanceId: string): GraphRuntime | null {
+    return this.graphsByInstance.get(instanceId) ?? null
+  }
+
+  /** The full address of a graph: `<space-slug>.<graph-slug>`. */
+  addressOf(ref: GraphRef): string {
+    return `${ref.space.slug}.${ref.graph.slug}`
+  }
+
+  /**
    * THE ONE PLACE a slug becomes a space. Live first, then a slug a rename
    * freed.
    *
@@ -209,10 +425,12 @@ class SpacesRegistry {
     return this.spaces.get(id) ?? null
   }
 
-  findByNode(nodeId: string): SpaceRuntime | null {
+  findByNode(nodeId: string): GraphRef | null {
     for (const s of this.spaces.values()) {
-      if (s.graph.nodes.some((n) => (n as { id?: string }).id === nodeId)) {
-        return s
+      for (const graph of s.graphs.values()) {
+        if (graph.graph.nodes.some((n) => (n as { id?: string }).id === nodeId)) {
+          return { space: s, graph }
+        }
       }
     }
     return null
@@ -220,6 +438,206 @@ class SpacesRegistry {
 
   async create(name: string, slug: string, graph: GraphData): Promise<SpaceRuntime> {
     return this.createInternal(name, slug, graph)
+  }
+
+  /**
+   * A graph for a Graph App instance -- the onAdded hook's job. The slug is
+   * the name's, fixed for the graph's whole life; a taken slug is refused so
+   * the add flow rolls the instance back rather than owning a graph it did
+   * not create (two instances on one graph would double-own it, and the
+   * first removal would take the data out from under the survivor).
+   */
+  async createGraph(spaceSlug: string, name: string, instanceId: string): Promise<GraphRuntime> {
+    const owner = this.getBySlug(spaceSlug)
+    if (!owner) {
+      throw new Error(`Space not found: ${spaceSlug}`)
+    }
+    const slug = graphSlugFor(name)
+    if (owner.graphs.has(slug)) {
+      throw new GraphSlugTakenError(`${owner.slug}.${slug}`)
+    }
+    const [row] = await db
+      .insert(spaceGraph)
+      .values({
+        spaceId: owner.id,
+        instanceId,
+        slug,
+        name,
+        data: JSON.stringify(EMPTY_GRAPH),
+      })
+      .returning()
+    const runtime: GraphRuntime = {
+      id: row.id,
+      spaceId: row.spaceId,
+      slug: row.slug,
+      name: row.name,
+      instanceId: row.instanceId,
+      graph: EMPTY_GRAPH,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    }
+    this.registerGraph(owner, runtime)
+    return runtime
+  }
+
+  /**
+   * Remove the graph an instance owns -- the onRemoved hook's job, so the
+   * data dies with the instance. The DEFAULT graph is refused: a bare
+   * `<space>` address must always resolve, so the default has to be pointed
+   * elsewhere before its graph can go.
+   */
+  async removeGraphByInstance(instanceId: string): Promise<void> {
+    const graph = this.graphsByInstance.get(instanceId)
+    if (!graph) {
+      return
+    }
+    const owner = this.spaces.get(graph.spaceId)
+    if (owner && owner.defaultGraphSlug === graph.slug) {
+      throw new DefaultGraphRemovalError(`${owner.slug}.${graph.slug}`)
+    }
+    await db.delete(spaceGraph).where(eq(spaceGraph.id, graph.id))
+    owner?.graphs.delete(graph.slug)
+    this.graphsByInstance.delete(instanceId)
+  }
+
+  /**
+   * A graph's DISPLAY name -- the onUpdated hook's job when an instance's
+   * name parameter changes. The slug never moves with it: it is an address,
+   * fixed at creation, and everything written down outside this process
+   * (canvas URLs, agent notes, MCP calls) keeps resolving.
+   */
+  async renameGraphByInstance(instanceId: string, name: string): Promise<GraphRuntime | null> {
+    const graph = this.graphsByInstance.get(instanceId)
+    if (!graph) {
+      return null
+    }
+    const [row] = await db.update(spaceGraph).set({ name }).where(eq(spaceGraph.id, graph.id)).returning()
+    graph.name = row.name
+    graph.updatedAt = row.updatedAt
+    return graph
+  }
+
+  /**
+   * Follow an App-instance transfer: the platform has already moved the
+   * spaceApp row, and this moves the graph the instance owns with it -- the
+   * Graph App's onTransferred hook. The graph keeps its identity (row id,
+   * instance, node ids) and gets an address under the target space.
+   *
+   * The SLUG survives when the target has it free. When it clashes, the
+   * graph takes its DONOR SPACE's name and slug instead -- a graph called
+   * "Default" arriving beside the target's own default is disambiguated by
+   * where it came from, which is the one meaningful name a transfer can
+   * derive -- and a further clash falls back to a numbered suffix, as
+   * creation does. The instance's name parameter is rewritten alongside so
+   * its settings form reads what the graph is now called.
+   *
+   * Transferring a space's DEFAULT graph is allowed only when it is that
+   * space's ONLY graph -- the donor gets a fresh empty default in its place,
+   * so a bare `<space>` address never stops resolving. With other graphs
+   * present the default has to be re-pointed first, same as removal.
+   */
+  async transferGraphByInstance(instanceId: string, previousSpaceSlug: string): Promise<GraphRef> {
+    const graph = this.graphsByInstance.get(instanceId)
+    if (!graph) {
+      throw new Error(`No graph behind instance: ${instanceId}`)
+    }
+    const source = this.spaces.get(graph.spaceId)
+    if (!source) {
+      throw new Error(`Space not found for graph: ${graph.slug}`)
+    }
+    const row = await db.query.spaceApp.findFirst({ where: eq(spaceApp.id, instanceId) })
+    const target = row ? this.spaces.get(row.spaceId) : null
+    if (!target) {
+      throw new Error(`Target space not found for instance: ${instanceId}`)
+    }
+    if (target.id === source.id) {
+      return { space: target, graph }
+    }
+    let slug = graph.slug
+    let name = graph.name
+    if (target.graphs.has(slug)) {
+      const donor = this.getBySlug(previousSpaceSlug)
+      slug = donor?.slug ?? previousSpaceSlug
+      name = donor?.name ?? previousSpaceSlug
+      if (target.graphs.has(slug)) {
+        let i = 2
+        while (target.graphs.has(`${slug}-${i}`)) {
+          i += 1
+        }
+        slug = `${slug}-${i}`
+      }
+    }
+    const isDefault = source.defaultGraphSlug === graph.slug
+    if (isDefault && source.graphs.size > 1) {
+      throw new DefaultGraphRemovalError(`${source.slug}.${graph.slug}`)
+    }
+    const replacement = await db.transaction(async (tx) => {
+      const [moved] = await tx
+        .update(spaceGraph)
+        .set({ spaceId: target.id, slug, name })
+        .where(eq(spaceGraph.id, graph.id))
+        .returning()
+      await tx
+        .update(spaceApp)
+        .set({ params: JSON.stringify({ name }) })
+        .where(eq(spaceApp.id, instanceId))
+      graph.updatedAt = moved.updatedAt
+      if (!isDefault) {
+        return null
+      }
+      const [instance] = await tx
+        .insert(spaceApp)
+        .values({
+          spaceId: source.id,
+          extensionId: GRAPH_APP_EXTENSION_ID,
+          appSlug: GRAPH_APP_SLUG,
+          params: JSON.stringify({ name: DEFAULT_GRAPH_NAME }),
+        })
+        .returning()
+      const [fresh] = await tx
+        .insert(spaceGraph)
+        .values({
+          spaceId: source.id,
+          instanceId: instance.id,
+          slug: DEFAULT_GRAPH_SLUG,
+          name: DEFAULT_GRAPH_NAME,
+        })
+        .returning()
+      return fresh
+    })
+    source.graphs.delete(graph.slug)
+    graph.spaceId = target.id
+    graph.slug = slug
+    graph.name = name
+    target.graphs.set(slug, graph)
+    if (replacement) {
+      this.registerGraph(source, {
+        id: replacement.id,
+        spaceId: replacement.spaceId,
+        slug: replacement.slug,
+        name: replacement.name,
+        instanceId: replacement.instanceId,
+        graph: parseGraph(replacement.data),
+        createdAt: replacement.createdAt,
+        updatedAt: replacement.updatedAt,
+      })
+    }
+    return { space: target, graph }
+  }
+
+  /** Point the bare `<space>` address at another of the space's graphs. */
+  async setDefaultGraph(spaceSlug: string, graphSlug: string): Promise<SpaceRuntime | null> {
+    const owner = this.getBySlug(spaceSlug)
+    if (!owner) {
+      return null
+    }
+    if (!owner.graphs.has(graphSlug)) {
+      throw new Error(`Graph not found: ${owner.slug}.${graphSlug}`)
+    }
+    const [row] = await db.update(space).set({ defaultGraphSlug: graphSlug }).where(eq(space.id, owner.id)).returning()
+    owner.defaultGraphSlug = row.defaultGraphSlug
+    owner.updatedAt = row.updatedAt
+    return owner
   }
 
   async setPinned(slug: string, pinned: boolean): Promise<SpaceRuntime | null> {
@@ -270,6 +688,10 @@ class SpacesRegistry {
    * it: that setting is read back through a plain equality check, so a rename
    * that left it pointing at the old slug would silently drop the reader onto a
    * different space on their next load.
+   *
+   * Graph addresses ride on the space part and move with it -- the graphs
+   * themselves are keyed by space id and their own slug, which a space rename
+   * does not touch.
    */
   async rename(slug: string, name: string): Promise<SpaceRuntime | null> {
     const id = this.idFor(slug)
@@ -332,7 +754,11 @@ class SpacesRegistry {
     await db.delete(space).where(eq(space.id, id))
     this.spaces.delete(id)
     this.bySlug.delete(runtime?.slug ?? slug)
-    // The rows cascade with the space; this drops the in-memory mirror of them.
+    // The graph, instance and alias rows cascade with the space; this drops
+    // the in-memory mirror of them.
+    for (const graph of runtime?.graphs.values() ?? []) {
+      this.graphsByInstance.delete(graph.instanceId)
+    }
     for (const [aliasSlug, aliasId] of this.aliasBySlug) {
       if (aliasId === id) {
         this.aliasBySlug.delete(aliasSlug)
@@ -341,17 +767,16 @@ class SpacesRegistry {
     return true
   }
 
-  // `expectedUpdatedAt`, when given, must match the row's current `updatedAt`
-  // or the write is rejected (GraphConflictError) instead of silently
-  // clobbering a newer save from another tab/tool call. The condition is
-  // enforced by the UPDATE's WHERE clause so the check-then-write is atomic
-  // even across concurrent requests.
-  async saveGraph(slug: string, graph: GraphData, expectedUpdatedAt?: string): Promise<SpaceRuntime | null> {
-    const id = this.idFor(slug)
-    if (!id) {
+  // `expectedUpdatedAt`, when given, must match the graph row's current
+  // `updatedAt` or the write is rejected (GraphConflictError) instead of
+  // silently clobbering a newer save from another tab/tool call. The
+  // condition is enforced by the UPDATE's WHERE clause so the
+  // check-then-write is atomic even across concurrent requests.
+  async saveGraph(address: string, graph: GraphData, expectedUpdatedAt?: string): Promise<GraphRef | null> {
+    const ref = this.resolveGraph(address)
+    if (!ref) {
       return null
     }
-    const runtime = this.spaces.get(id)!
     // `updatedAt` is millisecond-precision, not a monotonic counter, so two
     // writers racing within the same millisecond — plus a third stale writer
     // whose expectedUpdatedAt happens to match — could theoretically both pass
@@ -361,19 +786,19 @@ class SpacesRegistry {
     // this with a monotonic integer `version` column instead of tightening the
     // timestamp comparison.
     const condition = expectedUpdatedAt
-      ? and(eq(space.id, id), eq(space.updatedAt, new Date(expectedUpdatedAt)))
-      : eq(space.id, id)
+      ? and(eq(spaceGraph.id, ref.graph.id), eq(spaceGraph.updatedAt, new Date(expectedUpdatedAt)))
+      : eq(spaceGraph.id, ref.graph.id)
     const [row] = await db
-      .update(space)
+      .update(spaceGraph)
       .set({ data: JSON.stringify(graph) })
       .where(condition)
       .returning()
     if (!row) {
-      throw new GraphConflictError(slug)
+      throw new GraphConflictError(address)
     }
-    runtime.graph = graph
-    runtime.updatedAt = row.updatedAt
-    return runtime
+    ref.graph.graph = graph
+    ref.graph.updatedAt = row.updatedAt
+    return ref
   }
 
   async setActiveSlug(slug: string): Promise<void> {
@@ -409,4 +834,4 @@ export function getSpacesRegistry(): SpacesRegistry {
   return globalForSpaces.__SPACES_REGISTRY__
 }
 
-export type { SpaceRuntime }
+export type { GraphRef, GraphRuntime, SpaceRuntime }

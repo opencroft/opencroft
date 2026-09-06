@@ -23,7 +23,12 @@ import {
   getApprovalMeta,
   withApprovalRequired,
 } from '@/app/_authed/(approvals)/_server/with-approval'
-import { callAppAction, listSpaceAppInfos, resolveAppHandleContext } from '@/app/_authed/(apps)/_server/runtime'
+import {
+  callAppAction,
+  listSpaceAppInfos,
+  resolveAppHandleContext,
+  transferSpaceAppImpl,
+} from '@/app/_authed/(apps)/_server/runtime'
 import {
   type InstallAuth,
   installExtensionFromUrl,
@@ -75,9 +80,10 @@ import {
 } from '@/app/_authed/(group-chats)/_server/model'
 import { recordAudit } from '@/app/_authed/(mcp)/_server/audit'
 import { DbReadRefused, runBoundedRead } from '@/app/_authed/(mcp)/_server/db-read'
-import { resolveExisting, resolveForUnset, resolveForWrite } from '@/app/_authed/(mcp)/_server/property-path'
 import { executeExtensionTool, getExtensionToolDefinitions } from '@/app/_authed/(mcp)/_server/extension-tools'
+import { resolveExisting, resolveForUnset, resolveForWrite } from '@/app/_authed/(mcp)/_server/property-path'
 import { skillToolDefinitions, skillToolHandlers } from '@/app/_authed/(mcp)/_server/skill-tools'
+import { isSleepMode } from '@/app/_authed/(mcp)/_server/sleep-mode'
 import type { ToolCallerContext, ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { isYoloMode } from '@/app/_authed/(mcp)/_server/yolo'
 // MCP tool calls carry no session cookie by design (bearer-token surface,
@@ -100,17 +106,17 @@ import {
 } from '@/app/_authed/(space)/_server/actions-impl'
 import { withGraphConflictRetry } from '@/app/_authed/(space)/_server/graph-conflict-retry'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
-import type { GraphData } from '@/app/_authed/(space)/_server/types'
+import { type GraphData, parseGraphAddress } from '@/app/_authed/(space)/_server/types'
 import { askUserStore } from '@/lib/ask-user-store'
 import type { SSEEvent } from '@/lib/sse-events'
 import { toastStore } from '@/lib/toast-store'
 import { secrets } from '@/server/secrets'
-import { isSleepMode } from '@/app/_authed/(mcp)/_server/sleep-mode'
 
 const SPACE_PARAM = {
   space: {
     type: 'string',
-    description: 'Space slug. Omit to target the currently active space.',
+    description:
+      'Graph address: a space slug (its default graph) or "<space>.<graph>" for a named graph — see list_spaces for both. Omit to target the default graph of the active space.',
   },
 }
 
@@ -510,7 +516,8 @@ export const toolDefinitions = [
   },
   {
     name: 'list_spaces',
-    description: 'List all spaces. Each space is an independent graph.',
+    description:
+      'List all spaces with their graphs. A space can hold several graphs (each one is a Graph App instance); every node tool addresses one graph — a bare space slug means its default graph, "<space>.<graph>" a named one. Each graph entry carries its address, name, whether it is the default, and its App instanceId.',
     inputSchema: { type: 'object' as const, properties: {} },
   },
   {
@@ -658,9 +665,14 @@ export const toolDefinitions = [
         nodeId: { type: 'string', description: 'The unique node ID' },
         path: { type: 'string', description: 'Dot path within node.data, e.g. "script" or "schedules.0.enabled".' },
         value: {
-          description: 'New value, written exactly as given (string, number, boolean, null, object or array). Omit when unset is true.',
+          description:
+            'New value, written exactly as given (string, number, boolean, null, object or array). Omit when unset is true.',
         },
-        unset: { type: 'boolean', description: 'Remove the property at path instead of writing. The path must exist, and value must be omitted.' },
+        unset: {
+          type: 'boolean',
+          description:
+            'Remove the property at path instead of writing. The path must exist, and value must be omitted.',
+        },
         ...SPACE_PARAM,
       },
       required: ['nodeId', 'path'],
@@ -669,7 +681,7 @@ export const toolDefinitions = [
   {
     name: 'edit_node_property',
     description:
-      "Replace an exact string inside a node's string property at a dot path (an array index is its own dot segment, e.g. \"schedules.0.cron\"). The path must resolve to an existing string — an unresolvable path is refused naming the failing segment. Preferred over update_nodes for targeted edits in multi-line strings. Fails if oldString is not unique unless replaceAll is true.",
+      'Replace an exact string inside a node\'s string property at a dot path (an array index is its own dot segment, e.g. "schedules.0.cron"). The path must resolve to an existing string — an unresolvable path is refused naming the failing segment. Preferred over update_nodes for targeted edits in multi-line strings. Fails if oldString is not unique unless replaceAll is true.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -1280,6 +1292,19 @@ export const toolDefinitions = [
       required: ['instanceId', 'action'],
     },
   },
+  {
+    name: 'app_transfer',
+    description:
+      'Move one App instance to another space, with whatever space-scoped data its App owns — a Graph instance moves its whole graph (the graph keeps its slug when free in the target, otherwise takes its donor space’s name and slug). A transfer the App refuses (e.g. a Graph that is its space’s default while other graphs remain) rolls back whole. Use list_apps to find the instanceId.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        instanceId: { type: 'string', description: 'The App instance to move — see list_apps.' },
+        target: { type: 'string', description: 'Slug of the space to move it to.' },
+      },
+      required: ['instanceId', 'target'],
+    },
+  },
 
   // ── MCP servers ─────────────────────────────────────────────────────────
   {
@@ -1431,7 +1456,7 @@ export async function getAgentToolDefinitions(extraReservedNames: Set<string> = 
         continue
       }
 
-      const nodes = runtime.graph.nodes as unknown as GraphNode[]
+      const nodes = [...runtime.graphs.values()].flatMap((g) => g.graph.nodes) as unknown as GraphNode[]
       for (const node of nodes) {
         if (node.type !== 'agent-tool') {
           continue
@@ -1514,7 +1539,7 @@ export async function executeAgentTool(
       continue
     }
 
-    const nodes = runtime.graph.nodes as unknown as GraphNode[]
+    const nodes = [...runtime.graphs.values()].flatMap((g) => g.graph.nodes) as unknown as GraphNode[]
 
     const toolNode = nodes.find(
       (n) => n.type === 'agent-tool' && ((n.data ?? {}) as Record<string, unknown>).name === toolName,
@@ -1719,17 +1744,21 @@ async function resolveSpace(args: Record<string, unknown>): Promise<string> {
   if (!input) {
     return getActiveSpaceSlugImpl()
   }
-  const resolved = await resolveSpaceSlugImpl(input)
+  // A graph address rides on the space part: the space resolves through the
+  // same alias fallback as ever, the graph suffix is carried along canonically
+  // and validated where the graph is actually loaded.
+  const { spaceSlug, graphSlug } = parseGraphAddress(input)
+  const resolved = await resolveSpaceSlugImpl(spaceSlug)
   if (resolved) {
-    return resolved
+    return graphSlug ? `${resolved}.${graphSlug}` : resolved
   }
-  fail(-32602, `Space not found: ${input} (use a slug — see list_spaces)`)
+  fail(-32602, `Space not found: ${input} (use a slug or "<space>.<graph>" — see list_spaces)`)
 }
 
 async function loadOrFail(slug: string): Promise<{ graph: GraphData; updatedAt: string }> {
   const result = await loadSpaceGraphImpl(slug)
   if (!result) {
-    fail(-32602, `Space not found: ${slug}`)
+    fail(-32602, `Graph not found: ${slug}`)
   }
   return result
 }
@@ -1901,15 +1930,16 @@ function requireArray<T = unknown>(value: unknown, name: string): T[] {
 const CORE_EXTENSION_ID = 'builtin/core'
 
 async function findNodeAcrossSpaces(nodeId: string): Promise<{ node: GraphNode; slug: string }> {
-  const spaces = await listSpacesImpl()
-  for (const space of spaces) {
-    const result = await loadSpaceGraphImpl(space.slug)
-    const node = result?.graph.nodes.find((n) => (n as { id?: string }).id === nodeId) as GraphNode | undefined
-    if (node) {
-      return { node, slug: space.slug }
-    }
+  const registry = getSpacesRegistry()
+  await registry.ensureLoaded()
+  // Whichever graph of whichever space holds the node; the SPACE slug is the
+  // answer, matching what the terminal-context resolution scopes by.
+  const ref = registry.findByNode(nodeId)
+  const node = ref?.graph.graph.nodes.find((n) => (n as { id?: string }).id === nodeId) as GraphNode | undefined
+  if (!ref || !node) {
+    fail(-32602, `Node not found: ${nodeId}`)
   }
-  fail(-32602, `Node not found: ${nodeId}`)
+  return { node, slug: ref.space.slug }
 }
 
 // The node-id sentinel used by the static per-extension terminal-context handle
@@ -2880,7 +2910,17 @@ function buildHandlers(): Record<string, ToolHandler> {
     // ── list_spaces ─────────────────────────────────────────────────
     list_spaces: async () => {
       const spaces = await listSpacesImpl()
-      return textResult(JSON.stringify(spaces, null, 2))
+      const registry = getSpacesRegistry()
+      const withGraphs = spaces.map((space) => ({
+        ...space,
+        graphs: registry.graphsOf(space.slug).map((graph) => ({
+          address: `${space.slug}.${graph.slug}`,
+          name: graph.name,
+          default: registry.getBySlug(space.slug)?.defaultGraphSlug === graph.slug,
+          instanceId: graph.instanceId,
+        })),
+      }))
+      return textResult(JSON.stringify(withGraphs, null, 2))
     },
 
     // ── create_space ────────────────────────────────────────────────
@@ -3138,7 +3178,9 @@ function buildHandlers(): Record<string, ToolHandler> {
             ;(target.parent as Record<string, unknown>)[target.key as string] = value
           }
         })
-        return textResult(unset ? `Property ${propPath} on ${nodeId} removed.` : `Property ${propPath} on ${nodeId} written.`)
+        return textResult(
+          unset ? `Property ${propPath} on ${nodeId} removed.` : `Property ${propPath} on ${nodeId} written.`,
+        )
       },
       { view: 'write_node_property' },
     ),
@@ -3847,6 +3889,24 @@ function buildHandlers(): Record<string, ToolHandler> {
       },
       { view: 'app_call' },
     ),
+
+    // ── app_transfer ─────────────────────────────────────────────────
+    app_transfer: withApprovalRequired(async (args) => {
+      const instanceId = args.instanceId as string | undefined
+      const target = args.target as string | undefined
+      if (!instanceId || !target) {
+        fail(-32602, 'Missing required params: instanceId, target')
+      }
+      const targetSlug = await resolveSpaceSlugImpl(target)
+      if (!targetSlug) {
+        fail(-32602, `Space not found: ${target} (use a slug — see list_spaces)`)
+      }
+      await transferSpaceAppImpl(instanceId, targetSlug)
+      const registry = getSpacesRegistry()
+      const graph = registry.graphByInstance(instanceId)
+      const movedGraphAddress = graph ? `${targetSlug}.${graph.slug}` : undefined
+      return textResult(JSON.stringify({ instanceId, space: targetSlug, movedGraphAddress }, null, 2))
+    }),
 
     // ── ask_user ──────────────────────────────────────────────────────────
     ask_user: async (args) => {

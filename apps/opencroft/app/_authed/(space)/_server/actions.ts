@@ -2,13 +2,14 @@ import { getSessionUser } from '@opencroft/auth/server'
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 
-import type { RenameSpaceResult } from '@/app/_authed/(space)/_server/actions-impl'
+import type { GraphInstanceView, RenameSpaceResult } from '@/app/_authed/(space)/_server/actions-impl'
 import {
   createSpaceImpl,
   deleteSpaceImpl,
   exportSpaceImpl,
   findSpaceByNodeImpl,
   getActiveSpaceSlugImpl,
+  getGraphViewForInstanceImpl,
   importSpaceImpl,
   listSpacesImpl,
   loadSpaceGraphImpl,
@@ -148,4 +149,11 @@ export const findSpaceByNode = createServerFn({ strict: { output: false } })
   .handler(async ({ data: nodeId }): Promise<SpaceSummary | null> => {
     await requireSession()
     return findSpaceByNodeImpl(nodeId)
+  })
+
+export const getGraphViewForInstance = createServerFn({ strict: { output: false } })
+  .inputValidator((instanceId: string) => instanceId)
+  .handler(async ({ data: instanceId }): Promise<GraphInstanceView | null> => {
+    await requireSession()
+    return getGraphViewForInstanceImpl(instanceId)
   })

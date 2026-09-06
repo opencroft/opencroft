@@ -14,7 +14,11 @@
 import { CronExpressionParser } from 'cron-parser'
 
 import { dispatchExecutionContext } from '@/app/_authed/(extension-runtime)/_server/exec-dispatch'
-import { loadGraphPlain, saveGraphPlain, withGraphConflictRetry } from '@/app/_authed/(space)/_server/graph-conflict-retry'
+import {
+  loadGraphPlain,
+  saveGraphPlain,
+  withGraphConflictRetry,
+} from '@/app/_authed/(space)/_server/graph-conflict-retry'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 
 export type ScheduleMode = 'simple' | 'cron'
@@ -82,7 +86,10 @@ interface GraphNode {
 // marking it "invalid" rather than crashing the tick).
 function isDue(cron: string, windowStart: number, now: number): boolean {
   try {
-    const next = CronExpressionParser.parse(cron, { currentDate: new Date(windowStart) }).next().toDate().getTime()
+    const next = CronExpressionParser.parse(cron, { currentDate: new Date(windowStart) })
+      .next()
+      .toDate()
+      .getTime()
     return next <= now
   } catch {
     return false
@@ -97,7 +104,10 @@ export function computeDueRuleIds(rules: ScheduleRule[], windowStart: number, no
 // expression — matches isDue's "never due" treatment rather than throwing.
 export function computeNextRunAt(cron: string, now: number): number | undefined {
   try {
-    return CronExpressionParser.parse(cron, { currentDate: new Date(now) }).next().toDate().getTime()
+    return CronExpressionParser.parse(cron, { currentDate: new Date(now) })
+      .next()
+      .toDate()
+      .getTime()
   } catch {
     return undefined
   }
@@ -111,7 +121,8 @@ function collectEventNodesBySpace(): Map<string, GraphNode[]> {
     if (!space) {
       continue
     }
-    const events = (space.graph.nodes as unknown as GraphNode[]).filter((n) => n.type === 'event')
+    const spaceNodes = [...space.graphs.values()].flatMap((g) => g.graph.nodes)
+    const events = (spaceNodes as unknown as GraphNode[]).filter((n) => n.type === 'event')
     if (events.length > 0) {
       bySpace.set(summary.slug, events)
     }

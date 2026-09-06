@@ -77,7 +77,8 @@ function collectDockerNodeIds(): string[] {
     if (!space) {
       continue
     }
-    for (const node of space.graph.nodes as unknown as GraphNode[]) {
+    const spaceNodes = [...space.graphs.values()].flatMap((g) => g.graph.nodes)
+    for (const node of spaceNodes as unknown as GraphNode[]) {
       if (node.type !== 'docker' || !node.id) {
         continue
       }

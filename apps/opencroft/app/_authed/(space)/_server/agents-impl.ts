@@ -85,8 +85,10 @@ export async function listAgentNodesImpl(): Promise<AgentNodeRef[]> {
     if (!space) {
       continue
     }
-    const nodes = space.graph.nodes as NodeShape[]
-    const edges = space.graph.edges as EdgeShape[]
+    // Every graph of the space: agents and their wiring may sit on any of
+    // them, and this answers for the space as a whole.
+    const nodes = [...space.graphs.values()].flatMap((g) => g.graph.nodes as NodeShape[])
+    const edges = [...space.graphs.values()].flatMap((g) => g.graph.edges as EdgeShape[])
     const jobsByAgent = new Map<string, AgentJobRef[]>()
     const instructionsByAgent = new Map<string, AgentInstructionRef[]>()
     const jobsById = new Map<string, NodeShape>()

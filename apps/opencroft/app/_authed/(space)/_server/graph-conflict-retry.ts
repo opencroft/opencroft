@@ -45,19 +45,20 @@ async function saveResolved(slug: string, graph: GraphData, expectedUpdatedAt: s
 export async function loadGraphPlain(slug: string): Promise<{ graph: GraphData; updatedAt: string }> {
   const registry = getSpacesRegistry()
   await registry.ensureLoaded()
-  const space = registry.getBySlug(slug)
-  if (!space) {
-    throw new Error(`Space not found: ${slug}`)
+  const ref = registry.resolveGraph(slug)
+  if (!ref) {
+    throw new Error(`Graph not found: ${slug}`)
   }
-  return { graph: space.graph, updatedAt: space.updatedAt.toISOString() }
+  return { graph: ref.graph.graph, updatedAt: ref.graph.updatedAt.toISOString() }
 }
 
 export async function saveGraphPlain(slug: string, graph: GraphData, expectedUpdatedAt: string): Promise<unknown> {
-  const runtime = await getSpacesRegistry().saveGraph(slug, graph, expectedUpdatedAt)
+  const ref = await getSpacesRegistry().saveGraph(slug, graph, expectedUpdatedAt)
   // Single broadcast point, mirroring saveSpaceGraph's action (actions.ts) — any
-  // open tab resyncs before it can save over this write.
-  toastStore.broadcast({ type: 'graph_updated', spaceId: slug })
-  return runtime
+  // open tab resyncs before it can save over this write. Space-scoped, like
+  // saveSpaceGraphImpl's: the version signal is one per space.
+  toastStore.broadcast({ type: 'graph_updated', spaceId: ref?.space.slug ?? slug })
+  return ref
 }
 
 export async function withGraphConflictRetry<T>(

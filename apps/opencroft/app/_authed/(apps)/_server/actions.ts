@@ -8,7 +8,15 @@ import { getRequest } from '@tanstack/react-start/server'
 import { and, asc, eq } from 'drizzle-orm'
 
 import { appInstanceDataDir } from '@/app/_authed/(apps)/_server/instance-paths'
-import { handleInstanceAdded, handleInstanceRecreated, handleInstanceRemoved } from '@/app/_authed/(apps)/_server/runtime'
+import {
+  appUpdatesInPlace,
+  handleInstanceAdded,
+  handleInstanceBeforeRemoved,
+  handleInstanceRemoved,
+  handleInstanceUpdated,
+  transferAllSpaceAppsImpl,
+  transferSpaceAppImpl,
+} from '@/app/_authed/(apps)/_server/runtime'
 import type { AppMeta, SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
 import { getProvided } from '@/app/_authed/(extension-runtime)/_server/provides'
 import { registry } from '@/app/_authed/(space)/_server/actions-impl'
@@ -72,7 +80,13 @@ function toInstance(row: typeof spaceApp.$inferSelect): SpaceAppInstance {
 export const listApps = createServerFn({ strict: { output: false } }).handler(async (): Promise<AppMeta[]> => {
   await requireSession()
   const provided = await getProvided<AppEntry>('apps')
-  return provided.map(({ extensionId, value }) => ({ ...value, extensionId }))
+  return Promise.all(
+    provided.map(async ({ extensionId, value }) => ({
+      ...value,
+      extensionId,
+      updatesInPlace: await appUpdatesInPlace(extensionId, value.slug),
+    })),
+  )
 })
 
 /** The Apps added to one space, with the entered parameter values. */
@@ -125,10 +139,10 @@ export const addSpaceApp = createServerFn({ method: 'POST', strict: { output: fa
   })
 
 /**
- * Change one instance's parameters. NOT an in-place patch: the instance is
- * recreated — unloaded, its data directory deleted, then initialized again
- * from the new values (see handleInstanceRecreated). The UI warns before
- * calling this.
+ * Change one instance's parameters. An App with an onUpdated hook reacts in
+ * place and keeps its data; any other instance is recreated — unloaded, its
+ * data directory deleted, then initialized again from the new values (see
+ * handleInstanceUpdated). The UI warns before calling this.
  */
 export const updateSpaceApp = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { spaceSlug: string; instanceId: string; params?: Record<string, string> }) => data)
@@ -146,8 +160,39 @@ export const updateSpaceApp = createServerFn({ method: 'POST', strict: { output:
       throw new Error(`No extension provides app: ${row.extensionId}/${row.appSlug}`)
     }
     const params = collectParams(app, data.params)
-    const updated = await handleInstanceRecreated(row, JSON.stringify(params))
+    const updated = await handleInstanceUpdated(row, JSON.stringify(params))
     return toInstance(updated)
+  })
+
+/**
+ * Move one App instance to another space, with whatever space-scoped data
+ * its App owns (a Graph instance moves its whole graph). A transfer the
+ * App's hook refuses rolls back whole and surfaces the error.
+ */
+export const transferSpaceApp = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { spaceSlug: string; instanceId: string; targetSpaceSlug: string }) => data)
+  .handler(async ({ data }): Promise<void> => {
+    await requireSession()
+    const spaceId = await resolveSpaceId(data.spaceSlug)
+    const row = await db.query.spaceApp.findFirst({
+      where: and(eq(spaceApp.id, data.instanceId), eq(spaceApp.spaceId, spaceId)),
+    })
+    if (!row) {
+      throw new Error(`Unknown app instance: ${data.instanceId}`)
+    }
+    await transferSpaceAppImpl(data.instanceId, data.targetSpaceSlug)
+  })
+
+/**
+ * Move EVERY App instance of a space to another space — the "transfer space"
+ * action in the space's settings. Returns how many instances moved. The
+ * emptied space keeps a fresh default graph and can then be deleted.
+ */
+export const transferAllSpaceApps = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { spaceSlug: string; targetSpaceSlug: string }) => data)
+  .handler(async ({ data }): Promise<number> => {
+    await requireSession()
+    return transferAllSpaceAppsImpl(data.spaceSlug, data.targetSpaceSlug)
   })
 
 /**
@@ -165,6 +210,10 @@ export const removeSpaceApp = createServerFn({ method: 'POST', strict: { output:
     if (!row) {
       return false
     }
+    // The App's veto, before anything is touched: a throw surfaces to the
+    // caller and the instance stays whole (e.g. the Graph App refusing to
+    // remove the space's default graph).
+    await handleInstanceBeforeRemoved(row)
     await handleInstanceRemoved(row)
     await db.delete(spaceApp).where(eq(spaceApp.id, row.id))
     return true

@@ -67,7 +67,8 @@ async function handleRequest(request: Request, params: { _splat?: string }) {
       continue
     }
 
-    for (const node of runtime.graph.nodes as unknown as GraphNode[]) {
+    const spaceNodes = [...runtime.graphs.values()].flatMap((g) => g.graph.nodes)
+    for (const node of spaceNodes as unknown as GraphNode[]) {
       if (node.type !== 'api-route') {
         continue
       }

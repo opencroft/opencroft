@@ -75,31 +75,35 @@ export async function listSpacesImpl(): Promise<SpaceSummary[]> {
   return r.list()
 }
 
+/** `slug` is a graph address: `<space>` (its default graph) or `<space>.<graph>`. */
 export async function loadSpaceGraphImpl(slug: string): Promise<{ graph: GraphData; updatedAt: string } | null> {
   const r = await registry()
-  const space = r.getBySlug(slug)
-  if (!space) {
+  const ref = r.resolveGraph(slug)
+  if (!ref) {
     return null
   }
-  return { graph: space.graph, updatedAt: space.updatedAt.toISOString() }
+  return { graph: ref.graph.graph, updatedAt: ref.graph.updatedAt.toISOString() }
 }
 
 export async function saveSpaceGraphImpl(data: {
+  /** Graph address, same grammar loadSpaceGraphImpl takes. */
   slug: string
   graph: GraphData
   expectedUpdatedAt?: string
 }): Promise<{ updatedAt: string }> {
   const r = await registry()
   const resolved = await resolveGraph(data.graph)
-  const runtime = await r.saveGraph(data.slug, resolved, data.expectedUpdatedAt)
-  if (!runtime) {
-    throw new Error(`Space not found: ${data.slug}`)
+  const ref = await r.saveGraph(data.slug, resolved, data.expectedUpdatedAt)
+  if (!ref) {
+    throw new Error(`Graph not found: ${data.slug}`)
   }
   // Single broadcast point for every graph mutation (canvas autosave and
   // MCP node/edge tools alike) so any other open tab resyncs instead of
-  // later overwriting this write with a stale snapshot.
-  toastStore.broadcast({ type: 'graph_updated', spaceId: data.slug })
-  return { updatedAt: runtime.updatedAt.toISOString() }
+  // later overwriting this write with a stale snapshot. Scoped to the SPACE:
+  // the version signal stays one per space, so a canvas showing another
+  // graph of it refetches its own address -- a spare fetch, never a miss.
+  toastStore.broadcast({ type: 'graph_updated', spaceId: ref.space.slug })
+  return { updatedAt: ref.graph.updatedAt.toISOString() }
 }
 
 export async function createSpaceImpl(name: string): Promise<SpaceSummary> {
@@ -212,10 +216,15 @@ export async function exportSpaceImpl(slug: string): Promise<SpaceExport | null>
   if (!space) {
     return null
   }
+  // The DEFAULT graph only, in the shape exports always had -- an import from
+  // before graphs were rows still lands whole. A space's other graphs are not
+  // carried yet; extending the payload for them is a follow-up, not a quiet
+  // reinterpretation of this one.
+  const defaultGraph = space.graphs.get(space.defaultGraphSlug)
   return {
     name: space.name,
     slug: space.slug,
-    graph: space.graph,
+    graph: defaultGraph?.graph ?? { nodes: [], edges: [] },
     exportedAt: new Date().toISOString(),
   }
 }
@@ -255,11 +264,38 @@ export async function setActiveSpaceSlugImpl(slug: string): Promise<void> {
   await r.setActiveSlug(space.slug)
 }
 
-export async function findSpaceByNodeImpl(nodeId: string): Promise<SpaceSummary | null> {
+/** What a Graph App instance's view needs to draw its canvas. */
+export interface GraphInstanceView {
+  /** The graph's address: what the canvas loads and saves by. */
+  address: string
+  graphName: string
+  spaceSlug: string
+  spaceName: string
+}
+
+export async function getGraphViewForInstanceImpl(instanceId: string): Promise<GraphInstanceView | null> {
   const r = await registry()
-  const space = r.findByNode(nodeId)
+  const graph = r.graphByInstance(instanceId)
+  if (!graph) {
+    return null
+  }
+  const space = r.getById(graph.spaceId)
   if (!space) {
     return null
   }
-  return toSummary(space)
+  return {
+    address: `${space.slug}.${graph.slug}`,
+    graphName: graph.name,
+    spaceSlug: space.slug,
+    spaceName: space.name,
+  }
+}
+
+export async function findSpaceByNodeImpl(nodeId: string): Promise<SpaceSummary | null> {
+  const r = await registry()
+  const ref = r.findByNode(nodeId)
+  if (!ref) {
+    return null
+  }
+  return toSummary(ref.space)
 }

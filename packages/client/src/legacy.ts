@@ -192,6 +192,13 @@ export declare const toast: typeof import('sonner').toast
 export declare const InputHandle: FC<HandlePinProps>
 export declare const OutputHandle: FC<HandlePinProps>
 
+/**
+ * The full canvas surface behind a Graph App instance -- editor, chat and
+ * providers, pointed at the instance's graph. What the builtin Graph App's
+ * component renders, and all it renders.
+ */
+export declare const GraphCanvas: FC<{ instanceId: string }>
+
 export declare const NodeFrame: ComponentType<Record<string, unknown>>
 export declare const NodeCard: ComponentType<Record<string, unknown>>
 export declare const NodeCardHeader: ComponentType<Record<string, unknown>>

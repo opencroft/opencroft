@@ -151,7 +151,8 @@ async function findNodeData<T>(nodeId: string): Promise<T | null> {
     if (!space) {
       continue
     }
-    const node = (space.graph.nodes as { id?: string; data?: T }[]).find((n) => n.id === nodeId)
+    const spaceNodes = [...space.graphs.values()].flatMap((g) => g.graph.nodes)
+    const node = (spaceNodes as { id?: string; data?: T }[]).find((n) => n.id === nodeId)
     if (node) {
       return node.data ?? null
     }

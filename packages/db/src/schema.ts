@@ -53,7 +53,13 @@ export const space = pgTable(
     id: text().primaryKey().notNull().$defaultFn(uuid),
     slug: text().notNull(),
     name: text().notNull(),
+    /** LEGACY: the graph this space held before graphs became rows of their
+     *  own (see spaceGraph). Read once by the one-time migration that turns
+     *  it into the space's default graph, never written after -- whatever it
+     *  still holds is inert. */
     data: text().default('{"nodes":[],"edges":[]}').notNull(),
+    /** Which of this space's graphs a bare `<space>` address resolves to. */
+    defaultGraphSlug: text().default('default').notNull(),
     pinned: boolean().default(false).notNull(),
     /** Small square image as a base64 data URL, like `user.image`; null = no icon. */
     icon: text(),
@@ -102,6 +108,41 @@ export const spaceApp = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [index('SpaceApp_spaceId_idx').on(t.spaceId)],
+)
+
+// A graph within a space -- the nodes and edges one canvas draws. Every graph
+// is owned by exactly one Graph App instance (the host-registered app): the
+// instance is the door to it in the UI and the owner of its lifecycle, so the
+// row dies with the instance -- through the app's own hooks, DELIBERATELY not
+// through an FK cascade on instanceId. A cascade would delete graph data
+// underneath the in-memory registry whenever an instance row went away with
+// its onRemoved hook having failed, and a silent deletion is worse than an
+// orphaned row someone can still read.
+//
+// Addressed as `<space-slug>.<slug>`; a bare space slug resolves to the
+// space's defaultGraphSlug. The slug is fixed at creation (no aliases, unlike
+// spaces): it is an address, and a graph's display name can change without
+// moving it.
+export const spaceGraph = pgTable(
+  'SpaceGraph',
+  {
+    id: text().primaryKey().notNull().$defaultFn(uuid),
+    spaceId: text()
+      .notNull()
+      .references(() => space.id, { onDelete: 'cascade' }),
+    instanceId: text().notNull(),
+    slug: text().notNull(),
+    name: text().notNull(),
+    /** JSON: `{"nodes":[...],"edges":[...]}` -- same shape space.data held. */
+    data: text().default('{"nodes":[],"edges":[]}').notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('SpaceGraph_spaceId_slug_key').on(t.spaceId, t.slug),
+    uniqueIndex('SpaceGraph_instanceId_key').on(t.instanceId),
+    index('SpaceGraph_spaceId_idx').on(t.spaceId),
+  ],
 )
 
 export const mcpAuditLog = pgTable(
@@ -737,6 +778,7 @@ export const schema = {
   secret,
   space,
   spaceApp,
+  spaceGraph,
   spaceSlugAlias,
   mcpAuditLog,
   apiToken,
