@@ -323,7 +323,21 @@ function EmbeddedThread({
   // agent selection is the SAME state the live thread's picker switches, so
   // the two controls cannot disagree.
   return (
-    <div className={cn('flex h-full min-h-0 flex-col justify-end', className)}>
+    <div className={cn('flex h-full min-h-0 flex-col', className)}>
+      {/* The slack above the composer carries the same empty-state family the
+          create flow and the "No messages yet" placeholder wear — without it
+          this window is a bare panel with a lone composer at the bottom. */}
+      <div className='flex min-h-0 flex-1 flex-col justify-center'>
+        <Empty className='py-8'>
+          <EmptyHeader>
+            <EmptyMedia>
+              <MessageCirclePlus className='size-6 text-muted-foreground' />
+            </EmptyMedia>
+            <EmptyTitle>New chat</EmptyTitle>
+            <EmptyDescription>Send the first message to start the conversation.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </div>
       {/* shrink-0 so the frame hugs its content and the slack lands above it;
           the selection badge renders INSIDE the frame, by the composer itself,
           in the same place the live composer's attachments slot puts it. */}

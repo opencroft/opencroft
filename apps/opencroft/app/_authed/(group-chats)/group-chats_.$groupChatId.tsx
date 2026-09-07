@@ -1,7 +1,5 @@
 import { createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
 import { useCallback, useMemo, useState } from 'react'
-import { Button } from 'ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
 import { GroupChatDetail } from 'ui/group-chat/group-chat-detail'
 import { ScrollPage } from 'ui/layout/scrollpage'
@@ -11,6 +9,7 @@ import { stopProcessLocal } from '@/app/_authed/(agent)/_server/acp'
 import { deriveSessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import {
   GroupChatRenameDialog,
+  GroupChatThreadDeleteDialog,
   GroupChatThreadRenameDialog,
   GroupChatTopicDialog,
 } from '@/app/_authed/(group-chats)/_components/group-chat-edit-dialogs'
@@ -19,7 +18,6 @@ import { GroupChatMembersDialog } from '@/app/_authed/(group-chats)/_components/
 import { GroupChatPinsPanel } from '@/app/_authed/(group-chats)/_components/group-chat-pins-panel'
 import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
 import { GroupChatThreadTree } from '@/app/_authed/(group-chats)/_components/group-chat-thread-tree'
-import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
 import { threadSessionKey } from '@/app/_authed/(group-chats)/_lib/thread-session-key'
 import { EMPTY_THREAD_LAYOUT } from '@/app/_authed/(group-chats)/_lib/thread-tree-layout'
@@ -27,7 +25,6 @@ import { useSafeBack } from '@/app/_authed/(group-chats)/_lib/use-safe-back'
 import { useThreadLayout } from '@/app/_authed/(group-chats)/_lib/use-thread-layout'
 import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import {
-  deleteGroupChatThread,
   getGroupChatThreadLayout,
   getMyGroupChatView,
   listDirectoryUsersForPicker,
@@ -74,12 +71,8 @@ function GroupChatDetailPage() {
   const router = useRouter()
   const goToList = useCallback(() => navigate({ to: '/group-chats' }), [navigate])
   const onBack = useSafeBack(goToList)
-  // Delete confirm. The kit's ChatListItem calls onDelete immediately; the
-  // confirm lives here rather than in the kit because whether to confirm (and
-  // with what copy) is a product call, and the kit is agnostic to it.
+  // Which thread's Delete was chosen — the shared confirm dialog takes over.
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
-  const [deleting, setDeleting] = useState(false)
-  const [deleteError, setDeleteError] = useState<string>()
   const [renaming, setRenaming] = useState(false)
   const [editingTopic, setEditingTopic] = useState(false)
   // Which thread's Rename was chosen. The kit's row reports the id and stops
@@ -135,28 +128,9 @@ function GroupChatDetailPage() {
         })
       }}
       onRename={(threadId) => setRenameThreadId(threadId)}
-      onDelete={(threadId) => {
-        setDeleteError(undefined)
-        setDeleteTarget(threadId)
-      }}
+      onDelete={(threadId) => setDeleteTarget(threadId)}
     />
   )
-  const confirmDelete = async () => {
-    if (!deleteTarget) {
-      return
-    }
-    setDeleteError(undefined)
-    setDeleting(true)
-    try {
-      await deleteGroupChatThread({ data: deleteTarget })
-      setDeleteTarget(null)
-      await router.invalidate()
-    } catch (e) {
-      setDeleteError(failureMessage(e, 'The thread could not be deleted.'))
-    } finally {
-      setDeleting(false)
-    }
-  }
 
   if (data.refused) {
     return <GroupChatRefusal code={data.code} />
@@ -248,33 +222,18 @@ function GroupChatDetailPage() {
         topic={chat.topic}
       />
 
-      <Dialog
-        open={deleteTarget !== null}
-        onOpenChange={(next) => {
-          if (!next) {
-            setDeleteTarget(null)
-            setDeleteError(undefined)
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete thread</DialogTitle>
-          </DialogHeader>
-          <p className='text-sm text-muted-foreground'>
-            The conversation, its session and the agent process underneath it will be removed. This cannot be undone.
-          </p>
-          {deleteError ? <p className='text-sm text-destructive'>{deleteError}</p> : null}
-          <div className='flex justify-end gap-2'>
-            <Button variant='outline' onClick={() => setDeleteTarget(null)} disabled={deleting}>
-              Cancel
-            </Button>
-            <Button variant='destructive' onClick={() => void confirmDelete()} disabled={deleting}>
-              {deleting ? 'Deleting…' : 'Delete'}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {deleteTarget ? (
+        <GroupChatThreadDeleteDialog
+          key={deleteTarget}
+          open
+          onOpenChange={(next) => {
+            if (!next) {
+              setDeleteTarget(null)
+            }
+          }}
+          threadId={deleteTarget}
+        />
+      ) : null}
     </ScrollPage>
   )
 }

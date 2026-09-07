@@ -1,10 +1,11 @@
 'use client'
 
-// Edit dialogs for a group chat's name and topic, and for a thread's title --
-// the host side of the kit's onEditName/onEditTopic affordances
-// (group-chat-detail.tsx) and of the thread row's own Rename item
-// (group-chat-thread-list.tsx). Same split as the members dialog and the delete
-// confirm: the kit only carries the affordance, the app owns what it opens.
+// Edit dialogs for a group chat's name and topic, for a thread's title, and
+// the thread delete confirm -- the host side of the kit's
+// onEditName/onEditTopic affordances (group-chat-detail.tsx) and of the thread
+// row's own Rename/Delete items (group-chat-thread-list.tsx). Same split as
+// the members dialog: the kit only carries the affordance, the app owns what
+// it opens.
 //
 // Renaming EITHER a chat or a thread moves the address it is addressed by, not
 // only what it is called -- so both dialogs say so, and both can be refused for
@@ -18,9 +19,11 @@ import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Input } from 'ui/input'
 
+import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { memberActionRefusal } from '@/app/_authed/(group-chats)/_lib/member-action-refusal'
 import type { GroupChatWriteResult } from '@/app/_authed/(group-chats)/_server/actions'
 import {
+  deleteGroupChatThread,
   renameMyGroupChat,
   renameMyGroupChatThread,
   setMyGroupChatTopic,
@@ -175,6 +178,63 @@ export function GroupChatTopicDialog({
       description="Every agent in this chat is told this as what it's for. It isn't shown anywhere else for you beyond this screen."
       submit={(value) => setMyGroupChatTopic({ data: { groupChatId, topic: value } })}
     />
+  )
+}
+
+/**
+ * The confirm behind a thread row's Delete item. The kit's ChatListItem calls
+ * onDelete immediately; whether to confirm (and with what copy) is a product
+ * call, so the confirm lives host-side and is shared by every surface that
+ * offers the item — the group-chat screen and the embedded ChatSelector.
+ * Mount it conditionally with `key={threadId}` so each target starts clean.
+ */
+export function GroupChatThreadDeleteDialog({
+  open,
+  onOpenChange,
+  threadId,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  threadId: string
+}) {
+  const router = useRouter()
+  const [deleting, setDeleting] = useState(false)
+  const [error, setError] = useState<string>()
+
+  const confirm = async () => {
+    setError(undefined)
+    setDeleting(true)
+    try {
+      await deleteGroupChatThread({ data: threadId })
+      onOpenChange(false)
+      await router.invalidate()
+    } catch (e) {
+      setError(failureMessage(e, 'The thread could not be deleted.'))
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Delete thread</DialogTitle>
+        </DialogHeader>
+        <p className='text-sm text-muted-foreground'>
+          The conversation, its session and the agent process underneath it will be removed. This cannot be undone.
+        </p>
+        {error ? <p className='text-sm text-destructive'>{error}</p> : null}
+        <DialogFooter>
+          <Button variant='outline' onClick={() => onOpenChange(false)} disabled={deleting}>
+            Cancel
+          </Button>
+          <Button variant='destructive' onClick={() => void confirm()} disabled={deleting}>
+            {deleting ? 'Deleting…' : 'Delete'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

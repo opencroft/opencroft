@@ -1,5 +1,6 @@
 'use client'
 
+import { Link } from '@tanstack/react-router'
 import { MessageCircleMore, SquarePen } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
@@ -9,8 +10,14 @@ import { Popover, PopoverContent, PopoverTrigger } from 'ui/popover'
 import { Spinner } from 'ui/spinner'
 
 import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
+import { stopProcessLocal } from '@/app/_authed/(agent)/_server/acp'
 import { deriveSessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import type { EmbeddedChatSelection } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
+import {
+  GroupChatThreadDeleteDialog,
+  GroupChatThreadRenameDialog,
+} from '@/app/_authed/(group-chats)/_components/group-chat-edit-dialogs'
+import { threadSessionKey } from '@/app/_authed/(group-chats)/_lib/thread-session-key'
 import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import { getGroupChatEmbedView, listGroupChatThreadsView } from '@/app/_authed/(group-chats)/_server/actions'
 
@@ -44,8 +51,10 @@ export interface ChatSelectorProps {
  * Picks which conversation an embedded chat surface shows: a header button
  * (beside the dock controls) opening a menu with a search field, a "New chat"
  * action, and the chat's recent threads — the same rows the group-chat
- * screen's thread list draws. Also exposed to extension client code through
- * the host API, beside EmbeddedAgentChat.
+ * screen's thread list draws, with the same per-row context menu (Rename /
+ * Stop process / Delete) behind them and a More footer leading to the chat's
+ * own screen. Also exposed to extension client code through the host API,
+ * beside EmbeddedAgentChat.
  */
 export function ChatSelector({ space, selection, onChange, size, className }: ChatSelectorProps) {
   const [open, setOpen] = useState(false)
@@ -53,6 +62,13 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
   // null = loading; [] with error = the load failed.
   const [threads, setThreads] = useState<GroupChatThreadEntry[] | null>(null)
   const [error, setError] = useState<string>()
+  // The chat's id, once resolved — the More footer links to its screen by it.
+  const [chatId, setChatId] = useState<string | null>(null)
+  // Which row's Rename / Delete was chosen; the same host-side dialogs the
+  // group-chat screen opens take over, outside the popover so closing it does
+  // not unmount them.
+  const [renameTarget, setRenameTarget] = useState<{ id: string; title: string } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) {
@@ -61,10 +77,14 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
     let cancelled = false
     setThreads(null)
     setError(undefined)
+    setChatId(null)
     getGroupChatEmbedView({ data: space })
       .then(async (view) => {
         if (view.state !== 'ok') {
           throw new Error(view.state === 'missing' ? 'This chat does not exist yet.' : 'This chat is not available.')
+        }
+        if (!cancelled) {
+          setChatId(view.chat.id)
         }
         const list = await listGroupChatThreadsView({ data: view.chat.id })
         if (!cancelled) {
@@ -106,67 +126,140 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
   }))
   const activeThreadId = selection && 'threadId' in selection ? selection.threadId : undefined
 
+  const close = () => {
+    setOpen(false)
+    setQuery('')
+  }
+
   const pick = (next: EmbeddedChatSelection) => {
     onChange(next)
-    setOpen(false)
+    close()
   }
 
   return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next)
-        if (!next) {
-          setQuery('')
-        }
-      }}
-    >
-      <PopoverTrigger asChild>
-        <Button
-          variant='ghost'
-          size={size ?? 'icon-xs'}
-          aria-label='Choose a chat'
-          title='Choose a chat'
-          className={className}
-        >
-          <MessageCircleMore />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent side='bottom' align='end' className='w-72 p-0'>
-        {/* The same Command dress the space selector's menu wears — borderless
+    <>
+      <Popover
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next)
+          if (!next) {
+            setQuery('')
+          }
+        }}
+      >
+        <PopoverTrigger asChild>
+          <Button
+            variant='ghost'
+            size={size ?? 'icon-xs'}
+            aria-label='Choose a chat'
+            title='Choose a chat'
+            className={className}
+          >
+            <MessageCircleMore />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent side='bottom' align='end' className='w-72 p-0'>
+          {/* The same Command dress the space selector's menu wears — borderless
             search on a divider, flat rows — so the two header menus read as one
             family. Filtering stays this component's own (the query narrows
             `shown` before rendering), hence shouldFilter off. */}
-        <Command shouldFilter={false}>
-          <CommandInput value={query} onValueChange={setQuery} placeholder='Search chats…' />
-          <CommandList>
-            <CommandGroup>
-              <CommandItem onSelect={() => pick({ newId: newChatId() })}>
-                <SquarePen />
-                New chat
-              </CommandItem>
-            </CommandGroup>
-            {threads === null ? (
-              <div className='flex justify-center py-3'>
-                <Spinner className='size-4 text-muted-foreground' />
-              </div>
-            ) : error ? (
-              <p className='px-3 py-2 text-xs text-muted-foreground'>{error}</p>
-            ) : shown.length === 0 ? (
-              <p className='px-3 py-2 text-xs text-muted-foreground'>
-                {query.trim() ? 'No chats match the search.' : 'No chats yet.'}
-              </p>
-            ) : (
-              <GroupChatThreadList
-                threads={items}
-                activeId={activeThreadId}
-                onSelect={(id) => pick({ threadId: id })}
-                className='max-h-72 overflow-y-auto p-1'
-              />
-            )}
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+          <Command shouldFilter={false}>
+            <CommandInput value={query} onValueChange={setQuery} placeholder='Search chats…' />
+            <CommandList>
+              <CommandGroup>
+                <CommandItem onSelect={() => pick({ newId: newChatId() })}>
+                  <SquarePen />
+                  New chat
+                </CommandItem>
+              </CommandGroup>
+              {threads === null ? (
+                <div className='flex justify-center py-3'>
+                  <Spinner className='size-4 text-muted-foreground' />
+                </div>
+              ) : error ? (
+                <p className='px-3 py-2 text-xs text-muted-foreground'>{error}</p>
+              ) : shown.length === 0 ? (
+                <p className='px-3 py-2 text-xs text-muted-foreground'>
+                  {query.trim() ? 'No chats match the search.' : 'No chats yet.'}
+                </p>
+              ) : (
+                <GroupChatThreadList
+                  threads={items}
+                  activeId={activeThreadId}
+                  onSelect={(id) => pick({ threadId: id })}
+                  // The same row actions the group-chat screen's thread tree
+                  // offers, wired the same way: Rename and Delete report the row
+                  // and a host dialog takes over; Stop maps the thread id to its
+                  // session key and calls the one shared stop path. The row's
+                  // state comes from the shared activity poll, so nothing needs
+                  // reloading after a stop.
+                  onRename={(id) => {
+                    const thread = (threads ?? []).find((t) => t.id === id)
+                    if (thread) {
+                      setRenameTarget({ id, title: thread.title ?? '' })
+                      close()
+                    }
+                  }}
+                  onStopProcess={(id) => {
+                    const sessionKey = threadSessionKey(threads ?? [], id)
+                    if (!sessionKey) {
+                      return
+                    }
+                    stopProcessLocal({ data: sessionKey }).catch((err) => {
+                      console.error('Failed to stop thread process', id, err)
+                    })
+                  }}
+                  onDelete={(id) => {
+                    setDeleteTarget(id)
+                    close()
+                  }}
+                  // No scroll of its own — the CommandList above is the menu's
+                  // one scroll container, and a second nested one splits the
+                  // wheel between two scrollbars.
+                  className='p-1'
+                />
+              )}
+            </CommandList>
+          </Command>
+          {/* Same footer the space selector's menu ends with: the full screen
+            behind this menu, one click away. Rendered once the chat resolved —
+            the id is what the link needs. */}
+          {chatId ? (
+            <div className='border-t p-1'>
+              <Button asChild variant='ghost' size='sm' className='w-full justify-center' onClick={close}>
+                <Link to='/group-chats/$groupChatId' params={{ groupChatId: chatId }}>
+                  More
+                </Link>
+              </Button>
+            </div>
+          ) : null}
+        </PopoverContent>
+      </Popover>
+      {renameTarget ? (
+        <GroupChatThreadRenameDialog
+          key={renameTarget.id}
+          open
+          onOpenChange={(next) => {
+            if (!next) {
+              setRenameTarget(null)
+            }
+          }}
+          threadId={renameTarget.id}
+          title={renameTarget.title}
+        />
+      ) : null}
+      {deleteTarget ? (
+        <GroupChatThreadDeleteDialog
+          key={deleteTarget}
+          open
+          onOpenChange={(next) => {
+            if (!next) {
+              setDeleteTarget(null)
+            }
+          }}
+          threadId={deleteTarget}
+        />
+      ) : null}
+    </>
   )
 }
