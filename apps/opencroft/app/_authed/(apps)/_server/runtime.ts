@@ -253,35 +253,6 @@ export async function transferSpaceAppImpl(instanceId: string, targetSpaceSlug: 
   }
 }
 
-/**
- * Move EVERY App instance of one space to another -- the space settings'
- * "transfer space" action. Ordered so the space's default graph goes LAST:
- * transferring a default graph is only allowed once it is the space's only
- * graph, which moving the others first makes true. The donor is left with
- * the fresh empty default that transfer creates -- an empty space, ready to
- * be deleted or reused.
- */
-export async function transferAllSpaceAppsImpl(spaceSlug: string, targetSpaceSlug: string): Promise<number> {
-  const r = await registry()
-  const source = r.getBySlug(spaceSlug)
-  if (!source) {
-    throw new Error(`Unknown space: ${spaceSlug}`)
-  }
-  const rows = await db.query.spaceApp.findMany({
-    where: eq(spaceApp.spaceId, source.id),
-    orderBy: asc(spaceApp.createdAt),
-  })
-  const defaultGraphInstanceId = source.graphs.get(source.defaultGraphSlug)?.instanceId
-  const ordered = [
-    ...rows.filter((row) => row.id !== defaultGraphInstanceId),
-    ...rows.filter((row) => row.id === defaultGraphInstanceId),
-  ]
-  for (const row of ordered) {
-    await transferSpaceAppImpl(row.id, targetSpaceSlug)
-  }
-  return ordered.length
-}
-
 /** Fire onUnload for every loaded instance — the shutdown half of startSpaceApps. */
 async function unloadAllInstances(): Promise<void> {
   for (const [instanceId, loaded] of loadedInstances()) {

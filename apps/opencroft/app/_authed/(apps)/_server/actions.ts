@@ -11,7 +11,6 @@ import {
   handleInstanceUpdated,
   removeSpaceAppImpl,
   renameSpaceAppImpl,
-  transferAllSpaceAppsImpl,
   transferSpaceAppImpl,
 } from '@/app/_authed/(apps)/_server/runtime'
 import type { AppMeta, SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
@@ -189,18 +188,6 @@ export const transferSpaceApp = createServerFn({ method: 'POST', strict: { outpu
       throw new Error(`Unknown app instance: ${data.instanceId}`)
     }
     await transferSpaceAppImpl(data.instanceId, data.targetSpaceSlug)
-  })
-
-/**
- * Move EVERY App instance of a space to another space — the "transfer space"
- * action in the space's settings. Returns how many instances moved. The
- * emptied space keeps a fresh default graph and can then be deleted.
- */
-export const transferAllSpaceApps = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { spaceSlug: string; targetSpaceSlug: string }) => data)
-  .handler(async ({ data }): Promise<number> => {
-    await requireSession()
-    return transferAllSpaceAppsImpl(data.spaceSlug, data.targetSpaceSlug)
   })
 
 /**

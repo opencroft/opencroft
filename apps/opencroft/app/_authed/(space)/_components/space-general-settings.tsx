@@ -16,9 +16,7 @@ import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 import { Label } from 'ui/label'
 import { Flex } from 'ui/layout/flex'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
 
-import { transferAllSpaceApps } from '@/app/_authed/(apps)/_server/actions'
 import { SpaceIconSettings } from '@/app/_authed/(space)/_components/space-icon-settings'
 import { deleteSpace, renameSpace } from '@/app/_authed/(space)/_server/actions'
 import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
@@ -31,18 +29,13 @@ interface Props {
 
 /**
  * The General tab of a space's settings: name, icon, and the Danger Zone --
- * transferring the space's contents away and deleting the space.
+ * deleting the space. Moving individual apps elsewhere first is each app's
+ * own settings page (its Transfer action), not a bulk action here.
  *
  * Renaming MOVES THE SPACE'S ADDRESS (the slug follows the name), so a
  * successful rename navigates to the settings page under the new slug; a
  * name whose address another space holds is refused with the reason shown,
  * not suffixed (see the registry's rename).
- *
- * "Transfer space" moves every App instance -- graphs included, with their
- * nodes -- to the chosen space, leaving this one empty but alive (a fresh
- * default graph replaces the departed one). Deleting it afterwards is the
- * separate red button below, which is the point of them being two actions:
- * emptying a space and destroying it are different decisions.
  */
 export function SpaceGeneralSettings({ space, spaces }: Props) {
   const router = useRouter()
@@ -50,12 +43,6 @@ export function SpaceGeneralSettings({ space, spaces }: Props) {
   const [name, setName] = useState(space.name)
   const [renameError, setRenameError] = useState<string | undefined>()
   const [renaming, setRenaming] = useState(false)
-
-  const [transferTarget, setTransferTarget] = useState('')
-  const [transferConfirm, setTransferConfirm] = useState(false)
-  const [transferError, setTransferError] = useState<string | undefined>()
-  const [transferring, setTransferring] = useState(false)
-  const [transferred, setTransferred] = useState<number | null>(null)
 
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleteError, setDeleteError] = useState<string | undefined>()
@@ -87,26 +74,6 @@ export function SpaceGeneralSettings({ space, spaces }: Props) {
     }
   }
 
-  async function handleTransfer() {
-    if (!transferTarget || transferring) {
-      return
-    }
-    setTransferConfirm(false)
-    setTransferError(undefined)
-    setTransferring(true)
-    try {
-      const count = await transferAllSpaceApps({
-        data: { spaceSlug: space.slug, targetSpaceSlug: transferTarget },
-      })
-      setTransferred(count)
-      router.invalidate()
-    } catch (error) {
-      setTransferError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setTransferring(false)
-    }
-  }
-
   async function handleDelete() {
     setDeleteConfirm(false)
     setDeleteError(undefined)
@@ -118,8 +85,6 @@ export function SpaceGeneralSettings({ space, spaces }: Props) {
     await router.navigate({ to: '/spaces' })
     router.invalidate()
   }
-
-  const targetName = spaces.find((s) => s.slug === transferTarget)?.name ?? transferTarget
 
   return (
     <Flex withGaps className='w-full gap-8'>
@@ -143,54 +108,10 @@ export function SpaceGeneralSettings({ space, spaces }: Props) {
         <h2 className='text-base font-semibold text-destructive'>Danger Zone</h2>
 
         <Flex withGaps className='w-full'>
-          <Label>Transfer space</Label>
-          <p className='text-xs text-muted-foreground'>
-            Move everything this space holds — its apps and graphs, nodes included — to another space. This space stays,
-            empty, so deleting it afterwards is a separate decision.
-          </p>
-          <Flex row withGaps className='w-full max-w-md'>
-            <Select
-              value={transferTarget || undefined}
-              onValueChange={(value) => {
-                setTransferTarget(value)
-                setTransferError(undefined)
-                setTransferred(null)
-              }}
-            >
-              <SelectTrigger className='w-full'>
-                <SelectValue placeholder='Choose a space' />
-              </SelectTrigger>
-              <SelectContent>
-                {spaces
-                  .filter((s) => s.slug !== space.slug)
-                  .map((s) => (
-                    <SelectItem key={s.slug} value={s.slug}>
-                      {s.name}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
-            <Button
-              variant='destructive'
-              onClick={() => setTransferConfirm(true)}
-              disabled={transferring || !transferTarget}
-            >
-              {transferring ? 'Transferring…' : 'Transfer'}
-            </Button>
-          </Flex>
-          {transferError && <p className='text-sm text-destructive'>{transferError}</p>}
-          {transferred !== null && (
-            <p className='text-sm text-muted-foreground'>
-              Moved {transferred} app instance{transferred === 1 ? '' : 's'} to {targetName}.
-            </p>
-          )}
-        </Flex>
-
-        <Flex withGaps className='w-full'>
           <Label>Delete space</Label>
           <p className='text-xs text-muted-foreground'>
-            Deletes the space with everything still in it — its graphs, nodes and app instances. Transfer first if any
-            of it should survive.
+            Deletes the space with everything still in it — its graphs, nodes and app instances. Transfer apps out
+            first, from their own settings pages, if any of it should survive.
           </p>
           <div>
             <Button variant='destructive' onClick={() => setDeleteConfirm(true)} disabled={lastSpace}>
@@ -201,22 +122,6 @@ export function SpaceGeneralSettings({ space, spaces }: Props) {
           {deleteError && <p className='text-sm text-destructive'>{deleteError}</p>}
         </Flex>
       </Flex>
-
-      <AlertDialog open={transferConfirm} onOpenChange={setTransferConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Transfer everything to {targetName}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Every app instance of {space.name} moves to {targetName}, graphs with all their nodes included. Graph
-              addresses change to the target space's; node ids stay the same.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleTransfer}>Transfer</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <AlertDialog open={deleteConfirm} onOpenChange={setDeleteConfirm}>
         <AlertDialogContent>
