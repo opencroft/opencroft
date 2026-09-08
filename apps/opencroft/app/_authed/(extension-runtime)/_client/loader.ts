@@ -31,9 +31,21 @@ async function importBundle(url: string): Promise<LoadedModule> {
 
 // Each extension ships a runtime-compiled stylesheet (utilities for the
 // classes its client code uses, referencing the host theme). Inserted BEFORE
-// the host styles: when both sheets define the same utility, the host's
-// canonical Tailwind ordering must win the cascade — an extension sheet loaded
-// after the host would e.g. let its `.hidden` override the host's `md:block`.
+// the host styles, and this is still load-bearing — but for less than it used
+// to be, so it is worth being exact about which half.
+//
+// An extension's PLAIN utilities share the host's `utilities` layer, so order
+// alone separates them: loaded after the host, an extension's `.hidden` would
+// override a host variant such as `sm:flex-row` arriving on a shared `@ext/ui`
+// component. Inserting first is what prevents that, and nothing else does.
+//
+// Its VARIANT utilities no longer depend on this. They are emitted into a
+// later cascade layer (see _server/css-cascade-layers.ts), which outranks
+// everything in `utilities` whichever sheet the browser parses first — the
+// order used to decide that too, and decided it wrongly.
+//
+// So: moving this insertion later reintroduces a real defect, and moving it
+// earlier changes nothing. It is not a free knob in either direction.
 function injectStyles(extensionId: string, version: number): void {
   const [scope, slug] = extensionId.split('/')
   const href = bundleUrl(extensionId, 'client.css', version)

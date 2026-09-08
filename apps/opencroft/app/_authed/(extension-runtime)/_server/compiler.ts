@@ -10,6 +10,7 @@ import * as esbuild from 'esbuild'
 import * as lucideIcons from 'lucide-react'
 
 import { readCheckoutState } from '@/app/_authed/(extension-runtime)/_server/checkout-state'
+import { EXTENSION_UTILITY_LAYER, hasVariant } from '@/app/_authed/(extension-runtime)/_server/css-cascade-layers'
 import {
   BUILD_PROVENANCE_FILE,
   extDir,
@@ -859,21 +860,60 @@ async function compileSide(
 
 // Extensions compile at runtime, long after the host CSS was built — so each
 // extension gets its own Tailwind pass over its client sources. The entry
-// references the host theme without re-emitting tokens or preflight, and the
-// utilities land in the host's `utilities` cascade layer so both sheets merge
-// predictably (identical classes compile to identical rules).
+// references the host theme without re-emitting tokens or preflight.
 //
-// The explicit layer statement matters: extension sheets are injected BEFORE
-// the host stylesheet (see _client/loader.ts), so the first sheet to load must
-// establish the same layer order the host expects, and duplicated utilities
-// resolve to the host's canonical ordering.
-const EXT_CSS_ENTRY = `
-@layer theme, base, components, utilities;
+// The stylesheet is built in two passes, one per cascade layer, because the
+// utilities have to be split by RANK and a single Tailwind pass emits one
+// layer. Why splitting by rank is the only correct answer, and why sheet order
+// cannot supply it, is in css-cascade-layers.ts.
+//
+// The layer statement names `extension-utilities` last, and does so in both
+// passes for the price of one line: a layer name the host's own statement does
+// not mention is appended after the names they share, so the extension layer
+// sorts last whichever sheet the browser parses first. That independence is the
+// point — the previous arrangement was correct only while the injection order
+// in _client/loader.ts stayed exactly as it was, and nothing said so there.
+function extCssEntry(layer: string): string {
+  return `
+@layer theme, base, components, utilities, ${EXTENSION_UTILITY_LAYER};
 @import 'tailwindcss/theme.css' theme(reference);
 @import 'ui/theme.css' theme(reference);
 @import 'tw-animate-css';
-@import 'tailwindcss/utilities.css' layer(utilities);
+@import 'tailwindcss/utilities.css' layer(${layer});
 `
+}
+
+/**
+ * Compile one extension's stylesheet from the sources under `srcDir`: its plain
+ * utilities into `utilities`, its variant-carrying ones into
+ * `extension-utilities`.
+ *
+ * Exported for the test that asserts where each half lands. Nothing had ever
+ * asserted anything about this artefact's content before — which is how the
+ * same cascade collision reached a user through two different extensions.
+ */
+export async function buildExtensionCss(srcDir: string): Promise<string> {
+  const scanner = new Scanner({ sources: [{ base: srcDir, pattern: '**/*', negated: false }] })
+  const candidates = scanner.scan()
+  const buildLayer = async (layer: string, subset: string[]): Promise<string> => {
+    // An empty subset still emits the entry's own preamble, so skip the pass
+    // rather than concatenate a second copy of it for no utilities.
+    if (subset.length === 0) {
+      return ''
+    }
+    const compiler = await compileTailwind(extCssEntry(layer), { base: projectRoot(), onDependency: () => {} })
+    return compiler.build(subset)
+  }
+  const plain = await buildLayer(
+    'utilities',
+    candidates.filter((candidate) => !hasVariant(candidate)),
+  )
+  const variants = await buildLayer(
+    EXTENSION_UTILITY_LAYER,
+    candidates.filter((candidate) => hasVariant(candidate)),
+  )
+  return [plain, variants].filter(Boolean).join('\n')
+}
 
 async function compileClientCss(extensionId: string): Promise<CompileError[]> {
   const srcDir = path.join(extDir(extensionId), 'src')
@@ -885,9 +925,7 @@ async function compileClientCss(extensionId: string): Promise<CompileError[]> {
   buildAttemptCounter += 1
   const outfile = stagingName(finalOutfile, buildAttemptCounter)
   try {
-    const compiler = await compileTailwind(EXT_CSS_ENTRY, { base: projectRoot(), onDependency: () => {} })
-    const scanner = new Scanner({ sources: [{ base: srcDir, pattern: '**/*', negated: false }] })
-    const css = compiler.build(scanner.scan())
+    const css = await buildExtensionCss(srcDir)
     await fs.writeFile(outfile, css)
     await fs.rename(outfile, finalOutfile)
     return []
