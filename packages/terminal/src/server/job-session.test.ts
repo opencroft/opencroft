@@ -6,8 +6,11 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import test from 'node:test'
 
-import { pipedProcessHandle, startJobSession } from './job-session'
+import type { TerminalContext } from '../types'
+import { MAX_JOB_LIFETIME_MS, startJobSession } from './job-session'
+import { sessionManager } from './manager'
 import { type SessionHandle, SessionManager, type SocketPeer } from './session-manager'
+import { pipedProcessHandle } from './stream-handle'
 
 function collect(handle: SessionHandle): { text: () => string; done: Promise<void> } {
   let text = ''
@@ -81,13 +84,13 @@ test('an attached watcher cannot type into the job', async () => {
   assert.equal(watched.text(), 'done\r\n')
 })
 
-test('the key handed back is unguessable, and not derived from anything the caller supplied', () => {
+test('the key handed back is unguessable, and not derived from anything the caller supplied', async () => {
   // Knowing a session key is the whole authorisation to attach to a session, so a key computed
   // from the command, a node id, or a service name would put the job's output within reach of
   // anyone who could compute the same thing.
   const opts = { command: 'sh', args: ['-c', 'exit 0'] }
-  const first = startJobSession(opts)
-  const second = startJobSession(opts)
+  const first = await startJobSession({ type: 'local' }, opts)
+  const second = await startJobSession({ type: 'local' }, opts)
 
   assert.notEqual(first.sessionKey, second.sessionKey, 'identical inputs must not give the same key')
   for (const value of [opts.command, ...opts.args]) {
@@ -120,6 +123,25 @@ function fakeHandle(): SessionHandle {
  */
 function deadHandle(): SessionHandle {
   return { ...fakeHandle(), isAlive: () => false }
+}
+
+/**
+ * A handle that remembers whether anything ended it.
+ *
+ * The dispositions below are all about what happens to the COMMAND, so they are checked at the
+ * command. `manager.get(id)` returning a session says the registry still holds it, which is a
+ * weaker statement than "nothing killed the process" and would still pass if a future `kill` path
+ * stopped deregistering.
+ */
+function tracedHandle(): SessionHandle & { killed: () => boolean } {
+  let killed = false
+  return {
+    ...fakeHandle(),
+    kill() {
+      killed = true
+    },
+    killed: () => killed,
+  }
 }
 
 const peer = (): SocketPeer => ({ send() {} })
@@ -233,4 +255,158 @@ test('an interactive session is never counted against the job budget', () => {
   } finally {
     manager.dispose()
   }
+})
+
+// ── a client reaching a live job: three doors, one rule ──
+//
+// The rule is that a client may take over the watch and may never end the command. Each door gets
+// its own test because the first version of this held at one of the three and read as an invariant.
+
+test('a second connection to a running job takes over the watch, and never ends the command', () => {
+  // `prepareConnect` replaces a live same-key session so a reconnecting tab wins over a socket that
+  // has not noticed it is gone -- correct for a shell, which the client can simply open again.
+  // Applied to a job that would kill a deploy mid-flight to hand a second watcher an empty session.
+  // Refusing instead was the first fix and it locked the person out of watching their own deploy;
+  // taking over keeps the command AND lets them back in.
+  const manager = new SessionManager()
+  try {
+    const stale = peer()
+    const handle = tracedHandle()
+    const job = manager.create(stale, handle, { sessionKey: 'job:abc', kind: 'job' })
+
+    const newcomer = peer()
+    const decision = manager.prepareConnect(newcomer, 'job:abc', 80, 24)
+
+    assert.equal(decision.kind, 'reattached', 'the newcomer watches rather than being turned away')
+    assert.equal(decision.kind === 'reattached' ? decision.session.id : null, job.id)
+    assert.equal(handle.killed(), false, 'and nothing was ended to hand the watch over')
+    assert.equal(job.attachedPeer, newcomer, 'the watch moved')
+  } finally {
+    manager.dispose()
+  }
+})
+
+test('an explicit attach reaches a live job under the same rule, not around it', () => {
+  // This is the door that made refusing at `connect` a speed bump rather than an invariant: a
+  // client turned away there arrived here with the same key and got in, because `attach` has no
+  // kind check and needs none. It was already right; what was missing is that the two agree.
+  const manager = new SessionManager()
+  try {
+    const stale = peer()
+    const handle = tracedHandle()
+    const job = manager.create(stale, handle, { sessionKey: 'job:attach', kind: 'job' })
+
+    const newcomer = peer()
+    const result = manager.attach(newcomer, { sessionKey: 'job:attach', cols: 80, rows: 24 })
+
+    assert.equal(result.ok, true, 'the newcomer is admitted')
+    assert.equal(handle.killed(), false, 'without touching the command')
+    assert.equal(job.attachedPeer, newcomer, 'and it is the newcomer watching now')
+  } finally {
+    manager.dispose()
+  }
+})
+
+test('a watcher disconnecting from a job detaches it, and does not end the deploy', () => {
+  // The third door, and the one that stayed open behind the other two: `disconnect` used to kill
+  // whatever the peer was attached to. On a job that is the deploy, ended by its watcher saying
+  // goodbye -- the exact outcome the connect branch exists to prevent, reached another way.
+  const manager = new SessionManager()
+  try {
+    const watcher = peer()
+    const handle = tracedHandle()
+    const job = manager.create(watcher, handle, { sessionKey: 'job:bye', kind: 'job' })
+
+    manager.handleDisconnect(watcher)
+
+    assert.ok(manager.get(job.id), 'the deploy is still there')
+    assert.equal(handle.killed(), false, 'and still running')
+    assert.equal(job.attachedPeer, null, 'nobody is watching it')
+    const back = manager.attach(peer(), { sessionKey: 'job:bye', cols: 80, rows: 24 })
+    assert.equal(back.ok, true, 'which is what detaching rather than killing is for')
+  } finally {
+    manager.dispose()
+  }
+})
+
+test('a person disconnecting from their terminal still ends it — the branch is scoped to jobs', () => {
+  // The control for the test above. Without it, "the job survived a disconnect" would also pass on
+  // a manager that had simply stopped killing anything.
+  const manager = new SessionManager()
+  try {
+    const owner = peer()
+    const handle = tracedHandle()
+    const shell = manager.create(owner, handle, { sessionKey: 'terminal-bye' })
+
+    manager.handleDisconnect(owner)
+
+    assert.equal(manager.get(shell.id), undefined, 'the person closed their terminal and meant it')
+    assert.equal(handle.killed(), true, 'and the shell behind it is gone')
+  } finally {
+    manager.dispose()
+  }
+})
+
+test('a job nobody is watching is attachable — that is how a deploy gets watched at all', () => {
+  const manager = new SessionManager()
+  try {
+    const job = manager.create(null, fakeHandle(), { sessionKey: 'job:def', kind: 'job' })
+
+    const decision = manager.prepareConnect(peer(), 'job:def', 80, 24)
+
+    assert.equal(decision.kind, 'reattached')
+    assert.equal(decision.kind === 'reattached' ? decision.session.id : null, job.id)
+  } finally {
+    manager.dispose()
+  }
+})
+
+test('a live interactive session with the same key is still replaced, not refused', () => {
+  // The guard is scoped to jobs on purpose. Refusing here instead would strand a tab behind a
+  // socket the server still believes in, with no way for the client to get its shell back.
+  const manager = new SessionManager()
+  try {
+    const stale = peer()
+    const first = manager.create(stale, fakeHandle(), { sessionKey: 'terminal-one' })
+
+    const decision = manager.prepareConnect(peer(), 'terminal-one', 80, 24)
+
+    assert.equal(decision.kind, 'create', 'the newcomer gets to spawn')
+    assert.equal(manager.get(first.id), undefined, 'and the session it replaced is gone')
+  } finally {
+    manager.dispose()
+  }
+})
+
+// ── the bound ──
+
+test('a job that reaches its time limit is stopped, and the watcher is told why', async (t) => {
+  // Mocked clock rather than a real wait: the assertion is about what happens AT the bound, and
+  // the bound is half an hour. Enabled before the job starts, because the timer is armed inside
+  // startJobSession and a real one would never fire inside a test run.
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+
+  const job = await startJobSession({ type: 'local' } as TerminalContext, {
+    command: 'sh',
+    args: ['-c', 'sleep 30'],
+  })
+  const session = sessionManager.get(job.sessionId)
+  assert.ok(session, 'the job is registered')
+
+  let text = ''
+  session.handle.onData((chunk) => {
+    text += chunk
+  })
+
+  // Registered before the tick: the command's death is a real process event, so waiting for it is
+  // the only way to assert the kill happened rather than that it was requested.
+  const stopped = new Promise<void>((resolve) => session.handle.onExit(() => resolve()))
+
+  t.mock.timers.tick(MAX_JOB_LIFETIME_MS)
+
+  assert.match(text, /reached its time limit/, 'the reason is in the stream, not only in a log')
+  assert.match(text, /30 minutes/, 'and it says what the limit was')
+
+  await stopped
+  assert.equal(session.handle.isAlive(), false, 'and the command was actually stopped')
 })

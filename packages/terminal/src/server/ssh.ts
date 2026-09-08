@@ -7,6 +7,7 @@ import { Client, type ClientChannel, type SFTPWrapper } from 'ssh2'
 import type { ExecOptions, ExecResult, ServerConfig, SshCredentials } from '../types'
 import { DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_TIMEOUT_MS, OutputCollector } from './exec-util'
 import { resolveKeyContent } from './keys'
+import { makeStreamHandle, type StreamHandle } from './stream-handle'
 
 export interface SftpEntry {
   name: string
@@ -312,6 +313,88 @@ export async function sshExecResult(
           timedOut: timedOut || undefined,
         })
       })
+    })
+  })
+}
+
+/**
+ * Run `command` over ssh and hand back a session handle that streams its output as it arrives,
+ * instead of a result that appears once the command has finished.
+ *
+ * **The `exec` channel, never `shell`.** `shell` allocates a pty, and a pty echoes whatever is
+ * written to its stdin straight back to the reader — so a command whose input is a document, a
+ * compose file on `-f -`, would print that document to everyone watching, and those documents are
+ * exactly where resolved secret values live. `exec` has no echo: what a watcher receives is the
+ * command's own output and nothing else. This is the same reason the local transport pipes rather
+ * than allocating a pty, stated here because the ssh library makes the wrong choice the easy one.
+ *
+ * The pooled connection is released exactly once, on whichever of THREE routes out happens first:
+ * a channel that never opened, a normal close, and a channel that opened and then failed. The third
+ * is the one this transport actually meets. `sshExecResult` next door has the same two-route shape
+ * and is fine with it, because it holds a channel for the length of a request and rejects a
+ * promise; this one holds a channel for the life of a job — up to `MAX_JOB_LIFETIME_MS` — and owns
+ * a live session other code believes in. Over half an hour a dropped connection or a rebooted host
+ * is an ordinary event rather than an edge case.
+ *
+ * "Exactly once" is load-bearing and not a tidiness point: `release` decrements a refcount shared
+ * with every other channel on the pooled connection, and a failing channel emits both `'error'` and
+ * `'close'`. Releasing twice would hand the connection back to the idle timer while another session
+ * is still using it.
+ */
+export async function sshStreamHandle(
+  creds: SshCredentials,
+  command: string,
+  stdin?: string | Buffer,
+): Promise<StreamHandle> {
+  const client = await acquire(creds)
+
+  return new Promise<StreamHandle>((resolve, reject) => {
+    client.exec(command, (err, stream) => {
+      if (err) {
+        release(creds)
+        reject(err)
+        return
+      }
+
+      // One release per acquire, whichever route out fires first — see the doc above.
+      let released = false
+      const releaseOnce = () => {
+        if (released) {
+          return
+        }
+        released = true
+        release(creds)
+      }
+
+      const handle = makeStreamHandle(() => stream.close())
+      stream.setEncoding('utf8')
+      stream.stderr.setEncoding('utf8')
+      stream.on('data', (chunk: string) => handle.emit(chunk))
+      stream.stderr.on('data', (chunk: string) => handle.emit(chunk))
+      stream.on('close', () => {
+        releaseOnce()
+        handle.finish()
+      })
+      // The connection went away under a running command. Two things would go wrong without this,
+      // and they are the same two `pipedProcessHandle` installs its own `'error'` listener for: an
+      // `'error'` on a Duplex with no listener is raised as an unhandled error and takes the
+      // process down, and the pooled connection is never released. The reason goes into the stream
+      // BEFORE the exit, because a watcher whose output merely stops diagnoses the deploy rather
+      // than the link.
+      //
+      // This one listener covers the write below as well. A `ClientChannel` is a Duplex, so a write
+      // that fails because the channel is already gone surfaces here — unlike a child process,
+      // whose stdin is a separate stream and needs its own swallow.
+      stream.on('error', (streamErr: Error) => {
+        handle.emit(`\n${streamErr.message}\n`)
+        releaseOnce()
+        handle.finish()
+      })
+      // The command takes its input once. Ending the writable side is what makes a reader on the
+      // far end see EOF rather than waiting for input that is never coming.
+      stream.end(stdin ?? '')
+
+      resolve(handle)
     })
   })
 }

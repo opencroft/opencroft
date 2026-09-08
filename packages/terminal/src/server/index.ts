@@ -1,5 +1,5 @@
 export * from '../types'
-export { getBackend, type TerminalBackend } from './backend'
+export { getBackend, type StreamOptions, type TerminalBackend } from './backend'
 export { type JobSession, type JobSessionOptions, startJobSession } from './job-session'
 export { resolveKeyContent } from './keys'
 export { exec, homedir, readFile, spawn, spawnPipe } from './shell'
@@ -17,4 +17,5 @@ export {
   type SshKeyType,
 } from './ssh-key-format'
 export { type SshKey, setPermissions, sshKeys } from './ssh-keys'
+export type { StreamHandle } from './stream-handle'
 export { terminalExec, terminalExecResult, terminalRun, terminalRunResult } from './terminal'

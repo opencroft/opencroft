@@ -33,6 +33,21 @@ test('the client message path does not import the job entry point', async () => 
   )
 })
 
+test('the client message path does not import the streaming dispatch either', async () => {
+  // `stream` lives on TerminalBackend, so `getBackend` now hands out the ability to start a
+  // command and keep it running. socket.ts does not import that module today, and this is what
+  // says so out loud: the job entry point being unreachable is worth little if the capability it
+  // wraps arrives by another door. socket.ts spawns its own pty and ssh shell directly, which is
+  // a client asking for a shell it is entitled to -- not a server-chosen command with a key.
+  const source = await readFile(SOCKET, 'utf8')
+  const imports = [...source.matchAll(/^import[^\n]*from\s+'([^']+)'/gm)].map((m) => m[1])
+  assert.ok(imports.length > 0, 'the scan found the imports it is supposed to be checking')
+  assert.ok(
+    !imports.some((spec) => spec?.endsWith('/backend') || spec === './backend'),
+    'socket.ts must not import backend; a client message must not reach the streaming dispatch',
+  )
+})
+
 test('the client message path does not name the job entry point at all', async () => {
   // Covers the ways an import would not: a dynamic import, a re-export, a require.
   const source = await readFile(SOCKET, 'utf8')

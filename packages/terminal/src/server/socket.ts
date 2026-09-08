@@ -247,7 +247,7 @@ function handleMessage(peer: SocketPeer, raw: string) {
       manager.resize(peer, msg.payload.cols, msg.payload.rows)
       break
     case 'disconnect':
-      manager.killByPeer(peer)
+      manager.handleDisconnect(peer)
       break
   }
 }

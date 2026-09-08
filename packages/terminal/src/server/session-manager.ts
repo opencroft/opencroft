@@ -238,17 +238,62 @@ export class SessionManager {
     }
   }
 
+  // ── A client reaching a live job: three doors, one rule ──
+  //
+  // The rule is stated over the class rather than at one entry point, because a client holding a
+  // session key arrives through three of them, and a guard that holds at one is a speed bump
+  // rather than an invariant:
+  //
+  //   prepareConnect     a `connect` carrying the job's key
+  //   attach             an explicit `attach { sessionId?, sessionKey? }`
+  //   handleDisconnect   the client's `disconnect`
+  //
+  // THE RULE: a client may take over the watch on a job; it may never end the command. Arriving
+  // takes the watch from whoever held it — `doAttach` reassigns the peer and replays scrollback
+  // without touching the handle — and leaving gives up the watch and nothing else.
+  //
+  // Refusing a second watcher was the first version of this and it was wrong from both sides.
+  // `attach` admitted the same client anyway, with the same key, so the refusal never was an
+  // invariant. And the incumbent it protected is usually a socket that has not noticed it is gone,
+  // so it locked a person out of watching their own deploy after a network blip, until the server
+  // timed the dead socket out. Taking over protects the command AND the watcher; refusing protects
+  // only the command.
+  //
+  // There is deliberately no client-facing way to stop a job: one ends when it exits, when its
+  // bound expires, or when server code kills it. A cancel, if one is ever wanted, needs its own
+  // message with its own authority rather than the watch channel — which is why `handleDisconnect`
+  // detaches instead of growing a special case.
+  //
+  // Interactive sessions keep kill-and-replace at `prepareConnect`. That predates this work and
+  // nothing here is evidence about it; leaving it is a decision, not an omission.
+
   /**
    * Decide what a `connect`/`local`/`wsl` message should do before the caller spawns anything:
-   * reattach to a detached same-key session (no spawn needed), kill-and-replace a live same-key
-   * session then clear the way for a fresh spawn, or refuse outright when at capacity with
-   * nothing evictable. Callers must not spawn a process when this returns anything but `create`.
+   * reattach to a detached same-key session (no spawn needed), take over a live job, kill-and-
+   * replace a live same-key interactive session then clear the way for a fresh spawn, or refuse
+   * outright when at capacity with nothing evictable. Callers must not spawn a process when this
+   * returns anything but `create`.
    */
   prepareConnect(peer: SocketPeer, sessionKey: string | undefined, cols: number, rows: number): ConnectDecision {
     if (sessionKey) {
       const existing = this.findByKey(sessionKey)
       if (existing) {
-        if (existing.detachedAt !== null) {
+        // Four cases, and they are written out because the job column is the one that ends a
+        // running deploy if it is got wrong:
+        //
+        //  interactive + detached  reattach. The tab came back; this is the whole point of a key.
+        //  interactive + live      kill and replace. At most one live session per key, and the
+        //                          newcomer wins: the incumbent is usually a socket that has not
+        //                          noticed it is gone, and the shell is replaceable anyway.
+        //  job + detached          attach and watch. This is how a deploy gets watched at all.
+        //  job + live              attach and TAKE OVER the watch — never kill-and-replace, because
+        //                          "replace" on a job means killing the command, and a deploy is not
+        //                          a shell: the client cannot start another one, and the work that
+        //                          was already done does not come back.
+        //
+        // So both job rows are the same action, and the condition says so rather than reaching the
+        // same place twice. See the class note above for why this takes over rather than refusing.
+        if (existing.detachedAt !== null || existing.kind === 'job') {
           this.doAttach(existing, peer, cols, rows)
           return { kind: 'reattached', session: existing }
         }
@@ -266,6 +311,20 @@ export class SessionManager {
    * Reserve capacity for a server-started job, before spawning it. Jobs have no `prepareConnect`
    * step of their own — nothing reattaches to a job that does not exist yet — so this is the
    * whole admission check.
+   *
+   * **It reserves nothing, and that is a decision rather than an oversight.** The name is
+   * historical: this counts live sessions of the kind and may evict one, so the answer is true at
+   * the instant it is given and not after. The caller then awaits a spawn or a network dial before
+   * reaching `create`, so two job starts at 9 of 10 can both be admitted and both create.
+   *
+   * `create` re-checks the OTHER invariant it guards — one live session per key — at the
+   * synchronous insertion point, and the asymmetry is deliberate. Two sessions on one key leave the
+   * loser's handle registered and unreachable, because `peerSession` only ever points at one id:
+   * a leak that never resolves itself. Two jobs over the cap cost bounded extra memory and
+   * connections, and the next `prepareJob` sees the true count and refuses — the overshoot drains.
+   * Closing it properly means holding a real reservation, which needs its own release on every
+   * failure path and a reaper for the ones whose owner died first: a permanent leak of a different
+   * kind, traded for a bound that is advisory.
    */
   prepareJob(): { ok: true } | { ok: false; message: string } {
     return this.reserveSlot('job')
@@ -331,7 +390,15 @@ export class SessionManager {
     return managed
   }
 
-  /** Handle a client `attach { sessionId?, sessionKey? }` message (explicit reconnect). */
+  /**
+   * Handle a client `attach { sessionId?, sessionKey? }` message (explicit reconnect).
+   *
+   * Takeover, for both kinds — and for a job that IS the disposition, stated here rather than left
+   * to be inferred from the absence of a kind check. `doAttach` reassigns the watching peer and
+   * replays scrollback without touching the handle, so the command runs on regardless of who is
+   * watching it. This door is why refusing at `prepareConnect` never was an invariant; the two now
+   * agree. See the class note above `prepareConnect`.
+   */
   attach(
     peer: SocketPeer,
     opts: { sessionId?: string; sessionKey?: string; cols: number; rows: number },
@@ -376,17 +443,34 @@ export class SessionManager {
     this.getSessionForPeer(peer)?.handle.resize(cols, rows)
   }
 
-  /** Client `disconnect` message: always kills, regardless of sessionKey. */
-  killByPeer(peer: SocketPeer): void {
+  /**
+   * Client `disconnect` message. Named for the message rather than for one of its two outcomes,
+   * because it no longer always kills.
+   *
+   * **Interactive: kill**, regardless of sessionKey. The person closed their terminal and meant it.
+   *
+   * **Job: detach, never kill.** `disconnect` comes from whoever is watching, and a watcher going
+   * away is not a decision about the deploy. Without this branch the door `prepareConnect` closes
+   * stays open right behind it — the watcher that could no longer evict a job could still end it by
+   * saying goodbye. See the class note above `prepareConnect`.
+   */
+  handleDisconnect(peer: SocketPeer): void {
     const id = this.peerSession.get(peer)
     this.peerSession.delete(peer)
     if (!id) {
       return
     }
     const session = this.sessions.get(id)
-    if (session && session.attachedPeer === peer) {
-      this.kill(id, 'explicit')
+    if (!session || session.attachedPeer !== peer) {
+      return
     }
+    if (session.kind === 'job') {
+      session.attachedPeer = null
+      session.detachedAt = this.now()
+      this.log(`detach id=${id} key=${session.sessionKey ?? '-'} reason=disconnect`)
+      return
+    }
+    this.kill(id, 'explicit')
   }
 
   /** Socket close: detach persistent (keyed) sessions, kill legacy (unkeyed) ones. */
