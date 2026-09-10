@@ -1,7 +1,7 @@
 'use client'
 
 import { Link } from '@tanstack/react-router'
-import { Pencil } from 'lucide-react'
+import { ExternalLink } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from 'ui/button'
 import { Input } from 'ui/input'
@@ -32,9 +32,9 @@ function paramsSummary(instance: SpaceAppInstance, meta: AppMeta | undefined): s
 
 /**
  * The Apps section of a space's settings, in two tabs: the installed
- * instances — each row opening the App itself and carrying one Edit
- * affordance, the instance's settings page (name, parameters, transfer,
- * removal) — and the searchable catalog to add from, whose rows lead to the
+ * instances — each row opening the instance's settings page (name,
+ * parameters, transfer, removal) and carrying one affordance for the App
+ * itself — and the searchable catalog to add from, whose rows lead to the
  * add-app form page.
  */
 export function SpaceApps({ spaceSlug, apps, instances, tab, onTabChange }: Props) {
@@ -72,7 +72,7 @@ export function SpaceApps({ spaceSlug, apps, instances, tab, onTabChange }: Prop
                 return (
                   <Flex key={instance.id} row withGaps align='center' className='w-full rounded-md border p-3'>
                     <Link
-                      to='/space/$slug/app/$instanceId'
+                      to='/space/$slug/settings/app/$instanceId'
                       params={{ slug: spaceSlug, instanceId: instance.id }}
                       className='flex min-w-0 flex-1 items-center gap-3 hover:opacity-80'
                     >
@@ -82,15 +82,13 @@ export function SpaceApps({ spaceSlug, apps, instances, tab, onTabChange }: Prop
                         <span className='truncate text-xs text-muted-foreground'>{subtitle}</span>
                       </Flex>
                     </Link>
-                    {/* The row's ONE action: the instance's settings page,
-                        which holds the name, the parameters, the transfer and
-                        the removal. */}
-                    <Button asChild variant='ghost' size='icon' aria-label='Edit' title='Edit'>
-                      <Link
-                        to='/space/$slug/settings/app/$instanceId'
-                        params={{ slug: spaceSlug, instanceId: instance.id }}
-                      >
-                        <Pencil />
+                    {/* The row's ONE action: the App itself. The row body
+                        leads to the instance's settings page instead, which
+                        holds the name, the parameters, the transfer and the
+                        removal. */}
+                    <Button asChild variant='ghost' size='icon' aria-label='Open' title='Open'>
+                      <Link to='/space/$slug/app/$instanceId' params={{ slug: spaceSlug, instanceId: instance.id }}>
+                        <ExternalLink />
                       </Link>
                     </Button>
                   </Flex>

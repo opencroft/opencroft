@@ -51,7 +51,7 @@ function paramsChanged(values: Record<string, string>, instance: SpaceAppInstanc
  * moves), parameter editing (recreates the instance unless its App updates in
  * place, and says so first), and the danger zone — transferring the instance
  * to another space and removing it. Everything the Apps list used to spread
- * over per-row buttons, behind the row's one Edit affordance.
+ * over per-row buttons, behind the row itself.
  */
 export function AppSettings({ spaceSlug, instance, meta, spaces }: Props) {
   const router = useRouter()
