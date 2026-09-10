@@ -21,9 +21,6 @@ import { threadSessionKey } from '@/app/_authed/(group-chats)/_lib/thread-sessio
 import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import { getGroupChatEmbedView, listGroupChatThreadsView } from '@/app/_authed/(group-chats)/_server/actions'
 
-/** How many threads an empty search shows — the recent ones; a query searches them all. */
-const RECENT_COUNT = 8
-
 /**
  * The id a "New chat" starts under. It doubles as the thread's title (the
  * embedded surface titles a thread with its id), so it is a readable stamp
@@ -50,7 +47,7 @@ export interface ChatSelectorProps {
 /**
  * Picks which conversation an embedded chat surface shows: a header button
  * (beside the dock controls) opening a menu with a search field, a "New chat"
- * action, and the chat's recent threads — the same rows the group-chat
+ * action, and every thread the chat has — the same rows the group-chat
  * screen's thread list draws, with the same per-row context menu (Rename /
  * Stop process / Delete) behind them and a More footer leading to the chat's
  * own screen. Also exposed to extension client code through the host API,
@@ -106,11 +103,25 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
   // shows the same live state as the same thread there.
   const { pendingKeys, activeKeys, aliveKeys } = useSessionActivityKeys(open && (threads?.length ?? 0) > 0)
 
+  // EVERY thread of the chat, newest first — the menu is bounded by its own
+  // scroll box (the kit's CommandList, 300px) rather than by a count.
+  //
+  // There was a cap of eight here, and it was applied to a sort by CREATION
+  // time. The two together are what made it wrong rather than merely small: a
+  // chat's oldest threads are the ones that have been going longest, so they
+  // sort last and were precisely the ones dropped. Measured 10.09.2026 on a
+  // chat of twelve — the four it hid were the four oldest, and each of them
+  // was a conversation in daily use. Nothing on the menu said anything was
+  // missing, and the search field only reached them if you already knew a name
+  // to type, which is the one thing a chooser is for not needing.
+  //
+  // The cap saved nothing either way: the server applies no limit of its own,
+  // so every thread is already loaded and in memory by the time this runs.
   const shown = useMemo(() => {
     const all = [...(threads ?? [])].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
     const q = query.trim().toLowerCase()
     if (!q) {
-      return all.slice(0, RECENT_COUNT)
+      return all
     }
     return all.filter((t) => (t.title ?? '').toLowerCase().includes(q) || t.agent.name.toLowerCase().includes(q))
   }, [threads, query])
