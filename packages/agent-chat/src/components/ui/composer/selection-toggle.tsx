@@ -32,11 +32,16 @@ import { cn } from 'ui/lib/utils'
 // public props, and carrying it in both places is how the two definitions get
 // to disagree.
 export interface SelectionToggleProps extends Omit<ComponentPropsWithoutRef<'button'>, 'children'> {
-  // Names the selection in the button's tooltip. An icon on its own says what
-  // the control does and not what it is about, and this control is about one
-  // particular thing the reader picked.
-  label: string
-  // Whether the selection is quoted above the composer AND goes with the next
+  // Names the selection in the button's tooltip, when there IS one. An icon on
+  // its own says what the control does and not what it is about, and while
+  // something is selected this control is about that particular thing.
+  //
+  // Optional, because the control stands whether or not anything is selected.
+  // With no label the wording speaks about selections in general instead --
+  // which is what the press means at that moment, since the answer is kept by
+  // the scope rather than by whatever happens to be selected.
+  label?: string
+  // Whether a selection is quoted above the composer AND goes with the next
   // message. One flag, both consequences -- see the note on the component.
   //
   // Positive form on purpose: the control states what will happen, not what
@@ -57,6 +62,12 @@ export interface SelectionToggleProps extends Omit<ComponentPropsWithoutRef<'but
 // only hid it would leave the message carrying something invisible, which is
 // the worse half of the two possible mistakes. Showing and sending move
 // together and cannot be set against each other.
+//
+// IT STANDS WHETHER OR NOT ANYTHING IS SELECTED, and it is live either way.
+// The answer belongs to the surface, not to whatever happens to be selected on
+// it, so a reader can settle it before selecting anything and have it hold. A
+// control that appeared only once there was something to hide would be asking
+// the question at the one moment the reader is busy with something else.
 //
 // IT DOES NOT TOUCH THE SELECTION. Pressing it holds the selection back;
 // pressing it again brings the same one straight back, unchanged. Whatever
@@ -79,9 +90,17 @@ export const SelectionToggle = forwardRef<HTMLButtonElement, SelectionToggleProp
   { label, included, onToggle, className, onClick, onMouseDown, ...rest },
   ref,
 ) {
-  const title = included
-    ? `"${label}" is shown here and goes with the next message — press to hold it back`
-    : `"${label}" is held back — press to show it and send it with the next message`
+  // Named when there is something to name, general when there is not. The
+  // second pair is not a placeholder for the first: with nothing selected the
+  // press is about what happens to the NEXT selection, and wording that named
+  // nothing would leave the reader guessing whether the control was inert.
+  const title = label
+    ? included
+      ? `"${label}" is shown here and goes with the next message — press to hold it back`
+      : `"${label}" is held back — press to show it and send it with the next message`
+    : included
+      ? 'What you select is shown here and goes with the next message — press to hold selections back'
+      : 'Selections are held back — press to show them and send them with the next message'
   return (
     <Button
       ref={ref}

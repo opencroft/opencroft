@@ -180,11 +180,12 @@ export function GroupChatStartThreadComposer({
         error={error}
         onDismissError={() => setError(undefined)}
         placeholder={placeholder}
-        // The toggle is offered whenever there IS a selection, held back or
-        // not -- it is the only way back from held-back, so tying it to the
-        // quotation's own condition would hide the control that undoes the
-        // hiding. Absent outside a selection scope, like everything else here.
-        attachmentControls={selectionScope?.selection ? SELECTION_TOGGLE : undefined}
+        // Offered wherever there is a scope to keep the answer in, selected or
+        // not: it is the only way back from held-back, and the reader may
+        // settle it before selecting anything. Tying it to the quotation's own
+        // condition would hide the control that undoes the hiding. Absent
+        // outside a selection scope, where there would be nowhere to put it.
+        attachmentControls={selectionScope ? SELECTION_TOGGLE : undefined}
       />
     </div>
   )

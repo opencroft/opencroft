@@ -1,15 +1,23 @@
-// Turning passing OFF is a decision, and a republish must not undo it.
+// Whether selections are passed is the READER's answer, and nothing a
+// publisher does may move it.
 //
-// The selection scope resets `passEnabled` whenever a selection is set, which
-// is right for a NEW selection: picking something is the statement of intent to
-// send it. It is wrong for a republish of the same thing. A canvas node's data
-// changes on its own while it stays selected, so without a way to tell the two
-// apart, a reader who turned passing off has it switched back on by something
-// they did not do -- and the next message carries what they declined to send.
+// This file used to pin the opposite rule. Setting a selection reset the flag
+// to true, on the reasoning that picking something states the intent to send
+// it — and a `key` on the selection existed so that a publisher republishing
+// the same thing (a canvas node whose data refreshes while it stays selected)
+// would not trip that reset under a reader who had turned passing off.
 //
-// The publisher says which case it is by supplying a stable `key`. No key means
-// every publish is a new selection, which is the behaviour extensions had
-// before the field existed, so the first test here is the compatibility one.
+// What that reset protected was a reader who could not tell passing was off:
+// the control only existed while something was selected, so an inherited "off"
+// made the quotation silently inert. The control now stands on the panel
+// whether or not anything is selected, so its own state is that notice, and
+// the protection lives there instead. The reset is gone, and `key` with it —
+// it had no other reader.
+//
+// So the tests below are the same population as before, asserting the opposite
+// outcome: a fresh publish, a republish, a different selection, and a clear
+// followed by a re-select. Plus the case the old rule made unreachable, which
+// is setting the answer before selecting anything at all.
 
 import assert from 'node:assert/strict'
 import test, { after } from 'node:test'
@@ -29,7 +37,7 @@ after(() => dom.cleanup())
 type Scope = ReturnType<typeof useSelection>
 
 // Renders the scope and hands the live context value back, so a test can drive
-// it the way the badge and a publisher do rather than through markup.
+// it the way the toggle and a publisher do rather than through markup.
 async function mountScope(): Promise<{ scope: () => Scope; unmount: () => Promise<void> }> {
   let latest: Scope | null = null
   function Probe(): ReactNode {
@@ -59,62 +67,93 @@ async function mountScope(): Promise<{ scope: () => Scope; unmount: () => Promis
   }
 }
 
-test('an unkeyed publish is always a new selection, as it was before keys existed', async () => {
+test('a scope passes by default, before anyone has said anything', async () => {
+  const { scope, unmount } = await mountScope()
+  try {
+    assert.equal(scope().passEnabled, true, 'the default is to send what is selected')
+    assert.equal(scope().selection, null, 'and it holds before there is any selection to hold an opinion about')
+  } finally {
+    await unmount()
+  }
+})
+
+test('nothing a publisher does moves the answer', async () => {
   const { scope, unmount } = await mountScope()
   try {
     await act(async () => scope().setSelection({ label: 'A', content: 'a' }))
     await act(async () => scope().togglePass())
     assert.equal(scope().passEnabled, false, 'the reader turned passing off')
 
+    // Every shape of publish the old rule distinguished between, one after
+    // another. None of them is the reader, so none of them may answer for one.
     await act(async () => scope().setSelection({ label: 'A', content: 'a2' }))
-    assert.equal(scope().passEnabled, true, 'with no key, every publish is a fresh selection')
-  } finally {
-    await unmount()
-  }
-})
+    assert.equal(scope().passEnabled, false, 'a republish of the same thing with fresh content')
 
-test('a republish under the same key leaves the reader choice alone', async () => {
-  const { scope, unmount } = await mountScope()
-  try {
-    await act(async () => scope().setSelection({ label: 'Node', content: 'first', key: 'node_1' }))
-    await act(async () => scope().togglePass())
-    assert.equal(scope().passEnabled, false)
+    await act(async () => scope().setSelection({ label: 'B', content: 'b' }))
+    assert.equal(scope().passEnabled, false, 'something else selected')
 
-    // What a node's own data update looks like from here: same node, new content.
-    await act(async () => scope().setSelection({ label: 'Node', content: 'second', key: 'node_1' }))
-
-    assert.equal(scope().passEnabled, false, 'passing stays off -- nobody asked for it back')
-    assert.equal(scope().selection?.content, 'second', 'and the content is still refreshed')
-  } finally {
-    await unmount()
-  }
-})
-
-test('selecting a different node is a fresh selection and passes again', async () => {
-  const { scope, unmount } = await mountScope()
-  try {
-    await act(async () => scope().setSelection({ label: 'One', content: 'one', key: 'node_1' }))
-    await act(async () => scope().togglePass())
-    assert.equal(scope().passEnabled, false)
-
-    await act(async () => scope().setSelection({ label: 'Two', content: 'two', key: 'node_2' }))
-    assert.equal(scope().passEnabled, true, 'picking something else is a new intent to send it')
-  } finally {
-    await unmount()
-  }
-})
-
-test('clearing and re-selecting the same node passes again', async () => {
-  // Deselecting is the reader dropping the whole thing, so choosing the node
-  // again is a fresh decision even though the key matches.
-  const { scope, unmount } = await mountScope()
-  try {
-    await act(async () => scope().setSelection({ label: 'One', content: 'one', key: 'node_1' }))
-    await act(async () => scope().togglePass())
     await act(async () => scope().setSelection(null))
-    await act(async () => scope().setSelection({ label: 'One', content: 'one', key: 'node_1' }))
-    assert.equal(scope().passEnabled, true)
+    assert.equal(scope().passEnabled, false, 'deselected')
+
+    await act(async () => scope().setSelection({ label: 'A', content: 'a' }))
+    assert.equal(scope().passEnabled, false, 'and the first thing selected again')
   } finally {
     await unmount()
+  }
+})
+
+test('the publisher still owns the selection itself', async () => {
+  // The other half of the same independence, and the one that would break
+  // quietly: holding passing back must not stop a publisher replacing or
+  // dropping what is selected.
+  const { scope, unmount } = await mountScope()
+  try {
+    await act(async () => scope().togglePass())
+    await act(async () => scope().setSelection({ label: 'A', content: 'a' }))
+    assert.equal(scope().selection?.content, 'a')
+
+    await act(async () => scope().setSelection({ label: 'B', content: 'b' }))
+    assert.equal(scope().selection?.label, 'B', 'replaced')
+
+    await act(async () => scope().clearSelection())
+    assert.equal(scope().selection, null, 'and dropped')
+  } finally {
+    await unmount()
+  }
+})
+
+test('the answer can be given before anything is selected, and the next selection obeys it', async () => {
+  // Unreachable under the old rule twice over: the control did not exist with
+  // nothing selected, and the first publish would have reset the flag anyway.
+  // It is the whole point of putting the control on the panel permanently.
+  const { scope, unmount } = await mountScope()
+  try {
+    await act(async () => scope().togglePass())
+    assert.equal(scope().passEnabled, false, 'held back with nothing selected yet')
+
+    await act(async () => scope().setSelection({ label: 'A', content: 'a' }))
+    assert.equal(scope().passEnabled, false, 'the selection arrives held back, as asked')
+    assert.equal(scope().selection?.label, 'A', 'and it is still selected — held back is not discarded')
+  } finally {
+    await unmount()
+  }
+})
+
+test('the answer belongs to the mounted scope and does not outlive it', async () => {
+  // A standing preference, but standing within the surface that asked for it.
+  // Navigating away unmounts the provider, and a fresh one starts from the
+  // default — the same rule the selection itself has always followed. Pinned
+  // because "standing" invites someone to persist it, and that is a decision
+  // rather than a tidy-up.
+  const first = await mountScope()
+  await act(async () => first.scope().togglePass())
+  assert.equal(first.scope().passEnabled, false)
+  await first.unmount()
+
+  const second = await mountScope()
+  try {
+    assert.equal(second.scope().passEnabled, true, 'a new scope starts from the default')
+  } finally {
+    await second.unmount()
   }
 })

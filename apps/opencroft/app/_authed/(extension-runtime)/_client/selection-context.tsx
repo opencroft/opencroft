@@ -13,6 +13,12 @@
 // is gone with it — there is nothing app-global to clear and no store that
 // could outlive the surface. One selection per mounted scope; a new
 // `setSelection` replaces the old one (last write wins).
+//
+// TWO INDEPENDENT PIECES OF STATE. What is selected, and whether selections are
+// passed. Neither reads the other: a publisher setting a selection does not
+// touch the flag, and the flag can be set with nothing selected at all. That
+// independence is the contract rather than an implementation detail — see the
+// note on `passEnabled`.
 
 import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
@@ -22,63 +28,58 @@ export interface UserSelection {
   label: string
   /** What the agent receives when passing is on. */
   content: string
-  /**
-   * What makes this the SAME selection across republishes, when the publisher
-   * has such a notion. Optional, and absent means every publish is a new
-   * selection — which is the behaviour this had before the field existed.
-   *
-   * It exists for a publisher that republishes live content for one thing: a
-   * canvas node whose data changes on its own while it stays selected. Without
-   * it, each refresh reads as a fresh selection and resets `passEnabled`, so a
-   * reader who turned passing OFF has it turned back on by something they did
-   * not do — and the next message carries what they declined to send.
-   */
-  key?: string
 }
 
 export interface SelectionContextValue {
   /** The current selection, or null when nothing is selected. */
   selection: UserSelection | null
-  /** Whether the selection rides along with the next message. Toggled from
-   *  the badge; reset to true whenever a new selection is set — selecting
-   *  something is the statement of intent to pass it. */
+  /**
+   * Whether a selection rides along with the next message.
+   *
+   * A STANDING PREFERENCE OF THE SCOPE, not a property of what is selected.
+   * Setting a selection does not touch it, and it can be set with nothing
+   * selected at all — the control that reads it stands on the panel whether or
+   * not there is anything to hide.
+   *
+   * It used to reset to true whenever a new selection arrived, on the reasoning
+   * that picking something states the intent to send it. What that protected
+   * was a reader unable to tell that passing had been left off: the control
+   * only existed while something was selected, so an old "off" made the
+   * quotation silently inert. The control is now permanent, so its own state is
+   * that notice, and the reader's answer stands until the reader changes it.
+   */
   passEnabled: boolean
   /** Replace the selection (last write wins). `null` clears it. */
   setSelection: (selection: UserSelection | null) => void
-  /** Drop the selection entirely — the badge's X. */
+  /**
+   * Drop the selection entirely. For a publisher that has stopped publishing —
+   * a view navigating off the thing it was offering. There is no reader-facing
+   * control for this; holding a selection back is what a reader does, and that
+   * is `togglePass`.
+   */
   clearSelection: () => void
-  /** Flip whether the selection is passed with the next message. */
+  /** Flip whether selections are passed with the next message. */
   togglePass: () => void
 }
 
 const SelectionContext = createContext<SelectionContextValue | null>(null)
 
 export function SelectionProvider({ children }: { children: ReactNode }) {
-  const [selection, setSelectionState] = useState<UserSelection | null>(null)
+  // Publishing writes the selection and nothing else. There is deliberately no
+  // branch here that reads `passEnabled` or writes it: whatever a publisher
+  // does, the reader's answer about passing is theirs and stays where they left
+  // it. See the note on `passEnabled` for what the removed reset protected.
+  const [selection, setSelection] = useState<UserSelection | null>(null)
   const [passEnabled, setPassEnabled] = useState(true)
 
-  const setSelection = useCallback((next: UserSelection | null) => {
-    setSelectionState((current) => {
-      // A fresh selection passes by default: setting one is the intent to use
-      // it, and inheriting a stale "off" from a previous selection would make
-      // the badge silently inert.
-      //
-      // A republish of the SAME selection is not a fresh one, and must leave
-      // the reader's choice alone. Only a keyed publisher can say the two
-      // apart; without a key every publish is fresh, exactly as before.
-      const sameThing = next !== null && current !== null && next.key !== undefined && next.key === current.key
-      if (!sameThing) {
-        setPassEnabled(true)
-      }
-      return next
-    })
-  }, [])
-  const clearSelection = useCallback(() => setSelectionState(null), [])
+  const clearSelection = useCallback(() => setSelection(null), [])
   const togglePass = useCallback(() => setPassEnabled((prev) => !prev), [])
 
   const value = useMemo<SelectionContextValue>(
     () => ({ selection, passEnabled, setSelection, clearSelection, togglePass }),
-    [selection, passEnabled, setSelection, clearSelection, togglePass],
+    // `setSelection` is React's own setter and its identity is stable, so it is
+    // not listed. It used to be a `useCallback` of ours and had to be.
+    [selection, passEnabled, clearSelection, togglePass],
   )
   return <SelectionContext.Provider value={value}>{children}</SelectionContext.Provider>
 }

@@ -87,10 +87,29 @@ async function mount(): Promise<{
   }
 }
 
-test('with nothing selected, neither part draws', async () => {
+test('with nothing selected the quotation stays away and the switch still stands', async () => {
+  // The two halves part company here, and this is the only place they do. There
+  // is nothing to quote, but there is somewhere to keep an answer — so the
+  // reader can settle it before selecting anything rather than being asked at
+  // the moment they are busy selecting something.
   const view = await mount()
   assert.equal(view.quote(), null, 'no selection, no quotation')
-  assert.equal(view.toggle(), null, 'no selection, nothing to toggle')
+  assert.ok(view.toggle(), 'the switch is on the panel regardless')
+  assert.equal(view.toggle()?.getAttribute('aria-pressed'), 'true', 'and it starts from the default')
+  await view.unmount()
+})
+
+test('an answer given before selecting anything is the one the selection arrives under', async () => {
+  const view = await mount()
+  await view.press()
+  assert.equal(view.toggle()?.getAttribute('aria-pressed'), 'false', 'held back, with nothing selected yet')
+
+  await act(async () => view.scope().setSelection({ label: LABEL, content: CONTENT }))
+  assert.equal(view.quote(), null, 'the selection arrives held back rather than overriding the answer')
+  assert.equal(view.scope().selection?.label, LABEL, 'held back is not discarded — it is there to be shown')
+
+  await view.press()
+  assert.equal(view.quote()?.textContent, LABEL, 'and one press shows it')
   await view.unmount()
 })
 

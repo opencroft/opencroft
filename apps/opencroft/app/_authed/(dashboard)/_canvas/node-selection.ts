@@ -31,10 +31,5 @@ export function nodeSelection(node: SelectableNode): UserSelection {
   return {
     label: name,
     content: [`Selected node: ${name}`, `Type: ${node.type ?? 'unknown'}`, `Id: ${node.id}`].join('\n'),
-    // The node id, so that republishing this node with fresh data reads as the
-    // same selection rather than a new one. A canvas node's data changes on its
-    // own while it stays selected; without this, each of those refreshes would
-    // switch passing back on under a reader who had turned it off.
-    key: node.id,
   }
 }

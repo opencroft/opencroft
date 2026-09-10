@@ -75,17 +75,19 @@ interface GroupChatThreadChatProps {
 // provider) is unchanged by both. Module-level for identity stability — they
 // feed the memoized command bar.
 //
-// Handed to their slots only when there IS a selection, which is a second test
-// of the same condition and has to be. A slot draws around whatever it is
-// given, and an element that renders null is still an element — so passing
-// either unconditionally would put a strip of empty row under the composer at
-// all times, which is exactly what those slots are built not to do. The two
-// tests are asking different questions: this one whether the slot exists, the
-// component's own whether there is anything to draw in it.
+// Each is handed to its slot on the same condition its own component draws on,
+// which is a second test of that condition and has to be. A slot draws around
+// whatever it is given, and an element that renders null is still an element —
+// so passing either unconditionally would put a strip of empty row under the
+// composer at all times, which is exactly what those slots are built not to do.
+// The two tests are asking different questions: this one whether the slot
+// exists, the component's own whether there is anything to draw in it.
 //
-// The quotation carries the second condition as well, and only the quotation:
-// it is hidden while the selection is held back, whereas the toggle is how it
-// is brought back and must stand there whichever way the flag is set.
+// AND THE TWO CONDITIONS ARE NOT THE SAME ONE. The quotation needs something to
+// quote. The toggle needs somewhere to keep the answer it sets, which is any
+// mounted scope — so it stands with nothing selected, and the reader can settle
+// it before selecting anything. The plain thread route has no provider and gets
+// neither.
 const SELECTION_BADGE = <SelectionBadge />
 const SELECTION_TOGGLE = <SelectionToggle />
 
@@ -292,7 +294,7 @@ export function GroupChatThreadChat({
       onDraftChange={onDraftChange}
       leadingBarContent={leadingBarContent}
       attachments={selectionScope?.selection && selectionScope.passEnabled ? SELECTION_BADGE : undefined}
-      attachmentControls={selectionScope?.selection ? SELECTION_TOGGLE : undefined}
+      attachmentControls={selectionScope ? SELECTION_TOGGLE : undefined}
     />
   )
 
