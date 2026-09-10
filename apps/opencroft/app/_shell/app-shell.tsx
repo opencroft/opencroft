@@ -19,6 +19,7 @@ import {
   SidebarRail,
   SidebarTrigger,
 } from 'ui/sidebar'
+import { Wordmark } from 'ui/wordmark'
 
 import { SpaceSidebarSection } from '@/app/_authed/(space)/_components/space-selector'
 import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
@@ -46,7 +47,16 @@ function AppSidebar({ spaces, dashboards, pinnedDashboardSlugs }: SidebarProps) 
   return (
     <Sidebar collapsible='icon'>
       <SidebarHeader>
-        <SidebarTrigger />
+        {/*
+          The lockup goes when the sidebar collapses to icons: at that width
+          there is no room for a name, and a truncated wordmark is not a
+          smaller wordmark. The trigger stays, so the row keeps the control
+          that brings the sidebar back.
+        */}
+        <div className='flex items-center gap-2'>
+          <Wordmark className='min-w-0 flex-1 group-data-[collapsible=icon]:hidden' />
+          <SidebarTrigger />
+        </div>
       </SidebarHeader>
       <SidebarContent>
         <SpaceSidebarSection spaces={spaces} />
