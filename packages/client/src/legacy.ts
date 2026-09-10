@@ -256,6 +256,122 @@ export declare const useDockerContainers: (...args: unknown[]) => unknown
 export declare const useDockerSnapshotReceived: (...args: unknown[]) => unknown
 export declare const useSeedDockerContainers: (...args: unknown[]) => unknown
 
+// ── The host's chat surface ─────────────────────────────────────────────────
+// Offered whole so an extension mounts the host's own conversation rather than
+// arranging the pieces: the dock chrome, the embedded thread, and the picker
+// that chooses which thread it shows. Host-injected at runtime.
+
+/** Which conversation an embedded chat surface shows. */
+export type EmbeddedChatSelection = { threadId: string } | { newId: string }
+
+export interface EmbeddedAgentChatProps {
+  /** The group chat's slug — the first segment of every thread session key. */
+  space: string
+  /** The DEFAULT thread slug this surface owns, one per member agent. */
+  id: string
+  /** Override the shown conversation. Unset = the default thread. */
+  thread?: EmbeddedChatSelection | null
+  /**
+   * What to NAME the chat if this surface has to create it. The address is
+   * always `space`; this is only the display name, and it defaults to the slug
+   * when a host has no better one.
+   */
+  title?: string
+  /**
+   * Reports whether the chat RESOLVED: true only when it exists and the caller
+   * can see it, false while loading and when it is missing, refused or failed.
+   */
+  onChatAvailable?: (available: boolean) => void
+  className?: string
+}
+export declare const EmbeddedAgentChat: FC<EmbeddedAgentChatProps>
+
+export interface ChatSelectorProps {
+  /** The group chat's slug — same address the embedded chat surface takes. */
+  space: string
+  /** The current selection, so the open menu can mark the active thread. */
+  selection?: EmbeddedChatSelection | null
+  onChange: (selection: EmbeddedChatSelection) => void
+  /** A larger tap target for touch surfaces; default is the compact header button. */
+  size?: 'icon' | 'icon-sm' | 'icon-xs'
+  className?: string
+}
+export declare const ChatSelector: FC<ChatSelectorProps>
+
+export interface ChatDockProps {
+  /** The group chat's address: the space's slug. */
+  space: string
+  /** The thread slug this surface addresses by default. */
+  id: string
+  /** What the panel's header calls the conversation. */
+  title: string
+  /** The chat's display name, used only if it has to be created. */
+  chatName?: string
+  /** The surface the chat sits beside, floats over, or covers. */
+  children: ReactNode
+}
+/**
+ * The whole chrome around an embedded thread — corner launcher, the three
+ * docks plus the floating window, the mobile cover and its Back behaviour.
+ */
+export declare const ChatDock: FC<ChatDockProps>
+
+// ── Selection scope ─────────────────────────────────────────────────────────
+// What the reader has selected on the surface the chat sits beside, and
+// whether it rides along with the next message.
+
+export interface UserSelection {
+  /** What the quotation shows. Presentation only — never sent to the agent. */
+  label: string
+  /** What the agent receives when passing is on. */
+  content: string
+}
+
+export interface SelectionContextValue {
+  /** The current selection, or null when nothing is selected. */
+  selection: UserSelection | null
+  /**
+   * Whether a selection rides along with the next message. A standing
+   * preference of the scope rather than a property of what is selected:
+   * publishing a selection does not touch it, and it can be set with nothing
+   * selected at all.
+   */
+  passEnabled: boolean
+  setSelection: (selection: UserSelection | null) => void
+  clearSelection: () => void
+  togglePass: () => void
+}
+
+export declare const SelectionProvider: FC<{ children: ReactNode }>
+/** Throws outside a `SelectionProvider` rather than returning an empty scope. */
+export declare const useSelection: () => SelectionContextValue
+
+// ── URL parameters, and the breakpoint ──────────────────────────────────────
+
+export interface UrlParamWriteOptions {
+  /**
+   * Replace the current history entry instead of pushing a new one. Defaults
+   * to `true`, so state that changes as often as the screen does does not make
+   * the back button walk through it one step at a time.
+   */
+  replace?: boolean
+}
+
+export interface UrlParamControls {
+  /** The current value, or `null` when the parameter is absent. */
+  value: string | null
+  /** Write the parameter, leaving every other parameter untouched. */
+  set: (value: string, options?: UrlParamWriteOptions) => void
+  /** Remove the parameter, leaving every other parameter untouched. */
+  remove: (options?: UrlParamWriteOptions) => void
+}
+
+/** One URL search parameter, for state that should survive a reload. */
+export declare const useUrlParam: (name: string) => UrlParamControls
+
+/** The kit's mobile breakpoint, the same signal the host's own chat dock reads. */
+export declare const useIsMobile: () => boolean
+
 // ── UI components ────────────────────────────────────────────────────────────
 // The full `ui` package surface (every shadcn component plus SearchableDropdown,
 // Popover, Command, Combobox, …). Host-injected at runtime; `ui/ext` is the set.
