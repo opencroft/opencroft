@@ -52,5 +52,11 @@ data/
 .mcp.json
 *.gen.ts
 
-# written by a running instance's startup command, not by any build step
-.deploy-marker
+# Written by a running instance's startup command, not by any build step. That
+# command writes it with a RELATIVE path, so the file lands wherever the
+# container's working directory happens to point -- an older layout put one at
+# the repository root, where it went stale and was later read as though it were
+# current. Anchored to the single path the current layout writes, so a copy
+# anywhere else shows up as untracked rather than being hidden. This does not
+# stop a stray one being written; it stops one being invisible.
+/apps/opencroft/.deploy-marker
