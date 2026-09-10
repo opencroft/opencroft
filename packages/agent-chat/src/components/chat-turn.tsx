@@ -3,8 +3,10 @@
 import { Maximize2, Minimize2, Pencil, X } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
 import { useState } from 'react'
-// The type import back the other way is erased, so this is not a runtime cycle.
+// Both of these import types back from this file, and a type import is erased,
+// so neither is a runtime cycle.
 import { type AuthorRun, authorRuns } from '../author-runs'
+import { detailEntryKeys, withHeader } from '../detail-entries'
 import { Markdown } from './markdown'
 // A relative sibling path rather than this package's own alias: the two files
 // are in one package, so nothing has to resolve through the package's exports
@@ -675,14 +677,6 @@ function toolDotVariant(item: DetailItem): ChainDotVariant {
   return item.result.isError ? 'destructive' : 'success'
 }
 
-function withHeader(items: DetailItem[]): DetailEntry[] {
-  const entries: DetailEntry[] = items.map((item) => ({ kind: 'item', item }))
-  if (items[0] && items[0].kind !== 'assistant-text') {
-    entries.unshift({ kind: 'header' })
-  }
-  return entries
-}
-
 export interface ChatTurnDetailsProps {
   blockId: string
   items: DetailItem[]
@@ -720,46 +714,11 @@ export function ChatTurnDetails({
   const { Chained, ChainDot, ThinkingBlock } = renderers
   const [collapsed, setCollapsed] = useState(defaultCollapsed ?? false)
   const entries = withHeader(items)
-
-  // How far `entries` is shifted from `items`, which is what makes an entry's
-  // own position unusable as its identity: `withHeader` prepends a header only
-  // when the first item is not assistant text, so the offset FLIPS the moment
-  // that first item's kind changes -- and every entry after it renumbers at
-  // once, remounting each one.
-  //
-  // Taken as the difference in length rather than by re-testing the header's
-  // condition here, so this and `withHeader` cannot come to disagree about
-  // whether a header is present.
-  const headerOffset = entries.length - items.length
-
-  // An entry's identity, which is deliberately not its place in `entries`.
-  //
-  // A tool call has a real id and uses it. Everything else is keyed by its
-  // position in `items`, which does not move when the header appears or
-  // disappears -- that shift is the whole of what was wrong here, and taking
-  // the position from `items` removes it without asking the host to promise
-  // anything and without inventing an identity for entries that have none.
-  //
-  // Namespaced because the two spaces would otherwise overlap: a tool whose id
-  // is "3" and the item at position 3 are different entries and must not be
-  // one key.
-  //
-  // WHAT THIS DOES NOT FIX, because it will otherwise be read as covering it:
-  // `items` itself being reordered, or having an entry inserted into or removed
-  // from its middle. Position is still the identity for text and thinking
-  // entries -- that is what the declaration of `DetailItem` says, and giving
-  // them an id would be inventing data the host does not have. What would
-  // retire the remaining positional half is those entries arriving with an
-  // identity of their own.
-  const entryKey = (entry: DetailEntry, index: number) => {
-    if (entry.kind === 'header') {
-      return 'header'
-    }
-    if (entry.item.kind === 'tool') {
-      return `tool:${entry.item.id}`
-    }
-    return `pos:${index - headerOffset}`
-  }
+  // Not the entry's own position: `withHeader` prepends conditionally, so that
+  // position shifts by one the moment the first item's kind changes. The
+  // reasoning, and what this deliberately does not cover, is where the
+  // derivation lives.
+  const entryKeys = detailEntryKeys(entries, items)
 
   const toggle =
     items.length > 1 ? (
@@ -879,7 +838,7 @@ export function ChatTurnDetails({
         )
         return (
           <Chained
-            key={entryKey(entry, i)}
+            key={entryKeys[i]}
             marker={marker}
             lineAbove={!isFirst}
             lineBelow={!isLast}
