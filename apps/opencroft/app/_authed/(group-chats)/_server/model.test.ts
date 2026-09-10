@@ -22,10 +22,17 @@ import { buildSpawnConfig } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
 import { and, eq } from 'drizzle-orm'
 
+import type { ToolCallerContext } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { slug } from '@/app/_authed/(server)/_server/types'
 
 const workdir = await mkdtemp(join(tmpdir(), 'opencroft-group-chats-test-'))
 process.env.PGLITE_PATH = join(workdir, 'pglite')
+// The sleep-mode module resolves its marker directory once, when it loads, so
+// this has to be in place before anything imports it — agent-client-instance
+// does, below. Set it afterwards and the marker lands in a directory nothing
+// reads: the flag stays false while the file exists, which is the one failure
+// that would make the sleep tests at the end of this file pass vacuously.
+process.env.OPENCROFT_DATA_DIR = join(workdir, 'data')
 process.env.DB_MIGRATIONS_DIR = join(
   import.meta.dirname,
   '..',
@@ -4066,4 +4073,159 @@ test('the migration leaves a pre-slug key exactly as found, and says so', async 
     preSlug,
     'a working address is not broken to tidy a spelling',
   )
+})
+
+// ---------------------------------------------------------------------------
+// SLEEP MODE IS NOT VISIBLE IN WHAT A CALLER IS TOLD.
+//
+// The trap both tests below are built around: neither the delivery path nor
+// the send tool reads the sleep flag any more. So "turn the mode on, assert
+// the result did not change" would pass whether or not the mode ever took
+// effect — the same green for the right reason and the wrong one — and would
+// read as coverage while proving nothing.
+//
+// What makes them mean something is that each first establishes the mode is in
+// force, by an observable only the mode produces: the message is genuinely
+// held, nothing reaches the agent, and it arrives once the instance wakes. The
+// reported result is asserted against that background, never on its own.
+
+test('asleep, a node delivery into an idle session still reports delivered — while genuinely holding the message', async () => {
+  const { isSleepMode, setSleepMode } = await import('@/app/_authed/(mcp)/_server/sleep-mode')
+  const owner = await makeUser('sleep-node-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'sleep node delivery')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, NODE_PRINCIPAL)
+  // Inserted directly rather than via startThread: the session must be idle,
+  // because an idle session is the only case the flag used to change.
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-session',
+      sessionKey: `group-chat:${chat.id}:agent-session:sleep-node-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  const prompts: string[] = []
+  const connection = {
+    newSession: async () => ({ sessionId: `sleep-${crypto.randomUUID()}` }),
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      prompts.push(params.prompt.map((b) => b.text ?? '').join(''))
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', slug('Agent Session')),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store)
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  setSleepMode(true)
+  try {
+    // The gate agent-client consults is `shouldHoldDelivery: isSleepMode` —
+    // this function IS the gate, so reading true here is reading the gate.
+    assert.equal(isSleepMode(), true, 'precondition: the instance is really asleep')
+    const outcome = await model.deliverThreadFromNode(
+      thread.sessionKey,
+      'held while asleep',
+      NODE_PRINCIPAL,
+      'wait',
+      'Node',
+    )
+    assert.equal(outcome.status, 'delivered', 'an idle session reports what it would report awake')
+    assert.equal(prompts.length, 0, 'and the message is really held — nothing reached the agent')
+  } finally {
+    setSleepMode(false)
+  }
+
+  // The half that stops `prompts.length === 0` above from also being satisfied
+  // by "nothing was ever queued": waking has to produce the message that was
+  // held, or the zero meant something else.
+  agentClient.resumeDelivery()
+  await waitForPrompts(prompts, 1)
+  assert.match(prompts[0] ?? '', /held while asleep/, 'the held message is delivered on waking, not dropped')
+})
+
+test('asleep, group_chat_send returns exactly the result it returns awake', async () => {
+  const { isSleepMode, setSleepMode } = await import('@/app/_authed/(mcp)/_server/sleep-mode')
+  const { handlers } = await import('@/app/_authed/(mcp)/_server/chat-tools')
+  const owner = await makeUser('sleep-tool-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'sleep send tool')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-solo' })
+
+  const prompts: string[] = []
+  const connection = {
+    newSession: async () => ({ sessionId: `sleep-tool-${crypto.randomUUID()}` }),
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      prompts.push(params.prompt.map((b) => b.text ?? '').join(''))
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', slug('Agent Session')),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store)
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening')
+  await waitForPrompts(prompts, 1)
+
+  // A different member does the sending, the way an agent using the tool would.
+  const caller = { agent: 'Agent Solo' } as ToolCallerContext
+  const awake = await handlers.group_chat_send(
+    { thread: started.thread.id, message: 'sent while awake', queue: 'wait' },
+    caller,
+  )
+
+  setSleepMode(true)
+  try {
+    assert.equal(isSleepMode(), true, 'precondition: the instance is really asleep')
+    const asleep = await handlers.group_chat_send(
+      { thread: started.thread.id, message: 'sent while asleep', queue: 'wait' },
+      caller,
+    )
+    // Reintroduce a branch on the flag and these two stop matching, which is
+    // the whole regression this pins.
+    assert.deepEqual(asleep, awake, 'the same result, whatever the delivery gate is doing')
+    assert.doesNotMatch(
+      JSON.stringify(asleep),
+      /sleep|held|wake/i,
+      'and it says nothing about the mode, however it is worded',
+    )
+  } finally {
+    setSleepMode(false)
+  }
 })
