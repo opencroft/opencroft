@@ -69,9 +69,46 @@ const USER_SELECTION_TAG = /<opencroft-user-selection>([\s\S]*?)<\/opencroft-use
 // stopgap until the wire changes -- it is the only thing that can ever describe
 // one of those.
 //
-// The first line, because these selections introduce themselves: a project
-// reference opens by naming the project, a diff by naming the file. The whole of
-// it goes on the chip's title, so the choice of line hides nothing.
+// The first line, because these selections introduce themselves: every publisher
+// in this app opens its content with a `Key: value` line naming the source. The
+// whole of it goes on the chip's title, so the choice of line hides nothing.
+//
+// WHAT THAT COSTS, counted rather than assumed. Enumerated 10.09.2026: five
+// publishers reach this, and the first line names the SOURCE in every one of
+// them -- `Design project: …` for a design-kit project and for a component
+// inside it, `Documentation: …` for an open document and for a highlight within
+// it, `Repository: …` for a file in a repository. So the chip says where the
+// context came from and not which part of it, and the part is what the reader
+// picked. The label the composer's own chip showed was better, and it cannot be
+// recovered: it was presentation and never travelled. Hover carries the rest.
+//
+// The two guards below are not for those five. `useSelection` is on the host
+// API, so any extension can publish any content it likes, and neither an empty
+// first line nor a whole payload on one line is reachable from this app today.
+const MAX_LABEL = 80
+
+// What a chip says when the attachment gives it nothing to be named by. A chip
+// that says nothing is worse than no chip: it reports that something travelled
+// while withholding the one thing it exists to report.
+const UNNAMED_ATTACHMENT = 'Attached context'
+
+function attachmentLabel(detail: string): string {
+  // `detail` is already trimmed, so a first line can only be empty if the whole
+  // of it was -- which is refused before this is reached. The branch stays
+  // because that is an argument about today's callers, not a property of the
+  // function.
+  const [firstLine = ''] = detail.split('\n')
+  const trimmed = firstLine.trim()
+  if (!trimmed) {
+    return UNNAMED_ATTACHMENT
+  }
+  // The chip truncates at its own width, so this is not what makes it fit. It
+  // bounds the string itself, which is what reaches the accessibility tree and
+  // the title of anything that renders one: a publisher putting a page on one
+  // line would otherwise put that page in a label.
+  return trimmed.length > MAX_LABEL ? `${trimmed.slice(0, MAX_LABEL - 1)}…` : trimmed
+}
+
 function attachmentsOf(raw: string): MessageAttachment[] {
   const attachments: MessageAttachment[] = []
   for (const [, content] of raw.matchAll(USER_SELECTION_TAG)) {
@@ -79,8 +116,7 @@ function attachmentsOf(raw: string): MessageAttachment[] {
     if (!detail) {
       continue
     }
-    const [firstLine] = detail.split('\n')
-    attachments.push({ label: firstLine.trim(), detail })
+    attachments.push({ label: attachmentLabel(detail), detail })
   }
   return attachments
 }

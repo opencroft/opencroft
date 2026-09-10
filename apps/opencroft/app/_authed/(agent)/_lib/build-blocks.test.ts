@@ -413,6 +413,33 @@ test('an empty selection tag attaches nothing rather than an unnamed chip', () =
   assert.equal(part?.attachments, undefined)
 })
 
+// The five publishers in this app all open their content with a line naming the
+// source, so none of them reaches either guard below. The host exposes the
+// selection API to extensions, though, so what an attachment's content looks
+// like is not this app's to bound — and a chip that reports something travelled
+// while saying nothing about it is worse than no chip at all.
+
+test('an attachment whose first line is blank still names itself', () => {
+  // Only reachable from a publisher outside this app: the content is trimmed
+  // before the line is taken, so nothing here can produce it.
+  const raw = '<opencroft-user-selection>\n\n   \nthe body is all there is</opencroft-user-selection>\nand my question'
+  const [part] = partsOf(buildBlocks([userMessage(1, raw)])[0]) ?? []
+  assert.equal(part?.attachments?.[0]?.label, 'the body is all there is')
+})
+
+test('a whole payload on one line is bounded before it becomes a label', () => {
+  // The chip truncates at its own width, so this is about the string rather
+  // than the pixels: it is what reaches the accessibility tree, and a label is
+  // not a place to put a page.
+  const line = 'x'.repeat(500)
+  const raw = `<opencroft-user-selection>${line}</opencroft-user-selection>\nand my question`
+  const [part] = partsOf(buildBlocks([userMessage(1, raw)])[0]) ?? []
+  const attachment = part?.attachments?.[0]
+  assert.equal(attachment?.label.length, 80, 'the label is capped')
+  assert.ok(attachment?.label.endsWith('…'), 'and says it was cut')
+  assert.equal(attachment?.detail, line, 'while the whole of it survives for the hover')
+})
+
 test('each message of a batch keeps its own attachment', () => {
   // Per message, not per delivery: a turn is a batch, and an attachment belongs
   // to the message it was sent with rather than to whatever else travelled at
