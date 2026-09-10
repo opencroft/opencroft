@@ -1,50 +1,28 @@
-import type { SVGProps } from 'react'
-
 import { cn } from 'ui/lib/utils'
 
-// The OpenCroft lockup: the "Croft Plot" mark beside the name.
-//
-// THE ACCENT IS STATED OUTRIGHT rather than read from a theme token, and that
-// is the whole design decision in this file. A two-tone lockup is the mark; it
-// is not a surface treatment. Reading the host's accent would repaint the logo
-// differently on every surface it appears on, and against a neutral palette it
-// repaints it into near-invisibility -- a wordmark that disappears on half the
-// product is not a variant, it is a broken mark.
-//
-// Everything that is NOT the accent inherits instead of naming a colour, so the
-// outline and the first half of the name take the surface's own text colour and
-// one component sits correctly on a light or a dark background. That split --
-// the accent fixed, the rest inherited -- is what removes the need for a second
-// variant per theme.
-//
-// THE GEOMETRY IS A COPY, and the seam is worth stating because nothing
-// enforces it. This same mark is drawn by the loading indicator in this
-// project, and again in the marketing site's own kit. Referencing across design
-// projects would tie this product's kit to the site's, which is the wrong
-// direction for a dependency to run, so each draws its own. If the mark is ever
-// redrawn, every copy has to be walked by hand -- nothing here will fail to say
-// so.
-const ACCENT = '#3b82f6'
+import { BRAND_ACCENT, Logo } from 'ui/components/ui/logo'
 
-// Decorative: every size renders the name as text beside it, so announcing the
-// mark as well would read the product's name twice.
-function Mark(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' aria-hidden='true' {...props}>
-      <rect x='4' y='4' width='7' height='7' rx='1.8' stroke='currentColor' strokeWidth='1.5' />
-      <rect x='13' y='4' width='7' height='7' rx='1.8' stroke='currentColor' strokeWidth='1.5' />
-      <rect x='4' y='13' width='7' height='7' rx='1.8' stroke='currentColor' strokeWidth='1.5' />
-      <rect x='13' y='13' width='7' height='7' rx='1.8' fill={ACCENT} />
-    </svg>
-  )
-}
+// The OpenCroft lockup: the mark beside the name.
+//
+// It draws the sibling mark rather than repeating its geometry, and takes the
+// accent from the same place, so the colour of the filled square and the colour
+// of the second half of the name cannot drift apart.
+//
+// NOTHING HERE NAMES A THEME COLOUR. The accent is fixed because it is part of
+// the mark; everything else inherits, so the outline and "Open" take whatever
+// text colour surrounds them and the lockup sits correctly on a light or a dark
+// surface. The line under the two larger sizes is dimmed with opacity rather
+// than given a muted colour token -- a token would tie this to one product's
+// palette, which is the thing this project exists to avoid.
+
+const MARK_SIZE = { large: 96, medium: 64, small: 24 }
 
 // One string, one place. The two halves are a single word split by colour, so
 // they are never authored as two labels that could drift apart.
 function Name() {
   return (
     <>
-      Open<span style={{ color: ACCENT }}>Croft</span>
+      Open<span style={{ color: BRAND_ACCENT }}>Croft</span>
     </>
   )
 }
@@ -63,7 +41,7 @@ export function Wordmark({ variant = 'small', className }: WordmarkProps) {
   if (variant === 'small') {
     return (
       <span className={cn('inline-flex min-w-0 items-center gap-1.5 font-bold', className)}>
-        <Mark className='h-6 w-6 shrink-0' />
+        <Logo size={MARK_SIZE.small} className='shrink-0' aria-hidden='true' />
         <span className='truncate'>
           <Name />
         </span>
@@ -74,14 +52,14 @@ export function Wordmark({ variant = 'small', className }: WordmarkProps) {
   const large = variant === 'large'
   return (
     <span className={cn('inline-flex min-w-0 items-center', large ? 'gap-2' : 'gap-1', className)}>
-      <Mark className={cn('shrink-0', large ? 'h-24 w-24' : 'h-16 w-16')} />
+      <Logo size={large ? MARK_SIZE.large : MARK_SIZE.medium} className='shrink-0' aria-hidden='true' />
       <span className={cn('flex min-w-0 flex-col', large ? 'leading-[1.05]' : 'leading-[1.1]')}>
         <span className={cn('truncate font-bold tracking-[-0.03em]', large ? 'text-[2.6rem]' : 'text-[1.85rem]')}>
           <Name />
         </span>
         <span
           className={cn(
-            'truncate font-medium uppercase text-muted-foreground',
+            'truncate font-medium uppercase opacity-70',
             large ? 'mt-[6px] text-[0.9rem] tracking-[0.1em]' : 'mt-[5px] text-[0.72rem] tracking-[0.06em]',
           )}
         >
