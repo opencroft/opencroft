@@ -604,11 +604,8 @@ function UserMessageBubble({
             // rendering the same way: here it is a record, and what makes it one
             // is that the message has already gone, not a flag on the element.
             // There is no control in it to leave unwired.
-            //
-            // Keyed by position, because a delivered message's attachments are
-            // read out of a text that cannot change -- nothing reorders, so the
-            // position IS the identity.
             <SelectionBadge
+              // biome-ignore lint/suspicious/noArrayIndexKey: a delivered message's attachments are decoded out of a text that cannot change, so nothing here reorders, is inserted or is removed -- position IS the identity, and there is no id to key on instead. What would retire this suppression: attachments becoming editable after delivery, or arriving carrying an identity of their own. Either one makes position stop being identity, and the key then has to become that identity rather than this comment being widened.
               key={index}
               label={attachment.label}
               // Everything the quotation is not told to name itself is spread
