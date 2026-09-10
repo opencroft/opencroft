@@ -720,6 +720,47 @@ export function ChatTurnDetails({
   const { Chained, ChainDot, ThinkingBlock } = renderers
   const [collapsed, setCollapsed] = useState(defaultCollapsed ?? false)
   const entries = withHeader(items)
+
+  // How far `entries` is shifted from `items`, which is what makes an entry's
+  // own position unusable as its identity: `withHeader` prepends a header only
+  // when the first item is not assistant text, so the offset FLIPS the moment
+  // that first item's kind changes -- and every entry after it renumbers at
+  // once, remounting each one.
+  //
+  // Taken as the difference in length rather than by re-testing the header's
+  // condition here, so this and `withHeader` cannot come to disagree about
+  // whether a header is present.
+  const headerOffset = entries.length - items.length
+
+  // An entry's identity, which is deliberately not its place in `entries`.
+  //
+  // A tool call has a real id and uses it. Everything else is keyed by its
+  // position in `items`, which does not move when the header appears or
+  // disappears -- that shift is the whole of what was wrong here, and taking
+  // the position from `items` removes it without asking the host to promise
+  // anything and without inventing an identity for entries that have none.
+  //
+  // Namespaced because the two spaces would otherwise overlap: a tool whose id
+  // is "3" and the item at position 3 are different entries and must not be
+  // one key.
+  //
+  // WHAT THIS DOES NOT FIX, because it will otherwise be read as covering it:
+  // `items` itself being reordered, or having an entry inserted into or removed
+  // from its middle. Position is still the identity for text and thinking
+  // entries -- that is what the declaration of `DetailItem` says, and giving
+  // them an id would be inventing data the host does not have. What would
+  // retire the remaining positional half is those entries arriving with an
+  // identity of their own.
+  const entryKey = (entry: DetailEntry, index: number) => {
+    if (entry.kind === 'header') {
+      return 'header'
+    }
+    if (entry.item.kind === 'tool') {
+      return `tool:${entry.item.id}`
+    }
+    return `pos:${index - headerOffset}`
+  }
+
   const toggle =
     items.length > 1 ? (
       <ChatDetailsToggle
@@ -838,7 +879,7 @@ export function ChatTurnDetails({
         )
         return (
           <Chained
-            key={i}
+            key={entryKey(entry, i)}
             marker={marker}
             lineAbove={!isFirst}
             lineBelow={!isLast}
