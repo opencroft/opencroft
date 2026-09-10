@@ -284,7 +284,7 @@ const RESERVED_WORDS = new Set([
 // construction; kept as a separate set it would be forwarded as well, and a
 // duplicate binding is a syntax error that fails every extension build rather
 // than one name.
-function extensionScopedExports(extensionId: string): { name: string; code: string }[] {
+export function extensionScopedExports(extensionId: string): { name: string; code: string }[] {
   const quoted = JSON.stringify(extensionId)
   const under = (segment: string) => `(p) => {
   const [scope, slug] = ${quoted}.split('/');
@@ -300,7 +300,7 @@ function extensionScopedExports(extensionId: string): { name: string; code: stri
   ]
 }
 
-function bindableNames(api: object): string[] {
+export function bindableNames(api: object): string[] {
   return Object.keys(api).filter((name) => /^[A-Za-z_$][\w$]*$/.test(name) && !RESERVED_WORDS.has(name))
 }
 
