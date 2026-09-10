@@ -1,5 +1,6 @@
 'use client'
 
+import { useSession } from '@opencroft/auth/client'
 import { MessagesSquare, PanelBottom, PanelLeft, PanelRight, PictureInPicture2, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useState } from 'react'
@@ -40,6 +41,24 @@ const OPEN_KEY = 'opencroft.chatDock.open'
 const MODE_KEY = 'opencroft.chatDock.mode'
 const SIZE_KEY = 'opencroft.chatDock.size'
 const FLOAT_KEY = 'opencroft.chatDock.float'
+
+// WHICH CONVERSATION, unlike the four keys above, is scoped twice over.
+//
+// By SPACE, because the chats are per space: one key for all of them would
+// restore the previous space's thread on arriving at the next one, and a thread
+// belonging to a chat this surface does not address resolves to "This thread is
+// not available" -- a refusal that reads as a defect rather than as a browser
+// remembering the wrong thing.
+//
+// By ACCOUNT, which the four above deliberately are not, and the difference is
+// what the value IS. A dock side or a window size is a layout preference, and
+// two accounts sharing one browser sharing it costs nothing. This is a pointer
+// into conversation data, and the second account is refused by the same panel
+// for the same reason -- so the sharing that is harmless for an arrangement is
+// not harmless for this.
+function lastChatKey(accountId: string, space: string): string {
+  return `opencroft.chatDock.lastChat.${accountId}.${space}`
+}
 
 const MODE_DEFAULT: ChatDockMode = 'right'
 
@@ -157,8 +176,27 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
 
   // Which conversation the panel shows; unset = the surface's default thread.
   // Held here (not deeper) so it survives closing and reopening the chat, and
-  // deliberately not persisted: a fresh page starts on the default.
-  const [chatSelection, setChatSelection] = useState<EmbeddedChatSelection>()
+  // persisted so it also survives leaving the surface -- reopening one lands
+  // back in the conversation rather than on the default thread.
+  //
+  // A "new chat" that was never sent is remembered like any other, because at
+  // this level the two are the same value and telling them apart would mean
+  // asking the server whether the thread exists yet. What that costs is a
+  // start composer restored under the timestamp it was first offered under;
+  // what the alternative would cost is the common case, since a new chat that
+  // HAS been sent is still a `newId` and dropping those would forget every
+  // conversation started from this menu.
+  //
+  // The account is unresolved for the first render or two while the shared
+  // session atom answers (the sidebar's own sign-out item has it in flight
+  // already). The key changing is what makes the hook re-read, so the cost is
+  // a pick made inside that window being written under a key nothing reads
+  // again -- not a restore of the wrong account's chat.
+  const { data: session } = useSession()
+  const [chatSelection, setChatSelection] = useLocalStorage<EmbeddedChatSelection | undefined>(
+    lastChatKey(session?.user.id ?? 'unresolved', space),
+    undefined,
+  )
 
   // Whether the group chat actually exists (and is visible to the caller).
   // Until it does there is nothing to switch between, so the headers keep the
