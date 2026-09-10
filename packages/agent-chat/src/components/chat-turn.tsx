@@ -3,8 +3,10 @@
 import { Maximize2, Minimize2, Pencil, X } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
 import { useState } from 'react'
-// The type import back the other way is erased, so this is not a runtime cycle.
+// Both of these import types back from this file, and a type import is erased,
+// so neither is a runtime cycle.
 import { type AuthorRun, authorRuns } from '../author-runs'
+import { detailEntryKeys, withHeader } from '../detail-entries'
 import { Markdown } from './markdown'
 // A relative sibling path rather than this package's own alias: the two files
 // are in one package, so nothing has to resolve through the package's exports
@@ -604,11 +606,8 @@ function UserMessageBubble({
             // rendering the same way: here it is a record, and what makes it one
             // is that the message has already gone, not a flag on the element.
             // There is no control in it to leave unwired.
-            //
-            // Keyed by position, because a delivered message's attachments are
-            // read out of a text that cannot change -- nothing reorders, so the
-            // position IS the identity.
             <SelectionBadge
+              // biome-ignore lint/suspicious/noArrayIndexKey: a delivered message's attachments are decoded out of a text that cannot change, so nothing here reorders, is inserted or is removed -- position IS the identity, and there is no id to key on instead. What would retire this suppression: attachments becoming editable after delivery, or arriving carrying an identity of their own. Either one makes position stop being identity, and the key then has to become that identity rather than this comment being widened.
               key={index}
               label={attachment.label}
               // Everything the quotation is not told to name itself is spread
@@ -678,14 +677,6 @@ function toolDotVariant(item: DetailItem): ChainDotVariant {
   return item.result.isError ? 'destructive' : 'success'
 }
 
-function withHeader(items: DetailItem[]): DetailEntry[] {
-  const entries: DetailEntry[] = items.map((item) => ({ kind: 'item', item }))
-  if (items[0] && items[0].kind !== 'assistant-text') {
-    entries.unshift({ kind: 'header' })
-  }
-  return entries
-}
-
 export interface ChatTurnDetailsProps {
   blockId: string
   items: DetailItem[]
@@ -723,6 +714,12 @@ export function ChatTurnDetails({
   const { Chained, ChainDot, ThinkingBlock } = renderers
   const [collapsed, setCollapsed] = useState(defaultCollapsed ?? false)
   const entries = withHeader(items)
+  // Not the entry's own position: `withHeader` prepends conditionally, so that
+  // position shifts by one the moment the first item's kind changes. The
+  // reasoning, and what this deliberately does not cover, is where the
+  // derivation lives.
+  const entryKeys = detailEntryKeys(entries, items)
+
   const toggle =
     items.length > 1 ? (
       <ChatDetailsToggle
@@ -841,7 +838,7 @@ export function ChatTurnDetails({
         )
         return (
           <Chained
-            key={i}
+            key={entryKeys[i]}
             marker={marker}
             lineAbove={!isFirst}
             lineBelow={!isLast}
