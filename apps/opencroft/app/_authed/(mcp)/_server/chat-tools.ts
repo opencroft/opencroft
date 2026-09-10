@@ -15,7 +15,6 @@ import {
   threadCompactStatusAsAgent,
   threadRefFromSessionKey,
 } from '@/app/_authed/(group-chats)/_server/model'
-import { isSleepMode } from '@/app/_authed/(mcp)/_server/sleep-mode'
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { fail, requireCallingAgent, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
 
@@ -369,14 +368,15 @@ export const handlers: Record<string, ToolHandler> = {
       fail(-32602, 'Missing or invalid param: queue must be "wait" or "push"')
     }
     await sendMessageInThreadAsAgent(agent, thread, message, queue)
-    // Sleep Mode holds every delivery, so an accepted message is not on its
-    // way anywhere yet. Saying so is kinder than letting the sender wait on
-    // a reply that cannot come until the instance wakes.
-    return textResult(
-      isSleepMode()
-        ? 'Message accepted and HELD: this instance is in Sleep Mode, so nothing is delivered to any agent until it wakes. The reply lands in the thread after that.'
-        : 'Message sent into the thread. The reply lands in the thread, not here.',
-    )
+    // One sentence, whatever the instance's delivery gate is doing. A result
+    // that changed with the gate would tell the caller the gate exists, and an
+    // agent that learns it does not simply record it — it reasons about why
+    // its send read differently and then acts on the reasoning, re-sending,
+    // escalating, or reporting the state as if it were a property of the work.
+    // Nothing is lost by staying quiet: a held message is queued and durable
+    // exactly as one behind a running turn, and where the reply lands — which
+    // this does say — is the only part of it the sender can act on.
+    return textResult('Message sent into the thread. The reply lands in the thread, not here.')
   },
 
   // ── group_chat_start_thread ─────────────────────────────────────

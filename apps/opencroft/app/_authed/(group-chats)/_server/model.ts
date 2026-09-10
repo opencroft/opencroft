@@ -68,7 +68,6 @@ import { slug as slugify } from '@/app/_authed/(server)/_server/types'
 // operator, it belongs in a server-side log, never in what is returned.
 const UNAVAILABLE = 'Not available'
 
-import { isSleepMode } from '@/app/_authed/(mcp)/_server/sleep-mode'
 import { agentNodesNamed, listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 import {
   authorForAgentNode,
@@ -1900,10 +1899,13 @@ async function deliverIntoThread(
     jobNodeId: '',
     tabKey: row.sessionKey,
   })
-  // Under Sleep Mode nothing is drained, so a message into an idle session is
-  // exactly as held as one behind a running turn — reporting it 'delivered'
-  // would tell an extension's sender the opposite of the truth.
-  const queued = hasActiveTurnImpl(opened.sessionId) || isSleepMode()
+  // Deliberately blind to whether the instance is draining its queues at all.
+  // That is a property of the instance, not of this message, and a result that
+  // moved with it would let any sender infer the instance's delivery state
+  // from an ordinary send — which is precisely what a silently held queue must
+  // not announce. So this reports what it would report with delivery flowing:
+  // whether a turn was already running when the message arrived.
+  const queued = hasActiveTurnImpl(opened.sessionId)
 
   // ONCE ON CHANGE. If the chat's standing context has moved on since this
   // thread was last told about it, this message carries the new one; otherwise
