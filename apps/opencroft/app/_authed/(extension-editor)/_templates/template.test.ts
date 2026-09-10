@@ -46,13 +46,22 @@ test('the extension a new project starts from compiles', async () => {
 })
 
 test('the template hands out the spelling that carries type declarations', () => {
-  const client = extensionTemplate('probe-extension')['src/client.tsx']
+  const files = extensionTemplate('probe-extension')
 
-  assert.match(client, /from '@opencroft\/client'/)
-  // Not merely "the new one is present". Both spellings resolve to shims over
-  // the same host object, so a template importing both would compile and read
-  // as correct while still teaching the untyped one to every extension made
-  // from it. Only one of them has declarations behind it, so only one may
-  // appear here.
-  assert.doesNotMatch(client, /@ext\/host/)
+  assert.match(files['src/client.tsx'], /from '@opencroft\/client'/)
+
+  // Not merely "the new one is present". Every spelling resolves to a shim over
+  // the same host object, so a template importing two of them would compile and
+  // read as correct while still teaching an untyped one to every extension made
+  // from it. There are TWO untyped ones, not one -- the host surface and the ui
+  // surface -- and both are named below, because a test that forbids one of a
+  // pair reads as a rule about the pair and is not.
+  //
+  // Over every file the template emits rather than the client one alone: the
+  // untyped host spelling is resolved on the server side too, so a template
+  // that reached for it there would teach the same thing from a file this
+  // assertion was not looking at.
+  const emitted = Object.values(files).join('\n')
+  assert.doesNotMatch(emitted, /@ext\/host/)
+  assert.doesNotMatch(emitted, /@ext\/ui/)
 })
