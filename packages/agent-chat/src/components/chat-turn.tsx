@@ -6,6 +6,10 @@ import { useState } from 'react'
 // The type import back the other way is erased, so this is not a runtime cycle.
 import { type AuthorRun, authorRuns } from '../author-runs'
 import { Markdown } from './markdown'
+// A relative sibling path rather than this package's own alias: the two files
+// are in one package, so nothing has to resolve through the package's exports
+// map to reach one from the other.
+import { SelectionBadge } from './ui/composer/selection-badge'
 
 import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
 import { Button } from 'ui/components/ui/button'
@@ -198,11 +202,29 @@ export interface ChatAuthorAccount {
   avatarUrl?: string | null
 }
 
+// Something that travelled WITH a message and is not part of its words: a
+// passage the reader had selected, a reference to whatever they were looking at.
+//
+// Presentation only, and the host's to resolve. This draws one chip per
+// attachment; how it was attached, and what the agent actually received, is not
+// visible from here and deliberately is not this component's business.
+export interface MessageAttachment {
+  // What the chip says. Short -- it truncates.
+  label: string
+  // The whole of what travelled, for a reader who would rather see it than be
+  // told it exists. Optional, because a host may have nothing but the label.
+  detail?: string
+}
+
 export interface ChatUserMessagePart {
   text: UserText
   author?: string
   authorAccount?: ChatAuthorAccount
   sentAt?: string
+  // What travelled with this message besides its words, drawn as chips above
+  // them. Absent or empty draws nothing, which is every message that carried
+  // only words.
+  attachments?: readonly MessageAttachment[]
   // A stable identity for this one message, where it has one.
   //
   // A message that has been sent does not: it is decoded out of a text that
@@ -561,6 +583,39 @@ function UserMessageBubble({
           It sits on the markdown rather than on the bubble because a line clamp
           is `-webkit-box`, and that display value cannot be put on a bordered
           bubble without destroying it. */}
+      {!preview && part.attachments?.length ? (
+        // ABOVE THE WORDS, which is where it was when the message was written:
+        // a composer's attachments row sits above the box being typed into, so
+        // the message is read in the order it was composed.
+        //
+        // Wrapping rather than scrolling sideways. Several chips on a narrow
+        // bubble is a real state, and a row that scrolled would put what the
+        // message carried behind a gesture.
+        //
+        // Left out of the collapsed form deliberately. That form is the opening
+        // few LINES of the message, kept short so a tall question cannot cover
+        // the reply it belongs to -- and a row of chips is neither its words nor
+        // a line of them.
+        <div className='flex min-w-0 flex-wrap items-center gap-1'>
+          {part.attachments.map((attachment, index) => (
+            // NEITHER CALLBACK WIRED, so the chip is a record rather than a
+            // control: the selection has already travelled, so there is nothing
+            // left to hold back and nothing to discard.
+            //
+            // Keyed by position, because a delivered message's attachments are
+            // read out of a text that cannot change -- nothing reorders, so the
+            // position IS the identity.
+            <SelectionBadge
+              key={index}
+              label={attachment.label}
+              // Everything the chip is not told to name itself is spread onto
+              // it, so the whole of what travelled reaches the reader through
+              // the ordinary title attribute rather than a prop of its own.
+              title={attachment.detail ?? attachment.label}
+            />
+          ))}
+        </div>
+      ) : null}
       <Markdown text={part.text} className={preview ? 'line-clamp-3' : undefined} />
     </div>
   )

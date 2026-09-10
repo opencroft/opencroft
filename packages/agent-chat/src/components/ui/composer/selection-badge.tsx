@@ -39,13 +39,22 @@ export interface SelectionBadgeProps extends Omit<ComponentPropsWithoutRef<'span
   label: string
   // Whether the selection goes with the next message. Positive form on
   // purpose -- the control states what will happen, not what will not.
-  included: boolean
+  //
+  // Optional, and going by default: a chip drawn on a message that has already
+  // been sent is a record that the selection went with it, and a readout has no
+  // toggle to disagree with.
+  included?: boolean
   // A press on the label: hold the selection back, or send it again. The
   // selection itself survives either way; only this flag moves.
-  onToggleIncluded: () => void
+  //
+  // OMIT IT and the label is a readout rather than a toggle -- see the note on
+  // the component below for why absence decides that rather than a flag.
+  onToggleIncluded?: () => void
   // The X: drop the selection entirely. Distinct from holding it back, which
   // is why the two are separate controls rather than one three-state press.
-  onClear: () => void
+  //
+  // OMIT IT and no X is drawn, for the same reason.
+  onClear?: () => void
 }
 
 // What the reader has selected somewhere else on the screen, shown in the
@@ -87,12 +96,37 @@ export interface SelectionBadgeProps extends Omit<ComponentPropsWithoutRef<'span
 // already truncates. So the chip carries `min-w-0` and no `shrink-0` -- which
 // is what marks it, to the flex row it sits in, as the one that yields.
 //
+// EITHER CONTROL APPEARS ONLY WHERE THE HOST GAVE IT SOMETHING TO DO, and that
+// is what lets this same chip stand on a message that has already gone. There
+// it is a record rather than a control: the selection travelled, so there is
+// nothing left to hold back and nothing to discard. The handler being absent is
+// what decides it, rather than a read-only flag -- a flag would also admit the
+// state that means nothing, read-only with handlers wired, and a component
+// cannot offer an action it was given no way to perform. A disabled button
+// would be the wrong shape for the same reason: it says "this could be pressed,
+// but not now", which was never true here.
+//
 // Presentational throughout: it holds no selection, stores no flag and phrases
 // nothing about what the agent receives.
 export const SelectionBadge = forwardRef<HTMLSpanElement, SelectionBadgeProps>(function SelectionBadge(
-  { label, included, onToggleIncluded, onClear, className, ...rest },
+  { label, included = true, onToggleIncluded, onClear, className, ...rest },
   ref,
 ) {
+  // The chip's contents, written once and used by both forms so the truncation
+  // and the three state signals cannot drift between the control and the
+  // readout.
+  //
+  // min-w-0 as well as truncate: whatever box holds this is a flex container,
+  // and a flex item refuses to shrink below its longest unbreakable word until
+  // it is told it may. Without it a long path widens the chip instead of being
+  // cut.
+  const glyphAndLabel = (
+    <>
+      {included ? <Eye className='size-3.5 shrink-0' /> : <EyeOff className='size-3.5 shrink-0' />}
+      <span className={cn('min-w-0 truncate', included ? '' : 'line-through')}>{label}</span>
+    </>
+  )
+
   return (
     <span
       ref={ref}
@@ -114,40 +148,49 @@ export const SelectionBadge = forwardRef<HTMLSpanElement, SelectionBadgeProps>(f
         className,
       )}
     >
-      <Button
-        type='button'
-        variant='ghost'
-        onClick={onToggleIncluded}
-        // The composer keeps focus when this is pressed -- losing it
-        // mid-sentence to a control beside the box is its own small betrayal.
-        onMouseDown={(event) => event.preventDefault()}
-        aria-pressed={included}
-        title={
-          included
-            ? `"${label}" is sent with the next message — press to hold it back`
-            : `"${label}" is held back — press to send it with the next message`
-        }
-        className={cn(INSET_CONTROL, 'min-w-0 gap-1 px-1 text-xs', included ? '' : 'text-muted-foreground')}
-      >
-        {included ? <Eye className='size-3.5 shrink-0' /> : <EyeOff className='size-3.5 shrink-0' />}
-        {/* min-w-0 as well as truncate: the button is a flex container, and a
-            flex item refuses to shrink below its longest unbreakable word
-            until it is told it may. Without it a long path widens the control
-            instead of being cut. */}
-        <span className={cn('min-w-0 truncate', included ? '' : 'line-through')}>{label}</span>
-      </Button>
-      <Button
-        type='button'
-        variant='ghost'
-        size='icon'
-        onClick={onClear}
-        onMouseDown={(event) => event.preventDefault()}
-        title='Clear selection'
-        aria-label='Clear selection'
-        className={INSET_CONTROL_SQUARE}
-      >
-        <X className='size-3.5' />
-      </Button>
+      {onToggleIncluded ? (
+        <Button
+          type='button'
+          variant='ghost'
+          onClick={onToggleIncluded}
+          // The composer keeps focus when this is pressed -- losing it
+          // mid-sentence to a control beside the box is its own small betrayal.
+          onMouseDown={(event) => event.preventDefault()}
+          aria-pressed={included}
+          title={
+            included
+              ? `"${label}" is sent with the next message — press to hold it back`
+              : `"${label}" is held back — press to send it with the next message`
+          }
+          className={cn(INSET_CONTROL, 'min-w-0 gap-1 px-1 text-xs', included ? '' : 'text-muted-foreground')}
+        >
+          {glyphAndLabel}
+        </Button>
+      ) : (
+        <span
+          className={cn(
+            INSET_CONTROL,
+            'inline-flex min-w-0 items-center gap-1 px-1 text-xs',
+            included ? '' : 'text-muted-foreground',
+          )}
+        >
+          {glyphAndLabel}
+        </span>
+      )}
+      {onClear ? (
+        <Button
+          type='button'
+          variant='ghost'
+          size='icon'
+          onClick={onClear}
+          onMouseDown={(event) => event.preventDefault()}
+          title='Clear selection'
+          aria-label='Clear selection'
+          className={INSET_CONTROL_SQUARE}
+        >
+          <X className='size-3.5' />
+        </Button>
+      ) : null}
     </span>
   )
 })

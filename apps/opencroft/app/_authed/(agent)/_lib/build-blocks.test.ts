@@ -363,3 +363,65 @@ test('a turn whose every message strips to nothing draws no bubble, and still en
     ['t:1'],
   )
 })
+
+// ---------------------------------------------------------------------------
+// What a message CARRIED, as opposed to what it said.
+//
+// The strip above is total, which is the defect these cover: a message sent with
+// a passage attached rendered identically to one sent with nothing, both in the
+// queue and once delivered. So the same text has to yield both — the words with
+// the tag gone, and a record that the tag was there.
+// ---------------------------------------------------------------------------
+
+const SELECTION =
+  '<opencroft-user-selection>Design project: Northwind (northwind)\nComponent: pay-form</opencroft-user-selection>\n'
+
+test('an attached selection survives the strip as an attachment, and stays out of the words', () => {
+  const [part] = partsOf(buildBlocks([userMessage(1, `${SELECTION}what does this do?`)])[0]) ?? []
+  assert.equal(part?.text, 'what does this do?', 'the tag itself never belongs in the words')
+  assert.deepEqual(part?.attachments, [
+    {
+      label: 'Design project: Northwind (northwind)',
+      detail: 'Design project: Northwind (northwind)\nComponent: pay-form',
+    },
+  ])
+})
+
+test('a message waiting to be read reports the same attachment as it will once delivered', () => {
+  // One message, two surfaces. The queue row and the transcript row read the
+  // same text through the same function, so they cannot disagree about what is
+  // attached -- which they did, by both showing nothing.
+  const text = `${SELECTION}what does this do?`
+  const [queued] = buildUnread([waiting('q9', 'Alex Rivera', '2026-03-04T09:12:00.000Z', text)])
+  const [delivered] = partsOf(buildBlocks([userMessage(1, text)])[0]) ?? []
+  assert.deepEqual(queued?.attachments, delivered?.attachments)
+  assert.equal(queued?.attachments?.length, 1)
+})
+
+test('a message with nothing attached carries no attachments field at all', () => {
+  // Absent rather than empty: an empty list would draw an empty row above the
+  // words, and every message ever sent before this existed is in this state.
+  const [part] = partsOf(buildBlocks([userMessage(1, 'just a question')])[0]) ?? []
+  assert.equal(part?.attachments, undefined)
+  assert.equal(buildUnread([{ id: 'q10', kind: 'system', text: '/compact' }])[0]?.attachments, undefined)
+})
+
+test('an empty selection tag attaches nothing rather than an unnamed chip', () => {
+  const raw = '<opencroft-user-selection>   </opencroft-user-selection>\nstill a question'
+  const [part] = partsOf(buildBlocks([userMessage(1, raw)])[0]) ?? []
+  assert.equal(part?.text, 'still a question')
+  assert.equal(part?.attachments, undefined)
+})
+
+test('each message of a batch keeps its own attachment', () => {
+  // Per message, not per delivery: a turn is a batch, and an attachment belongs
+  // to the message it was sent with rather than to whatever else travelled at
+  // the same time.
+  const raw = encodeBatch([
+    sent('Alex Rivera', '2026-03-04T09:12:00.000Z', `${SELECTION}what does this do?`),
+    sent('Sam Okonkwo', '2026-03-04T09:13:00.000Z', 'and no attachment here'),
+  ])
+  const parts = partsOf(buildBlocks([userMessage(1, raw)])[0]) ?? []
+  assert.equal(parts[0]?.attachments?.length, 1)
+  assert.equal(parts[1]?.attachments, undefined)
+})

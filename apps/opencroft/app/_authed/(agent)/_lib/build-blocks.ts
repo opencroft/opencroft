@@ -1,5 +1,5 @@
 import type { Block } from 'agent-chat/components/chat-conversation'
-import type { ChatUserMessagePart, DetailItem, UserText } from 'agent-chat/components/chat-turn'
+import type { ChatUserMessagePart, DetailItem, MessageAttachment, UserText } from 'agent-chat/components/chat-turn'
 import type { ChatUnreadMessage } from 'agent-chat/components/chat-unread'
 import { toUserParts } from 'agent-chat/user-parts'
 import type { QueuedPrompt } from 'agent-client/types'
@@ -48,6 +48,43 @@ export function userText(raw: string): UserText | null {
   return stripped.trim() ? (stripped as UserText) : null
 }
 
+// The envelope tag a reader's selection travels in. Not anchored: one delivery
+// can carry several messages, and this reads each message's own text.
+const USER_SELECTION_TAG = /<opencroft-user-selection>([\s\S]*?)<\/opencroft-user-selection>/gi
+
+// What a message carried besides its words, so the bubble can show that it
+// carried anything at all. Without this the strip above is total: a message sent
+// with a page of context attached renders identically to one sent with none.
+//
+// Only the reader's own selection, not every `<opencroft-*>` part. The task and
+// instruction tags are standing context this application injects once per
+// session -- nobody attached them, and a chip on the first message of every
+// conversation would say nothing about that message.
+//
+// THE LABEL IS DERIVED, and that is a property of the envelope rather than a
+// shortcut taken here. The tag carries what the AGENT received; the label the
+// composer's chip showed was presentation and never travelled, so there is
+// nothing on the wire to read it from. Every message sent before these chips
+// existed is in that state permanently, which is why deriving it is not a
+// stopgap until the wire changes -- it is the only thing that can ever describe
+// one of those.
+//
+// The first line, because these selections introduce themselves: a project
+// reference opens by naming the project, a diff by naming the file. The whole of
+// it goes on the chip's title, so the choice of line hides nothing.
+function attachmentsOf(raw: string): MessageAttachment[] {
+  const attachments: MessageAttachment[] = []
+  for (const [, content] of raw.matchAll(USER_SELECTION_TAG)) {
+    const detail = content.trim()
+    if (!detail) {
+      continue
+    }
+    const [firstLine] = detail.split('\n')
+    attachments.push({ label: firstLine.trim(), detail })
+  }
+  return attachments
+}
+
 // A user turn as the transcript renders it: the whole turn as it was delivered,
 // and that same delivery read back into the messages it carried.
 //
@@ -67,7 +104,7 @@ function userTurn(
   // who anybody is.
   authors?: Record<string, ResolvedAuthor>,
 ): { text: UserText; parts: ChatUserMessagePart[] } | null {
-  const parts = toUserParts(raw, userText, authors)
+  const parts = toUserParts(raw, userText, authors, attachmentsOf)
   const text = userText(raw)
   return parts.length > 0 && text !== null ? { text, parts } : null
 }
@@ -110,6 +147,11 @@ export function buildUnread(
   return queue.map((entry): ChatUnreadMessage => {
     const author = entry.kind === 'message' ? entry.sender : undefined
     const authorAccount = author ? authors?.[author] : undefined
+    // The same reading a delivered message gets, through the same function --
+    // not a second one that agrees with it. A message waiting to be read and the
+    // same message once it has been handed over are one message, and one of them
+    // showing what it carries while the other does not would be two.
+    const attachments = attachmentsOf(entry.text)
     return {
       id: entry.id,
       text: userText(entry.text) ?? EMPTY_USER_TEXT,
@@ -121,6 +163,9 @@ export function buildUnread(
       // annotation on the callback is what checks the rest of this object; it
       // cannot reach inside a spread, so the spread carries its own.
       ...(authorAccount ? ({ authorAccount } satisfies Pick<ChatUnreadMessage, 'authorAccount'>) : {}),
+      // Carried on the same terms: an empty list is absence, and a message
+      // holding one would draw an empty row above its words.
+      ...(attachments.length ? ({ attachments } satisfies Pick<ChatUnreadMessage, 'attachments'>) : {}),
       sentAt: entry.kind === 'message' ? entry.sentAt : undefined,
     }
   })

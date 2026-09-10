@@ -1,6 +1,6 @@
 import { decodeBatch, splitDelivery } from 'agent-client/queue-tags'
 
-import type { ChatUserMessagePart, UserText } from './components/chat-turn'
+import type { ChatUserMessagePart, MessageAttachment, UserText } from './components/chat-turn'
 
 /**
  * Read a delivered prompt back into the messages it was built from.
@@ -46,6 +46,19 @@ export function toUserParts(
   // Optional because a host with no notion of accounts has nothing to pass and
   // should not have to say so.
   accounts?: Record<string, { name: string; avatarUrl?: string | null }>,
+  // What travelled with each message besides its words, read back out of the
+  // raw text by the host that put it there.
+  //
+  // A SECOND SEAM rather than a wider `render`, because the two answer different
+  // questions: `render` decides what the words are and may decide there are
+  // none, which drops the message; this only ever adds to a message that is
+  // being drawn anyway. Folding them together would let an attachment reader
+  // silently suppress a bubble.
+  //
+  // Optional, because a host that attaches nothing has nothing to say here --
+  // and because every message written before anything did is in exactly that
+  // state.
+  attachmentsOf?: (raw: string) => readonly MessageAttachment[],
 ): ChatUserMessagePart[] {
   const parts: ChatUserMessagePart[] = []
   for (const message of decodeBatch(prompt)) {
@@ -53,6 +66,7 @@ export function toUserParts(
     if (text === null) {
       continue
     }
+    const attachments = attachmentsOf?.(message.text)
     // The wire is unchanged: the tag attribute and the decoded message field
     // are both still `sender`. Only the rendered part renames, because what it
     // holds is the durable identifier rather than a display name.
@@ -67,6 +81,10 @@ export function toUserParts(
       // reaches the component that reads it. The array's element type checks
       // everything else here; it cannot reach inside a spread.
       ...(authorAccount ? ({ authorAccount } satisfies Pick<ChatUserMessagePart, 'authorAccount'>) : {}),
+      // Spread on the same terms and for the same reason as the account above:
+      // an empty list is absence, not a value, and a part carrying one would
+      // make the component draw an empty row where nothing was attached.
+      ...(attachments?.length ? ({ attachments } satisfies Pick<ChatUserMessagePart, 'attachments'>) : {}),
       sentAt: message.sentAt || undefined,
     })
   }
