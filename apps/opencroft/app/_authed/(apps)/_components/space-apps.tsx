@@ -33,9 +33,9 @@ function paramsSummary(instance: SpaceAppInstance, meta: AppMeta | undefined): s
 /**
  * The Apps section of a space's settings, in two tabs: the installed
  * instances — each row opening the instance's settings page (name,
- * parameters, transfer, removal) and carrying one affordance for the App
- * itself — and the searchable catalog to add from, whose rows lead to the
- * add-app form page.
+ * parameters, transfer, removal) and carrying one affordance that opens the
+ * App itself in a new tab — and the searchable catalog to add from, whose
+ * rows lead to the add-app form page.
  */
 export function SpaceApps({ spaceSlug, apps, instances, tab, onTabChange }: Props) {
   const [search, setSearch] = useState('')
@@ -82,12 +82,24 @@ export function SpaceApps({ spaceSlug, apps, instances, tab, onTabChange }: Prop
                         <span className='truncate text-xs text-muted-foreground'>{subtitle}</span>
                       </Flex>
                     </Link>
-                    {/* The row's ONE action: the App itself. The row body
-                        leads to the instance's settings page instead, which
-                        holds the name, the parameters, the transfer and the
-                        removal. */}
-                    <Button asChild variant='ghost' size='icon' aria-label='Open' title='Open'>
-                      <Link to='/space/$slug/app/$instanceId' params={{ slug: spaceSlug, instanceId: instance.id }}>
+                    {/* The row's ONE action: the App itself, in a new tab, so
+                        the icon is literal and the settings this row leads to
+                        stay open behind it. The target is what carries that:
+                        a link only routes in place while its target is absent
+                        or _self, so setting it hands the click back to the
+                        browser. Current browsers imply `noopener` for a
+                        `_blank` target; writing it out beside `noreferrer`
+                        states the intent in one place and costs nothing.
+                        The accessible name carries the new tab too, because
+                        the icon only announces it to people who can see it;
+                        the visible tooltip stays the short form. */}
+                    <Button asChild variant='ghost' size='icon' aria-label='Open in a new tab' title='Open'>
+                      <Link
+                        to='/space/$slug/app/$instanceId'
+                        params={{ slug: spaceSlug, instanceId: instance.id }}
+                        target='_blank'
+                        rel='noopener noreferrer'
+                      >
                         <ExternalLink />
                       </Link>
                     </Button>
