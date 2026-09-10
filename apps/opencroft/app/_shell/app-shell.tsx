@@ -69,10 +69,10 @@ function AppSidebar({ spaces, dashboards, pinnedDashboardSlugs }: SidebarProps) 
         <SidebarGroup>
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton asChild tooltip='Group chats' isActive={pathname.startsWith('/group-chats')}>
+              <SidebarMenuButton asChild tooltip='Chats' isActive={pathname.startsWith('/group-chats')}>
                 <Link to='/group-chats'>
                   <MessagesSquare />
-                  <span>Group chats</span>
+                  <span>Chats</span>
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
