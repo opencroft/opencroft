@@ -23,12 +23,9 @@ export function extensionTemplate(slug: string): Record<string, string> {
         2,
       ) + '\n',
 
-    'src/client.tsx': `import {
-  defineExtension,
-  NodeFrame,
-  OutputHandle,
-  icons,
-} from '@ext/host';
+    'src/client.tsx': `import { legacy } from '@opencroft/client';
+
+const { defineExtension, NodeFrame, OutputHandle, icons } = legacy;
 
 const ${camelCase(slug)}Node = ({ data, selected }) => {
   return (

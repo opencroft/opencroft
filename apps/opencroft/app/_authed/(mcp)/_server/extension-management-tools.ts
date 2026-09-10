@@ -59,7 +59,7 @@ export const definitions = [
   {
     name: 'create_extension',
     description:
-      'Create a new local extension on disk. Writes files under data/extensions/local/<slug>/. At minimum must include extension.json and src/client.tsx. The manifest.id must be "local/<slug>" and match the slug used in the folder. Client source must use `export default defineExtension({ manifest: { id }, nodes: [...] })` from "@ext/host".',
+      'Create a new local extension on disk. Writes files under data/extensions/local/<slug>/. At minimum must include extension.json and src/client.tsx. The manifest.id must be "local/<slug>" and match the slug used in the folder. Client source must use `export default defineExtension({ manifest: { id }, nodes: [...] })`, taking `defineExtension` and the rest of the client surface from the `legacy` namespace of "@opencroft/client" — that spelling is the one carrying type declarations.',
     inputSchema: {
       type: 'object' as const,
       properties: {
