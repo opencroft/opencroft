@@ -588,19 +588,22 @@ function UserMessageBubble({
         // a composer's attachments row sits above the box being typed into, so
         // the message is read in the order it was composed.
         //
-        // Wrapping rather than scrolling sideways. Several chips on a narrow
-        // bubble is a real state, and a row that scrolled would put what the
-        // message carried behind a gesture.
+        // STACKED, NOT WRAPPED SIDE BY SIDE. Each of these is a quotation with a
+        // rule down its left, and quotations set beside one another read as
+        // columns of a table rather than as separate things that were carried.
+        // Several on one message is a real state, and stacking is also what
+        // keeps a long one from squeezing its neighbour to a few characters.
         //
         // Left out of the collapsed form deliberately. That form is the opening
         // few LINES of the message, kept short so a tall question cannot cover
-        // the reply it belongs to -- and a row of chips is neither its words nor
+        // the reply it belongs to -- and quoted context is neither its words nor
         // a line of them.
-        <div className='flex min-w-0 flex-wrap items-center gap-1'>
+        <div className='flex min-w-0 flex-col gap-1'>
           {part.attachments.map((attachment, index) => (
-            // NEITHER CALLBACK WIRED, so the chip is a record rather than a
-            // control: the selection has already travelled, so there is nothing
-            // left to hold back and nothing to discard.
+            // The same component the composer quotes the live selection with,
+            // rendering the same way: here it is a record, and what makes it one
+            // is that the message has already gone, not a flag on the element.
+            // There is no control in it to leave unwired.
             //
             // Keyed by position, because a delivered message's attachments are
             // read out of a text that cannot change -- nothing reorders, so the
@@ -608,9 +611,10 @@ function UserMessageBubble({
             <SelectionBadge
               key={index}
               label={attachment.label}
-              // Everything the chip is not told to name itself is spread onto
-              // it, so the whole of what travelled reaches the reader through
-              // the ordinary title attribute rather than a prop of its own.
+              // Everything the quotation is not told to name itself is spread
+              // onto it, so the whole of what travelled reaches the reader
+              // through the ordinary title attribute rather than a prop of its
+              // own.
               title={attachment.detail ?? attachment.label}
             />
           ))}

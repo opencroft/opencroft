@@ -5,9 +5,18 @@
   // needs the automatic runtime to actually execute a component; the app's
   // real "jsx": "preserve" is correct for the bundler and stays untouched.
   //
-  // The ui package is listed because its exports map publishes raw `.tsx`
-  // source rather than a built boundary, so a shared component rendered under
-  // this runner executes those files inside this program.
+  // The ui and agent-chat packages are listed because their exports maps
+  // publish raw `.tsx` source rather than a built boundary, so a shared
+  // component rendered under this runner executes those files inside this
+  // program.
+  //
+  // agent-chat joined the list on 10.09.2026, the first time an app test
+  // rendered one of its components rather than only importing its types. The
+  // symptom was the one described below, from the component's own frame:
+  // "React is not defined" out of a file that imports nothing but `forwardRef`.
+  // Nothing in that file is wrong, and nothing in the app's own configuration
+  // is either -- which is why it is worth naming here rather than diagnosing
+  // again.
   //
   // What listing them changes: the JSX transform those files get. tsx loads
   // exactly one tsconfig per process -- the one named here -- and asks it about
@@ -37,5 +46,12 @@
   "compilerOptions": {
     "jsx": "react-jsx"
   },
-  "include": ["**/*.ts", "**/*.tsx", "../../packages/ui/src/**/*.ts", "../../packages/ui/src/**/*.tsx"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "../../packages/ui/src/**/*.ts",
+    "../../packages/ui/src/**/*.tsx",
+    "../../packages/agent-chat/src/**/*.ts",
+    "../../packages/agent-chat/src/**/*.tsx"
+  ]
 }

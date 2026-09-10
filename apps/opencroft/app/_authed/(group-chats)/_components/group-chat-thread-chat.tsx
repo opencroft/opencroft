@@ -20,6 +20,7 @@ import { buildBlocks, buildUnread } from '@/app/_authed/(agent)/_lib/build-block
 import { wrapUserSelection } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { SelectionBadge } from '@/app/_authed/(extension-runtime)/_client/selection-badge'
 import { useOptionalSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
+import { SelectionToggle } from '@/app/_authed/(extension-runtime)/_client/selection-toggle'
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { threadSendRefusal } from '@/app/_authed/(group-chats)/_lib/send-failure'
 import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
@@ -67,19 +68,26 @@ interface GroupChatThreadChatProps {
   renderFrame?: (parts: ThreadChatParts) => ReactNode
 }
 
-// The chip that rides in the composer's attachments row. It renders nothing
-// unless a SelectionProvider with a live selection encloses this component, so
-// the plain thread route (no provider) is unchanged by it. Module-level for
-// identity stability — it feeds the memoized command bar.
+// The two halves of the selection in the composer: the quotation that rides in
+// the attachments row above the input, and the toggle that stands beside the
+// context ring below it. Neither renders anything unless a SelectionProvider
+// with a live selection encloses this component, so the plain thread route (no
+// provider) is unchanged by both. Module-level for identity stability — they
+// feed the memoized command bar.
 //
-// Handed to the row only when there IS a selection, which is a second test of
-// the same condition and has to be. The row draws around whatever it is given,
-// and an element that renders null is still an element — so passing this one
-// unconditionally would put a strip of empty row under the composer at all
-// times, which is exactly what the row is built not to do. The two tests are
-// asking different questions: this one whether the row exists, the chip's own
-// whether there is a chip to draw in it.
+// Handed to their slots only when there IS a selection, which is a second test
+// of the same condition and has to be. A slot draws around whatever it is
+// given, and an element that renders null is still an element — so passing
+// either unconditionally would put a strip of empty row under the composer at
+// all times, which is exactly what those slots are built not to do. The two
+// tests are asking different questions: this one whether the slot exists, the
+// component's own whether there is anything to draw in it.
+//
+// The quotation carries the second condition as well, and only the quotation:
+// it is hidden while the selection is held back, whereas the toggle is how it
+// is brought back and must stand there whichever way the flag is set.
 const SELECTION_BADGE = <SelectionBadge />
+const SELECTION_TOGGLE = <SelectionToggle />
 
 export function GroupChatThreadChat({
   thread,
@@ -283,7 +291,8 @@ export function GroupChatThreadChat({
       savedDraft={thread.draft ?? undefined}
       onDraftChange={onDraftChange}
       leadingBarContent={leadingBarContent}
-      attachments={selectionScope?.selection ? SELECTION_BADGE : undefined}
+      attachments={selectionScope?.selection && selectionScope.passEnabled ? SELECTION_BADGE : undefined}
+      attachmentControls={selectionScope?.selection ? SELECTION_TOGGLE : undefined}
     />
   )
 

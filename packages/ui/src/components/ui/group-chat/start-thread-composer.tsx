@@ -61,6 +61,12 @@ export interface StartThreadComposerProps {
   // does not own the message, so it cannot clear what it did not set.
   onDismissError?: () => void
   placeholder?: string
+  // Host content in the action row's readout cluster -- the run of controls
+  // and readouts that follows the leading slot, and where a composer with a
+  // session draws its context ring. Named for what a host puts there rather
+  // than for the slot it lands in, so the two composers a host wires take the
+  // same prop under the same name.
+  attachmentControls?: ReactNode
   // Shown when the group chat has no agent members yet.
   emptyState?: ReactNode
   className?: string
@@ -88,6 +94,20 @@ export interface StartThreadComposerProps {
 // the action row, so it sits under the full-width message rather than stealing
 // width from it.
 //
+// `attachmentControls` goes to `configExtra`, the bar's readout slot, and the
+// rename is the whole of the mapping. There is no usage readout on this
+// composer -- there is no session yet to have spent anything -- so a control
+// described by where it sits relative to the ring has no anchor here to be
+// positioned against. The bar's own slot IS that anchor's place: a host that
+// draws the ring puts it in the same slot, ahead of whatever else goes there.
+// So the control lands in the same relative spot on both composers without
+// this one deciding a position of its own, which would be a second answer to a
+// question the bar already answers.
+//
+// Straight through rather than merged with anything, because this composer
+// passes no `configs` and no readouts -- there is nothing here for a host's
+// content to be ordered against.
+//
 // The name field is standing, not behind a toggle: it costs one row whether or
 // not it is filled in, and a person typing a name should not need to find an
 // icon first. Leaving it empty is how a thread stays unnamed -- the host
@@ -105,6 +125,7 @@ export function StartThreadComposer({
   error,
   onDismissError,
   placeholder,
+  attachmentControls,
   emptyState,
   className,
 }: StartThreadComposerProps) {
@@ -169,6 +190,7 @@ export function StartThreadComposer({
         startIcon={false}
         approval={false}
         leading={picker}
+        configExtra={attachmentControls}
         sendError={error}
         onDismissSendError={onDismissError}
       />

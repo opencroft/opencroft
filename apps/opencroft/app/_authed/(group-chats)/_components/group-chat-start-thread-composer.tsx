@@ -17,11 +17,18 @@ import { StartThreadComposer } from 'ui/group-chat/start-thread-composer'
 import { wrapUserSelection } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { SelectionBadge } from '@/app/_authed/(extension-runtime)/_client/selection-badge'
 import { useOptionalSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
+import { SelectionToggle } from '@/app/_authed/(extension-runtime)/_client/selection-toggle'
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { type MemberRef, startGroupChatThread } from '@/app/_authed/(group-chats)/_server/actions'
 import { useLocalStorage } from '@/hooks/utils/use-local-storage'
 import { cn } from '@/lib/utils'
+
+// Hoisted so the element identity is stable across renders: it takes no props
+// -- it reads the selection scope itself -- so a fresh element every render
+// would say the subtree changed on every keystroke in the composer above it,
+// when nothing about it has. The same element lets React leave it alone.
+const SELECTION_TOGGLE = <SelectionToggle />
 
 interface Props {
   groupChatId: string
@@ -143,9 +150,13 @@ export function GroupChatStartThreadComposer({
     // changing the width the composer would have had on its own.
     <div className={cn('flex min-w-0 flex-1 flex-col gap-1', className)}>
       {/* Inside the frame, above the bar — the same place the live composer
-          shows its selection through the command bar's attachments slot, and
-          the same condition: a badge only when something is selected. Null
-          outside a selection scope (the group-chat screen). */}
+          shows its selection through the command bar's attachments slot. Null
+          outside a selection scope (the group-chat screen).
+
+          The condition here is only half of it, and deliberately so: the
+          quotation is also held back while the toggle below is off, and that
+          half belongs to the quotation rather than to this line. Repeating it
+          here would put the rule in two places and let them disagree. */}
       {selectionScope?.selection ? <SelectionBadge /> : null}
       <StartThreadComposer
         agents={memberAgents}
@@ -169,6 +180,11 @@ export function GroupChatStartThreadComposer({
         error={error}
         onDismissError={() => setError(undefined)}
         placeholder={placeholder}
+        // The toggle is offered whenever there IS a selection, held back or
+        // not -- it is the only way back from held-back, so tying it to the
+        // quotation's own condition would hide the control that undoes the
+        // hiding. Absent outside a selection scope, like everything else here.
+        attachmentControls={selectionScope?.selection ? SELECTION_TOGGLE : undefined}
       />
     </div>
   )

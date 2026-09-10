@@ -134,6 +134,24 @@ export interface UseAgentCommandBarOptions {
    *  under every composer. Must be identity-stable when nothing meaningful
    *  changed; it feeds the memoized bar. */
   attachments?: ReactNode
+  /** Host slot: a control that governs the attachments row above — placed at
+   *  the LEADING EDGE of the action row's readout cluster, immediately before
+   *  the context ring.
+   *
+   *  A slot of its own rather than a corner of `controls`, because the two
+   *  clusters mean different things: `controls` acts on the message being
+   *  typed (dictation and the like), while this acts on what is riding along
+   *  with it. Its position is beside the readouts for the same reason — what a
+   *  message is carrying is a fact about the message, not another way to write
+   *  one.
+   *
+   *  Nothing in this package knows what an attachment is or what governing one
+   *  means; the slot places whatever it is given. Given nothing, no element is
+   *  rendered — same contract as `attachments`, and the same obligation on the
+   *  host: an element that renders null is not nothing. Must be
+   *  identity-stable when nothing meaningful changed; it feeds the memoized
+   *  bar. */
+  attachmentControls?: ReactNode
   /** Discards the session and starts a fresh one, offered from the ring's
    *  popover. Omit to render the ring with no Clear button. */
   onClear?: () => void
@@ -190,6 +208,7 @@ export function useAgentCommandBar({
   compact,
   onClear,
   attachments,
+  attachmentControls,
   presence,
 }: UseAgentCommandBarOptions): ReactElement {
   // Lazy init so a session opened with an existing draft paints with it
@@ -651,11 +670,19 @@ export function useAgentCommandBar({
 
   const configExtra = useMemo(() => {
     const booleanOptions = selectLeftoverBooleanOptions(configOptions)
-    if (!usage && booleanOptions.length === 0) {
+    // The host's slot counts towards the cluster being occupied. Without it in
+    // this test a composer whose only readout is the host's own control
+    // renders no cluster at all, and the control it was handed is dropped with
+    // nothing to say so.
+    if (!attachmentControls && !usage && booleanOptions.length === 0) {
       return null
     }
     return (
       <>
+        {/* BEFORE the context ring, which is a position rather than a
+            preference: the ring is a readout of what the session is holding,
+            and what this message is about to add to it reads ahead of it. */}
+        {attachmentControls}
         {usage ? (
           <ContextRing
             usedTokens={usage.used}
@@ -676,7 +703,7 @@ export function useAgentCommandBar({
         ) : null}
       </>
     )
-  }, [configOptions, usage, compact, onClear])
+  }, [attachmentControls, configOptions, usage, compact, onClear])
 
   // Memoized for element identity, not for render cost -- see this hook's own
   // doc comment on why identity stability is the whole point. Every entry

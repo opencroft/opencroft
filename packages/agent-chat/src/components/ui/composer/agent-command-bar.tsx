@@ -518,13 +518,19 @@ export function AgentCommandBar({
           so nothing around it is remounted as this appears and clears. See the
           structural rule in this component's doc comment.
 
-          IT WRAPS rather than scrolling or clipping. Everything in this row is
-          something the user attached and can only detach from here, so a row
-          that could hide one of them fails at the only thing it does; the
-          panel standing a line taller is the cheaper cost -- and upward, so it
-          costs the transcript above rather than the composer. Children carry
-          `min-w-0` to shorten within a line, exactly as they do in the action
-          row. */}
+          IT WRAPS rather than scrolling or clipping. This row is the whole
+          statement of what the next message is carrying, so a row that could
+          hide one of them fails at the only thing it does; the panel standing
+          a line taller is the cheaper cost -- and upward, so it costs the
+          transcript above rather than the composer. Children carry `min-w-0`
+          to shorten within a line, exactly as they do in the action row.
+
+          That used to be argued from this row also being the only place to
+          detach from, which is no longer true of every host: one may put the
+          control that removes something in the action row instead, leaving
+          this row drawing a thing whose removal it does not own. The reason
+          survives it, because it was never about where the control is -- what
+          the reader cannot see is what they cannot decide about. */}
       {attachments ? <div className='flex min-w-0 flex-wrap items-center gap-1 px-1'>{attachments}</div> : null}
 
       <Textarea

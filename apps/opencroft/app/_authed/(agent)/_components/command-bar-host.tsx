@@ -61,6 +61,12 @@ interface AgentCommandBarHostProps {
    *  it. Must be identity-stable when nothing changed; it feeds the memoized
    *  bar. */
   attachments?: ReactNode
+  /** Rendered in the action row below the composer, at the start of the readout
+   *  cluster and before the context ring — forwarded to the package hook's slot
+   *  of the same name. This is where a control that governs the attachments row
+   *  goes; the same null-is-not-nothing rule applies, and it must be
+   *  identity-stable when nothing changed. */
+  attachmentControls?: ReactNode
   /** How often the session reads what is waiting for it, and how to change it —
    *  both from the session controller, forwarded straight to the package hook's
    *  slot of the same name. Must be identity-stable when nothing changed; it
@@ -104,6 +110,7 @@ export function AgentCommandBarHost({
   sendError,
   onDismissSendError,
   attachments,
+  attachmentControls,
   presence,
 }: AgentCommandBarHostProps) {
   const [autoApprove, setAutoApproveState] = useState(false)
@@ -186,6 +193,7 @@ export function AgentCommandBarHost({
     lockedConfigOptions: lockedConfigOptions,
     approvalTitles: APPROVAL_TITLES,
     attachments,
+    attachmentControls,
     presence,
   })
 
