@@ -27,7 +27,7 @@ import { useNodeContext } from '@/app/_authed/(dashboard)/_extension-system/use-
 import { ChatDock } from '@/app/_authed/(extension-runtime)/_client/chat-dock'
 import { ChatSelector } from '@/app/_authed/(extension-runtime)/_client/chat-selector'
 import { EmbeddedAgentChat } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
-import { GraphCanvas } from '@/app/_authed/(extension-runtime)/_client/graph-canvas'
+import { GraphCanvasLoading } from '@/app/_authed/(extension-runtime)/_client/graph-canvas-loading'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { createSafeIcons } from '@/app/_authed/(extension-runtime)/_client/safe-icons'
 import { SelectionProvider, useSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
@@ -320,6 +320,39 @@ function createStorageFor(extensionId: string, namespace?: string): ExtensionSto
     list: () => callAction(extensionId, '__storage_list', []) as Promise<string[]>,
     clear: () => callAction(extensionId, '__storage_clear', []) as Promise<void>,
   }
+}
+
+// ── The graph surface, reached lazily ──────────────────────────────────
+// This module is what anything asks when it wants to know what the host
+// offers: the extension compiler under bare `tsx`, the provider registry, and
+// suites that never draw a canvas. Importing the graph surface STATICALLY put
+// the whole editor subtree behind that question --
+//   graph-canvas -> space-canvas -> flow-editor -> @xyflow/react's stylesheet
+// -- so every consumer of the host API paid for the heaviest UI in the app,
+// and any runtime without a CSS loader could not load this module at all.
+// A dynamic import keeps the capability and drops the edge: the module
+// arrives when something actually renders a graph. See
+// host-import-graph.test.ts, which asserts the edge rather than the symptom.
+//
+// The Suspense boundary belongs here rather than at the call site, because
+// the call site is a compiled extension bundle that receives GraphCanvas
+// through the host API. A component handed out that way cannot also require
+// whoever renders it to remember a boundary.
+const LazyGraphCanvas = React.lazy(async () => ({
+  default: (await import('@/app/_authed/(extension-runtime)/_client/graph-canvas')).GraphCanvas,
+}))
+
+function GraphCanvas(props: { instanceId: string }) {
+  return React.createElement(
+    React.Suspense,
+    {
+      // The same component the canvas shows while it resolves its own view, so
+      // fetching the chunk and fetching the graph are one wait rather than two
+      // that merely happen to match today.
+      fallback: React.createElement(GraphCanvasLoading),
+    },
+    React.createElement(LazyGraphCanvas, props),
+  )
 }
 
 export const extensionUiApi = {

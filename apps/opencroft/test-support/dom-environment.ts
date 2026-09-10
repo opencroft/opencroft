@@ -18,6 +18,14 @@ export interface DomEnvironment {
 export async function installDomEnvironment(): Promise<DomEnvironment> {
   const { JSDOM } = await import('jsdom')
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
+    // A real origin. jsdom defaults the document to `about:blank`, whose
+    // `location.origin` is the literal string "null" -- a state no served page
+    // is ever in, and one that anything deriving a URL from the origin rejects.
+    // The auth client is the case that found this: it deliberately takes no
+    // baseURL so it addresses `/api/auth` on whatever origin served the page,
+    // so importing it under `about:blank` threw before any test ran. Which host
+    // this names is arbitrary; that it parses as an http origin is not.
+    url: 'http://localhost/',
     pretendToBeVisual: true,
   })
 

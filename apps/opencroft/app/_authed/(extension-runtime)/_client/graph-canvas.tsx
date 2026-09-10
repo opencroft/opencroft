@@ -3,9 +3,9 @@
 import { ReactFlowProvider } from '@xyflow/react'
 import { useEffect, useState } from 'react'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
-import { LogoLoader } from 'ui/logo-loader'
 
 import { CanvasNodesProvider } from '@/app/_authed/(dashboard)/_canvas/canvas-nodes-context'
+import { GraphCanvasLoading } from '@/app/_authed/(extension-runtime)/_client/graph-canvas-loading'
 import { SpaceCanvas } from '@/app/_authed/(space)/_components/space-canvas'
 import { getGraphViewForInstance } from '@/app/_authed/(space)/_server/actions'
 import type { GraphInstanceView } from '@/app/_authed/(space)/_server/actions-impl'
@@ -45,11 +45,7 @@ export function GraphCanvas({ instanceId }: { instanceId: string }) {
   }, [instanceId])
 
   if (view === undefined) {
-    return (
-      <div className='flex h-full min-h-24 items-center justify-center'>
-        <LogoLoader size={40} className='text-foreground' />
-      </div>
-    )
+    return <GraphCanvasLoading />
   }
   if (!view) {
     return (
