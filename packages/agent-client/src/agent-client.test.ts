@@ -2856,3 +2856,92 @@ test('a queue restored at session open stays held until the host wakes', async (
   h.endTurn()
   await settle()
 })
+
+// ── the wake and the reading cadence, together ─────────────────────────────
+//
+// Two independent holds, and waking releases exactly one of them. The gate
+// answers "may anything be delivered at all"; Presence answers "is this
+// agent's queue due yet". A wake that answered both would hand every agent its
+// whole queue the instant the instance came back, which is the interruption
+// the cadence exists to prevent -- and the moment it happens is a restart,
+// when the flood is least wanted.
+//
+// Asserted here rather than left to compose by inspection: the wake path is
+// six lines in resumeDelivery and the cadence is evaluated a call deeper, so
+// nothing in either place reads as depending on the other.
+
+test('a wake does not flood a session whose cadence is still holding', async () => {
+  let held = true
+  const h = await setup('openclaw', { shouldHoldDelivery: () => held })
+  h.client.setPresence(h.sessionId, { kind: 'custom', intervalMs: WINDOW_MS })
+  await h.client.prompt(h.sessionId, 'held', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  held = false
+  h.client.resumeDelivery()
+  await settle()
+  assert.deepEqual(deliveries(h), [], 'the wake hands the queue to the cadence, not to the agent')
+  // Nothing touches the session between the two assertions, so the arrival
+  // below can only be the window the wake itself re-armed. That is the half
+  // that separates "held by Presence" from "left until something else happens
+  // along to trigger a drain".
+  await afterWindow()
+  assert.deepEqual(deliveries(h), [['held']], 'and the window the wake armed still fires on its own')
+  h.endTurn()
+  await settle()
+})
+
+test('a queue already overdue when the instance wakes goes at once', async () => {
+  // The same rule in the other direction. The window is measured from when
+  // each message was SENT, so a cadence that elapsed while the instance slept
+  // is due the moment the gate opens: an agent does not start a fresh hour
+  // because somebody held its queue for one.
+  let held = true
+  const durable: QueuedPrompt[] = [
+    {
+      id: 'overdue-1',
+      kind: 'message',
+      sender: 'Reader',
+      sentAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+      text: 'sent two hours ago',
+    },
+  ]
+  const store: QueueStore = {
+    append: () => {},
+    remove: () => {},
+    clear: () => {},
+    load: () => durable,
+  }
+  const h = await setup('openclaw', {
+    sessionKey: `wake-overdue-${counter}`,
+    queueStore: store,
+    loadPresence: () => ({ kind: 'hourly' }),
+    shouldHoldDelivery: () => held,
+  })
+  await settle()
+  assert.deepEqual(deliveries(h), [], 'precondition: the restored queue is held by the gate')
+  held = false
+  h.client.resumeDelivery()
+  await settle()
+  assert.deepEqual(
+    deliveries(h),
+    [['sent two hours ago']],
+    'an hourly window that elapsed under the hold is due on wake, not an hour later',
+  )
+  h.endTurn()
+  await settle()
+})
+
+test('changing the cadence while the instance is asleep delivers nothing', async () => {
+  // The two holds compose in one order only. setPresence re-evaluates what is
+  // waiting -- that is what makes switching to realtime release it -- and that
+  // re-evaluation meets the gate and stops, so the cadence is never a way
+  // round a hold.
+  const h = await setup('openclaw', { shouldHoldDelivery: () => true })
+  h.client.setPresence(h.sessionId, { kind: 'custom', intervalMs: WINDOW_MS })
+  await h.client.prompt(h.sessionId, 'held', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  h.client.setPresence(h.sessionId, { kind: 'realtime' })
+  await afterWindow()
+  assert.deepEqual(deliveries(h), [], 'the gate sits above the reading window, on this path too')
+  await h.client.deleteSession(h.sessionId)
+})
