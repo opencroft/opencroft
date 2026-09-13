@@ -40,6 +40,7 @@ import {
   tailByRecords,
   tailByTurns,
 } from './pagination'
+import { type PermissionHandler, permissionContext } from './permission-context'
 import { type ResolvedPermissions, toolKey } from './permissions'
 import { DEFAULT_PRESENCE, msUntilDue, presenceWindowMs } from './presence'
 import { buildDelivery, type DeliveryNote } from './queue-tags'
@@ -63,22 +64,9 @@ export interface ClientInfo {
   version: string
 }
 
-// What the host decides to do with an ACP permission request:
-//  - 'allow':  resolve it as approved without prompting the user.
-//  - 'deny':   resolve it as rejected without prompting the user.
-//  - 'prompt': surface it to the chat UI for the user to decide (the default).
-export type PermissionOutcome = 'allow' | 'deny' | 'prompt'
-
-export interface PermissionContext {
-  sessionId: string
-  // The ACP tool-call title (best-effort tool name).
-  toolName: string
-  // The ACP tool-call kind (e.g. 'read' | 'edit' | 'execute'), when the agent
-  // provides one — lets the host auto-approve read-only kinds, etc.
-  toolKind?: string
-}
-
-export type PermissionHandler = (context: PermissionContext) => PermissionOutcome | Promise<PermissionOutcome>
+// The permission contract a host implements lives in its own module, so that
+// reading a request into it is testable without an agent on the other end.
+export type { PermissionContext, PermissionHandler, PermissionOutcome } from './permission-context'
 
 export interface AgentClientOptions {
   mcpServerName?: string
@@ -743,8 +731,14 @@ function pickAllowOption(request: RequestPermissionRequest): string {
 // Resolve the session an elicitation belongs to, scoped to the connection it
 // arrived on, with the global last-prompted session as a fallback. The optional
 // permissionHandler lets the host auto-approve / bypass requests before they
-// surface to the user.
-function buildClient(getElicitationSession: () => string | null, permissionHandler?: PermissionHandler): Client {
+// surface to the user; `mcpServerName` is the built-in server's name, which is
+// what lets a permission request for one of the host's own tools be recognised
+// as such and carry that tool's identity.
+function buildClient(
+  getElicitationSession: () => string | null,
+  mcpServerName: string,
+  permissionHandler?: PermissionHandler,
+): Client {
   return {
     sessionUpdate: async (notification: SessionNotification) => {
       handleUpdate(notification)
@@ -755,13 +749,7 @@ function buildClient(getElicitationSession: () => string | null, permissionHandl
       if (isAlwaysAllowed(perms, title)) {
         return { outcome: { outcome: 'selected', optionId: pickAllowOption(request) } }
       }
-      const outcome = permissionHandler
-        ? await permissionHandler({
-            sessionId: request.sessionId,
-            toolName: title,
-            toolKind: request.toolCall.kind ?? undefined,
-          })
-        : 'prompt'
+      const outcome = permissionHandler ? await permissionHandler(permissionContext(request, mcpServerName)) : 'prompt'
       if (outcome === 'allow') {
         return { outcome: { outcome: 'selected', optionId: pickAllowOption(request) } }
       }
@@ -1000,7 +988,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // session last prompted through this engine.
   function ensureNativeConnection(selection: AgentSelection): AgentConnection {
     return createNativeHarness(
-      buildClient(() => store.lastSessionId, options.permissionHandler),
+      buildClient(() => store.lastSessionId, mcpServerName, options.permissionHandler),
       selection,
       nativeConfig,
       store.nativeSessions,
@@ -1066,7 +1054,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // by which point `entry` is assigned — so the forward reference is safe.
     let entry: ConnEntry
     const connection = new ClientSideConnection(
-      () => buildClient(() => entry.lastSessionId, options.permissionHandler),
+      () => buildClient(() => entry.lastSessionId, mcpServerName, options.permissionHandler),
       stream,
     )
     entry = { process: child, connection, lastSessionId: null, loadSession: false, initialized: Promise.resolve() }

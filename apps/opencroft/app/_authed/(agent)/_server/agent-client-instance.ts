@@ -5,10 +5,11 @@ import { readPersistedPresence, writePersistedUsage } from '@/app/_authed/(agent
 import { readMcpServersForAgent } from '@/app/_authed/(agent)/_server/mcp-store'
 import { queueStore } from '@/app/_authed/(agent)/_server/queue-store'
 import { loadSkillDefs, skillBodyHandler } from '@/app/_authed/(agent)/_server/skill-store'
+import { toolPermissionOutcome } from '@/app/_authed/(agent)/_server/tool-permission'
 import { opencroftLocalTools } from '@/app/_authed/(agent)/_server/tools-bridge'
+import { isSleepMode, subscribeSleepMode } from '@/app/_authed/(mcp)/_server/sleep-mode'
 import { isYoloMode } from '@/app/_authed/(mcp)/_server/yolo'
 import { approvalStore } from '@/lib/approval-store'
-import { isSleepMode, subscribeSleepMode } from '@/app/_authed/(mcp)/_server/sleep-mode'
 
 // Single shared agent-client engine for the opencroft app. Every ACP route and
 // the SSE stream import this one instance so they share the session store.
@@ -26,19 +27,17 @@ import { isSleepMode, subscribeSleepMode } from '@/app/_authed/(mcp)/_server/sle
 // they bypass the MCP approval queue (the agent chat has its own permission
 // flow) instead of appearing in the MCP Requests inspector tab.
 
-// ACP tool-call kinds that only read state — safe to auto-approve so the chat
-// only prompts for write/exec kinds (the destructive operations).
-const READONLY_KINDS = new Set(['read', 'search', 'fetch', 'think'])
-
 // Decide each ACP permission request against the global approval mode:
 //   YOLO        → bypass approvals entirely.
 //   Auto-approve → approve every request.
-//   Default      → auto-approve read-only kinds, prompt for the rest.
-function resolvePermission({ toolKind }: PermissionContext): PermissionOutcome {
+//   Default      → decide on the tool itself (see tool-permission.ts), which
+//                  is this app's own classification rather than the kind the
+//                  request happened to arrive with.
+function resolvePermission(context: PermissionContext): PermissionOutcome {
   if (isYoloMode() || approvalStore.getAutoApprove()) {
     return 'allow'
   }
-  return toolKind && READONLY_KINDS.has(toolKind) ? 'allow' : 'prompt'
+  return toolPermissionOutcome(context)
 }
 
 // Last context usage seen per session, snapshotted when a turn ends so a
