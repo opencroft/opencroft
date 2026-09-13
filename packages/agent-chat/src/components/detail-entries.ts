@@ -1,4 +1,4 @@
-import type { DetailEntry, DetailItem } from './components/chat-turn'
+import type { DetailEntry, DetailItem } from './chat-turn'
 
 /**
  * The entries a turn's reply chain renders: its items, plus -- only sometimes

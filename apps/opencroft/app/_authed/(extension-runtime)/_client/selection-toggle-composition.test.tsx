@@ -27,7 +27,7 @@ const dom = await installDomEnvironment()
 const { act } = await import('react')
 const { createRoot } = await import('react-dom/client')
 const { Slot } = await import('radix-ui')
-const { SelectionToggle } = await import('agent-chat/components/ui/composer/selection-toggle')
+const { SelectionToggle } = await import('agent-chat/components/selection-toggle')
 
 after(() => dom.cleanup())
 

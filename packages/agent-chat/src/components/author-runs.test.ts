@@ -16,7 +16,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { authorRuns } from './author-runs'
-import type { ChatUserMessagePart, UserText } from './components/chat-turn'
+import type { ChatUserMessagePart, UserText } from './chat-turn'
 
 const said = (author: string | undefined, text = 'hello'): ChatUserMessagePart => ({
   text: text as UserText,
