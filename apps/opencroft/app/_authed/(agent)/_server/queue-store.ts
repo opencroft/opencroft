@@ -183,4 +183,16 @@ export const queueStore: QueueStore = {
     })
     return rows.map(toEntry).filter((entry): entry is QueuedPrompt => entry !== null)
   },
+
+  async pendingKeys() {
+    // The same predicate `load` filters on, asked across every key instead of
+    // one: a row still waiting is one never delivered and never withdrawn.
+    // Marked rows are excluded for exactly the reason they are excluded there --
+    // they are history, and a key whose queue is all history holds nothing.
+    const rows = await db
+      .selectDistinct({ sessionKey: agentQueueEntry.sessionKey })
+      .from(agentQueueEntry)
+      .where(isNull(agentQueueEntry.removedAt))
+    return rows.map((row) => row.sessionKey)
+  },
 }

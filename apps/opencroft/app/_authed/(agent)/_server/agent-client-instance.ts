@@ -81,6 +81,22 @@ async function loadPresence(sessionKey: string) {
   }
 }
 
+/**
+ * Resume the session a key belongs to, whatever registry owns it.
+ *
+ * Held here rather than imported so the cycle described at `openSessionForKey`
+ * stays open; `server/startup.ts` fills it in. Unset means the wake covers only
+ * sessions already in memory — which is what it covered before this existed, so
+ * a boot that has not reached startup yet degrades rather than throws.
+ */
+type SessionOpener = (sessionKey: string) => Promise<unknown>
+
+let sessionOpener: SessionOpener | undefined
+
+export function registerSessionOpener(opener: SessionOpener): void {
+  sessionOpener = opener
+}
+
 export const agentClient = createAgentClient({
   // Sleep Mode's gate: while the instance is asleep no queue is drained to
   // any agent — see (mcp)/_server/sleep-mode for why the flag is a
@@ -89,9 +105,20 @@ export const agentClient = createAgentClient({
   shouldHoldDelivery: isSleepMode,
   tools: opencroftLocalTools,
   loadMcpServers: readMcpServersForAgent,
-  // Durable copy of the queue. Written behind the in-memory one and never read
-  // to make a decision — see QueueStore.
+  // Durable copy of the queue. Written behind the in-memory one, and read back
+  // to restore a session that is opening — plus, since the delivery gate
+  // learned to reach sessions this process does not have, enumerated on wake to
+  // decide which ones to open. See QueueStore, whose doc carries the same
+  // exception.
   queueStore,
+  // How a key with a waiting queue gets a session again. Registered at server
+  // startup rather than imported: stream.ts already imports this module for the
+  // client itself, so reaching back for the opener statically would close a
+  // cycle. Same seam, and the same reason, as the session-wake and
+  // standing-context resolvers that module registers.
+  openSessionForKey: async (sessionKey: string) => {
+    await sessionOpener?.(sessionKey)
+  },
   loadPresence,
   // Global skill catalog from the settings DB, resolved per turn. For now every
   // configured skill is exposed to this agent client (not scoped per node).

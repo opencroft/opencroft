@@ -67,6 +67,7 @@ async function setup(
     queueStore?: QueueStore
     loadPresence?: (sessionKey: string) => Presence | undefined
     shouldHoldDelivery?: () => boolean
+    openSessionForKey?: (sessionKey: string) => void | Promise<void>
     transformDeliveredPrompt?: (text: string) => string
     contextWindow?: number
     // Model a real ACP agent: cancelling ends the turn it was running, which
@@ -153,6 +154,9 @@ async function setup(
       : {}),
     ...(options.shouldHoldDelivery
       ? ({ shouldHoldDelivery: options.shouldHoldDelivery } satisfies Pick<AgentClientOptions, 'shouldHoldDelivery'>)
+      : {}),
+    ...(options.openSessionForKey
+      ? ({ openSessionForKey: options.openSessionForKey } satisfies Pick<AgentClientOptions, 'openSessionForKey'>)
       : {}),
   })
   const meta = await client.createSession(selection)
@@ -2943,5 +2947,164 @@ test('changing the cadence while the instance is asleep delivers nothing', async
   h.client.setPresence(h.sessionId, { kind: 'realtime' })
   await afterWindow()
   assert.deepEqual(deliveries(h), [], 'the gate sits above the reading window, on this path too')
+  await h.client.deleteSession(h.sessionId)
+})
+
+// ── the wake and the sessions this process does not have ───────────────────
+//
+// A wake can only drain what it can see, and after a restart it sees nothing:
+// the queues are durable, the sessions are not. That is the case the feature
+// is actually for -- the gate is closed in order to restart -- so "every idle
+// session" quietly meant "every idle session that happens to still be here".
+//
+// The engine decides WHICH absent keys deserve a session (their own cadence
+// says the queue is due now) and the host decides HOW one comes back. These
+// tests are about the first half; a key that is not due must be left exactly
+// where it was, because that is where it would be if the gate had never shut.
+
+/** A durable store over a plain map, with the enumeration the wake needs. */
+function keyedStore(rows: Map<string, QueuedPrompt[]>, onLoad?: (key: string) => void): QueueStore {
+  return {
+    append: () => {},
+    remove: () => {},
+    clear: () => {},
+    load: (key) => {
+      onLoad?.(key)
+      return rows.get(key) ?? []
+    },
+    pendingKeys: () => [...rows.keys()],
+  }
+}
+
+function waiting(text: string, sentAt = new Date().toISOString()): QueuedPrompt {
+  return { id: `entry-${text}`, kind: 'message', sender: 'Reader', sentAt, text }
+}
+
+test('a wake opens a session for a due queue whose session is gone', async () => {
+  // The measured gap: the queue survives a restart, the session does not, and
+  // nothing went looking for it.
+  let held = true
+  const opened: string[] = []
+  const rows = new Map([['agent:absent:due', [waiting('from before the restart')]]])
+  const h = await setup('openclaw', {
+    sessionKey: 'agent:resident',
+    queueStore: keyedStore(rows),
+    openSessionForKey: (key) => {
+      opened.push(key)
+    },
+    shouldHoldDelivery: () => held,
+  })
+  await settle()
+  assert.deepEqual(opened, [], 'precondition: nothing is opened while the gate is shut')
+  held = false
+  h.client.resumeDelivery()
+  await settle()
+  assert.deepEqual(opened, ['agent:absent:due'], 'the wake reaches the key it has no session for')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a wake leaves a key whose cadence is still holding exactly where it was', async () => {
+  // The other half of the rule, and the reason the engine reads the cadence
+  // instead of opening everything: for an agent, a session is a process.
+  const opened: string[] = []
+  const rows = new Map([['agent:absent:waiting', [waiting('just sent')]]])
+  const h = await setup('openclaw', {
+    sessionKey: 'agent:resident',
+    queueStore: keyedStore(rows),
+    loadPresence: () => ({ kind: 'hourly' }),
+    openSessionForKey: (key) => {
+      opened.push(key)
+    },
+    shouldHoldDelivery: () => false,
+  })
+  h.client.resumeDelivery()
+  await settle()
+  assert.deepEqual(opened, [], 'an hourly key whose hour has not passed is not started for nothing')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a wake does not open a second session for a key this process already holds', async () => {
+  // The store answers by key and cannot know what is resident. Opening one that
+  // is would put two sessions on one conversation and deliver its queue twice --
+  // and the resident drain above has it covered already.
+  const opened: string[] = []
+  const rows = new Map([['agent:resident', [waiting('held')]]])
+  const h = await setup('openclaw', {
+    sessionKey: 'agent:resident',
+    queueStore: keyedStore(rows),
+    openSessionForKey: (key) => {
+      opened.push(key)
+    },
+    shouldHoldDelivery: () => false,
+  })
+  h.client.resumeDelivery()
+  await settle()
+  assert.deepEqual(opened, [], 'the key is in memory, so the wake leaves it to the drain that can see it')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a wake call made while the gate is still shut opens nothing', async () => {
+  // Same rule the per-session drain obeys: every path re-asks the gate, so a
+  // wake that arrives early cannot start anything.
+  const opened: string[] = []
+  const rows = new Map([['agent:absent:due', [waiting('held')]]])
+  const h = await setup('openclaw', {
+    sessionKey: 'agent:resident',
+    queueStore: keyedStore(rows),
+    openSessionForKey: (key) => {
+      opened.push(key)
+    },
+    shouldHoldDelivery: () => true,
+  })
+  h.client.resumeDelivery()
+  await settle()
+  assert.deepEqual(opened, [], 'a wake cannot bypass the gate, on this path either')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a store with no enumeration still wakes what is in memory', async () => {
+  // The capability is optional, and a host that has not implemented it must get
+  // the older behaviour rather than an error -- the standalone product ships
+  // this package too.
+  let held = true
+  const durable: QueuedPrompt[] = [waiting('resident and held')]
+  const store: QueueStore = { append: () => {}, remove: () => {}, clear: () => {}, load: () => durable }
+  const h = await setup('openclaw', {
+    sessionKey: `no-enumeration-${counter}`,
+    queueStore: store,
+    shouldHoldDelivery: () => held,
+  })
+  await settle()
+  assert.deepEqual(deliveries(h), [], 'precondition: held')
+  held = false
+  h.client.resumeDelivery()
+  await settle()
+  assert.deepEqual(deliveries(h), [['resident and held']], 'the resident half is untouched by the new path')
+  h.endTurn()
+  await settle()
+})
+
+test('one key that cannot be opened does not strand the keys behind it', async () => {
+  // A wake gets one chance. Stopping at the first failure would leave every
+  // later queue held with nothing coming to look at it again.
+  const opened: string[] = []
+  const rows = new Map([
+    ['agent:absent:first', [waiting('first')]],
+    ['agent:absent:second', [waiting('second')]],
+  ])
+  const h = await setup('openclaw', {
+    sessionKey: 'agent:resident',
+    queueStore: keyedStore(rows),
+    openSessionForKey: (key) => {
+      if (key === 'agent:absent:first') {
+        throw new Error('this host cannot open that one')
+      }
+      opened.push(key)
+    },
+    shouldHoldDelivery: () => false,
+  })
+  h.client.resumeDelivery()
+  await settle()
+  assert.deepEqual(opened, ['agent:absent:second'], 'the second key is still reached')
   await h.client.deleteSession(h.sessionId)
 })

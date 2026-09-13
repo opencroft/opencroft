@@ -937,6 +937,24 @@ export function registerSessionWakeResolver(resolver: SessionWakeResolver): void
 // graph branch does; a group-chat thread (or any other owner with no graph
 // presence) answers through a registered resolver instead, same two-tier
 // order as resolveStandingContext.
+/**
+ * Bring a session back when all the caller holds is its key.
+ *
+ * The shape a delivery gate's wake needs: it finds keys in the durable queue
+ * store and has no graph in hand, so resolution goes through the registered
+ * resolvers rather than the graph branch — the same two-tier order, entered at
+ * the second tier. `requestCompactOnGraph`'s own group-chat callers already
+ * pass an empty graph for this reason.
+ *
+ * Consequence worth knowing rather than discovering: a key whose ONLY route is
+ * live graph presence is not reachable this way and is left alone. That is the
+ * conservative direction — resuming nothing is what happened before — but it is
+ * a real bound, not full coverage.
+ */
+export async function wakeSessionByKey(sessionKey: string): Promise<{ sessionId: string } | null> {
+  return wakeSession(sessionKey, [], [])
+}
+
 async function wakeSession(
   sessionKey: string,
   nodes: GraphNodeLike[],

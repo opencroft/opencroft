@@ -1,9 +1,11 @@
 import { startDbBackupScheduler } from '@opencroft/db-backups'
 
+import { registerSessionOpener } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import {
   registerSessionWakeResolver,
   registerStandingContextResolver,
   registerThreadDeliveryResolver,
+  wakeSessionByKey,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
 import {
   deliverThreadFromNode,
@@ -51,6 +53,12 @@ export function ensureServerStarted(): void {
   // requestCompactOnGraph can resume a group-chat thread without stream.ts
   // ever importing group-chat code.
   registerSessionWakeResolver(groupChatWakeSession)
+  // And once more, in the other direction: the agent client holds the delivery
+  // gate and, on a wake, finds keys whose session this process does not have.
+  // It cannot import the session layer to open them — stream.ts imports the
+  // client — so the opener is handed to it here, the one place that already
+  // names both sides.
+  registerSessionOpener(wakeSessionByKey)
   void preload()
 }
 
