@@ -1,4 +1,4 @@
-import type { ChatAuthorAccount, ChatUserMessagePart } from './components/chat-turn'
+import type { ChatAuthorAccount, ChatUserMessagePart } from './chat-turn'
 
 /**
  * One run of consecutive messages by a single sender, and the face it is drawn

@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import type { DetailEntry, DetailItem } from './components/chat-turn'
+import type { DetailEntry, DetailItem } from './chat-turn'
 import { detailEntryKeys, withHeader } from './detail-entries'
 
 const text = (t: string): DetailItem => ({ kind: 'assistant-text', text: t })

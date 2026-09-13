@@ -5,13 +5,10 @@ import type { ComponentType, ReactNode } from 'react'
 import { useState } from 'react'
 // Both of these import types back from this file, and a type import is erased,
 // so neither is a runtime cycle.
-import { type AuthorRun, authorRuns } from '../author-runs'
-import { detailEntryKeys, withHeader } from '../detail-entries'
+import { type AuthorRun, authorRuns } from './author-runs'
+import { detailEntryKeys, withHeader } from './detail-entries'
 import { Markdown } from './markdown'
-// A relative sibling path rather than this package's own alias: the two files
-// are in one package, so nothing has to resolve through the package's exports
-// map to reach one from the other.
-import { SelectionBadge } from './ui/composer/selection-badge'
+import { SelectionBadge } from './selection-badge'
 
 import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
 import { Button } from 'ui/components/ui/button'

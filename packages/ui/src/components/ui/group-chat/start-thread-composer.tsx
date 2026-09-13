@@ -3,7 +3,7 @@
 import { type ReactNode } from 'react'
 import { Hash } from 'lucide-react'
 
-import { AgentCommandBar } from 'agent-chat/components/ui/composer/agent-command-bar'
+import { AgentCommandBar } from 'agent-chat/components/agent-command-bar'
 import { AgentPicker, type AgentRef } from 'ui/components/ui/group-chat/agent-picker'
 import { cn } from 'ui/lib/utils'
 

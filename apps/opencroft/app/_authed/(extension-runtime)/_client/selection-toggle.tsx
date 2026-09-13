@@ -18,7 +18,7 @@
 // untouched, so a second press brings the same one straight back; whatever
 // published it goes on publishing it either way.
 
-import { SelectionToggle as KitSelectionToggle } from 'agent-chat/components/ui/composer/selection-toggle'
+import { SelectionToggle as KitSelectionToggle } from 'agent-chat/components/selection-toggle'
 
 import { useOptionalSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
 

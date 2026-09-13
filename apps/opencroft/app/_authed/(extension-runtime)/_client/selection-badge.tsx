@@ -15,7 +15,7 @@
 // is the first of them: held back means not quoted here, not only not sent.
 // The second is at the send transport, which reads the same flag.
 
-import { SelectionBadge as KitSelectionBadge } from 'agent-chat/components/ui/composer/selection-badge'
+import { SelectionBadge as KitSelectionBadge } from 'agent-chat/components/selection-badge'
 
 import { useOptionalSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
 

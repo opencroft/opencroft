@@ -5,7 +5,7 @@
 // imports from here, not from the hook file).
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 
-import type { CommandBarConfig, CommandBarConfigOption } from './components/ui/composer/agent-command-bar'
+import type { CommandBarConfig, CommandBarConfigOption } from './components/agent-command-bar'
 
 // The config-option id agents use for the permission mode. ACP delivers modes
 // twice -- as session modes AND as this option, built from the same list -- and

@@ -4,19 +4,11 @@ import { Eye, EyeOff } from 'lucide-react'
 import { forwardRef } from 'react'
 import type { ComponentPropsWithoutRef } from 'react'
 
-// RELATIVE ON PURPOSE, rather than through the package alias. The command bar
-// is a sibling of this file in the same design project and the same category,
-// and an aliased path to one of those gets rewritten on install -- into the
-// shared UI package, where a chat-generic component does not live. The
-// installed file then imports its way straight out of the package it was just
-// installed into, and the failure is invisible from here: the preview resolves
-// by name, so it renders either way. A relative path has no alias to be
-// rewritten through.
-//
-// The rule, and the line between the two imports below: a same-category
-// sibling in this project is imported relatively; a primitive that really does
-// live in the shared package keeps the alias, which is why the button import
-// is the shape it is. Please do not normalise this one to match it.
+// THE TWO IMPORTS BELOW HAVE TWO DESTINATIONS, and that is why their shapes
+// differ. The command bar is a sibling of this file and installs beside it, in
+// the same package; the button is a primitive that lives in the shared one.
+// Normalising either to match the other sends it to a package the file is not
+// in, and nothing here reports that -- the failure is at the consumer's build.
 //
 // The paths themselves are deliberately not written out in this comment. The
 // installer rewrites module specifiers wherever it finds them, comment text
