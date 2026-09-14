@@ -23,7 +23,7 @@
 
 import { loadSpaceGraphImpl, saveSpaceGraphImpl } from '@/app/_authed/(space)/_server/actions-impl'
 import { GraphConflictError, getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
-import type { GraphData } from '@/app/_authed/(space)/_server/types'
+import { type GraphData, parseGraphAddress } from '@/app/_authed/(space)/_server/types'
 import { toastStore } from '@/lib/toast-store'
 
 export { GraphConflictError }
@@ -57,7 +57,13 @@ export async function saveGraphPlain(slug: string, graph: GraphData, expectedUpd
   // Single broadcast point, mirroring saveSpaceGraph's action (actions.ts) — any
   // open tab resyncs before it can save over this write. Space-scoped, like
   // saveSpaceGraphImpl's: the version signal is one per space.
-  toastStore.broadcast({ type: 'graph_updated', spaceId: ref?.space.slug ?? slug })
+  //
+  // The fallback parses rather than passing `slug` through: `slug` here is a
+  // graph ADDRESS, so for a named graph it reads `<space>.<graph>` and would
+  // broadcast that as a spaceId — a shape no listener expects. Reached only when
+  // saveGraph resolved nothing and therefore wrote nothing, which is why this
+  // stayed correct-looking for as long as every caller passed a bare space slug.
+  toastStore.broadcast({ type: 'graph_updated', spaceId: ref?.space.slug ?? parseGraphAddress(slug).spaceSlug })
   return ref
 }
 

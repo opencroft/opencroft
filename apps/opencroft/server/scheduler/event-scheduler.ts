@@ -113,21 +113,36 @@ export function computeNextRunAt(cron: string, now: number): number | undefined 
   }
 }
 
-function collectEventNodesBySpace(): Map<string, GraphNode[]> {
+/**
+ * Every event node on the instance, keyed by the GRAPH ADDRESS it lives on.
+ *
+ * The address is produced here, once, from the registry ref that actually holds
+ * the node, and is carried verbatim to the load, the save and the conflict
+ * retry. NOTHING DOWNSTREAM RE-DERIVES IT, and that is the point rather than a
+ * style: this used to key by space slug, flattening every graph of a space into
+ * one bucket, so which graph a node came from was discarded here and guessed
+ * later. `resolveGraph` reads a bare slug as the space's DEFAULT graph, so every
+ * write for a node on any other graph went looking for it in a graph it is not
+ * in, found nothing, declined to change anything, and saved the unchanged clone
+ * anyway — one byte-identical write a minute, to the wrong graph, for as long as
+ * the schedule stayed enabled. Successes, failures and nextRunAt alike went that
+ * way, which is why a failing schedule and a working one looked the same.
+ *
+ * The dotted form is used for DEFAULT graphs too, uniformly. `resolveGraph`'s
+ * `?? defaultGraphSlug` fallback is the re-derivation this flow is retiring, so
+ * nothing here may depend on it — a fix that works because the default case
+ * happens to resolve is the same defect with a passing test.
+ */
+function collectEventNodesByGraph(): Map<string, GraphNode[]> {
   const registry = getSpacesRegistry()
-  const bySpace = new Map<string, GraphNode[]>()
-  for (const summary of registry.list()) {
-    const space = registry.getBySlug(summary.slug)
-    if (!space) {
-      continue
-    }
-    const spaceNodes = [...space.graphs.values()].flatMap((g) => g.graph.nodes)
-    const events = (spaceNodes as unknown as GraphNode[]).filter((n) => n.type === 'event')
+  const byGraph = new Map<string, GraphNode[]>()
+  for (const ref of registry.listGraphs()) {
+    const events = (ref.graph.graph.nodes as unknown as GraphNode[]).filter((n) => n.type === 'event')
     if (events.length > 0) {
-      bySpace.set(summary.slug, events)
+      byGraph.set(registry.addressOf(ref), events)
     }
   }
-  return bySpace
+  return byGraph
 }
 
 // Per event-node dedup: if a fire from a previous tick is still running, skip
@@ -136,15 +151,19 @@ function collectEventNodesBySpace(): Map<string, GraphNode[]> {
 // tick runs, so it's never reconsidered. Consistent with the no-catch-up
 // semantics elsewhere in this scheduler (a downtime miss is also just dropped),
 // not a bug, but don't describe it as "will fire next tick".
-// Keyed by slug+nodeId, not nodeId alone — node ids are only unique within a
-// space, not across the whole registry.
+// Keyed by address+nodeId, not nodeId alone — node ids are only unique within a
+// space, not across the whole registry. The address rather than the bare space
+// slug, so this key is the same one the write uses; it is no weaker for dedup,
+// because a node id is unique within its space and therefore names exactly one
+// graph of it.
 const inFlight = new Set<string>()
-function inFlightKey(slug: string, nodeId: string): string {
-  return `${slug}:${nodeId}`
+function inFlightKey(address: string, nodeId: string): string {
+  return `${address}:${nodeId}`
 }
 
 async function persistRunOutcome(
-  slug: string,
+  /** The `<space>.<graph>` address the node was collected from — never re-derived here. */
+  address: string,
   nodeId: string,
   dueRuleIds: string[],
   fireId: string,
@@ -165,12 +184,20 @@ async function persistRunOutcome(
   const entryId = `run-${nodeId}-${fireId}`
   try {
     await withGraphConflictRetry(
-      slug,
+      address,
       (graph) => {
         const node = (graph.nodes as unknown as GraphNode[]).find((n) => n.id === nodeId)
         if (!node) {
           // Deleted concurrently — nothing to persist. Reapply-not-recreate,
           // same rule as the MCP tools' conflict retry.
+          //
+          // RESIDUAL, named rather than hidden: withGraphConflictRetry saves
+          // even when the mutator changes nothing, so this branch still writes
+          // the unchanged clone and broadcasts. That used to be the steady
+          // state — every fire on a non-default graph landed here — and with
+          // the address carried it shrinks to a rare, genuinely concurrent
+          // delete. Widening the shared helper with a skip-save path is not
+          // worth that residual: all seven MCP graph-write tools sit on it.
           return
         }
         const data = (node.data ??= {})
@@ -207,8 +234,8 @@ async function persistRunOutcome(
   }
 }
 
-async function fireAndRecord(slug: string, nodeId: string, dueRuleIds: string[]): Promise<void> {
-  const key = inFlightKey(slug, nodeId)
+async function fireAndRecord(address: string, nodeId: string, dueRuleIds: string[]): Promise<void> {
+  const key = inFlightKey(address, nodeId)
   if (inFlight.has(key)) {
     return
   }
@@ -223,13 +250,13 @@ async function fireAndRecord(slug: string, nodeId: string, dueRuleIds: string[])
       sourceHandleId: 'exec-out',
       event: { type: 'event', nodeId, firedAt: startedAt, payload: {} },
     })
-    await persistRunOutcome(slug, nodeId, dueRuleIds, fireId, startedAt, {
+    await persistRunOutcome(address, nodeId, dueRuleIds, fireId, startedAt, {
       status: summary.primary.error ? 'error' : 'success',
       durationMs: Date.now() - startedAt,
       error: summary.primary.error,
     })
   } catch (err) {
-    await persistRunOutcome(slug, nodeId, dueRuleIds, fireId, startedAt, {
+    await persistRunOutcome(address, nodeId, dueRuleIds, fireId, startedAt, {
       status: 'error',
       durationMs: Date.now() - startedAt,
       error: err instanceof Error ? err.message : String(err),
@@ -242,13 +269,13 @@ async function fireAndRecord(slug: string, nodeId: string, dueRuleIds: string[])
 // Exported (not just used by tick()) so tests can drive an explicit window
 // without waiting on real wall-clock time or the module's own tick timer.
 export async function processDueEvents(windowStart: number, now: number): Promise<void> {
-  const bySpace = collectEventNodesBySpace()
+  const byGraph = collectEventNodesByGraph()
   const fires: Promise<void>[] = []
-  for (const [slug, nodes] of bySpace) {
+  for (const [address, nodes] of byGraph) {
     for (const node of nodes) {
       const dueRuleIds = computeDueRuleIds(node.data?.schedules ?? [], windowStart, now)
       if (dueRuleIds.length > 0) {
-        fires.push(fireAndRecord(slug, node.id, dueRuleIds))
+        fires.push(fireAndRecord(address, node.id, dueRuleIds))
       }
     }
   }
