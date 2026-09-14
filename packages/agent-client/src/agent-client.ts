@@ -135,6 +135,24 @@ export interface AgentClientOptions {
   // resumeDelivery() to drain every idle session; a session with a turn
   // running drains at its own settlement, as always. Absent means never held.
   shouldHoldDelivery?: () => boolean
+  /**
+   * Open the session for a key that has a queue waiting but nothing in memory.
+   *
+   * The engine decides WHICH keys (their cadence says they are due now) and the
+   * host decides HOW a session comes back — it owns the registry that says what
+   * this key belongs to and how to resume it. The engine has no way to build a
+   * session from a key alone and must not guess one.
+   *
+   * Must be resume-or-reuse, never a blind create: between the engine asking
+   * whether a key is resident and this being called, something else may have
+   * opened the same key, and a second session for one conversation delivers the
+   * queue twice. A host with an idempotent resolve already has the right
+   * function; a host without one should not invent it here.
+   *
+   * Absent means the wake covers only what is already in memory — the behaviour
+   * from before this existed.
+   */
+  openSessionForKey?: (sessionKey: string) => void | Promise<void>
 }
 
 /**
@@ -164,6 +182,13 @@ export interface AgentClientOptions {
  *
  * Errors are the host's to handle. The engine calls these fire-and-forget, so a
  * rejected promise must not escape — implementations log and swallow.
+ *
+ * WITH ONE EXCEPTION, and it is deliberate: `pendingKeys` is read to DECIDE,
+ * not to restore. Every other call here is a durable copy written behind the
+ * in-memory queue and read back only when a session opens; that one is asked
+ * when the delivery gate reopens and its answer determines which sessions get
+ * opened at all. Said here because the rest of this doc reads as "the store
+ * never drives anything", which stopped being true when that method landed.
  */
 export interface QueueStore {
   /**
@@ -186,6 +211,26 @@ export interface QueueStore {
   clear(sessionKey: string): void | Promise<void>
   /** The queue as it was left, oldest first. Read once, when a session opens. */
   load(sessionKey: string): QueuedPrompt[] | Promise<QueuedPrompt[]>
+  /**
+   * Every key that currently holds an undelivered queue.
+   *
+   * THE ONE READ THE ENGINE MAKES TO DECIDE SOMETHING, rather than to restore
+   * a session that already exists. Everything else here is written behind the
+   * in-memory queue and read back only when a session opens; this is asked
+   * when the host's delivery gate reopens, to find the queues whose session is
+   * not in memory at all — after a restart, that is every held queue, so
+   * without it a wake reaches nothing it was held for.
+   *
+   * Optional, and a store that omits it is not broken: the wake then covers
+   * exactly the sessions it covered before, the ones already in memory. That
+   * is the older behaviour, not a silent failure of the newer one.
+   *
+   * Order does not matter and duplicates are the engine's to tolerate. A key
+   * whose queue has been fully delivered must NOT be returned — "holds a
+   * queue" is the question, and answering it with every key ever seen would
+   * make the engine open sessions for conversations that are finished.
+   */
+  pendingKeys?(): string[] | Promise<string[]>
 }
 
 type Subscriber = (event: ChatEvent) => void
@@ -1667,6 +1712,73 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     drainQueue(sessionId)
   }
 
+  /**
+   * Open the sessions a wake owes and nothing more: keys holding a queue that
+   * is due NOW under their own cadence, and which nothing in this process is
+   * holding.
+   *
+   * DUE ONLY, and that is the whole design rather than a saving. Opening every
+   * key with a queue would, after a restart, start every held session at once
+   * -- for an agent that is a process -- which is the stampede the gate was
+   * closed to avoid. The due ones are also exactly the ones the operator meant
+   * to resume; a session whose window has not elapsed is left where it was,
+   * which is where it would have been had the gate never closed.
+   *
+   * The cadence question is answered by `msUntilDue`, the SAME function the
+   * in-session drain asks. There is deliberately no second copy of the rule
+   * here: a wake that decided due-ness its own way would drift from the drain
+   * silently, and the two disagreeing is indistinguishable from either one
+   * being wrong.
+   */
+  async function openDueAbsentSessions(): Promise<void> {
+    const durable = options.queueStore
+    const open = options.openSessionForKey
+    if (!durable?.pendingKeys || !open) {
+      return
+    }
+    // Asked again rather than assumed: this runs after an await, and a host
+    // that went back to sleep in between must not have sessions started under
+    // it. Each drain re-checks the gate for the same reason.
+    if (options.shouldHoldDelivery?.() === true) {
+      return
+    }
+    let keys: string[]
+    try {
+      keys = await durable.pendingKeys()
+    } catch (error) {
+      console.error('[agent-client] pendingKeys failed; the wake covers resident sessions only', error)
+      return
+    }
+    const resident = new Set(
+      [...store.sessions.values()].map((session) => session.meta.sessionKey).filter((key): key is string => !!key),
+    )
+    const now = Date.now()
+    for (const key of new Set(keys)) {
+      if (resident.has(key)) {
+        continue
+      }
+      try {
+        const queued = await durable.load(key)
+        if (queued.length === 0) {
+          continue
+        }
+        const presence = (await options.loadPresence?.(key)) ?? DEFAULT_PRESENCE
+        // null means nothing here waits on a cadence at all -- a system entry
+        // and no message. Those are never presence-gated, so "no window to
+        // wait for" reads as due, not as "skip".
+        const waitMs = msUntilDue(queued, presenceWindowMs(presence), now)
+        if (waitMs === null || waitMs <= 0) {
+          await open(key)
+        }
+      } catch (error) {
+        // One key's failure must not strand the rest: a wake that stopped at
+        // the first bad row would leave every later queue held with no second
+        // chance coming.
+        console.error('[agent-client] could not open a due session for its waiting queue', key, error)
+      }
+    }
+  }
+
   return {
     /**
      * Drain every idle session's queue -- the other half of
@@ -1681,6 +1793,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
           void drainQueue(sessionId)
         }
       }
+      // The loop above can only reach sessions this process still has. After a
+      // restart that is none of them, which is exactly when a wake matters
+      // most -- the restart is what the gate was closed for.
+      void openDueAbsentSessions()
     },
     // `usage` is composed in here rather than stored on `meta`, so the live
     // session state stays the single source of truth for it.
