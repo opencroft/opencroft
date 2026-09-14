@@ -1,4 +1,4 @@
-import { createFileRoute, Link, notFound } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from 'ui/button'
 import { Flex } from 'ui/layout/flex'
@@ -8,6 +8,7 @@ import { cn } from 'ui/lib/utils'
 import { SpaceApps } from '@/app/_authed/(apps)/_components/space-apps'
 import { listApps, listSpaceApps } from '@/app/_authed/(apps)/_server/actions'
 import { SpaceGeneralSettings } from '@/app/_authed/(space)/_components/space-general-settings'
+import { settleSpaceRoute } from '@/app/_authed/(space)/_lib/space-route'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 
 export const Route = createFileRoute('/_authed/(space)/space_/$slug/settings')({
@@ -20,15 +21,14 @@ export const Route = createFileRoute('/_authed/(space)/space_/$slug/settings')({
     tab: search.tab === 'add' ? 'add' : undefined,
   }),
   loader: async ({ params }) => {
-    const [spaces, apps, instances] = await Promise.all([
+    // The space's existence is settled before the app data's rejection can
+    // settle it — see settleSpaceRoute. Still one round of concurrent requests.
+    const { space, spaces, data } = await settleSpaceRoute(
+      params.slug,
       listSpaces(),
-      listApps(),
-      listSpaceApps({ data: params.slug }),
-    ])
-    const space = spaces.find((s) => s.slug === params.slug)
-    if (!space) {
-      throw notFound()
-    }
+      Promise.all([listApps(), listSpaceApps({ data: params.slug })]),
+    )
+    const [apps, instances] = data
     return { space, apps, instances, spaces }
   },
   component: SpaceSettingsPage,

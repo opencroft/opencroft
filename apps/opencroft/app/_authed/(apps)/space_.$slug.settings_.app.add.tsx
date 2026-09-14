@@ -7,6 +7,8 @@ import { ScrollContent, ScrollHeader, ScrollPage } from 'ui/layout/scrollpage'
 import { AddApp } from '@/app/_authed/(apps)/_components/add-app'
 import { findAppByRef } from '@/app/_authed/(apps)/_lib/app-ref'
 import { listApps } from '@/app/_authed/(apps)/_server/actions'
+import { settleSpaceRoute } from '@/app/_authed/(space)/_lib/space-route'
+import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 
 // The add-app form — where a row of the settings' Add tab lands. Which App is
 // being added rides in the `app` search param as `<extension-slug>.<app-slug>`
@@ -17,7 +19,14 @@ export const Route = createFileRoute('/_authed/(apps)/space_/$slug/settings_/app
   validateSearch: (search: Record<string, unknown>): { app: string } => ({
     app: typeof search.app === 'string' ? search.app : '',
   }),
-  loader: async () => ({ apps: await listApps() }),
+  // This loader wants nothing from the space itself, which is exactly why it
+  // never noticed one that does not exist: it answered 200 and rendered the add
+  // form for any slug at all. The space list is fetched to make the address mean
+  // something.
+  loader: async ({ params }) => {
+    const { data: apps } = await settleSpaceRoute(params.slug, listSpaces(), listApps())
+    return { apps }
+  },
   component: Page,
 })
 
