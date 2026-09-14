@@ -6,6 +6,7 @@ import { ScrollContent, ScrollHeader, ScrollPage } from 'ui/layout/scrollpage'
 
 import { AppSettings } from '@/app/_authed/(apps)/_components/app-settings'
 import { listApps, listSpaceApps } from '@/app/_authed/(apps)/_server/actions'
+import { settleSpaceRoute } from '@/app/_authed/(space)/_lib/space-route'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 
 // One App instance's settings — where the Apps list's Edit button lands.
@@ -14,11 +15,14 @@ import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 // own, and Back returns to that section.
 export const Route = createFileRoute('/_authed/(apps)/space_/$slug/settings_/app/$instanceId')({
   loader: async ({ params }) => {
-    const [spaces, apps, instances] = await Promise.all([
+    // An unknown SPACE is settled first (settleSpaceRoute); an unknown INSTANCE
+    // in a space that exists is this loader's own notFound, below. Both 404.
+    const { spaces, data } = await settleSpaceRoute(
+      params.slug,
       listSpaces(),
-      listApps(),
-      listSpaceApps({ data: params.slug }),
-    ])
+      Promise.all([listApps(), listSpaceApps({ data: params.slug })]),
+    )
+    const [apps, instances] = data
     const instance = instances.find((entry) => entry.id === params.instanceId)
     if (!instance) {
       throw notFound()
