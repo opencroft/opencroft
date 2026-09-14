@@ -431,6 +431,9 @@ function LocalProfileFields({
         ) : null}
       </div>
       {isNative ? <NativeProfileFields data={data} updateData={updateData} /> : null}
+      {/* Outside the gate above, and after it so a native profile keeps the
+          field order it always had. */}
+      <ContextWindowField data={data} updateData={updateData} />
       {data.containerName ? (
         <p className='text-[10px] text-muted-foreground'>
           Runs in container <code>{data.containerName}</code> at <code>/agents/&lt;agent-slug&gt;</code>.
@@ -444,8 +447,6 @@ function LocalProfileFields({
   )
 }
 
-// System prompt + temperature only apply to the in-process Custom (native)
-// harness; ACP agents carry their own prompt and manage their own sampling.
 // Connect/disconnect UI for harnesses that keep their own file-based OAuth
 // credentials (see agent-client's oauth-login): the harness prints a consent
 // URL, the user signs in and pastes the authorization code back, and the
@@ -567,6 +568,10 @@ function OauthAccountSection({ adapterId }: { adapterId: string }) {
   )
 }
 
+// System prompt + temperature only apply to the in-process Custom (native)
+// harness; ACP agents carry their own prompt and manage their own sampling.
+// That is the whole of what this gate is for — the context window was in here
+// too and is not native-only, which is why it now renders on its own above.
 function NativeProfileFields({ data, updateData }: { data: AgentData; updateData: (p: Partial<AgentData>) => void }) {
   return (
     <div className='flex flex-col gap-3'>
@@ -595,26 +600,56 @@ function NativeProfileFields({ data, updateData }: { data: AgentData; updateData
           placeholder='Provider default'
         />
       </div>
-      <div className='flex flex-col gap-1'>
-        <Label className='text-xs'>Context window</Label>
-        <Input
-          className='h-8 text-xs'
-          type='number'
-          min={0}
-          step={1000}
-          value={data.contextWindow ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            updateData({ contextWindow: e.target.value === '' ? undefined : Number(e.target.value) })
-          }
-          placeholder='Unknown'
-        />
-        {/* "Unknown" rather than a number, because that is what empty MEANS
-            here: the chat shows tokens used and no percentage, instead of a
-            ratio against a figure nobody established. */}
-        <span className='text-[10px] text-muted-foreground'>
-          Tokens. Leave empty if you do not know it — the chat then shows usage without a percentage.
-        </span>
-      </div>
+    </div>
+  )
+}
+
+/**
+ * The configured context window — shown for EVERY harness, native or bridged.
+ *
+ * It used to sit inside the native-only block above, and the comment that
+ * justifies that block names system prompt and temperature and not this: the
+ * window was swept into the gate by proximity rather than by a reason. The
+ * consequence was the opposite of the intent. `knownContextWindow` consults a
+ * configured window first and never asks which adapter is in use, and for a
+ * bridged session it is the ONLY authority there is — a bridged harness's own
+ * reported size is withheld deliberately, because nothing in the protocol
+ * separates the bridge's seeded family default from the corrected value that
+ * replaces it. So the gate put the single available remedy out of reach of
+ * exactly the sessions that cannot do without it.
+ *
+ * Empty stays meaningful and is the normal case for a bridged agent nobody has
+ * configured: the chat shows tokens used and no proportion, rather than a ratio
+ * against a figure nobody established.
+ *
+ * THERE IS A SECOND FIELD FOR THE SAME VALUE: agent-chat's `AgentPresetForm`
+ * ("Max context") writes the same `contextWindow`. It is not mounted in this
+ * app, which is why ungating it alone changed nothing a person could reach —
+ * this copy kept the gate and this copy is the one in the Inspector. If a
+ * harness gate is ever argued for again it has to be argued for in both at
+ * once, or they disagree and only one of them is visible.
+ */
+function ContextWindowField({ data, updateData }: { data: AgentData; updateData: (p: Partial<AgentData>) => void }) {
+  return (
+    <div className='flex flex-col gap-1'>
+      <Label className='text-xs'>Context window</Label>
+      <Input
+        className='h-8 text-xs'
+        type='number'
+        min={0}
+        step={1000}
+        value={data.contextWindow ?? ''}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+          updateData({ contextWindow: e.target.value === '' ? undefined : Number(e.target.value) })
+        }
+        placeholder='Unknown'
+      />
+      {/* "Unknown" rather than a number, because that is what empty MEANS
+          here: the chat shows tokens used and no percentage, instead of a
+          ratio against a figure nobody established. */}
+      <span className='text-[10px] text-muted-foreground'>
+        Tokens. Leave empty if you do not know it — the chat then shows usage without a percentage.
+      </span>
     </div>
   )
 }

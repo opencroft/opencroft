@@ -330,7 +330,16 @@ export function AgentPresetForm({
           the OpenAI nor the Anthropic models route carries a context length,
           and a llama.cpp router reports none until an instance is up. A wrong
           value is worse than none, which is why nothing is guessed from the
-          model name to fill it. */}
+          model name to fill it.
+
+          THERE IS A SECOND FIELD FOR THE SAME VALUE. The agent node's own
+          Inspector (core's `nodes/agent.tsx`, `ContextWindowField`) writes the
+          same `contextWindow`, and in the opencroft app that one is the surface
+          a person actually reaches — this form is not mounted there. Ungating
+          this one alone left the defect exactly as it was, from the user's side,
+          because the reachable copy kept its harness gate. If a harness gate is
+          ever argued for again, it has to be argued for in both places at once,
+          or the two disagree and only one of them is visible. */}
       <Field>
         <FieldLabel>Max context</FieldLabel>
         <ControlledInput
