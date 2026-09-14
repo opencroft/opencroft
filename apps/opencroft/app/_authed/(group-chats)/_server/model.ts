@@ -20,6 +20,8 @@ import {
   groupChatSlugAlias,
   groupChatThread,
   groupChatThreadAlias,
+  space,
+  spaceSlugAlias,
   user,
 } from '@opencroft/db'
 import type { QueueMode } from 'agent-client/types'
@@ -52,7 +54,7 @@ import {
   resolveOrCreateSession,
   withSessionKeyLock,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
-import { GroupChatAccessError } from '@/app/_authed/(group-chats)/_shared/access-error'
+import { GroupChatAccessError, type GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
 import { slug as slugify } from '@/app/_authed/(server)/_server/types'
 
 // THE ONE MESSAGE every "you cannot have this" refusal carries.
@@ -260,19 +262,8 @@ export async function getGroupChat(request: Request, groupChatId: string): Promi
   return row
 }
 
-/**
- * How an embedded surface's `space` slug resolves for the signed-in caller.
- *
- * `missing` and `not-a-member` are DELIBERATELY distinguishable here, unlike
- * everywhere else in this file (see requireGroupChatMember's collapse). The
- * embedding surface offers to CREATE a chat whose slug does not exist, so it
- * has to know which case it is in — and the distinction discloses nothing the
- * caller could not already learn: `createGroupChat` refuses `slug-taken` for
- * any existing slug, member or not, so slug existence is observable to every
- * signed-in user through the creation path this same surface offers. What the
- * caller SHOWS for `not-a-member` must still be the collapsed `not-found`
- * refusal, same code and copy as the thread route's.
- */
+/** The columns a `GroupChatSummary` is made of, named once so the live and
+ *  alias lookups below cannot select different shapes for the same type. */
 const chatColumns = {
   id: groupChat.id,
   slug: groupChat.slug,
@@ -296,13 +287,94 @@ const threadSummaryColumns = {
 
 export type GroupChatSlugResolution =
   | { state: 'missing' }
-  | { state: 'not-a-member' }
+  | { state: 'not-a-member'; joinable: boolean }
   | { state: 'member'; chat: GroupChatSummary }
 
 /**
- * Resolve a group chat by the slug an embedding surface addresses it with.
+ * The chat a slug addresses: live first, alias second.
+ *
+ * A SLUG A RENAME FREED STILL RESOLVES, through `groupChatSlugAlias`, because
+ * an extension's configured `space` is written down somewhere nobody edits when
+ * a chat is renamed -- without this a rename drops every embed into its "this
+ * chat does not exist" create flow, and reports nothing wrong while doing it.
+ *
+ * The ordering is load-bearing rather than cosmetic: if a later chat has taken
+ * this slug for real, the chat holding it NOW is the answer. Every path that
+ * binds a slug live deletes the alias on it, so the two should never both match
+ * -- reading live first is what makes that a guarantee instead of a likelihood.
+ *
+ * Shared by the resolution below and by `joinSpaceGroupChat`, so one address
+ * cannot mean two different chats depending on which of them asked.
+ */
+async function chatRowBySlug(chatSlug: string): Promise<GroupChatSummary | null> {
+  const [live] = await db.select(chatColumns).from(groupChat).where(eq(groupChat.slug, chatSlug)).limit(1)
+  if (live) {
+    return live
+  }
+  const [aliased] = await db
+    .select(chatColumns)
+    .from(groupChat)
+    .innerJoin(groupChatSlugAlias, eq(groupChatSlugAlias.groupChatId, groupChat.id))
+    .where(eq(groupChatSlugAlias.slug, chatSlug))
+    .limit(1)
+  return aliased ?? null
+}
+
+/**
+ * Whether a slug addresses a SPACE — live slug first, then one a rename freed,
+ * the same ordering and for the same reason as `chatRowBySlug` above. Asked of
+ * the tables rather than through the spaces registry, which would put the graph
+ * runtime behind every membership question this file answers.
+ *
+ * A chat at a space's own address IS that space's chat by construction: the
+ * embed looks its chat up by the space's slug, and the create flow mints one
+ * at that slug precisely so the two agree.
+ *
+ * This is also the whole of "is the caller in the space" today. Spaces carry
+ * no membership of their own, so every signed-in user is in every one of them;
+ * when space-level restrictions arrive they replace this function's body and
+ * nothing else here has to move.
+ */
+async function slugAddressesASpace(spaceSlug: string): Promise<boolean> {
+  const [live] = await db.select({ id: space.id }).from(space).where(eq(space.slug, spaceSlug)).limit(1)
+  if (live) {
+    return true
+  }
+  const [aliased] = await db
+    .select({ spaceId: spaceSlugAlias.spaceId })
+    .from(spaceSlugAlias)
+    .where(eq(spaceSlugAlias.slug, spaceSlug))
+    .limit(1)
+  return !!aliased
+}
+
+/**
+ * How an embedded surface's `space` slug resolves for the signed-in caller.
  * The input is slugified first — the surface passes whatever string its host
  * configured, and the slug column only ever holds `slugify` output.
+ *
+ * `missing` and `not-a-member` are DELIBERATELY distinguishable here, unlike
+ * everywhere else in this file (see requireGroupChatMember's collapse). The
+ * embedding surface offers to CREATE a chat whose slug does not exist, so it
+ * has to know which case it is in — and the distinction discloses nothing the
+ * caller could not already learn: `createGroupChat` refuses `slug-taken` for
+ * any existing slug, member or not, so slug existence is observable to every
+ * signed-in user through the creation path this same surface offers.
+ *
+ * WHAT `not-a-member` SHOWS IS NO LONGER THE COLLAPSED REFUSAL, where the slug
+ * addresses a space. This comment used to say it must be; that was this file's
+ * own choice and it was reversed — a person who is in the space
+ * has the right to enter that space's chat, so the surface offers to JOIN.
+ * Space-level restrictions do not exist yet, which is why `slugAddressesASpace`
+ * above is the whole of "is the caller in the space" today, and is where a real
+ * gate goes when there is one.
+ *
+ * `joinable` carries that scope, and it is decided HERE rather than left to the
+ * caller: the same embedded component is handed to extensions through the host
+ * API and may be mounted against any slug at all. Whether Join belongs on an
+ * arbitrary group chat — one with no space-membership argument behind it — is a
+ * question the rule does not answer, so a slug naming no space keeps exactly
+ * the refusal it had.
  */
 export async function resolveGroupChatBySlug(request: Request, slug: string): Promise<GroupChatSlugResolution> {
   const sessionUser = await requireSignedInUser(request)
@@ -310,31 +382,12 @@ export async function resolveGroupChatBySlug(request: Request, slug: string): Pr
   if (!chatSlug) {
     return { state: 'missing' }
   }
-  // Live first, alias second. A SLUG A RENAME FREED STILL RESOLVES, through
-  // `groupChatSlugAlias`, because an extension's configured `space` is written
-  // down somewhere nobody edits when a chat is renamed -- without this a rename
-  // drops every embed into its "this chat does not exist" create flow, and
-  // reports nothing wrong while doing it.
-  //
-  // The ordering is load-bearing rather than cosmetic: if a later chat has
-  // taken this slug for real, the chat holding it NOW is the answer. Every path
-  // that binds a slug live deletes the alias on it, so the two should never
-  // both match -- reading live first is what makes that a guarantee instead of
-  // a likelihood.
-  const [live] = await db.select(chatColumns).from(groupChat).where(eq(groupChat.slug, chatSlug)).limit(1)
-  const [row] = live
-    ? [live]
-    : await db
-        .select(chatColumns)
-        .from(groupChat)
-        .innerJoin(groupChatSlugAlias, eq(groupChatSlugAlias.groupChatId, groupChat.id))
-        .where(eq(groupChatSlugAlias.slug, chatSlug))
-        .limit(1)
+  const row = await chatRowBySlug(chatSlug)
   if (!row) {
     return { state: 'missing' }
   }
   if (!(await isUserMember(row.id, sessionUser.id))) {
-    return { state: 'not-a-member' }
+    return { state: 'not-a-member', joinable: await slugAddressesASpace(chatSlug) }
   }
   return { state: 'member', chat: row }
 }
@@ -994,6 +1047,54 @@ export async function addMember(request: Request, groupChatId: string, principal
     .insert(groupChatMember)
     .values({ groupChatId, principalType: 'user', userId: principal.userId })
     .onConflictDoNothing()
+}
+
+/** Joined, or refused — and every refusal here carries the one collapsed code. */
+export type JoinGroupChatResult = { ok: true } | { ok: false; code: GroupChatAccessFailure }
+
+/**
+ * Add YOURSELF to the chat a space addresses by its own slug.
+ *
+ * The rule: being in the space is what confers the
+ * right to enter that space's chat, so a non-member opening the space's
+ * embedded chat gets a Join control instead of a refusal. See
+ * `resolveGroupChatBySlug` above for why the scope is "the slug names a
+ * space" and what is still open beyond it.
+ *
+ * NOT A BRANCH INSIDE `addMember`. That one requires the caller to be a member
+ * already — any member may add another — which is exactly what this caller is
+ * not. Two different rules, two functions, so neither can be widened by an
+ * edit meant for the other.
+ *
+ * The scope gate is re-asked here rather than trusted from the screen: a
+ * `createServerFn` is a callable endpoint in its own right, so a slug arriving
+ * with the request proves nothing about which surface sent it.
+ */
+export async function joinSpaceGroupChat(request: Request, slug: string): Promise<JoinGroupChatResult> {
+  const sessionUser = await requireSignedInUser(request)
+  const chatSlug = slugify(slug)
+  if (!chatSlug) {
+    return { ok: false, code: 'not-found' }
+  }
+  const row = await chatRowBySlug(chatSlug)
+  if (!row) {
+    // Nothing to join. A slug carrying no chat is the create flow's case, and
+    // minting one here would take the address on the caller's behalf.
+    return { ok: false, code: 'not-found' }
+  }
+  if (await isUserMember(row.id, sessionUser.id)) {
+    // Already in. This reports a state rather than an event, so a second click
+    // — or a Join raced against being added — answers the same as the first.
+    return { ok: true }
+  }
+  if (!(await slugAddressesASpace(chatSlug))) {
+    return { ok: false, code: 'not-found' }
+  }
+  await db
+    .insert(groupChatMember)
+    .values({ groupChatId: row.id, principalType: 'user', userId: sessionUser.id })
+    .onConflictDoNothing()
+  return { ok: true }
 }
 
 /**

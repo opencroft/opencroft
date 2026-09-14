@@ -53,6 +53,7 @@ process.env.NODE_ENV = 'development'
 const {
   db,
   space,
+  spaceSlugAlias,
   agentQueueEntry: agentQueueEntryTable,
   groupChat,
   groupChatMember,
@@ -3151,6 +3152,129 @@ test('resolveGroupChatBySlug slugifies its input, the same transform the slug co
 test('resolveGroupChatBySlug refuses an anonymous caller before answering anything', async () => {
   const refusal = await captureRefusal(() => model.resolveGroupChatBySlug(reqAnonymous(), 'embed-resolve-chat'))
   assert.equal(refusal.code, 'unauthenticated')
+})
+
+// ---------------------------------------------------------------------------
+// Joining a space's own chat. The rule is this:
+// being in the space is what entitles a person to that space's chat, so a
+// non-member is offered Join rather than the collapsed refusal.
+//
+// THE SCOPE IS WHAT THESE ASSERT HARDEST. The same embedded component is
+// handed to extensions through the host API and may be mounted against any
+// slug at all, so whether Join is offered cannot be the caller's to decide —
+// and a chat sitting at no space's address has to keep exactly the refusal it
+// had, because whether Join belongs on an arbitrary group chat is a question
+// that was asked and not answered.
+// ---------------------------------------------------------------------------
+
+test('resolveGroupChatBySlug reports joinable only when the slug names a space', async () => {
+  const owner = await makeUser('join-scope-owner@example.test')
+  const outsider = await makeUser('join-scope-outsider@example.test')
+  await db.insert(space).values({ slug: 'join-scope-space', name: 'Join Scope Space' })
+  await model.createGroupChat(reqAs(owner), 'Join Scope Space', undefined, { slug: 'join-scope-space' })
+  await model.createGroupChat(reqAs(owner), 'Join Scope Loose', undefined, { slug: 'join-scope-loose' })
+
+  const spaceChat = await model.resolveGroupChatBySlug(reqAs(outsider), 'join-scope-space')
+  assert.ok(spaceChat.state === 'not-a-member')
+  assert.equal(spaceChat.joinable, true)
+
+  const looseChat = await model.resolveGroupChatBySlug(reqAs(outsider), 'join-scope-loose')
+  assert.ok(looseChat.state === 'not-a-member')
+  assert.equal(looseChat.joinable, false, 'a chat at no space address keeps the refusal it had')
+})
+
+test('joinSpaceGroupChat adds the caller to the space chat they were outside', async () => {
+  const owner = await makeUser('join-add-owner@example.test')
+  const outsider = await makeUser('join-add-outsider@example.test')
+  await db.insert(space).values({ slug: 'join-add-space', name: 'Join Add Space' })
+  const chat = await model.createGroupChat(reqAs(owner), 'Join Add Space', undefined, { slug: 'join-add-space' })
+
+  assert.equal((await model.resolveGroupChatBySlug(reqAs(outsider), 'join-add-space')).state, 'not-a-member')
+
+  assert.deepEqual(await model.joinSpaceGroupChat(reqAs(outsider), 'join-add-space'), { ok: true })
+
+  const after = await model.resolveGroupChatBySlug(reqAs(outsider), 'join-add-space')
+  assert.ok(after.state === 'member')
+  assert.equal(after.chat.id, chat.id)
+  // The ROW, not only the answer: membership is what every other read in this
+  // file gates on, so a join that satisfied the resolution without writing one
+  // would leave the reader outside everything they had just been let into.
+  const rows = await db
+    .select()
+    .from(groupChatMember)
+    .where(and(eq(groupChatMember.groupChatId, chat.id), eq(groupChatMember.userId, outsider.id)))
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0]?.principalType, 'user')
+})
+
+test('joinSpaceGroupChat refuses a chat that is no space chat, and adds nobody', async () => {
+  const owner = await makeUser('join-refuse-owner@example.test')
+  const outsider = await makeUser('join-refuse-outsider@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Join Refuse Loose', undefined, {
+    slug: 'join-refuse-loose',
+  })
+
+  assert.deepEqual(await model.joinSpaceGroupChat(reqAs(outsider), 'join-refuse-loose'), {
+    ok: false,
+    code: 'not-found',
+  })
+
+  // A refusal, not a message over a write that already happened — the screen is
+  // not the gate, this is.
+  const rows = await db
+    .select()
+    .from(groupChatMember)
+    .where(and(eq(groupChatMember.groupChatId, chat.id), eq(groupChatMember.userId, outsider.id)))
+  assert.equal(rows.length, 0)
+  assert.equal((await model.resolveGroupChatBySlug(reqAs(outsider), 'join-refuse-loose')).state, 'not-a-member')
+})
+
+test('joinSpaceGroupChat refuses a slug no chat carries, even where a space holds it', async () => {
+  const caller = await makeUser('join-nochat@example.test')
+  await db.insert(space).values({ slug: 'join-nochat-space', name: 'Join No Chat Space' })
+
+  // Nothing to join. That case belongs to the create flow, and minting a chat
+  // here would take the address on the caller's behalf.
+  assert.deepEqual(await model.joinSpaceGroupChat(reqAs(caller), 'join-nochat-space'), {
+    ok: false,
+    code: 'not-found',
+  })
+  const chats = await db.select().from(groupChat).where(eq(groupChat.slug, 'join-nochat-space'))
+  assert.equal(chats.length, 0)
+})
+
+test('joinSpaceGroupChat answers the same for someone already in, and writes no second row', async () => {
+  const owner = await makeUser('join-idem-owner@example.test')
+  await db.insert(space).values({ slug: 'join-idem-space', name: 'Join Idem Space' })
+  const chat = await model.createGroupChat(reqAs(owner), 'Join Idem Space', undefined, { slug: 'join-idem-space' })
+
+  assert.deepEqual(await model.joinSpaceGroupChat(reqAs(owner), 'join-idem-space'), { ok: true })
+  const rows = await db
+    .select()
+    .from(groupChatMember)
+    .where(and(eq(groupChatMember.groupChatId, chat.id), eq(groupChatMember.userId, owner.id)))
+  assert.equal(rows.length, 1, 'this reports a state rather than an event, so a second click is not a second row')
+})
+
+test('joinSpaceGroupChat refuses an anonymous caller before answering anything', async () => {
+  const refusal = await captureRefusal(() => model.joinSpaceGroupChat(reqAnonymous(), 'join-scope-space'))
+  assert.equal(refusal.code, 'unauthenticated')
+})
+
+test('a space slug a rename freed still entitles the chat it addresses', async () => {
+  const owner = await makeUser('join-alias-owner@example.test')
+  const outsider = await makeUser('join-alias-outsider@example.test')
+  const [row] = await db.insert(space).values({ slug: 'join-alias-now', name: 'Join Alias Space' }).returning()
+  assert.ok(row)
+  await db.insert(spaceSlugAlias).values({ slug: 'join-alias-was', spaceId: row.id })
+  await model.createGroupChat(reqAs(owner), 'Join Alias Chat', undefined, { slug: 'join-alias-was' })
+
+  // An embed configured with the old space slug is still addressing the space,
+  // by the same rule that keeps the chat lookup itself working across a rename.
+  const resolved = await model.resolveGroupChatBySlug(reqAs(outsider), 'join-alias-was')
+  assert.ok(resolved.state === 'not-a-member')
+  assert.equal(resolved.joinable, true)
+  assert.deepEqual(await model.joinSpaceGroupChat(reqAs(outsider), 'join-alias-was'), { ok: true })
 })
 
 test('findThreadBySlug: a member gets the row, absence is null, a non-member is refused', async () => {
