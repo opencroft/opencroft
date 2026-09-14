@@ -1,0 +1,41 @@
+{
+  "$schema": "see scripts/typecheck-extensions.mjs",
+  "$about": [
+    "Type diagnostics in the extension checkouts that this repository currently tolerates.",
+    "typecheck-extensions.mjs reports a diagnostic that is NOT listed here and ignores one that is,",
+    "so what this file costs is the only thing standing between a red typecheck and silence.",
+    "",
+    "Same contract as test-baseline.json beside it, and the same reason. Every entry needs a",
+    "`reason` that stands on its own: a reader must understand what is wrong and why it is",
+    "tolerated without leaving this file. `ticket` may sit beside it to say who owns the fix,",
+    "never instead of it. `count` is how many diagnostics share the signature -- the signature",
+    "has no line or column in it, so two of the same shape in one file are one id, and the count",
+    "is what notices when a third appears or one of a pair is fixed.",
+    "",
+    "An entry here is not this repository's to fix. Every one of them lives in a separate",
+    "extension repository, which is why they arrive as a baseline rather than as a commit:",
+    "the check had to be able to run before the diagnostics could be seen at all.",
+    "",
+    "Nothing writes to this file automatically, and nothing should. Adding a line is a diff",
+    "someone reads, which is the whole mechanism.",
+    "",
+    "An entry the script reports as no longer reproducing should be deleted."
+  ],
+  "tolerated": [
+    {
+      "id": "documentation/src/docs/chat-panel.tsx: error TS2774: This condition will always return true since this function is always defined. Did you mean to call it instead?",
+      "count": 2,
+      "reason": "A defensive `&&` guard reads three host symbols off the injected surface and renders a fallback when any is absent. Those symbols now carry declarations, so the guard is provably dead -- the condition cannot be false. The guard's own comment gives its reason as a hand-maintained export list that lagged the host, and that reason no longer holds. It is a real finding rather than noise, and the file is to be corrected on its next visit for its own reasons rather than by an out-of-band edit to a shared checkout."
+    },
+    {
+      "id": "documentation/src/docs/docs-page.tsx: error TS2571: Object is of type 'unknown'.",
+      "count": 1,
+      "reason": "Reads `.props.children` off a value narrowed only to an object with a `props` key, which React's current types leave as `unknown`. A genuine type error in that repository, in a helper that walks rendered children; it is the kind this check exists to surface, and it belongs to the extension's own repository to fix."
+    },
+    {
+      "id": "task-pipelines/src/client.tsx: error TS2322: Type '({ data, selected }: { data: TaskPipelinesData; selected?: boolean | undefined; }) => Element' is not assignable to type 'ComponentType<ExtensionComponentProps<Record<string, unknown>>>'.",
+      "count": 1,
+      "reason": "NOT a defect in the extension. A node definition is generic over its data type, but the collection that holds them is not, so every node is checked against `Record<string, unknown>` and a component that types its own node data cannot be registered. The only way to be green today is to erase the type at the registration point, which is what this host's own first-party extension does 94 times. Tolerated because the fix is a change to the declared contract, not to the extension."
+    }
+  ]
+}

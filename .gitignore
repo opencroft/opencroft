@@ -41,6 +41,11 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# One generated tsc project per extension checkout, written by
+# typecheck-extensions.mjs. It lives here rather than in the checkout because an
+# extension is a separate repository, and on a deployed instance a shared one.
+.extension-typecheck/
+
 *.local.json
 
 dist/
