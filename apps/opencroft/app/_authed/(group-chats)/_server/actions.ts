@@ -14,6 +14,7 @@ import type {
   GroupChatPinSummary,
   GroupChatSummary,
   GroupChatThreadSummary,
+  JoinGroupChatResult,
   MemberPrincipal,
   StartThreadResult,
 } from '@/app/_authed/(group-chats)/_server/model'
@@ -28,6 +29,8 @@ import {
   editPin,
   getGroupChat,
   getThread,
+  // Aliased: the server function below carries the same name.
+  joinSpaceGroupChat as joinSpaceChat,
   listGroupChatsForUser,
   listMembers,
   listPins,
@@ -82,6 +85,7 @@ export type {
   GroupChatSummary,
   GroupChatThreadEntry,
   GroupChatThreadSummary,
+  JoinGroupChatResult,
   MemberPrincipal,
   MemberRef,
   StartThreadResult,
@@ -423,14 +427,26 @@ export const getGroupChatThreadView = createServerFn({ method: 'GET', strict: { 
 // ── The embedded surface's reads ─────────────────────────────────────────
 
 /**
- * How an embedded chat's `space` resolves for this caller. `missing` and
- * `refused` are separate states because the surface CREATES a missing chat —
- * see `resolveGroupChatBySlug` on why that distinction discloses nothing new.
- * The refused state still carries the collapsed `not-found` code, so what the
- * reader sees is exactly the thread route's refusal.
+ * How an embedded chat's `space` resolves for this caller. Four states,
+ * because the surface has something different to offer in each:
+ *
+ *   `missing`   no chat carries this slug — the surface offers to create it.
+ *   `joinable`  a chat carries it, the caller is not in it, and the slug names
+ *               a space — the surface offers to Join.
+ *   `refused`   anything else the caller cannot have, carrying the collapsed
+ *               `not-found` code: what the reader sees is the thread route's
+ *               refusal, unchanged.
+ *   `ok`        the chat, for a member.
+ *
+ * `missing` and `joinable` disclose that a slug is taken. That was already
+ * observable to any signed-in user through the create path this same surface
+ * offers (`createGroupChat` refuses `slug-taken` whoever asks) — see
+ * `resolveGroupChatBySlug` for the reasoning, and for why `joinable` is
+ * decided on the server rather than by whichever host mounted the component.
  */
 export type GroupChatEmbedView =
   | { state: 'missing' }
+  | { state: 'joinable' }
   | { state: 'refused'; code: GroupChatAccessFailure }
   | { state: 'ok'; chat: GroupChatDetailView }
 
@@ -442,10 +458,21 @@ export const getGroupChatEmbedView = createServerFn({ method: 'GET', strict: { o
       return { state: 'missing' }
     }
     if (resolved.state === 'not-a-member') {
-      return { state: 'refused', code: 'not-found' }
+      return resolved.joinable ? { state: 'joinable' } : { state: 'refused', code: 'not-found' }
     }
     return { state: 'ok', chat: await getGroupChatDetailView(getRequest(), resolved.chat.id) }
   })
+
+/**
+ * Join the space's own chat. Returns its refusal as DATA rather than throwing
+ * it, for the reason recorded on `GroupChatAccessError`: a refusal thrown out
+ * of a `createServerFn` reaches the browser as a bare message with its `code`
+ * stripped, so a caller that has to know which refusal it was cannot be given
+ * one that throws.
+ */
+export const joinSpaceGroupChat = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((space: string) => space)
+  .handler(async ({ data: space }): Promise<JoinGroupChatResult> => joinSpaceChat(getRequest(), space))
 
 /**
  * The thread an embedded surface's (agent, id) pair maps to, or null when the

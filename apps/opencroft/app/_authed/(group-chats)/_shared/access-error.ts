@@ -33,6 +33,14 @@ export type GroupChatAccessFailure =
    * client-side mapping is belt-and-braces rather than the thing holding the
    * property up. Emitting a distinguishable refusal for these two cases is a
    * defect, not a style choice.
+   *
+   * ONE PLACE DOES NOT REFUSE AT ALL, and it is not an exception to the above:
+   * a space's own embedded chat offers a non-member a Join control instead,
+   * by design. It reaches that decision
+   * without this code — `resolveGroupChatBySlug` answers in states rather than
+   * refusals, and its own comment carries the reasoning, including why the
+   * existence it discloses was already observable through the create path.
+   * Everything that still throws a refusal still collapses into this.
    */
   | 'not-found'
   /**

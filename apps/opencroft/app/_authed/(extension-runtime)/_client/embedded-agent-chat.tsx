@@ -12,7 +12,20 @@
 //   - chat missing        → an empty state offering to create it (the caller
 //                           picks users and agents; creation is the same
 //                           membership model the group-chats UI uses).
-//   - caller not a member → the same collapsed refusal the thread route shows.
+//   - not a member, and
+//     the slug names a
+//     space               → an empty state offering to JOIN, which adds them.
+//                           Being in the space is what entitles a person to
+//                           that space's chat, so there is nobody to ask.
+//                           This replaces the collapsed refusal that used to
+//                           stand here and gave a live button in the product
+//                           nothing to do.
+//   - not a member, and
+//     the slug names no
+//     space               → the collapsed refusal the thread route shows,
+//                           unchanged. Whether Join belongs on an arbitrary
+//                           chat is a separate, unanswered question; the
+//                           server decides which case this is.
 //   - no thread yet       → the SAME start composer the group-chat screen's
 //                           footer renders (its agent picker doubles as this
 //                           surface's picker); the first send creates the
@@ -23,7 +36,7 @@
 //                           picker: the thread names its agent, and switching
 //                           conversations is the ChatSelector's job.
 
-import { MessageCirclePlus } from 'lucide-react'
+import { MessageCirclePlus, UserPlus } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CommandBarFrame } from 'ui/agent-chat/command-bar-frame'
@@ -50,6 +63,7 @@ import {
   findGroupChatEmbedThread,
   getGroupChatEmbedView,
   getGroupChatThreadView,
+  joinSpaceGroupChat,
   listDirectoryUsersForPicker,
 } from '@/app/_authed/(group-chats)/_server/actions'
 import type { AgentNodeRef } from '@/app/_authed/(space)/_server/agents'
@@ -96,6 +110,7 @@ export interface EmbeddedAgentChatProps {
 type EmbedPhase =
   | { phase: 'loading' }
   | { phase: 'missing' }
+  | { phase: 'joinable' }
   | { phase: 'refused'; view: Extract<GroupChatEmbedView, { state: 'refused' }> }
   | { phase: 'ready'; chat: GroupChatDetailView }
   | { phase: 'error'; message: string }
@@ -119,6 +134,8 @@ export function EmbeddedAgentChat({ space, id, thread, title, onChatAvailable, c
         onChatAvailable?.(view.state === 'ok')
         if (view.state === 'missing') {
           setState({ phase: 'missing' })
+        } else if (view.state === 'joinable') {
+          setState({ phase: 'joinable' })
         } else if (view.state === 'refused') {
           setState({ phase: 'refused', view })
         } else {
@@ -155,6 +172,8 @@ export function EmbeddedAgentChat({ space, id, thread, title, onChatAvailable, c
           <GroupChatRefusal code={state.view.code} />
         </div>
       )
+    case 'joinable':
+      return <JoinChatEmptyState space={space} className={className} onJoined={reload} />
     case 'missing':
       return <CreateChatEmptyState space={space} title={title} className={className} onCreated={reload} />
     case 'ready':
@@ -355,6 +374,72 @@ function EmbeddedThread({
           />
         </CommandBarFrame>
       </div>
+    </div>
+  )
+}
+
+// ── The join flow, when the chat is there and the reader is not in it ────
+
+/**
+ * One control, and it adds them. Nobody is asked and nothing is requested:
+ * the entitlement is already established by being in the space, so a Join
+ * that produced a pending state would be inventing an approval step the
+ * product does not have.
+ *
+ * The copy keeps the create flow's discipline — no slug, no chat name, no
+ * "group chat". The reader opened the chat of THIS space; which chat it is
+ * goes without saying. It also says nothing about WHY they are not in it,
+ * because nothing here knows: not being added and having been removed look
+ * the same from here, and a sentence that picked one would be wrong half the
+ * time.
+ */
+function JoinChatEmptyState({
+  space,
+  className,
+  onJoined,
+}: {
+  space: string
+  className?: string
+  onJoined: () => void
+}) {
+  const [joining, setJoining] = useState(false)
+  const [error, setError] = useState<string>()
+  const join = async () => {
+    setError(undefined)
+    setJoining(true)
+    try {
+      const result = await joinSpaceGroupChat({ data: space })
+      if (!result.ok) {
+        // The server disagrees that this chat is joinable — the same question
+        // the read answered, asked again at the moment it mattered, and it is
+        // the answer that counts. Shown rather than reloaded into: a reload
+        // would replace the sentence with the collapsed refusal screen, which
+        // says less about what just happened.
+        setError(groupChatAccessMessageForCode(result.code))
+        return
+      }
+      onJoined()
+    } catch (e) {
+      setError(failureMessage(e, 'You could not be added to this chat.'))
+    } finally {
+      setJoining(false)
+    }
+  }
+  return (
+    <div className={cn('flex h-full min-h-0 flex-col justify-center', className)}>
+      <Empty className='py-8'>
+        <EmptyHeader>
+          <EmptyMedia>
+            <UserPlus className='size-6 text-muted-foreground' />
+          </EmptyMedia>
+          <EmptyTitle>Join this chat</EmptyTitle>
+          <EmptyDescription>You are not in this chat yet.</EmptyDescription>
+        </EmptyHeader>
+        <Button size='sm' onClick={() => void join()} disabled={joining}>
+          {joining ? 'Joining…' : 'Join'}
+        </Button>
+        {error ? <p className='text-sm text-destructive'>{error}</p> : null}
+      </Empty>
     </div>
   )
 }
