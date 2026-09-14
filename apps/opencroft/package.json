@@ -9,6 +9,7 @@
     "pretypecheck": "node scripts/check-workspace-deps.mjs && node scripts/generate-route-tree.mjs",
     "smoke": "node scripts/smoke-check.mjs",
     "typecheck": "node ../../scripts/run-typecheck.mjs app server",
+    "posttypecheck": "node scripts/typecheck-extensions.mjs",
     "dev:ext": "npx tsx scripts/watch-extensions.ts",
     "monitor": "npx tsx scripts/monitor-server.ts",
     "build": "npm run check:server-fn-shape && vite build && npm run check:client-bundle",
