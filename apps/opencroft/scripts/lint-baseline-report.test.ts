@@ -15,7 +15,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { aggregate, compare, total, validateRun } from '../../../scripts/lint-baseline-report.mjs'
+import { aggregate, compare, fromFile, toFile, total, validateRun } from '../../../scripts/lint-baseline-report.mjs'
 
 const at = (path: string, category: string) => ({
   severity: 'error',
@@ -126,6 +126,54 @@ test('the total is the debt number the baseline reports', () => {
   assert.equal(total([{ count: 2 }, { count: 3 }]), 5)
   assert.equal(total([]), 0)
   assert.equal(total(undefined), 0)
+})
+
+test('the written form puts one rule on one line, so an increase is one changed line', () => {
+  // The file is a door: an added or raised entry is a finding entering the
+  // tolerated set and is reviewed like a suppression. That review only works
+  // if the reviewer can see it at a glance, which is a property of the SHAPE
+  // rather than of anyone's diligence.
+  const written = toFile([
+    { file: 'b.ts', rule: 'format', count: 1 },
+    { file: 'a.ts', rule: 'lint/style/useTemplate', count: 3 },
+    { file: 'a.ts', rule: 'format', count: 2 },
+  ])
+
+  assert.deepEqual(written, {
+    'a.ts': { format: 2, 'lint/style/useTemplate': 3 },
+    'b.ts': { format: 1 },
+  })
+  // Sorted, so the file is stable and a diff shows only what actually moved.
+  assert.deepEqual(Object.keys(written), ['a.ts', 'b.ts'])
+})
+
+test('the written form round-trips without losing or inventing a finding', () => {
+  const entries = [
+    { file: 'a.ts', rule: 'format', count: 2 },
+    { file: 'a.ts', rule: 'lint/style/useTemplate', count: 3 },
+    { file: 'my dir/b.ts', rule: 'format', count: 1 },
+  ]
+
+  const { entries: back, malformed } = fromFile(toFile(entries))
+
+  assert.equal(malformed, 0)
+  assert.deepEqual(back, entries)
+  assert.equal(total(back), total(entries))
+})
+
+test('a baseline entry that cannot be read is counted, never treated as zero', () => {
+  // Treating it as zero LOWERS the bar silently — the gate would then report
+  // the real findings as excess, or worse, accept a hand-edit that removed a
+  // count by corrupting it.
+  const { entries, malformed } = fromFile({
+    'a.ts': { format: 2 },
+    'b.ts': { format: 'lots' },
+    'c.ts': { format: 0 },
+    'd.ts': null,
+  })
+
+  assert.deepEqual(entries, [{ file: 'a.ts', rule: 'format', count: 2 }])
+  assert.equal(malformed, 3)
 })
 
 test('a run that scanned nothing is refused', () => {

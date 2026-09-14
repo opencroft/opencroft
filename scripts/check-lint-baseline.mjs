@@ -62,11 +62,12 @@
 // not this script's.
 
 import { execFileSync, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { aggregate, compare, total, validateRun } from './lint-baseline-report.mjs'
+import { aggregate, compare, fromFile, toFile, total, validateRun } from './lint-baseline-report.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BIOME = path.join(ROOT, 'node_modules', '.bin', 'biome')
@@ -110,8 +111,36 @@ try {
 
 const { entries: actual, unreadable } = aggregate(parsed.diagnostics)
 
-const baselineFile = existsSync(BASELINE) ? JSON.parse(readFileSync(BASELINE, 'utf8')) : { entries: [] }
-const baseline = baselineFile.entries ?? []
+const baselineRaw = existsSync(BASELINE) ? readFileSync(BASELINE, 'utf8') : null
+const baselineFile = baselineRaw ? JSON.parse(baselineRaw) : {}
+const { entries: baseline, malformed } = fromFile(baselineFile.entries)
+// Not while regenerating: `--update` is the documented recovery for a baseline
+// that cannot be read, and the diff it produces is what gets reviewed. Gating
+// on it here would leave a corrupted file with no way back through the tool
+// that owns it.
+if (malformed > 0 && !update) {
+  die(`${malformed} baseline entr(ies) could not be read — a baseline that cannot be parsed cannot hold a bar`)
+}
+
+/** What the run identifies itself against. A verdict with no tree attached is
+ *  not evidence: the block is pasted into a pull request by hand, so it has to
+ *  say which commit it ran on and which baseline it compared with, or it could
+ *  have come from anywhere. A dirty tree is named rather than hidden, because a
+ *  SHA alone would misattribute uncommitted work to the commit. */
+const describeTree = () => {
+  try {
+    const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim()
+    const dirty = execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8' })
+      .split('\n')
+      .filter(Boolean).length
+    return `${sha}${dirty === 0 ? ' (clean)' : ` (+${dirty} uncommitted)`}`
+  } catch {
+    return 'unknown (not a git checkout)'
+  }
+}
+const baselineHash = baselineRaw
+  ? `sha256:${createHash('sha256').update(baselineRaw).digest('hex').slice(0, 12)}`
+  : 'absent'
 
 const verdict = validateRun(parsed, { unreadable, baselineEntries: total(baseline) })
 if (!verdict.ok) {
@@ -136,15 +165,21 @@ if (update) {
       '',
       'Rules are at full strength in biome.json and nothing here demotes any of them. A file with',
       'no entry below must be completely clean.',
+      '',
+      'THIS FILE IS A DOOR. A diff that ADDS a line here, or RAISES a number, is a finding',
+      'entering the tolerated set, and it is reviewed exactly like a suppression: a written reason,',
+      'or refusal. Downward travels free. The shape below is nested one-rule-per-line so that an',
+      'increase is a single changed line with both numbers on screen — an array of objects hides',
+      'an insertion inside its neighbour’s punctuation, and a door nobody can see opening is not a',
+      'door.',
     ],
     biome: version,
     total: total(actual),
-    entries: actual,
+    entries: toFile(actual),
   }
   writeFileSync(BASELINE, `${JSON.stringify(next, null, 2)}\n`)
-  console.log(`check-lint-baseline: biome ${version}, ${verdict.scanned} files scanned`)
   console.log(
-    `check-lint-baseline: wrote ${path.relative(ROOT, BASELINE)} — ${actual.length} entries, ${total(actual)} findings`,
+    `check-lint-baseline: wrote ${path.relative(ROOT, BASELINE)} — ${actual.length} file/rule pairs, ${total(actual)} findings`,
   )
   process.exit(0)
 }
@@ -163,10 +198,19 @@ if (asJson) {
     JSON.stringify({ biome: version, scanned: verdict.scanned, total: total(actual), excess, deficit }, null, 2),
   )
 } else {
-  console.log(`check-lint-baseline: biome ${version}, ${verdict.scanned} files scanned`)
-  console.log(
-    `check-lint-baseline: ${total(actual)} findings in ${actual.length} file/rule pairs (baseline: ${total(baseline)})`,
-  )
+  // The block below is EVIDENCE, and it is pasted into a pull request by hand,
+  // so it has to say what it ran against. A verdict with no tree attached could
+  // have come from anywhere — another branch, another checkout, yesterday. The
+  // commit bounds that; the baseline hash says which bar was cleared; the
+  // version says which tool decided. One run, one block.
+  const failing = excess.length > 0 || deficit.length > 0
+  console.log('── check-lint-baseline ─────────────────────────────────────────')
+  console.log(`  biome     ${version}`)
+  console.log(`  commit    ${describeTree()}`)
+  console.log(`  baseline  ${baselineHash} — ${baseline.length} file/rule pairs, ${total(baseline)} findings`)
+  console.log(`  scanned   ${verdict.scanned} files, ${total(actual)} findings`)
+  console.log(`  verdict   ${failing ? `FAIL — ${excess.length} above, ${deficit.length} below` : 'PASS'}`)
+  console.log('────────────────────────────────────────────────────────────────')
   console.log('')
   for (const e of excess) {
     console.log(`  NEW      ${e.file}  ${e.rule}  ${e.allowed} → ${e.actual}`)
@@ -174,7 +218,7 @@ if (asJson) {
   for (const e of deficit) {
     console.log(`  FIXED    ${e.file}  ${e.rule}  ${e.allowed} → ${e.actual}`)
   }
-  if (excess.length === 0 && deficit.length === 0) {
+  if (!failing) {
     console.log('  nothing added, nothing fixed-but-unrecorded.')
   } else {
     console.log('')
