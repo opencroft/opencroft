@@ -142,17 +142,17 @@ async function freshAgentNode(): Promise<{ nodeId: string; selection: AgentSelec
 test('a second ensureLocalSession call for the same never-prompted tab still reports created:true', async () => {
   const { nodeId, selection } = await freshAgentNode()
   seedMockConnection(selection)
-  const tabKey = `agent:acp:test:${crypto.randomUUID()}`
+  const tabKey = `acp-test-tab-${crypto.randomUUID()}`
 
   // Mount #1: genuinely creates the session, exactly like the real first mount.
-  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
   assert.equal(first.created, true, 'the session is genuinely new on the first call')
 
   // Mount #2: same tab, no message has ever been sent through either mount --
   // this is the scenario that used to corrupt createdRef. Whichever mount
   // goes on to call deliver() must still see this as the session's first
   // message, since nothing has been prompted yet.
-  const second = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  const second = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
   assert.equal(
     second.created,
     true,
@@ -163,14 +163,14 @@ test('a second ensureLocalSession call for the same never-prompted tab still rep
 test('once a message is delivered, a later ensureLocalSession call for the same tab reports created:false', async () => {
   const { nodeId, selection } = await freshAgentNode()
   seedMockConnection(selection)
-  const tabKey = `agent:acp:test:${crypto.randomUUID()}`
+  const tabKey = `acp-test-tab-${crypto.randomUUID()}`
 
-  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
   assert.equal(opened.created, true)
 
   await promptLocalImpl({ sessionId: opened.sessionId, text: 'hello', queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
 
-  const resumed = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  const resumed = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
   assert.equal(resumed.created, false, 'a session that already received a message is never "new" again')
 })
 
@@ -184,9 +184,9 @@ test('once a message is delivered, a later ensureLocalSession call for the same 
 test('a session is durable the moment it is created, before anything is prompted', async () => {
   const { nodeId, selection } = await freshAgentNode()
   seedMockConnection(selection)
-  const tabKey = `agent:agent:test:${crypto.randomUUID()}`
+  const tabKey = `agent-test-tab-${crypto.randomUUID()}`
 
-  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
 
   assert.deepEqual(
     await readPersistedSession(tabKey),
@@ -198,13 +198,13 @@ test('a session is durable the moment it is created, before anything is prompted
 test('a restart before the first turn ends resumes the same session instead of creating a rival', async () => {
   const { nodeId, selection } = await freshAgentNode()
   seedMockConnection(selection, { canLoad: true })
-  const tabKey = `agent:agent:test:${crypto.randomUUID()}`
+  const tabKey = `agent-test-tab-${crypto.randomUUID()}`
 
-  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
   await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
   forgetInMemorySession(tabKey)
 
-  const afterRestart = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  const afterRestart = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
 
   assert.equal(
     afterRestart.sessionId,
@@ -219,12 +219,12 @@ test('a restart before the first prompt resumes the same session and still brief
   // still be told what it is for.
   const { nodeId, selection } = await freshAgentNode()
   seedMockConnection(selection, { canLoad: true })
-  const tabKey = `agent:agent:test:${crypto.randomUUID()}`
+  const tabKey = `agent-test-tab-${crypto.randomUUID()}`
 
-  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
   forgetInMemorySession(tabKey)
 
-  const afterRestart = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  const afterRestart = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
 
   assert.equal(afterRestart.sessionId, first.sessionId, 'still one session')
   assert.equal(afterRestart.created, true, 'nothing was ever sent to it, so it has no context yet')
@@ -235,16 +235,16 @@ test('a restart before the first prompt resumes the same session and still brief
 test('a dead pointer falls back to a fresh session that still gets the full context', async () => {
   const { nodeId, selection } = await freshAgentNode()
   seedMockConnection(selection, { canLoad: false })
-  const tabKey = `agent:agent:test:${crypto.randomUUID()}`
+  const tabKey = `agent-test-tab-${crypto.randomUUID()}`
 
-  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
   await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
   assert.deepEqual(await readPersistedSession(tabKey), { id: first.sessionId, prompted: true })
 
   // The pointer survives, the session does not.
   forgetInMemorySession(tabKey)
 
-  const replacement = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  const replacement = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
 
   assert.notEqual(replacement.sessionId, first.sessionId, 'the dead session cannot be resumed, so this is a new one')
   assert.equal(
@@ -262,9 +262,9 @@ test('a dead pointer falls back to a fresh session that still gets the full cont
 test('the durable pointer is only offered as a target while its session is live', async () => {
   const { nodeId, selection } = await freshAgentNode()
   seedMockConnection(selection)
-  const tabKey = `agent:agent:test:${crypto.randomUUID()}`
+  const tabKey = `agent-test-tab-${crypto.randomUUID()}`
 
-  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
   forgetInMemorySession(tabKey)
 
   // Live, just not in this process's map any more: the durable pointer is what
@@ -273,7 +273,7 @@ test('the durable pointer is only offered as a target while its session is live'
 
   // A pointer to a session that no longer exists is not a target — prompting
   // it would send the message into nothing.
-  assert.equal(await findTargetSessionImpl({ baseKey: `agent:agent:test:${crypto.randomUUID()}` }), null)
+  assert.equal(await findTargetSessionImpl({ baseKey: `agent-test-tab-${crypto.randomUUID()}` }), null)
 })
 
 // ── unload-session primitive ──────────────────────────────────────────────
@@ -288,9 +288,9 @@ test('the durable pointer is only offered as a target while its session is live'
 test('stopLocalSessionProcessImpl drops the in-memory pointer but keeps the durable one', async () => {
   const { nodeId, selection } = await freshAgentNode()
   seedMockConnection(selection, { canLoad: true })
-  const tabKey = `agent:resume:test:${crypto.randomUUID()}`
+  const tabKey = `resume-test-tab-${crypto.randomUUID()}`
 
-  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
   await stopLocalSessionProcessImpl(tabKey)
 
   assert.equal(tabSessions.has(tabKey), false, 'the live pointer is gone -- nothing to route a message to yet')
@@ -304,13 +304,13 @@ test('stopLocalSessionProcessImpl drops the in-memory pointer but keeps the dura
 test('a message after unload reattaches to the SAME session instead of starting a new one', async () => {
   const { nodeId, selection } = await freshAgentNode()
   seedMockConnection(selection, { canLoad: true })
-  const tabKey = `agent:resume:test:${crypto.randomUUID()}`
+  const tabKey = `resume-test-tab-${crypto.randomUUID()}`
 
-  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
   await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
   await stopLocalSessionProcessImpl(tabKey)
 
-  const afterUnload = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  const afterUnload = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
 
   assert.equal(
     afterUnload.sessionId,
@@ -330,9 +330,9 @@ test('a message after unload reattaches to the SAME session instead of starting 
 test('forgetLocalSessionImpl drops the durable pointer too -- unlike stopLocalSessionProcessImpl', async () => {
   const { nodeId, selection } = await freshAgentNode()
   seedMockConnection(selection, { canLoad: true })
-  const tabKey = `agent:close:test:${crypto.randomUUID()}`
+  const tabKey = `close-test-tab-${crypto.randomUUID()}`
 
-  await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
   await forgetLocalSessionImpl(tabKey)
 
   assert.equal(tabSessions.has(tabKey), false, 'the live pointer is gone')
@@ -353,9 +353,9 @@ test('forgetLocalSessionImpl drops the durable pointer too -- unlike stopLocalSe
 test('a fresh, never-prompted session has contextUsage: null -- nothing has ever been reported', async () => {
   const { nodeId, selection } = await freshAgentNode()
   seedMockConnection(selection)
-  const tabKey = `agent:dock:test:${crypto.randomUUID()}`
+  const tabKey = `dock-test-tab-${crypto.randomUUID()}`
 
-  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
 
   assert.equal(opened.contextUsage, null)
 })
@@ -369,14 +369,14 @@ test('a fresh, never-prompted session has contextUsage: null -- nothing has ever
 test('reattaching an unloaded session restores its last usage live -- never as a stale (asOf) reading', async () => {
   const { nodeId, selection } = await freshAgentNode()
   seedMockConnection(selection, { canLoad: true })
-  const tabKey = `agent:dock:test:${crypto.randomUUID()}`
+  const tabKey = `dock-test-tab-${crypto.randomUUID()}`
 
-  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
   await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
   await writePersistedUsage(first.sessionId, { used: 8_000, size: 200_000 })
   await stopLocalSessionProcessImpl(tabKey)
 
-  const reattached = await ensureLocalSessionImpl({ agentNodeId: nodeId, jobNodeId: 'job-1', tabKey })
+  const reattached = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
 
   assert.deepEqual(
     reattached.contextUsage,

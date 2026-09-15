@@ -436,9 +436,9 @@ export async function readPersistedUsage(sessionId: string): Promise<PersistedUs
  * resolved through the durable tabKey pointer to the ACP session id
  * `readPersistedUsage` is actually keyed by, since a session that has gone
  * offline is not in agent-client's memory to ask directly. Works for any key
- * this store's pointer namespace covers (a 1:1 chat tab, an agent:job
- * dispatch, or a group-chat thread — they all resolve through the same
- * `agent-tab-sessions` pointer). Null when there is no pointer for this key,
+ * this store's pointer namespace covers — every group-chat thread resolves
+ * through the same `agent-tab-sessions` pointer. Null when there is no
+ * pointer for this key,
  * or the pointer's session never reported usage before going offline — the
  * same UNKNOWN a session that has never been loaded reports.
  */

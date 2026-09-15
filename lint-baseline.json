@@ -30,8 +30,8 @@
     "an added entry: it means either deletions, or a narrower config."
   ],
   "biome": "2.4.16",
-  "filesScanned": 843,
-  "total": 402,
+  "filesScanned": 840,
+  "total": 387,
   "entries": {
     "apps/opencroft/app/_authed/(agent)/_server/acp-impl.test.ts": {
       "format": 1
@@ -40,15 +40,9 @@
       "format": 1
     },
     "apps/opencroft/app/_authed/(agent)/_shared/agent-node-shape.ts": {
-      "lint/complexity/useLiteralKeys": 10
+      "lint/complexity/useLiteralKeys": 7
     },
     "apps/opencroft/app/_authed/(agent)/api/acp.mcp.ts": {
-      "assist/source/organizeImports": 1
-    },
-    "apps/opencroft/app/_authed/(agent)/api/acp.sessions-stream.ts": {
-      "assist/source/organizeImports": 1
-    },
-    "apps/opencroft/app/_authed/(agent)/api/acp.sessions.ts": {
       "assist/source/organizeImports": 1
     },
     "apps/opencroft/app/_authed/(agent)/api/acp.skills.ts": {
@@ -166,9 +160,6 @@
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-instruction.tsx": {
       "assist/source/organizeImports": 1
     },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-job.tsx": {
-      "assist/source/organizeImports": 1
-    },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-mcp.tsx": {
       "assist/source/organizeImports": 1,
       "format": 1,
@@ -251,13 +242,9 @@
       "assist/source/organizeImports": 1,
       "lint/a11y/useButtonType": 1
     },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/send-message-helpers.ts": {
-      "lint/complexity/useLiteralKeys": 3
-    },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/send-message.tsx": {
       "assist/source/organizeImports": 1,
-      "format": 1,
-      "lint/correctness/noUnusedVariables": 1
+      "format": 1
     },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/server.tsx": {
       "assist/source/organizeImports": 1,
@@ -303,7 +290,7 @@
       "lint/complexity/useLiteralKeys": 1
     },
     "apps/opencroft/app/_authed/(extension-runtime)/_server/send-message-helpers.ts": {
-      "lint/complexity/useLiteralKeys": 9
+      "lint/complexity/useLiteralKeys": 4
     },
     "apps/opencroft/app/_authed/(extension-runtime)/_server/stream-downstream-context.test.ts": {
       "format": 1

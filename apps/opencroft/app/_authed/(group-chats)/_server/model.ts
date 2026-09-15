@@ -47,10 +47,15 @@ import {
 import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { type TurnsPage, turnsPageForSessionKey } from '@/app/_authed/(extension-runtime)/_server/host'
 import { type ContextUsage, toContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
-import type { CompactAck, CompactStatus, ThreadDeliveryOutcome } from '@/app/_authed/(extension-runtime)/_server/stream'
+import type {
+  CompactAck,
+  CompactResult,
+  CompactStatus,
+  ThreadDeliveryOutcome,
+} from '@/app/_authed/(extension-runtime)/_server/stream'
 import {
-  getCompactStatusOnGraph,
-  requestCompactOnGraph,
+  getCompactStatus,
+  requestCompact,
   resolveOrCreateSession,
   withSessionKeyLock,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
@@ -1491,7 +1496,7 @@ async function standingContextForThread(groupChatId: string, agentNodeId: string
  *
  * Every site that resolves a key needs the alias half, not just the ones a
  * person reaches. A key can be captured in a closure and resolved a whole turn
- * later (see `requestCompactOnGraph`), by which time a rename may have retired
+ * later (see `requestCompact`), by which time a rename may have retired
  * it; a lookup without the fallback finds nothing and its caller carries on
  * with whatever "not a group-chat thread" means to it -- which, for the
  * compaction path, is dropping the history and then not restoring the topic,
@@ -1534,8 +1539,8 @@ export async function groupChatStandingContext(sessionKey: string): Promise<Stan
  * Wakes an offline thread's session from its stored state, or null when the
  * key is not a group-chat thread's — the offline-compaction counterpart to
  * `groupChatStandingContext` above, registered the same way (see
- * server/startup.ts) so `requestCompactOnGraph` can resume a thread with no
- * graph presence without stream.ts importing group-chat code.
+ * server/startup.ts) so `requestCompact` can resume a thread
+ * without stream.ts importing group-chat code.
  *
  * The same `resolveOrCreateSession` call `deliverIntoThread` makes for an
  * ordinary message — a thread that has gone offline still has its durable
@@ -1559,7 +1564,6 @@ export async function groupChatWakeSession(sessionKey: string): Promise<{ sessio
   // second session this whole change exists to prevent.
   const opened = await resolveOrCreateSession(row.sessionKey, {
     agentNodeId: row.agentNodeId,
-    jobNodeId: '',
     tabKey: row.sessionKey,
   })
   return { sessionId: opened.sessionId }
@@ -1598,6 +1602,34 @@ export function threadRefFromSessionKey(sessionKey: string): string {
     return partsOfSessionKey(sessionKey) ? legacyBody.replaceAll(':', '.') : legacyBody
   }
   return sessionKey
+}
+
+// The compaction machinery addresses a session by its STORED key, and its ack
+// and status carry that key back. Every surface of this module emits the
+// public dot-form reference instead — a raw stored sessionKey must never
+// leave through a response a person or an agent reads, which is exactly how
+// the storage spelling once leaked onto a screen. These re-shapes replace the
+// key with the ref at the boundary, so the callers below cannot forget to.
+
+export type ThreadCompactAck = Omit<CompactAck, 'sessionKey'> & { thread: string }
+export type ThreadCompactStatus = Omit<CompactStatus, 'sessionKey' | 'result'> & {
+  thread: string
+  result?: Omit<CompactResult, 'sessionKey'> & { thread: string }
+}
+
+function toThreadCompactAck(ack: CompactAck): ThreadCompactAck {
+  const { sessionKey, ...rest } = ack
+  return { ...rest, thread: threadRefFromSessionKey(sessionKey) }
+}
+
+function toThreadCompactStatus(status: CompactStatus): ThreadCompactStatus {
+  const { sessionKey, result, ...rest } = status
+  const view: ThreadCompactStatus = { ...rest, thread: threadRefFromSessionKey(sessionKey) }
+  if (result) {
+    const { sessionKey: resultKey, ...resultRest } = result
+    view.result = { ...resultRest, thread: threadRefFromSessionKey(resultKey) }
+  }
+  return view
 }
 
 /**
@@ -1796,7 +1828,7 @@ async function createThread(
     throw new Error('The thread could not be created')
   }
 
-  const opened = await ensureLocalSessionImpl({ agentNodeId, jobNodeId: '', tabKey: sessionKey })
+  const opened = await ensureLocalSessionImpl({ agentNodeId, tabKey: sessionKey })
   const envelope = composeEnvelope(firstMessage, {
     sessionInit: { jobContext: standing.jobContext, instructions: standing.instructions },
     isNewSession: opened.created,
@@ -1848,7 +1880,7 @@ export async function openThreadSession(request: Request, threadId: string): Pro
   if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
-  return ensureLocalSessionImpl({ agentNodeId: row.agentNodeId, jobNodeId: '', tabKey: row.sessionKey })
+  return ensureLocalSessionImpl({ agentNodeId: row.agentNodeId, tabKey: row.sessionKey })
 }
 
 /**
@@ -1948,7 +1980,6 @@ async function deliverIntoThread(
   // test that discriminates it from ensureInFlight's own protection.
   const opened = await resolveOrCreateSession(row.sessionKey, {
     agentNodeId: row.agentNodeId,
-    jobNodeId: '',
     tabKey: row.sessionKey,
   })
   // Deliberately blind to whether the instance is draining its queues at all.
@@ -2013,13 +2044,11 @@ async function deliverIntoThread(
  * heard from it — see `groupChatStandingContext`'s header for why that is the
  * whole point.
  *
- * `requestCompactOnGraph` resolves standing context two ways: a real graph
- * node/edge presence, or a registered `StandingContextResolver` — a group-chat
- * thread has no graph presence at all, so `[]`/`[]` here is correct rather
- * than a stand-in for "not implemented yet": the resolver registered at
- * server boot (see server/startup.ts) is the only thing that can claim this
- * sessionKey, exactly as it is the only thing that can claim it at restore
- * time inside performCompact.
+ * `requestCompact` resolves standing context through the registered
+ * `StandingContextResolver`s: the resolver registered at server boot (see
+ * server/startup.ts) is the only thing that can claim this sessionKey,
+ * exactly as it is the only thing that can claim it at restore time inside
+ * performCompact.
  *
  * Membership-gated the same way `sendMessageInThread` is, including the
  * agent-still-a-member check: compaction sends `/compact` and a restore
@@ -2027,7 +2056,7 @@ async function deliverIntoThread(
  * agent's threads are refused here for the same reason they are refused a
  * send.
  */
-export async function compactThread(request: Request, threadId: string): Promise<CompactAck> {
+export async function compactThread(request: Request, threadId: string): Promise<ThreadCompactAck> {
   const sessionUser = await requireSignedInUser(request)
   const [row] = await db
     .select({
@@ -2047,11 +2076,11 @@ export async function compactThread(request: Request, threadId: string): Promise
   if (!(await isAgentMember(row.groupChatId, row.agentNodeId))) {
     throw new GroupChatAccessError('agent-not-a-member', 'That agent is no longer a member of this group chat')
   }
-  return requestCompactOnGraph([], [], row.sessionKey)
+  return toThreadCompactAck(await requestCompact(row.sessionKey))
 }
 
 /** The compact job's status for a thread — same membership gate as `compactThread`. */
-export async function threadCompactStatus(request: Request, threadId: string): Promise<CompactStatus> {
+export async function threadCompactStatus(request: Request, threadId: string): Promise<ThreadCompactStatus> {
   const sessionUser = await requireSignedInUser(request)
   const [row] = await db
     .select({ groupChatId: groupChatThread.groupChatId, sessionKey: groupChatThread.sessionKey })
@@ -2064,7 +2093,7 @@ export async function threadCompactStatus(request: Request, threadId: string): P
   if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
-  return getCompactStatusOnGraph(row.sessionKey)
+  return toThreadCompactStatus(getCompactStatus(row.sessionKey))
 }
 
 /**
@@ -2740,16 +2769,16 @@ export async function startThreadAsAgent(
  * The thread's OWN agent must also still be a member — `resolveThreadForAgent`
  * only checks the CALLER, so this repeats the check `compactThread` makes
  * inline rather than through `deliverIntoThread`, since compaction never goes
- * through that shared delivery path (it talks to `requestCompactOnGraph`
+ * through that shared delivery path (it talks to `requestCompact`
  * directly, same as `compactThread` does).
  */
-export async function compactThreadAsAgent(agentName: string, threadRef: string): Promise<CompactAck> {
+export async function compactThreadAsAgent(agentName: string, threadRef: string): Promise<ThreadCompactAck> {
   const agentNodeId = await requireAgentNode(agentName)
   const row = await resolveThreadForAgent(agentNodeId, threadRef)
   if (!(await isAgentMember(row.groupChatId, row.agentNodeId))) {
     throw new GroupChatAccessError('agent-not-a-member', 'That agent is no longer a member of this group chat')
   }
-  return requestCompactOnGraph([], [], row.sessionKey)
+  return toThreadCompactAck(await requestCompact(row.sessionKey))
 }
 
 /**
@@ -2759,10 +2788,10 @@ export async function compactThreadAsAgent(agentName: string, threadRef: string)
  * agent has since left, matching `threadCompactStatus`'s own precedent (it
  * checks the requester's membership and nothing else either).
  */
-export async function threadCompactStatusAsAgent(agentName: string, threadRef: string): Promise<CompactStatus> {
+export async function threadCompactStatusAsAgent(agentName: string, threadRef: string): Promise<ThreadCompactStatus> {
   const agentNodeId = await requireAgentNode(agentName)
   const row = await resolveThreadForAgent(agentNodeId, threadRef)
-  return getCompactStatusOnGraph(row.sessionKey)
+  return toThreadCompactStatus(getCompactStatus(row.sessionKey))
 }
 
 /**

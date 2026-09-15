@@ -40,71 +40,14 @@ export interface ExtensionStorageApi {
   clear(): Promise<void>
 }
 
-/** `null` means unknown (offline session, no turn completed yet, or a harness that doesn't report usage) -- never "nothing held". */
-export interface HostContextUsage {
-  usedTokens: number
-  contextLimit: number | null
+/** What a SendMessage node's `send` delivered to -- a group-chat thread, the only destination it routes to. `status` says whether the message queued behind a running turn or was delivered immediately. */
+export interface HostSendMessageResult {
+  kind: 'thread'
+  threadRef: string
+  status: 'queued' | 'delivered'
 }
 
-export interface HostSessionSummary {
-  sessionKey: string
-  agent: string
-  job: string
-  title: string
-  createdAt: number
-  lastActivityAt: number
-  status: 'offline' | 'idle' | 'working' | 'waiting'
-  contextUsage: HostContextUsage | null
-}
-
-export interface HostTurnSummary {
-  index: number
-  prompt: string
-  promptLength: number
-  status: 'finished' | 'in-progress' | 'interrupted' | 'unknown'
-  finalMessage?: string
-  finalMessageLength?: number
-}
-
-export interface HostTurnsPage {
-  turns: HostTurnSummary[]
-  hasMore: boolean
-  nextBeforeIndex: number | null
-  sessionStatus: 'offline' | 'idle' | 'working' | 'waiting'
-}
-
-export interface HostCompactResult {
-  sessionKey: string
-  contextUsageBefore: HostContextUsage | null
-  contextUsageAfter: HostContextUsage | null
-  compacted: boolean | null
-  instructionsRestored: boolean
-}
-
-/** Returned immediately by `compact` -- the compaction itself runs in the background; poll `compactStatus` for the outcome. */
-export interface HostCompactAck {
-  sessionKey: string
-  accepted: true
-  coalesced: boolean
-  state: 'pending' | 'running'
-}
-
-export interface HostCompactStatus {
-  sessionKey: string
-  state: 'never-requested' | 'pending' | 'running' | 'done' | 'error'
-  requestedAt?: number
-  startedAt?: number
-  finishedAt?: number
-  result?: HostCompactResult
-  error?: string
-}
-
-/** What a SendMessage node's `send` actually delivered to -- an agent:job session (unchanged) or a group-chat thread (mutually exclusive `thread` field in the payload). */
-export type HostSendMessageResult =
-  | { kind: 'agent'; sessionKey: string; created: boolean; forced: boolean }
-  | { kind: 'thread'; threadRef: string; status: 'queued' | 'delivered' }
-
-/** Deliver through a SendMessage node's own path (session reuse/create, envelope composition) -- the same mechanism its `text-in` wiring uses. */
+/** Deliver through a SendMessage node's own path -- the same membership-gated thread delivery its `text-in` wiring uses. */
 export interface HostSendMessageApi {
   /**
    * `sourceNodeId` is what fed THIS run, taken from the action context's input
@@ -125,35 +68,6 @@ export interface HostSendMessageApi {
     sourceNodeId: string | undefined,
     callerAgent?: string,
   ): Promise<HostSendMessageResult>
-  listAgents(nodeId: string): Promise<{ agent: string; jobs: string[] }[]>
-  listSessions(nodeId: string, params: { agent?: string; job?: string }): Promise<HostSessionSummary[]>
-  listTurns(
-    nodeId: string,
-    params: { sessionKey: string; turns?: number; beforeIndex?: number },
-  ): Promise<HostTurnsPage>
-  /** Returns immediately -- never blocks for the compaction itself. */
-  compact(nodeId: string, params: { sessionKey: string }): Promise<HostCompactAck>
-  compactStatus(nodeId: string, params: { sessionKey: string }): Promise<HostCompactStatus>
-  /** Terminates an idle session's process; the transcript and durable session pointer are kept, so the next message reloads it transparently (same cold-start resume an offline session already uses). */
-  unload(nodeId: string, params: { sessionKey: string }): Promise<{ sessionKey: string; unloaded: true }>
-  /**
-   * Removes a session for good: drops its durable session pointer (and any
-   * config overrides) AND its chat-list entry, so it no longer resumes and no
-   * longer appears in the sidebar. Default requires `status` (see
-   * listSessions) to be `offline` -- deleting a live session would silently
-   * drop whatever it's doing, so `idle`/`working`/`waiting` are refused unless
-   * `force: true`, which first ends the live process (same teardown as a live
-   * chat delete) and then proceeds. The underlying harness's on-disk
-   * transcript is deliberately left alone and NOT located or deleted -- this
-   * stays harness-agnostic, the same boundary agentClient.loadSession
-   * observes, and the harness may be running on a different terminal context
-   * (local/WSL/SSH) than this server; the transcript is orphaned, not lost
-   * track of.
-   */
-  delete(
-    nodeId: string,
-    params: { sessionKey: string; force?: boolean },
-  ): Promise<{ sessionKey: string; deleted: true }>
 }
 
 export interface HostExecContextApi {

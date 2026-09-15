@@ -38,7 +38,6 @@ import { sendFailureMessage } from '@/app/_authed/(agent)/_shared/send-refused-e
 
 export interface LocalSource {
   agentNodeId: string
-  jobNodeId: string
   tabKey: string
 }
 
@@ -356,7 +355,7 @@ export function useAcpSession(
   // Optional on purpose — see OpenTransport. No argument, no behaviour change.
   openTransport?: OpenTransport,
 ): AcpSession {
-  const { agentNodeId, jobNodeId, tabKey } = source
+  const { agentNodeId, tabKey } = source
   // Held in a ref and called through it, so a caller that rebuilds the function
   // each render cannot make the resolve-session effect re-run and reopen the
   // session in a loop -- the same guard the send transport's own callers rely on
@@ -385,7 +384,7 @@ export function useAcpSession(
   const [sendError, setSendError] = useState<string | undefined>(undefined)
   const [sending, startSending] = useTransition()
   // Bumped by clearSession to force the resolve-session effect below to run
-  // again for the SAME tab -- agentNodeId/jobNodeId/tabKey don't change on a
+  // again for the SAME tab -- agentNodeId/tabKey don't change on a
   // clear, so nothing else would re-trigger it.
   const [generation, setGeneration] = useState(0)
   // A message typed before the ACP session finished being created, queued so
@@ -454,7 +453,7 @@ export function useAcpSession(
   const [seedUsage, setSeedUsage] = useState<AgentUsage | undefined>(undefined)
 
   // Resolve (or lazily create) the live ACP session for this tab.
-  // biome-ignore lint/correctness/useExhaustiveDependencies(generation): not read in the body -- it exists purely to force this effect to re-run for the SAME tab after clearSession, which agentNodeId/jobNodeId/tabKey alone would not trigger
+  // biome-ignore lint/correctness/useExhaustiveDependencies(generation): not read in the body -- it exists purely to force this effect to re-run for the SAME tab after clearSession, which agentNodeId/tabKey alone would not trigger
   useEffect(() => {
     let cancelled = false
     setSessionId(null)
@@ -465,7 +464,7 @@ export function useAcpSession(
     setCanSteer(false)
     setSeedUsage(undefined)
     sendChainRef.current = Promise.resolve()
-    open({ agentNodeId, jobNodeId, tabKey })
+    open({ agentNodeId, tabKey })
       .then((result) => {
         if (!cancelled) {
           setSessionId(result.sessionId)
@@ -492,7 +491,7 @@ export function useAcpSession(
     return () => {
       cancelled = true
     }
-  }, [agentNodeId, jobNodeId, tabKey, generation, open])
+  }, [agentNodeId, tabKey, generation, open])
 
   // Stream events once the session id is known.
   useEffect(() => {

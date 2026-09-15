@@ -252,133 +252,22 @@
           "id": "send",
           "label": "Send",
           "icon": "Send",
-          "description": "Deliver a message to an agent through this node — same routing as a wired text-in delivery (session reuse/create, envelope composition, hidden-by-default registration). agent/job fall back to this node's configured defaults when omitted. Pass `thread` instead to deliver into a group-chat thread this node's own wiring can reach — mutually exclusive with agent/job/key/session. Returns, for an agent:job send, the target session key, whether a new session was created and whether a push actually interrupted a running turn; for a thread send, the thread reference and whether it queued behind a running turn or was delivered immediately. Never the message content.",
+          "description": "Deliver a message into a group-chat thread — same delivery as a wired text-in payload, with the sender attributed from what fed the run. Delivered only when the sender is a member of the thread's chat; refused, clearly, for an unknown or unauthorized thread. Returns the thread reference and whether the message queued behind a running turn or was delivered immediately. Never the message content.",
           "inputSchema": {
             "type": "object",
             "properties": {
               "message": { "type": "string", "description": "The message text to deliver" },
-              "agent": {
+              "thread": {
                 "type": "string",
-                "description": "Target agent slug; falls back to this node's default agent"
-              },
-              "job": { "type": "string", "description": "Target job slug; falls back to this node's default job" },
-              "key": {
-                "type": "string",
-                "description": "Optional session discriminator — same agent+job with a different key is a distinct, stable session"
-              },
-              "title": {
-                "type": "string",
-                "description": "Optional session title, applied only when the session is first created"
-              },
-              "session": {
-                "type": "string",
-                "description": "Legacy combined \"agent:<agent>:<job>\" key, honored when agent/job are omitted"
+                "description": "A group-chat thread reference (\"<group-slug>.<agent-slug>.<thread-slug>\", a whole session key, or a thread id) to deliver into"
               },
               "queue": {
                 "type": "string",
                 "enum": ["wait", "push"],
                 "description": "How this message relates to anything already waiting for that agent. \"wait\" holds it until the turn in progress ends, then delivers it on its own. \"push\" interrupts that turn and delivers everything held at once, this message last, so the agent reads the whole picture before acting — use it when what you are sending changes what the agent should be doing. With nothing already waiting the two are the same ordinary send. Required: sending into a session that may be busy is a choice, not a default. Replaces the former \"force\", which was this same interrupt-and-deliver-everything."
-              },
-              "thread": {
-                "type": "string",
-                "description": "A group-chat thread reference (\"<group-slug>:<agent-slug>:<thread-slug>\", a whole session key, or a thread id) to deliver into, instead of an agent:job session. Mutually exclusive with agent/job/key/session — carrying both is refused. Delivered only when the thread's own agent is one this node's wiring could otherwise reach; refused, clearly, for an unknown or unreachable thread."
               }
             },
-            "required": ["message", "queue"]
-          }
-        },
-        {
-          "id": "listAgents",
-          "label": "List Agents",
-          "icon": "List",
-          "description": "Enumerate the agents (and their jobs) this node can route to via `send` — same space, same slug resolution, so any value returned here is guaranteed to route.",
-          "inputSchema": { "type": "object", "properties": {} }
-        },
-        {
-          "id": "listSessions",
-          "label": "List Sessions",
-          "icon": "ListTree",
-          "description": "List the sessions this node can reach (same agent/job resolution as `send`) — compact navigation info only, never message content. Each session's `status` is the same offline/idle/working/waiting vocabulary the chat list uses: waiting = blocked on a permission request, working = a turn is running, idle = process alive but neither, offline = no process. Each also carries `contextUsage`: `{ usedTokens, contextLimit, asOf? }` as last reported by that session's own harness, never estimated here. An `offline` session with prior activity reports its last-known reading here too, with `asOf` (ms since epoch) set — its absence means the figure is live. `contextUsage` is null only when it is genuinely UNKNOWN — never loaded, not finished a turn since it was loaded, or a harness that does not report usage — and null must not be read as \"nothing held\"; `contextLimit` alone is null when the harness cannot say what the model's window is, so a ratio cannot always be computed. Use it to spot a session that should be compacted before it fills (see the `compact` action). Optionally filter by agent and/or job slug.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "agent": { "type": "string", "description": "Only sessions for this agent slug" },
-              "job": { "type": "string", "description": "Only sessions for this job slug" }
-            }
-          }
-        },
-        {
-          "id": "listTurns",
-          "label": "List Turns",
-          "icon": "History",
-          "description": "Tail-first, cursor-paged view of a session's turns (a sessionKey from listSessions) — truncated prompt/final-message text only, never the full event stream. Omit beforeIndex for the most recent turns; pass a previous page's nextBeforeIndex to page further back. Response includes `sessionStatus` (same vocabulary as listSessions): `offline` means the session has no live process, so an empty `turns` array there means \"nothing to load\", not \"empty session\". A turn's own `status` is `unknown` when it was restored by a session/load replay after a restart — it ended, but the replay does not record how, so treat it as neither success nor failure.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "sessionKey": { "type": "string", "description": "Session key, as returned by listSessions" },
-              "turns": { "type": "number", "description": "Number of turns to return (default 10, capped at 50)" },
-              "beforeIndex": {
-                "type": "number",
-                "description": "Cursor from a previous page's nextBeforeIndex — fetches the turns immediately before it"
-              }
-            },
-            "required": ["sessionKey"]
-          }
-        },
-        {
-          "id": "compact",
-          "label": "Compact Session",
-          "icon": "Archive",
-          "description": "Request compaction of a session's context and return immediately — this call never blocks for the compaction itself; poll `compactStatus` with the same sessionKey for the outcome. An `offline` session is woken from its stored state first (the same resume a message sent to it would trigger) and left running afterwards — compaction never leaves a session offline, since re-orienting from the re-delivered task context and standing instructions is the point. Errors synchronously only when the session cannot be resumed at all (nothing was ever persisted for this key). A `working` or `waiting` session is NOT an error here — the request queues behind whatever turn is currently running and executes once the session goes idle, without ever interrupting that turn (same no-interrupt principle as an ordinary queued message). A second `compact` call for a session that already has a pending or running compaction COALESCES into it instead of starting a duplicate — `coalesced: true` in the response tells a caller that re-fires (e.g. after not waiting for a previous ack) that it did not start a second compaction. Once it actually runs: `/compact`, then a re-send of that session's task context and standing instructions, because compaction summarises the conversation and drops the original messages — including the ones that carried them. See `compactStatus`'s description for what the eventual result contains. WHEN to compact is the caller's policy, not this action's.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "sessionKey": { "type": "string", "description": "Session key, as returned by listSessions" }
-            },
-            "required": ["sessionKey"]
-          }
-        },
-        {
-          "id": "compactStatus",
-          "label": "Compact Status",
-          "icon": "History",
-          "description": "The queryable signal that a `compact` request actually ran — the only way to observe its outcome, since `compact` itself returns before the compaction happens. `state` is `never-requested` (no compact has ever been requested for this sessionKey since the server last started), `pending` (queued, waiting for the session's current turn to end), `running` (the /compact turn or the instruction restore is in flight now), `done`, or `error` (the compaction job itself failed unexpectedly — distinct from `result.compacted: false`, which is a completed job that determined nothing shrank). `result` is present once `state` is `done`: `contextUsageBefore`/`contextUsageAfter` (same shape and same null-means-unknown rule as listSessions) BRACKET THE `/compact` TURN ALONE — the after-reading is taken before any instructions are re-sent, so it reports what compaction freed and is not reduced by the cost of restoring them. `compacted` is true when the held context shrank, false when it GREW (a harness with no `/compact` answers it as an ordinary message, so it ends up holding more — this is the failure signal, not a clean delivery), and null when it cannot be told: usage unknown on either side, or an unchanged figure, which is indistinguishable from a reading that has not refreshed. `instructionsRestored` reports whether the re-sent instructions were actually read (not merely sent) — it is false when `compacted` is false, since nothing was dropped and re-sending would only grow the context this action exists to shrink, and also false when the session had no task context or instructions to restore. A job's status is retained only until superseded by a new `compact` request for the same sessionKey; there is no history beyond the most recent one.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "sessionKey": { "type": "string", "description": "Session key, as returned by listSessions" }
-            },
-            "required": ["sessionKey"]
-          }
-        },
-        {
-          "id": "unload",
-          "label": "Unload Session",
-          "icon": "Power",
-          "description": "Terminate an idle session's process to free the RAM it holds while it isn't doing anything. The session's transcript and its durable session pointer are left untouched — the next message sent to this sessionKey reloads it transparently (the same cold-start resume an `offline` session already uses), so nothing about the conversation is lost. Only applies to a session whose `status` (see `listSessions`) is `idle`: `offline` has no process to unload and errors synchronously, and `working`/`waiting` also error rather than unload, since that session's own harness may own background work a kill would silently drop with no way to resume it.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "sessionKey": { "type": "string", "description": "Session key, as returned by listSessions" }
-            },
-            "required": ["sessionKey"]
-          }
-        },
-        {
-          "id": "delete",
-          "label": "Delete Session",
-          "icon": "Trash2",
-          "description": "Remove a session for good: drops its durable session pointer (so it can never cold-start resume, unlike `unload`) and its chat-list entry (so it also stops appearing in the sidebar). By default this only works on a session whose `status` (see `listSessions`) is `offline` — the normal case, e.g. clearing out stale sessions nobody is using — and errors synchronously for `idle`/`working`/`waiting`, since deleting a live session also ends its process and would silently drop whatever it's doing. Pass `force: true` to override: it ends the live process first (same teardown a live chat delete already uses) and then deletes. Unlike deleting a chat in the UI, this does not touch the underlying harness's on-disk transcript — that stays intentionally out of reach, the same harness-agnostic boundary session loading already observes (the harness may even be running on a different terminal context — local/WSL/SSH — than this server), so the transcript file is orphaned on disk, not deleted, and not tracked by anything afterward.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "sessionKey": { "type": "string", "description": "Session key, as returned by listSessions" },
-              "force": {
-                "type": "boolean",
-                "description": "Delete even if the session is idle/working/waiting, ending its live process first. Without this, a non-offline session is refused rather than silently interrupted."
-              }
-            },
-            "required": ["sessionKey"]
+            "required": ["message", "thread", "queue"]
           }
         }
       ]

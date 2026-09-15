@@ -20,10 +20,7 @@ import { foldEvents, isSnapshotEvent } from 'agent-client/fold'
 import type { ChatEvent } from 'agent-client/types'
 import { asc, eq } from 'drizzle-orm'
 
-import { forgetLocalSessionImpl, stopLocalSessionProcessImpl } from '@/app/_authed/(agent)/_server/acp-impl'
-import { readLastKnownUsage } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
-import { deleteSession as deleteSessionEntry, readSessions } from '@/app/_authed/(agent)/_server/agent-sessions-store'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import { appInstanceDataDir } from '@/app/_authed/(apps)/_server/instance-paths'
 import {
@@ -31,19 +28,7 @@ import {
   type ExecDispatchSummary,
 } from '@/app/_authed/(extension-runtime)/_server/exec-dispatch'
 import {
-  agentConfiguredWindow,
-  parseSessionKey,
-  reachableAgentJobs,
-  reachablePairKey,
-  reachablePairs,
-} from '@/app/_authed/(extension-runtime)/_server/send-message-helpers'
-import { type ContextUsage, toContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
-import {
-  type CompactAck,
-  type CompactStatus,
   deliverToSendMessageNode,
-  getCompactStatusOnGraph,
-  requestCompactOnGraph,
   type SendMessageDeliveryResult,
   type GraphEdgeLike as SendMessageEdgeLike,
   type GraphNodeLike as SendMessageNodeLike,
@@ -346,12 +331,9 @@ export function listGraphHandles(filter?: ListHandlesFilter): Promise<HandleInfo
   return graphApi.listHandles(filter)
 }
 
-// Locate a `send-message` node and its OWN space's full node/edge list — every
-// lookup below (listAgents, and deliverToSendMessageNode's own agent/job
-// resolution) is scoped to that one space, matching how the node's `text-in`
-// wiring already resolves (by design: agents/jobs
-// from other spaces are never reachable from a given SendMessage node, so
-// listing them would suggest targets `send` could never actually route to).
+// Locate a `send-message` node and its OWN space's full node/edge list — the
+// nodes are what sender attribution resolves against (see senderForSend),
+// scoped to the one space the node lives in.
 async function findSendMessageNode(
   nodeId: string,
 ): Promise<{ node: GraphNodeRecord; nodes: SendMessageNodeLike[]; edges: SendMessageEdgeLike[] } | null> {
@@ -375,46 +357,6 @@ async function findSendMessageNode(
   }
 }
 
-// The agent/job slug pairs a send-message node can route to, and the graph
-// wiring behind group-chat thread reachability, live in
-// send-message-helpers.ts — imported above — so listSessions/listTurns
-// filtering the (node-independent) persisted session registry, and a thread
-// send's reachability check, both read the SAME authority, not a copy of it.
-
-export interface SessionSummary {
-  sessionKey: string
-  agent: string
-  job: string
-  title: string
-  createdAt: number
-  lastActivityAt: number
-  // Same four-state vocabulary and derivation as the chat list's row status
-  // (see deriveSessionStatus) — waiting (pending permission) > working
-  // (active turn) > idle (alive, neither) > offline (no process).
-  status: SessionStatus
-  // How much context the session is holding, as last reported by its own
-  // harness — never estimated here.
-  //
-  // `null` means UNKNOWN, and a caller must not read it as "nothing held".
-  // Three different things produce it: an `offline` session (no live process
-  // to have reported anything), a session that has not completed a turn since
-  // it was loaded, and a harness that does not report usage at all.
-  //
-  // `contextLimit` is null on its own when the harness reports usage but
-  // cannot say what the model's window is; a caller wanting a ratio needs both
-  // and should treat a null limit as "cannot compute one".
-  //
-  // An `offline` session's last reported reading is served here too, marked
-  // with `asOf` (see ContextUsage) rather than folded into the null case —
-  // `null` now means genuinely never reported (never loaded, or loaded but no
-  // turn has finished since).
-  contextUsage: ContextUsage | null
-  // Server-held prompts waiting for the session's current turn to end. Unlike
-  // `contextUsage`, 0 is a fact, not unknown — an offline/unloaded session
-  // cannot hold server-side prompts.
-  queuedMessages: number
-}
-
 export interface TurnSummary {
   index: number
   prompt: string
@@ -430,7 +372,7 @@ export interface TurnsPage {
   turns: TurnSummary[]
   hasMore: boolean
   nextBeforeIndex: number | null
-  // The session's own status (see SessionSummary.status). An empty `turns`
+  // The session's own status (see deriveSessionStatus). An empty `turns`
   // array means two different things depending on this: a genuinely empty
   // (never-prompted) session at idle/working/waiting, vs. an offline session
   // whose history isn't loaded in memory at all — a caller must be able to
@@ -626,57 +568,6 @@ export interface HostSendMessageApi {
     sourceNodeId: string | undefined,
     callerAgent?: string,
   ): Promise<SendMessageDeliveryResult>
-  listAgents(nodeId: string): Promise<{ agent: string; jobs: string[] }[]>
-  listSessions(nodeId: string, params: { agent?: string; job?: string }): Promise<SessionSummary[]>
-  listTurns(nodeId: string, params: { sessionKey: string; turns?: number; beforeIndex?: number }): Promise<TurnsPage>
-  compact(nodeId: string, params: { sessionKey: string }): Promise<CompactAck>
-  compactStatus(nodeId: string, params: { sessionKey: string }): Promise<CompactStatus>
-  /** Terminates an idle session's process; the transcript and durable session pointer are kept, so the next message reloads it transparently (same cold-start resume an offline session already uses). */
-  unload(nodeId: string, params: { sessionKey: string }): Promise<{ sessionKey: string; unloaded: true }>
-  /**
-   * Removes a session for good: drops its durable session pointer (and any
-   * config overrides) AND its chat-list entry, so it no longer resumes and no
-   * longer appears in the sidebar. Default requires `status` (see
-   * listSessions) to be `offline` -- deleting a live session would silently
-   * drop whatever it's doing, so `idle`/`working`/`waiting` are refused unless
-   * `force: true`, which first ends the live process (same teardown as a live
-   * chat delete) and then proceeds. The underlying harness's on-disk
-   * transcript is deliberately left alone and NOT located or deleted -- this
-   * stays harness-agnostic, the same boundary agentClient.loadSession
-   * observes, and the harness may be running on a different terminal context
-   * (local/WSL/SSH) than this server; the transcript is orphaned, not lost
-   * track of.
-   */
-  delete(
-    nodeId: string,
-    params: { sessionKey: string; force?: boolean },
-  ): Promise<{ sessionKey: string; deleted: true }>
-}
-
-// Refuse a session key with the SAME not-found shape for every action below
-// that targets an EXISTING session -- `send` is exempt, since creating a
-// session on first dispatch is its own feature. Reachability (this node's
-// space wires the key's agent/job pair together) proves only that a session
-// under this key COULD exist, not that one actually was created here: the
-// same pair can appear in a syntactically valid key nobody ever sent to.
-// Checking the durable registry too closes that gap once, at the boundary,
-// instead of leaving each action to rely on its own downstream call happening
-// to do something safe for a key that was never real -- which is exactly how
-// this class of gap has gone live before: once as a phantom no-op, once as a
-// phantom session mint. One guard, called first, by every in-scope action.
-async function requireExistingSessionKey(
-  sessionKey: string,
-  nodes: SendMessageNodeLike[],
-  edges: SendMessageEdgeLike[],
-): Promise<void> {
-  const parts = sessionKey ? parseSessionKey(sessionKey) : null
-  if (!parts || !reachablePairs(nodes, edges).has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
-    throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
-  }
-  const known = (await readSessions()).some((entry) => entry.key === sessionKey)
-  if (!known) {
-    throw new Error(`Session not reachable from this node: ${sessionKey || '(empty)'}`)
-  }
 }
 
 const sendMessageApi: HostSendMessageApi = {
@@ -700,186 +591,7 @@ const sendMessageApi: HostSendMessageApi = {
     // see it for the order and for why the agent listing is a thunk rather
     // than a list.
     const sender = await senderForSend({ sourceNodeId, callerAgent }, found.nodes, listAgentNodesImpl)
-    const result = await deliverToSendMessageNode(
-      found.node as unknown as SendMessageNodeLike,
-      found.nodes,
-      found.edges,
-      JSON.stringify(payload),
-      sender,
-    )
-    if (!result) {
-      throw new Error(
-        'No agent/job resolved for this message — check the agent/job slugs (or this node’s own defaults) against listAgents',
-      )
-    }
-    return result
-  },
-  async listAgents(nodeId) {
-    const found = await findSendMessageNode(nodeId)
-    if (!found) {
-      throw new Error(`Node not found: ${nodeId}`)
-    }
-    return reachableAgentJobs(found.nodes, found.edges)
-  },
-
-  async listSessions(nodeId, params) {
-    const found = await findSendMessageNode(nodeId)
-    if (!found) {
-      throw new Error(`Node not found: ${nodeId}`)
-    }
-    const reachable = reachablePairs(found.nodes, found.edges)
-    const agentFilter = typeof params.agent === 'string' ? params.agent.trim() : undefined
-    const jobFilter = typeof params.job === 'string' ? params.job.trim() : undefined
-
-    const sessionKeys = {
-      pending: new Set(agentClient.pendingPermissionSessionKeys()),
-      active: new Set(agentClient.activeSessionKeys()),
-      alive: new Set(agentClient.aliveSessionKeys()),
-    }
-    const metaByKey = new Map(
-      agentClient
-        .listSessions()
-        .filter((m) => m.sessionKey)
-        .map((m) => [m.sessionKey as string, m]),
-    )
-
-    const out: SessionSummary[] = []
-    for (const entry of await readSessions()) {
-      const parts = parseSessionKey(entry.key)
-      if (!parts || !reachable.has(reachablePairKey(parts.agentSlug, parts.jobSlug))) {
-        continue
-      }
-      if (agentFilter && parts.agentSlug !== agentFilter) {
-        continue
-      }
-      if (jobFilter && parts.jobSlug !== jobFilter) {
-        continue
-      }
-      const live = metaByKey.get(entry.key)
-      // Offline: nothing in agent-client's memory to read a live figure from
-      // — fall back to what the session persisted before it went offline,
-      // marked with `asOf` (see ContextUsage) so a caller can tell it apart
-      // from a fresh reading. Only queried when genuinely offline, so an
-      // online session never pays for a settings-store read it doesn't need.
-      const contextUsage = live
-        ? toContextUsage(live.usage)
-        : toContextUsage(
-            undefined,
-            (await readLastKnownUsage(entry.key)) ?? undefined,
-            // Resolved from the nodes this call already loaded, so an offline
-            // session costs no extra graph read for its window.
-            agentConfiguredWindow(parts.agentSlug, found.nodes),
-          )
-      out.push({
-        sessionKey: entry.key,
-        agent: parts.agentSlug,
-        job: parts.jobSlug,
-        title: entry.title ?? '',
-        createdAt: entry.createdAt,
-        // Dead sessions have no in-memory state to read a real activity time
-        // from (agent-client sessions don't survive a restart) — fall back to
-        // createdAt rather than fabricate one.
-        lastActivityAt: live?.lastActivityAt ?? entry.createdAt,
-        status: deriveSessionStatus(entry.key, sessionKeys),
-        contextUsage,
-        queuedMessages: live?.queuedMessages ?? 0,
-      })
-    }
-    out.sort((a, b) => b.lastActivityAt - a.lastActivityAt)
-    return out
-  },
-
-  async listTurns(nodeId, params) {
-    const found = await findSendMessageNode(nodeId)
-    if (!found) {
-      throw new Error(`Node not found: ${nodeId}`)
-    }
-    const sessionKey = params.sessionKey.trim()
-    await requireExistingSessionKey(sessionKey, found.nodes, found.edges)
-    return turnsPageForSessionKey(sessionKey, { turns: params.turns, beforeIndex: params.beforeIndex })
-  },
-
-  async compact(nodeId, params) {
-    const found = await findSendMessageNode(nodeId)
-    if (!found) {
-      throw new Error(`Node not found: ${nodeId}`)
-    }
-    const sessionKey = params.sessionKey.trim()
-    await requireExistingSessionKey(sessionKey, found.nodes, found.edges)
-
-    // Accepts and returns immediately; the compaction itself — waiting out the
-    // in-flight turn, both usage reads, the verdict, the conditional restore —
-    // runs in the background and is queryable via compactStatus below. This
-    // end owns only the node lookup and the reachability check.
-    return requestCompactOnGraph(found.nodes, found.edges, sessionKey)
-  },
-
-  async compactStatus(nodeId, params) {
-    const found = await findSendMessageNode(nodeId)
-    if (!found) {
-      throw new Error(`Node not found: ${nodeId}`)
-    }
-    const sessionKey = params.sessionKey.trim()
-    await requireExistingSessionKey(sessionKey, found.nodes, found.edges)
-    return getCompactStatusOnGraph(sessionKey)
-  },
-
-  async unload(nodeId, params) {
-    const found = await findSendMessageNode(nodeId)
-    if (!found) {
-      throw new Error(`Node not found: ${nodeId}`)
-    }
-    const sessionKey = params.sessionKey.trim()
-    await requireExistingSessionKey(sessionKey, found.nodes, found.edges)
-    const status = deriveSessionStatus(sessionKey, {
-      pending: new Set(agentClient.pendingPermissionSessionKeys()),
-      active: new Set(agentClient.activeSessionKeys()),
-      alive: new Set(agentClient.aliveSessionKeys()),
-    })
-    // Only an idle process is safe to unload: offline already has nothing
-    // running, and working/waiting means the session's own harness may own
-    // background work that a kill would silently drop with no way to resume it.
-    if (status !== 'idle') {
-      throw new Error(
-        `Session is ${status}, not idle — unload only applies to an idle session (offline: no process to unload; working/waiting: unloading would kill in-flight work)`,
-      )
-    }
-    await stopLocalSessionProcessImpl(sessionKey)
-    return { sessionKey, unloaded: true }
-  },
-
-  async delete(nodeId, params) {
-    const found = await findSendMessageNode(nodeId)
-    if (!found) {
-      throw new Error(`Node not found: ${nodeId}`)
-    }
-    const sessionKey = params.sessionKey.trim()
-    await requireExistingSessionKey(sessionKey, found.nodes, found.edges)
-    const force = params.force === true
-    if (!force) {
-      const status = deriveSessionStatus(sessionKey, {
-        pending: new Set(agentClient.pendingPermissionSessionKeys()),
-        active: new Set(agentClient.activeSessionKeys()),
-        alive: new Set(agentClient.aliveSessionKeys()),
-      })
-      // The normal case is deleting an offline (stale) session. A live one
-      // (idle/working/waiting) is refused by default since deleting it also
-      // ends its process — pass force: true to end it and delete anyway.
-      if (status !== 'offline') {
-        throw new Error(
-          `Session is ${status}, not offline — delete only applies to an offline session by default (pass force: true to end a live session and delete it anyway)`,
-        )
-      }
-    }
-    // Ends any live process, and drops the durable session pointer + config
-    // overrides — safe to call unconditionally whether or not a process is
-    // actually running (same call group-chat thread deletion already reuses).
-    await forgetLocalSessionImpl(sessionKey)
-    // forgetLocalSessionImpl only drops the durable session pointer, not the
-    // human-facing chat-list entry — remove that separately so the session
-    // also stops appearing in the sidebar.
-    await deleteSessionEntry(sessionKey)
-    return { sessionKey, deleted: true }
+    return deliverToSendMessageNode(JSON.stringify(payload), sender)
   },
 }
 
