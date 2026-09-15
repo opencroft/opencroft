@@ -72,8 +72,8 @@ export function SpaceApps({ spaceSlug, apps, instances, tab, onTabChange }: Prop
                 return (
                   <Flex key={instance.id} row withGaps align='center' className='w-full rounded-md border p-3'>
                     <Link
-                      to='/space/$slug/settings/app/$instanceId'
-                      params={{ slug: spaceSlug, instanceId: instance.id }}
+                      to='/space/$slug/settings/app/$app'
+                      params={{ slug: spaceSlug, app: instance.slug }}
                       className='flex min-w-0 flex-1 items-center gap-3 hover:opacity-80'
                     >
                       <Icon className='size-5 shrink-0 text-muted-foreground' />
@@ -95,8 +95,8 @@ export function SpaceApps({ spaceSlug, apps, instances, tab, onTabChange }: Prop
                         the visible tooltip stays the short form. */}
                     <Button asChild variant='ghost' size='icon' aria-label='Open in a new tab' title='Open'>
                       <Link
-                        to='/space/$slug/app/$instanceId'
-                        params={{ slug: spaceSlug, instanceId: instance.id }}
+                        to='/space/$slug/app/$app'
+                        params={{ slug: spaceSlug, app: instance.slug }}
                         target='_blank'
                         rel='noopener noreferrer'
                       >

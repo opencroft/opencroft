@@ -101,8 +101,8 @@ function buildRouter() {
         <SpaceApps spaceSlug={SPACE_SLUG} apps={[APP]} instances={[INSTANCE]} tab='installed' onTabChange={() => {}} />
       ),
     }),
-    createRoute({ getParentRoute: () => rootRoute, path: '/space/$slug/app/$instanceId' }),
-    createRoute({ getParentRoute: () => rootRoute, path: '/space/$slug/settings/app/$instanceId' }),
+    createRoute({ getParentRoute: () => rootRoute, path: '/space/$slug/app/$app' }),
+    createRoute({ getParentRoute: () => rootRoute, path: '/space/$slug/settings/app/$app' }),
     createRoute({ getParentRoute: () => rootRoute, path: '/space/$slug/settings/app/add' }),
   ])
   return createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ['/'] }) })
@@ -138,8 +138,8 @@ test('the row body opens the instance settings and the button beside it opens th
     assert.ok(rowLink, 'the row rendered')
     assert.equal(
       rowLink.getAttribute('href'),
-      `/space/${SPACE_SLUG}/settings/app/${INSTANCE.id}`,
-      'clicking the row opens the instance settings',
+      `/space/${SPACE_SLUG}/settings/app/${INSTANCE.slug}`,
+      'clicking the row opens the instance settings, addressed by slug',
     )
 
     const openLink = dom.container.querySelector('a[aria-label="Open in a new tab"]')
@@ -147,8 +147,8 @@ test('the row body opens the instance settings and the button beside it opens th
     assert.equal(openLink.getAttribute('title'), 'Open', 'while the visible tooltip stays the short form')
     assert.equal(
       openLink.getAttribute('href'),
-      `/space/${SPACE_SLUG}/app/${INSTANCE.id}`,
-      'the button opens the App itself',
+      `/space/${SPACE_SLUG}/app/${INSTANCE.slug}`,
+      'the button opens the App itself, addressed by slug',
     )
     assert.match(
       openLink.querySelector('svg')?.getAttribute('class') ?? '',
@@ -205,7 +205,7 @@ test('the button hands its click to the browser, and a link without a target doe
     await clickOn(rowLink)
     assert.equal(
       router.state.location.pathname,
-      `/space/${SPACE_SLUG}/settings/app/${INSTANCE.id}`,
+      `/space/${SPACE_SLUG}/settings/app/${INSTANCE.slug}`,
       'while a link with no target is still routed in place',
     )
   } finally {
