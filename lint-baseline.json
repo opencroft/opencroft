@@ -30,7 +30,7 @@
     "an added entry: it means either deletions, or a narrower config."
   ],
   "biome": "2.4.16",
-  "filesScanned": 843,
+  "filesScanned": 846,
   "total": 402,
   "entries": {
     "apps/opencroft/app/_authed/(agent)/_server/acp-impl.test.ts": {
