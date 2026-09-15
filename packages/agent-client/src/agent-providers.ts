@@ -25,8 +25,9 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
     },
     // Verified against the endpoint above: z.ai rejects the bracketed
     // context-variant form (`glm-5.2[1m]`) that it used to accept, and now
-    // serves glm-5.3 for any 5.x id it still recognises.
-    models: ['glm-4.6', 'glm-5.1', 'glm-5.3'],
+    // serves glm-5.3 for any 5.x id it still recognises. glm-5.3-flash is a
+    // distinct, faster model code whose thinking cannot be disabled.
+    models: ['glm-4.6', 'glm-5.1', 'glm-5.3', 'glm-5.3-flash'],
     keyEnv: 'ZAI_API_KEY',
   },
   {
