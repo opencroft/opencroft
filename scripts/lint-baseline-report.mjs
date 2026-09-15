@@ -1,0 +1,241 @@
+// Reading a biome run's diagnostics and comparing them to what is written
+// down. Kept apart from check-lint-baseline.mjs, which runs biome and decides
+// an exit code, so this half can be exercised against output that never came
+// from a real run — including the shapes a real run is least likely to produce
+// and most likely to be wrong about.
+//
+// The same separation the workspace test baseline uses, for the same reason.
+
+/** The key a finding is counted under: file plus rule, and no line numbers.
+ *  Line numbers churn on every edit above them, and a baseline that churns is
+ *  one nobody can read a diff of.
+ *
+ *  Joined on NUL, which cannot occur in either half, and never split back
+ *  apart — file and rule travel as their own fields on every entry. A key
+ *  built with an ordinary separator and parsed with `split` mis-files the
+ *  first path containing that character, silently, under a truncated name.
+ *
+ *  CONSTRUCTED rather than written as the byte. Identical at runtime, but a
+ *  source file carrying a literal NUL is classified as binary, and the forge
+ *  then renders every future diff of this file as "Binary files differ" — so
+ *  the half of the gate that can actually be reviewed would stop being
+ *  reviewable, permanently and silently. */
+const KEY_SEPARATOR = String.fromCharCode(0)
+
+export const keyOf = (file, rule) => `${file}${KEY_SEPARATOR}${rule}`
+
+const byPlace = (a, b) => a.file.localeCompare(b.file) || a.rule.localeCompare(b.rule)
+
+/**
+ * Count diagnostics per file and rule.
+ *
+ * A diagnostic this cannot read is COUNTED rather than skipped. Dropping one
+ * silently is a false green: the finding disappears from the actuals, the
+ * comparison sees a deficit or nothing at all, and the reason is invisible.
+ * The caller fails the run when `unreadable` is non-zero.
+ */
+export function aggregate(diagnostics) {
+  const counts = new Map()
+  let unreadable = 0
+  for (const d of diagnostics ?? []) {
+    const file = typeof d?.location?.path === 'string' ? d.location.path : null
+    const rule = typeof d?.category === 'string' ? d.category : null
+    if (!file || !rule) {
+      unreadable += 1
+      continue
+    }
+    const key = keyOf(file, rule)
+    const seen = counts.get(key)
+    if (seen) {
+      seen.count += 1
+    } else {
+      counts.set(key, { file, rule, count: 1 })
+    }
+  }
+  return { entries: [...counts.values()].sort(byPlace), unreadable }
+}
+
+/**
+ * What changed against the baseline, in BOTH directions.
+ *
+ * `excess` is the gate everyone expects: a finding that is new, or more of one
+ * than was written down. A file with no entry at all must be clean, which is
+ * what holds new code to full strength.
+ *
+ * `deficit` fails the run too, and that is the half worth explaining. A
+ * baseline entry larger than reality is not harmless bookkeeping — it is a
+ * licence. An entry of 2 over an actual 1 means the next instance of that rule
+ * in that file lands green, because the gate only ever compares against the
+ * written number. So a fix has to bring the baseline down with it, in the same
+ * change, and the number stays exact at every commit rather than exact on the
+ * day somebody wrote it.
+ *
+ * That is also what makes this file the report: a count that can only ever be
+ * the truth needs nothing published beside it.
+ */
+export function compare(actual, baseline) {
+  const now = new Map((actual ?? []).map((e) => [keyOf(e.file, e.rule), e]))
+  const was = new Map((baseline ?? []).map((e) => [keyOf(e.file, e.rule), e]))
+
+  const excess = []
+  for (const [key, entry] of now) {
+    const allowed = was.get(key)?.count ?? 0
+    if (entry.count > allowed) {
+      excess.push({ file: entry.file, rule: entry.rule, allowed, actual: entry.count })
+    }
+  }
+
+  const deficit = []
+  for (const [key, entry] of was) {
+    const count = now.get(key)?.count ?? 0
+    if (count < entry.count) {
+      deficit.push({ file: entry.file, rule: entry.rule, allowed: entry.count, actual: count })
+    }
+  }
+
+  return { excess: excess.sort(byPlace), deficit: deficit.sort(byPlace) }
+}
+
+/** Total findings an entry list accounts for — the debt number. */
+export const total = (entries) => (entries ?? []).reduce((sum, e) => sum + e.count, 0)
+
+// ── The written form ──────────────────────────────────────────────────────
+//
+// Nested file → rule → count, rather than an array of objects, and the reason
+// is entirely about how it reads as a DIFF.
+//
+// The baseline file is a door: a change that adds or increases an entry is a
+// finding entering the tolerated set, and it is reviewed like a suppression.
+// That review only works if an increase is visible at a glance. An array of
+// `{ file, rule, count }` objects does not give that — inserting one shifts
+// the punctuation of its neighbour, so an addition and an unrelated
+// re-indentation produce similar-looking hunks, and a reviewer scanning for a
+// new tolerance has to read structure rather than lines.
+//
+// In this shape every rule is exactly one line. A new tolerance is one added
+// line, an increase is one changed line with both numbers on screen, and a
+// removal is one deleted line. Downward travels free and looks it.
+
+/** Entries as they are written to disk: file → rule → count, sorted so the
+ *  file is stable and a diff shows only what actually moved. */
+export function toFile(entries) {
+  const out = {}
+  for (const { file, rule, count } of [...(entries ?? [])].sort(byPlace)) {
+    out[file] ??= {}
+    out[file][rule] = count
+  }
+  return out
+}
+
+/** The inverse. Anything malformed is dropped from the RESULT and counted, so
+ *  a hand-edited file that cannot be read fails the run rather than quietly
+ *  lowering the bar it is supposed to hold. */
+export function fromFile(written) {
+  const entries = []
+  let malformed = 0
+  for (const [file, rules] of Object.entries(written ?? {})) {
+    if (!rules || typeof rules !== 'object') {
+      malformed += 1
+      continue
+    }
+    for (const [rule, count] of Object.entries(rules)) {
+      if (!Number.isInteger(count) || count < 1) {
+        malformed += 1
+        continue
+      }
+      entries.push({ file, rule, count })
+    }
+  }
+  return { entries: entries.sort(byPlace), malformed }
+}
+
+/**
+ * Whether a run can be believed at all, before anything is compared.
+ *
+ * Every branch here exists because its failure is indistinguishable from a pass
+ * by exit code alone. `biome check` on a path that does not exist exits 1 — the
+ * same code a successful run with findings returns — so the exit code reports
+ * neither the success nor the failure of the RUN, only the state of the tree.
+ *
+ * `diagnosticsNotPrinted` is the quiet one: biome caps printed diagnostics in
+ * some invocations, and a capped run produces a smaller, entirely well-formed
+ * actuals list. Measured 2026-09-14, the JSON reporter capped nothing at 412
+ * diagnostics — but relying on that default is how a silent truncation becomes
+ * a baseline that ratchets the wrong way.
+ */
+export function validateRun(parsed, { unreadable, baselineEntries }) {
+  if (!parsed || typeof parsed !== 'object') {
+    return { ok: false, reason: 'biome produced no readable JSON' }
+  }
+  if (!parsed.summary || typeof parsed.summary !== 'object') {
+    return { ok: false, reason: 'biome output carried no summary' }
+  }
+  if (!Array.isArray(parsed.diagnostics)) {
+    return { ok: false, reason: 'biome output carried no diagnostics array' }
+  }
+  const summary = parsed.summary
+  const scanned = (summary.changed ?? 0) + (summary.unchanged ?? 0)
+  if (scanned <= 0) {
+    return { ok: false, reason: 'biome scanned no files — it ran, and looked at nothing' }
+  }
+  if ((summary.diagnosticsNotPrinted ?? 0) > 0) {
+    return {
+      ok: false,
+      reason: `biome withheld ${summary.diagnosticsNotPrinted} diagnostics — the actuals are truncated`,
+    }
+  }
+  if (unreadable > 0) {
+    return { ok: false, reason: `${unreadable} diagnostic(s) carried no file or rule and could not be counted` }
+  }
+  // Zero findings is the shape a broken invocation and a finished ratchet
+  // share. It is only believable once the baseline is empty too, and until
+  // then it means the run looked at nothing it understood.
+  if (parsed.diagnostics.length === 0 && (baselineEntries ?? 0) > 0) {
+    return {
+      ok: false,
+      reason: `biome reported zero diagnostics over ${scanned} files while the baseline still carries ${baselineEntries} — that is a broken run, not a clean tree`,
+    }
+  }
+  return { ok: true, scanned }
+}
+
+/**
+ * Whether this run looked at as much of the tree as the baseline was measured
+ * over.
+ *
+ * THE ONE HOLE THE TWO-SIDED COMPARISON CANNOT SEE. Excluding a path from
+ * biome's `files.includes` takes that path's findings out of the actuals, and
+ * takes nothing out of the baseline unless the path already carried entries —
+ * so excluding a CLEAN directory, which is most of the tree, satisfies the
+ * excess side (no findings arrive from a file nobody scanned) and the deficit
+ * side alike, and every future finding in it is invisible. Measured on this
+ * repository 2026-09-14: one added exclusion, 867 files scanned instead of
+ * 870, gate green, exit 0.
+ *
+ * So the count of scanned files becomes a number that can only move
+ * deliberately, exactly like the entries. Growth is free — files get added.
+ * Shrinkage has two causes and no way to tell them apart from here, so the
+ * refusal names both rather than picking one.
+ *
+ * A baseline that records no count is refused rather than waved through. It is
+ * the same reasoning as the zero-findings branch above: "nothing written down"
+ * and "nothing to write down" arrive as the same absent field, and treating the
+ * absence as a pass would make deleting one line the way to disarm this.
+ * `--update` is the way back, and it is the only one.
+ */
+export function coverageVerdict(scanned, recorded) {
+  if (!Number.isInteger(recorded) || recorded < 1) {
+    return {
+      ok: false,
+      reason:
+        'the baseline does not record how many files it was measured over, so a run that scanned fewer cannot be told from one that scanned all of them — regenerate it',
+    }
+  }
+  if (scanned < recorded) {
+    return {
+      ok: false,
+      reason: `this run scanned ${scanned} files and the baseline was measured over ${recorded} — either files were deleted, in which case regenerate the baseline in the change that deleted them, or something has been excluded from biome and every finding in it is now invisible`,
+    }
+  }
+  return { ok: true }
+}
