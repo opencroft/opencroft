@@ -159,8 +159,16 @@ test('the restore closes with the re-orientation instruction, under the context 
   // addition to the restore, never a replacement for what it exists to carry.
   assert.match(restore, /<opencroft-task>job context the restore must bring back<\/opencroft-task>/)
 
-  const instructionAt = restore.indexOf('THIS TURN IS RE-ORIENTATION, NOT A NEW TASK.')
+  // The standing wording for this rule, quoted rather than paraphrased, so
+  // the message and every agent's standing instructions state it identically. A
+  // paraphrase here would read as a second rule arriving beside the first.
+  const instructionAt = restore.indexOf('Work starts ONLY from an incoming dispatch message.')
   assert.ok(instructionAt > -1, 'the restore says in so many words that it is not a dispatch')
+
+  // The licence to re-load has to survive alongside the instruction to stop.
+  // Dropping it leaves the next real dispatch landing on an agent that has
+  // forgotten how its environment works, which is the opposite failure.
+  assert.match(restore, /re-loading anything they tell you to load/)
   assert.ok(
     restore.indexOf('<opencroft-task>') < instructionAt,
     'context first, then what to do with it — the other order describes a message that has not arrived yet',
