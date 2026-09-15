@@ -798,8 +798,26 @@ export async function awaitDispatchedTurn(
 // Appended after the re-delivered session-init block (see performCompact).
 // Written to read as a trailing line under the instructions themselves, because
 // composeEnvelope puts the session-init parts ahead of the message.
-const REINSTRUCT_NOTE =
-  'The task context and instructions above are the ones this session was started with. Compaction has just summarised this conversation and dropped the original messages, including the ones that carried them — so they are repeated here. Re-read them and follow them for the rest of this session, including re-loading anything they tell you to load.'
+//
+// THE SECOND PARAGRAPH IS WHY THIS IS NOT JUST "HERE IS YOUR CONTEXT AGAIN".
+// A restore is assembled out of the same parts a session's FIRST message is —
+// a task block, standing instructions, then a message — so on arrival it is
+// indistinguishable from a fresh dispatch. An agent whose own standing
+// instructions say what to do at the start of a session reads it as one and
+// does that: observed 2026-08-15, where a restore turn went off and re-checked
+// the agent's assigned tracker items with nobody having asked.
+//
+// So the instruction to stop has to be stated HERE. Every compacted session
+// receives this one message, whereas the same sentence written into an
+// individual agent's instructions binds that agent alone — and those
+// instructions are part of what this message re-delivers, so they cannot be
+// what limits it. Re-reading and re-loading stay licensed: holding your context
+// is the point of the restore. Acting on it is the part that has to wait for a
+// real message.
+const REINSTRUCT_NOTE = [
+  'The task context and instructions above are the ones this session was started with. Compaction has just summarised this conversation and dropped the original messages, including the ones that carried them — so they are repeated here. Re-read them and follow them for the rest of this session, including re-loading anything they tell you to load.',
+  'THIS TURN IS RE-ORIENTATION, NOT A NEW TASK. Re-reading the context above and re-loading what it names is the whole of it. Do not start, resume, re-check or re-verify any work, and do not act on anything in your own instructions that tells you what to do at the start of a session — this is not one. A one-line acknowledgement is enough; then end your turn. The next task arrives as its own message.',
+].join('\n\n')
 
 // Compact a live session's context, then give it back the instructions the
 // compaction dropped.

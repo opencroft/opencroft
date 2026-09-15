@@ -141,6 +141,36 @@ test('compact against an idle session returns immediately and runs to completion
   assert.equal(status.result?.instructionsRestored, true)
 })
 
+// Asserted on the text actually dispatched rather than on the note constant,
+// because the requirement is about ORDER as much as content: the restore is
+// assembled by composeEnvelope, and only the assembled message can show that
+// the instruction is what the agent reads last.
+test('the restore closes with the re-orientation instruction, under the context it re-delivers', async () => {
+  const h = await setupCompactableSession()
+
+  await requestCompactOnGraph(h.nodes, h.edges, h.sessionKey)
+  await waitFor(() => h.promptCalls.length > 0)
+  h.endTurn() // settles /compact's own turn
+  await waitFor(() => h.promptCalls.length > 1)
+  const restore = h.promptCalls[1] ?? ''
+  h.endTurn() // settles the restore's turn
+
+  // The re-delivered context is still all there. The instruction is an
+  // addition to the restore, never a replacement for what it exists to carry.
+  assert.match(restore, /<opencroft-task>job context the restore must bring back<\/opencroft-task>/)
+
+  const instructionAt = restore.indexOf('THIS TURN IS RE-ORIENTATION, NOT A NEW TASK.')
+  assert.ok(instructionAt > -1, 'the restore says in so many words that it is not a dispatch')
+  assert.ok(
+    restore.indexOf('<opencroft-task>') < instructionAt,
+    'context first, then what to do with it — the other order describes a message that has not arrived yet',
+  )
+  assert.ok(
+    restore.trimEnd().endsWith('The next task arrives as its own message.'),
+    'and it must be the LAST thing read: an agent that stops at the context has been given no reason to stop',
+  )
+})
+
 test('compact against a working session queues behind the turn without interrupting it', async () => {
   const h = await setupCompactableSession()
 
