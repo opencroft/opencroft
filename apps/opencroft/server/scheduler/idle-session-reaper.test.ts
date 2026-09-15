@@ -92,7 +92,7 @@ test('an already-offline session is never reaped -- nothing to unload, however l
   assert.deepEqual(due, [])
 })
 
-test('a session key that does not parse as agent:<slug>:<job> is skipped, not thrown on', () => {
+test('a session key that matches neither registry shape is skipped, not thrown on', () => {
   const now = 1_000_000
   const sessionKey = 'not-a-valid-key'
   const sessions = [{ sessionKey, lastActivityAt: now - 46 * 60_000 }]
@@ -101,6 +101,62 @@ test('a session key that does not parse as agent:<slug>:<job> is skipped, not th
   const due = selectDueSessions(sessions, statuses, () => ENABLED, now)
 
   assert.deepEqual(due, [])
+})
+
+// Group-chat thread sessions are keyed `group-chat.<chat>.<agent>.<thread>`,
+// not `agent:<agent>:<job>`. These pin that the reaper resolves their owning
+// agent too; matching only the `agent:` shape is the bug that silently
+// exempted every thread session.
+
+test('a group-chat thread session, idle past its threshold on an opted-in agent, is due', () => {
+  const now = 1_000_000
+  const sessionKey = 'group-chat.my-chat.dave.standup'
+  const sessions = [{ sessionKey, lastActivityAt: now - 46 * 60_000 }]
+  const statuses = statusesOf([[sessionKey, 'idle']])
+
+  const due = selectDueSessions(sessions, statuses, (agentSlug) => (agentSlug === 'dave' ? ENABLED : null), now)
+
+  assert.deepEqual(due, [sessionKey], 'the AGENT segment, not the chat, is what the config lookup keys on')
+})
+
+test('a group-chat thread key in the legacy colon spelling resolves to the same owning agent', () => {
+  const now = 1_000_000
+  const sessionKey = 'group-chat:my-chat:dave:standup'
+  const sessions = [{ sessionKey, lastActivityAt: now - 46 * 60_000 }]
+  const statuses = statusesOf([[sessionKey, 'idle']])
+
+  const due = selectDueSessions(sessions, statuses, (agentSlug) => (agentSlug === 'dave' ? ENABLED : null), now)
+
+  assert.deepEqual(due, [sessionKey])
+})
+
+test('a group-chat key that does not split into four slug segments (pre-slug thread) is skipped', () => {
+  const now = 1_000_000
+  const sessionKey = 'group-chat.only.two-segments'
+  const sessions = [{ sessionKey, lastActivityAt: now - 46 * 60_000 }]
+  const statuses = statusesOf([[sessionKey, 'idle']])
+
+  const due = selectDueSessions(sessions, statuses, () => ENABLED, now)
+
+  assert.deepEqual(due, [])
+})
+
+test('a group-chat thread of a non-opted-in agent is never reaped, alongside an opted-in one that is', () => {
+  const now = 1_000_000
+  const optedIn = 'group-chat.my-chat.dave.standup'
+  const optedOut = 'group-chat.my-chat.erin.standup'
+  const sessions = [
+    { sessionKey: optedIn, lastActivityAt: now - 60 * 60_000 },
+    { sessionKey: optedOut, lastActivityAt: now - 60 * 60_000 },
+  ]
+  const statuses = statusesOf([
+    [optedIn, 'idle'],
+    [optedOut, 'idle'],
+  ])
+
+  const due = selectDueSessions(sessions, statuses, (agentSlug) => (agentSlug === 'dave' ? ENABLED : DISABLED), now)
+
+  assert.deepEqual(due, [optedIn])
 })
 
 test('each session is checked against its OWN agent -- one opted-in agent does not reap another agent’s sessions', () => {
