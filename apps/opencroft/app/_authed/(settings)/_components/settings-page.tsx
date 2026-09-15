@@ -1,7 +1,7 @@
 'use client'
 
-import { Link, type LinkProps, useRouteContext } from '@tanstack/react-router'
-import { Archive, ChevronRight, ScrollText, User, Users } from 'lucide-react'
+import { useRouteContext } from '@tanstack/react-router'
+import { Archive, ScrollText, User, Users } from 'lucide-react'
 import type React from 'react'
 import { Suspense, useCallback } from 'react'
 import { MenuLayout } from 'ui/layout/menulayout'
@@ -15,6 +15,7 @@ import {
   findExtensionPage,
   useExtensionSettings,
 } from '@/app/_authed/(settings)/_components/extension-settings'
+import UsersSettings from '@/app/_authed/(settings)/_components/users-settings'
 import { useUrlState } from '@/components/hooks/use-url-state'
 import { cn } from '@/lib/utils'
 
@@ -24,39 +25,17 @@ interface BuiltinPage {
   label: string
   icon: React.ElementType
   component: React.ComponentType
+  /** Rendered only for an administrator — see the visibility note below. */
+  adminOnly?: boolean
 }
 
 const BUILTIN_PAGES: BuiltinPage[] = [
   { id: 'account', label: 'Account', icon: User, component: AccountSettings },
   { id: 'audit', label: 'MCP Audit', icon: ScrollText, component: AuditSettings },
   { id: 'backup', label: 'Backup & Restore', icon: Archive, component: BackupSettings },
+  { id: 'users', label: 'Users', icon: Users, component: UsersSettings, adminOnly: true },
 ]
 
-// An entry that LEAVES this page for a screen of its own.
-//
-// The user list is not a panel: it is a full screen with its own add and edit
-// pages beneath it, and those pages need the whole width. Rendering it as a
-// section would also give the list two addresses — /settings?section=users
-// and /settings/users — and only the second is the one the route guard in
-// _authed.tsx protects.
-//
-// So it navigates, and the menu says so with a chevron rather than dressing
-// it up as a tab that swaps the panel. An entry that looks like the three
-// above but replaces the whole page instead is a small lie about where the
-// click goes.
-interface LinkPage {
-  id: string
-  label: string
-  icon: React.ElementType
-  to: LinkProps['to']
-  /** Rendered only for an administrator — see the visibility note below. */
-  adminOnly?: boolean
-}
-
-const LINK_PAGES: LinkPage[] = [{ id: 'users', label: 'Users', icon: Users, to: '/settings/users', adminOnly: true }]
-
-// Every menu entry, tab or link, shares this so the two kinds read as one
-// list rather than two designs that happen to sit together.
 const ENTRY_CLASS = 'w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors'
 
 function SettingsContent() {
@@ -70,15 +49,15 @@ function SettingsContent() {
   // call or a second copy of the rule: if the two could disagree, the loser
   // is a menu entry that bounces the person who clicks it.
   const { isAdmin } = useRouteContext({ from: '/_authed' })
-  const linkPages = LINK_PAGES.filter((page) => !page.adminOnly || isAdmin)
+  const builtinPages = BUILTIN_PAGES.filter((page) => !page.adminOnly || isAdmin)
 
-  const builtin = BUILTIN_PAGES.find((p) => p.id === value)
+  const builtin = builtinPages.find((p) => p.id === value)
   const extensionPage = !builtin ? findExtensionPage(settings, value) : null
   const ActiveComponent = builtin?.component ?? extensionPage?.component
 
   const menu = (
     <nav className='p-2 space-y-1'>
-      {BUILTIN_PAGES.map((page) => {
+      {builtinPages.map((page) => {
         const Icon = page.icon
         return (
           <button
@@ -90,17 +69,6 @@ function SettingsContent() {
             <Icon className='h-4 w-4 shrink-0' />
             {page.label}
           </button>
-        )
-      })}
-      {linkPages.map((page) => {
-        const Icon = page.icon
-        return (
-          <Link key={page.id} to={page.to} className={cn(ENTRY_CLASS, 'hover:bg-accent/50')}>
-            <Icon className='h-4 w-4 shrink-0' />
-            {page.label}
-            {/* Says this one goes somewhere rather than swapping the panel. */}
-            <ChevronRight className='h-4 w-4 shrink-0 ml-auto text-muted-foreground' />
-          </Link>
         )
       })}
       <ExtensionSettingsMenu activeId={value} onSelect={setSection} />
