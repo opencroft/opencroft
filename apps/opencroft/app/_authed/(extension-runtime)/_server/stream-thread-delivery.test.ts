@@ -1,9 +1,9 @@
-// Proves the send-message node's `thread` envelope field end to end: delivery
-// gated on the SENDER holding a member row in the thread's chat — a system
-// sender by its explicit per-chat grant, an agent by its ordinary membership —
-// refusal for an unknown thread and for a sender with no row, and that the
-// agent:job envelope path — refactored to share resolveOrCreateSession with
-// the thread path — behaves exactly as it did before.
+// Proves the send-message node's delivery end to end: every send targets a
+// group-chat thread, gated on the SENDER holding a member row in the thread's
+// chat — a system sender by its explicit per-chat grant, an agent by its
+// ordinary membership — with refusal for an unknown thread and for a sender
+// with no row, and a payload that still names the removed direct-session
+// fields refused loudly rather than delivered nowhere.
 //
 // Same PGLITE_PATH-before-any-db-import discipline as model.test.ts: this
 // exercises the real group-chats model behind the registered resolver, not a
@@ -76,12 +76,11 @@ await db.insert(space).values({
   }),
 })
 
-// A SECOND space, for the one test that drives the STREAM rather than calling
-// the delivery directly. It needs what the others do not: the source-to-
-// send-message wiring in the graph the registry serves, because that is what
-// `persistToDownstreamSendMessages` walks to find where a completed stream
-// goes. Kept apart from the space above so nothing here changes what those
-// tests resolve.
+// A SECOND space, for the tests that drive the STREAM rather than calling the
+// delivery directly. It needs the source-to-send-message wiring in the graph
+// the registry serves, because that is what `persistToDownstreamSendMessages`
+// walks to find where a completed stream goes. Kept apart from the space above
+// so nothing here changes what those tests resolve.
 await db.insert(space).values({
   slug: 'stream-failure-space',
   name: 'Stream Failure Space',
@@ -97,14 +96,8 @@ await db.insert(space).values({
       // the refusal already reached a reader before this change.
       { id: 'sf-src', type: 'script-node', data: {} },
       { id: 'sf-sm', type: 'send-message', data: {} },
-      { id: 'sf-job', type: 'agent-job', data: { name: 'Task', context: 'do the thing' } },
     ],
-    edges: [
-      { source: 'sf-src', sourceHandle: 'stdout-out', target: 'sf-sm', targetHandle: 'text-in' },
-      // For the agent:job routing surface only — a thread delivery no longer
-      // reads this wiring; its authority is the sender's member row.
-      { source: 'sf-job', target: 'sf-agent' },
-    ],
+    edges: [{ source: 'sf-src', sourceHandle: 'stdout-out', target: 'sf-sm', targetHandle: 'text-in' }],
   }),
 })
 
@@ -159,26 +152,6 @@ function seedAgentSessionConnection(connection: AgentConnection, agentName = 'Ag
   })
 }
 
-// The send-message node's own graph, kept deliberately separate from the real
-// DB-backed space above EXCEPT for the agent node id: that one has to match
-// the real 'agent-session' node for the agent:job envelope regression test
-// below, whose route resolves an agentNodeId that ensureLocalSessionImpl then
-// looks up in the REAL space registry — an invented id would fail there with
-// "Agent node not found", independent of anything under test. The job node's
-// id is free to be synthetic; nothing re-resolves it against the real
-// registry. A THREAD delivery reads none of this wiring any more: its
-// authority is the sender's member row in the thread's chat, granted and
-// revoked in the database, which is exactly what the tests below vary.
-const sendMessageNodeGraph = () => ({
-  target: { id: 'sm1', type: 'send-message', data: {} },
-  nodes: [
-    { id: 'sm1', type: 'send-message', data: {} },
-    { id: 'agent-session', type: 'agent', data: { name: 'Agent Session' } },
-    { id: 'j1', type: 'agent-job', data: { name: 'Task', context: 'do the thing' } },
-  ],
-  edges: [{ source: 'j1', target: 'agent-session' }],
-})
-
 test('a thread envelope delivers when the sender holds a member row in the chat, and reports delivered', async () => {
   const owner = await makeUser('thread-deliver-owner@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'granted delivery')
@@ -205,11 +178,7 @@ test('a thread envelope delivers when the sender holds a member row in the chat,
   const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message')
   await waitForPrompts(prompts, 1)
 
-  const { target, nodes, edges } = sendMessageNodeGraph()
   const result = await stream.deliverToSendMessageNode(
-    target,
-    nodes,
-    edges,
     JSON.stringify({ message: 'the hourly pass has run', thread: started.thread.sessionKey, queue: 'wait' }),
     SENT_BY,
   )
@@ -228,7 +197,7 @@ test('a sender with no member row is refused in the same words as an unknown ref
     .values({
       groupChatId: chat.id,
       agentNodeId: 'agent-idle',
-      sessionKey: `group-chat:${chat.id}:agent-idle:ungranted-fixture`,
+      sessionKey: `group-chat.${chat.id}.agent-idle.ungranted-fixture`,
       createdByUserId: owner.id,
     })
     .returning()
@@ -241,13 +210,9 @@ test('a sender with no member row is refused in the same words as an unknown ref
   // delivery's two callers is an agent invoking the node action over MCP, and
   // a refusal that named the cause would let it sort thread references into
   // real and invented.
-  const { target, nodes, edges } = sendMessageNodeGraph()
   const refuse = async (ref: string): Promise<Error> => {
     try {
       await stream.deliverToSendMessageNode(
-        target,
-        nodes,
-        edges,
         JSON.stringify({ message: 'should not land', thread: ref, queue: 'wait' }),
         SENT_BY,
       )
@@ -259,7 +224,7 @@ test('a sender with no member row is refused in the same words as an unknown ref
   }
 
   const ungranted = await refuse(thread.sessionKey)
-  const unknown = await refuse('no-such-chat:no-such-agent:no-such-thread')
+  const unknown = await refuse('no-such-chat.no-such-agent.no-such-thread')
 
   // The only thing that may differ between the two is the reference the caller
   // handed in itself. Compared this way rather than against a literal so the
@@ -269,7 +234,7 @@ test('a sender with no member row is refused in the same words as an unknown ref
   const said = (err: Error, ref: string) => err.message.replace(ref, '<ref>')
   assert.equal(
     said(ungranted, thread.sessionKey),
-    said(unknown, 'no-such-chat:no-such-agent:no-such-thread'),
+    said(unknown, 'no-such-chat.no-such-agent.no-such-thread'),
     'a caller can tell a real thread from an invented one by the refusal it gets back',
   )
   assert.doesNotMatch(
@@ -308,23 +273,16 @@ test('an agent sender answers to the same row: a member delivers, a non-member i
   const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message')
   await waitForPrompts(prompts, 1)
 
-  const { target, nodes, edges } = sendMessageNodeGraph()
   const asMember = await stream.deliverToSendMessageNode(
-    target,
-    nodes,
-    edges,
     JSON.stringify({ message: 'from a member agent', thread: started.thread.sessionKey, queue: 'wait' }),
     { author: 'agent.session', principal: { kind: 'agent', agentNodeId: 'agent-session' } },
   )
-  assert.equal(asMember?.kind, 'thread')
+  assert.equal(asMember.kind, 'thread')
   await waitForPrompts(prompts, 2)
 
   await assert.rejects(
     () =>
       stream.deliverToSendMessageNode(
-        target,
-        nodes,
-        edges,
         JSON.stringify({ message: 'from an outsider agent', thread: started.thread.sessionKey, queue: 'wait' }),
         { author: 'agent.idle', principal: { kind: 'agent', agentNodeId: 'agent-idle' } },
       ),
@@ -339,16 +297,12 @@ test('an agent sender answers to the same row: a member delivers, a non-member i
 })
 
 test('a thread envelope refuses cleanly for an unknown thread reference — nothing is created', async () => {
-  const { target, nodes, edges } = sendMessageNodeGraph()
   await assert.rejects(
     () =>
       stream.deliverToSendMessageNode(
-        target,
-        nodes,
-        edges,
         JSON.stringify({
           message: 'nowhere to go',
-          thread: 'no-such-chat:no-such-agent:no-such-thread',
+          thread: 'no-such-chat.no-such-agent.no-such-thread',
           queue: 'wait',
         }),
         SENT_BY,
@@ -357,18 +311,21 @@ test('a thread envelope refuses cleanly for an unknown thread reference — noth
   )
 })
 
-test('a thread and an agent/job field together are refused, not silently resolved one way', async () => {
-  const { target, nodes, edges } = sendMessageNodeGraph()
+test('a payload naming a removed direct-session field is refused loudly, not delivered nowhere', async () => {
   await assert.rejects(
     () =>
       stream.deliverToSendMessageNode(
-        target,
-        nodes,
-        edges,
-        JSON.stringify({ message: 'ambiguous', thread: 'a:b:c', agent: 'session', job: 'task', queue: 'wait' }),
+        JSON.stringify({ message: 'legacy', thread: 'a.b.c', agent: 'session', job: 'task', queue: 'wait' }),
         SENT_BY,
       ),
-    /not both/i,
+    /has been removed/i,
+  )
+})
+
+test('a payload naming no thread at all is refused rather than delivered nowhere', async () => {
+  await assert.rejects(
+    () => stream.deliverToSendMessageNode(JSON.stringify({ message: 'no destination', queue: 'wait' }), SENT_BY),
+    /must be a JSON payload naming a group-chat thread/i,
   )
 })
 
@@ -401,63 +358,13 @@ test('a message already queued behind a running turn reports queued, not deliver
   const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message')
   await waitForPrompts(prompts, 1)
 
-  const { target, nodes, edges } = sendMessageNodeGraph()
   const result = await stream.deliverToSendMessageNode(
-    target,
-    nodes,
-    edges,
     JSON.stringify({ message: 'arrives mid-turn', thread: started.thread.sessionKey, queue: 'wait' }),
     SENT_BY,
   )
   assert.deepEqual(result, { kind: 'thread', threadRef: started.thread.sessionKey, status: 'queued' })
 
   firstPromptGate.resolve()
-  await waitForPrompts(prompts, 2)
-})
-
-// ---------------------------------------------------------------------------
-// REGRESSION: the agent:job envelope path, refactored to share
-// resolveOrCreateSession with the thread path above, behaves exactly as
-// before — same session reuse, same created/forced reporting.
-// ---------------------------------------------------------------------------
-
-test('an agent:job envelope still creates then reuses one stable session, unaffected by the thread path existing', async () => {
-  const prompts: string[] = []
-  seedAgentSessionConnection({
-    newSession: async () => ({ sessionId: `agent-job-${crypto.randomUUID()}` }),
-    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
-      prompts.push(params.prompt.map((b) => b.text ?? '').join(''))
-      return { stopReason: 'end_turn' }
-    },
-    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
-    cancel: async () => {},
-    setSessionConfigOption: async () => ({}),
-    closeSession: async () => ({}),
-  } as unknown as AgentConnection)
-
-  const { target, nodes, edges } = sendMessageNodeGraph()
-  const first = await stream.deliverToSendMessageNode(
-    target,
-    nodes,
-    edges,
-    JSON.stringify({ message: 'first', agent: 'agent session', job: 'task', queue: 'wait' }),
-    SENT_BY,
-  )
-  assert.ok(first?.kind === 'agent', 'the first delivery must resolve the agent:job path')
-  assert.equal(first.created, true)
-  assert.equal(first.forced, false)
-  await waitForPrompts(prompts, 1)
-
-  const second = await stream.deliverToSendMessageNode(
-    target,
-    nodes,
-    edges,
-    JSON.stringify({ message: 'second', agent: 'agent session', job: 'task', queue: 'wait' }),
-    SENT_BY,
-  )
-  assert.ok(second?.kind === 'agent')
-  assert.equal(second.sessionKey, first.sessionKey, 'the same stable session, not a second one')
-  assert.equal(second.created, false, 'the second delivery reuses the session the first one created')
   await waitForPrompts(prompts, 2)
 })
 
@@ -471,65 +378,6 @@ test('an agent:job envelope still creates then reuses one stable session, unaffe
 // Driving the stream is what makes narrowing it again go red rather than
 // silent.
 // ---------------------------------------------------------------------------
-
-test('a send that fails on the stream path reports into the thread it was aimed at', async () => {
-  const owner = await makeUser('stream-failure-owner@example.test')
-  const chat = await model.createGroupChat(reqAs(owner), 'stream failure reporting')
-  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'sf-agent' })
-  // The failure REPORT is a delivery too, authored by the send-message
-  // machinery's own system identity — so it answers to the same member-row
-  // authority as the send it reports on, and needs its own grant here.
-  await model.addMember(reqAs(owner), chat.id, { kind: 'system', systemId: 'system.send-message' })
-
-  const prompts: string[] = []
-  seedAgentSessionConnection(
-    {
-      newSession: async () => ({ sessionId: `stream-failure-${crypto.randomUUID()}` }),
-      prompt: async (params: { prompt: Array<{ text?: string }> }) => {
-        prompts.push(params.prompt.map((b) => b.text ?? '').join(''))
-        return { stopReason: 'end_turn' }
-      },
-      resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
-      cancel: async () => {},
-      setSessionConfigOption: async () => ({}),
-      closeSession: async () => ({}),
-    } as unknown as AgentConnection,
-    'Stream Failure Agent',
-  )
-
-  const started = await model.startThread(reqAs(owner), chat.id, 'sf-agent', 'opening message')
-  await waitForPrompts(prompts, 1)
-
-  // A failure that is NOT the unattributable-sender refusal: the payload names
-  // a thread and an agent at once, which the delivery rejects before either
-  // branch runs. The refusal already reached a reader before this change, so
-  // testing with one would leave the widening unexercised.
-  //
-  // The thread it names is reachable, deliberately. A failure OF the
-  // destination cannot be reported TO the destination -- that residue is named
-  // in the source -- so the case worth pinning is the one where the report can
-  // actually arrive.
-  const payload = JSON.stringify({
-    message: 'this text must not reach the thread',
-    thread: started.thread.sessionKey,
-    agent: 'sf-agent',
-    queue: 'wait',
-  })
-
-  const outgoing = stream.getStream<{ text: string; final: boolean }>('stream-failure-space', 'sf-src', 'stdout-out')
-  stream.broadcast(outgoing, { text: payload, final: true })
-
-  await waitForPrompts(prompts, 2)
-  const report = prompts[1] ?? ''
-  assert.match(report, /was not delivered/, 'a person reading the thread is told the send failed')
-  assert.match(report, /thread or an agent\/job session, not both/, 'and why, in the words the failure used')
-  assert.match(report, /sf-sm/, 'and which wiring to go and fix')
-  assert.doesNotMatch(
-    report,
-    /this text must not reach the thread/,
-    'the undelivered text is never carried: a report that quotes it has delivered it',
-  )
-})
 
 test('the cause collapsed out of the refusal is written down where a person reads it', async () => {
   const owner = await makeUser('stream-detail-owner@example.test')

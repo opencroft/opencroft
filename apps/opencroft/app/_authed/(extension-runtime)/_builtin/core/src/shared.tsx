@@ -49,16 +49,11 @@ export const SCRIPT_CONSUMER_NODEJS: HandleDef[] = [
 ]
 
 export const AGENT_HANDLES: HandleDef[] = [
-  { id: 'agent-in', contextType: 'agent-job', role: 'target', label: 'Jobs' },
   { id: 'instructions-in', contextType: 'agent-instruction', role: 'target', label: 'Instructions' },
 ]
 
 export const AGENT_INSTRUCTION_HANDLES: HandleDef[] = [
   { id: 'instruction-out', contextType: 'agent-instruction', role: 'source', label: 'Agent' },
-]
-
-export const AGENT_JOB_HANDLES: HandleDef[] = [
-  { id: 'job-out', contextType: 'agent-job', role: 'source', label: 'Agent' },
 ]
 
 // ═════════════════════════════════════════════════════════════════════

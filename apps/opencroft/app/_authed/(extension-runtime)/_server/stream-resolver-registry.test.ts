@@ -1,7 +1,7 @@
 // Regression coverage for a failure where group_chat_compact threw
-// "No agent/job resolved for session" on a real thread with genuine membership,
-// while the UI ring's Compact button (same requestCompactOnGraph([], [], key)
-// call) worked. Root cause: registerStandingContextResolver/
+// "No agent resolved for session" on a real thread with genuine membership,
+// while the UI ring's Compact button (same requestCompact(key) call) worked.
+// Root cause: registerStandingContextResolver/
 // registerThreadDeliveryResolver only ever run once, from server/startup.ts's
 // once-per-process ensureServerStarted guard. Vite's dev SSR (e.g. `vite
 // dev`) can hand a later importer of this module a genuinely fresh instance —

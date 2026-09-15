@@ -13,7 +13,7 @@ function statusesOf(entries: [string, SessionStatus][]): Map<string, SessionStat
 
 test('an idle session past its threshold, on an opted-in agent, is due', () => {
   const now = 1_000_000
-  const sessionKey = 'agent:dave:chat:tab1'
+  const sessionKey = 'group-chat.my-chat.dave.standup'
   const sessions = [{ sessionKey, lastActivityAt: now - 46 * 60_000 }]
   const statuses = statusesOf([[sessionKey, 'idle']])
 
@@ -24,7 +24,7 @@ test('an idle session past its threshold, on an opted-in agent, is due', () => {
 
 test('an idle session that has not yet crossed its threshold is not due', () => {
   const now = 1_000_000
-  const sessionKey = 'agent:dave:chat:tab1'
+  const sessionKey = 'group-chat.my-chat.dave.standup'
   const sessions = [{ sessionKey, lastActivityAt: now - 10 * 60_000 }]
   const statuses = statusesOf([[sessionKey, 'idle']])
 
@@ -35,7 +35,7 @@ test('an idle session that has not yet crossed its threshold is not due', () => 
 
 test('an agent that has not opted in is never reaped, however long a session has been idle', () => {
   const now = 1_000_000
-  const sessionKey = 'agent:dave:chat:tab1'
+  const sessionKey = 'group-chat.my-chat.dave.standup'
   const sessions = [{ sessionKey, lastActivityAt: now - 46 * 60_000 }]
   const statuses = statusesOf([[sessionKey, 'idle']])
 
@@ -46,7 +46,7 @@ test('an agent that has not opted in is never reaped, however long a session has
 
 test('an agent with no config at all (no matching node found) is never reaped', () => {
   const now = 1_000_000
-  const sessionKey = 'agent:dave:chat:tab1'
+  const sessionKey = 'group-chat.my-chat.dave.standup'
   const sessions = [{ sessionKey, lastActivityAt: now - 46 * 60_000 }]
   const statuses = statusesOf([[sessionKey, 'idle']])
 
@@ -61,7 +61,7 @@ test('an agent with no config at all (no matching node found) is never reaped', 
 
 test('a working session is never reaped, however long it has been idle by the clock', () => {
   const now = 1_000_000
-  const sessionKey = 'agent:dave:chat:tab1'
+  const sessionKey = 'group-chat.my-chat.dave.standup'
   const sessions = [{ sessionKey, lastActivityAt: now - 46 * 60_000 }]
   const statuses = statusesOf([[sessionKey, 'working']])
 
@@ -72,7 +72,7 @@ test('a working session is never reaped, however long it has been idle by the cl
 
 test('a waiting session (blocked on a permission prompt) is never reaped, however long it has been idle by the clock', () => {
   const now = 1_000_000
-  const sessionKey = 'agent:dave:chat:tab1'
+  const sessionKey = 'group-chat.my-chat.dave.standup'
   const sessions = [{ sessionKey, lastActivityAt: now - 46 * 60_000 }]
   const statuses = statusesOf([[sessionKey, 'waiting']])
 
@@ -83,7 +83,7 @@ test('a waiting session (blocked on a permission prompt) is never reaped, howeve
 
 test('an already-offline session is never reaped -- nothing to unload, however long it has been idle by the clock', () => {
   const now = 1_000_000
-  const sessionKey = 'agent:dave:chat:tab1'
+  const sessionKey = 'group-chat.my-chat.dave.standup'
   const sessions = [{ sessionKey, lastActivityAt: now - 46 * 60_000 }]
   const statuses = statusesOf([[sessionKey, 'offline']])
 
@@ -92,7 +92,7 @@ test('an already-offline session is never reaped -- nothing to unload, however l
   assert.deepEqual(due, [])
 })
 
-test('a session key that matches neither registry shape is skipped, not thrown on', () => {
+test('a session key that is not a group-chat thread key is skipped, not thrown on', () => {
   const now = 1_000_000
   const sessionKey = 'not-a-valid-key'
   const sessions = [{ sessionKey, lastActivityAt: now - 46 * 60_000 }]
@@ -103,10 +103,9 @@ test('a session key that matches neither registry shape is skipped, not thrown o
   assert.deepEqual(due, [])
 })
 
-// Group-chat thread sessions are keyed `group-chat.<chat>.<agent>.<thread>`,
-// not `agent:<agent>:<job>`. These pin that the reaper resolves their owning
-// agent too; matching only the `agent:` shape is the bug that silently
-// exempted every thread session.
+// Group-chat thread sessions are keyed `group-chat.<chat>.<agent>.<thread>`
+// (a lingering colon spelling still parses). These pin that the reaper
+// resolves their owning agent from the AGENT segment.
 
 test('a group-chat thread session, idle past its threshold on an opted-in agent, is due', () => {
   const now = 1_000_000
@@ -161,8 +160,8 @@ test('a group-chat thread of a non-opted-in agent is never reaped, alongside an 
 
 test('each session is checked against its OWN agent -- one opted-in agent does not reap another agent’s sessions', () => {
   const now = 1_000_000
-  const optedIn = 'agent:dave:chat:tab1'
-  const optedOut = 'agent:erin:chat:tab1'
+  const optedIn = 'group-chat.my-chat.dave.tab1'
+  const optedOut = 'group-chat.my-chat.erin.tab1'
   const sessions = [
     { sessionKey: optedIn, lastActivityAt: now - 60 * 60_000 },
     { sessionKey: optedOut, lastActivityAt: now - 60 * 60_000 },
@@ -179,7 +178,7 @@ test('each session is checked against its OWN agent -- one opted-in agent does n
 
 test('due is exactly at the threshold, not only strictly past it', () => {
   const now = 1_000_000
-  const sessionKey = 'agent:dave:chat:tab1'
+  const sessionKey = 'group-chat.my-chat.dave.standup'
   const sessions = [{ sessionKey, lastActivityAt: now - ENABLED.thresholdMs }]
   const statuses = statusesOf([[sessionKey, 'idle']])
 

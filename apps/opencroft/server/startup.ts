@@ -50,7 +50,7 @@ export function ensureServerStarted(): void {
   // importing group-chat code.
   registerThreadDeliveryResolver(deliverThreadFromNode)
   // Same reasoning again, for waking an offline thread ahead of a compact —
-  // requestCompactOnGraph can resume a group-chat thread without stream.ts
+  // requestCompact can resume a group-chat thread without stream.ts
   // ever importing group-chat code.
   registerSessionWakeResolver(groupChatWakeSession)
   // And once more, in the other direction: the agent client holds the delivery

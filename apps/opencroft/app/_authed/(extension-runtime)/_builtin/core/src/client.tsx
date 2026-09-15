@@ -13,7 +13,6 @@ function GraphAppView({ instanceId }: AppComponentProps) {
 import { AgentInspector, AgentNode, AgentProfileTab } from './nodes/agent'
 import { AgentSpeechRecognitionTab } from './nodes/agent-asr'
 import { AgentInstructionInspector, AgentInstructionNode } from './nodes/agent-instruction'
-import { AgentJobInspector, AgentJobNode } from './nodes/agent-job'
 import { AgentMcpTab } from './nodes/agent-mcp'
 import { AgentSkillsTab } from './nodes/agent-skills'
 import { AgentSpeechTab } from './nodes/agent-speech'
@@ -44,7 +43,6 @@ import { type WslData, WslFilesTab, WslInspector, WslNode, WslTerminalTab } from
 import {
   AGENT_HANDLES,
   AGENT_INSTRUCTION_HANDLES,
-  AGENT_JOB_HANDLES,
   FS_TARGET_CONSUMER,
   SCRIPT_CONSUMER,
   SCRIPT_CONSUMER_NODEJS,
@@ -65,7 +63,6 @@ export default defineExtension({
     { id: 'filesystem-target', label: 'Filesystem Target', color: 'oklch(0.7 0.17 140)' },
     { id: 'text-stream', label: 'Text Stream', color: 'oklch(0.75 0.17 100)' },
     { id: 'execution-context', label: 'Execution Context', color: 'oklch(0.65 0.24 25)' },
-    { id: 'agent-job', label: 'Agent Job', color: 'oklch(0.7 0.17 60)' },
     { id: 'agent-instruction', label: 'Agent Instruction', color: 'oklch(0.72 0.16 180)' },
   ],
   // The HOST-registered Graph App: metadata and parameters live in
@@ -383,17 +380,6 @@ export default defineExtension({
           component: AgentSkillsTab as unknown as never,
         },
       ],
-    },
-    {
-      typeId: 'agent-job',
-      name: 'Agent Job',
-      category: 'AI',
-      icon: 'Briefcase',
-      accent: 'oklch(0.7 0.17 60)',
-      handles: AGENT_JOB_HANDLES as unknown as never[],
-      defaultData: { name: '', context: '' },
-      component: AgentJobNode as unknown as never,
-      inspector: AgentJobInspector as unknown as never,
     },
     {
       typeId: 'agent-instruction',

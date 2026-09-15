@@ -14,7 +14,6 @@ import {
   isAgentNode,
 } from '@/app/_authed/(agent)/_shared/agent-node-shape'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
-import { parseSessionKey } from '@/app/_authed/(extension-runtime)/_server/send-message-helpers'
 import { partsOfSessionKey } from '@/app/_authed/(group-chats)/_shared/session-key'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
@@ -32,17 +31,14 @@ export interface ReapCandidateSession {
   lastActivityAt: number
 }
 
-// The owning agent's slug for EITHER registry's key shape: the 1:1/agent-job
-// registry's `agent:<agent>:<job>[:<key>]`, or a group-chat thread's
-// `group-chat.<chat>.<agent>.<thread>` (both stored spellings). A thread
-// session is exactly as unloadable as a 1:1 one, and matching only the
-// `agent:` shape silently exempted every thread session from the reaper.
+// The owning agent's slug from a group-chat thread key,
+// `group-chat.<chat>.<agent>.<thread>` (both stored spellings).
 // Null for anything else — an unrecognised key is skipped, never guessed at.
 // A group-chat key's agent segment was frozen at thread creation, so an agent
 // renamed since stops matching its node and its sessions are left alone: the
 // same fail-safe direction every other miss in this module takes.
 export function ownerAgentSlug(sessionKey: string): string | null {
-  return parseSessionKey(sessionKey)?.agentSlug ?? partsOfSessionKey(sessionKey)?.agentSlug ?? null
+  return partsOfSessionKey(sessionKey)?.agentSlug ?? null
 }
 
 // Pure: which sessions are due for unload, given an already-resolved status

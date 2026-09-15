@@ -8,7 +8,6 @@ import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 import type { QueueMode } from 'agent-client/types'
 
-import type { CompactAck, CompactStatus } from '@/app/_authed/(extension-runtime)/_server/stream'
 import { listArtifactsForThread, type ThreadArtifact } from '@/app/_authed/(group-chats)/_server/artifacts'
 import type {
   GroupChatPinSummary,
@@ -17,6 +16,8 @@ import type {
   JoinGroupChatResult,
   MemberPrincipal,
   StartThreadResult,
+  ThreadCompactAck,
+  ThreadCompactStatus,
 } from '@/app/_authed/(group-chats)/_server/model'
 import {
   addMember,
@@ -305,7 +306,7 @@ export const sendGroupChatThreadMessage = createServerFn({ method: 'POST', stric
   )
 
 /** Compaction started, or refused with a code — same shape as `StartThreadOutcome`. */
-export type CompactThreadOutcome = { ok: true; ack: CompactAck } | { ok: false; code: GroupChatAccessFailure }
+export type CompactThreadOutcome = { ok: true; ack: ThreadCompactAck } | { ok: false; code: GroupChatAccessFailure }
 
 // Not wrapped in `asWriteResult`: that helper discards the success payload
 // (`{ ok: true }` with nothing else), but the caller needs the CompactAck back
@@ -327,7 +328,7 @@ export const compactGroupChatThread = createServerFn({ method: 'POST', strict: {
 
 export const getGroupChatThreadCompactStatus = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((threadId: string) => threadId)
-  .handler(async ({ data: threadId }): Promise<CompactStatus> => threadCompactStatus(getRequest(), threadId))
+  .handler(async ({ data: threadId }): Promise<ThreadCompactStatus> => threadCompactStatus(getRequest(), threadId))
 
 // ── Pinned notes ─────────────────────────────────────────────────────────
 
