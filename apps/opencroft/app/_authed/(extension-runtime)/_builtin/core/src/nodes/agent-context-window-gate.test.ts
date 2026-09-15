@@ -64,27 +64,87 @@ function renderSitesOf(name: string): ts.Node[] {
 }
 
 /**
- * The conditions of every conditional standing between this element and the
- * function that returns it -- `cond ? <X/> : null` and `cond && <X/>` alike.
+ * Every condition that decides whether this element renders, up to the
+ * component that owns it -- `cond ? <X/> : null`, `cond && <X/>`, an enclosing
+ * `if`, and the early-return guards standing before it.
  *
- * Empty means the element renders unconditionally wherever its function does.
- * The walk stops at the function boundary: a gate outside the component is a
- * statement about the component, not about this field.
+ * Empty means the element renders unconditionally wherever its component does.
+ *
+ * THE WALK IS TRANSPARENT THROUGH ARROWS AND FUNCTION EXPRESSIONS, and stops
+ * only at the named FunctionDeclaration -- the component boundary. A gate
+ * outside the component is a statement about the component rather than about
+ * this field, so that boundary stays; but a local closure is not a boundary, it
+ * is a hiding place. Stopping at every function let this through green
+ * (as found in review):
+ *
+ *   const renderContextWindow = () => {
+ *     if (!isNative) { return null }
+ *     return <ContextWindowField ... />
+ *   }
+ *   ...
+ *   {renderContextWindow()}
+ *
+ * Two blind spots composed there: the walk halted at the arrow, and it never
+ * read `if` at all. Note what the control could NOT do about it -- the
+ * legitimate gate is written `cond ? ... : null`, so the control certifies the
+ * walk on conditional expressions, not the walk. A control can only vouch for
+ * the shapes it exercises.
+ *
+ * THE RESIDUAL, stated rather than left to be discovered: a field handed out
+ * through a callback prop that escapes the component is beyond any parent walk,
+ * because the deciding condition is then in someone else's file. Nothing here
+ * covers that shape. What stands against it is the position assertion below --
+ * the field must be rendered by the same component that renders the gate, which
+ * a field that has left the component no longer is.
  */
 function gatesAbove(node: ts.Node): string[] {
   const gates: string[] = []
-  for (
-    let cur: ts.Node | undefined = node.parent;
-    cur && !ts.isFunctionDeclaration(cur) && !ts.isFunctionExpression(cur) && !ts.isArrowFunction(cur);
-    cur = cur.parent
-  ) {
+  let child: ts.Node = node
+  for (let cur: ts.Node | undefined = node.parent; cur && !ts.isFunctionDeclaration(cur); cur = cur.parent) {
     if (ts.isConditionalExpression(cur)) {
       gates.push(cur.condition.getText(source))
     } else if (ts.isBinaryExpression(cur) && cur.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
       gates.push(cur.left.getText(source))
+    } else if (ts.isIfStatement(cur)) {
+      gates.push(cur.expression.getText(source))
+    } else if (ts.isBlock(cur)) {
+      gates.push(...guardsBefore(cur, child))
+    }
+    child = cur
+  }
+  return gates
+}
+
+/**
+ * The conditions of the early-return guards standing before `statement` in
+ * `block`.
+ *
+ * These are the element's SIBLINGS, not its ancestors, so the walk above cannot
+ * reach them -- and `if (!isNative) return null` above a return is the ordinary
+ * way a gate is written once the markup moves into a helper.
+ *
+ * Only guards that RETURN count. An `if` that does something else and falls
+ * through does not decide whether the element renders, and counting it would
+ * report a gate that is not one.
+ */
+function guardsBefore(block: ts.Block, statement: ts.Node): string[] {
+  const gates: string[] = []
+  for (const candidate of block.statements) {
+    if (candidate === statement) {
+      break
+    }
+    if (ts.isIfStatement(candidate) && returnsOutright(candidate.thenStatement)) {
+      gates.push(candidate.expression.getText(source))
     }
   }
   return gates
+}
+
+function returnsOutright(statement: ts.Statement): boolean {
+  if (ts.isReturnStatement(statement)) {
+    return true
+  }
+  return ts.isBlock(statement) && statement.statements.some((inner) => ts.isReturnStatement(inner))
 }
 
 /** The name of the function whose body renders this element. */
