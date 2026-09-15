@@ -21,9 +21,16 @@
     "or refusal. Downward travels free. The shape below is nested one-rule-per-line so that an",
     "increase is a single changed line with both numbers on screen — an array of objects hides",
     "an insertion inside its neighbour’s punctuation, and a door nobody can see opening is not a",
-    "door."
+    "door.",
+    "",
+    "`filesScanned` is the second door, and it guards the one thing the entries cannot. Findings",
+    "below are a claim about the files biome LOOKED at; excluding a clean path from its config",
+    "removes findings from neither side of the comparison and hides every future finding in that",
+    "path. A run that scans fewer files than this number is refused. A DROP here is reviewed like",
+    "an added entry: it means either deletions, or a narrower config."
   ],
   "biome": "2.4.16",
+  "filesScanned": 843,
   "total": 402,
   "entries": {
     "apps/opencroft/app/_authed/(agent)/_server/acp-impl.test.ts": {

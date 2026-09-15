@@ -67,7 +67,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { aggregate, compare, fromFile, toFile, total, validateRun } from './lint-baseline-report.mjs'
+import { aggregate, compare, coverageVerdict, fromFile, toFile, total, validateRun } from './lint-baseline-report.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BIOME = path.join(ROOT, 'node_modules', '.bin', 'biome')
@@ -172,8 +172,15 @@ if (update) {
       'increase is a single changed line with both numbers on screen — an array of objects hides',
       'an insertion inside its neighbour’s punctuation, and a door nobody can see opening is not a',
       'door.',
+      '',
+      '`filesScanned` is the second door, and it guards the one thing the entries cannot. Findings',
+      'below are a claim about the files biome LOOKED at; excluding a clean path from its config',
+      'removes findings from neither side of the comparison and hides every future finding in that',
+      'path. A run that scans fewer files than this number is refused. A DROP here is reviewed like',
+      'an added entry: it means either deletions, or a narrower config.',
     ],
     biome: version,
+    filesScanned: verdict.scanned,
     total: total(actual),
     entries: toFile(actual),
   }
@@ -191,11 +198,31 @@ if (baselineFile.biome && baselineFile.biome !== version) {
   die(`the baseline was written by biome ${baselineFile.biome} and this is ${version} — regenerate it deliberately`)
 }
 
+// After `--update` has already exited, for the same reason the malformed-entry
+// guard is: regenerating is the documented way to answer this refusal, and a
+// guard that blocked the answer would leave no way back through the tool that
+// owns the file.
+const coverage = coverageVerdict(verdict.scanned, baselineFile.filesScanned)
+if (!coverage.ok) {
+  die(coverage.reason)
+}
+
 const { excess, deficit } = compare(actual, baseline)
 
 if (asJson) {
   console.log(
-    JSON.stringify({ biome: version, scanned: verdict.scanned, total: total(actual), excess, deficit }, null, 2),
+    JSON.stringify(
+      {
+        biome: version,
+        scanned: verdict.scanned,
+        baselineScanned: baselineFile.filesScanned,
+        total: total(actual),
+        excess,
+        deficit,
+      },
+      null,
+      2,
+    ),
   )
 } else {
   // The block below is EVIDENCE, and it is pasted into a pull request by hand,
@@ -208,7 +235,9 @@ if (asJson) {
   console.log(`  biome     ${version}`)
   console.log(`  commit    ${describeTree()}`)
   console.log(`  baseline  ${baselineHash} — ${baseline.length} file/rule pairs, ${total(baseline)} findings`)
-  console.log(`  scanned   ${verdict.scanned} files, ${total(actual)} findings`)
+  console.log(
+    `  scanned   ${verdict.scanned} files, ${total(actual)} findings (baseline measured over ${baselineFile.filesScanned})`,
+  )
   console.log(`  verdict   ${failing ? `FAIL — ${excess.length} above, ${deficit.length} below` : 'PASS'}`)
   console.log('────────────────────────────────────────────────────────────────')
   console.log('')

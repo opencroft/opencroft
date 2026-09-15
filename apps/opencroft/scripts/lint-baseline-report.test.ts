@@ -15,7 +15,16 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { aggregate, compare, fromFile, toFile, total, validateRun } from '../../../scripts/lint-baseline-report.mjs'
+import {
+  aggregate,
+  compare,
+  coverageVerdict,
+  fromFile,
+  keyOf,
+  toFile,
+  total,
+  validateRun,
+} from '../../../scripts/lint-baseline-report.mjs'
 
 const at = (path: string, category: string) => ({
   severity: 'error',
@@ -233,4 +242,50 @@ test('output that is not a biome run at all is refused, in each shape', () => {
     const v = validateRun(parsed, { unreadable: 0, baselineEntries: 5 })
     assert.equal(v.ok, false, `${what} should refuse the run`)
   }
+})
+
+// ── How much of the tree the run looked at ────────────────────────────────
+//
+// The hole the two-sided comparison cannot see: a path excluded from biome's
+// config contributes findings to neither side, so excluding a CLEAN path is
+// invisible to both excess and deficit. Direction is the whole of this guard —
+// a check that refused growth as well would fail every time a file was added.
+
+test('a run that scanned fewer files than the baseline was measured over is refused', () => {
+  const v = coverageVerdict(867, 870)
+
+  assert.equal(v.ok, false)
+  // Both causes, because nothing here can tell them apart and guessing sends
+  // the reader to the wrong one.
+  assert.match(v.reason, /deleted/)
+  assert.match(v.reason, /excluded/)
+})
+
+test('scanning MORE is free — files get added, and that is not a narrowing', () => {
+  assert.equal(coverageVerdict(871, 870).ok, true)
+  assert.equal(coverageVerdict(870, 870).ok, true)
+})
+
+test('a baseline that records no coverage at all is refused, not waved through', () => {
+  // "Nothing written down" and "nothing to write down" arrive as the same
+  // absent field. Reading the absence as a pass would make deleting one line
+  // the way to disarm this.
+  for (const [what, recorded] of [
+    ['absent', undefined],
+    ['null', null],
+    ['zero', 0],
+    ['not a number', '870'],
+  ] as const) {
+    assert.equal(coverageVerdict(870, recorded).ok, false, `a ${what} coverage count should refuse the run`)
+  }
+})
+
+test('the key separator is a character no path or rule can contain', () => {
+  // Pinned because the spelling changed — the byte was written literally once,
+  // which classified the file as binary and made every future diff of it
+  // unreviewable on the forge. What matters is the runtime string, not how it
+  // is spelled, so this asserts the string.
+  const key = keyOf('a', 'b')
+  assert.equal(key.length, 3, 'the separator is exactly one character')
+  assert.equal(key.charCodeAt(1), 0, 'and it is NUL, which no path and no rule name can contain')
 })
