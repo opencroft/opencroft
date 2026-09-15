@@ -811,12 +811,25 @@ export async function awaitDispatchedTurn(
 // receives this one message, whereas the same sentence written into an
 // individual agent's instructions binds that agent alone — and those
 // instructions are part of what this message re-delivers, so they cannot be
-// what limits it. Re-reading and re-loading stay licensed: holding your context
-// is the point of the restore. Acting on it is the part that has to wait for a
-// real message.
+// what limits it.
+//
+// TWO INSTRUCTIONS THAT SOUND CONTRADICTORY AND ARE NOT: re-load, then stop.
+// The first paragraph's licence to re-load is deliberate and must survive —
+// a session whose history was just summarised away genuinely needs to re-read
+// its own skills, and without that the next real dispatch lands on an agent
+// that has forgotten how its environment works. The line between the two is
+// that re-orientation is about the agent's own equipment and work is about the
+// queue. Re-loading is equipment. Reading a tracker is queue.
+//
+// THE SECOND PARAGRAPH IS QUOTED, NOT COMPOSED. It is the wording the agents'
+// own standing instructions already carry, in the same words, because two
+// differently-worded statements of one rule arriving in the same turn from two
+// directions read as two rules and invite the reader to work out which governs.
+// One wording, repeated, reads as the rule. If it changes there, change it
+// here.
 const REINSTRUCT_NOTE = [
   'The task context and instructions above are the ones this session was started with. Compaction has just summarised this conversation and dropped the original messages, including the ones that carried them — so they are repeated here. Re-read them and follow them for the rest of this session, including re-loading anything they tell you to load.',
-  'THIS TURN IS RE-ORIENTATION, NOT A NEW TASK. Re-reading the context above and re-loading what it names is the whole of it. Do not start, resume, re-check or re-verify any work, and do not act on anything in your own instructions that tells you what to do at the start of a session — this is not one. A one-line acknowledgement is enough; then end your turn. The next task arrives as its own message.',
+  'Work starts ONLY from an incoming dispatch message. A session start or a compaction re-delivery of standing context is re-orientation: re-read the context and end the turn — no tracker reads, no status changes, no pings; the dispatcher owns the queue. This message IS that re-delivery: re-reading the context above and re-loading what it names is the whole of this turn. A one-line acknowledgement is fine. The next task arrives as its own message.',
 ].join('\n\n')
 
 // Compact a live session's context, then give it back the instructions the
