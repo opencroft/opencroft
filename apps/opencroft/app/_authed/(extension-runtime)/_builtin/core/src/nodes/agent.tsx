@@ -100,9 +100,6 @@ export function AgentNode({ data, selected }: { id: string; data: AgentData; sel
         <InputHandle type='agent-instruction' id='instructions-in'>
           <span className='text-[10px] text-muted-foreground'>Instructions</span>
         </InputHandle>
-        <InputHandle type='agent-job' id='agent-in'>
-          <span className='text-[10px] text-muted-foreground'>Jobs</span>
-        </InputHandle>
       </div>
     </NodeFrame>
   )

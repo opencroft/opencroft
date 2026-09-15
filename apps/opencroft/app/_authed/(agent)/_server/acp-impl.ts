@@ -200,11 +200,7 @@ async function currentContextUsage(tabKey: string, agentNodeId: string): Promise
 
 // Build the agent's selection in memory from its node data + Secrets Store key
 // (no on-disk profile store), and open (or reuse) the ACP session for this tab.
-export async function ensureLocalSessionImpl(data: {
-  agentNodeId: string
-  jobNodeId: string
-  tabKey: string
-}): Promise<OpenedSession> {
+export async function ensureLocalSessionImpl(data: { agentNodeId: string; tabKey: string }): Promise<OpenedSession> {
   const pending = ensureInFlight.get(data.tabKey)
   if (pending) {
     return pending
@@ -218,11 +214,7 @@ export async function ensureLocalSessionImpl(data: {
   }
 }
 
-async function openLocalSession(data: {
-  agentNodeId: string
-  jobNodeId: string
-  tabKey: string
-}): Promise<OpenedSession> {
+async function openLocalSession(data: { agentNodeId: string; tabKey: string }): Promise<OpenedSession> {
   const known = tabSessions.get(data.tabKey)
   if (known && agentClient.listSessions().some((s) => s.id === known.id)) {
     // `?? false` / `?? true` cover entries recorded before canSteer/everPrompted
@@ -271,9 +263,9 @@ async function openLocalSession(data: {
     // every surface, and understating capacity can trigger a compaction the
     // session did not need.
     contextWindow: agent.contextWindow,
-    // The chat tab key is already a stable session key
-    // (agent:<agent-slug>:<job>:<unique>); forward it so an ACP bridge can bind
-    // this session to a stable gateway session/agent instead of an ephemeral
+    // The tab key is already a stable session key (a group-chat thread's
+    // stored sessionKey); forward it so an ACP bridge can bind this session
+    // to a stable gateway session/agent instead of an ephemeral
     // acp-bridge:<uuid> session.
     sessionKey: data.tabKey,
     // Same slug used for the workspace dir — lets loadMcpServers (mcp-store.ts)
@@ -619,47 +611,25 @@ export async function setPresenceLocalImpl(data: { sessionId: string; presence: 
   await writePersistedPresence(sessionKey, data.presence)
 }
 
-// Resolve the live ACP session a Send Message node should target for a base
-// session key (`agent:<agent-slug>:<job-slug>`). The chat UI opens sessions with
-// a unique suffix (`...:<uniq>`), so a node-owned session created under the bare
-// base key is distinct from any tab the user has open. We bridge the two:
-//   1. Prefer the node's own remembered session (exact base key) once it exists,
-//      so repeated sends reuse the same session instead of spawning duplicates.
-//   2. Otherwise adopt the user's most recently created live chat for this
-//      agent+job (a suffixed variant), so the message lands in a chat they can see.
-//   3. Otherwise the durable pointer for this key, if the session it names is
+// Resolve the live ACP session for a session key:
+//   1. Prefer the remembered in-memory session (exact key), if still live, so
+//      repeated deliveries reuse the same session instead of spawning
+//      duplicates.
+//   2. Otherwise the durable pointer for this key, if the session it names is
 //      still live — memory is per-process and empties on every restart, so it
 //      cannot be the only place a session is looked for.
-//   4. Return null when nothing live exists — the caller then resumes the
+//   3. Return null when nothing live exists — the caller then resumes the
 //      durable pointer, or creates a fresh session if it can no longer load.
 //
-// Async because step 3 reads the settings-backed store; every caller awaits it.
+// Async because step 2 reads the settings-backed store; every caller awaits it.
 export async function findTargetSessionImpl(data: { baseKey: string }): Promise<{ sessionId: string } | null> {
   const createdById = new Map(agentClient.listSessions().map((s) => [s.id, s.createdAt]))
-  // 1. The node's own remembered session, if still live.
+  // 1. The remembered session, if still live.
   const exact = tabSessions.get(data.baseKey)
   if (exact && createdById.has(exact.id)) {
     return { sessionId: exact.id }
   }
-  // 2. The most recently created live chat tab for this agent+job.
-  const prefix = `${data.baseKey}:`
-  let best: { id: string; createdAt: number } | null = null
-  for (const [tabKey, entry] of tabSessions) {
-    if (!tabKey.startsWith(prefix)) {
-      continue
-    }
-    const createdAt = createdById.get(entry.id)
-    if (createdAt === undefined) {
-      continue // stale pointer to a session that's no longer live
-    }
-    if (!best || createdAt > best.createdAt) {
-      best = { id: entry.id, createdAt }
-    }
-  }
-  if (best) {
-    return { sessionId: best.id }
-  }
-  // 3. The durable pointer, but only if that session is still live. A pointer
+  // 2. The durable pointer, but only if that session is still live. A pointer
   // to a session the agent can no longer serve is not a target: returning it
   // would prompt into nothing. Reporting no target instead sends the caller
   // through the resume path, which either loads it or replaces it honestly.

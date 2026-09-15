@@ -263,10 +263,10 @@ async function secretsStoreDeleteAction(ctx: ActionCtx): Promise<{ deleted: stri
 }
 
 // ── Send Message node actions ─────────────────────────────────────────────
-// Thin entry points only — all routing/delivery logic lives behind
-// `host.sendMessage` (`_server/host.ts`), which reuses the exact mechanism
-// the node's own `text-in` wiring already goes through: session reuse/create,
-// envelope composition, hidden-by-default registration.
+// Thin entry point only — the delivery logic lives behind `host.sendMessage`
+// (`_server/host.ts`), the exact mechanism the node's own `text-in` wiring
+// already goes through: sender attribution and membership-gated thread
+// delivery.
 
 async function sendMessageSendAction(ctx: ActionCtx): Promise<HostSendMessageResult> {
   // Schema already requires `message` (see extension.json) — checked again
@@ -286,119 +286,6 @@ async function sendMessageSendAction(ctx: ActionCtx): Promise<HostSendMessageRes
   // because deciding here would put the rule in the one place that changes
   // whenever somebody adds a node type.
   return host.sendMessage.send(ctx.nodeId, ctx.params, ctx.inputSource('text-in')?.sourceNodeId, ctx.callerAgent)
-}
-
-function sendMessageListAgentsAction(ctx: ActionCtx): Promise<{ agent: string; jobs: string[] }[]> {
-  return host.sendMessage.listAgents(ctx.nodeId)
-}
-
-// Mirrors the host's shape across the extension boundary — redeclared rather
-// than imported, so the two must move together. `null` context usage means
-// unknown (never loaded, no turn completed since it was loaded, or a harness
-// that does not report usage); it never means "nothing held". An offline
-// session with a prior reading carries it here too, with `asOf` (ms since
-// epoch) set — its absence means the figure is live.
-interface ContextUsage {
-  usedTokens: number
-  contextLimit: number | null
-  asOf?: number
-}
-
-interface SessionSummary {
-  sessionKey: string
-  agent: string
-  job: string
-  title: string
-  createdAt: number
-  lastActivityAt: number
-  status: 'offline' | 'idle' | 'working' | 'waiting'
-  contextUsage: ContextUsage | null
-}
-
-function sendMessageListSessionsAction(ctx: ActionCtx): Promise<SessionSummary[]> {
-  const agent = typeof ctx.params.agent === 'string' ? ctx.params.agent : undefined
-  const job = typeof ctx.params.job === 'string' ? ctx.params.job : undefined
-  return host.sendMessage.listSessions(ctx.nodeId, { agent, job })
-}
-
-// Mirrors the host's TurnSummary across the extension boundary, which is why it
-// is redeclared rather than imported — and why the two must move together.
-// 'unknown' is a turn restored by a session/load replay: it ended, but the
-// replay does not say how.
-interface TurnSummary {
-  index: number
-  prompt: string
-  promptLength: number
-  status: 'finished' | 'in-progress' | 'interrupted' | 'unknown'
-  finalMessage?: string
-  finalMessageLength?: number
-}
-
-function sendMessageListTurnsAction(ctx: ActionCtx): Promise<{
-  turns: TurnSummary[]
-  hasMore: boolean
-  nextBeforeIndex: number | null
-  sessionStatus: 'offline' | 'idle' | 'working' | 'waiting'
-}> {
-  const sessionKey = typeof ctx.params.sessionKey === 'string' ? ctx.params.sessionKey.trim() : ''
-  if (!sessionKey) {
-    throw new Error('"sessionKey" is required and must be a non-empty string')
-  }
-  const turns = typeof ctx.params.turns === 'number' ? ctx.params.turns : undefined
-  const beforeIndex = typeof ctx.params.beforeIndex === 'number' ? ctx.params.beforeIndex : undefined
-  return host.sendMessage.listTurns(ctx.nodeId, { sessionKey, turns, beforeIndex })
-}
-
-function sendMessageCompactAction(ctx: ActionCtx): Promise<{
-  sessionKey: string
-  accepted: true
-  coalesced: boolean
-  state: 'pending' | 'running'
-}> {
-  const sessionKey = typeof ctx.params.sessionKey === 'string' ? ctx.params.sessionKey.trim() : ''
-  if (!sessionKey) {
-    throw new Error('"sessionKey" is required and must be a non-empty string')
-  }
-  return host.sendMessage.compact(ctx.nodeId, { sessionKey })
-}
-
-function sendMessageCompactStatusAction(ctx: ActionCtx): Promise<{
-  sessionKey: string
-  state: 'never-requested' | 'pending' | 'running' | 'done' | 'error'
-  requestedAt?: number
-  startedAt?: number
-  finishedAt?: number
-  result?: {
-    sessionKey: string
-    contextUsageBefore: ContextUsage | null
-    contextUsageAfter: ContextUsage | null
-    compacted: boolean | null
-    instructionsRestored: boolean
-  }
-  error?: string
-}> {
-  const sessionKey = typeof ctx.params.sessionKey === 'string' ? ctx.params.sessionKey.trim() : ''
-  if (!sessionKey) {
-    throw new Error('"sessionKey" is required and must be a non-empty string')
-  }
-  return host.sendMessage.compactStatus(ctx.nodeId, { sessionKey })
-}
-
-function sendMessageUnloadAction(ctx: ActionCtx): Promise<{ sessionKey: string; unloaded: true }> {
-  const sessionKey = typeof ctx.params.sessionKey === 'string' ? ctx.params.sessionKey.trim() : ''
-  if (!sessionKey) {
-    throw new Error('"sessionKey" is required and must be a non-empty string')
-  }
-  return host.sendMessage.unload(ctx.nodeId, { sessionKey })
-}
-
-function sendMessageDeleteAction(ctx: ActionCtx): Promise<{ sessionKey: string; deleted: true }> {
-  const sessionKey = typeof ctx.params.sessionKey === 'string' ? ctx.params.sessionKey.trim() : ''
-  if (!sessionKey) {
-    throw new Error('"sessionKey" is required and must be a non-empty string')
-  }
-  const force = ctx.params.force === true
-  return host.sendMessage.delete(ctx.nodeId, { sessionKey, force })
 }
 
 // ── Server node actions ───────────────────────────────────────────────────
@@ -455,13 +342,6 @@ export const nodeActions = {
   },
   'send-message': {
     send: sendMessageSendAction,
-    listAgents: sendMessageListAgentsAction,
-    listSessions: sendMessageListSessionsAction,
-    listTurns: sendMessageListTurnsAction,
-    compact: sendMessageCompactAction,
-    compactStatus: sendMessageCompactStatusAction,
-    unload: sendMessageUnloadAction,
-    delete: sendMessageDeleteAction,
   },
   server: {
     setKey: serverSetKey,

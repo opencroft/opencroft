@@ -28,18 +28,9 @@ import {
 import { writePersistedConfigOption } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { modeLockedByYolo } from '@/app/_authed/(agent)/_server/yolo-mode-enforcement'
-import {
-  type CompactAck,
-  type CompactStatus,
-  type GraphEdgeLike,
-  type GraphNodeLike,
-  getCompactStatusOnGraph,
-  requestCompactOnGraph,
-} from '@/app/_authed/(extension-runtime)/_server/stream'
-import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 
 export const ensureLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { agentNodeId: string; jobNodeId: string; tabKey: string }) => data)
+  .inputValidator((data: { agentNodeId: string; tabKey: string }) => data)
   .handler(async ({ data }): Promise<OpenedSession> => ensureLocalSessionImpl(data))
 
 // `queue` says how this message relates to anything already held: `wait` to be
@@ -69,48 +60,6 @@ export const setPresenceLocal = createServerFn({ method: 'POST', strict: { outpu
 export const findTargetSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { baseKey: string }) => data)
   .handler(async ({ data }): Promise<{ sessionId: string } | null> => await findTargetSessionImpl(data))
-
-// The space a node lives in, and its full node/edge list -- the same
-// per-space scoping requestCompactOnGraph's other caller (the send-message
-// node action, host.ts's `compact`) already uses, just resolved from an
-// agent node instead of a send-message node.
-async function findNodeGraph(nodeId: string): Promise<{ nodes: GraphNodeLike[]; edges: GraphEdgeLike[] } | null> {
-  const registry = getSpacesRegistry()
-  await registry.ensureLoaded()
-  for (const summary of registry.list()) {
-    const space = registry.getBySlug(summary.slug)
-    if (!space) {
-      continue
-    }
-    // The node's whole SPACE, across its graphs -- reachability is
-    // space-scoped, whichever canvas the node was drawn on.
-    const spaceGraphs = [...space.graphs.values()]
-    const nodes = spaceGraphs.flatMap((g) => g.graph.nodes) as unknown as GraphNodeLike[]
-    if (nodes.some((n) => n.id === nodeId)) {
-      return { nodes, edges: spaceGraphs.flatMap((g) => g.graph.edges) as unknown as GraphEdgeLike[] }
-    }
-  }
-  return null
-}
-
-// Compact a 1:1 chat's own session -- the graph-based mechanism a
-// send-message node action already uses to compact a THIRD party's reachable
-// session, exposed here for a chat's own open tab instead. No reachability
-// check: this always targets the session the caller already has open, not
-// one it is reaching for.
-export const compactLocal = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { agentNodeId: string; sessionKey: string }) => data)
-  .handler(async ({ data }): Promise<CompactAck> => {
-    const graph = await findNodeGraph(data.agentNodeId)
-    if (!graph) {
-      throw new Error('Agent node not found')
-    }
-    return requestCompactOnGraph(graph.nodes, graph.edges, data.sessionKey)
-  })
-
-export const getLocalCompactStatus = createServerFn({ method: 'GET', strict: { output: false } })
-  .inputValidator((sessionKey: string) => sessionKey)
-  .handler(async ({ data: sessionKey }): Promise<CompactStatus> => getCompactStatusOnGraph(sessionKey))
 
 // Drop a message from the session's server-side queue before it's delivered.
 // Clients observe the result via the 'queue' snapshot event on the stream.

@@ -82,7 +82,7 @@ const { registerSessionWakeResolver, registerStandingContextResolver } = await i
 registerStandingContextResolver(model.groupChatStandingContext)
 // Same reason, for waking an offline thread ahead of a compact — without
 // this, every offline-compact test below throws "Session cannot be resumed"
-// before requestCompactOnGraph's graph-vs-resolver fallback ever gets a
+// before requestCompact's registered-resolver lookup ever gets a
 // group-chat answer.
 registerSessionWakeResolver(model.groupChatWakeSession)
 
@@ -925,7 +925,7 @@ test('deleteGroupChat drains threads started while it is tearing down, instead o
   // inserted mid-teardown will carry -- so there is a real session for the
   // drain pass to tear down, and closeSession fires when it does.
   const { ensureLocalSessionImpl } = await import('@/app/_authed/(agent)/_server/acp-impl')
-  await ensureLocalSessionImpl({ agentNodeId: 'agent-session', jobNodeId: '', tabKey: stragglerKey })
+  await ensureLocalSessionImpl({ agentNodeId: 'agent-session', tabKey: stragglerKey })
 
   await model.deleteGroupChat(reqAs(owner), chat.id)
 
@@ -985,7 +985,7 @@ test('deleteGroupChat sweeps a session re-created after its own thread was torn 
         // the cascade -- and re-opens its session.
         if (agentNodeId === 'agent-session-2' && !reopened) {
           reopened = true
-          await ensureLocalSessionImpl({ agentNodeId: 'agent-session', jobNodeId: '', tabKey: firstKey })
+          await ensureLocalSessionImpl({ agentNodeId: 'agent-session', tabKey: firstKey })
         }
         return {}
       },
@@ -1567,11 +1567,10 @@ test('a changed pin set rides the next send the same way the topic does', async 
 })
 
 // ---------------------------------------------------------------------------
-// COMPACTION. Before this, `group-chat:<chatId>:<agent>:<uuid>` session keys
-// could not be compacted at all: `requestCompactOnGraph` resolved sessions
-// via `parseSessionKey`'s `/^agent:.../` regex plus graph reachability, and a
-// group-chat key matches neither, so it threw "No agent/job resolved for
-// session" before `performCompact` ever ran.
+// COMPACTION. A group-chat session key is resolved through a registered
+// StandingContextResolver (the one group-chats registers at server boot), so
+// `requestCompact` finds its agent and standing context and `performCompact`
+// runs against it.
 // ---------------------------------------------------------------------------
 
 test('a group-chat thread can be compacted at all', async () => {
@@ -1614,7 +1613,12 @@ test('a group-chat thread can be compacted at all', async () => {
   await waitForPrompts(prompts, 1)
 
   const ack = await model.compactThread(reqAs(owner), started.thread.id)
-  assert.equal(ack.accepted, true, 'the group-chat: key must resolve instead of throwing before performCompact runs')
+  assert.equal(ack.accepted, true, 'the group-chat key must resolve instead of throwing before performCompact runs')
+  // The surface emits the dot-form thread reference, never the raw stored
+  // sessionKey it addresses the session by — the display leak this assertion
+  // exists to close.
+  assert.equal(ack.thread, model.threadRefFromSessionKey(started.thread.sessionKey))
+  assert.equal(Object.hasOwn(ack, 'sessionKey'), false, 'no raw stored sessionKey may leave through the ack')
 
   await waitForPrompts(prompts, 3) // opening, then '/compact', then the restore
   assert.equal(prompts[1], '/compact')
@@ -1623,6 +1627,9 @@ test('a group-chat thread can be compacted at all', async () => {
   const status = await model.threadCompactStatus(reqAs(owner), started.thread.id)
   assert.equal(status.state, 'done')
   assert.equal(status.result?.instructionsRestored, true)
+  assert.equal(status.thread, model.threadRefFromSessionKey(started.thread.sessionKey))
+  assert.equal(Object.hasOwn(status, 'sessionKey'), false, 'nor through the status')
+  assert.equal(Object.hasOwn(status.result ?? {}, 'sessionKey'), false, 'nor through its result')
 })
 
 // THE POINT OF THE POST-COMPACTION DELIVERY POINT IN THE STANDING-CONTEXT
@@ -2687,7 +2694,7 @@ test('deliverThreadFromNode reports not-found for an unresolvable reference', as
 
 // THE CONVERGENCE ITSELF: deliverIntoThread
 // now opens its session through the SAME
-// resolveOrCreateSession/withSessionKeyLock the agent:job path uses, instead
+// resolveOrCreateSession/withSessionKeyLock delivery uses, instead
 // of a second, unguarded call to ensureLocalSessionImpl. Two concurrent
 // deliveries into a thread whose session has never been opened must still
 // produce exactly one session and drop neither message — true both before and
@@ -3639,7 +3646,7 @@ test('a rename that would collide on the session key is refused before anything 
 })
 
 // REGRESSION. A session key can be captured in a closure and resolved a whole
-// turn later -- `requestCompactOnGraph` does exactly that -- so a rename
+// turn later -- `requestCompact` does exactly that -- so a rename
 // committing in between hands these two functions an address that has just been
 // retired. Without the alias fallback the compaction drops the history and then
 // silently does NOT restore the topic, pins and instructions that were the

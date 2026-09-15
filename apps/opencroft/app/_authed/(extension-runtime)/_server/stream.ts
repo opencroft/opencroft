@@ -27,19 +27,10 @@ import {
   promptLocalImpl,
 } from '@/app/_authed/(agent)/_server/acp-impl'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
-import { readSessions, upsertSession } from '@/app/_authed/(agent)/_server/agent-sessions-store'
 import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { updateNodeData } from '@/app/_authed/(extension-runtime)/_server/node-data'
 import { reportSendFailure } from '@/app/_authed/(extension-runtime)/_server/send-failure-report'
-import {
-  type AgentContext,
-  buildSessionKey,
-  parseSessionKey,
-  resolveSessionOnGraph,
-  type EdgeLike as SmEdgeLike,
-  type NodeLike as SmNodeLike,
-  tryParseJsonMessage,
-} from '@/app/_authed/(extension-runtime)/_server/send-message-helpers'
+import { tryParseJsonMessage } from '@/app/_authed/(extension-runtime)/_server/send-message-helpers'
 import {
   type ContextUsage,
   compactionVerdict,
@@ -333,7 +324,7 @@ async function persistToDownstreamSendMessages(
       // `sourceNodeId` is the node whose stream produced this text -- what the
       // run observed, not what the graph has wired to the handle.
       const sender = await senderForSourceNode(sourceNodeId, nodes)
-      await deliverToSendMessageNode(target, nodes, edges, text, sender)
+      await deliverToSendMessageNode(text, sender)
     } catch (err) {
       // A thread refusal hands the caller one collapsed sentence and carries
       // its cause separately; this is the server side, which is where the
@@ -343,7 +334,7 @@ async function persistToDownstreamSendMessages(
       // Unconditionally, and first. Whatever else a failure manages to reach,
       // the log entry is the one report that cannot itself fail.
       console.error(`[send-message] Failed to send via node ${target.id}:`, reason)
-      await reportFailedSend(target, nodes, edges, text, reason)
+      await reportFailedSend(target.id, text, reason)
     }
   }
 }
@@ -372,13 +363,7 @@ async function persistToDownstreamSendMessages(
  * close, and closing it needs a destination that does not depend on the one
  * that just failed.
  */
-async function reportFailedSend(
-  target: GraphNodeLike,
-  nodes: GraphNodeLike[],
-  edges: GraphEdgeLike[],
-  text: string,
-  reason: string,
-): Promise<void> {
+async function reportFailedSend(nodeId: string, text: string, reason: string): Promise<void> {
   let threadRef: string | undefined
   try {
     threadRef = tryParseJsonMessage(text)?.thread
@@ -392,12 +377,12 @@ async function reportFailedSend(
     // IS the whole of what this failure can say. Said out loud rather than left
     // as an assumption, because a silent return here looks exactly like a
     // report that was delivered.
-    console.error(`[send-message] Failure on node ${target.id} named no thread; it is reported to this log only.`)
+    console.error(`[send-message] Failure on node ${nodeId} named no thread; it is reported to this log only.`)
     return
   }
-  await reportSendFailure({ nodeId: target.id, reason, threadRef }, async (thread, message) => {
+  await reportSendFailure({ nodeId, reason, threadRef }, async (thread, message) => {
     try {
-      await deliverToSendMessageNode(target, nodes, edges, JSON.stringify({ thread, queue: 'wait', message }), {
+      await deliverToSendMessageNode(JSON.stringify({ thread, queue: 'wait', message }), {
         author: SEND_MESSAGE_SYSTEM_AUTHOR,
         principal: { kind: 'system', systemId: SEND_MESSAGE_SYSTEM_AUTHOR },
       })
@@ -437,14 +422,12 @@ export async function withSessionKeyLock<T>(key: string, run: () => Promise<T>):
   }
 }
 
-// Reuse an existing live session for this key (the node's own remembered
-// session, a chat tab the user has open, or the durable pointer) so messages
-// land in one stable conversation; only create a fresh session when none
-// exists. Shared by the agent:job path below AND group-chat thread delivery
-// (via deliverIntoThread) — both need the identical check-then-act, and
-// before this converged on it a thread's own open was
-// ensureLocalSessionImpl called directly, a second, unguarded copy of the
-// same logic.
+// Reuse an existing live session for this key (the remembered tab session or
+// the durable pointer) so messages land in one stable conversation; only
+// create a fresh session when none exists. Used by group-chat thread delivery
+// (via deliverIntoThread) — before this existed a thread's own open was
+// ensureLocalSessionImpl called directly, an unguarded copy of the same
+// check-then-act.
 //
 // Serialised per session key: resolving and creating is a check-then-act, and
 // two deliveries for one key arriving together would otherwise both find
@@ -460,12 +443,10 @@ export async function withSessionKeyLock<T>(key: string, run: () => Promise<T>):
 // "only guarded one layer down" apart. What this lock adds beyond that is
 // closing the narrower window BETWEEN resolving ("does one already exist?")
 // and creating, across two calls that do not overlap tightly enough for the
-// lower guard to catch — the same reasoning already applied to the agent:job
-// path. The provable, demonstrated gain either way: one delivery-
-// serialization primitive instead of two copies that could drift apart.
+// lower guard to catch.
 export async function resolveOrCreateSession(
   sessionKey: string,
-  open: { agentNodeId: string; jobNodeId: string; tabKey: string },
+  open: { agentNodeId: string; tabKey: string },
 ): Promise<{ sessionId: string; created: boolean }> {
   return withSessionKeyLock(sessionKey, async () => {
     const existing = await findTargetSessionImpl({ baseKey: sessionKey })
@@ -477,21 +458,21 @@ export async function resolveOrCreateSession(
   })
 }
 
-/** What `deliverToSendMessageNode` actually delivered to — an agent:job
- *  session or a group-chat thread. A caller
- *  that only cares whether delivery happened can ignore `kind`; one that logs
- *  or reports outcomes reads it to know which fields apply. */
-export type SendMessageDeliveryResult =
-  | { kind: 'agent'; sessionKey: string; created: boolean; forced: boolean }
-  | { kind: 'thread'; threadRef: string; status: 'queued' | 'delivered' }
+/** What `deliverToSendMessageNode` delivered to — a group-chat thread, the
+ *  only destination a send-message node routes to. `status` says whether the
+ *  message queued behind a running turn or was delivered immediately. */
+export interface SendMessageDeliveryResult {
+  kind: 'thread'
+  threadRef: string
+  status: 'queued' | 'delivered'
+}
 
 /**
- * Resolve a thread reference and either deliver or refuse — the group-chat
- * counterpart to the agent:job path below. Registered by group-chats' own
- * server startup (registerThreadDeliveryResolver), NOT imported here: this
- * module knows nothing about group chats specifically, the same reason
- * StandingContextResolver exists rather than an import of group-chat code
- * (see registerStandingContextResolver above).
+ * Resolve a thread reference and either deliver or refuse. Registered by
+ * group-chats' own server startup (registerThreadDeliveryResolver), NOT
+ * imported here: this module knows nothing about group chats specifically,
+ * the same reason StandingContextResolver exists rather than an import of
+ * group-chat code (see registerStandingContextResolver above).
  *
  * The authority is MEMBERSHIP OF THE SENDER: the principal — which agent
  * node, or which system identity, actually fed this send — must hold a
@@ -581,22 +562,12 @@ export function registerThreadDeliveryResolver(resolver: ThreadDeliveryResolver)
 }
 
 // The one delivery mechanism behind every path that hands a message to a
-// SendMessage node — the `text-in` stream wiring above, and
-// the node's own `send` action via `host.sendMessage.send`. Resolves the
-// target agent/job (payload fields win, the node's own defaults fill the
-// rest), reuses a live session or creates one (registering + hiding it by
-// default only on a genuine creation), and composes the
-// envelope with instructions/task context gated on that same `created` flag
-// too — so every caller gets identical session and envelope
-// semantics, not a re-implementation of them. `queue` (formerly `force`) is part of the
-// same shared payload schema, so either entry point can carry it, and so
-// is `thread` — mutually exclusive with agent/job/key/session, checked
-// before either branch runs so a caller naming both gets a clear refusal
-// instead of one silently winning.
+// SendMessage node — the `text-in` stream wiring above, and the node's own
+// `send` action via `host.sendMessage.send`. Every message targets a
+// group-chat thread; a payload that names none is refused with the reason,
+// never dropped, so a wiring that still sends the removed direct-session
+// shape fails loudly instead of silently delivering nowhere.
 export async function deliverToSendMessageNode(
-  target: GraphNodeLike,
-  nodes: GraphNodeLike[],
-  edges: GraphEdgeLike[],
   text: string,
   // Who this message is from, already established by the caller from what fed
   // the run — the transcript author and the principal the membership gate
@@ -604,98 +575,42 @@ export async function deliverToSendMessageNode(
   // optional: an optional sender is a sender that can be omitted, and this
   // whole change exists because it was.
   sender: AttributedSender,
-): Promise<SendMessageDeliveryResult | null> {
+): Promise<SendMessageDeliveryResult> {
   const parsed = tryParseJsonMessage(text)
-  if (parsed?.thread) {
-    if (parsed.agent || parsed.job || parsed.key || parsed.session) {
-      throw new Error('A message may target a thread or an agent/job session, not both')
-    }
-    const threadRef = parsed.thread.trim()
-    let outcome: ThreadDeliveryOutcome = { status: 'not-found' }
-    for (const resolver of threadDeliveryResolvers) {
-      outcome = await resolver(threadRef, parsed.message, sender.principal, parsed.queue, sender.author)
-      if (outcome.status !== 'not-found') {
-        break
-      }
-    }
-    // One sentence for both causes. It names only the reference the caller
-    // itself supplied, and "not available" rather than "not reachable"
-    // because reachability was the authority this change removed — what is
-    // being said now is that this node has nothing to deliver into, without
-    // saying which of the two reasons applies.
-    const refusal = `Thread not available from this node: ${threadRef || '(empty)'}`
-    if (outcome.status === 'not-found') {
-      throw new ThreadDeliveryRefusal(refusal)
-    }
-    if (outcome.status === 'not-a-member') {
-      // The cause travels as `detail`, which reaches the log and the in-thread
-      // failure report and stops there. It is worth carrying because the
-      // collapsed message alone is what let this path fail identically for a
-      // week whether the reference was wrong or the sender unauthorized —
-      // someone reading the report can act on this one by adding the row it
-      // names.
-      throw new ThreadDeliveryRefusal(
-        refusal,
-        `Sender ${sender.author} is not a member of that thread's chat (${threadRef}); ` +
-          `grant it membership there to authorize this delivery`,
-      )
-    }
-    return { kind: 'thread', threadRef, status: outcome.status }
+  if (!parsed?.thread) {
+    throw new Error(
+      'A send-message delivery must be a JSON payload naming a group-chat thread: { "thread": "...", "message": "...", "queue": "wait" | "push" }',
+    )
   }
-
-  const route = resolveRoute(text, target, nodes, edges, sender.author)
-  if (!route) {
-    return null
+  const threadRef = parsed.thread.trim()
+  let outcome: ThreadDeliveryOutcome = { status: 'not-found' }
+  for (const resolver of threadDeliveryResolvers) {
+    outcome = await resolver(threadRef, parsed.message, sender.principal, parsed.queue, sender.author)
+    if (outcome.status !== 'not-found') {
+      break
+    }
   }
-
-  const { sessionId, created } = await resolveOrCreateSession(route.sessionKey, {
-    agentNodeId: route.ctx.agentNodeId,
-    jobNodeId: route.ctx.jobNodeId,
-    tabKey: route.sessionKey,
-  })
-  if (created) {
-    // Register in the shared registry (keyed by the node's base session key)
-    // so the node-driven conversation shows up in the chat list and is
-    // resumable on every device, like a UI-started chat.
-    await upsertSession({
-      key: route.sessionKey,
-      agentNodeId: route.ctx.agentNodeId,
-      agentName: route.ctx.agentName,
-      jobNodeId: route.ctx.jobNodeId,
-      jobName: route.ctx.jobName,
-      title: route.title,
-      createdAt: Date.now(),
-    }).catch(() => {})
+  // One sentence for both causes. It names only the reference the caller
+  // itself supplied — what is being said is that this node has nothing to
+  // deliver into, without saying which of the two reasons applies.
+  const refusal = `Thread not available from this node: ${threadRef || '(empty)'}`
+  if (outcome.status === 'not-found') {
+    throw new ThreadDeliveryRefusal(refusal)
   }
-
-  // Automated senders never include the selected-node/space system context
-  // (chat-only); task context + instructions are session-scoped, so only a
-  // freshly created ACP session gets them.
-  const message = composeEnvelope(route.message, {
-    sessionInit: { jobContext: route.ctx.jobContext, instructions: route.ctx.instructions },
-    isNewSession: created,
-  })
-
-  // `push` (formerly `force`) interrupts the in-flight turn and delivers
-  // everything held as ONE turn, rather than draining one per turn and having
-  // the agent act on each stale message before it reaches this one.
-  //
-  // Both halves of that live in agentClient.prompt now — this used to cancel
-  // here and then pass a separate flush flag, which meant any other surface
-  // wanting a push had to remember to do the same two things in the same order.
-  // `interrupted` comes back from the same call, and is still honest about an
-  // idle or brand-new session: it interrupted nothing and does not claim to.
-  //
-  // Not `front` for either mode: held messages stay ahead of this one, so the
-  // newest reads as the latest word on them rather than a preamble to messages
-  // written before it.
-  const { interrupted } = await promptLocalImpl({
-    sessionId,
-    text: message,
-    queue: route.queue,
-    origin: { kind: 'message', sender: route.sender },
-  })
-  return { kind: 'agent', sessionKey: route.sessionKey, created, forced: interrupted }
+  if (outcome.status === 'not-a-member') {
+    // The cause travels as `detail`, which reaches the log and the in-thread
+    // failure report and stops there. It is worth carrying because the
+    // collapsed message alone is what let this path fail identically for a
+    // week whether the reference was wrong or the sender unauthorized —
+    // someone reading the report can act on this one by adding the row it
+    // names.
+    throw new ThreadDeliveryRefusal(
+      refusal,
+      `Sender ${sender.author} is not a member of that thread's chat (${threadRef}); ` +
+        `grant it membership there to authorize this delivery`,
+    )
+  }
+  return { kind: 'thread', threadRef, status: outcome.status }
 }
 
 // Nothing guarantees the compaction is observable when the prompt call returns,
@@ -869,8 +784,8 @@ export interface CompactResult {
   instructionsRestored: boolean
 }
 
-// A source of standing context for sessions the graph cannot resolve at all —
-// a group-chat thread has no node/edge presence, but still holds an agent
+// A source of standing context for a session, resolved by its key — a
+// group-chat thread has no node/edge presence, but still holds an agent
 // worth restoring after compaction. Registered explicitly (see
 // server/startup.ts) rather than as an import-time side effect, and
 // deliberately without this module naming group chats or any other owner: it
@@ -903,18 +818,9 @@ export function registerStandingContextResolver(resolver: StandingContextResolve
   }
 }
 
-// The graph first — unchanged behaviour for every `agent:*` session — then
-// each registered resolver in turn. First match wins; a key nobody claims
-// resolves to null exactly as resolveSessionOnGraph alone did before this.
-async function resolveStandingContext(
-  sessionKey: string,
-  nodes: GraphNodeLike[],
-  edges: GraphEdgeLike[],
-): Promise<StandingContext | null> {
-  const graphCtx = resolveSessionOnGraph(sessionKey, nodes as unknown as SmNodeLike[], edges as unknown as SmEdgeLike[])
-  if (graphCtx) {
-    return { jobContext: graphCtx.jobContext, instructions: graphCtx.instructions }
-  }
+// Each registered resolver in turn. First match wins; a key nobody claims
+// resolves to null.
+async function resolveStandingContext(sessionKey: string): Promise<StandingContext | null> {
   for (const resolver of standingContextResolvers) {
     const resolved = await resolver(sessionKey)
     if (resolved) {
@@ -950,57 +856,20 @@ export function registerSessionWakeResolver(resolver: SessionWakeResolver): void
 
 // Resumes an offline session from its stored state — never creates a session
 // that never existed; a truly fresh key has no prior turns to have gone
-// offline from, so there is nothing this is meant to cover. The graph case
-// resolves agentNodeId/jobNodeId the same way resolveStandingContext's own
-// graph branch does; a group-chat thread (or any other owner with no graph
-// presence) answers through a registered resolver instead, same two-tier
-// order as resolveStandingContext.
+// offline from, so there is nothing this is meant to cover.
 /**
  * Bring a session back when all the caller holds is its key.
  *
  * The shape a delivery gate's wake needs: it finds keys in the durable queue
- * store and has no graph in hand, so resolution goes through the registered
- * resolvers rather than the graph branch — the same two-tier order, entered at
- * the second tier. `requestCompactOnGraph`'s own group-chat callers already
- * pass an empty graph for this reason.
+ * store, so resolution goes through the registered resolvers — an owner that
+ * does not recognise the key answers null and the next one is asked.
  *
- * Consequence worth knowing rather than discovering: a key whose ONLY route is
- * live graph presence is not reachable this way and is left alone. That is the
- * conservative direction — resuming nothing is what happened before — but it is
- * a real bound, not full coverage.
+ * Consequence worth knowing rather than discovering: a key no registered
+ * owner claims is not reachable this way and is left alone. That is the
+ * conservative direction — resuming nothing is what happened before — but it
+ * is a real bound, not full coverage.
  */
 export async function wakeSessionByKey(sessionKey: string): Promise<{ sessionId: string } | null> {
-  return wakeSession(sessionKey, [], [])
-}
-
-async function wakeSession(
-  sessionKey: string,
-  nodes: GraphNodeLike[],
-  edges: GraphEdgeLike[],
-): Promise<{ sessionId: string } | null> {
-  const graphCtx = resolveSessionOnGraph(sessionKey, nodes as unknown as SmNodeLike[], edges as unknown as SmEdgeLike[])
-  if (graphCtx) {
-    // resolveSessionOnGraph proves the KEY'S AGENT/JOB PAIR is wired into the
-    // graph — it says nothing about whether a session was ever actually
-    // created under this exact key (discriminator suffix included), because
-    // reachability is a property of the graph, not of the durable session
-    // registry. Without this check, a structurally-valid but never-created
-    // key would reach resolveOrCreateSession's create branch and mint a
-    // brand-new session for nobody — the same reachability-only gap the
-    // send-message node's `delete` action already guards against with this
-    // exact existence check, left open here only because compact used to
-    // refuse every offline session outright regardless.
-    const known = (await readSessions()).some((entry) => entry.key === sessionKey)
-    if (!known) {
-      return null
-    }
-    const opened = await resolveOrCreateSession(sessionKey, {
-      agentNodeId: graphCtx.agentNodeId,
-      jobNodeId: graphCtx.jobNodeId,
-      tabKey: sessionKey,
-    })
-    return { sessionId: opened.sessionId }
-  }
   for (const resolver of sessionWakeResolvers) {
     const resolved = await resolver(sessionKey)
     if (resolved) {
@@ -1052,16 +921,13 @@ async function performCompact(
     return { sessionKey, contextUsageBefore, contextUsageAfter, compacted, instructionsRestored: false }
   }
 
-  // Resolved fresh HERE, not the snapshot requestCompactOnGraph saw when this
-  // job was queued: a group chat's topic/pins (or, for a graph session, wired
-  // instructions) can change while the job waits its turn, and what gets
-  // restored is what is true NOW — see groupChatStandingContext's header for
-  // why that is what makes pins survive compaction by construction rather
-  // than by luck. For a graph session this recomputes from the same node/edge
-  // snapshot requestCompactOnGraph already had, so nothing observable changes
-  // there. A session whose context resolves to nothing at restore time (its
-  // owner deleted meanwhile) safely skips the restore instead of sending
-  // stale or empty text.
+  // Resolved fresh HERE, not the snapshot requestCompact saw when this job
+  // was queued: a group chat's topic/pins can change while the job waits its
+  // turn, and what gets restored is what is true NOW — see
+  // groupChatStandingContext's header for why that is what makes pins survive
+  // compaction by construction rather than by luck. A session whose context
+  // resolves to nothing at restore time (its owner deleted meanwhile) safely
+  // skips the restore instead of sending stale or empty text.
   const restoreCtx = await resolveContext()
   // Restore on true (it worked, and the instructions went with the dropped
   // messages) and on null (cannot tell — re-sending is the safe direction: a
@@ -1099,7 +965,7 @@ async function performCompact(
   }
 }
 
-// One compact job per session at a time — see requestCompactOnGraph. In-memory
+// One compact job per session at a time — see requestCompact. In-memory
 // only, same as every other live-session fact in this codebase (agent-client's
 // own sessions included): a restart drops it, and there is nothing to resume,
 // because a pending job that has not dispatched anything yet has no side
@@ -1145,7 +1011,7 @@ const compactJobs = globalForCompact.__COMPACT_JOBS__
  *
  * The job itself is unaffected either way — it holds a session id and finishes
  * regardless — so this is about the STATUS POLL, which asks by key: without it,
- * `getCompactStatusOnGraph` answers 'never-requested' for a compaction the
+ * `getCompactStatus` answers 'never-requested' for a compaction the
  * reader is watching run. Silent, and it makes the ring look stuck.
  *
  * A key with no job is the ordinary case (nothing was compacting), so absence
@@ -1215,18 +1081,10 @@ async function runCompactJob(
 // performCompact above), so this can never be what interrupts one, which is
 // what makes "queue behind the turn" true here rather than just "queue the
 // timeout".
-//
-// `nodes`/`edges` may be empty — a session with no graph presence at all
-// (a group-chat thread) resolves purely through a registered
-// StandingContextResolver instead; see resolveStandingContext above.
-export async function requestCompactOnGraph(
-  nodes: GraphNodeLike[],
-  edges: GraphEdgeLike[],
-  sessionKey: string,
-): Promise<CompactAck> {
-  const ctx = await resolveStandingContext(sessionKey, nodes, edges)
+export async function requestCompact(sessionKey: string): Promise<CompactAck> {
+  const ctx = await resolveStandingContext(sessionKey)
   if (!ctx) {
-    throw new Error(`No agent/job resolved for session: ${sessionKey}`)
+    throw new Error(`No agent resolved for session: ${sessionKey}`)
   }
   // An offline session has nothing in agent-client's memory to compact — wake
   // it from its stored state (same resume a message sent into it would
@@ -1235,7 +1093,7 @@ export async function requestCompactOnGraph(
   // standing context, and unloading it again would throw that away.
   let existing = await findTargetSessionImpl({ baseKey: sessionKey })
   if (!existing) {
-    const woken = await wakeSession(sessionKey, nodes, edges)
+    const woken = await wakeSessionByKey(sessionKey)
     if (!woken) {
       throw new Error(`Session cannot be resumed, so there is no context to compact: ${sessionKey}`)
     }
@@ -1259,14 +1117,14 @@ export async function requestCompactOnGraph(
   // Deliberately not awaited — the whole point is that the caller does not
   // wait for this. runCompactJob owns its own errors (see its try/catch), so
   // this can never surface as an unhandled rejection.
-  void runCompactJob(existing.sessionId, sessionKey, () => resolveStandingContext(sessionKey, nodes, edges), job)
+  void runCompactJob(existing.sessionId, sessionKey, () => resolveStandingContext(sessionKey), job)
   return { sessionKey, accepted: true, coalesced: false, state: 'pending' }
 }
 
 // Entry point for the `compactStatus` action — the queryable signal that a
 // compact actually ran, since the caller no longer gets the result back from
 // the call that requested it.
-export function getCompactStatusOnGraph(sessionKey: string): CompactStatus {
+export function getCompactStatus(sessionKey: string): CompactStatus {
   const job = compactJobs.get(sessionKey)
   if (!job) {
     return { sessionKey, state: 'never-requested' }
@@ -1280,74 +1138,6 @@ export function getCompactStatusOnGraph(sessionKey: string): CompactStatus {
     result: job.result ?? undefined,
     error: job.error ?? undefined,
   }
-}
-
-interface SendMessageNodeData {
-  defaultAgent?: string
-  defaultJob?: string
-  titleOverride?: string
-}
-
-interface RouteResolution {
-  sessionKey: string
-  message: string
-  ctx: AgentContext
-  title: string
-  queue: QueueMode
-  sender: string
-}
-
-function resolveRoute(
-  text: string,
-  target: GraphNodeLike,
-  nodes: GraphNodeLike[],
-  edges: GraphEdgeLike[],
-  author: string,
-): RouteResolution | null {
-  const smNodes = nodes as unknown as SmNodeLike[]
-  const smEdges = edges as unknown as SmEdgeLike[]
-  const data = (target.data ?? {}) as SendMessageNodeData
-
-  // Input is either a JSON envelope `{ agent?, job?, key?, title?, message }` or plain text.
-  const parsed = tryParseJsonMessage(text)
-  const message = parsed ? parsed.message : text
-
-  // A legacy `session` string ("agent:<agent>:<job>") supplies agent/job when the
-  // dedicated fields are absent.
-  const legacy = parsed?.session ? parseSessionKey(parsed.session) : null
-
-  // Payload fields win; the node's configured defaults fill any that are omitted.
-  const agentName = parsed?.agent || legacy?.agentSlug || data.defaultAgent || ''
-  const jobName = parsed?.job || legacy?.jobSlug || data.defaultJob || ''
-  if (!agentName.trim() || !jobName.trim()) {
-    // Nothing resolvable to route to — drop silently.
-    return null
-  }
-
-  // The optional key widens the session identity so one agent+job can hold several
-  // stable, independent sessions (one per key); it does not change which agent/job
-  // nodes the session binds to.
-  const sessionKey = buildSessionKey(agentName, jobName, parsed?.key)
-  const ctx = resolveSessionOnGraph(sessionKey, smNodes, smEdges)
-  if (!ctx) {
-    return null
-  }
-
-  // Applied only when the session is first created (see caller). Payload title wins
-  // over the node's override, then falls back to the job name.
-  const title = parsed?.title || (data.titleOverride || '').trim() || ctx.jobName
-
-  // A JSON payload always carries `queue` — tryParseJsonMessage refuses one that
-  // does not. `parsed` is null only for PLAIN TEXT arriving on the node's
-  // `text-in` wire, which takes no parameters at all and so has no caller to
-  // state an intent with. That wire waits: it is the conservative half of the
-  // choice, and the only place in this change where a value is assumed rather
-  // than stated.
-  // Who the message is from is NOT decided here. It is stamped by the caller
-  // from what actually fed the run and handed in, because only the run knows
-  // which of the things wired to this node fired it. This function sees the
-  // graph, and the graph cannot answer that question.
-  return { sessionKey, message, ctx, title, queue: parsed?.queue ?? 'wait', sender: author }
 }
 
 const g = globalThis as Record<string, unknown>

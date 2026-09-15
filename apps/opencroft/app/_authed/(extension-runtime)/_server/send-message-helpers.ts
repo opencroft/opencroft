@@ -1,50 +1,8 @@
-import { usableContextWindow } from 'agent-client/context-window'
 import type { QueueMode } from 'agent-client/types'
-
-import {
-  agentInstructionText,
-  agentJobContext,
-  agentJobName,
-  agentNodeName,
-  isAgentJobNode,
-  isAgentNode,
-} from '@/app/_authed/(agent)/_shared/agent-node-shape'
-
-export interface NodeLike {
-  id: string
-  type?: string
-  data?: Record<string, unknown>
-}
-
-export interface EdgeLike {
-  source: string
-  sourceHandle?: string
-  target: string
-  targetHandle?: string
-}
-
-export interface AgentContext {
-  agentName: string
-  agentNodeId: string
-  jobName: string
-  jobNodeId: string
-  jobContext: string
-  instructions: string[]
-}
 
 export interface ParsedMessage {
   /** Message body to deliver. */
   message: string
-  /** Explicit target agent slug; falls back to the node's default agent when absent. */
-  agent?: string
-  /** Explicit target job slug; falls back to the node's default job when absent. */
-  job?: string
-  /** Optional session discriminator: same agent+job but a distinct key = a distinct stable session. */
-  key?: string
-  /** Optional session title, applied only when the session is first created. */
-  title?: string
-  /** Legacy combined key `agent:<agent>:<job>`; honored when `agent`/`job` are absent. */
-  session?: string
   /**
    * How this message relates to the target session's queue — `wait` to be
    * delivered on its own once the running turn ends, `push` to interrupt and
@@ -54,43 +12,11 @@ export interface ParsedMessage {
    */
   queue: QueueMode
   /**
-   * Who the message is from, for attribution in the transcript. Optional
-   * because a node sending on its own behalf has no one else to name; absent
-   * means the node speaks for itself.
-   */
-  sender?: string
-  /**
-   * A group-chat thread reference (`<group-slug>:<agent-slug>:<thread-slug>`,
-   * a whole session key, or a thread id) instead of an agent:job session.
-   * Mutually exclusive with `agent`/`job`/`key`/`session` — carrying both is a
-   * caller error, not a preference between them, so it is refused rather than
-   * silently resolved one way.
+   * A group-chat thread reference (`<group-slug>.<agent-slug>.<thread-slug>`,
+   * a whole session key, or a thread id). The only routing a send-message
+   * node performs — a payload that names no thread is refused at delivery.
    */
   thread?: string
-}
-
-function slug(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-}
-
-export function buildSessionKey(agentName: string, jobName: string, key?: string): string {
-  const base = `agent:${slug(agentName)}:${slug(jobName)}`
-  const k = (key ?? '').trim()
-  return k ? `${base}:${slug(k)}` : base
-}
-
-export function parseSessionKey(sessionKey: string): { agentSlug: string; jobSlug: string } | null {
-  // The optional third segment is a session discriminator key; it does not affect
-  // which agent/job the session binds to, so it is accepted but ignored here.
-  const m = sessionKey.match(/^agent:([^:]+):([^:]+)(?::.+)?$/)
-  if (!m) {
-    return null
-  }
-  return { agentSlug: m[1], jobSlug: m[2] }
 }
 
 export function tryParseJsonMessage(text: string): ParsedMessage | null {
@@ -106,6 +32,17 @@ export function tryParseJsonMessage(text: string): ParsedMessage | null {
   const obj = parsed as Record<string, unknown>
   if (typeof obj['message'] !== 'string') {
     return null
+  }
+  // Refused rather than ignored, and THROWN rather than returned as null: these
+  // fields addressed direct agent sessions, a delivery path that no longer
+  // exists. Silently dropping them would deliver the message somewhere the
+  // caller did not name — or nowhere — without telling them why.
+  const removed = ['agent', 'job', 'key', 'session'].filter((field) => field in obj)
+  if (removed.length > 0) {
+    throw new Error(
+      `send: ${removed.map((f) => `"${f}"`).join(', ')} addressed a direct agent session, ` +
+        'a delivery path that has been removed — target a group-chat thread with "thread" instead',
+    )
   }
   const optStr = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
   // Refused rather than defaulted, and THROWN rather than returned as null: a
@@ -123,11 +60,6 @@ export function tryParseJsonMessage(text: string): ParsedMessage | null {
   }
   return {
     message: obj['message'],
-    agent: optStr(obj['agent']),
-    job: optStr(obj['job']),
-    key: optStr(obj['key']),
-    title: optStr(obj['title']),
-    session: optStr(obj['session']),
     queue,
     // NO `sender`. Who a message is from is stamped by the send path, from
     // what actually fed the run, and is never read from the payload: a field
@@ -135,125 +67,4 @@ export function tryParseJsonMessage(text: string): ParsedMessage | null {
     // nobody checked makes the avatar beside it a lie rather than a fact.
     thread: optStr(obj['thread']),
   }
-}
-
-/**
- * The context window configured on an agent node, by the slug its sessions are
- * keyed under. Undefined when the agent has none — which is the ordinary case
- * and means "nobody established this model's window", not zero.
- *
- * Exported for the offline context-usage path: a session that is not loaded
- * has no harness to ask, so the operator's own figure is the only authority
- * left, and this is where the node shape for it already lives.
- */
-export function agentConfiguredWindow(agentSlug: string, nodes: NodeLike[]): number | undefined {
-  return usableContextWindow(findAgentBySlug(agentSlug, nodes)?.data?.contextWindow)
-}
-
-function findAgentBySlug(agentSlug: string, nodes: NodeLike[]): NodeLike | null {
-  for (const n of nodes) {
-    if (isAgentNode(n) && slug(agentNodeName(n)) === agentSlug) {
-      return n
-    }
-  }
-  return null
-}
-
-function findJobBySlug(jobSlug: string, nodes: NodeLike[]): NodeLike | null {
-  for (const n of nodes) {
-    if (isAgentJobNode(n) && slug(agentJobName(n)) === jobSlug) {
-      return n
-    }
-  }
-  return null
-}
-
-export function resolveSessionOnGraph(sessionKey: string, nodes: NodeLike[], edges: EdgeLike[]): AgentContext | null {
-  const parts = parseSessionKey(sessionKey)
-  if (!parts) {
-    return null
-  }
-  const agentNode = findAgentBySlug(parts.agentSlug, nodes)
-  if (!agentNode) {
-    return null
-  }
-  const jobNode = findJobBySlug(parts.jobSlug, nodes)
-  if (!jobNode) {
-    return null
-  }
-
-  const instrEdges = edges.filter((e) => e.target === agentNode.id && e.targetHandle === 'instructions-in')
-  const instructions: string[] = []
-  for (const ie of instrEdges) {
-    const instrNode = nodes.find((n) => n.id === ie.source)
-    const text = instrNode ? agentInstructionText(instrNode).trim() : ''
-    if (text) {
-      instructions.push(text)
-    }
-  }
-
-  return {
-    agentName: agentNodeName(agentNode),
-    agentNodeId: agentNode.id,
-    jobName: agentJobName(jobNode),
-    jobNodeId: jobNode.id,
-    jobContext: agentJobContext(jobNode).trim(),
-    instructions,
-  }
-}
-
-// ── Reachability ────────────────────────────────────────────────────────
-//
-// What a send-message node may route to: an agent/job pair wired into ITS OWN
-// space (per the original design note — agents/jobs from other spaces
-// are never reachable from a given node). `agent:job` session routing and
-// group-chat thread delivery both answer to this same authority, so it lives
-// once, here, rather than as a second copy beside each caller.
-
-// Node id -> the slugs of every job wired to it, via edges the agent:job
-// session path already relies on (source = job node, target = agent node).
-// Factored out of reachableAgentJobs so a caller that only has a NODE ID (a
-// thread's target agent, known before its current display name is) can check
-// reachability without resolving a name to compare by slug first.
-function jobsByAgentNodeId(nodes: NodeLike[], edges: EdgeLike[]): Map<string, string[]> {
-  const map = new Map<string, string[]>()
-  for (const edge of edges) {
-    const job = nodes.find((n) => n.id === edge.source && isAgentJobNode(n))
-    const jobName = job ? agentJobName(job) : ''
-    if (!job || !jobName) {
-      continue
-    }
-    const list = map.get(edge.target) ?? []
-    list.push(slug(jobName))
-    map.set(edge.target, list)
-  }
-  return map
-}
-
-/** Every agent in this space, with the job slugs wired to it (possibly none —
- *  an agent with no job edge is present but unreachable, since routing a
- *  session needs both halves of the pair). */
-export function reachableAgentJobs(nodes: NodeLike[], edges: EdgeLike[]): { agent: string; jobs: string[] }[] {
-  const jobsByAgentId = jobsByAgentNodeId(nodes, edges)
-  const out: { agent: string; jobs: string[] }[] = []
-  for (const node of nodes) {
-    if (!isAgentNode(node)) {
-      continue
-    }
-    const name = agentNodeName(node)
-    if (!name) {
-      continue
-    }
-    out.push({ agent: slug(name), jobs: jobsByAgentId.get(node.id) ?? [] })
-  }
-  return out
-}
-
-export function reachablePairKey(agent: string, job: string): string {
-  return `${agent}::${job}`
-}
-
-/** Every `agent:job` pair this space's wiring actually supports. */
-export function reachablePairs(nodes: NodeLike[], edges: EdgeLike[]): Set<string> {
-  return new Set(reachableAgentJobs(nodes, edges).flatMap((a) => a.jobs.map((j) => reachablePairKey(a.agent, j))))
 }

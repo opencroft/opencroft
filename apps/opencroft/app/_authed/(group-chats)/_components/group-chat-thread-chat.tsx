@@ -101,7 +101,7 @@ export function GroupChatThreadChat({
   // render: `useAcpSession` keys its effects on this object, so a fresh
   // identity every render would tear the session down and reopen it in a loop.
   const source = useMemo<LocalSource>(
-    () => ({ agentNodeId: thread.agent.nodeId, jobNodeId: '', tabKey: thread.sessionKey }),
+    () => ({ agentNodeId: thread.agent.nodeId, tabKey: thread.sessionKey }),
     [thread.agent.nodeId, thread.sessionKey],
   )
 
@@ -187,7 +187,7 @@ export function GroupChatThreadChat({
     [],
   )
   // A genuine, non-access failure -- compactGroupChatThread only catches
-  // GroupChatAccessError itself, so requestCompactOnGraph's own throws (no
+  // GroupChatAccessError itself, so requestCompact's own throws (no
   // live process for this session, or no standing-context resolver claimed
   // it) come through as an ordinary thrown error, not a `{ok:false, code}`
   // result. Without this try/catch that rejection fell through uncaught to

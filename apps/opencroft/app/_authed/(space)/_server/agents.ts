@@ -18,11 +18,7 @@ import { createServerFn } from '@tanstack/react-start'
 
 import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 
-export type {
-  AgentInstructionRef,
-  AgentJobRef,
-  AgentNodeRef,
-} from '@/app/_authed/(space)/_server/agents-impl'
+export type { AgentInstructionRef, AgentNodeRef } from '@/app/_authed/(space)/_server/agents-impl'
 
 // The handler must be an arrow function, not the point-free `.handler(listAgentNodesImpl)`.
 // `vite build` tree-shakes the unreferenced `agents-impl` import away either
