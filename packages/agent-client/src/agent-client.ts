@@ -54,6 +54,7 @@ import type {
   AgentSelection,
   AvailableCommand,
   ChatEvent,
+  CompactionState,
   Presence,
   PromptOrigin,
   QueuedPrompt,
@@ -112,6 +113,16 @@ export interface AgentClientOptions {
   // is called inside a try/catch so a throwing host observer cannot break the
   // emit, and its return value is ignored.
   onEvent?: (sessionId: string, event: ChatEvent) => void
+  // Notified on every LIVE status transition of a context compaction — once
+  // per status a compaction entity reaches, with its full merged state, and
+  // never during a session/load history replay (a replayed `completed` is old
+  // news, and a host reacting to it — e.g. re-sending standing context — would
+  // fire again on every resume). Same isolation contract as onEvent: called in
+  // a try/catch, return value ignored, never drives the engine. A host that
+  // re-delivers dropped instructions after compaction hooks the `completed`
+  // transition here — that covers the harness's own auto-compaction and a
+  // user-typed `/compact` alike, not just compactions the host itself started.
+  onCompaction?: (sessionId: string, compaction: CompactionState) => void
   // Durable copy of the queue, for a host whose queue can outlive its process.
   //
   // The engine serves entirely from memory and never reads this to make a
@@ -262,6 +273,13 @@ interface SessionState {
   // session/new response — the agent pushes them shortly after the session
   // opens, and again whenever its command set changes.
   commands: AvailableCommand[]
+  // Context compactions by compactionId, merged from the protocol's
+  // ID-addressed patches (compaction_update replaces fields it carries;
+  // compaction_summary_chunk appends). Optional — only agents whose harness
+  // reports compaction ever populate it, and session records that survived a
+  // dev hot-reload may predate the field (backfilled at the use site, same as
+  // `commands`).
+  compactions?: Map<string, CompactionState>
   // Effective per-tool / per-skill permissions; undefined = unrestricted.
   permissions?: ResolvedPermissions
   // Number of prompt promises currently in flight for this session — the
@@ -513,6 +531,11 @@ function endsOnSettledWork(tail: ChatEvent | undefined): boolean {
   if (tail.kind === 'tool_call' || tail.kind === 'tool_update') {
     return isTerminalToolStatus(tail.status)
   }
+  // Same shape as a settled tool call: a turn can genuinely end on the
+  // compaction it ran (an explicit /compact turn does exactly that).
+  if (tail.kind === 'compaction') {
+    return isTerminalToolStatus(tail.compaction.status)
+  }
   return false
 }
 
@@ -520,6 +543,10 @@ function endsOnSettledWork(tail: ChatEvent | undefined): boolean {
 // by createAgentClient. Module-level, like `store`, because emit() is
 // module-level and fires for every session rather than per client instance.
 let onEventHook: ((sessionId: string, event: ChatEvent) => void) | undefined
+
+// Same shape and reasoning for AgentClientOptions.onCompaction — handleUpdate,
+// its caller, is module-level too.
+let onCompactionHook: ((sessionId: string, compaction: CompactionState) => void) | undefined
 
 function emit(sessionId: string, event: ChatEvent): void {
   const session = store.sessions.get(sessionId)
@@ -764,8 +791,96 @@ export function handleUpdate(notification: SessionNotification): void {
       emit(sessionId, { kind: 'session_info', title: update.title ?? undefined })
       break
     }
+    case 'compaction_update': {
+      // An ID-addressed upsert (experimental ACP contract, opted into via
+      // clientCapabilities.session.compaction): the first update for an ID
+      // places the entity, later ones patch it — omitted fields stay, null
+      // clears, a value replaces (`summary: []` also clears). The merged
+      // record is what emits, so consumers fold by replacement and never
+      // re-implement the patch rules.
+      const session = store.sessions.get(sessionId)
+      if (!session) {
+        break
+      }
+      session.compactions ??= new Map()
+      const previous = session.compactions.get(update.compactionId)
+      const record: CompactionState = {
+        ...(previous ?? { compactionId: update.compactionId }),
+        status: update.status,
+      }
+      if (update.summary !== undefined) {
+        const text = (update.summary ?? []).map(textOf).join('')
+        record.summary = text || undefined
+      }
+      if (update.error !== undefined) {
+        record.error = update.error ?? undefined
+      }
+      applyCompactionMeta(record, update._meta)
+      session.compactions.set(update.compactionId, record)
+      emit(sessionId, { kind: 'compaction', compaction: { ...record } })
+      // Live status transitions only: the terminal update can arrive twice
+      // (the bridge re-sends `completed` to enrich it with token counts once
+      // the boundary reports them), and a session/load replay re-delivers the
+      // whole lifecycle of every past compaction.
+      if (!session.replaying && previous?.status !== record.status && onCompactionHook) {
+        try {
+          onCompactionHook(sessionId, { ...record })
+        } catch {}
+      }
+      break
+    }
+    case 'compaction_summary_chunk': {
+      // Streamed summary for an in-progress compaction. Accumulated silently:
+      // the terminal update either replaces the summary wholesale (its
+      // `summary` field wins, by the patch rules above) or omits it and lets
+      // this accumulation stand. Not emitted per chunk — each event would have
+      // to carry the full merged record, growing the log quadratically in the
+      // summary's length for a live view the terminal update repaints anyway.
+      const session = store.sessions.get(sessionId)
+      if (!session) {
+        break
+      }
+      session.compactions ??= new Map()
+      const record = session.compactions.get(update.compactionId) ?? {
+        compactionId: update.compactionId,
+        status: 'in_progress',
+      }
+      record.summary = (record.summary ?? '') + textOf(update.content)
+      session.compactions.set(update.compactionId, record)
+      break
+    }
     default:
       break
+  }
+}
+
+// The bridge's provider-neutral compaction facts ride the update's `_meta`
+// under this key (see @agentclientprotocol/claude-agent-acp's
+// context-compaction-meta): trigger, token counts, duration. `_meta` is a
+// replace-patch — the bridge only re-sends it when it adds facts — so fields
+// merge into the record rather than resetting it.
+const CONTEXT_COMPACTION_META_KEY = 'contextCompaction'
+
+function applyCompactionMeta(record: CompactionState, meta: unknown): void {
+  if (!meta || typeof meta !== 'object') {
+    return
+  }
+  const facts = (meta as Record<string, unknown>)[CONTEXT_COMPACTION_META_KEY]
+  if (!facts || typeof facts !== 'object') {
+    return
+  }
+  const { trigger, preTokens, postTokens, durationMs } = facts as Record<string, unknown>
+  if (trigger === 'manual' || trigger === 'automatic') {
+    record.trigger = trigger
+  }
+  if (typeof preTokens === 'number') {
+    record.preTokens = preTokens
+  }
+  if (typeof postTokens === 'number') {
+    record.postTokens = postTokens
+  }
+  if (typeof durationMs === 'number') {
+    record.durationMs = durationMs
   }
 }
 
@@ -1019,6 +1134,7 @@ const EXIT_GRACE_MS = 200
 
 export function createAgentClient(options: AgentClientOptions = {}) {
   onEventHook = options.onEvent
+  onCompactionHook = options.onCompaction
   const mcpServerName = options.mcpServerName ?? 'local'
   const clientInfo = options.clientInfo ?? { name: 'agent-client', version: '0.1.0' }
   const mcp = createMcpServer({
@@ -1194,6 +1310,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
             // auto-decline. `{}` per mode is the spec's spelling of "supported"
             // (presence advertises, the object is room for future detail).
             elicitation: { form: {}, url: {} },
+            // The compaction opt-in (experimental): with it, an agent reports
+            // context compactions as first-class compaction_update /
+            // compaction_summary_chunk session updates — handled above in
+            // handleUpdate — instead of claude-agent-acp's legacy synthetic
+            // "Compact conversation" tool call. Same `{}`-means-supported
+            // spelling as elicitation.
+            session: { compaction: {} },
           },
           clientInfo,
         })

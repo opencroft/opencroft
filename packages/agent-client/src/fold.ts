@@ -1,4 +1,4 @@
-import type { ChatEvent, ElicitationSchema, PermissionOpt, PlanItem } from './types'
+import type { ChatEvent, CompactionState, ElicitationSchema, PermissionOpt, PlanItem } from './types'
 
 export type ChatMessage =
   | { id: string; kind: 'user'; text: string }
@@ -43,7 +43,12 @@ type ToolMessage = Extract<ChatMessage, { kind: 'tool' }>
 // the same toolCallId. Defined here, beside the correlation logic that owns
 // the tool-call lifecycle, so renderers and the pagination cut rule share one
 // definition instead of each hardcoding the status strings.
-const TERMINAL_TOOL_STATUSES = new Set(['completed', 'failed'])
+//
+// 'cancelled' is not an ACP tool-call status — it comes from the compaction
+// lifecycle, which folds into a tool-shaped message below and closes with it
+// when a compaction is abandoned at a turn boundary. Real tool calls never
+// carry it, so listing it here changes nothing for them.
+const TERMINAL_TOOL_STATUSES = new Set(['completed', 'failed', 'cancelled'])
 
 export function isTerminalToolStatus(status: string | undefined): boolean {
   return status !== undefined && TERMINAL_TOOL_STATUSES.has(status)
@@ -90,6 +95,55 @@ export function lastConversationEvent(events: ChatEvent[]): ChatEvent | undefine
 }
 type PermissionMessage = Extract<ChatMessage, { kind: 'permission' }>
 type AskMessage = Extract<ChatMessage, { kind: 'ask' }>
+
+/**
+ * How a compaction presents in a transcript: a tool-shaped row, deliberately.
+ *
+ * The event vocabulary is honest — 'compaction' is its own ChatEvent kind, so
+ * a consumer that wants to render it specially can. But every renderer today
+ * draws tool rows, and claude-agent-acp's legacy presentation (before the
+ * client advertised the compaction capability) was a synthetic "Compact
+ * conversation" tool call — so folding to the same shape keeps the chat
+ * looking the way it already did while adding what the honest contract
+ * carries: the retained summary as the row's output, the trigger and token
+ * counts as its input.
+ *
+ * The id is namespaced because the legacy presentation used the bare
+ * compactionId AS a toolCallId — this one must never collide with a real
+ * tool row if both somehow appear in one transcript.
+ */
+export const COMPACTION_TITLE = 'Compact conversation'
+
+export function compactionView(compaction: CompactionState): {
+  id: string
+  title: string
+  status: string
+  input: Record<string, unknown>
+  output?: string
+  isError: boolean
+} {
+  const input: Record<string, unknown> = {}
+  if (compaction.trigger !== undefined) {
+    input.trigger = compaction.trigger
+  }
+  if (compaction.preTokens !== undefined) {
+    input.preTokens = compaction.preTokens
+  }
+  if (compaction.postTokens !== undefined) {
+    input.postTokens = compaction.postTokens
+  }
+  if (compaction.durationMs !== undefined) {
+    input.durationMs = compaction.durationMs
+  }
+  return {
+    id: `compaction:${compaction.compactionId}`,
+    title: COMPACTION_TITLE,
+    status: compaction.status,
+    input,
+    output: compaction.summary ?? (compaction.status === 'failed' ? compaction.error : undefined),
+    isError: compaction.status === 'failed',
+  }
+}
 
 export function foldEvents(events: ChatEvent[]): ChatMessage[] {
   const messages: ChatMessage[] = []
@@ -151,6 +205,33 @@ export function foldEvents(events: ChatEvent[]): ChatMessage[] {
       }
       case 'plan': {
         messages.push({ id: nextId(), kind: 'plan', entries: event.entries })
+        break
+      }
+      case 'compaction': {
+        // Upsert by compactionId, like tool_call/tool_update: every event
+        // carries the entity's full merged state, so later ones replace the
+        // row's fields in place while the first fixes its timeline position.
+        const view = compactionView(event.compaction)
+        const existing = tools.get(view.id)
+        if (existing) {
+          existing.status = view.status
+          existing.input = view.input
+          if (view.output !== undefined) {
+            existing.output = view.output
+          }
+        } else {
+          const message: ToolMessage = {
+            id: nextId(),
+            kind: 'tool',
+            toolCallId: view.id,
+            title: view.title,
+            status: view.status,
+            input: view.input,
+            ...(view.output !== undefined ? { output: view.output } : {}),
+          }
+          tools.set(view.id, message)
+          messages.push(message)
+        }
         break
       }
       case 'permission_request': {

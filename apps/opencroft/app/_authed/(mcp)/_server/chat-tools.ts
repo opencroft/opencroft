@@ -194,8 +194,10 @@ export const definitions = [
       "Compact a thread's session: shrinks its context window and, on success, re-delivers the " +
       "thread's CURRENT standing context (topic + pins). Works on an offline thread too — it is woken " +
       'from its stored state first and left running afterwards, the same as a message sent into it would. ' +
-      'Use this at a task boundary before the next dispatch — do not send a bare "/compact" message ' +
-      'instead, since that skips the standing-context re-delivery. Returns immediately once the job is ' +
+      'Use this at a task boundary before the next dispatch — prefer it over sending a bare "/compact" ' +
+      'message: this one re-delivers standing context on every harness and reports progress, while a bare ' +
+      '/compact only triggers the re-delivery on harnesses that report compaction over ACP, and reports ' +
+      'nothing back. Returns immediately once the job is ' +
       'accepted; call group_chat_compact_status to see when it actually finishes.',
     inputSchema: {
       type: 'object' as const,

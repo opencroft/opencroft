@@ -1,10 +1,11 @@
 import { startDbBackupScheduler } from '@opencroft/db-backups'
 
-import { registerSessionOpener } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import { registerCompactionHandler, registerSessionOpener } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import {
   registerSessionWakeResolver,
   registerStandingContextResolver,
   registerThreadDeliveryResolver,
+  restoreAfterCompaction,
   wakeSessionByKey,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
 import {
@@ -59,6 +60,12 @@ export function ensureServerStarted(): void {
   // client — so the opener is handed to it here, the one place that already
   // names both sides.
   registerSessionOpener(wakeSessionByKey)
+  // And the reverse of the standing-context registration above: when a
+  // harness reports its OWN compaction (auto-compaction on a full context, a
+  // reader's /compact typed in chat), the client's hook hands it to stream.ts
+  // to re-deliver the standing context the compaction just dropped — the same
+  // restore the Compact button's job performs, now driven by the event.
+  registerCompactionHandler(restoreAfterCompaction)
   void preload()
 }
 

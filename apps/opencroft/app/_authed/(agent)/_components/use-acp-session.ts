@@ -5,7 +5,7 @@ import type { ChatUserMessagePart } from 'agent-chat/components/chat-turn'
 import type { AgentChatEdit } from 'agent-chat/session'
 import { usePaginatedHistory } from 'agent-chat/use-paginated-history'
 import { toEditableParts } from 'agent-chat/user-parts'
-import { isTerminalToolStatus } from 'agent-client/fold'
+import { compactionView, isTerminalToolStatus } from 'agent-client/fold'
 import { DEFAULT_PRESENCE } from 'agent-client/presence'
 import type {
   AvailableCommand,
@@ -297,6 +297,36 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
           if (event.output !== undefined || isTerminalToolStatus(event.status)) {
             part.result = { text: toolText(event.output), isError: event.status === 'failed' }
           }
+        }
+        break
+      }
+      case 'compaction': {
+        // A context compaction, drawn as the tool-shaped row compactionView
+        // defines (see agent-client/fold) — upserted by its namespaced id the
+        // same way tool_call/tool_update correlate, since every event carries
+        // the entity's full merged state.
+        const view = compactionView(event.compaction)
+        const existing = tools.get(view.id)
+        const result =
+          view.output !== undefined || isTerminalToolStatus(view.status)
+            ? { text: view.output ?? '', isError: view.isError }
+            : undefined
+        if (existing) {
+          existing.args = view.input
+          if (result) {
+            existing.result = result
+          }
+        } else {
+          const message = ensureAssistant(id)
+          const part: ToolPart = {
+            type: 'tool-call',
+            id: view.id,
+            name: view.title,
+            args: view.input,
+            ...(result ? { result } : {}),
+          }
+          message.parts.push(part)
+          tools.set(view.id, part)
         }
         break
       }

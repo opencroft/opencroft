@@ -15,7 +15,7 @@ import type { AgentSelection } from 'agent-client/types'
 
 import { tabSessions } from '@/app/_authed/(agent)/_server/acp-impl'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
-import { getCompactStatus, registerStandingContextResolver, requestCompact } from './stream'
+import { getCompactStatus, registerStandingContextResolver, requestCompact, restoreAfterCompaction } from './stream'
 
 interface AcpStoreShape {
   connections: Map<string, unknown>
@@ -64,7 +64,7 @@ registerStandingContextResolver(async (sessionKey) =>
 // subprocess), then registers it into tabSessions directly.
 // findTargetSessionImpl reads tabSessions directly, so this is enough for
 // requestCompact's own session lookup to work.
-async function setupCompactableSession(): Promise<{
+async function setupCompactableSession(keyPrefix = CLAIMED_PREFIX): Promise<{
   sessionKey: string
   sessionId: string
   promptCalls: string[]
@@ -72,7 +72,7 @@ async function setupCompactableSession(): Promise<{
   endTurn: (stopReason?: string) => void
 }> {
   counter += 1
-  const sessionKey = `${CLAIMED_PREFIX}${counter}`
+  const sessionKey = `${keyPrefix}${counter}`
 
   const selection: AgentSelection = {
     providerId: 'test-provider',
@@ -80,6 +80,10 @@ async function setupCompactableSession(): Promise<{
     model: 'test-model',
     apiKey: '',
     cwd: `/tmp/compact-async-test-${counter}`,
+    // As production sessions carry it (acp-impl passes the tab key): the
+    // event-driven restore resolves a session's key through listSessions,
+    // so its tests need the metadata real sessions have.
+    sessionKey,
   }
   const turns: TurnDeferred[] = []
   const promptCalls: string[] = []
@@ -256,4 +260,53 @@ test('compact refuses a claimed key that was never actually created, and creates
     false,
     'the refusal must not have spawned a live session for this key',
   )
+})
+
+// ── the event-driven restore (harness-reported compactions) ────────────────
+
+test('a harness-reported compaction completing restores standing context, driven by the event alone', async () => {
+  const h = await setupCompactableSession()
+
+  await restoreAfterCompaction(h.sessionId, { compactionId: 'auto-1', status: 'completed' })
+  await waitFor(() => h.promptCalls.length > 0)
+  const restore = h.promptCalls[0] ?? ''
+  assert.match(
+    restore,
+    /<opencroft-task>context the restore must bring back<\/opencroft-task>/,
+    'the context comes back without anybody having pressed Compact',
+  )
+  assert.match(restore, /Work starts ONLY from an incoming dispatch message\./)
+  h.endTurn() // the restore's own turn
+})
+
+test('the event path restores nothing for a non-terminal transition or an unclaimed session', async () => {
+  const h = await setupCompactableSession()
+  await restoreAfterCompaction(h.sessionId, { compactionId: 'auto-2', status: 'in_progress' })
+  await restoreAfterCompaction(h.sessionId, { compactionId: 'auto-2', status: 'failed', error: 'no' })
+  assert.equal(h.promptCalls.length, 0, 'only a completed compaction dropped anything worth re-sending')
+
+  const unclaimed = await setupCompactableSession('nobody-claims-')
+  await restoreAfterCompaction(unclaimed.sessionId, { compactionId: 'auto-3', status: 'completed' })
+  assert.equal(unclaimed.promptCalls.length, 0, 'a key no resolver owns has no standing context to restore')
+})
+
+test('the event path defers to a live compact job, which owns that restore', async () => {
+  const h = await setupCompactableSession()
+
+  await requestCompact(h.sessionKey)
+  await waitFor(() => h.promptCalls.length > 0) // '/compact' dispatched, job running
+
+  // The harness reports the compaction the job's /compact caused — mid-turn,
+  // exactly when the real event arrives. The job is still running, so the
+  // event path must stand back rather than double-restore.
+  await restoreAfterCompaction(h.sessionId, { compactionId: 'job-1', status: 'completed' })
+  assert.equal(h.promptCalls.length, 1, 'no second restore raced the job')
+
+  h.endTurn() // /compact's turn
+  await waitFor(() => h.promptCalls.length > 1) // the job's own restore
+  h.endTurn() // restore's turn
+  await waitFor(() => getCompactStatus(h.sessionKey).state === 'done')
+
+  const restores = h.promptCalls.filter((p) => p.includes('<opencroft-task>'))
+  assert.equal(restores.length, 1, 'exactly one restore reached the session')
 })

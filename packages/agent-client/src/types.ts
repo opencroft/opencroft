@@ -211,6 +211,31 @@ export type Presence =
   | { kind: 'daily' }
   | { kind: 'custom'; intervalMs: number }
 
+/**
+ * One context compaction of a session, as reported by the agent over ACP
+ * (`compaction_update` / `compaction_summary_chunk`, gated on the client
+ * advertising `clientCapabilities.session.compaction`). The engine merges the
+ * protocol's ID-addressed patches into this record, so every `compaction`
+ * event carries the entity's full current state — fold the LAST one seen per
+ * `compactionId`.
+ *
+ * `status` is open-ended by protocol; 'in_progress' | 'completed' | 'failed' |
+ * 'cancelled' are the defined values. `summary` is the user-displayable text
+ * the compaction retained; the trigger and token counts come from the
+ * bridge's `_meta.contextCompaction` extension and are absent when the agent
+ * did not report them.
+ */
+export interface CompactionState {
+  compactionId: string
+  status: string
+  summary?: string
+  error?: string
+  trigger?: 'manual' | 'automatic'
+  preTokens?: number
+  postTokens?: number
+  durationMs?: number
+}
+
 export type ChatEvent =
   | { kind: 'user'; text: string }
   | { kind: 'agent_message'; text: string }
@@ -257,6 +282,10 @@ export type ChatEvent =
   // Composers use it for slash-command autocomplete; a command is still SENT
   // as an ordinary prompt whose text starts with `/`.
   | { kind: 'available_commands'; commands: AvailableCommand[] }
+  // A context compaction's full current state (see CompactionState) — emitted
+  // on every status transition, in timeline position. An entity is upserted by
+  // `compactionId`: the first event places it, later ones replace its fields.
+  | { kind: 'compaction'; compaction: CompactionState }
   // Agent-pushed session metadata (currently just title); undefined title
   // means the agent didn't set one on this update.
   | { kind: 'session_info'; title?: string }

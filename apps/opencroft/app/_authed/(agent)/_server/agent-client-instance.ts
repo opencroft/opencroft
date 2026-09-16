@@ -1,5 +1,5 @@
 import { createAgentClient, type PermissionContext, type PermissionOutcome } from 'agent-client/agent-client'
-import type { ChatEvent } from 'agent-client/types'
+import type { ChatEvent, CompactionState } from 'agent-client/types'
 
 import { readPersistedPresence, writePersistedUsage } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { readMcpServersForAgent } from '@/app/_authed/(agent)/_server/mcp-store'
@@ -97,6 +97,22 @@ export function registerSessionOpener(opener: SessionOpener): void {
   sessionOpener = opener
 }
 
+/**
+ * What to do when a session's harness reports a compaction — same seam and
+ * same cycle-avoidance reason as SessionOpener above: the handler lives in
+ * stream.ts (which imports this module for the client itself), so
+ * `server/startup.ts` fills it in. Unset means compactions are recorded and
+ * rendered but trigger no host reaction — the pre-startup degradation, not an
+ * error.
+ */
+type CompactionHandler = (sessionId: string, compaction: CompactionState) => Promise<unknown>
+
+let compactionHandler: CompactionHandler | undefined
+
+export function registerCompactionHandler(handler: CompactionHandler): void {
+  compactionHandler = handler
+}
+
 export const agentClient = createAgentClient({
   // Sleep Mode's gate: while the instance is asleep no queue is drained to
   // any agent — see (mcp)/_server/sleep-mode for why the flag is a
@@ -135,6 +151,14 @@ export const agentClient = createAgentClient({
   // seam in a shared package, and this product no longer using it is not a
   // reason to take it from one that might.
   onEvent: persistUsageOnTurnEnd,
+  // Live compaction transitions (never replay — the engine gates that). The
+  // registered handler re-delivers the session's standing context once a
+  // compaction completes; see stream.ts's restoreAfterCompaction.
+  onCompaction: (sessionId, compaction) => {
+    void compactionHandler?.(sessionId, compaction).catch((error) => {
+      console.error('Compaction handler failed for session', sessionId, error)
+    })
+  },
 })
 
 // Waking is the flag's only transition with work attached: every idle

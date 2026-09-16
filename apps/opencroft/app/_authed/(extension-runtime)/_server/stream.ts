@@ -18,7 +18,7 @@
 // function's handler, and nesting another one there is unreliable (see
 // deliverToSendMessageNode). acp-impl.ts is server-only by construction — see
 // its header for why that separation also keeps the client bundle clean.
-import type { QueueMode } from 'agent-client/types'
+import type { CompactionState, QueueMode } from 'agent-client/types'
 
 import {
   ensureLocalSessionImpl,
@@ -892,6 +892,23 @@ export async function wakeSessionByKey(sessionKey: string): Promise<{ sessionId:
   return null
 }
 
+// The restore's text, or null when there is nothing worth re-sending — a
+// context that resolved to nobody, or one whose fields are all blank. Shared
+// by performCompact (the host-initiated job) and restoreAfterCompaction (the
+// event-driven path), so what "has instructions to restore" means cannot
+// drift between the two.
+function buildRestoreText(restoreCtx: StandingContext | null): string | null {
+  const hasInstructions =
+    Boolean(restoreCtx?.jobContext?.trim()) || (restoreCtx?.instructions ?? []).some((i) => i.trim())
+  if (!restoreCtx || !hasInstructions) {
+    return null
+  }
+  return composeEnvelope(REINSTRUCT_NOTE, {
+    sessionInit: { jobContext: restoreCtx.jobContext, instructions: restoreCtx.instructions },
+    isNewSession: true,
+  })
+}
+
 // The guard this replaced used to refuse a working/waiting session outright,
 // because a prompt sent into a busy session is QUEUED rather than delivered,
 // which made compaction unsafe there in a way that no amount of waiting
@@ -941,20 +958,14 @@ async function performCompact(
   // compaction by construction rather than by luck. A session whose context
   // resolves to nothing at restore time (its owner deleted meanwhile) safely
   // skips the restore instead of sending stale or empty text.
-  const restoreCtx = await resolveContext()
   // Restore on true (it worked, and the instructions went with the dropped
   // messages) and on null (cannot tell — re-sending is the safe direction: a
   // redundant envelope costs tokens, a missing one costs the agent its
   // instructions).
-  const hasInstructions =
-    Boolean(restoreCtx?.jobContext?.trim()) || (restoreCtx?.instructions ?? []).some((i) => i.trim())
-  if (!restoreCtx || !hasInstructions) {
+  const restore = buildRestoreText(await resolveContext())
+  if (!restore) {
     return { sessionKey, contextUsageBefore, contextUsageAfter, compacted, instructionsRestored: false }
   }
-  const restore = composeEnvelope(REINSTRUCT_NOTE, {
-    sessionInit: { jobContext: restoreCtx.jobContext, instructions: restoreCtx.instructions },
-    isNewSession: true,
-  })
   // `front: true`: if anything auto-drained into a turn while /compact's own
   // turn was settling (see this function's header and awaitDispatchedTurn),
   // that turn may still be running here. Without `front`, the restore would
@@ -1037,6 +1048,52 @@ export function renameCompactJobKey(from: string, to: string): void {
   }
   compactJobs.set(to, job)
   compactJobs.delete(from)
+}
+
+/**
+ * The event-driven restore: a harness that reports compaction over ACP (see
+ * agent-client's onCompaction hook) reports every compaction, including ones
+ * this host never initiated — the SDK auto-compacting when context fills
+ * mid-turn, and a reader typing `/compact` straight into the chat. Those used
+ * to lose the session's standing context silently, because performCompact's
+ * restore only runs for compactions the Compact button / group_chat_compact
+ * started. This handler closes that gap by reacting to the compaction itself
+ * rather than to who asked for it.
+ *
+ * It defers to a live compact job for the same key on purpose: performCompact
+ * still owns the restore for job-initiated compactions, where the restore's
+ * outcome (`instructionsRestored`) is part of the job's reported result. The
+ * engine fires the hook once per status transition and never during history
+ * replay, so a `completed` seen here is a fresh, live compaction — no dedup
+ * ledger needed on this side.
+ *
+ * Wired up in server/startup.ts via registerCompactionHandler, the same seam
+ * (and the same cycle-avoidance reason) as registerSessionOpener: this module
+ * imports the agent client, so the client cannot statically import this.
+ */
+export async function restoreAfterCompaction(sessionId: string, compaction: CompactionState): Promise<void> {
+  if (compaction.status !== 'completed') {
+    return
+  }
+  const sessionKey = agentClient.listSessions().find((m) => m.id === sessionId)?.sessionKey
+  if (!sessionKey) {
+    // No key, no owner to resolve standing context by — nothing to restore.
+    return
+  }
+  const job = compactJobs.get(sessionKey)
+  if (job && (job.state === 'pending' || job.state === 'running')) {
+    return
+  }
+  const restore = buildRestoreText(await resolveStandingContext(sessionKey))
+  if (!restore) {
+    return
+  }
+  // `front: true` and `queue: 'wait'`, both as in performCompact's restore:
+  // the re-delivery is the very next thing the session reads once whatever is
+  // running ends, and it never interrupts a turn to say so. For the SDK's
+  // mid-turn auto-compaction that means the context comes back at the first
+  // turn boundary after the shrink — the earliest moment a prompt can land.
+  await promptLocalImpl({ sessionId, text: restore, front: true, queue: 'wait', origin: { kind: 'system' } })
 }
 
 // Resolves once the session has no turn in flight right now — never sends

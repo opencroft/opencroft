@@ -4,9 +4,10 @@ import test from 'node:test'
 
 import { type AgentClientOptions, buildClient, createAgentClient, handleUpdate, type QueueStore } from './agent-client'
 import type { AgentConnection } from './connection'
+import { COMPACTION_TITLE, foldEvents, isTerminalToolStatus } from './fold'
 import { decodeBatch } from './queue-tags'
 import { buildSpawnConfig, findAdapter } from './resolve'
-import type { AgentSelection, ChatEvent, Presence, QueuedPrompt } from './types'
+import type { AgentSelection, ChatEvent, CompactionState, Presence, QueuedPrompt } from './types'
 
 // ── prompt queue / turn guard / mid-turn input ─────────────────────────────
 //
@@ -70,6 +71,7 @@ async function setup(
     openSessionForKey?: (sessionKey: string) => void | Promise<void>
     transformDeliveredPrompt?: (text: string) => string
     contextWindow?: number
+    onCompaction?: (sessionId: string, compaction: CompactionState) => void
     // Model a real ACP agent: cancelling ends the turn it was running, which
     // resolves the in-flight prompt promise and therefore fires settleTurn.
     // The default no-op cancel hides every ordering question that depends on
@@ -157,6 +159,9 @@ async function setup(
       : {}),
     ...(options.openSessionForKey
       ? ({ openSessionForKey: options.openSessionForKey } satisfies Pick<AgentClientOptions, 'openSessionForKey'>)
+      : {}),
+    ...(options.onCompaction
+      ? ({ onCompaction: options.onCompaction } satisfies Pick<AgentClientOptions, 'onCompaction'>)
       : {}),
   })
   const meta = await client.createSession(selection)
@@ -3238,5 +3243,125 @@ test('one key that cannot be opened does not strand the keys behind it', async (
   h.client.resumeDelivery()
   await settle()
   assert.deepEqual(opened, ['agent:absent:second'], 'the second key is still reached')
+  await h.client.deleteSession(h.sessionId)
+})
+
+// ── compaction reporting (ACP compaction_update / compaction_summary_chunk) ─
+
+function sendCompactionUpdate(sessionId: string, update: Record<string, unknown>): void {
+  handleUpdate({
+    sessionId,
+    update: { sessionUpdate: 'compaction_update', ...update },
+  } as Parameters<typeof handleUpdate>[0])
+}
+
+function sendSummaryChunk(sessionId: string, compactionId: string, text: string): void {
+  handleUpdate({
+    sessionId,
+    update: { sessionUpdate: 'compaction_summary_chunk', compactionId, content: { type: 'text', text } },
+  } as Parameters<typeof handleUpdate>[0])
+}
+
+test('a compaction lifecycle merges into one record, folds to one row, and fires the hook per transition', async () => {
+  const hookCalls: CompactionState[] = []
+  const h = await setup('openclaw', { onCompaction: (_sessionId, compaction) => hookCalls.push(compaction) })
+  sendCompactionUpdate(h.sessionId, { compactionId: 'c1', status: 'in_progress', _meta: { contextCompaction: { version: 1 } } })
+  // Streamed summary accumulates silently — no chat event per chunk.
+  sendSummaryChunk(h.sessionId, 'c1', 'Streamed ')
+  sendSummaryChunk(h.sessionId, 'c1', 'summary.')
+  sendCompactionUpdate(h.sessionId, {
+    compactionId: 'c1',
+    status: 'completed',
+    // The terminal summary replaces the streamed accumulation wholesale.
+    summary: [{ type: 'text', text: 'Final summary.' }],
+    _meta: { contextCompaction: { version: 1, trigger: 'manual', preTokens: 1000, postTokens: 200 } },
+  })
+  const compactions = h.events.filter((event) => event.kind === 'compaction')
+  assert.equal(compactions.length, 2, 'one event per compaction_update, none per chunk')
+  assert.deepEqual(compactions.at(-1), {
+    kind: 'compaction',
+    compaction: {
+      compactionId: 'c1',
+      status: 'completed',
+      summary: 'Final summary.',
+      trigger: 'manual',
+      preTokens: 1000,
+      postTokens: 200,
+    },
+  })
+  const folded = foldEvents(sessionEvents(h.sessionId))
+  const rows = folded.filter((message) => message.kind === 'tool' && message.title === COMPACTION_TITLE)
+  assert.equal(rows.length, 1, 'both updates upsert the same row')
+  const row = rows[0]
+  assert.ok(row.kind === 'tool')
+  assert.equal(row.toolCallId, 'compaction:c1')
+  assert.equal(row.status, 'completed')
+  assert.equal(row.output, 'Final summary.')
+  assert.deepEqual(row.input, { trigger: 'manual', preTokens: 1000, postTokens: 200 })
+  assert.deepEqual(
+    hookCalls.map((compaction) => compaction.status),
+    ['in_progress', 'completed'],
+  )
+  // The bridge re-sends the terminal to enrich it with boundary facts; the
+  // record merges them, the hook does not fire again for the same status.
+  sendCompactionUpdate(h.sessionId, {
+    compactionId: 'c1',
+    status: 'completed',
+    _meta: { contextCompaction: { version: 1, durationMs: 42 } },
+  })
+  const enriched = h.events.filter((event) => event.kind === 'compaction').at(-1)
+  assert.ok(enriched && enriched.kind === 'compaction')
+  assert.equal(enriched.compaction.durationMs, 42)
+  assert.equal(enriched.compaction.summary, 'Final summary.', 'omitted summary stays')
+  assert.equal(enriched.compaction.preTokens, 1000, 'meta fields merge rather than reset')
+  assert.equal(hookCalls.length, 2)
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a terminal update without a summary keeps the streamed accumulation', async () => {
+  const h = await setup('openclaw')
+  sendCompactionUpdate(h.sessionId, { compactionId: 'c2', status: 'in_progress' })
+  sendSummaryChunk(h.sessionId, 'c2', 'Part one.')
+  sendSummaryChunk(h.sessionId, 'c2', ' Part two.')
+  sendCompactionUpdate(h.sessionId, { compactionId: 'c2', status: 'completed' })
+  const last = h.events.filter((event) => event.kind === 'compaction').at(-1)
+  assert.ok(last && last.kind === 'compaction')
+  assert.equal(last.compaction.summary, 'Part one. Part two.')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a cancelled compaction closes its row as terminal, and a failed one carries its error', async () => {
+  const h = await setup('openclaw')
+  sendCompactionUpdate(h.sessionId, { compactionId: 'c3', status: 'in_progress' })
+  sendCompactionUpdate(h.sessionId, { compactionId: 'c3', status: 'cancelled' })
+  sendCompactionUpdate(h.sessionId, { compactionId: 'c4', status: 'failed', error: 'ran out of road' })
+  const folded = foldEvents(sessionEvents(h.sessionId))
+  const cancelled = folded.find((message) => message.kind === 'tool' && message.toolCallId === 'compaction:c3')
+  assert.ok(cancelled && cancelled.kind === 'tool')
+  assert.equal(cancelled.status, 'cancelled')
+  assert.ok(isTerminalToolStatus(cancelled.status), 'the row is settled, not forever in progress')
+  const failed = folded.find((message) => message.kind === 'tool' && message.toolCallId === 'compaction:c4')
+  assert.ok(failed && failed.kind === 'tool')
+  assert.equal(failed.status, 'failed')
+  assert.equal(failed.output, 'ran out of road')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a replayed compaction emits its event but never fires the live hook', async () => {
+  const hookCalls: CompactionState[] = []
+  const h = await setup('openclaw', { onCompaction: (_sessionId, compaction) => hookCalls.push(compaction) })
+  const session = acpStore().sessions.get(h.sessionId) as { replaying?: boolean }
+  session.replaying = true
+  sendCompactionUpdate(h.sessionId, {
+    compactionId: 'c5',
+    status: 'completed',
+    summary: [{ type: 'text', text: 'Old news.' }],
+  })
+  session.replaying = false
+  assert.ok(
+    h.events.some((event) => event.kind === 'compaction' && event.compaction.compactionId === 'c5'),
+    'the transcript still shows the replayed compaction',
+  )
+  assert.equal(hookCalls.length, 0, 'a replayed completed is old news, not a fresh compaction')
   await h.client.deleteSession(h.sessionId)
 })
