@@ -85,6 +85,10 @@ async function setup(
     // `injected` unless steerOutcome overrides it.
     steeringSupported?: boolean
     steerOutcome?: string
+    // Model a harness that advertised the SDK's session/fork capability: the
+    // seeded connection reports it, and its unstable_forkSession records its
+    // params and answers with a forked session id.
+    forkSupported?: boolean
     // Model a real ACP agent: cancelling ends the turn it was running, which
     // resolves the in-flight prompt promise and therefore fires settleTurn.
     // The default no-op cancel hides every ordering question that depends on
@@ -115,6 +119,7 @@ async function setup(
   const closeSessionCalls: string[] = []
   const resumeCalls: string[] = []
   const extMethodCalls: Array<{ method: string; params: Record<string, unknown> }> = []
+  const forkCalls: Array<Record<string, unknown>> = []
   const turns: TurnDeferred[] = []
   const takeTurn = (index?: number) => (index === undefined ? turns.shift() : turns.splice(index, 1)[0])
   const connection = {
@@ -122,6 +127,10 @@ async function setup(
       sessionId: `test-session-${counter}`,
       configOptions: options.configOptions,
     }),
+    unstable_forkSession: async (params: Record<string, unknown>) => {
+      forkCalls.push(params)
+      return { sessionId: `forked-session-${counter}` }
+    },
     prompt: (params: { prompt: Array<{ text: string }> }) => {
       promptCalls.push(params.prompt[0].text)
       return new Promise((resolve, reject) => {
@@ -161,6 +170,7 @@ async function setup(
     lastSessionId: null,
     loadSession: false,
     steeringSupported: options.steeringSupported === true,
+    forkSupported: options.forkSupported === true,
     initialized: Promise.resolve(),
   })
   const client = createAgentClient({
@@ -200,6 +210,7 @@ async function setup(
     closeSessionCalls,
     resumeCalls,
     extMethodCalls,
+    forkCalls,
     endTurn: (index?: number) => takeTurn(index)?.resolve({ stopReason: 'end_turn' }),
     // Resolve a turn with the FULL prompt response the harness would send —
     // the experimental usage/quota/failure decorations included. The engine
@@ -3909,6 +3920,116 @@ test('userTurnAt names a turn by event index, and reports the ordinal that rewin
   assert.equal(h.client.userTurnAt(h.sessionId, -1), null)
   assert.equal(h.client.userTurnAt('no-such-session', userIndices[0]), null)
   await h.client.deleteSession(h.sessionId)
+})
+
+
+// ── session/fork over ACP ───────────────────────────────────────────────────
+//
+// An external agent that advertised `session/fork` forks its own transcript;
+// the engine adopts the agent-minted id and rewinds its own log to the same
+// turn boundary. The cutoff travels in the agent's fork-point dialect, named
+// by the message ids the agent itself stamped on its chunks — so the history
+// below is built with chunk updates that carry one.
+
+// Two turns, each holding one agent message with its own id: the minimum a
+// cutoff anchor and a dropped turn can be told apart in.
+async function twoTurnHistory(h: Awaited<ReturnType<typeof setup>>): Promise<void> {
+  const push = (update: Record<string, unknown>) =>
+    handleUpdate({ sessionId: h.sessionId, update } as Parameters<typeof handleUpdate>[0])
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'first reply' }, messageId: 'msg_first' })
+  h.endTurn()
+  await settle()
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  push({
+    sessionUpdate: 'agent_message_chunk',
+    content: { type: 'text', text: 'second reply' },
+    messageId: 'msg_second',
+  })
+  h.endTurn()
+  await settle()
+}
+
+test('createSession reports canFork only when the agent advertised session/fork', async () => {
+  const plain = await setup()
+  const plainMeta = (acpStore().sessions.get(plain.sessionId) as { meta: { canFork: boolean } }).meta
+  assert.equal(plainMeta.canFork, false, 'no advertisement, no fork')
+  await plain.client.deleteSession(plain.sessionId)
+
+  const forking = await setup('openclaw', { forkSupported: true })
+  const forkMeta = (acpStore().sessions.get(forking.sessionId) as { meta: { canFork: boolean } }).meta
+  assert.equal(forkMeta.canFork, true, 'the agent advertisement is what canFork reports')
+  await forking.client.deleteSession(forking.sessionId)
+})
+
+test('forkSession refuses a session whose agent never advertised session/fork', async () => {
+  const h = await setup()
+  await assert.rejects(h.client.forkSession(h.sessionId, 0), (error: Error) => {
+    assert.match(error.message, /Forking is only supported/)
+    return true
+  })
+  assert.deepEqual(h.forkCalls, [], 'the refusal happens before anything reaches the agent')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('forkSession over ACP forks the agent session, rewinds the log, and adopts the forked id', async () => {
+  const h = await setup('openclaw', { forkSupported: true })
+  await twoTurnHistory(h)
+  const source = sessionEvents(h.sessionId)
+  const userIndices = source.flatMap((event, index) => (event.kind === 'user' ? [index] : []))
+  assert.equal(userIndices.length, 2, 'precondition: two turns, to fork between them')
+
+  const meta = await h.client.forkSession(h.sessionId, 1)
+  assert.ok(meta)
+  assert.equal(meta.id, `forked-session-${counter}`, 'the caller is handed the agent-minted fork id')
+  assert.equal(meta.canFork, true)
+
+  // The cutoff travels as the agent's own fork-point dialect, anchored on the
+  // last agent message BEFORE the dropped turn: the agent keeps its transcript
+  // up to the first turn's reply, and the second turn and its reply are gone.
+  assert.deepEqual(h.forkCalls, [
+    {
+      sessionId: h.sessionId,
+      cwd: h.selection.cwd,
+      mcpServers: [],
+      _meta: { jetbrains: { air: { fork: { version: 1, messageId: 'msg_first' } } } },
+    },
+  ])
+
+  // The fork's log is the source's, cut at the same boundary the agent trims
+  // its own transcript — the rewound replay the reader sees matches the model
+  // history the fork actually holds.
+  assert.deepEqual(kinds(sessionEvents(meta.id)), kinds(source.slice(0, userIndices[1])))
+
+  // And the fork speaks through the same connection: it is the same harness,
+  // reached by the same spawn config as the session it was branched from.
+  await h.client.prompt(meta.id, 'hello', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  // Deliveries are read back through the real parser: the stored call is the
+  // tagged delivery, not the bare words.
+  assert.deepEqual(deliveries(h), [['first'], ['second'], ['hello']])
+  h.endTurn()
+  await settle()
+  await h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(meta.id)
+})
+
+test('a cutoff with no agent message to anchor on forks without a fork point', async () => {
+  const h = await setup('openclaw', { forkSupported: true })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  h.endTurn()
+  await settle()
+
+  const meta = await h.client.forkSession(h.sessionId, 0)
+  assert.ok(meta)
+  // Turn 0 has nothing before it to anchor a fork point on, and session/fork
+  // has no "fork empty" spelling: no cutoff is sent, so the agent copies the
+  // whole transcript — while this session's own log still rewinds, which is
+  // what the reader sees.
+  assert.equal((h.forkCalls[0] as { _meta?: unknown })._meta, undefined)
+  assert.deepEqual(kinds(sessionEvents(meta.id)), [])
+  await h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(meta.id)
 })
 
 // ── shouldHoldDelivery / resumeDelivery ─────────────────────────────────────

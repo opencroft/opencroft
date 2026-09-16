@@ -107,7 +107,8 @@ export interface OpenedSession {
 
 export interface TabSession {
   id: string
-  // Whether this tab's agent can fork its history (native harness only).
+  // Whether this tab's agent can fork its history (the engine's resolution:
+  // the native harness's own store, or an advertised `session/fork`).
   canFork: boolean
   // Whether this tab's agent accepts mid-turn prompts as live-turn input
   // (adapter-declared; see agent-client's supportsMidTurnInput).
@@ -397,8 +398,9 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
   }
 
   const meta = await agentClient.createSession(selection, agent.defaultModeId)
-  // Forking rewinds an agent's own message history, which only the in-process
-  // (native) harness owns — external ACP agents can't truncate it.
+  // canFork is the engine's own resolution: the native harness rewinds its own
+  // message store, and an external ACP agent that advertised `session/fork`
+  // forks its transcript through the engine (see agent-client's forkSession).
   const canFork = meta.canFork ?? false
   tabSessions.set(data.tabKey, { id: meta.id, canFork, canSteer, everPrompted: false, adapterId })
   // Durable before the caller can prompt it, so a restart mid-first-turn finds
