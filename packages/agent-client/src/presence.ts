@@ -25,6 +25,16 @@ export const MINUTES_WINDOW_MIN_MS = 1 * MINUTE_MS
 export const MINUTES_WINDOW_MAX_MS = 3 * MINUTE_MS
 
 /**
+ * `hourly` is a range too, and deliberately SHORT of the hour it is named
+ * for: harness prompt caches typically live for one hour, so a wait of a
+ * full hour lands exactly on the TTL edge and reopens the conversation
+ * against a cold cache every single time. 30–45 minutes reads at hourly
+ * scale while staying safely inside the cache's lifetime.
+ */
+export const HOURLY_WINDOW_MIN_MS = 30 * MINUTE_MS
+export const HOURLY_WINDOW_MAX_MS = 45 * MINUTE_MS
+
+/**
  * How long the oldest waiting message must have waited before the queue goes.
  *
  * `minutes` is deliberately random within its range, and the caller is expected
@@ -43,9 +53,9 @@ export const MINUTES_WINDOW_MAX_MS = 3 * MINUTE_MS
  * already held when the cadence was switched. For those, zero makes them due
  * immediately, which is what choosing the cadence means.
  *
- * `turn-based` is zero too, and the zero means "due at the next boundary the
+ * `online` is zero too, and the zero means "due at the next boundary the
  * engine consults": now when the session is idle, its own turn's end when it
- * is busy. What keeps a turn-based message out of a RUNNING turn is the
+ * is busy. What keeps an online message out of a RUNNING turn is the
  * engine's turn gate, never a window — a window here would add a wait after
  * the turn ended, which is not what the cadence promises.
  */
@@ -53,12 +63,12 @@ export function presenceWindowMs(presence: Presence, roll: () => number = Math.r
   switch (presence.kind) {
     case 'high-attention':
     case 'realtime':
-    case 'turn-based':
+    case 'online':
       return 0
     case 'minutes':
       return MINUTES_WINDOW_MIN_MS + roll() * (MINUTES_WINDOW_MAX_MS - MINUTES_WINDOW_MIN_MS)
     case 'hourly':
-      return HOUR_MS
+      return HOURLY_WINDOW_MIN_MS + roll() * (HOURLY_WINDOW_MAX_MS - HOURLY_WINDOW_MIN_MS)
     case 'daily':
       return DAY_MS
     case 'custom':

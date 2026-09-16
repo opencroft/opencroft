@@ -176,7 +176,7 @@ export interface UseAgentCommandBarOptions {
    *  passed — a cadence with no way to change it is a control that lies. Must
    *  be identity-stable when nothing meaningful changed; it feeds the memoized
    *  bar. */
-  presence?: { value: PresenceValue; onSelect: (presence: PresenceValue) => void }
+  presence?: { value: PresenceValue; onSelect: (presence: PresenceValue) => void; steering?: boolean }
 }
 
 // Everything the command bar needs that the design-kit component deliberately
@@ -477,7 +477,9 @@ export function useAgentCommandBar({
             toggle (auto-approve being process-wide rather than per-session,
             say) shows the mode dial as THE permission control, and a presence
             out at the head reads as left of everything. */}
-        {presence ? <PresenceSelector presence={presence.value} onSelect={presence.onSelect} /> : null}
+        {presence ? (
+          <PresenceSelector presence={presence.value} onSelect={presence.onSelect} steering={presence.steering} />
+        ) : null}
         {dial.modeValues.length > 0 ? (
           <ModeSelector
             options={dial.modeValues}

@@ -20,13 +20,13 @@ export type PresenceValue =
   | { kind: 'high-attention' }
   | { kind: 'realtime' }
   // Below realtime: read at the agent's own turn boundary, never mid-turn.
-  | { kind: 'turn-based' }
+  | { kind: 'online' }
   | { kind: 'minutes' }
   | { kind: 'hourly' }
   | { kind: 'daily' }
   | { kind: 'custom'; intervalMs: number }
 
-export type FixedPresenceKind = 'high-attention' | 'realtime' | 'turn-based' | 'minutes' | 'hourly' | 'daily'
+export type FixedPresenceKind = 'high-attention' | 'realtime' | 'online' | 'minutes' | 'hourly' | 'daily'
 
 const MINUTE_MS = 60_000
 
@@ -34,19 +34,19 @@ const MINUTE_MS = 60_000
 //
 // Five colours for seven cadences, deliberately. What the colour answers is
 // "how does this cadence read", not "which setting is selected": red stops
-// the turn to read now, green reads now, amber reads at its own next turn,
-// blue reads later, violet reads on an interval somebody chose. Which of the
-// three later cadences is in force is not a thing to read off a 16-pixel
-// glyph, so it is on the button's title and in the popover, where an exact
-// answer belongs.
+// the turn to read now, violet streams into the live turn, green reads at
+// its own next turn, blue reads later, amber reads on an interval somebody
+// chose. Which of the three later cadences is in force is not a thing to
+// read off a 16-pixel glyph, so it is on the button's title and in the
+// popover, where an exact answer belongs.
 const PRESENCE_COLOR = {
   'high-attention': 'text-red-500',
-  realtime: 'text-green-500',
-  'turn-based': 'text-amber-500',
+  realtime: 'text-violet-500',
+  online: 'text-green-500',
   minutes: 'text-blue-500',
   hourly: 'text-blue-500',
   daily: 'text-blue-500',
-  custom: 'text-violet-500',
+  custom: 'text-amber-500',
 }
 
 // The cadences with nothing to configure, in the order they are offered:
@@ -57,9 +57,9 @@ const PRESENCE_COLOR = {
 const FIXED: { kind: FixedPresenceKind; label: string; hint: string }[] = [
   { kind: 'high-attention', label: 'High Attention', hint: 'interrupts to read' },
   { kind: 'realtime', label: 'Realtime', hint: 'as it arrives' },
-  { kind: 'turn-based', label: 'Turn-based', hint: 'between its turns' },
+  { kind: 'online', label: 'Online', hint: 'between its turns' },
   { kind: 'minutes', label: 'In minutes', hint: 'within a few' },
-  { kind: 'hourly', label: 'Hourly', hint: 'once an hour' },
+  { kind: 'hourly', label: 'Within the hour', hint: 'in 30–45 min' },
   { kind: 'daily', label: 'Daily', hint: 'once a day' },
 ]
 
@@ -84,6 +84,13 @@ export function presenceLabel(presence: PresenceValue): string {
 export interface PresenceSelectorProps {
   presence: PresenceValue
   onSelect: (presence: PresenceValue) => void
+  // Whether this session's agent takes mid-turn input. Realtime is the one
+  // cadence that only exists as a steering behaviour (streaming into the live
+  // turn), so without steering it is not offered — on such an agent it would
+  // behave exactly like Online under a different name. The CURRENT value is
+  // still shown if it happens to be realtime; hiding is about not offering a
+  // distinction the session cannot make, not about denying what is set.
+  steering?: boolean
   className?: string
 }
 
@@ -99,10 +106,11 @@ export interface PresenceSelectorProps {
  * no hover-revealed control and nothing to drag, so the whole of it works on a
  * touch screen without a second route having to exist.
  */
-export function PresenceSelector({ presence, onSelect, className }: PresenceSelectorProps) {
+export function PresenceSelector({ presence, onSelect, steering = true, className }: PresenceSelectorProps) {
   const current = customMinutes(presence)
   const [open, setOpen] = useState(false)
   const [minutes, setMinutes] = useState(current ? String(current) : '')
+  const offered = steering ? FIXED : FIXED.filter((entry) => entry.kind !== 'realtime')
 
   // Reseeded on open rather than kept in sync: while the popover is shut the
   // typed value has no owner, and starting from what is actually in force is
@@ -147,7 +155,7 @@ export function PresenceSelector({ presence, onSelect, className }: PresenceSele
           open upward from the start edge. */}
       <PopoverContent align='start' side='top' className='w-64 p-2'>
         <div className='flex flex-col gap-0.5'>
-          {FIXED.map((entry) => (
+          {offered.map((entry) => (
             <button
               key={entry.kind}
               type='button'

@@ -1,6 +1,6 @@
 'use client'
 
-import { Bot, Maximize2, Minimize2, Pencil, X } from 'lucide-react'
+import { Bot, ChevronDown, ChevronRight, Maximize2, Minimize2, Pencil, X } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
 import { useState } from 'react'
 // Both of these import types back from this file, and a type import is erased,
@@ -698,21 +698,42 @@ function SubagentBlock({
 }) {
   const { ThinkingBlock } = renderers
   const live = item.state === undefined
+  // Collapsed is the ARRIVING state for a subagent that already finished — a
+  // reopened conversation shows its delegations as one line each, not as the
+  // full transcripts they streamed as. A live one starts open, because
+  // watching it work is the point of the block. Initial value only: a live
+  // block the reader is watching must not snap shut the moment its subagent
+  // completes.
+  const [open, setOpen] = useState(live)
   const badge = live ? 'running' : item.state
   const badgeClass = live
     ? 'bg-primary/10 text-primary animate-pulse'
     : item.state === 'completed'
       ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
       : 'bg-muted text-muted-foreground'
+  const Chevron = open ? ChevronDown : ChevronRight
   return (
     <div className='rounded-md border border-border/60 bg-muted/20'>
-      <div className='flex items-center gap-2 px-3 py-2'>
+      {/* The whole header is the toggle — a chevron-sized target fails on
+          touch, and the header row carries nothing else pressable. */}
+      <button
+        type='button'
+        onClick={() => setOpen((value) => !value)}
+        className='flex w-full items-center gap-2 rounded-md px-3 py-2 text-left hover:bg-accent/40'
+        title={open ? 'Collapse subagent' : 'Expand subagent'}
+      >
+        <Chevron className='size-3.5 shrink-0 text-muted-foreground' />
         <Bot className='size-3.5 shrink-0 text-muted-foreground' />
         <span className='truncate text-xs font-medium text-foreground'>{item.name || 'Subagent'}</span>
         <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badgeClass}`}>{badge}</span>
-      </div>
-      {item.task ? <div className='px-3 pb-2 text-xs text-muted-foreground'>{item.task}</div> : null}
-      {item.items.length > 0 ? (
+        {!open && item.items.length > 0 ? (
+          <span className='ml-auto shrink-0 text-[10px] text-muted-foreground'>
+            {item.items.length} step{item.items.length === 1 ? '' : 's'}
+          </span>
+        ) : null}
+      </button>
+      {open && item.task ? <div className='px-3 pb-2 text-xs text-muted-foreground'>{item.task}</div> : null}
+      {open && item.items.length > 0 ? (
         <div className='flex flex-col gap-2 border-t border-border/40 px-3 py-2'>
           {item.items.map((child, i) => {
             if (child.kind === 'assistant-text') {
@@ -775,8 +796,11 @@ export function ChatTurnDetails({
   // derivation lives.
   const entryKeys = detailEntryKeys(entries, items)
 
+  // Offered for any turn with something to hide. `> 1` alone missed the turn
+  // whose single item is a subagent — the largest block a turn can carry, and
+  // the one the reader most wants to fold away.
   const toggle =
-    items.length > 1 ? (
+    items.length > 1 || items.some((item) => item.kind === 'subagent') ? (
       <ChatDetailsToggle
         collapsed={collapsed}
         onToggle={() => {

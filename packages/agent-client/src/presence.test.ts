@@ -7,6 +7,8 @@ import test from 'node:test'
 
 import {
   DEFAULT_PRESENCE,
+  HOURLY_WINDOW_MAX_MS,
+  HOURLY_WINDOW_MIN_MS,
   MINUTES_WINDOW_MAX_MS,
   MINUTES_WINDOW_MIN_MS,
   msUntilDue,
@@ -31,16 +33,25 @@ test('the default is realtime, so a new setting changes nothing that did not ask
 })
 
 test('the fixed cadences are the intervals they are named for', () => {
-  assert.equal(presenceWindowMs({ kind: 'hourly' }), 60 * 60_000)
   assert.equal(presenceWindowMs({ kind: 'daily' }), 24 * 60 * 60_000)
   assert.equal(presenceWindowMs({ kind: 'custom', intervalMs: 4_500 }), 4_500)
 })
 
-test('turn-based opens no window: the turn gate holds it, never a wait after', () => {
+test('hourly lands inside 30–45 minutes, deliberately short of the hour', () => {
+  // A full-hour wait lands exactly on the typical prompt-cache TTL and
+  // reopens the conversation cold every time; the range reads at hourly
+  // scale while staying inside the cache's lifetime.
+  assert.equal(presenceWindowMs({ kind: 'hourly' }, () => 0), HOURLY_WINDOW_MIN_MS)
+  assert.equal(presenceWindowMs({ kind: 'hourly' }, () => 1), HOURLY_WINDOW_MAX_MS)
+  const middle = presenceWindowMs({ kind: 'hourly' }, () => 0.5)
+  assert.ok(middle > HOURLY_WINDOW_MIN_MS && middle < HOURLY_WINDOW_MAX_MS, String(middle))
+})
+
+test('online opens no window: the turn gate holds it, never a wait after', () => {
   // Zero means "due at the next boundary the engine consults" — idle now,
   // or the running turn's own end. A window here would ADD a wait after the
   // turn ended, which is not what the cadence promises.
-  assert.equal(presenceWindowMs({ kind: 'turn-based' }), 0)
+  assert.equal(presenceWindowMs({ kind: 'online' }), 0)
 })
 
 test('minutes lands inside its range at both ends of the roll', () => {

@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+
 import { createAgentClient, type PermissionContext, type PermissionOutcome } from 'agent-client/agent-client'
 import type { ChatEvent, CompactionState } from 'agent-client/types'
 
@@ -112,6 +114,15 @@ let compactionHandler: CompactionHandler | undefined
 export function registerCompactionHandler(handler: CompactionHandler): void {
   compactionHandler = handler
 }
+
+// Bridge-side forensics: claude-agent-acp appends a per-process decision log
+// (session/replay phases, subagent routing, steering) to this directory when
+// the variable is set — spawned bridges inherit process.env. Under the app's
+// own data dir (gitignored, survives dev-server restarts), and `??=` so an
+// operator-set path is never overridden. Costs one small append-only file per
+// bridge process; without it a wire-level question ("did the harness announce
+// this subagent on replay?") has no answer after the fact.
+process.env.CLAUDE_AGENT_LOGS ??= join(process.cwd(), 'data', 'claude-acp-logs')
 
 export const agentClient = createAgentClient({
   // Sleep Mode's gate: while the instance is asleep no queue is drained to

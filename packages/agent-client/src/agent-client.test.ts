@@ -423,6 +423,72 @@ test('loadSession seeds configOptions from the response when nothing was replaye
   await client.deleteSession(sessionId)
 })
 
+// A session/load replay re-announces every subagent and streams its sidechain
+// under the child's own session id (claude-agent-acp's replay contract), so
+// coming back to a conversation must reproduce the nested transcripts, not
+// just the parent's. This drives the exact wire sequence the bridge sends.
+test('a replay reproduces subagent transcripts: announced, nested, and closed', async () => {
+  counter += 1
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: '',
+    cwd: `/tmp/agent-client-test-${counter}`,
+  }
+  const sessionId = `replayed-subagents-${counter}`
+  const childId = `${sessionId}:replay-subagent:toolu_1`
+  const push = (sid: string, update: Record<string, unknown>) =>
+    handleUpdate({ sessionId: sid, update } as Parameters<typeof handleUpdate>[0])
+  const connection = {
+    loadSession: async () => {
+      push(sessionId, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'delegate this' } })
+      push(sessionId, {
+        sessionUpdate: 'subagent_spawned',
+        subagentSessionId: childId,
+        name: 'Investigator',
+        task: 'dig',
+        capabilities: {},
+      })
+      push(childId, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'dig here' } })
+      push(childId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'dug' } })
+      push(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'summary' } })
+      push(sessionId, { sessionUpdate: 'subagent_state_update', subagentSessionId: childId, state: 'completed' })
+      return {}
+    },
+  } as unknown as AgentConnection
+  const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
+  assert.ok(store, 'agent-client global store must exist after import')
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: true,
+    initialized: Promise.resolve(),
+  })
+  const client = createAgentClient()
+  assert.ok(await client.loadSession(sessionId, selection))
+  const events: ChatEvent[] = []
+  client.subscribe(sessionId, (event) => events.push(event))
+
+  const spawned = events.find((event) => event.kind === 'subagent')
+  assert.ok(spawned && spawned.kind === 'subagent' && spawned.subagent.name === 'Investigator')
+  const nested = events.filter(
+    (event): event is Extract<ChatEvent, { kind: 'subagent_event' }> => event.kind === 'subagent_event',
+  )
+  assert.deepEqual(
+    nested.map((event) => event.event.kind),
+    ['user', 'agent_message'],
+    'the sidechain nested under the parent, in order',
+  )
+  const closed = events.filter((event) => event.kind === 'subagent').at(-1)
+  assert.ok(closed && closed.kind === 'subagent' && closed.subagent.state === 'completed')
+  // And the cold-open tail window a reconnecting chat is served must carry
+  // them too — this is the read the SSE stream actually performs.
+  const window = client.getRecordsWindow(sessionId, { records: 20 })
+  assert.ok(window && window.events.some((event) => event.kind === 'subagent_event'))
+  await client.deleteSession(sessionId)
+})
+
 // listTools feeds the editors that decide what a ROLE may reach, so it asks a
 // dynamic tools source for the whole registry with no caller. Both halves of
 // that matter: a factory that is handed nothing at all breaks on a host whose
@@ -3506,9 +3572,9 @@ test('without steering support a mid-turn message queues as before', async () =>
 // message into the running turn. The three below pin the other cadences on a
 // harness that COULD steer — each keeps its own promise instead.
 
-test('turn-based holds a mid-turn message on a steering harness and reads it between turns', async () => {
+test('online holds a mid-turn message on a steering harness and reads it between turns', async () => {
   const h = await setup('openclaw', { steeringSupported: true })
-  h.client.setPresence(h.sessionId, { kind: 'turn-based' })
+  h.client.setPresence(h.sessionId, { kind: 'online' })
   await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
   await settle()
   await h.client.prompt(h.sessionId, 'between', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })

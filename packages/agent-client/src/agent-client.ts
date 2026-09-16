@@ -1438,9 +1438,9 @@ export function supportsMidTurnInput(selection: AgentSelection): boolean {
 // Whether THIS session's messages go into a running turn: the harness must be
 // able to (supportsMidTurnInput) AND the reader must be reading `realtime` —
 // the one cadence that means "as it arrives, even mid-turn". Every other
-// cadence is a promise that messages wait: for the window, or (turn-based and
+// cadence is a promise that messages wait: for the window, or (online and
 // high-attention, each in its own way) for a turn boundary — high-attention
-// forces one, turn-based waits for the agent's own.
+// forces one, online waits for the agent's own.
 function steersMidTurn(session: SessionState): boolean {
   return session.presence.kind === 'realtime' && supportsMidTurnInput(session.selection)
 }

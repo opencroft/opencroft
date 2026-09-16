@@ -174,7 +174,10 @@ export function GroupChatThreadChat({
   const unread = useMemo(() => buildUnread(acp.queue, acp.queueAuthors), [acp.queue, acp.queueAuthors])
   // Memoized for the same reason as `unread`: it feeds the memoized command
   // bar, and a fresh object every render would rebuild it every render.
-  const presence = useMemo(() => ({ value: acp.presence, onSelect: acp.setPresence }), [acp.presence, acp.setPresence])
+  const presence = useMemo(
+    () => ({ value: acp.presence, onSelect: acp.setPresence, steering: acp.canSteer }),
+    [acp.presence, acp.setPresence, acp.canSteer],
+  )
 
   // Compacts and clears THIS thread, membership-checked (see clearThread's
   // own comment in model.ts for why clearSession -- generic across both

@@ -164,6 +164,10 @@ export interface AcpSession {
   // 'presence' snapshot. Realtime until the server says otherwise, which is
   // also what a session that has never been told anything else reads at.
   presence: Presence
+  // Whether this session's agent takes mid-turn input (adapter/connection
+  // capability, resolved server-side). The presence selector reads it to
+  // offer Realtime only where steering can make it mean something.
+  canSteer: boolean
   // Context usage meter (tokens used / window) from the latest 'usage' event.
   usage?: AgentUsage
   // Live background tasks the harness reported (running or paused) — the
@@ -1106,6 +1110,7 @@ export function useAcpSession(
       configOptions: folded.configOptions,
       commands: folded.commands,
       presence: folded.presence,
+      canSteer,
       // A live event this connection has actually seen wins and stays won —
       // once one lands, folded.usage keeps returning it on every later render
       // (it's derived from the accumulated event log), so the ring never
@@ -1134,6 +1139,7 @@ export function useAcpSession(
       folded.configOptions,
       folded.commands,
       folded.presence,
+      canSteer,
       folded.usage,
       folded.asyncTasks,
       seedUsage,
