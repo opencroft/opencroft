@@ -385,6 +385,11 @@ interface ConnEntry {
   // supportsMidTurnInput; the other is the adapter's forced flag). Only
   // meaningful once `initialized` has resolved.
   steeringSupported: boolean
+  // Whether the agent advertised the `session/fork` capability at initialize
+  // (agentCapabilities.sessionCapabilities.fork; `{}` means supported, per the
+  // same spelling as elicitation). Only meaningful once `initialized` has
+  // resolved.
+  forkSupported: boolean
   // Resolves when initialize() has completed and the capability flags above
   // are set. Every caller (spawner and concurrent reusers) awaits this before
   // using the connection, so capability checks never race a half-open
@@ -1408,6 +1413,35 @@ function supportsTools(selection: AgentSelection): boolean {
   return findAdapter(selection.adapterId)?.supportsTools !== false
 }
 
+// The turn cutoff of an ACP fork, translated into what the agent can act on.
+//
+// The ACP `session/fork` request carries no cutoff field of its own; the
+// dialect is claude-agent-acp's (verified against its fork-session
+// implementation, 0.78.0): `_meta.jetbrains.air.fork` names a
+// fork point by the message id the agent itself stamps on its message chunks —
+// the same id the engine keeps on `agent_message` events — and keeps its
+// transcript up to and including that message. So the anchor for "drop from
+// user turn N" is the LAST agent message strictly before that turn: the
+// model-history twin of the event-log trim forkSession applies to its own copy.
+//
+// With no anchor — the boundary is the first turn, or every earlier turn
+// produced no visible agent message — nothing expressible remains: the method
+// has no "fork empty" spelling, so no fork point is sent and the agent copies
+// the whole transcript. This session's log still rewinds (the reader sees the
+// edit land), but the agent's own copy of the older turns stays in its context.
+function forkCutoffMeta(session: { events: ChatEvent[] }, boundary: number | null): Record<string, unknown> | undefined {
+  if (boundary === null) {
+    return undefined
+  }
+  for (let i = boundary - 1; i >= 0; i -= 1) {
+    const event = session.events[i]
+    if (event.kind === 'agent_message' && event.messageId) {
+      return { jetbrains: { air: { fork: { version: 1, messageId: event.messageId } } } }
+    }
+  }
+  return undefined
+}
+
 // Whether this agent accepts a prompt while a turn is running, feeding it into
 // the live turn ("steering"). True on either of two words, and only those:
 //
@@ -1565,6 +1599,50 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     })
   }
 
+  // Fork an external ACP session over `session/fork` (the entry's agent
+  // advertised the capability — forkSession checked). Mirrors loadSession's
+  // session setup: a fork is a NEW session to the agent, so it gets this
+  // session's MCP servers with a fresh permission token, bound to the id the
+  // agent mints for the fork. `boundary` is the event-log index the cutoff
+  // names (null = no cutoff); see forkCutoffMeta for how it travels.
+  async function forkExternalSession(
+    session: SessionState,
+    entry: ConnEntry | undefined,
+    boundary: number | null,
+  ): Promise<Awaited<ReturnType<AgentConnection['unstable_forkSession']>>> {
+    const selection = session.selection
+    if (entry?.forkSupported !== true) {
+      throw new Error('Forking is only supported by the in-process native harness.')
+    }
+    let token: string | null = null
+    let mcpServers: AcpMcpServer[] = []
+    if (supportsTools(selection)) {
+      const { internal, servers } = await buildMcpServers(selection)
+      token = randomUUID()
+      store.acpTokenPermissions.set(token, session.permissions)
+      mcpServers = tagInternal(internal, servers, token)
+    }
+    try {
+      const response = await entry.connection.unstable_forkSession({
+        sessionId: session.meta.id,
+        cwd: selection.cwd,
+        mcpServers,
+        _meta: forkCutoffMeta(session, boundary),
+      })
+      if (token) {
+        store.acpTokenSession.set(token, response.sessionId)
+      }
+      return response
+    } catch (error) {
+      // The fork never happened: unwind the token so a permission record can't
+      // outlive the session it was minted for.
+      if (token) {
+        store.acpTokenPermissions.delete(token)
+      }
+      throw error
+    }
+  }
+
   // The in-process harness has no subprocess and no persistent identity, so it's
   // rebuilt fresh on every call (always the latest code) over the shared,
   // store-owned session map. The elicitation getter resolves against the native
@@ -1648,6 +1726,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       lastSessionId: null,
       loadSession: false,
       steeringSupported: false,
+      forkSupported: false,
       initialized: Promise.resolve(),
     }
     store.connections.set(key, entry)
@@ -1711,6 +1790,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // claude-agent-acp's `_session/steering` contract).
         entry.steeringSupported = Boolean(
           (initResult as { _meta?: { steering?: { supported?: boolean } } })._meta?.steering?.supported,
+        )
+        // The SDK's session/fork extension. The agent's own word about whether
+        // `unstable_forkSession` will be answered — the same read-back pattern
+        // as loadSession above, and the same `{}`-means-supported spelling.
+        entry.forkSupported = Boolean(
+          (initResult as { agentCapabilities?: { sessionCapabilities?: { fork?: unknown } } }).agentCapabilities
+            ?.sessionCapabilities?.fork,
         )
       } catch (error) {
         // The handshake fails the moment the process's stdout closes, which can
@@ -2736,7 +2822,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         title: `New chat ${store.titleCounter}`,
         createdAt: now,
         lastActivityAt: now,
-        canFork: native,
+        // The native harness rewinds its own message store; an external ACP
+        // agent forks its own transcript when it advertised `session/fork` —
+        // its word, read at initialize (see forkSession).
+        canFork: native || connEntryFor(selection)?.forkSupported === true,
         sessionKey: selection.sessionKey,
       }
       store.sessions.set(sessionId, {
@@ -2849,7 +2938,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         title: `New chat ${store.titleCounter}`,
         createdAt: loadedAt,
         lastActivityAt: loadedAt,
-        canFork: false,
+        // Same resolution as createSession: the agent's advertised
+        // `session/fork`, not the fact that history was replayed.
+        canFork: connEntryFor(selection)?.forkSupported === true,
         sessionKey: selection.sessionKey,
       }
       // Register the session record BEFORE the replay: the agent streams its
@@ -3121,24 +3212,21 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     },
 
     // Branch a session into a new one, rewound to a turn (dropFromTurn, 0-based;
-    // defaults to the last turn). Only the native harness can do this (we own its
-    // message store); ACP fork copies the whole session with no cutoff, so it's
-    // rejected here.
+    // defaults to the last turn). The native harness rewinds its own message
+    // store; an external ACP agent forks its own transcript when it advertised
+    // `session/fork` at initialize, with our turn cutoff translated into its
+    // fork-point dialect (see forkCutoffMeta).
     async forkSession(sessionId: string, dropFromTurn?: number): Promise<SessionMeta | null> {
       const session = store.sessions.get(sessionId)
       if (!session) {
         return null
       }
-      if (!isNativeSelection(session.selection)) {
+      const native = isNativeSelection(session.selection)
+      const entry = native ? undefined : connEntryFor(session.selection)
+      if (!native && entry?.forkSupported !== true) {
         throw new Error('Forking is only supported by the in-process native harness.')
       }
       const connection = await ensureConnection(session.selection)
-      const response = await connection.unstable_forkSession({
-        sessionId,
-        cwd: session.selection.cwd,
-        mcpServers: [],
-        _meta: dropFromTurn === undefined ? undefined : { dropFromTurn },
-      })
       // Trim our event log at the same boundary the harness trims its messages —
       // drop from the chosen user turn's event — so the fork's replayed transcript
       // matches its model history. With no prior turn, keep the leading modes event.
@@ -3149,6 +3237,14 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         }
       })
       const boundary = findTurnBoundary(userEvents, dropFromTurn)
+      const response = native
+        ? await connection.unstable_forkSession({
+            sessionId,
+            cwd: session.selection.cwd,
+            mcpServers: [],
+            _meta: dropFromTurn === undefined ? undefined : { dropFromTurn },
+          })
+        : await forkExternalSession(session, entry, boundary)
       // The fork starts idle with an empty queue, so the source session's
       // 'queue' snapshots must not carry over — replaying one would resurrect
       // queue state the fork doesn't actually hold.

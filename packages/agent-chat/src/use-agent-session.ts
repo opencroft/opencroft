@@ -53,6 +53,9 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
   const [activeId, setActiveId] = useState('')
   const [name, setName] = useState('')
   const [sessionId, setSessionId] = useState<string | null>(null)
+  // Whether this session's agent can fork its history, as the engine resolved
+  // it at session start (native store, or an advertised `session/fork`).
+  const [canFork, setCanFork] = useState(false)
   // True until the initial profiles + session load resolves — lets a host
   // show a distinct "loading" state instead of momentarily flashing "no
   // messages yet" before anything's been fetched.
@@ -190,8 +193,6 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
 
   const isCustomEndpoint = selection.providerId === 'openai-compatible'
   const canStart = canStartSelection(selection)
-  // Forking is a native-harness feature (we own its history); offered per message.
-  const isNative = selection.adapterId === 'native'
 
   const loadModels = useCallback(async () => {
     if (!selection.baseUrl) return
@@ -273,6 +274,7 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
     setUsage(null)
     setTurnActive(false)
     setQueue([])
+    setCanFork(false)
   }, [])
 
   const start = useCallback(async () => {
@@ -282,6 +284,7 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
       const meta = await startAgentSession(selection)
       resetSessionState()
       setSessionId(meta.id)
+      setCanFork(meta.canFork ?? false)
     } catch (error) {
       toast.error('Failed to start session', {
         description: error instanceof Error ? error.message : String(error),
@@ -299,8 +302,8 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
   }, [sessionId, resetSessionState])
 
   // Rewind the conversation to a user turn and continue from there. The branch
-  // replays the truncated transcript, which only the in-process harness can
-  // reconstruct.
+  // replays the truncated transcript — the engine forks the native harness's
+  // own store, or the agent's own transcript when it advertised `session/fork`.
   const fork = useCallback(
     async (dropFromTurn: number) => {
       if (!sessionId) return
@@ -417,6 +420,7 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
           resetSessionState()
           id = meta.id
           setSessionId(meta.id)
+          setCanFork(meta.canFork ?? false)
         } catch (error) {
           toast.error('Failed to start session', {
             description: error instanceof Error ? error.message : String(error),
@@ -514,9 +518,10 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
         adapterId: selection.adapterId,
         send,
         stop,
-        // Rewinding replays the forked transcript, which only the in-process
-        // harness can reconstruct.
-        canFork: isNative && Boolean(sessionId),
+        // The engine's resolution, read off the session start's meta: the
+        // native harness rewinds its own store, an external ACP agent that
+        // advertised `session/fork` forks its own transcript.
+        canFork,
         editMessage: startEdit,
         edit,
         cancelEdit,
@@ -536,9 +541,9 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
       turnActive,
       name,
       selection.adapterId,
+      canFork,
       send,
       stop,
-      isNative,
       edit,
       startEdit,
       cancelEdit,
@@ -590,7 +595,6 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
     usage,
     starting,
     canStart,
-    isNative,
     start,
     clear,
     send,
