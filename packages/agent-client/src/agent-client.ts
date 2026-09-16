@@ -819,7 +819,7 @@ function buildClient(
         })
       })
     },
-    unstable_createElicitation: (request: CreateElicitationRequest) =>
+    createElicitation: (request: CreateElicitationRequest) =>
       new Promise<CreateElicitationResponse>((resolve) => {
         const sessionId = getElicitationSession() ?? store.lastSessionId
         if (!sessionId) {
