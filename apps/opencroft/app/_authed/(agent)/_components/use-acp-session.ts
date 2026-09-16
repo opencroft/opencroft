@@ -106,7 +106,13 @@ export interface OpenedSessionResult {
   canSteer: boolean
   adapterId: string
   created: boolean
-  contextUsage: { usedTokens: number; contextLimit: number | null; asOf?: number } | null
+  contextUsage: {
+    usedTokens: number
+    contextLimit: number | null
+    cost?: { amount: number; currency: string }
+    rateLimits?: { status: string; window: string; utilization?: number; resetsAt?: number }[]
+    asOf?: number
+  } | null
 }
 
 // The default: exactly the call this hook has always made.
