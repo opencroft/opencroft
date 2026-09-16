@@ -270,7 +270,15 @@ export function ContextRing({
             className,
           )}
         >
-          <svg className='pointer-events-none absolute inset-0 size-7 -rotate-90' viewBox='0 0 24 24'>
+          {/* Decorative. The button already carries the reading as its
+              accessible name, so leaving the ring announceable would say the
+              same thing twice.
+
+              Spelled `aria-hidden='true'` rather than bare: the two are the
+              same attribute once React renders them, but the a11y lint only
+              recognises the explicit form and reads the bare one as no
+              annotation at all. */}
+          <svg aria-hidden='true' className='pointer-events-none absolute inset-0 size-7 -rotate-90' viewBox='0 0 24 24'>
             <circle cx='12' cy='12' r={radius} fill='none' strokeWidth='2.5' style={{ stroke: 'var(--border)' }} />
             <circle
               cx='12'
