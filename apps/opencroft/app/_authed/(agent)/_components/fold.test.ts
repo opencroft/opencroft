@@ -86,3 +86,82 @@ test('the last presence snapshot wins, like the queue', () => {
   ]
   assert.deepEqual(fold(events, 0).presence, { kind: 'custom', intervalMs: 15 * 60_000 })
 })
+
+test('the last usage snapshot wins, cost and rate limits with it', () => {
+  // The ring reads one usage object; a reading that carries neither
+  // decoration replaces only what it reported (the engine merges before it
+  // emits, so what arrives here is already the merged snapshot).
+  const events: ChatEvent[] = [
+    {
+      kind: 'usage',
+      used: 12_000,
+      size: 200_000,
+      cost: { amount: 0.42, currency: 'USD' },
+      rateLimits: [{ status: 'allowed', window: 'five_hour', utilization: 34 }],
+    },
+    { kind: 'usage', used: 13_000, size: 200_000 },
+  ]
+  const { usage } = fold(events, 0)
+  assert.deepEqual(usage, { used: 13_000, size: 200_000 })
+})
+
+test('a typed session failure renders as its own message, not a dead turn', () => {
+  // The bridge settles an exhausted turn as end_turn with the verdict in
+  // _meta; the fold turns that verdict into the visible outcome of the turn.
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'q' },
+    {
+      kind: 'turn_end',
+      stopReason: 'end_turn',
+      failure: {
+        id: 't:error',
+        kind: 'quota_exhausted',
+        title: 'The Claude account has no available quota.',
+        category: 'limit',
+        severity: 'error',
+      },
+    },
+  ]
+  const { messages } = fold(events, 10)
+  const failureMessage = messages.at(-1)
+  assert.ok(failureMessage)
+  assert.equal(failureMessage.role, 'assistant')
+  const [part] = failureMessage.parts
+  assert.equal(part.type, 'text')
+  assert.equal(part.type === 'text' ? part.text : '', '⛔ The Claude account has no available quota.')
+})
+
+test('a typed session failure with details carries them', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'q' },
+    {
+      kind: 'turn_end',
+      stopReason: 'end_turn',
+      failure: {
+        id: 't:error',
+        kind: 'auth_required',
+        title: 'Sign in to continue using Claude.',
+        details: 'Please run /login',
+        category: 'access',
+        severity: 'error',
+        actions: ['login'],
+      },
+    },
+  ]
+  const { messages } = fold(events, 0)
+  const [part] = messages.at(-1)?.parts ?? []
+  assert.equal(part.type === 'text' ? part.text : '', '⛔ Sign in to continue using Claude. — Please run /login')
+})
+
+test('a plain turn end adds no failure message', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'q' },
+    { kind: 'agent_message', text: 'a' },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ]
+  const { messages } = fold(events, 0)
+  assert.deepEqual(
+    messages.map((m) => m.role),
+    ['user', 'assistant'],
+  )
+})

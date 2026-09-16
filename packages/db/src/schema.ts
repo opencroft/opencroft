@@ -1,5 +1,15 @@
 import { sql } from 'drizzle-orm'
-import { bigint, boolean, index, integer, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
+import {
+  bigint,
+  boolean,
+  doublePrecision,
+  index,
+  integer,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core'
 
 import { authSchema, user } from './auth-schema'
 
@@ -152,6 +162,45 @@ export const spaceGraph = pgTable(
     uniqueIndex('SpaceGraph_instanceId_key').on(t.instanceId),
     index('SpaceGraph_spaceId_idx').on(t.spaceId),
   ],
+)
+
+// One row per finished agent-chat turn that reported a token spend, written
+// by the app from the turn's PromptResponse usage (see
+// agent-client's turn_end event). APPEND-ONLY, and deliberately a table of
+// its own rather than rows in UsageRollupDay: that table is recomputed in
+// full from agent-container transcripts on every rollup tick, so a chat row
+// written there would be one un-recomputeable outsider in a recompute model,
+// with different provenance (a turn aggregates several API requests, and the
+// per-model rows can exceed the main-loop figure). Aggregation is a plain
+// group-by over these rows at read time — one day, one harness, one model.
+//
+// Token counts are bigint for the same reason UsageRollupDay's are: cache
+// reads across a day dwarf int32. `model` is nullable because not every
+// harness names the model it ran; those rows aggregate under null.
+export const chatUsageTurn = pgTable(
+  'ChatUsageTurn',
+  {
+    id: text().primaryKey().notNull().$defaultFn(uuid),
+    // UTC date of the turn's end, 'YYYY-MM-DD' — the same bucketing key
+    // UsageRollupDay uses, so the two tables answer with one vocabulary.
+    day: text().notNull(),
+    sessionId: text().notNull(),
+    adapterId: text().notNull(),
+    model: text(),
+    inputTokens: bigint({ mode: 'number' }).notNull(),
+    outputTokens: bigint({ mode: 'number' }).notNull(),
+    cacheReadTokens: bigint({ mode: 'number' }).notNull(),
+    cacheWriteTokens: bigint({ mode: 'number' }).notNull(),
+    totalTokens: bigint({ mode: 'number' }).notNull(),
+    // The session cost the harness reported at the turn's end, when it
+    // prices sessions at all (cumulative for the session, not this turn's
+    // increment). Kept as reported: a per-turn cost would be a derived
+    // figure pretending to be a measurement.
+    costAmount: doublePrecision(),
+    costCurrency: text(),
+    createdAt: createdAt(),
+  },
+  (t) => [index('ChatUsageTurn_day_idx').on(t.day), index('ChatUsageTurn_sessionId_idx').on(t.sessionId)],
 )
 
 export const mcpAuditLog = pgTable(
@@ -800,6 +849,7 @@ export const schema = {
   groupChatThreadAlias,
   groupChatThreadArtifact,
   usageRollupDay,
+  chatUsageTurn,
   agentQueueEntry,
   ...authSchema,
 }
@@ -819,6 +869,7 @@ export type GroupChatThread = typeof groupChatThread.$inferSelect
 export type GroupChatSlugAlias = typeof groupChatSlugAlias.$inferSelect
 export type GroupChatThreadAlias = typeof groupChatThreadAlias.$inferSelect
 export type UsageRollupDay = typeof usageRollupDay.$inferSelect
+export type ChatUsageTurn = typeof chatUsageTurn.$inferSelect
 export type Username = typeof username.$inferSelect
 
 // Better Auth's tables, declared separately because their shape is the

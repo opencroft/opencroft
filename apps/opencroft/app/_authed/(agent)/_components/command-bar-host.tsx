@@ -30,7 +30,13 @@ interface AgentCommandBarHostProps {
    *  selectors. `asOf`, when present, marks a last-known reading from before
    *  the session went offline rather than a live one — forwarded through to
    *  the ring unchanged. */
-  usage?: { used: number; size?: number; asOf?: number }
+  usage?: {
+    used: number
+    size?: number
+    cost?: { amount: number; currency: string }
+    rateLimits?: { status: string; window: string; utilization?: number; resetsAt?: number }[]
+    asOf?: number
+  }
   /** Compact lifecycle for the ring's popover -- the trigger plus what to show
    *  while/after it runs. Omit to render the ring with no Compact button at
    *  all (ContextRing offers one only when it's given a handler). */

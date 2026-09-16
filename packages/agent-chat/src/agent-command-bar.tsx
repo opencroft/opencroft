@@ -88,7 +88,13 @@ export interface UseAgentCommandBarOptions {
    *  reading from before the session went offline rather than a live one —
    *  forwarded to the ring, which renders it dimmed with the time in its
    *  popover. Absent on every live reading. */
-  usage?: { used: number; size?: number; asOf?: number }
+  usage?: {
+    used: number
+    size?: number
+    cost?: { amount: number; currency: string }
+    rateLimits?: { status: string; window: string; utilization?: number; resetsAt?: number }[]
+    asOf?: number
+  }
   /** This session's persisted composer draft, loaded once when the session
    *  (identified by `session.sessionKey`) opens. Distinct from
    *  `session.draft` (edit-message staging, see the contract's own note). */
@@ -699,6 +705,8 @@ export function useAgentCommandBar({
           <ContextRing
             usedTokens={usage.used}
             contextLimit={usage.size ?? 0}
+            sessionCost={usage.cost}
+            rateLimits={usage.rateLimits}
             asOf={usage.asOf}
             onCompact={compact?.onCompact}
             compacting={compact?.compacting}

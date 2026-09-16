@@ -135,6 +135,11 @@ export type QueuedMessage = QueuedPrompt
 export interface AgentUsage {
   used: number
   size?: number
+  // Session cost and rate-limit windows, when the harness reports them. They
+  // ride the same 'usage' event as the context pair and persist across
+  // readings that lack them (the engine merges rather than replaces).
+  cost?: { amount: number; currency: string }
+  rateLimits?: { status: string; window: string; utilization?: number; resetsAt?: number }[]
   // Wall-clock time (ms since epoch) this figure was last known -- present
   // only when it's the last-known reading ensureLocalSession seeded while
   // the session was offline, never on a figure a live 'usage' event reported
@@ -496,12 +501,32 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
         break
       }
       case 'usage': {
-        usage = { used: event.used, size: event.size }
+        usage = {
+          used: event.used,
+          size: event.size,
+          ...(event.cost ? { cost: event.cost } : {}),
+          ...(event.rateLimits ? { rateLimits: event.rateLimits } : {}),
+        }
         break
       }
       case 'turn_end': {
         assistant = null
         waiting = false
+        // A typed session failure (quota exhausted, auth required, …) is the
+        // turn's actual outcome: the harness settled the prompt as a normal
+        // end_turn with no answer, so without this the turn reads as dead.
+        // Rendered as its own assistant message, ahead of whatever the
+        // harness streamed — for a limit failure that is usually nothing.
+        if (event.failure) {
+          const detail = event.failure.details ? ` — ${event.failure.details}` : ''
+          messages.push({
+            id,
+            role: 'assistant',
+            parts: [{ type: 'text', text: `⛔ ${event.failure.title}${detail}` }],
+            timestamp: 0,
+          })
+          assistant = null
+        }
         break
       }
       case 'error': {
@@ -658,6 +683,8 @@ export function useAcpSession(
               ? {
                   used: result.contextUsage.usedTokens,
                   size: result.contextUsage.contextLimit ?? undefined,
+                  ...(result.contextUsage.cost ? { cost: result.contextUsage.cost } : {}),
+                  ...(result.contextUsage.rateLimits ? { rateLimits: result.contextUsage.rateLimits } : {}),
                   asOf: result.contextUsage.asOf,
                 }
               : undefined,

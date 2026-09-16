@@ -81,19 +81,27 @@ export interface SessionMeta {
   profileId?: string
   // Whether this session's agent can fork its history (native harness only).
   canFork?: boolean
+  // The harness adapter id this session runs on (e.g. 'claude-subscription'),
+  // mirrored from the selection so a host can scope per-harness behavior —
+  // rate-limit displays, usage accounting — without re-deriving the spawn.
+  adapterId?: string
+  // The model id the session was created with, mirrored from the selection.
+  // A live model switch through a config option is not reflected here.
+  model?: string
   // The external session key this session was created with (selection.sessionKey),
   // mirrored here so a host can look up a session by key without also tracking
   // its own id — see agent-client.ts's emit/createSession.
   sessionKey?: string
   // Context the session is holding, as last reported by its harness via ACP
   // `usage_update`: `used` tokens, and `size` (the model's context window) when
-  // the harness knows it. Composed at read time from live session state, so it
-  // is a snapshot, not a stored field.
+  // the harness knows it. `cost` and `rateLimits` ride the same update when
+  // the harness reports them (see SessionUsage). Composed at read time from
+  // live session state, so it is a snapshot, not a stored field.
   //
   // Absent means UNKNOWN, never "nothing held": a harness that reports no usage,
   // or a session that has not completed a turn since it was loaded, both look
   // like this. A caller deciding whether to compact must not read it as zero.
-  usage?: { used: number; size?: number }
+  usage?: SessionUsage
   // Server-held prompts waiting for the current turn to end, composed at read
   // time from the live queue (same snapshot the 'queue' event publishes). A
   // number, not undefined: an idle session's queue is genuinely empty, so 0 is
@@ -357,9 +365,102 @@ export type ChatEvent =
   // the same reason `queue` is: a reconnecting client folds the last one seen
   // and knows what it is looking at, rather than having to ask.
   | { kind: 'presence'; presence: Presence }
-  | { kind: 'usage'; used: number; size?: number }
-  | { kind: 'turn_end'; stopReason: string }
+  | { kind: 'usage'; used: number; size?: number; cost?: SessionCost; rateLimits?: RateLimitWindow[] }
+  | {
+      kind: 'turn_end'
+      stopReason: string
+      /** The turn's own token spend, when the harness reported one on the prompt response. */
+      usage?: TurnTokenUsage
+      /** The same spend with the harness's per-model breakdown, when its `_meta` carried one. */
+      quota?: TurnQuota
+      /** A typed session failure the harness attached to the turn (e.g. a quota exhaustion). */
+      failure?: SessionFailure
+    }
   | { kind: 'error'; message: string }
+
+/**
+ * A context-usage reading as the engine holds and reports it: the harness's
+ * `used`/`size` pair, plus what rode alongside the same `usage_update` — the
+ * session's cumulative cost and the account's rate-limit windows, when the
+ * harness reports them. `cost`/`rateLimits` persist across readings (they are
+ * account- and session-scale state, not per-turn measurements), so they are
+ * absent only until the first report, not re-asking every update.
+ */
+export interface SessionUsage {
+  used: number
+  size?: number
+  cost?: SessionCost
+  rateLimits?: RateLimitWindow[]
+}
+
+/**
+ * Cumulative session cost, as ACP `usage_update.cost` reports it.
+ */
+export interface SessionCost {
+  amount: number
+  currency: string
+}
+
+/**
+ * One subscription rate-limit window, as the harness reported it. Claude's
+ * bridge forwards these on the `_claude/rateLimit` `_meta` key of a
+ * `usage_update`; other harnesses may carry their own. `window` is the
+ * harness's own window name (`five_hour`, `seven_day`, …) — open-ended, since
+ * the set of windows is the provider's business, not ours.
+ *
+ * `utilization` is percent of the window USED (0-100), so remaining is its
+ * complement. `resetsAt` is epoch ms, normalized from whatever unit the
+ * harness sent (see normalizeResetsAt in usage-meta).
+ */
+export interface RateLimitWindow {
+  /** `allowed` | `allowed_warning` | `rejected` — the harness's own verdict. */
+  status: string
+  /** The harness's window name (`five_hour`, `seven_day`, `overage`, …). */
+  window: string
+  utilization?: number
+  resetsAt?: number
+}
+
+/**
+ * A prompt turn's token spend, mirroring ACP's experimental PromptResponse
+ * `usage`. Counters the harness did not report stay absent, never zero.
+ */
+export interface TurnTokenUsage {
+  totalTokens: number
+  inputTokens?: number
+  outputTokens?: number
+  thoughtTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+}
+
+/**
+ * The per-model breakdown some harnesses attach beside a turn's usage (the
+ * claude bridge's `_meta.quota`, shaped like codex-acp's). `modelUsage` can
+ * total MORE than `tokenCount`: it counts subagents and internal calls the
+ * main-loop figure excludes.
+ */
+export interface TurnQuota {
+  tokenCount: TurnTokenUsage
+  modelUsage?: { model: string; tokenCount: TurnTokenUsage }[]
+}
+
+/**
+ * A typed session failure (the bridge's AIR `sessionFailure` extension): the
+ * harness's own word on WHY a turn ended with no answer — a quota exhaustion,
+ * an auth requirement, a transport loss — instead of a generic error string.
+ * `kind` is the harness's vocabulary (`quota_exhausted`, `auth_required`, …);
+ * `category` groups it (`limit`, `access`, `service`, …). Both open-ended.
+ */
+export interface SessionFailure {
+  id: string
+  kind: string
+  category: string
+  severity: string
+  title: string
+  details?: string
+  actions?: string[]
+}
 
 export interface SessionMode {
   id: string

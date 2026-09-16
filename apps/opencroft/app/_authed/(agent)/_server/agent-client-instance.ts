@@ -4,6 +4,7 @@ import { createAgentClient, type PermissionContext, type PermissionOutcome } fro
 import type { ChatEvent, CompactionState } from 'agent-client/types'
 
 import { readPersistedPresence, writePersistedUsage } from '@/app/_authed/(agent)/_server/acp-session-store'
+import { recordChatUsageTurn } from '@/app/_authed/(agent)/_server/chat-usage-store'
 import { readMcpServersForAgent } from '@/app/_authed/(agent)/_server/mcp-store'
 import { queueStore } from '@/app/_authed/(agent)/_server/queue-store'
 import { loadSkillDefs, skillBodyHandler } from '@/app/_authed/(agent)/_server/skill-store'
@@ -55,6 +56,23 @@ function resolvePermission(context: PermissionContext): PermissionOutcome {
 function persistUsageOnTurnEnd(sessionId: string, event: ChatEvent): void {
   if (event.kind !== 'turn_end') {
     return
+  }
+  // The turn's own spend, when the harness reported one — written as a row
+  // into ChatUsageTurn, the accounting record behind any later day/model
+  // aggregation (see chat-usage-store). Fire-and-forget like everything else
+  // here: an event observer must not hold up the emit, and a failed write
+  // costs one unrecorded turn, never the turn itself.
+  if (event.usage) {
+    const session = agentClient.listSessions().find((s) => s.id === sessionId)
+    void recordChatUsageTurn({
+      sessionId,
+      adapterId: session?.adapterId,
+      model: session?.model,
+      usage: event.usage,
+      cost: session?.usage?.cost,
+    }).catch((error) => {
+      console.error('Failed to record chat usage for session', sessionId, error)
+    })
   }
   const usage = agentClient.listSessions().find((s) => s.id === sessionId)?.usage
   if (!usage) {

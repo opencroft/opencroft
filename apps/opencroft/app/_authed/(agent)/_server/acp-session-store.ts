@@ -411,6 +411,11 @@ const USAGE_SETTING_ID = 'agent-session-usage'
 export interface PersistedUsage {
   used: number
   size?: number
+  // Session cost and rate-limit windows the harness reported alongside the
+  // reading — same persistence lifetime as the pair: an opening estimate for
+  // a cold open, overwritten by the next live report.
+  cost?: { amount: number; currency: string }
+  rateLimits?: { status: string; window: string; utilization?: number; resetsAt?: number }[]
   at: number
 }
 
@@ -447,15 +452,38 @@ export async function readLastKnownUsage(sessionKey: string): Promise<PersistedU
   return pointer ? readPersistedUsage(pointer.id) : null
 }
 
-export async function writePersistedUsage(sessionId: string, usage: { used: number; size?: number }): Promise<void> {
+export async function writePersistedUsage(
+  sessionId: string,
+  usage: {
+    used: number
+    size?: number
+    cost?: { amount: number; currency: string }
+    rateLimits?: { status: string; window: string; utilization?: number; resetsAt?: number }[]
+  },
+): Promise<void> {
   await withSettingLock(USAGE_SETTING_ID, () =>
     mutateSettingData(USAGE_SETTING_ID, (raw) => {
       const store = usageStoreFromRaw(raw)
       const current = store[sessionId]
-      if (current && current.used === usage.used && current.size === usage.size) {
+      if (
+        current &&
+        current.used === usage.used &&
+        current.size === usage.size &&
+        current.cost?.amount === usage.cost?.amount &&
+        current.rateLimits === usage.rateLimits
+      ) {
         return raw
       }
-      const next: UsageStore = { ...store, [sessionId]: { used: usage.used, size: usage.size, at: Date.now() } }
+      const next: UsageStore = {
+        ...store,
+        [sessionId]: {
+          used: usage.used,
+          size: usage.size,
+          ...(usage.cost ? { cost: usage.cost } : {}),
+          ...(usage.rateLimits ? { rateLimits: usage.rateLimits } : {}),
+          at: Date.now(),
+        },
+      }
       const ids = Object.keys(next)
       if (ids.length > USAGE_CAP) {
         // Oldest-first eviction. The session being written is always the newest,

@@ -57,14 +57,21 @@ import type {
   ChatEvent,
   CompactionState,
   Presence,
-  SubagentInfo,
   PromptOrigin,
   QueuedPrompt,
   QueueMode,
+  RateLimitWindow,
+  SessionCost,
+  SessionFailure,
   SessionMeta,
   SessionMode,
+  SessionUsage,
   SpawnConfig,
+  SubagentInfo,
+  TurnQuota,
+  TurnTokenUsage,
 } from './types'
+import { mergeRateLimit, normalizeTurnUsage, parseRateLimit, parseSessionFailure, parseTurnQuota } from './usage-meta'
 
 export interface ClientInfo {
   name: string
@@ -361,7 +368,10 @@ interface SessionState {
   // history — see the SNAPSHOT_KINDS handling below. This is the DISPLAYED
   // value (see the monotonic-within-turn rule at the usage_update case below)
   // — it can lag the harness's true current reading while a turn is active.
-  usage?: { used: number; size?: number }
+  // `cost`/`rateLimits` are the session- and account-scale state that rode
+  // alongside a reading; they persist across readings instead of being reset
+  // by the next bare used/size one.
+  usage?: SessionUsage
   // The latest RAW usage_update reading for the active turn, even one the
   // monotonic-within-turn rule held back from `usage` — settleTurn applies it
   // in full at the turn boundary. See the usage_update case for why.
@@ -617,7 +627,13 @@ function withSnapshotPrefix(session: SessionState, windowed: ChatEvent[]): ChatE
     prefix.push({ kind: 'session_info', title: session.meta.title })
   }
   if (session.usage && !has('usage')) {
-    prefix.push({ kind: 'usage', used: session.usage.used, size: session.usage.size })
+    prefix.push({
+      kind: 'usage',
+      used: session.usage.used,
+      size: session.usage.size,
+      ...(session.usage.cost ? { cost: session.usage.cost } : {}),
+      ...(session.usage.rateLimits ? { rateLimits: session.usage.rateLimits } : {}),
+    })
   }
   if (session.queue.length > 0 && !has('queue')) {
     prefix.push({ kind: 'queue', items: [...session.queue] })
@@ -712,7 +728,10 @@ function draftString(update: Record<string, unknown>, key: string): string | und
  * holds the merged record, every emit carries its full current state, and
  * consumers fold by replacement keyed on the entity id.
  */
-function handleExtensionUpdate(sessionId: string, update: Record<string, unknown> & { sessionUpdate: string }): boolean {
+function handleExtensionUpdate(
+  sessionId: string,
+  update: Record<string, unknown> & { sessionUpdate: string },
+): boolean {
   switch (update.sessionUpdate) {
     case 'subagent_spawned': {
       const session = store.sessions.get(sessionId)
@@ -1043,12 +1062,45 @@ export function handleUpdate(notification: SessionNotification): void {
       // stale pair for the whole turn. A `size` change is a new-window signal
       // and always applies immediately, whichever way `used` moves; only a
       // same-size reading is a candidate for the hold above.
+      //
+      // What else rides the update is session- and account-scale, not a
+      // per-turn reading, so it is merged rather than held: the session's
+      // cumulative cost (`cost`, when the harness prices the session) and the
+      // subscription rate-limit windows (the claude bridge's
+      // `_claude/rateLimit` `_meta`, one window per event, merged by window
+      // name). A later reading that carries neither leaves both alone — a
+      // turn-end result reports cost but no limit state, a rate-limit event
+      // reports limits but no cost, and neither is a retraction of the other.
+      const cost =
+        update.cost && Number.isFinite(update.cost.amount)
+          ? { amount: update.cost.amount, currency: update.cost.currency }
+          : session.usage?.cost
+      const rateLimit = parseRateLimit(update._meta)
+      const rateLimits = rateLimit ? mergeRateLimit(session.usage?.rateLimits, rateLimit) : session.usage?.rateLimits
+      // The raw reading is kept even when held, so settleTurn can apply it in
+      // full at the turn boundary (the monotonic rule's promised decrease).
       session.pendingUsage = { used: update.used, size }
-      if (session.activeTurns > 0 && session.usage && size === session.usage.size && update.used < session.usage.used) {
+      const held =
+        session.activeTurns > 0 && session.usage && size === session.usage.size && update.used < session.usage.used
+      // A held reading keeps the displayed used/size (the monotonic rule) but
+      // still merges the side state a bare reading carried — a cost or a
+      // limit update is not a context reading and is never held.
+      session.usage = {
+        used: held ? session.usage.used : update.used,
+        size: held ? session.usage.size : size,
+        ...(cost ? { cost } : {}),
+        ...(rateLimits ? { rateLimits } : {}),
+      }
+      if (held) {
         break
       }
-      session.usage = { used: update.used, size }
-      emit(sessionId, { kind: 'usage', used: update.used, size })
+      emit(sessionId, {
+        kind: 'usage',
+        used: update.used,
+        size,
+        ...(cost ? { cost } : {}),
+        ...(rateLimits ? { rateLimits } : {}),
+      })
       break
     }
     case 'config_option_update': {
@@ -1266,7 +1318,8 @@ export function buildClient(
         // declared mode guarantees. An unknown mode falls through to the
         // plain-message prompt, which is also what every elicitation was
         // before modes existed.
-        const form = request.mode === 'form' ? (request as { requestedSchema: ElicitationSchema }).requestedSchema : undefined
+        const form =
+          request.mode === 'form' ? (request as { requestedSchema: ElicitationSchema }).requestedSchema : undefined
         const urlMode = request.mode === 'url' ? (request as { url: string; elicitationId: string }) : undefined
         store.pendingElicitations.set(requestId, {
           sessionId,
@@ -1697,9 +1750,18 @@ export function createAgentClient(options: AgentClientOptions = {}) {
             // reports as async_task_spawned / async_task_progress /
             // async_task_state_update instead of being invisible between
             // turns; `nativeSubagentSessions` — the AIR alias for the
-            // subagents opt-in above.
+            // subagents opt-in above; `sessionFailure` — typed turn failures
+            // (a quota exhaustion, an auth requirement) instead of a generic
+            // error rejection: the harness attaches its structured verdict to
+            // the prompt response's `_meta`, which the turn settlement parses
+            // (see usage-meta). Without the declaration the bridge falls back
+            // to a bare rejection and the reason degrades to an error string.
             ...({ subagents: {} } as Record<string, unknown>),
-            _meta: { jetbrains: { air: { version: 1, capabilities: ['asyncTasks', 'nativeSubagentSessions'] } } },
+            _meta: {
+              jetbrains: {
+                air: { version: 1, capabilities: ['asyncTasks', 'nativeSubagentSessions', 'sessionFailure'] },
+              },
+            },
           },
           clientInfo,
         })
@@ -1836,7 +1898,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
    * arrives before the model can have replied to the injection, so the
    * transcript still orders the message ahead of everything it caused.
    */
-  async function steerIntoRunningTurn(sessionId: string, session: SessionState, deliveredText: string): Promise<boolean> {
+  async function steerIntoRunningTurn(
+    sessionId: string,
+    session: SessionState,
+    deliveredText: string,
+  ): Promise<boolean> {
     if (!supportsMidTurnInput(session.selection)) {
       return false
     }
@@ -1857,7 +1923,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // Surfaced rather than swallowed — the fallback prompt below still
       // delivers the message, but a steering channel that errors is worth a
       // line in the transcript while the contract is this young.
-      emit(sessionId, { kind: 'error', message: `steering failed, delivered as a prompt instead: ${errorMessage(error)}` })
+      emit(sessionId, {
+        kind: 'error',
+        message: `steering failed, delivered as a prompt instead: ${errorMessage(error)}`,
+      })
       return false
     }
     store.lastSessionId = sessionId
@@ -1910,8 +1979,18 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       entry.lastSessionId = sessionId
     }
     emit(sessionId, { kind: 'user', text: deliveredText })
+    // The response's usage/quota/failure decorations are read here, at the one
+    // place the prompt promise settles, so a host reads them off the turn_end
+    // event instead of re-parsing `_meta` — none of it is spec-guaranteed
+    // shape, and the parse rules live in one module (usage-meta).
     void connection.prompt({ sessionId, prompt: [{ type: 'text', text: deliveredText }] }).then(
-      (response) => settleTurn(sessionId, { stopReason: response.stopReason }),
+      (response) =>
+        settleTurn(sessionId, {
+          stopReason: response.stopReason,
+          usage: normalizeTurnUsage(response.usage),
+          quota: parseTurnQuota(response._meta),
+          failure: parseSessionFailure(response._meta),
+        }),
       (error: unknown) => {
         // Failures surface immediately, even while other prompts are still in
         // flight on this session — visibility beats state purity, at the cost
@@ -2356,7 +2435,16 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     return buildDelivery({ kind: 'messages', messages, note })
   }
 
-  function settleTurn(sessionId: string, outcome: { stopReason?: string }): void {
+  function settleTurn(
+    sessionId: string,
+    outcome: {
+      stopReason?: string
+      /** The settled prompt's own usage/quota/failure, when the harness reported one. */
+      usage?: TurnTokenUsage
+      quota?: TurnQuota
+      failure?: SessionFailure
+    },
+  ): void {
     const session = store.sessions.get(sessionId)
     if (!session) {
       return
@@ -2369,18 +2457,36 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // decreases for: apply the turn's true final reading now, even if it's
     // one that rule held back mid-turn. A no-op when the last applied
     // reading already matches (the common case — most turns never see a
-    // held-back decrease at all).
+    // held-back decrease at all). Merged onto the existing snapshot rather
+    // than replacing it, so the cost/rate-limit state a side reading had
+    // already merged in survives the boundary.
     if (
       session.pendingUsage &&
       (!session.usage ||
         session.pendingUsage.used !== session.usage.used ||
         session.pendingUsage.size !== session.usage.size)
     ) {
-      session.usage = session.pendingUsage
-      emit(sessionId, { kind: 'usage', used: session.usage.used, size: session.usage.size })
+      session.usage = {
+        ...(session.usage ?? {}),
+        used: session.pendingUsage.used,
+        size: session.pendingUsage.size,
+      }
+      emit(sessionId, {
+        kind: 'usage',
+        used: session.usage.used,
+        size: session.usage.size,
+        ...(session.usage.cost ? { cost: session.usage.cost } : {}),
+        ...(session.usage.rateLimits ? { rateLimits: session.usage.rateLimits } : {}),
+      })
     }
     if (outcome.stopReason !== undefined) {
-      emit(sessionId, { kind: 'turn_end', stopReason: outcome.stopReason })
+      emit(sessionId, {
+        kind: 'turn_end',
+        stopReason: outcome.stopReason,
+        ...(outcome.usage ? { usage: outcome.usage } : {}),
+        ...(outcome.quota ? { quota: outcome.quota } : {}),
+        ...(outcome.failure ? { failure: outcome.failure } : {}),
+      })
     }
     if (session.pendingMcpRefresh) {
       session.pendingMcpRefresh = false
@@ -2506,7 +2612,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     //
     // No-ops for an unknown session rather than throwing: the caller is a
     // best-effort restore alongside a resume that may itself have failed.
-    restoreUsage(sessionId: string, usage: { used: number; size?: number }): void {
+    restoreUsage(
+      sessionId: string,
+      usage: { used: number; size?: number; cost?: SessionCost; rateLimits?: RateLimitWindow[] },
+    ): void {
       const session = store.sessions.get(sessionId)
       if (!session || session.usage) {
         return
@@ -2517,7 +2626,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // having survived a restart -- a restored figure that skipped this is
       // how an offline session came back still showing a window the live path
       // would have refused.
-      session.usage = normalizeUsage(session.selection, usage)
+      const normalized = normalizeUsage(session.selection, usage)
+      session.usage = {
+        ...normalized,
+        ...(usage.cost ? { cost: usage.cost } : {}),
+        ...(usage.rateLimits ? { rateLimits: usage.rateLimits } : {}),
+      }
     },
 
     // Session keys (selection.sessionKey) of every session currently blocked on
@@ -2737,6 +2851,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         createdAt: now,
         lastActivityAt: now,
         canFork: native,
+        adapterId: selection.adapterId,
+        model: selection.model,
         sessionKey: selection.sessionKey,
       }
       store.sessions.set(sessionId, {
@@ -2850,6 +2966,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         createdAt: loadedAt,
         lastActivityAt: loadedAt,
         canFork: false,
+        adapterId: selection.adapterId,
+        model: selection.model,
         sessionKey: selection.sessionKey,
       }
       // Register the session record BEFORE the replay: the agent streams its
@@ -3163,6 +3281,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         lastActivityAt: forkedAt,
         profileId: session.meta.profileId,
         canFork: true,
+        // The fork runs on the source session's selection, so the harness and
+        // model mirrors carry over — they describe the spawn, not the tab.
+        adapterId: session.selection.adapterId,
+        model: session.selection.model,
         // Deliberately not inherited from the source session: a fork is reached
         // through its own tab, never through the original sessionKey (see
         // forkLocal in acp.ts), so carrying the key forward would make a

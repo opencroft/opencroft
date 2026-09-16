@@ -201,6 +201,10 @@ async function setup(
     resumeCalls,
     extMethodCalls,
     endTurn: (index?: number) => takeTurn(index)?.resolve({ stopReason: 'end_turn' }),
+    // Resolve a turn with the FULL prompt response the harness would send —
+    // the experimental usage/quota/failure decorations included. The engine
+    // reads them at the settlement, so this is the door a test drives them in.
+    endTurnWith: (response: Record<string, unknown>) => takeTurn()?.resolve(response as { stopReason: string }),
     failTurn: (message: string, index?: number) => takeTurn(index)?.reject(new Error(message)),
   }
 }
@@ -325,7 +329,11 @@ test('an adapter WITH a model env var never applies the model via config option'
   // Claude pins the model through ANTHROPIC_MODEL, so even when it advertises a
   // model option the config-option path must stand off — 'off' suppresses the
   // separate thought_level default so this asserts the model path alone.
-  const h = await setup('claude', { model: 'anthropic/claude-fable-5', reasoningEffort: 'off', configOptions: MODEL_SELECT_OPTIONS })
+  const h = await setup('claude', {
+    model: 'anthropic/claude-fable-5',
+    reasoningEffort: 'off',
+    configOptions: MODEL_SELECT_OPTIONS,
+  })
   await settle()
   assert.deepEqual(h.configOptionCalls, [])
   await h.client.deleteSession(h.sessionId)
@@ -1575,6 +1583,225 @@ test('a session sitting exactly at its configured window still shows the ratio',
   })
 })
 
+// ── what rides alongside a usage reading: session cost and rate limits ───
+//
+// A `usage_update` is not only the context pair. The schema carries an
+// optional cumulative session `cost`, and the claude bridge decorates the
+// update's `_meta` with the subscription account's rate-limit state
+// (`_claude/rateLimit`, one window per event). Both describe scale larger
+// than one reading, so they merge instead of replace.
+
+test('a usage_update carrying a cost surfaces it, on the session and in the event', async () => {
+  const h = await setup('openclaw', { contextWindow: 200_000 })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 12_000, size: 200_000, cost: { amount: 0.42, currency: 'USD' } },
+  } as Parameters<typeof handleUpdate>[0])
+  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
+    used: 12_000,
+    size: 200_000,
+    cost: { amount: 0.42, currency: 'USD' },
+  })
+  const usage = h.events.find((event) => event.kind === 'usage')
+  assert.deepEqual(usage && 'cost' in usage ? usage.cost : undefined, { amount: 0.42, currency: 'USD' })
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a cost persists across readings that carry none', async () => {
+  // A turn-end result prices the session; a mid-turn or rate-limit update
+  // does not — the absence is not a retraction of the cost.
+  const h = await setup('openclaw', { contextWindow: 200_000 })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 12_000, size: 200_000, cost: { amount: 0.42, currency: 'USD' } },
+  } as Parameters<typeof handleUpdate>[0])
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 13_000, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage?.cost, {
+    amount: 0.42,
+    currency: 'USD',
+  })
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a _claude/rateLimit decoration becomes a rate-limit window on the reading', async () => {
+  const h = await setup('openclaw', { contextWindow: 200_000 })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: {
+      sessionUpdate: 'usage_update',
+      used: 12_000,
+      size: 200_000,
+      _meta: {
+        '_claude/rateLimit': {
+          status: 'allowed',
+          rateLimitType: 'five_hour',
+          utilization: 34,
+          resetsAt: 1_760_000_000,
+        },
+      },
+    },
+  } as Parameters<typeof handleUpdate>[0])
+  const usage = h.client.listSessions().find((s) => s.id === h.sessionId)?.usage
+  assert.deepEqual(usage?.rateLimits, [
+    { status: 'allowed', window: 'five_hour', utilization: 34, resetsAt: 1_760_000_000_000 },
+  ])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('rate-limit windows merge by window name, one event per window', async () => {
+  const h = await setup('openclaw', { contextWindow: 200_000 })
+  for (const rateLimitType of ['five_hour', 'seven_day'] as const) {
+    handleUpdate({
+      sessionId: h.sessionId,
+      update: {
+        sessionUpdate: 'usage_update',
+        used: 12_000,
+        size: 200_000,
+        _meta: { '_claude/rateLimit': { status: 'allowed_warning', rateLimitType, utilization: 90 } },
+      },
+    } as Parameters<typeof handleUpdate>[0])
+  }
+  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage?.rateLimits, [
+    { status: 'allowed_warning', window: 'five_hour', utilization: 90 },
+    { status: 'allowed_warning', window: 'seven_day', utilization: 90 },
+  ])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a held mid-turn reading keeps the displayed tokens but still merges limit state', async () => {
+  // The monotonic hold is about the context pair; a limit window is account
+  // state, and holding it would leave the reader blind to a rejection that
+  // arrived mid-turn.
+  const h = await setup('openclaw', { contextWindow: 200_000 })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 50_000, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  await h.client.prompt(h.sessionId, 'hello', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: {
+      sessionUpdate: 'usage_update',
+      used: 1_000,
+      size: 200_000,
+      _meta: { '_claude/rateLimit': { status: 'rejected', rateLimitType: 'seven_day', utilization: 100 } },
+    },
+  } as Parameters<typeof handleUpdate>[0])
+  const usage = h.client.listSessions().find((s) => s.id === h.sessionId)?.usage
+  assert.equal(usage?.used, 50_000, 'the lower reading is held, exactly as without the decoration')
+  assert.deepEqual(usage?.rateLimits, [{ status: 'rejected', window: 'seven_day', utilization: 100 }])
+  h.endTurn()
+  await settle()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('listSessions mirrors the session harness and model', async () => {
+  // What per-harness usage accounting keys on: the selection, read back as
+  // session metadata rather than re-derived from the spawn.
+  const h = await setup('openclaw', { model: 'glm-5.3' })
+  const meta = h.client.listSessions().find((s) => s.id === h.sessionId)
+  assert.equal(meta?.adapterId, 'openclaw')
+  assert.equal(meta?.model, 'glm-5.3')
+  await h.client.deleteSession(h.sessionId)
+})
+
+// ── what a prompt response carries: turn usage, quota, typed failures ─────
+//
+// The response's experimental `usage` and `_meta.quota` say what the turn
+// spent; `_meta`'s AIR sessionFailure says WHY a turn ended with no answer
+// (a quota exhaustion arrives as `end_turn` plus the failure, not as an
+// error). All of it is read at settlement and emitted on turn_end, so a host
+// folds one event instead of parsing wire metadata.
+
+test('turn_end carries the response usage and the per-model quota breakdown', async () => {
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'hello', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  h.endTurnWith({
+    stopReason: 'end_turn',
+    usage: { totalTokens: 5_000, inputTokens: 4_000, outputTokens: 1_000, cacheReadTokens: 100_000 },
+    _meta: {
+      quota: {
+        token_count: { totalTokens: 5_000, inputTokens: 4_000, outputTokens: 1_000 },
+        model_usage: [
+          { model: 'claude-sonnet-5', token_count: { totalTokens: 6_000, inputTokens: 4_500, outputTokens: 1_500 } },
+        ],
+      },
+    },
+  })
+  await settle()
+  const turnEnd = h.events.find((event) => event.kind === 'turn_end')
+  assert.ok(turnEnd && turnEnd.kind === 'turn_end')
+  assert.deepEqual(turnEnd.usage, {
+    totalTokens: 5_000,
+    inputTokens: 4_000,
+    outputTokens: 1_000,
+    cacheReadTokens: 100_000,
+  })
+  assert.deepEqual(turnEnd.quota, {
+    tokenCount: { totalTokens: 5_000, inputTokens: 4_000, outputTokens: 1_000 },
+    modelUsage: [
+      { model: 'claude-sonnet-5', tokenCount: { totalTokens: 6_000, inputTokens: 4_500, outputTokens: 1_500 } },
+    ],
+  })
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a quota exhaustion arrives as a typed failure on turn_end, not a dead end_turn', async () => {
+  // The bridge settles an exhausted turn with stopReason "end_turn" and the
+  // structured verdict in `_meta` — read literally, a successful turn that
+  // said nothing. The failure is the actual content of the turn.
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'hello', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  h.endTurnWith({
+    stopReason: 'end_turn',
+    _meta: {
+      jetbrains: {
+        air: {
+          sessionFailure: {
+            id: 'turn-1:error',
+            revision: 1,
+            kind: 'quota_exhausted',
+            category: 'limit',
+            severity: 'error',
+            title: 'The Claude account has no available quota.',
+            actions: [],
+          },
+        },
+      },
+    },
+  })
+  await settle()
+  const turnEnd = h.events.find((event) => event.kind === 'turn_end')
+  assert.ok(turnEnd && turnEnd.kind === 'turn_end')
+  assert.deepEqual(turnEnd.failure, {
+    id: 'turn-1:error',
+    kind: 'quota_exhausted',
+    title: 'The Claude account has no available quota.',
+    category: 'limit',
+    severity: 'error',
+    actions: [],
+  })
+  assert.equal(turnEnd.usage, undefined)
+  assert.equal(turnEnd.quota, undefined)
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a plain turn end carries no usage, quota or failure', async () => {
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'hello', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  h.endTurn()
+  await settle()
+  const turnEnd = h.events.find((event) => event.kind === 'turn_end')
+  assert.ok(turnEnd && turnEnd.kind === 'turn_end')
+  assert.equal(turnEnd.usage, undefined)
+  assert.equal(turnEnd.quota, undefined)
+  assert.equal(turnEnd.failure, undefined)
+  await h.client.deleteSession(h.sessionId)
+})
+
 // ── hasActiveTurn ────────────────────────────────────────────────────────
 //
 // Same underlying read as activeSessionKeys, by raw session id — the check a
@@ -2237,7 +2464,10 @@ test('a remove cannot overtake the append it was issued after', async () => {
   // remove until the append it follows has settled.
   const fake = fakeStore({ hold: ['append'] })
   const h = await setup('openclaw', { sessionKey: 'agent:test:ordered-1', queueStore: fake.store })
-  await h.client.prompt(h.sessionId, 'straight-through', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await h.client.prompt(h.sessionId, 'straight-through', {
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
   await settle()
   assert.deepEqual(
     fake.writes.map((write) => write.op),
@@ -2246,7 +2476,10 @@ test('a remove cannot overtake the append it was issued after', async () => {
   )
   fake.release('append')
   await settle()
-  assert.deepEqual(fake.writes.map((write) => write.op), ['append', 'remove'])
+  assert.deepEqual(
+    fake.writes.map((write) => write.op),
+    ['append', 'remove'],
+  )
   assert.deepEqual(fake.rows.get('agent:test:ordered-1'), [], 'nothing is left for the next open to replay')
   await h.client.deleteSession(h.sessionId)
 })
@@ -2280,7 +2513,10 @@ test('a failed write does not wedge the writes behind it', async () => {
   const fake = fakeStore()
   fake.failNext('append')
   const h = await setup('openclaw', { sessionKey: 'agent:test:ordered-2', queueStore: fake.store })
-  await h.client.prompt(h.sessionId, 'lost-to-the-copy', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await h.client.prompt(h.sessionId, 'lost-to-the-copy', {
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
   await h.client.prompt(h.sessionId, 'still-recorded', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
   await settle()
   assert.deepEqual(
@@ -3049,7 +3285,6 @@ test('userTurnAt names a turn by event index, and reports the ordinal that rewin
   await h.client.deleteSession(h.sessionId)
 })
 
-
 // ── shouldHoldDelivery / resumeDelivery ─────────────────────────────────────
 //
 // The host's delivery gate: while it returns true nothing is drained to the
@@ -3124,7 +3359,13 @@ test('a system entry is held like everything else', async () => {
 test('a queue restored at session open stays held until the host wakes', async () => {
   let held = true
   const durable: QueuedPrompt[] = [
-    { id: 'held-1', kind: 'message', sender: 'Reader', sentAt: new Date().toISOString(), text: 'from before the restart' },
+    {
+      id: 'held-1',
+      kind: 'message',
+      sender: 'Reader',
+      sentAt: new Date().toISOString(),
+      text: 'from before the restart',
+    },
   ]
   const store: QueueStore = {
     append: () => {},
@@ -3414,7 +3655,11 @@ function sendSummaryChunk(sessionId: string, compactionId: string, text: string)
 test('a compaction lifecycle merges into one record, folds to one row, and fires the hook per transition', async () => {
   const hookCalls: CompactionState[] = []
   const h = await setup('openclaw', { onCompaction: (_sessionId, compaction) => hookCalls.push(compaction) })
-  sendCompactionUpdate(h.sessionId, { compactionId: 'c1', status: 'in_progress', _meta: { contextCompaction: { version: 1 } } })
+  sendCompactionUpdate(h.sessionId, {
+    compactionId: 'c1',
+    status: 'in_progress',
+    _meta: { contextCompaction: { version: 1 } },
+  })
   // Streamed summary accumulates silently — no chat event per chunk.
   sendSummaryChunk(h.sessionId, 'c1', 'Streamed ')
   sendSummaryChunk(h.sessionId, 'c1', 'summary.')
@@ -3636,10 +3881,22 @@ test('High Attention still interrupts on a steering harness, never injects', asy
 
 test('agent message chunks with different messageIds do not merge into one block', async () => {
   const h = await setup('openclaw')
-  handleUpdate({ sessionId: h.sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'before.' }, messageId: 'm1' } } as Parameters<typeof handleUpdate>[0])
-  handleUpdate({ sessionId: h.sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'after.' }, messageId: 'm2' } } as Parameters<typeof handleUpdate>[0])
-  const msgs = h.events.filter((event): event is Extract<ChatEvent, { kind: 'agent_message' }> => event.kind === 'agent_message')
-  assert.deepEqual(msgs.map((m) => m.messageId), ['m1', 'm2'], 'each chunk keeps its own message id for the fold to split on')
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'before.' }, messageId: 'm1' },
+  } as Parameters<typeof handleUpdate>[0])
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'after.' }, messageId: 'm2' },
+  } as Parameters<typeof handleUpdate>[0])
+  const msgs = h.events.filter(
+    (event): event is Extract<ChatEvent, { kind: 'agent_message' }> => event.kind === 'agent_message',
+  )
+  assert.deepEqual(
+    msgs.map((m) => m.messageId),
+    ['m1', 'm2'],
+    'each chunk keeps its own message id for the fold to split on',
+  )
   await h.client.deleteSession(h.sessionId)
 })
 
@@ -3654,13 +3911,22 @@ test('a spawned subagent routes its own transcript into the parent and closes on
   // subagent routing is handled in handleUpdate regardless of adapter.
   const h = await setup('openclaw')
   const childId = 'child-sess-1'
-  sendUpdate(h.sessionId, { sessionUpdate: 'subagent_spawned', subagentSessionId: childId, name: 'Researcher', task: 'dig', capabilities: {} })
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'subagent_spawned',
+    subagentSessionId: childId,
+    name: 'Researcher',
+    task: 'dig',
+    capabilities: {},
+  })
   assert.ok(h.client.hasBackgroundWork(h.sessionId), 'a live subagent is background work')
 
   // The child's own activity arrives addressed to ITS session id.
   sendUpdate(childId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working' } })
   const nested = h.events.find((event) => event.kind === 'subagent_event' && event.subagentSessionId === childId)
-  assert.ok(nested && nested.kind === 'subagent_event' && nested.event.kind === 'agent_message', 'the child step nested under the parent')
+  assert.ok(
+    nested && nested.kind === 'subagent_event' && nested.event.kind === 'agent_message',
+    'the child step nested under the parent',
+  )
 
   sendUpdate(h.sessionId, { sessionUpdate: 'subagent_state_update', subagentSessionId: childId, state: 'completed' })
   const last = h.events.filter((event) => event.kind === 'subagent').at(-1)
@@ -3689,7 +3955,10 @@ test('a background task is reported, snapshot-prefixed while live, and stoppable
   // handed the live task, via the snapshot prefix.
   const late: ChatEvent[] = []
   const unsub = h.client.subscribe(h.sessionId, (event) => late.push(event), { fromIndex: 9999 })
-  assert.ok(late.some((event) => event.kind === 'async_task' && event.task.asyncTaskId === 'task-1'), 'live task replays to a new subscriber')
+  assert.ok(
+    late.some((event) => event.kind === 'async_task' && event.task.asyncTaskId === 'task-1'),
+    'live task replays to a new subscriber',
+  )
   unsub()
 
   const stopped = await h.client.stopAsyncTask(h.sessionId, 'task-1')

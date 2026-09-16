@@ -16,6 +16,15 @@ export interface ContextRingProps {
   // "no window reported" as well as "nothing used"; the popover is what
   // distinguishes them, which is one more reason it exists.
   contextLimit: number
+  // The session's cumulative cost, when the harness prices the session. Shown
+  // in the popover, under the context counts — the ring's own mark stays the
+  // percentage, so one control keeps answering one question.
+  sessionCost?: { amount: number; currency: string }
+  // The account's subscription rate-limit windows, when the harness reports
+  // them (Claude's five-hour and weekly limits, per model where it says so).
+  // Each window renders its own line: how much of it is used, and when it
+  // resets. Absent means the harness reports none — never "all used up".
+  rateLimits?: { status: string; window: string; utilization?: number; resetsAt?: number }[]
   // Wall-clock time (ms since epoch) this figure was reported. Present ONLY on a
   // last-known reading served for a session that is offline -- never on a live
   // one. Its presence dims the ring and adds a line to the popover naming when
@@ -124,6 +133,50 @@ function formatAsOf(asOf: number): string {
   return `Reported ${new Date(asOf).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
 }
 
+// "$0.42" / "$12.50" — the harness reports a number and an ISO currency code,
+// and Intl renders both in one place. Two decimals: usage costs live in the
+// cents-to-tens range, where the integer dollars would read as "0" all day.
+function formatCost(cost: { amount: number; currency: string }): string {
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: cost.currency }).format(cost.amount)
+}
+
+// Human labels for the window names harnesses actually send; anything else
+// falls back to the harness's own spelling, which is still readable.
+const WINDOW_LABELS: Record<string, string> = {
+  five_hour: '5-hour limit',
+  seven_day: 'Weekly limit',
+  seven_day_opus: 'Weekly · Opus',
+  seven_day_sonnet: 'Weekly · Sonnet',
+  overage: 'Extra usage',
+}
+
+// One limit window's line: how much of it is used, and when it comes back.
+// A rejected window is the one state the reader is here for, so it takes the
+// destructive colour and says so in words, not colour alone.
+function RateLimitRow({ limit }: { limit: { status: string; window: string; utilization?: number; resetsAt?: number } }) {
+  const rejected = limit.status === 'rejected'
+  const used =
+    limit.utilization !== undefined
+      ? `${limit.utilization}% used`
+      : rejected
+        ? 'Limit reached'
+        : null
+  const resets = limit.resetsAt
+    ? ` · resets ${new Date(limit.resetsAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
+    : ''
+  return (
+    <span className='text-xs tabular-nums'>
+      <span className={cn('font-medium', rejected ? 'text-destructive' : 'text-foreground')}>
+        {WINDOW_LABELS[limit.window] ?? limit.window}
+      </span>
+      {used ? (
+        <span className={cn('text-muted-foreground', rejected && 'text-destructive')}> — {used}</span>
+      ) : null}
+      <span className='text-muted-foreground'>{resets}</span>
+    </span>
+  )
+}
+
 // A circular context-usage indicator for an agent chat: the fraction of the
 // window in use drawn as a ring, the integer percentage written in the centre,
 // and the counts -- plus Compact -- in a popover on press.
@@ -161,6 +214,8 @@ function formatAsOf(asOf: number): string {
 export function ContextRing({
   usedTokens,
   contextLimit,
+  sessionCost,
+  rateLimits,
   asOf,
   warnAtPercent = 70,
   dangerAtPercent = 90,
@@ -269,6 +324,23 @@ export function ContextRing({
               off about this figure; this is the line that says what. */}
           {freshness ? <span className='text-xs text-muted-foreground'>{freshness}</span> : null}
         </div>
+        {sessionCost ? (
+          <div className='flex flex-col gap-0.5 border-t border-border p-3'>
+            <span className='text-xs text-muted-foreground'>Session cost</span>
+            <span className='text-sm font-medium tabular-nums'>{formatCost(sessionCost)}</span>
+          </div>
+        ) : null}
+        {rateLimits && rateLimits.length > 0 ? (
+          <div className='flex flex-col gap-1 border-t border-border p-3'>
+            <span className='text-xs text-muted-foreground'>Usage limits</span>
+            {/* Stable across re-renders and unique per line: a harness sends
+                one reading per window, and the window is what distinguishes
+                them. */}
+            {rateLimits.map((limit) => (
+              <RateLimitRow key={limit.window} limit={limit} />
+            ))}
+          </div>
+        ) : null}
         {onCompact || onClear ? (
           // Full width and stacked under a rule: these are the actions here,
           // and tucking one beside the numbers it is about reads as a

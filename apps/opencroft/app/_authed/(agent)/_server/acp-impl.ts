@@ -325,7 +325,12 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
       // blank one — the agent's next `usage_update` replaces it.
       const usage = await readPersistedUsage(resumed.id)
       if (usage) {
-        agentClient.restoreUsage(resumed.id, { used: usage.used, size: usage.size })
+        agentClient.restoreUsage(resumed.id, {
+          used: usage.used,
+          size: usage.size,
+          ...(usage.cost ? { cost: usage.cost } : {}),
+          ...(usage.rateLimits ? { rateLimits: usage.rateLimits } : {}),
+        })
       }
       await pinModeIfYolo(resumed.id)
       return {

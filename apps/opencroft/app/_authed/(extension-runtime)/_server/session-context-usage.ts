@@ -1,4 +1,5 @@
 import { displayableContextWindow } from 'agent-client/context-window'
+import type { RateLimitWindow, SessionCost } from 'agent-client/types'
 
 // How much context a session is holding, and whether a compaction reduced it.
 //
@@ -11,6 +12,18 @@ export interface ContextUsage {
   usedTokens: number
   /** null when the harness reports usage but cannot name the model's window. */
   contextLimit: number | null
+  /**
+   * The session's cumulative cost, when the harness prices the session. Lives
+   * beside the context reading because that is where the harness reports it
+   * (usage_update.cost), not because the two are the same measurement.
+   */
+  cost?: SessionCost
+  /**
+   * The account's reported rate-limit windows, last known per window —
+   * subscription state the harness reports alongside usage readings. Absent
+   * until the first report, never cleared by a reading that lacks them.
+   */
+  rateLimits?: RateLimitWindow[]
   /**
    * Wall-clock time (ms since epoch) this figure was reported, present ONLY
    * on a last-known reading served from the persisted store for an offline
@@ -56,12 +69,22 @@ export interface ContextUsage {
 // ratio while it is offline, and has it back the moment it loads. Configuring
 // the window on the agent closes that gap.
 export function toContextUsage(
-  usage?: { used: number; size?: number },
-  lastKnown?: { used: number; size?: number; at: number },
+  usage?: {
+    used: number
+    size?: number
+    cost?: SessionCost
+    rateLimits?: RateLimitWindow[]
+  },
+  lastKnown?: { used: number; size?: number; cost?: SessionCost; rateLimits?: RateLimitWindow[]; at: number },
   knownWindow?: number,
 ): ContextUsage | null {
   if (usage) {
-    return { usedTokens: usage.used, contextLimit: usage.size ?? null }
+    return {
+      usedTokens: usage.used,
+      contextLimit: usage.size ?? null,
+      ...(usage.cost ? { cost: usage.cost } : {}),
+      ...(usage.rateLimits ? { rateLimits: usage.rateLimits } : {}),
+    }
   }
   if (lastKnown) {
     // The same gate the live and restore doors apply, called rather than
@@ -69,6 +92,8 @@ export function toContextUsage(
     return {
       usedTokens: lastKnown.used,
       contextLimit: displayableContextWindow(knownWindow, lastKnown.used) ?? null,
+      ...(lastKnown.cost ? { cost: lastKnown.cost } : {}),
+      ...(lastKnown.rateLimits ? { rateLimits: lastKnown.rateLimits } : {}),
       asOf: lastKnown.at,
     }
   }
