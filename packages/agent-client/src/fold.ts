@@ -37,6 +37,7 @@ export type ChatMessage =
   | { id: string; kind: 'error'; text: string }
 
 type ToolMessage = Extract<ChatMessage, { kind: 'tool' }>
+type PlanMessage = Extract<ChatMessage, { kind: 'plan' }>
 
 // A tool call is settled once it reaches one of these statuses — every other
 // status ('pending', 'in_progress') means more updates are still expected for
@@ -81,6 +82,14 @@ const SNAPSHOT_KINDS = new Set<ChatEvent['kind']>([
   // conversation exactly like usage does — it must not split a message run,
   // and a windowed subscriber rebuilds the live ones from withSnapshotPrefix.
   'async_task',
+  // The agent's plan is the same kind of thing: the agent's present-tense
+  // checklist, replaced wholesale by every event and interleaved mid-message
+  // (claude-agent-acp fires TodoWrite between text chunks). It must not split
+  // a message run, and a windowed subscriber whose cut fell before every plan
+  // event is handed the live one by withSnapshotPrefix. Unlike the kinds above
+  // it still FOLDS to a message — an upserted checklist row in the transcript,
+  // see foldEvents — but its arrival is state, not a step of the conversation.
+  'plan',
 ])
 
 export function isSnapshotEvent(event: ChatEvent): boolean {
@@ -154,6 +163,12 @@ export function foldEvents(events: ChatEvent[]): ChatMessage[] {
   const tools = new Map<string, ToolMessage>()
   const permissions = new Map<string, PermissionMessage>()
   const asks = new Map<string, AskMessage>()
+  // The plan is one entity for the whole transcript, not a step: its first
+  // event fixes the row's position, later ones patch that row in place, and an
+  // empty list retires it (claude-agent-acp publishes one when a conversation
+  // reset clears the task store). Held here so the next non-empty plan after a
+  // clear anchors a NEW row at its own position.
+  let plan: PlanMessage | null = null
   let counter = 0
   const nextId = () => {
     counter += 1
@@ -208,7 +223,19 @@ export function foldEvents(events: ChatEvent[]): ChatMessage[] {
         break
       }
       case 'plan': {
-        messages.push({ id: nextId(), kind: 'plan', entries: event.entries })
+        if (event.entries.length === 0) {
+          if (plan) {
+            messages.splice(messages.indexOf(plan), 1)
+            plan = null
+          }
+          break
+        }
+        if (plan) {
+          plan.entries = event.entries
+        } else {
+          plan = { id: nextId(), kind: 'plan', entries: event.entries }
+          messages.push(plan)
+        }
         break
       }
       case 'compaction': {

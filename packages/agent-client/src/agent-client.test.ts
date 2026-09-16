@@ -1279,6 +1279,142 @@ test('an available_commands_update notification replaces session commands and em
   await h.client.deleteSession(h.sessionId)
 })
 
+// ── agent plan (ACP `plan` session update) ──────────────────────────────────
+//
+// claude-agent-acp translates TodoWrite and its Task* tools into `plan`
+// updates, and every update carries the FULL entry list — so the fold must
+// treat the plan as one entity patched in place, not a checklist per update.
+// An empty list clears it: the bridge publishes one when a conversation reset
+// retires its task store. The wire updates are driven directly because the
+// contract under test is handleUpdate's; any ACP agent with a plan arrives
+// the same way.
+
+const planUpdate = (entries: Array<{ content: string; status: string; priority: string }>) => ({
+  sessionUpdate: 'plan',
+  entries,
+})
+
+const pushPlan = (sessionId: string, entries: Array<{ content: string; status: string; priority: string }>) => {
+  handleUpdate({ sessionId, update: planUpdate(entries) } as Parameters<typeof handleUpdate>[0])
+}
+
+const planMessages = (sessionId: string) =>
+  foldEvents(sessionEvents(sessionId)).filter((message) => message.kind === 'plan')
+
+const storedPlan = (sessionId: string) =>
+  (acpStore().sessions.get(sessionId) as { plan?: Array<Record<string, string>> } | undefined)?.plan
+
+test('plan updates fold to one checklist row patched in place', async () => {
+  const h = await setup('openclaw')
+  const first = [{ content: 'read the code', status: 'in_progress', priority: 'high' }]
+  const second = [
+    { content: 'read the code', status: 'completed', priority: 'high' },
+    { content: 'fix the fold', status: 'in_progress', priority: 'high' },
+  ]
+  pushPlan(h.sessionId, first)
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'starting' } },
+  } as Parameters<typeof handleUpdate>[0])
+  pushPlan(h.sessionId, second)
+
+  // One row, carrying the LAST update's entries — the first update fixed its
+  // place, this one patched it.
+  const plans = planMessages(h.sessionId)
+  assert.equal(plans.length, 1)
+  assert.ok(plans[0]?.kind === 'plan')
+  assert.deepEqual(plans[0].entries, second)
+  // The checklist sits in the transcript at the position of the FIRST plan
+  // event — before the reply chunk that arrived between the updates.
+  const messages = foldEvents(sessionEvents(h.sessionId))
+  assert.equal(messages.at(-2)?.kind, 'plan')
+  // The plan update interleaving mid-reply must not split the message run:
+  // the reply is one assistant message, the way SNAPSHOT_KINDS classifies the
+  // plan as state rather than conversation.
+  const assistant = messages.filter((message) => message.kind === 'assistant')
+  assert.equal(assistant.length, 1)
+  assert.ok(assistant[0]?.kind === 'assistant' && assistant[0].text === 'starting')
+  // Mirrored onto the session so a windowed subscribe can synthesize it.
+  assert.deepEqual(storedPlan(h.sessionId), second)
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('an empty plan clears the row, and the next plan anchors fresh', async () => {
+  const h = await setup('openclaw')
+  pushPlan(h.sessionId, [{ content: 'only step', status: 'pending', priority: 'medium' }])
+  pushPlan(h.sessionId, [])
+  // Cleared, not emptied: an empty checklist renders as nothing.
+  assert.equal(planMessages(h.sessionId).length, 0)
+  assert.deepEqual(storedPlan(h.sessionId), [])
+  // And the next non-empty plan is a NEW row, not a patch of the removed one.
+  const fresh = [{ content: 'fresh plan', status: 'in_progress', priority: 'high' }]
+  pushPlan(h.sessionId, fresh)
+  const plans = planMessages(h.sessionId)
+  assert.equal(plans.length, 1)
+  assert.ok(plans[0]?.kind === 'plan')
+  assert.deepEqual(plans[0].entries, fresh)
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a windowed subscribe hands a cold subscriber the live plan', async () => {
+  const h = await setup('openclaw')
+  const entries = [
+    { content: 'read the code', status: 'completed', priority: 'high' },
+    { content: 'fix the fold', status: 'in_progress', priority: 'high' },
+  ]
+  pushPlan(h.sessionId, entries)
+  const planIndex = sessionEvents(h.sessionId).findIndex((event) => event.kind === 'plan')
+  assert.ok(planIndex >= 0)
+  // A subscriber whose window starts AFTER the plan event — the cut a long
+  // session's cold open makes — is still handed the current plan, the same
+  // present-tense treatment usage and the queue get.
+  const replayed: ChatEvent[] = []
+  h.client.subscribe(h.sessionId, (event) => replayed.push(event), { fromIndex: planIndex + 1 })
+  const prefixed = replayed.filter((event): event is Extract<ChatEvent, { kind: 'plan' }> => event.kind === 'plan')
+  assert.equal(prefixed.length, 1)
+  assert.deepEqual(prefixed[0].entries, entries)
+  // And a CLEARED plan is not resurrected by the prefix: the only plan event a
+  // window past the clear sees is the real empty one from the log — a prefix
+  // synthesized from the pre-clear entries would appear as a second.
+  pushPlan(h.sessionId, [])
+  const afterClear: ChatEvent[] = []
+  h.client.subscribe(h.sessionId, (event) => afterClear.push(event), { fromIndex: planIndex + 1 })
+  const cleared = afterClear.filter((event): event is Extract<ChatEvent, { kind: 'plan' }> => event.kind === 'plan')
+  assert.equal(cleared.length, 1)
+  assert.deepEqual(cleared[0].entries, [])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a restored session still hands a cold subscriber the live plan', async () => {
+  // A restored session has the plan's events in its log but none of the
+  // mirror the live path keeps, so without the restore fold the checklist
+  // would sit behind the history cut — exactly the loss a restore exists to
+  // prevent for the other snapshot kinds.
+  const harness = restoreSetup()
+  const recorded = [
+    { kind: 'user', text: 'work through it' },
+    { kind: 'plan', entries: [{ content: 'read the code', status: 'completed', priority: 'high' }] },
+    { kind: 'agent_message', text: 'done' },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ] as ChatEvent[]
+  await harness.client.restoreSession(harness.sessionId, harness.selection, recorded)
+
+  const replayed: ChatEvent[] = []
+  harness.client.subscribe(harness.sessionId, (event) => replayed.push(event), { fromIndex: 2 })
+  const prefixed = replayed.filter((event): event is Extract<ChatEvent, { kind: 'plan' }> => event.kind === 'plan')
+  assert.equal(prefixed.length, 1)
+  assert.deepEqual(prefixed[0].entries, [{ content: 'read the code', status: 'completed', priority: 'high' }])
+  // A plan the agent had CLEARED before the process stopped stays cleared.
+  await harness.client.restoreSession(harness.sessionId, harness.selection, [
+    ...recorded,
+    { kind: 'plan', entries: [] },
+  ])
+  const afterClear: ChatEvent[] = []
+  harness.client.subscribe(harness.sessionId, (event) => afterClear.push(event), { fromIndex: 2 })
+  assert.ok(!afterClear.some((event) => event.kind === 'plan' && event.entries.length > 0))
+  await harness.client.deleteSession(harness.sessionId)
+})
+
 test('a form elicitation surfaces its schema and resolves with the content object', async () => {
   const h = await setup('openclaw')
   const client = buildClient(() => h.sessionId, 'local')

@@ -15,7 +15,15 @@
 
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 
-import type { AsyncTaskInfo, AvailableCommand, ChatEvent, CompactionState, SessionMode, SubagentInfo } from './types'
+import type {
+  AsyncTaskInfo,
+  AvailableCommand,
+  ChatEvent,
+  CompactionState,
+  PlanItem,
+  SessionMode,
+  SubagentInfo,
+} from './types'
 
 /**
  * The session state a log implies, folded out of it.
@@ -43,6 +51,12 @@ export interface RestoredSessionState {
   compactions: Map<string, CompactionState>
   subagents: Map<string, SubagentInfo>
   asyncTasks: Map<string, AsyncTaskInfo>
+  // The agent's plan, folded the same "last value wins" way handleUpdate
+  // mirrors it live: the last plan event in the log is the current plan, and an
+  // empty one means the agent had cleared it before stopping. Without this, a
+  // restored session has the plan's events in its transcript but no mirror, and
+  // a windowed subscribe would hide the checklist behind the history cut.
+  plan?: PlanItem[]
 }
 
 /**
@@ -155,6 +169,9 @@ export function foldRestoredState(events: readonly ChatEvent[]): RestoredSession
         break
       case 'async_task':
         state.asyncTasks.set(event.task.asyncTaskId, { ...event.task })
+        break
+      case 'plan':
+        state.plan = event.entries
         break
       default:
         break

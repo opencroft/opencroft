@@ -331,6 +331,9 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
   const subagents = new Map<string, { part: SubagentPart; tools: Map<string, ToolPart> }>()
   // Background tasks by asyncTaskId — last state wins, surfaced as a list.
   const asyncTasks = new Map<string, AsyncTaskInfo>()
+  // The live plan part and the assistant message it sits in, so later plan
+  // events patch it in place — see the 'plan' case below.
+  let plan: { message: ChatMessage; part: Extract<ChatPart, { type: 'plan' }> } | null = null
 
   events.forEach((event, offset) => {
     const id = baseIndex + offset
@@ -426,6 +429,29 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
       }
       case 'async_task': {
         asyncTasks.set(event.task.asyncTaskId, event.task)
+        break
+      }
+      case 'plan': {
+        // The plan is one entity, not a step: its first event fixes the part's
+        // position in the transcript, later ones patch that part in place, and
+        // an empty list retires it (a conversation reset publishes one to clear
+        // the agent's task store). Held here so the next non-empty plan after a
+        // clear anchors a new part at its own position.
+        if (event.entries.length === 0) {
+          if (plan) {
+            plan.message.parts.splice(plan.message.parts.indexOf(plan.part), 1)
+            plan = null
+          }
+          break
+        }
+        if (plan) {
+          plan.part.entries = event.entries
+        } else {
+          const message = ensureAssistant(id)
+          const part: ChatPart = { type: 'plan', id, entries: event.entries }
+          message.parts.push(part)
+          plan = { message, part }
+        }
         break
       }
       case 'compaction': {

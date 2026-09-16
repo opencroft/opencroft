@@ -1,6 +1,6 @@
 'use client'
 
-import { Bot, ChevronDown, ChevronRight, Maximize2, Minimize2, Pencil, X } from 'lucide-react'
+import { Bot, ChevronDown, ChevronRight, ListTodo, Loader2, Maximize2, Minimize2, Pencil, Square, SquareCheck, X } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
 import { useState } from 'react'
 // Both of these import types back from this file, and a type import is erased,
@@ -37,6 +37,12 @@ export type UserText = string & { readonly __userText: unique symbol }
 // The host's own copies satisfy this structurally.
 export type ChainDotVariant = 'default' | 'success' | 'destructive'
 
+// One entry of the agent's plan checklist (ACP `plan` session update, as the
+// host folds it — this component never learns the wire shape). `status` is the
+// agent's own word; the three ACP spellings ('pending' | 'in_progress' |
+// 'completed') get the intended drawing, anything else draws as pending.
+export type PlanEntry = { content: string; status: string; priority: string }
+
 // One item inside a turn's detail chain. The host builds these; this component
 // only renders them.
 //
@@ -61,6 +67,11 @@ export type DetailItem =
       args: unknown
       result?: { text: string; isError?: boolean }
     }
+  // The agent's live plan, as one checklist that the host patches in place —
+  // every plan update replaces the entries wholesale, so this item is keyed by
+  // its `id` (like a tool) rather than by position: entries come and go around
+  // it without remounting the rest of the chain.
+  | { kind: 'plan'; id: string; entries: PlanEntry[] }
   // A subagent the turn spawned, drawn as a nested, bordered block: its name
   // and task in a header with a live/terminal state badge, and its OWN reply
   // chain (`items`, built by the host the same way the parent's is) rendered
@@ -694,6 +705,45 @@ function toolDotVariant(item: DetailItem): ChainDotVariant {
   return item.result.isError ? 'destructive' : 'success'
 }
 
+// The agent's plan as one checklist. Not interactive — the agent owns the list
+// and rewrites it wholesale on every update; the reader only watches it. The
+// whole point of the drawing is the frontier: done entries strike through, the
+// one in progress spins, the rest wait.
+function PlanChecklist({ item }: { item: Extract<DetailItem, { kind: 'plan' }> }) {
+  return (
+    <div className='rounded-md border border-border/60 bg-muted/20 px-3 py-2'>
+      <div className='flex items-center gap-1.5 text-xs font-medium text-muted-foreground'>
+        <ListTodo className='size-3.5' />
+        Plan
+      </div>
+      <ul className='mt-1.5 flex flex-col gap-1'>
+        {item.entries.map((entry, i) => {
+          const completed = entry.status === 'completed'
+          const inProgress = entry.status === 'in_progress'
+          return (
+            // Position is the only identity a plan entry has: the agent
+            // rewrites the list wholesale and may repeat a line of text, so
+            // neither the content nor anything else on the entry can serve as
+            // a stable key. The same deliberate index key the nested-subagent
+            // renderers below use for host-built, wholesale-replaced lists.
+            // biome-ignore lint/suspicious/noArrayIndexKey: plan entries carry no id and their text may repeat
+            <li key={i} className='flex items-start gap-2 text-sm leading-5'>
+              {completed ? (
+                <SquareCheck className='mt-0.5 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400' />
+              ) : inProgress ? (
+                <Loader2 className='mt-0.5 size-3.5 shrink-0 animate-spin text-primary' />
+              ) : (
+                <Square className='mt-0.5 size-3.5 shrink-0 text-muted-foreground/60' />
+              )}
+              <span className={cn('min-w-0', completed && 'text-muted-foreground line-through')}>{entry.content}</span>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
 // A subagent's nested transcript, in a bordered block under the parent turn.
 // Renders its own items with the SAME per-kind renderers the parent uses
 // (text as markdown, thinking via the host's block, tool via renderTool), one
@@ -757,6 +807,9 @@ function SubagentBlock({
             }
             if (child.kind === 'subagent') {
               return <SubagentBlock key={child.id} item={child} renderTool={renderTool} renderers={renderers} />
+            }
+            if (child.kind === 'plan') {
+              return <PlanChecklist key={child.id} item={child} />
             }
             return <div key={child.id}>{renderTool(child)}</div>
           })}
@@ -844,6 +897,9 @@ export function ChatTurnDetails({
     if (item.kind === 'subagent') {
       return <SubagentBlock item={item} renderTool={renderTool} renderers={renderers} />
     }
+    if (item.kind === 'plan') {
+      return <PlanChecklist item={item} />
+    }
     return renderTool(item)
   }
 
@@ -905,6 +961,11 @@ export function ChatTurnDetails({
                 if (last?.kind === 'item') {
                   if (last.item.kind === 'tool') {
                     return renderTool(last.item)
+                  }
+                  if (last.item.kind === 'plan') {
+                    // The plan is present-tense state: even folded away, a
+                    // collapsed turn still shows where the agent stands.
+                    return <PlanChecklist item={last.item} />
                   }
                   if (last.item.kind === 'assistant-text') {
                     return last.item.text.trim() ? (

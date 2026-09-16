@@ -57,6 +57,7 @@ import type {
   AvailableCommand,
   ChatEvent,
   CompactionState,
+  PlanItem,
   Presence,
   SubagentInfo,
   PromptOrigin,
@@ -363,6 +364,15 @@ interface SessionState {
   // prompt is streaming over. settleTurn applies the deferred resume once the
   // turn that was running actually finishes, and clears this.
   pendingMcpRefresh?: boolean
+  // The agent's execution plan (ACP `plan` session update), mirrored here (like
+  // usage/modes/queue) so a windowed subscribe/getEventsWindow can synthesize
+  // it when the cut fell before every plan event — see the SNAPSHOT_KINDS
+  // handling in fold.ts and withSnapshotPrefix. Every update replaces this
+  // wholesale (the wire contract is a complete entry list, not a patch), and an
+  // EMPTY list clears: claude-agent-acp publishes one when a conversation reset
+  // retires the plan. Absent = no plan has ever arrived; [] = one was published
+  // empty.
+  plan?: PlanItem[]
   // Last usage_update seen, mirrored here (like modes/configOptions/queue) so
   // a windowed subscribe/getEventsWindow can synthesize it without scanning
   // history — see the SNAPSHOT_KINDS handling below. This is the DISPLAYED
@@ -653,6 +663,14 @@ function withSnapshotPrefix(session: SessionState, windowed: ChatEvent[]): ChatE
   }
   if (session.usage && !has('usage')) {
     prefix.push({ kind: 'usage', used: session.usage.used, size: session.usage.size })
+  }
+  // The live plan, for the same reason usage is here: present-tense state. A
+  // window cut before every plan event would otherwise hide the one thing the
+  // reader most needs on reopening a long session — what the agent is working
+  // through now. Empty means the plan was cleared, never announced, so nothing
+  // is synthesized for it (matching every line above: only non-defaults go).
+  if (session.plan && session.plan.length > 0 && !has('plan')) {
+    prefix.push({ kind: 'plan', entries: session.plan.map((entry) => ({ ...entry })) })
   }
   if (session.queue.length > 0 && !has('queue')) {
     prefix.push({ kind: 'queue', items: [...session.queue] })
@@ -1039,14 +1057,21 @@ export function handleUpdate(notification: SessionNotification): void {
       break
     }
     case 'plan': {
-      emit(sessionId, {
-        kind: 'plan',
-        entries: update.entries.map((entry) => ({
-          content: entry.content,
-          status: entry.status,
-          priority: entry.priority,
-        })),
-      })
+      const entries: PlanItem[] = update.entries.map((entry) => ({
+        content: entry.content,
+        status: entry.status,
+        priority: entry.priority,
+      }))
+      // Mirrored onto the session (like usage) so a windowed subscriber whose
+      // cut fell before every plan event is still handed the current plan —
+      // withSnapshotPrefix below. An empty list is stored as-is: it is the
+      // wire's way of retiring a plan, and prefixing it would resurrect one
+      // the agent cleared.
+      const session = store.sessions.get(sessionId)
+      if (session) {
+        session.plan = entries
+      }
+      emit(sessionId, { kind: 'plan', entries })
       break
     }
     case 'current_mode_update': {
@@ -3109,6 +3134,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         compactions: state.compactions,
         subagents: state.subagents,
         asyncTasks: state.asyncTasks,
+        ...(state.plan ? { plan: state.plan } : {}),
         permissions,
         activeTurns: 0,
         // Not folded from the log: the durable queue and the reading cadence

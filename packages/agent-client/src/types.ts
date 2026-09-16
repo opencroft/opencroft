@@ -105,6 +105,10 @@ export interface SessionMeta {
   presence?: Presence
 }
 
+// One entry of the agent's execution plan (ACP `plan` session update — the
+// stable one, not the draft planId-addressed `plan_update`). ACP entry status
+// spellings are 'pending' | 'in_progress' | 'completed'; the field stays a
+// string so an agent's own vocabulary still folds and renders.
 export interface PlanItem {
   content: string
   status: string
