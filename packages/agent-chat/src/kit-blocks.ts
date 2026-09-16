@@ -84,6 +84,12 @@ export function buildKitBlocks(messages: readonly ChatMessage[]): Block[] {
               : undefined,
         })
         break
+      case 'plan':
+        // One checklist per session: foldEvents already upserted the plan
+        // message in place, so this only translates it — `id` is the React
+        // key, the plan being an entity like a tool call rather than a step.
+        details.push({ kind: 'plan', id: `plan:${message.id}`, entries: message.entries })
+        break
       case 'error':
         // The kit turn has no error item of its own. Dropping it would lose the
         // only report the reader gets of a turn that failed, so it renders as
@@ -92,7 +98,7 @@ export function buildKitBlocks(messages: readonly ChatMessage[]): Block[] {
         break
       default:
         // 'permission' and 'ask' are answered by <Approvals>, beside the
-        // conversation rather than inside it. 'plan' has no kit equivalent yet.
+        // conversation rather than inside it.
         break
     }
   }

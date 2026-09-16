@@ -39,7 +39,14 @@ export const CHAT_RENDERERS: ChatTurnRenderers = { Chained, ChainDot, ThinkingBl
 // and re-throws on every visit, leaving the conversation unopenable. Contained
 // here, one block shows an error and the rest of the conversation still reads.
 export function renderToolCall(item: Extract<KitDetailItem, { kind: 'tool' }>) {
-  const spec = lookupToolView(item.name)
+  // Matched on the tool's PROGRAMMATIC name, falling back to the displayed one.
+  // The two coincide for an MCP tool, which is why keying on the display name
+  // worked at all — but an agent's own tools are announced with a human
+  // phrasing that embeds an argument ("Write apps/opencroft/…/foo.tsx"), so no
+  // registered id could ever equal one and every built-in silently fell through
+  // to the generic dump. The fallback keeps an agent that names no tool working
+  // exactly as it did.
+  const spec = lookupToolView(item.toolName ?? item.name)
   const args = (item.args ?? {}) as Record<string, unknown>
   const ViewComponent = spec?.body
   // A missing view is expected (an external MCP server's tool has no
@@ -50,7 +57,12 @@ export function renderToolCall(item: Extract<KitDetailItem, { kind: 'tool' }>) {
   // every unregistered tool a transcript renders, which is normal traffic for
   // external tools in production and would just be noise there.
   if (!ViewComponent && import.meta.env.DEV) {
-    console.warn(`[tool-views] No registered view for "${item.name}" — rendering the generic args/output dump.`)
+    // Names the id that was actually looked up, not the displayed one: the two
+    // differ for every agent tool, and reporting the phrasing sent a reader
+    // looking for a registry key that was never the one being matched.
+    console.warn(
+      `[tool-views] No registered view for "${item.toolName ?? item.name}" — rendering the generic args/output dump.`,
+    )
   }
   return (
     <RenderBoundary scope='tool-view' label={item.name} resetKey={item.id}>

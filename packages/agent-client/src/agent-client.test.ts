@@ -322,6 +322,15 @@ test('a model that matches no advertised option leaves the harness default', asy
   const h = await setup('openclaw', { model: 'ollama/llama-99', configOptions: MODEL_SELECT_OPTIONS })
   await settle()
   assert.deepEqual(h.configOptionCalls, [], 'guessing a model is worse than the default the harness already has')
+  // The mismatch is reported, not swallowed: this error event is the only
+  // sign a profile is naming a model the harness can't offer (e.g. its
+  // provider was never configured into the harness).
+  const errors = sessionEvents(h.sessionId).filter((event) => event.kind === 'error')
+  assert.equal(errors.length, 1, 'the mismatch must be visible in the chat, not a silent skip')
+  assert.match(
+    (errors[0] as Extract<ChatEvent, { kind: 'error' }>).message,
+    /ollama\/llama-99.*not offered by OpenClaw.*opencode\/big-pickle, anthropic\/claude-fable-5/s,
+  )
   await h.client.deleteSession(h.sessionId)
 })
 
@@ -340,6 +349,55 @@ test('an adapter WITH a model env var never applies the model via config option'
   await settle()
   assert.deepEqual(h.configOptionCalls, [])
   await h.client.deleteSession(h.sessionId)
+})
+
+// ── OpenCode provider wiring (OPENCODE_CONFIG_CONTENT) ──────────────────────
+//
+// OpenCode ignores the standard OPENAI_* / model env vars entirely and builds
+// its model catalog from its own provider configuration, so buildSpawnConfig
+// synthesizes that configuration from the selection (see selectionEnv in
+// harness-adapters). Without it the harness advertises only its built-in free
+// models and the profile's model can never match.
+
+const OPENCODE_SELECTION = {
+  providerId: 'zai',
+  adapterId: 'opencode',
+  model: 'glm-5.3-flash',
+  apiKey: 'secret-key-material',
+  cwd: '/tmp/agent-client-test-opencode',
+} satisfies AgentSelection
+
+test('an opencode spawn carries its provider as an OpenCode config document', () => {
+  const content = buildSpawnConfig(OPENCODE_SELECTION).env.OPENCODE_CONFIG_CONTENT
+  assert.ok(content, 'the config document must travel in the spawn env')
+  assert.ok(!content.includes('secret-key-material'), 'the document references the key, it never carries it')
+  const entry = JSON.parse(content).provider.zai
+  assert.equal(entry.npm, '@ai-sdk/openai-compatible')
+  assert.equal(entry.options.baseURL, 'https://api.z.ai/api/coding/paas/v4')
+  assert.equal(entry.options.apiKey, '{env:ZAI_API_KEY}')
+  // Context-variant bracket ids stay out: the OpenAI-compatible endpoint
+  // rejects them ("Unknown Model"), so offering one invites a mid-turn error.
+  assert.ok('glm-5.3-flash' in entry.models)
+  assert.ok(
+    Object.keys(entry.models).every((id) => !id.includes('[')),
+    'no context-variant bracket ids in the offered models',
+  )
+})
+
+test('an opencode baseUrl override wins over the provider endpoint', () => {
+  const content = buildSpawnConfig({ ...OPENCODE_SELECTION, baseUrl: 'https://proxy.example.test/v4' })
+    .env.OPENCODE_CONFIG_CONTENT
+  assert.equal(JSON.parse(content).provider.zai.options.baseURL, 'https://proxy.example.test/v4')
+})
+
+test('an opencode selection without a key omits the key reference', () => {
+  const content = buildSpawnConfig({ ...OPENCODE_SELECTION, apiKey: '' }).env.OPENCODE_CONFIG_CONTENT
+  assert.ok(!('apiKey' in JSON.parse(content).provider.zai.options))
+})
+
+test('a provider with no OpenAI-compatible endpoint gets no config document', () => {
+  const config = buildSpawnConfig({ ...OPENCODE_SELECTION, providerId: 'anthropic' })
+  assert.equal(config.env.OPENCODE_CONFIG_CONTENT, undefined)
 })
 
 // ── dynamic config options / session info ──────────────────────────────────
@@ -498,6 +556,290 @@ test('a replay reproduces subagent transcripts: announced, nested, and closed', 
   const window = client.getRecordsWindow(sessionId, { records: 20 })
   assert.ok(window && window.events.some((event) => event.kind === 'subagent_event'))
   await client.deleteSession(sessionId)
+})
+
+// ── restoring a session from a transcript the host kept ────────────────────
+//
+// The replay above is the harness's account of a conversation, and it is only
+// as complete as what the harness persisted. On claude-agent-acp 0.78.0 a
+// subagent's own transcript is stored in a separate file the replay never
+// reads, and the parent transcript carries no sidechain rows at all — so the
+// bridge has nothing to announce the delegation with and strips the Agent tool
+// call from the parent besides. Nothing is wrong with the replay handling; the
+// data does not cross the wire. restoreSession is the other door: rebuild the
+// transcript from what this side recorded as it was shown, and ask the harness
+// only for the agent.
+
+interface RestoreHarness {
+  client: ReturnType<typeof createAgentClient>
+  sessionId: string
+  selection: AgentSelection
+  loadCalls: string[]
+  resumeCalls: string[]
+  observed: ChatEvent[]
+}
+
+// A connection that can do both, so a test can assert WHICH one was used —
+// "the transcript came back" is satisfied by either, and only the call log
+// distinguishes restoring from replaying.
+function restoreSetup(options: { resumable?: boolean } = {}): RestoreHarness {
+  counter += 1
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: '',
+    cwd: `/tmp/agent-client-test-${counter}`,
+    sessionKey: `restore-key-${counter}`,
+  }
+  const sessionId = `restored-session-${counter}`
+  const loadCalls: string[] = []
+  const resumeCalls: string[] = []
+  const connection = {
+    loadSession: async (params: { sessionId: string }) => {
+      loadCalls.push(params.sessionId)
+      return {}
+    },
+    resumeSession: async (params: { sessionId: string }) => {
+      resumeCalls.push(params.sessionId)
+      return {}
+    },
+  } as unknown as AgentConnection
+  const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
+  assert.ok(store, 'agent-client global store must exist after import')
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: true,
+    resumeSession: options.resumable !== false,
+    initialized: Promise.resolve(),
+  })
+  const observed: ChatEvent[] = []
+  const client = createAgentClient({ onEvent: (_sessionId, event) => observed.push(event) })
+  return { client, sessionId, selection, loadCalls, resumeCalls, observed }
+}
+
+// The recording of a delegation, in the vocabulary the engine emits it in —
+// what the host's event log holds after the turn above was watched live.
+function recordedDelegation(childId: string): ChatEvent[] {
+  return [
+    { kind: 'user', text: 'delegate this' },
+    { kind: 'subagent', subagent: { subagentSessionId: childId, name: 'Investigator', task: 'dig' } },
+    { kind: 'subagent_event', subagentSessionId: childId, event: { kind: 'user', text: 'dig here' } },
+    { kind: 'subagent_event', subagentSessionId: childId, event: { kind: 'agent_message', text: 'dug' } },
+    { kind: 'agent_message', text: 'summary' },
+    {
+      kind: 'subagent',
+      subagent: { subagentSessionId: childId, name: 'Investigator', task: 'dig', state: 'completed' },
+    },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ]
+}
+
+test('a restored session reproduces the subagent blocks a replay cannot carry', async () => {
+  const harness = restoreSetup()
+  const childId = `${harness.sessionId}:subagent:toolu_1`
+  const recorded = recordedDelegation(childId)
+
+  const meta = await harness.client.restoreSession(harness.sessionId, harness.selection, recorded)
+
+  assert.ok(meta, 'a resumable agent must restore rather than refuse')
+  const events: ChatEvent[] = []
+  harness.client.subscribe(harness.sessionId, (event) => events.push(event))
+  const spawned = events.find((event) => event.kind === 'subagent')
+  assert.ok(spawned && spawned.kind === 'subagent' && spawned.subagent.name === 'Investigator')
+  const nested = events.filter(
+    (event): event is Extract<ChatEvent, { kind: 'subagent_event' }> => event.kind === 'subagent_event',
+  )
+  assert.deepEqual(
+    nested.map((event) => event.event.kind),
+    ['user', 'agent_message'],
+    'the subagent transcript is nested under the parent, in order',
+  )
+  const closed = events.filter((event) => event.kind === 'subagent').at(-1)
+  assert.ok(closed && closed.kind === 'subagent' && closed.subagent.state === 'completed')
+  await harness.client.deleteSession(harness.sessionId)
+})
+
+test('restoring asks the harness to resume, never to replay', async () => {
+  // The two must not BOTH happen: a replay on top of a restored log would write
+  // the conversation into the transcript a second time, which is the failure
+  // this whole path has to avoid rather than merely a wasted round trip.
+  const harness = restoreSetup()
+  await harness.client.restoreSession(harness.sessionId, harness.selection, recordedDelegation('child-1'))
+
+  assert.deepEqual(harness.resumeCalls, [harness.sessionId], 'the agent is reattached')
+  assert.deepEqual(harness.loadCalls, [], 'and never asked for its history')
+  await harness.client.deleteSession(harness.sessionId)
+})
+
+test('an agent that cannot resume refuses, so the caller can still replay', async () => {
+  // Falling back is the caller's decision, and it needs to be able to tell
+  // "restored" from "could not" — a half-registered session either way would
+  // leave a replay landing on top of one.
+  const harness = restoreSetup({ resumable: false })
+
+  const meta = await harness.client.restoreSession(harness.sessionId, harness.selection, recordedDelegation('child-1'))
+
+  assert.equal(meta, null)
+  assert.deepEqual(harness.resumeCalls, [])
+})
+
+test('restored events are not handed back to the host that recorded them', async () => {
+  // They are seeded by assignment rather than emitted. Emitted, a host storing
+  // what it observes would write its own log back into itself on every reopen,
+  // and the transcript would double in length each time a chat was opened.
+  const harness = restoreSetup()
+  const recorded = recordedDelegation('child-1')
+
+  await harness.client.restoreSession(harness.sessionId, harness.selection, recorded)
+
+  assert.deepEqual(harness.observed, [], 'nothing restored is re-announced to the observation hook')
+  await harness.client.deleteSession(harness.sessionId)
+})
+
+test('a restored session is still live: a running subagent keeps nesting into it', async () => {
+  // The subagent->parent route lives in a module-level map, not on the session,
+  // so restoring the records is not enough. Without the routes rebuilt, a
+  // subagent that was STILL RUNNING when the process stopped comes back drawn
+  // in the transcript and then goes silent, which is the same loss wearing a
+  // different face.
+  const harness = restoreSetup()
+  const childId = `${harness.sessionId}:subagent:toolu_1`
+  await harness.client.restoreSession(harness.sessionId, harness.selection, [
+    { kind: 'user', text: 'delegate this' },
+    { kind: 'subagent', subagent: { subagentSessionId: childId, name: 'Investigator', task: 'dig' } },
+  ])
+  const events: ChatEvent[] = []
+  harness.client.subscribe(harness.sessionId, (event) => events.push(event))
+
+  handleUpdate({
+    sessionId: childId,
+    update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'still digging' } },
+  } as Parameters<typeof handleUpdate>[0])
+
+  const nested = events.filter(
+    (event): event is Extract<ChatEvent, { kind: 'subagent_event' }> => event.kind === 'subagent_event',
+  )
+  assert.equal(nested.at(-1)?.event.kind, 'agent_message')
+  await harness.client.deleteSession(harness.sessionId)
+})
+
+test('the cold-open window a reconnecting chat is served carries the restored subagents', async () => {
+  // This is the read the SSE stream actually performs on connect — a restored
+  // transcript that only satisfies subscribe() would still open empty there.
+  const harness = restoreSetup()
+  const childId = `${harness.sessionId}:subagent:toolu_1`
+  await harness.client.restoreSession(harness.sessionId, harness.selection, recordedDelegation(childId))
+
+  const window = harness.client.getRecordsWindow(harness.sessionId, { records: 20 })
+
+  assert.ok(window, 'a restored session must be windowable like any other')
+  assert.ok(
+    window.events.some((event) => event.kind === 'subagent_event'),
+    'the nested subagent transcript is in the window a cold open is served',
+  )
+  await harness.client.deleteSession(harness.sessionId)
+})
+
+test('a transcript recorded up to its last turn boundary gains no second one', async () => {
+  // Reopening the same conversation repeatedly must not accumulate boundaries:
+  // each one reads as a turn, so a chat opened five times would show five.
+  const harness = restoreSetup()
+  await harness.client.restoreSession(harness.sessionId, harness.selection, recordedDelegation('child-1'))
+
+  const events: ChatEvent[] = []
+  harness.client.subscribe(harness.sessionId, (event) => events.push(event))
+  assert.equal(
+    events.filter((event) => event.kind === 'turn_end').length,
+    1,
+    'the boundary already recorded is the only one',
+  )
+  await harness.client.deleteSession(harness.sessionId)
+})
+
+test('a transcript that stops mid-turn is closed, so the chat does not sit waiting forever', async () => {
+  // The process stopped while the agent was working. Nothing is coming to end
+  // that turn — the turn ended when the process did — and a client with no
+  // boundary shows a spinner for a session that is idle.
+  const harness = restoreSetup()
+  await harness.client.restoreSession(harness.sessionId, harness.selection, [
+    { kind: 'user', text: 'do the thing' },
+    { kind: 'tool_call', toolCallId: 'call-1', title: 'Bash', status: 'in_progress' },
+  ])
+
+  const events: ChatEvent[] = []
+  harness.client.subscribe(harness.sessionId, (event) => events.push(event))
+  const closing = events.filter((event) => event.kind === 'turn_end')
+  assert.equal(closing.length, 1)
+  assert.equal(
+    closing[0].kind === 'turn_end' ? closing[0].stopReason : null,
+    'resumed',
+    'a turn cut off mid-step is reported as interrupted, not as a clean end',
+  )
+  await harness.client.deleteSession(harness.sessionId)
+})
+
+test('a restored queue snapshot is dropped, so delivered messages do not come back unread', async () => {
+  // A queue snapshot describes what was waiting when it was published. What is
+  // waiting NOW comes from the durable queue when the session opens, and a
+  // reader cannot tell a stale snapshot from a live one.
+  const harness = restoreSetup()
+  await harness.client.restoreSession(harness.sessionId, harness.selection, [
+    { kind: 'user', text: 'first' },
+    { kind: 'queue', items: [{ id: 'q1', kind: 'message', sender: 'Reader', sentAt: '2026-01-01T00:00:00.000Z', text: 'held' }] },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ])
+
+  const events: ChatEvent[] = []
+  harness.client.subscribe(harness.sessionId, (event) => events.push(event))
+  assert.deepEqual(
+    events.filter((event) => event.kind === 'queue'),
+    [],
+    'nothing in the restored transcript claims a message is still waiting',
+  )
+  await harness.client.deleteSession(harness.sessionId)
+})
+
+test('a permission left unanswered by the stopped process is restored closed, not live', async () => {
+  // Its resolve lived in the memory of a process that is gone, so the buttons
+  // a reader would be shown resolve nothing at all. The request stays in the
+  // transcript — it was asked — but it is not drawn as still waiting.
+  const harness = restoreSetup()
+  await harness.client.restoreSession(harness.sessionId, harness.selection, [
+    { kind: 'user', text: 'do the thing' },
+    { kind: 'permission_request', requestId: 'req-1', title: 'Run a command', options: [] },
+  ])
+
+  const events: ChatEvent[] = []
+  harness.client.subscribe(harness.sessionId, (event) => events.push(event))
+  const [permission] = foldEvents(events).filter((message) => message.kind === 'permission')
+  assert.ok(permission && permission.kind === 'permission')
+  assert.equal(permission.resolved, true)
+  await harness.client.deleteSession(harness.sessionId)
+})
+
+test('a restored session keeps the modes and usage its log recorded', async () => {
+  // These are "last value wins" state the engine mirrors on the session as it
+  // arrives, so a windowed read can be handed the current value. A restored
+  // session has the whole history and none of the mirror — without folding it
+  // back out, a chat that opens past the point its modes were announced has no
+  // modes at all.
+  const harness = restoreSetup()
+  await harness.client.restoreSession(harness.sessionId, harness.selection, [
+    { kind: 'modes', available: [{ id: 'default', name: 'Default' }], current: 'default' },
+    { kind: 'usage', used: 4200, size: 200000 },
+    { kind: 'mode_changed', current: 'plan' },
+    { kind: 'user', text: 'and then a long conversation' },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ])
+
+  assert.equal(harness.client.sessionModes(harness.sessionId)?.current, 'plan')
+  assert.deepEqual(
+    harness.client.listSessions().find((session) => session.id === harness.sessionId)?.usage,
+    { used: 4200, size: 200000 },
+  )
+  await harness.client.deleteSession(harness.sessionId)
 })
 
 // listTools feeds the editors that decide what a ROLE may reach, so it asks a
@@ -735,6 +1077,154 @@ test('a snapshot arriving between two chunks does not open a boundary', async ()
   await client.deleteSession(sessionId)
 })
 
+// ── the wake-the-model envelope is not a message ───────────────────────────
+
+// Verbatim from a real transcript: what the Claude SDK sends its
+// own model when a background task finishes. It arrives on the wire as an
+// ordinary user message, and left alone it renders as the reader having pasted
+// a block of XML into the conversation.
+const TASK_NOTIFICATION = [
+  '<task-notification>',
+  '<task-id>a31fca27d7d61ace2</task-id>',
+  '<tool-use-id>call_7b9f683965574aa0b2414ed3</tool-use-id>',
+  '<output-file>/tmp/tasks/a31fca27d7d61ace2.output</output-file>',
+  '<status>completed</status>',
+  '<summary>Agent "Temp file write/read/delete test" finished</summary>',
+].join('\n')
+
+test('a task-notification envelope never reaches the transcript', async () => {
+  const h = await setup('openclaw')
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: TASK_NOTIFICATION } },
+  } as Parameters<typeof handleUpdate>[0])
+
+  assert.deepEqual(
+    h.events.filter((event) => event.kind === 'user'),
+    [],
+    'the envelope is the model’s context, not something the reader said',
+  )
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a real user message is still a user message', async () => {
+  // The negative control for the test above: the check must be able to fail,
+  // and a predicate that dropped ordinary messages would pass it just as well.
+  const h = await setup('openclaw')
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'what changed?' } },
+  } as Parameters<typeof handleUpdate>[0])
+
+  assert.deepEqual(
+    h.events.filter((event) => event.kind === 'user'),
+    [{ kind: 'user', text: 'what changed?' }],
+  )
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a replayed task-notification is dropped without splitting the turn it landed in', async () => {
+  // The replay reconstructs a turn boundary at the start of each replayed
+  // message. Dropping the envelope after that check would leave the boundary
+  // behind, and a reader would see their own turn cut in two at a message
+  // nobody sent.
+  counter += 1
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: '',
+    cwd: `/tmp/agent-client-test-${counter}`,
+  }
+  const sessionId = `task-notification-replay-${counter}`
+  const push = (update: Record<string, unknown>) =>
+    handleUpdate({ sessionId, update } as Parameters<typeof handleUpdate>[0])
+  const connection = {
+    loadSession: async () => {
+      push({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'run it in the background' } })
+      push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'started' } })
+      push({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: TASK_NOTIFICATION } })
+      push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'and it finished' } })
+      return {}
+    },
+  } as unknown as AgentConnection
+  const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
+  assert.ok(store, 'agent-client global store must exist after import')
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: true,
+    initialized: Promise.resolve(),
+  })
+  const client = createAgentClient()
+  assert.ok(await client.loadSession(sessionId, selection))
+  const events: ChatEvent[] = []
+  client.subscribe(sessionId, (event) => events.push(event))
+
+  assert.deepEqual(
+    events.filter((event) => event.kind === 'user').map((event) => (event.kind === 'user' ? event.text : '')),
+    ['run it in the background'],
+    'one replayed message, and it is the one somebody sent',
+  )
+  assert.equal(
+    events.filter((event) => event.kind === 'turn_end').length,
+    1,
+    'only the closing boundary — the envelope opened none',
+  )
+  await client.deleteSession(sessionId)
+})
+
+test('a subagent is woken the same way, and it is no more the reader’s business nested', async () => {
+  counter += 1
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: '',
+    cwd: `/tmp/agent-client-test-${counter}`,
+  }
+  const sessionId = `nested-task-notification-${counter}`
+  const childId = `${sessionId}:subagent:toolu_1`
+  const push = (sid: string, update: Record<string, unknown>) =>
+    handleUpdate({ sessionId: sid, update } as Parameters<typeof handleUpdate>[0])
+  const connection = {
+    loadSession: async () => {
+      push(sessionId, {
+        sessionUpdate: 'subagent_spawned',
+        subagentSessionId: childId,
+        name: 'Investigator',
+        task: 'dig',
+        capabilities: {},
+      })
+      push(childId, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: TASK_NOTIFICATION } })
+      push(childId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'dug' } })
+      return {}
+    },
+  } as unknown as AgentConnection
+  const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
+  assert.ok(store, 'agent-client global store must exist after import')
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: true,
+    initialized: Promise.resolve(),
+  })
+  const client = createAgentClient()
+  assert.ok(await client.loadSession(sessionId, selection))
+  const events: ChatEvent[] = []
+  client.subscribe(sessionId, (event) => events.push(event))
+
+  const nested = events.filter(
+    (event): event is Extract<ChatEvent, { kind: 'subagent_event' }> => event.kind === 'subagent_event',
+  )
+  assert.deepEqual(
+    nested.map((event) => event.event.kind),
+    ['agent_message'],
+    'the envelope is dropped inside the subagent transcript too',
+  )
+  await client.deleteSession(sessionId)
+})
+
 test('a session_info_update notification updates the session title and emits it', async () => {
   const h = await setup('openclaw')
   handleUpdate({
@@ -798,6 +1288,142 @@ test('an available_commands_update notification replaces session commands and em
   const snapshots = h.events.filter((event) => event.kind === 'available_commands')
   assert.deepEqual(snapshots.at(-1), { kind: 'available_commands', commands })
   await h.client.deleteSession(h.sessionId)
+})
+
+// ── agent plan (ACP `plan` session update) ──────────────────────────────────
+//
+// claude-agent-acp translates TodoWrite and its Task* tools into `plan`
+// updates, and every update carries the FULL entry list — so the fold must
+// treat the plan as one entity patched in place, not a checklist per update.
+// An empty list clears it: the bridge publishes one when a conversation reset
+// retires its task store. The wire updates are driven directly because the
+// contract under test is handleUpdate's; any ACP agent with a plan arrives
+// the same way.
+
+const planUpdate = (entries: Array<{ content: string; status: string; priority: string }>) => ({
+  sessionUpdate: 'plan',
+  entries,
+})
+
+const pushPlan = (sessionId: string, entries: Array<{ content: string; status: string; priority: string }>) => {
+  handleUpdate({ sessionId, update: planUpdate(entries) } as Parameters<typeof handleUpdate>[0])
+}
+
+const planMessages = (sessionId: string) =>
+  foldEvents(sessionEvents(sessionId)).filter((message) => message.kind === 'plan')
+
+const storedPlan = (sessionId: string) =>
+  (acpStore().sessions.get(sessionId) as { plan?: Array<Record<string, string>> } | undefined)?.plan
+
+test('plan updates fold to one checklist row patched in place', async () => {
+  const h = await setup('openclaw')
+  const first = [{ content: 'read the code', status: 'in_progress', priority: 'high' }]
+  const second = [
+    { content: 'read the code', status: 'completed', priority: 'high' },
+    { content: 'fix the fold', status: 'in_progress', priority: 'high' },
+  ]
+  pushPlan(h.sessionId, first)
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'starting' } },
+  } as Parameters<typeof handleUpdate>[0])
+  pushPlan(h.sessionId, second)
+
+  // One row, carrying the LAST update's entries — the first update fixed its
+  // place, this one patched it.
+  const plans = planMessages(h.sessionId)
+  assert.equal(plans.length, 1)
+  assert.ok(plans[0]?.kind === 'plan')
+  assert.deepEqual(plans[0].entries, second)
+  // The checklist sits in the transcript at the position of the FIRST plan
+  // event — before the reply chunk that arrived between the updates.
+  const messages = foldEvents(sessionEvents(h.sessionId))
+  assert.equal(messages.at(-2)?.kind, 'plan')
+  // The plan update interleaving mid-reply must not split the message run:
+  // the reply is one assistant message, the way SNAPSHOT_KINDS classifies the
+  // plan as state rather than conversation.
+  const assistant = messages.filter((message) => message.kind === 'assistant')
+  assert.equal(assistant.length, 1)
+  assert.ok(assistant[0]?.kind === 'assistant' && assistant[0].text === 'starting')
+  // Mirrored onto the session so a windowed subscribe can synthesize it.
+  assert.deepEqual(storedPlan(h.sessionId), second)
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('an empty plan clears the row, and the next plan anchors fresh', async () => {
+  const h = await setup('openclaw')
+  pushPlan(h.sessionId, [{ content: 'only step', status: 'pending', priority: 'medium' }])
+  pushPlan(h.sessionId, [])
+  // Cleared, not emptied: an empty checklist renders as nothing.
+  assert.equal(planMessages(h.sessionId).length, 0)
+  assert.deepEqual(storedPlan(h.sessionId), [])
+  // And the next non-empty plan is a NEW row, not a patch of the removed one.
+  const fresh = [{ content: 'fresh plan', status: 'in_progress', priority: 'high' }]
+  pushPlan(h.sessionId, fresh)
+  const plans = planMessages(h.sessionId)
+  assert.equal(plans.length, 1)
+  assert.ok(plans[0]?.kind === 'plan')
+  assert.deepEqual(plans[0].entries, fresh)
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a windowed subscribe hands a cold subscriber the live plan', async () => {
+  const h = await setup('openclaw')
+  const entries = [
+    { content: 'read the code', status: 'completed', priority: 'high' },
+    { content: 'fix the fold', status: 'in_progress', priority: 'high' },
+  ]
+  pushPlan(h.sessionId, entries)
+  const planIndex = sessionEvents(h.sessionId).findIndex((event) => event.kind === 'plan')
+  assert.ok(planIndex >= 0)
+  // A subscriber whose window starts AFTER the plan event — the cut a long
+  // session's cold open makes — is still handed the current plan, the same
+  // present-tense treatment usage and the queue get.
+  const replayed: ChatEvent[] = []
+  h.client.subscribe(h.sessionId, (event) => replayed.push(event), { fromIndex: planIndex + 1 })
+  const prefixed = replayed.filter((event): event is Extract<ChatEvent, { kind: 'plan' }> => event.kind === 'plan')
+  assert.equal(prefixed.length, 1)
+  assert.deepEqual(prefixed[0].entries, entries)
+  // And a CLEARED plan is not resurrected by the prefix: the only plan event a
+  // window past the clear sees is the real empty one from the log — a prefix
+  // synthesized from the pre-clear entries would appear as a second.
+  pushPlan(h.sessionId, [])
+  const afterClear: ChatEvent[] = []
+  h.client.subscribe(h.sessionId, (event) => afterClear.push(event), { fromIndex: planIndex + 1 })
+  const cleared = afterClear.filter((event): event is Extract<ChatEvent, { kind: 'plan' }> => event.kind === 'plan')
+  assert.equal(cleared.length, 1)
+  assert.deepEqual(cleared[0].entries, [])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a restored session still hands a cold subscriber the live plan', async () => {
+  // A restored session has the plan's events in its log but none of the
+  // mirror the live path keeps, so without the restore fold the checklist
+  // would sit behind the history cut — exactly the loss a restore exists to
+  // prevent for the other snapshot kinds.
+  const harness = restoreSetup()
+  const recorded = [
+    { kind: 'user', text: 'work through it' },
+    { kind: 'plan', entries: [{ content: 'read the code', status: 'completed', priority: 'high' }] },
+    { kind: 'agent_message', text: 'done' },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ] as ChatEvent[]
+  await harness.client.restoreSession(harness.sessionId, harness.selection, recorded)
+
+  const replayed: ChatEvent[] = []
+  harness.client.subscribe(harness.sessionId, (event) => replayed.push(event), { fromIndex: 2 })
+  const prefixed = replayed.filter((event): event is Extract<ChatEvent, { kind: 'plan' }> => event.kind === 'plan')
+  assert.equal(prefixed.length, 1)
+  assert.deepEqual(prefixed[0].entries, [{ content: 'read the code', status: 'completed', priority: 'high' }])
+  // A plan the agent had CLEARED before the process stopped stays cleared.
+  await harness.client.restoreSession(harness.sessionId, harness.selection, [
+    ...recorded,
+    { kind: 'plan', entries: [] },
+  ])
+  const afterClear: ChatEvent[] = []
+  harness.client.subscribe(harness.sessionId, (event) => afterClear.push(event), { fromIndex: 2 })
+  assert.ok(!afterClear.some((event) => event.kind === 'plan' && event.entries.length > 0))
+  await harness.client.deleteSession(harness.sessionId)
 })
 
 test('a form elicitation surfaces its schema and resolves with the content object', async () => {

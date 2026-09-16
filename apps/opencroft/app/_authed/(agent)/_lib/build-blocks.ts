@@ -327,5 +327,10 @@ function partToDetail(p: ChatMessage['parts'][number]): DetailItem | null {
       items: p.parts.map(partToDetail).filter((item): item is DetailItem => item !== null),
     }
   }
-  return { kind: 'tool', id: p.id, name: p.name, args: p.args, result: p.result }
+  if (p.type === 'plan') {
+    // The plan is an entity like a tool call: named by its anchor so React
+    // keeps the checklist node while entries change around it.
+    return { kind: 'plan', id: `plan:${p.id}`, entries: p.entries }
+  }
+  return { kind: 'tool', id: p.id, name: p.name, toolName: p.toolName, args: p.args, result: p.result }
 }

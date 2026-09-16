@@ -68,6 +68,9 @@ export function detailEntryKeys(entries: DetailEntry[], items: DetailItem[]): st
     if (entry.item.kind === 'subagent') {
       return `subagent:${entry.item.id}`
     }
+    if (entry.item.kind === 'plan') {
+      return `plan:${entry.item.id}`
+    }
     return `pos:${index - headerOffset}`
   })
 }

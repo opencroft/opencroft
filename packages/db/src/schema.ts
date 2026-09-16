@@ -1,5 +1,16 @@
 import { sql } from 'drizzle-orm'
-import { bigint, boolean, index, integer, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
+import {
+  bigint,
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core'
 
 import { authSchema, user } from './auth-schema'
 
@@ -782,6 +793,44 @@ export const agentQueueEntry = pgTable(
   (t) => [index('AgentQueueEntry_sessionKey_position_idx').on(t.sessionKey, t.position)],
 )
 
+// One event of an agent session's transcript, as the chat showed it.
+//
+// The transcript a reader sees is rebuilt from the agent's own history when a
+// session is reopened, and that replay is only as complete as the harness's
+// persisted transcript happens to be — a delegation to a subagent, for
+// instance, is stored by the Claude CLI in a separate file the replay never
+// reads, so it comes back with the delegation missing and nothing marking the
+// hole. This table is the transcript we know is right, because it is a
+// recording of what was actually emitted, taken as it was emitted.
+//
+// Addressed by SESSION KEY for the same reason the queue is: a reopened
+// session can be a new id, so rows filed under one would name nothing that
+// could ever load them.
+//
+// `position` is assigned by the writer rather than derived from a timestamp:
+// events within one streaming turn land in the same millisecond by the dozen,
+// and their ORDER is the whole content of a transcript. It is also what the cap
+// is applied along -- a session left running for weeks would otherwise grow
+// this table without bound, so the oldest rows past the cap are dropped as new
+// ones arrive.
+//
+// The event itself is stored as JSON rather than in columns per kind. It is
+// read back only by the engine that wrote it, straight into the same union it
+// left as, and nothing queries INSIDE an event -- a schema here would be a
+// second definition of a shape that already has one, kept in step by hand.
+export const agentSessionEvent = pgTable(
+  'AgentSessionEvent',
+  {
+    sessionKey: text().notNull(),
+    position: integer().notNull(),
+    event: jsonb().notNull(),
+    createdAt: createdAt(),
+  },
+  // The pair is the identity, which makes an append idempotent: a retried
+  // write cannot land the same event at the same position twice.
+  (t) => [primaryKey({ columns: [t.sessionKey, t.position] })],
+)
+
 export const schema = {
   setting,
   secret,
@@ -801,10 +850,12 @@ export const schema = {
   groupChatThreadArtifact,
   usageRollupDay,
   agentQueueEntry,
+  agentSessionEvent,
   ...authSchema,
 }
 
 export type AgentQueueEntry = typeof agentQueueEntry.$inferSelect
+export type AgentSessionEvent = typeof agentSessionEvent.$inferSelect
 export type Setting = typeof setting.$inferSelect
 export type Secret = typeof secret.$inferSelect
 export type Space = typeof space.$inferSelect

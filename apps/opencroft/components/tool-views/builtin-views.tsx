@@ -161,6 +161,126 @@ function ToolContentPanel({ mode, label, content }: { mode: ToolViewProps['mode'
   )
 }
 
+// ── the agent's own file tools ─────────────────────────────────────────────
+//
+// The views above are for THIS app's MCP tools, which act on a remote node and
+// so have a `target` and can read the file back over it. An agent's own
+// Write/Edit act on the machine its harness runs on, which this app has no
+// handle for — so these render from the call's arguments alone. That is also
+// what makes them behave identically on a reopened conversation: the arguments
+// are in the transcript, where a live read would have nothing to read from.
+//
+// The harness sends a rendered diff of its own alongside the call, and it is
+// deliberately not used: for a Write it describes the file as newly created
+// even when the call overwrote one, because the correction to that arrives in a
+// hook the harness does not run when it replays history (measured against
+// claude-agent-acp 0.78.0). Reading the arguments gives the same answer live
+// and replayed, rather than a better one live and a misleading one after a
+// reload.
+
+const agentFilePath = (args: Record<string, unknown>) => args.file_path as string | undefined
+
+// A whole-file write. The prior contents are not in the call and not reachable
+// from here, so there is nothing to diff against — the resulting file is shown
+// on its own, which is what ToolContentPanel exists for.
+function AgentWriteView({ args, mode, result }: ToolViewProps) {
+  const filePath = agentFilePath(args)
+  const content = (args.content as string | undefined) ?? ''
+
+  if (mode === 'approval') {
+    return (
+      <div className='space-y-3 px-3 py-2'>
+        {filePath && <FieldRow label='Path' value={filePath} />}
+        <ToolContentPanel mode='history' label={filePath} content={content} />
+      </div>
+    )
+  }
+
+  return (
+    <OpBlock
+      verb='Write'
+      detail={filePath}
+      isError={result?.isError}
+      pending={!result}
+      overflowing={exceedsClamp(content)}
+    >
+      <OpRow label='content'>
+        <pre className='m-0 whitespace-pre-wrap break-all text-[11px] text-muted-foreground'>{content}</pre>
+      </OpRow>
+    </OpBlock>
+  )
+}
+
+// A targeted replacement, which is the case that genuinely has two sides: the
+// call carries both, so the diff is exact rather than reconstructed — unlike
+// the remote-file views above, which have to substitute in reverse against the
+// file as it is now.
+function AgentEditView({ args, mode, result }: ToolViewProps) {
+  const filePath = agentFilePath(args)
+  const oldString = (args.old_string as string | undefined) ?? ''
+  const newString = (args.new_string as string | undefined) ?? ''
+
+  const body = (
+    <div className='space-y-3 px-3 py-2'>
+      {filePath && <FieldRow label='Path' value={filePath} />}
+      <ToolDiffPanel mode='history' label={filePath} current={oldString} next={newString} />
+    </div>
+  )
+
+  if (mode === 'approval') {
+    return body
+  }
+
+  return (
+    <OpBlock
+      verb='Edit'
+      detail={filePath}
+      isError={result?.isError}
+      pending={!result}
+      overflowing={exceedsClamp(newString)}
+    >
+      <OpRow label='diff'>{body}</OpRow>
+    </OpBlock>
+  )
+}
+
+// Several replacements in one file. Each is its own before/after pair, so they
+// are drawn as a list of diffs rather than merged — a merged one would have to
+// invent a combined "before" that never existed.
+function AgentMultiEditView({ args, mode, result }: ToolViewProps) {
+  const filePath = agentFilePath(args)
+  const edits = Array.isArray(args.edits) ? (args.edits as Record<string, unknown>[]) : []
+
+  const body = (
+    <div className='space-y-3 px-3 py-2'>
+      {filePath && <FieldRow label='Path' value={filePath} />}
+      {edits.map((edit, index) => (
+        <ToolDiffPanel
+          // Position IS the identity here: an edits list is ordered, applied in
+          // order, and has no id of its own — two identical replacements in one
+          // call are different edits.
+          // biome-ignore lint/suspicious/noArrayIndexKey: an edit's position in the list is its identity
+          key={index}
+          mode='history'
+          label={`${index + 1} of ${edits.length}`}
+          current={(edit.old_string as string | undefined) ?? ''}
+          next={(edit.new_string as string | undefined) ?? ''}
+        />
+      ))}
+    </div>
+  )
+
+  if (mode === 'approval') {
+    return body
+  }
+
+  return (
+    <OpBlock verb='Edit' detail={filePath} isError={result?.isError} pending={!result}>
+      <OpRow label={edits.length === 1 ? '1 edit' : `${edits.length} edits`}>{body}</OpRow>
+    </OpBlock>
+  )
+}
+
 function RemoteReadView({ args, mode, result }: ToolViewProps) {
   const target = args.target as string | undefined
   const filePath = args.path as string | undefined
@@ -709,6 +829,21 @@ function UpdateNodesView({ args, requestId, mode }: ToolViewProps) {
     </div>
   )
 }
+
+// The agent's own file tools. Registered under their programmatic names, which
+// is what the transcript matches on — their displayed titles embed the file
+// path, so no fixed id could ever equal one.
+registerToolView('Write', {
+  body: AgentWriteView,
+})
+
+registerToolView('Edit', {
+  body: AgentEditView,
+})
+
+registerToolView('MultiEdit', {
+  body: AgentMultiEditView,
+})
 
 registerToolView('remote_read', {
   body: RemoteReadView,
