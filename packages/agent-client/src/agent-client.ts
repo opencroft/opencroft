@@ -1417,6 +1417,23 @@ function matchReasoningValue(options: unknown, effort: string): string | undefin
   return hit?.value
 }
 
+// Flatten a select config option's choice list; the options may be flat or
+// grouped, like matchReasoningValue's.
+function selectOptionValues(options: unknown): Array<{ name?: string; value?: string }> {
+  if (!Array.isArray(options)) {
+    return []
+  }
+  const flat: Array<{ name?: string; value?: string }> = []
+  for (const entry of options as Array<Record<string, unknown>>) {
+    if (Array.isArray(entry.options)) {
+      flat.push(...(entry.options as Array<{ name?: string; value?: string }>))
+    } else if (typeof entry.value === 'string') {
+      flat.push(entry as { name?: string; value?: string })
+    }
+  }
+  return flat
+}
+
 // Map a selection's model id to the value id of an ACP agent's model select
 // option, for adapters that carry no modelEnv (OpenCode, Codex) — there the
 // config option is the only channel a model choice can travel at all.
@@ -1424,19 +1441,9 @@ function matchReasoningValue(options: unknown, effort: string): string | undefin
 // `provider/` suffix equals the id (OpenCode spells models `provider/model`
 // while a profile stores the bare id). Anything looser risks pinning a
 // different model than the profile named, which is worse than leaving the
-// harness default. Options may be flat or grouped, like matchReasoningValue's.
+// harness default.
 function matchModelValue(options: unknown, model: string): string | undefined {
-  if (!Array.isArray(options)) {
-    return undefined
-  }
-  const flat: Array<{ value?: string }> = []
-  for (const entry of options as Array<Record<string, unknown>>) {
-    if (Array.isArray(entry.options)) {
-      flat.push(...(entry.options as Array<{ value?: string }>))
-    } else if (typeof entry.value === 'string') {
-      flat.push(entry as { value?: string })
-    }
-  }
+  const flat = selectOptionValues(options)
   const target = model.trim().toLowerCase()
   if (!target) {
     return undefined
@@ -2874,7 +2881,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // the choice, so without this the session starts on whatever the
       // harness last used and the profile's model is silently ignored. A
       // model that doesn't resolve to one of the advertised options leaves
-      // the harness default rather than guessing — see matchModelValue.
+      // the harness default rather than guessing — see matchModelValue — and
+      // says so in the chat: a silent skip here is how an unconfigured
+      // provider used to hide, the session just running on the harness's
+      // own pick.
       if (!native && selection.model && !findAdapter(selection.adapterId)?.modelEnv && response.configOptions) {
         const option = response.configOptions.find((entry) => entry.category === 'model' && entry.type === 'select')
         if (option && option.type === 'select') {
@@ -2883,6 +2893,17 @@ export function createAgentClient(options: AgentClientOptions = {}) {
             await this.setConfigOption(sessionId, option.id, value).catch((error: unknown) =>
               emit(sessionId, { kind: 'error', message: errorMessage(error) }),
             )
+          } else if (!value) {
+            const offered = selectOptionValues(option.options)
+              .map((entry) => entry.value)
+              .filter((entry): entry is string => typeof entry === 'string')
+            const list = offered.length > 8 ? `${offered.slice(0, 8).join(', ')} … (${offered.length} offered)` : offered.join(', ')
+            emit(sessionId, {
+              kind: 'error',
+              message: `Model "${selection.model}" is not offered by ${
+                findAdapter(selection.adapterId)?.label ?? 'this harness'
+              }${list ? ` (${list})` : ' (no models advertised)'}. The session keeps the harness's default — set the profile model to one of the offered ids, or configure the missing provider.`,
+            })
           }
         }
       }

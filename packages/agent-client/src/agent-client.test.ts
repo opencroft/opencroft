@@ -311,6 +311,15 @@ test('a model that matches no advertised option leaves the harness default', asy
   const h = await setup('openclaw', { model: 'ollama/llama-99', configOptions: MODEL_SELECT_OPTIONS })
   await settle()
   assert.deepEqual(h.configOptionCalls, [], 'guessing a model is worse than the default the harness already has')
+  // The mismatch is reported, not swallowed: this error event is the only
+  // sign a profile is naming a model the harness can't offer (e.g. its
+  // provider was never configured into the harness).
+  const errors = sessionEvents(h.sessionId).filter((event) => event.kind === 'error')
+  assert.equal(errors.length, 1, 'the mismatch must be visible in the chat, not a silent skip')
+  assert.match(
+    (errors[0] as Extract<ChatEvent, { kind: 'error' }>).message,
+    /ollama\/llama-99.*not offered by OpenClaw.*opencode\/big-pickle, anthropic\/claude-fable-5/s,
+  )
   await h.client.deleteSession(h.sessionId)
 })
 
@@ -329,6 +338,55 @@ test('an adapter WITH a model env var never applies the model via config option'
   await settle()
   assert.deepEqual(h.configOptionCalls, [])
   await h.client.deleteSession(h.sessionId)
+})
+
+// ── OpenCode provider wiring (OPENCODE_CONFIG_CONTENT) ──────────────────────
+//
+// OpenCode ignores the standard OPENAI_* / model env vars entirely and builds
+// its model catalog from its own provider configuration, so buildSpawnConfig
+// synthesizes that configuration from the selection (see selectionEnv in
+// harness-adapters). Without it the harness advertises only its built-in free
+// models and the profile's model can never match.
+
+const OPENCODE_SELECTION = {
+  providerId: 'zai',
+  adapterId: 'opencode',
+  model: 'glm-5.3-flash',
+  apiKey: 'secret-key-material',
+  cwd: '/tmp/agent-client-test-opencode',
+} satisfies AgentSelection
+
+test('an opencode spawn carries its provider as an OpenCode config document', () => {
+  const content = buildSpawnConfig(OPENCODE_SELECTION).env.OPENCODE_CONFIG_CONTENT
+  assert.ok(content, 'the config document must travel in the spawn env')
+  assert.ok(!content.includes('secret-key-material'), 'the document references the key, it never carries it')
+  const entry = JSON.parse(content).provider.zai
+  assert.equal(entry.npm, '@ai-sdk/openai-compatible')
+  assert.equal(entry.options.baseURL, 'https://api.z.ai/api/coding/paas/v4')
+  assert.equal(entry.options.apiKey, '{env:ZAI_API_KEY}')
+  // Context-variant bracket ids stay out: the OpenAI-compatible endpoint
+  // rejects them ("Unknown Model"), so offering one invites a mid-turn error.
+  assert.ok('glm-5.3-flash' in entry.models)
+  assert.ok(
+    Object.keys(entry.models).every((id) => !id.includes('[')),
+    'no context-variant bracket ids in the offered models',
+  )
+})
+
+test('an opencode baseUrl override wins over the provider endpoint', () => {
+  const content = buildSpawnConfig({ ...OPENCODE_SELECTION, baseUrl: 'https://proxy.example.test/v4' })
+    .env.OPENCODE_CONFIG_CONTENT
+  assert.equal(JSON.parse(content).provider.zai.options.baseURL, 'https://proxy.example.test/v4')
+})
+
+test('an opencode selection without a key omits the key reference', () => {
+  const content = buildSpawnConfig({ ...OPENCODE_SELECTION, apiKey: '' }).env.OPENCODE_CONFIG_CONTENT
+  assert.ok(!('apiKey' in JSON.parse(content).provider.zai.options))
+})
+
+test('a provider with no OpenAI-compatible endpoint gets no config document', () => {
+  const config = buildSpawnConfig({ ...OPENCODE_SELECTION, providerId: 'anthropic' })
+  assert.equal(config.env.OPENCODE_CONFIG_CONTENT, undefined)
 })
 
 // ── dynamic config options / session info ──────────────────────────────────

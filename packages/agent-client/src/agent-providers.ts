@@ -30,6 +30,13 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
     // `[1m]` ids opt into the 1M-token window the plain ids don't serve;
     // they are listed per the coding-plan docs and not yet verified against
     // the endpoint — pair them with a configured 1,000,000 contextWindow.
+    // Measured 2026-09-16: the OPENAI-compatible coding endpoint rejects the
+    // bracketed ids outright ("Unknown Model"), while the anthropic-style
+    // endpoint serves them (a Claude-Code bridge runs `glm-5.3-flash[1m]`
+    // there); that endpoint's catalog serves `glm-5.3-flash` with a
+    // 1,000,000-token window, so the bracket form is redundant on it. The
+    // OpenCode adapter therefore excludes bracketed ids — see
+    // opencodeSelectionEnv in harness-adapters.
     models: ['glm-4.6', 'glm-5.1', 'glm-5.3', 'glm-5.3[1m]', 'glm-5.3-flash', 'glm-5.3-flash[1m]'],
     keyEnv: 'ZAI_API_KEY',
   },
