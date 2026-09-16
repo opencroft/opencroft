@@ -69,6 +69,15 @@ export const removeQueuedLocal = createServerFn({ method: 'POST', strict: { outp
     agentClient.removeQueued(data.sessionId, data.id)
   })
 
+// Stop one background task the harness reported, without cancelling the turn.
+// Returns whether the harness accepted the stop; clients observe the task's
+// own state change via the async_task event on the stream.
+export const stopBackgroundTaskLocal = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { sessionId: string; asyncTaskId: string }) => data)
+  .handler(async ({ data }): Promise<{ stopped: boolean }> => ({
+    stopped: await agentClient.stopAsyncTask(data.sessionId, data.asyncTaskId),
+  }))
+
 // While YOLO is on, every session is pinned to bypass and mode changes are
 // refused here rather than applied and then quietly undone by the enforcement
 // pass. Returns the refusal as DATA, not a thrown error: a thrown createServerFn

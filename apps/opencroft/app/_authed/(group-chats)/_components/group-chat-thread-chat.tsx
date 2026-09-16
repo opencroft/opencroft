@@ -13,6 +13,7 @@ import { StickySection } from 'ui/layouts/sticky-section'
 import { ScrollArea } from 'ui/scroll-area'
 
 import { AgentChatStatusIndicators, CHAT_RENDERERS, renderToolCall } from '@/app/_authed/(agent)/_components/agent-chat'
+import { BackgroundTaskStrip } from '@/app/_authed/(agent)/_components/background-task-strip'
 import { AgentCommandBarHost } from '@/app/_authed/(agent)/_components/command-bar-host'
 import type { LocalSource, OpenTransport, SendTransport } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
@@ -322,6 +323,7 @@ export function GroupChatThreadChat({
           component and the same position relative to the conversation the
           1:1 host uses, so the two surfaces cannot drift. */}
       <Approvals session={acp} />
+      <BackgroundTaskStrip tasks={acp.backgroundTasks} onStop={acp.stopBackgroundTask} />
     </>
   )
 

@@ -65,6 +65,9 @@ export function detailEntryKeys(entries: DetailEntry[], items: DetailItem[]): st
     if (entry.item.kind === 'tool') {
       return `tool:${entry.item.id}`
     }
+    if (entry.item.kind === 'subagent') {
+      return `subagent:${entry.item.id}`
+    }
     return `pos:${index - headerOffset}`
   })
 }

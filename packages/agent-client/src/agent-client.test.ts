@@ -73,6 +73,11 @@ async function setup(
     contextWindow?: number
     model?: string
     onCompaction?: (sessionId: string, compaction: CompactionState) => void
+    // Model a harness that advertised the steering extension: the seeded
+    // connection reports it, and its extMethod records calls and answers
+    // `injected` unless steerOutcome overrides it.
+    steeringSupported?: boolean
+    steerOutcome?: string
     // Model a real ACP agent: cancelling ends the turn it was running, which
     // resolves the in-flight prompt promise and therefore fires settleTurn.
     // The default no-op cancel hides every ordering question that depends on
@@ -102,6 +107,7 @@ async function setup(
   const configOptionCalls: Array<{ sessionId: string; configId: string; value: unknown }> = []
   const closeSessionCalls: string[] = []
   const resumeCalls: string[] = []
+  const extMethodCalls: Array<{ method: string; params: Record<string, unknown> }> = []
   const turns: TurnDeferred[] = []
   const takeTurn = (index?: number) => (index === undefined ? turns.shift() : turns.splice(index, 1)[0])
   const connection = {
@@ -132,6 +138,13 @@ async function setup(
       closeSessionCalls.push(params.sessionId)
       return {}
     },
+    extMethod: async (method: string, params: Record<string, unknown>) => {
+      extMethodCalls.push({ method, params })
+      if (method === '_session/steering') {
+        return { outcome: options.steerOutcome ?? 'injected' }
+      }
+      return {}
+    },
   } as unknown as AgentConnection
   const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
@@ -140,6 +153,7 @@ async function setup(
     connection,
     lastSessionId: null,
     loadSession: false,
+    steeringSupported: options.steeringSupported === true,
     initialized: Promise.resolve(),
   })
   const client = createAgentClient({
@@ -178,6 +192,7 @@ async function setup(
     configOptionCalls,
     closeSessionCalls,
     resumeCalls,
+    extMethodCalls,
     endTurn: (index?: number) => takeTurn(index)?.resolve({ stopReason: 'end_turn' }),
     failTurn: (message: string, index?: number) => takeTurn(index)?.reject(new Error(message)),
   }
@@ -3424,5 +3439,125 @@ test('a replayed compaction emits its event but never fires the live hook', asyn
     'the transcript still shows the replayed compaction',
   )
   assert.equal(hookCalls.length, 0, 'a replayed completed is old news, not a fresh compaction')
+  await h.client.deleteSession(h.sessionId)
+})
+
+// ── steering (mid-turn input via the harness's _session/steering extension) ─
+
+test('a harness that advertised steering injects a mid-turn message instead of queuing it', async () => {
+  const h = await setup('openclaw', { steeringSupported: true })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  assert.equal(h.promptCalls.length, 1, 'the first message started the turn')
+
+  await h.client.prompt(h.sessionId, 'steer me', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  assert.equal(h.promptCalls.length, 1, 'the mid-turn message did NOT start a second prompt turn')
+  const steer = h.extMethodCalls.find((call) => call.method === '_session/steering')
+  assert.ok(steer, 'it went through the steering extension')
+  // Delivered text is wrapped with the sender's queue tag, like any message run.
+  assert.match((steer.params.prompt as Array<{ text: string }>)[0].text, /steer me/)
+  const users = h.events.filter((event) => event.kind === 'user' && event.text.includes('steer me'))
+  assert.equal(users.length, 1, 'the injected message shows once in the transcript')
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('steering that returns promptRequired falls through to a normal prompt', async () => {
+  const h = await setup('openclaw', { steeringSupported: true, steerOutcome: 'promptRequired' })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  // The turn was still counted as running, so the second went to steering; the
+  // extension declined (promptRequired), and the message must not be lost — it
+  // falls through to a real prompt once the first turn ends.
+  assert.ok(h.extMethodCalls.some((call) => call.method === '_session/steering'))
+  h.endTurn() // first turn ends → queued 'second' drains as a prompt
+  await settle()
+  assert.deepEqual(deliveries(h), [['first'], ['second']], 'the declined steer was delivered as a prompt, in order')
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('without steering support a mid-turn message queues as before', async () => {
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  assert.equal(h.extMethodCalls.length, 0, 'no steering attempted')
+  assert.deepEqual(deliveries(h), [['first']], 'the second message is held, not injected')
+  h.endTurn()
+  await settle()
+  assert.deepEqual(deliveries(h), [['first'], ['second']])
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('agent message chunks with different messageIds do not merge into one block', async () => {
+  const h = await setup('openclaw')
+  handleUpdate({ sessionId: h.sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'before.' }, messageId: 'm1' } } as Parameters<typeof handleUpdate>[0])
+  handleUpdate({ sessionId: h.sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'after.' }, messageId: 'm2' } } as Parameters<typeof handleUpdate>[0])
+  const msgs = h.events.filter((event): event is Extract<ChatEvent, { kind: 'agent_message' }> => event.kind === 'agent_message')
+  assert.deepEqual(msgs.map((m) => m.messageId), ['m1', 'm2'], 'each chunk keeps its own message id for the fold to split on')
+  await h.client.deleteSession(h.sessionId)
+})
+
+// ── subagents (ACP #1992 subagent_spawned / subagent_state_update) ──────────
+
+function sendUpdate(sessionId: string, update: Record<string, unknown>): void {
+  handleUpdate({ sessionId, update } as Parameters<typeof handleUpdate>[0])
+}
+
+test('a spawned subagent routes its own transcript into the parent and closes on a terminal state', async () => {
+  // openclaw (no per-session MCP server) so the test needs no reset() teardown;
+  // subagent routing is handled in handleUpdate regardless of adapter.
+  const h = await setup('openclaw')
+  const childId = 'child-sess-1'
+  sendUpdate(h.sessionId, { sessionUpdate: 'subagent_spawned', subagentSessionId: childId, name: 'Researcher', task: 'dig', capabilities: {} })
+  assert.ok(h.client.hasBackgroundWork(h.sessionId), 'a live subagent is background work')
+
+  // The child's own activity arrives addressed to ITS session id.
+  sendUpdate(childId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working' } })
+  const nested = h.events.find((event) => event.kind === 'subagent_event' && event.subagentSessionId === childId)
+  assert.ok(nested && nested.kind === 'subagent_event' && nested.event.kind === 'agent_message', 'the child step nested under the parent')
+
+  sendUpdate(h.sessionId, { sessionUpdate: 'subagent_state_update', subagentSessionId: childId, state: 'completed' })
+  const last = h.events.filter((event) => event.kind === 'subagent').at(-1)
+  assert.ok(last && last.kind === 'subagent' && last.subagent.state === 'completed')
+  assert.equal(h.client.hasBackgroundWork(h.sessionId), false, 'a completed subagent is no longer background work')
+  await h.client.deleteSession(h.sessionId)
+})
+
+// ── background tasks (AIR async_task_* ) ────────────────────────────────────
+
+test('a background task is reported, snapshot-prefixed while live, and stoppable', async () => {
+  const h = await setup('openclaw', { sessionKey: 'agent:with-tasks' })
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'async_task_spawned',
+    asyncTaskId: 'task-1',
+    name: 'nightly loop',
+    taskType: 'loop',
+    description: 'runs the thing',
+    showInTranscript: true,
+    canStop: true,
+  })
+  assert.ok(h.client.hasBackgroundWork(h.sessionId), 'a running task is background work')
+  assert.deepEqual(h.client.backgroundWorkSessionKeys(), ['agent:with-tasks'])
+
+  // A subscriber joining PAST the task event (windowed to nothing) is still
+  // handed the live task, via the snapshot prefix.
+  const late: ChatEvent[] = []
+  const unsub = h.client.subscribe(h.sessionId, (event) => late.push(event), { fromIndex: 9999 })
+  assert.ok(late.some((event) => event.kind === 'async_task' && event.task.asyncTaskId === 'task-1'), 'live task replays to a new subscriber')
+  unsub()
+
+  const stopped = await h.client.stopAsyncTask(h.sessionId, 'task-1')
+  assert.equal(stopped, true)
+  assert.ok(h.extMethodCalls.some((call) => call.method === '_session/async_task/stop'))
+
+  sendUpdate(h.sessionId, { sessionUpdate: 'async_task_state_update', asyncTaskId: 'task-1', state: 'stopped' })
+  assert.equal(h.client.hasBackgroundWork(h.sessionId), false, 'a stopped task is no longer background work')
   await h.client.deleteSession(h.sessionId)
 })

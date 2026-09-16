@@ -141,6 +141,15 @@ async function reapOne(sessionKey: string): Promise<void> {
     if (fresh !== 'idle') {
       return
     }
+    // A session with no turn running can still have live background work its
+    // harness reported — a subagent or a detached task. Unloading the process
+    // would kill that work silently, which is exactly what this guard exists
+    // to prevent: an "idle" session that is only idle at the prompt level is
+    // not idle. Re-read fresh here, beside the status check, for the same
+    // reason that one is fresh.
+    if (agentClient.backgroundWorkSessionKeys().includes(sessionKey)) {
+      return
+    }
     await stopLocalSessionProcessImpl(sessionKey)
     console.log(`[idle-session-reaper] unloaded ${sessionKey}`)
   } catch (err) {

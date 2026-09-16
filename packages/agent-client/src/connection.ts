@@ -23,4 +23,9 @@ export type AgentConnection = Pick<
   | 'cancel'
   | 'unstable_forkSession'
   | 'closeSession'
->
+> & {
+  // Extension requests (`_session/steering`, `_session/async_task/stop`, …).
+  // Optional: the native harness has no wire to carry one, and the engine only
+  // calls it on connections whose harness advertised the matching extension.
+  extMethod?: ClientSideConnection['extMethod']
+}

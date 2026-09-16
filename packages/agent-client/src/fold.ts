@@ -77,6 +77,10 @@ const SNAPSHOT_KINDS = new Set<ChatEvent['kind']>([
   'session_info',
   'usage',
   'queue',
+  // A background task's live state is "last value wins" and interleaves with
+  // conversation exactly like usage does — it must not split a message run,
+  // and a windowed subscriber rebuilds the live ones from withSnapshotPrefix.
+  'async_task',
 ])
 
 export function isSnapshotEvent(event: ChatEvent): boolean {

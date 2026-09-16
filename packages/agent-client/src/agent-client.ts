@@ -52,10 +52,12 @@ import { fileSkillHandler, fileSkills } from './skills'
 import { findTurnBoundary } from './turns'
 import type {
   AgentSelection,
+  AsyncTaskInfo,
   AvailableCommand,
   ChatEvent,
   CompactionState,
   Presence,
+  SubagentInfo,
   PromptOrigin,
   QueuedPrompt,
   QueueMode,
@@ -280,6 +282,12 @@ interface SessionState {
   // dev hot-reload may predate the field (backfilled at the use site, same as
   // `commands`).
   compactions?: Map<string, CompactionState>
+  // Subagents by subagentSessionId and background tasks by asyncTaskId,
+  // merged from their upsert notifications. Optional for the same reason
+  // `compactions` is: only reporting harnesses populate them, and hot-reload
+  // survivors may predate the fields.
+  subagents?: Map<string, SubagentInfo>
+  asyncTasks?: Map<string, AsyncTaskInfo>
   // Effective per-tool / per-skill permissions; undefined = unrestricted.
   permissions?: ResolvedPermissions
   // Number of prompt promises currently in flight for this session — the
@@ -371,9 +379,16 @@ interface ConnEntry {
   // (session/load history replay). Clients MUST NOT call loadSession otherwise.
   // Only meaningful once `initialized` has resolved.
   loadSession: boolean
-  // Resolves when initialize() has completed and `loadSession` is set. Every
-  // caller (spawner and concurrent reusers) awaits this before using the
-  // connection, so capability checks never race a half-open connection.
+  // Whether the harness advertised the steering extension at initialize
+  // (`_meta.steering.supported`). This is the harness's OWN word about
+  // mid-turn input — one of the two ways it gets enabled (see
+  // supportsMidTurnInput; the other is the adapter's forced flag). Only
+  // meaningful once `initialized` has resolved.
+  steeringSupported: boolean
+  // Resolves when initialize() has completed and the capability flags above
+  // are set. Every caller (spawner and concurrent reusers) awaits this before
+  // using the connection, so capability checks never race a half-open
+  // connection.
   initialized: Promise<void>
 }
 
@@ -410,6 +425,11 @@ interface ClientStore {
   acpTokenSession: Map<string, string>
   // Monotonic chat counter for default titles (delete-proof, unlike map size).
   titleCounter: number
+  // subagentSessionId -> parent sessionId, for routing a subagent's own
+  // session/update notifications into the parent's transcript. Entries live
+  // as long as the parent session does (see deleteSession's cleanup) — a
+  // terminal subagent may still have chunks in flight.
+  subagentParents: Map<string, string>
 }
 
 function createStore(): ClientStore {
@@ -423,6 +443,7 @@ function createStore(): ClientStore {
     acpTokenPermissions: new Map(),
     acpTokenSession: new Map(),
     titleCounter: 0,
+    subagentParents: new Map(),
   }
 }
 
@@ -445,6 +466,7 @@ store.acpTokenPermissions ??= new Map()
 store.acpTokenSession ??= new Map()
 store.lastSessionId ??= null
 store.titleCounter ??= 0
+store.subagentParents ??= new Map()
 
 function textOf(content: ContentBlock): string {
   if (content.type === 'text') {
@@ -600,6 +622,15 @@ function withSnapshotPrefix(session: SessionState, windowed: ChatEvent[]): ChatE
   if (session.queue.length > 0 && !has('queue')) {
     prefix.push({ kind: 'queue', items: [...session.queue] })
   }
+  // LIVE background tasks only. A finished task is transcript history — a
+  // window that scrolled past it is no more entitled to it than to an old
+  // tool call — but a task still running is present-tense state the reader
+  // is otherwise blind to, which is the exact failure this feature removes.
+  for (const task of session.asyncTasks?.values() ?? []) {
+    if ((task.state === 'running' || task.state === 'paused') && !has('async_task')) {
+      prefix.push({ kind: 'async_task', task: { ...task } })
+    }
+  }
   // Only when it is not the default, matching every line above: absent means
   // realtime, which is what DEFAULT_PRESENCE documents and what a session that
   // has never been told otherwise is actually doing. Synthesizing one for every
@@ -622,12 +653,187 @@ function dropSessionTokens(sessionId: string): void {
   }
 }
 
+// The harness's own message boundary, when the chunk carries one — spread
+// into the event so an absent id stays an absent FIELD rather than an
+// explicit undefined (events are compared whole in tests and snapshots).
+function chunkMessageId(update: { messageId?: string | null }): { messageId?: string } {
+  return update.messageId ? { messageId: update.messageId } : {}
+}
+
+// A subagent session's own update, translated to the event vocabulary for
+// nesting into the parent transcript. Only the conversation subset — the
+// session-state kinds (modes, config, usage, …) describe the CHILD session,
+// which holds no state of its own here, and folding them into the parent
+// would overwrite the parent's.
+function childEventOf(update: SessionNotification['update']): ChatEvent | null {
+  switch (update.sessionUpdate) {
+    case 'user_message_chunk':
+      return { kind: 'user', text: textOf(update.content), ...chunkMessageId(update) }
+    case 'agent_message_chunk':
+      return { kind: 'agent_message', text: textOf(update.content), ...chunkMessageId(update) }
+    case 'agent_thought_chunk':
+      return { kind: 'agent_thought', text: textOf(update.content), ...chunkMessageId(update) }
+    case 'tool_call':
+      return {
+        kind: 'tool_call',
+        toolCallId: update.toolCallId,
+        title: update.title,
+        status: update.status ?? 'pending',
+        toolKind: update.kind,
+        input: update.rawInput,
+      }
+    case 'tool_call_update':
+      return {
+        kind: 'tool_update',
+        toolCallId: update.toolCallId,
+        title: update.title ?? undefined,
+        status: update.status ?? undefined,
+        input: update.rawInput ?? undefined,
+        output: toolOutputText(update.content, update.rawOutput),
+      }
+    default:
+      return null
+  }
+}
+
+// Reads one string/boolean field off an untyped draft update without
+// inventing values: absent or mistyped answers undefined.
+function draftString(update: Record<string, unknown>, key: string): string | undefined {
+  const value = update[key]
+  return typeof value === 'string' ? value : undefined
+}
+
+/**
+ * The draft update kinds the SDK union doesn't carry yet. True means the
+ * update was one of them (handled or not — an unknown session still consumes
+ * it); false sends the caller on to the typed switch.
+ *
+ * Subagent and async-task entities follow the compaction pattern: the session
+ * holds the merged record, every emit carries its full current state, and
+ * consumers fold by replacement keyed on the entity id.
+ */
+function handleExtensionUpdate(sessionId: string, update: Record<string, unknown> & { sessionUpdate: string }): boolean {
+  switch (update.sessionUpdate) {
+    case 'subagent_spawned': {
+      const session = store.sessions.get(sessionId)
+      const subagentSessionId = draftString(update, 'subagentSessionId')
+      if (!session || !subagentSessionId) {
+        return true
+      }
+      const info: SubagentInfo = {
+        subagentSessionId,
+        name: draftString(update, 'name') ?? '',
+        task: draftString(update, 'task') ?? '',
+      }
+      session.subagents ??= new Map()
+      session.subagents.set(subagentSessionId, info)
+      store.subagentParents.set(subagentSessionId, sessionId)
+      emit(sessionId, { kind: 'subagent', subagent: { ...info } })
+      return true
+    }
+    case 'subagent_state_update': {
+      const session = store.sessions.get(sessionId)
+      const subagentSessionId = draftString(update, 'subagentSessionId')
+      if (!session || !subagentSessionId) {
+        return true
+      }
+      session.subagents ??= new Map()
+      // A terminal-first arrival (announce lost to a replay gap) still gets a
+      // record — nameless, but placed and closed rather than dropped.
+      const info = session.subagents.get(subagentSessionId) ?? { subagentSessionId, name: '', task: '' }
+      info.state = draftString(update, 'state') ?? info.state
+      session.subagents.set(subagentSessionId, info)
+      emit(sessionId, { kind: 'subagent', subagent: { ...info } })
+      return true
+    }
+    case 'async_task_spawned':
+    case 'async_task_progress':
+    case 'async_task_state_update': {
+      const session = store.sessions.get(sessionId)
+      const asyncTaskId = draftString(update, 'asyncTaskId')
+      if (!session || !asyncTaskId) {
+        return true
+      }
+      session.asyncTasks ??= new Map()
+      const previous = session.asyncTasks.get(asyncTaskId)
+      const task: AsyncTaskInfo = previous
+        ? { ...previous }
+        : {
+            asyncTaskId,
+            name: draftString(update, 'name') ?? '',
+            taskType: draftString(update, 'taskType') ?? '',
+            description: draftString(update, 'description') ?? '',
+            state: 'running',
+            canStop: update.canStop === true,
+            showInTranscript: update.showInTranscript !== false,
+          }
+      if (update.sessionUpdate === 'async_task_spawned') {
+        task.name = draftString(update, 'name') ?? task.name
+        task.taskType = draftString(update, 'taskType') ?? task.taskType
+        task.canStop = update.canStop === true
+        task.showInTranscript = update.showInTranscript !== false
+      }
+      const description = draftString(update, 'description')
+      if (description !== undefined) {
+        task.description = description
+      }
+      const summary = draftString(update, 'summary')
+      if (summary !== undefined) {
+        task.summary = summary
+      }
+      const lastToolName = draftString(update, 'lastToolName')
+      if (lastToolName !== undefined) {
+        task.lastToolName = lastToolName
+      }
+      const outputFilePath = draftString(update, 'outputFilePath')
+      if (outputFilePath !== undefined) {
+        task.outputFilePath = outputFilePath
+      }
+      const toolCallId = draftString(update, 'toolCallId')
+      if (toolCallId !== undefined) {
+        task.toolCallId = toolCallId
+      }
+      const usage = update.usage
+      if (usage && typeof usage === 'object' && !Array.isArray(usage)) {
+        const { totalTokens, toolUses, durationMs } = usage as Record<string, unknown>
+        if (typeof totalTokens === 'number' && typeof toolUses === 'number' && typeof durationMs === 'number') {
+          task.usage = { totalTokens, toolUses, durationMs }
+        }
+      }
+      if (update.sessionUpdate === 'async_task_state_update') {
+        task.state = draftString(update, 'state') ?? task.state
+      }
+      session.asyncTasks.set(asyncTaskId, task)
+      emit(sessionId, { kind: 'async_task', task: { ...task } })
+      return true
+    }
+    default:
+      return false
+  }
+}
+
 // Dispatches an inbound session/update notification to store state + a
 // ChatEvent. Exported so tests can drive it directly — the real caller is the
 // ACP Client wired up per spawned connection (buildClient below), which test
 // mocks bypass entirely by seeding store.connections with a fake AgentConnection.
 export function handleUpdate(notification: SessionNotification): void {
   const { sessionId, update } = notification
+  // Draft update kinds (subagents, async tasks — ACP #1992 / AIR) aren't in
+  // the SDK's typed union yet; recognized by name ahead of the switch below.
+  if (handleExtensionUpdate(sessionId, update as unknown as Record<string, unknown> & { sessionUpdate: string })) {
+    return
+  }
+  // A notification addressed to a subagent's own session id is one step of
+  // that subagent's transcript, nested into the parent's log — the parent is
+  // the session a subscriber is actually watching.
+  const parentId = store.subagentParents.get(sessionId)
+  if (parentId !== undefined && !store.sessions.has(sessionId)) {
+    const childEvent = childEventOf(update)
+    if (childEvent) {
+      emit(parentId, { kind: 'subagent_event', subagentSessionId: sessionId, event: childEvent })
+    }
+    return
+  }
   switch (update.sessionUpdate) {
     case 'user_message_chunk': {
       // Only arrives during session/load replay — live user turns are emitted
@@ -650,15 +856,15 @@ export function handleUpdate(notification: SessionNotification): void {
       if (previous && previous.kind !== 'user') {
         emit(sessionId, { kind: 'turn_end', stopReason: 'replayed' })
       }
-      emit(sessionId, { kind: 'user', text: textOf(update.content) })
+      emit(sessionId, { kind: 'user', text: textOf(update.content), ...chunkMessageId(update) })
       break
     }
     case 'agent_message_chunk': {
-      emit(sessionId, { kind: 'agent_message', text: textOf(update.content) })
+      emit(sessionId, { kind: 'agent_message', text: textOf(update.content), ...chunkMessageId(update) })
       break
     }
     case 'agent_thought_chunk': {
-      emit(sessionId, { kind: 'agent_thought', text: textOf(update.content) })
+      emit(sessionId, { kind: 'agent_thought', text: textOf(update.content), ...chunkMessageId(update) })
       break
     }
     case 'tool_call': {
@@ -1122,12 +1328,27 @@ function supportsTools(selection: AgentSelection): boolean {
 }
 
 // Whether this agent accepts a prompt while a turn is running, feeding it into
-// the live turn as streaming input ("steering"). Declared per adapter — ACP
-// has no capability for it — and off by default, in which case the engine
-// queues mid-turn prompts and delivers them as turns end. Exported so hosts
-// can adapt their turn-control UX to the same single flag.
+// the live turn ("steering"). True on either of two words, and only those:
+//
+//  - the HARNESS's own: it advertised the steering extension at initialize
+//    (`_meta.steering.supported`, captured per connection) — the honest
+//    signal, since ACP proper has no capability for this; or
+//  - OURS, forced: the adapter's `supportsMidTurnInput` flag, for a harness
+//    verified to steer without advertising it.
+//
+// A session whose connection is not up yet answers from the forced flag alone
+// — the conservative side: its messages queue, the next turn delivers them,
+// and once the connection reports in, mid-turn sends start steering. Off, the
+// engine queues mid-turn prompts and delivers them as turns end. Exported so
+// hosts adapt their turn-control UX to the same resolution the engine acts on.
 export function supportsMidTurnInput(selection: AgentSelection): boolean {
-  return findAdapter(selection.adapterId)?.supportsMidTurnInput === true
+  if (findAdapter(selection.adapterId)?.supportsMidTurnInput === true) {
+    return true
+  }
+  if (isNativeSelection(selection)) {
+    return false
+  }
+  return store.connections.get(spawnKey(buildSpawnConfig(selection)))?.steeringSupported === true
 }
 
 /** Whether an adapter's harness is verified to send ACP elicitations — see
@@ -1325,7 +1546,14 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       () => buildClient(() => entry.lastSessionId, mcpServerName, options.permissionHandler),
       stream,
     )
-    entry = { process: child, connection, lastSessionId: null, loadSession: false, initialized: Promise.resolve() }
+    entry = {
+      process: child,
+      connection,
+      lastSessionId: null,
+      loadSession: false,
+      steeringSupported: false,
+      initialized: Promise.resolve(),
+    }
     store.connections.set(key, entry)
     entry.initialized = (async () => {
       try {
@@ -1349,11 +1577,33 @@ export function createAgentClient(options: AgentClientOptions = {}) {
             // "Compact conversation" tool call. Same `{}`-means-supported
             // spelling as elicitation.
             session: { compaction: {} },
+            // Two draft opt-ins the SDK's ClientCapabilities type doesn't
+            // carry yet (spread past its excess-property check on purpose):
+            //
+            // `subagents` (ACP draft #1992): with it, the harness announces
+            // each spawned subagent (`subagent_spawned` / `subagent_state_update`)
+            // and routes the subagent's own activity as session/update
+            // notifications under its OWN subagentSessionId, instead of
+            // flattening everything into the parent transcript.
+            //
+            // The JetBrains AIR `asyncTasks` capability (in `_meta`, the only
+            // spelling claude-agent-acp checks): with it, background work —
+            // detached bash jobs, loops — reports as async_task_spawned /
+            // async_task_progress / async_task_state_update, instead of being
+            // completely invisible between turns.
+            ...({ subagents: {} } as Record<string, unknown>),
+            _meta: { jetbrains: { air: { version: 1, capabilities: ['asyncTasks'] } } },
           },
           clientInfo,
         })
         entry.loadSession = Boolean(
           (initResult as { agentCapabilities?: { loadSession?: boolean } }).agentCapabilities?.loadSession,
+        )
+        // The steering extension has no ACP capability field; the harness
+        // advertises it via initialize's top-level response `_meta` (see
+        // claude-agent-acp's `_session/steering` contract).
+        entry.steeringSupported = Boolean(
+          (initResult as { _meta?: { steering?: { supported?: boolean } } })._meta?.steering?.supported,
         )
       } catch (error) {
         // The handshake fails the moment the process's stdout closes, which can
@@ -1461,7 +1711,55 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // same tick sees the active turn and queues (or steers) instead of racing
   // past the guard. The counter is released — and the next queued prompt
   // delivered — only by settleTurn, once this prompt's promise settles.
-  async function deliverPrompt(sessionId: string, text: string): Promise<void> {
+  /**
+   * Inject a message into the session's RUNNING turn via the harness's
+   * `_session/steering` extension. True means delivered: the injection was
+   * accepted and the running turn owns the response. False means "use the
+   * normal prompt path" for any reason at all — the harness never advertised
+   * the extension (a forced-only adapter), the connection exposes no
+   * extension channel (native harness, a seeded test double), the turn ended
+   * in the race window (`idleBehavior: promptRequired` answers without
+   * injecting), or the request itself failed. Callers treat every false
+   * identically, so a steering failure degrades to exactly the delivery that
+   * existed before steering did.
+   *
+   * The user event emits only AFTER an accepted injection, not before the
+   * request: a false return falls through to deliverPrompt's own emit, and
+   * emitting on both sides would show the message twice. The response frame
+   * arrives before the model can have replied to the injection, so the
+   * transcript still orders the message ahead of everything it caused.
+   */
+  async function steerIntoRunningTurn(sessionId: string, session: SessionState, deliveredText: string): Promise<boolean> {
+    if (!supportsMidTurnInput(session.selection)) {
+      return false
+    }
+    const entry = connEntryFor(session.selection)
+    if (!entry?.steeringSupported || typeof entry.connection.extMethod !== 'function') {
+      return false
+    }
+    try {
+      const result = await entry.connection.extMethod('_session/steering', {
+        sessionId,
+        prompt: [{ type: 'text', text: deliveredText }],
+        _meta: { steering: { idleBehavior: 'promptRequired' } },
+      })
+      if ((result as { outcome?: string }).outcome !== 'injected') {
+        return false
+      }
+    } catch (error) {
+      // Surfaced rather than swallowed — the fallback prompt below still
+      // delivers the message, but a steering channel that errors is worth a
+      // line in the transcript while the contract is this young.
+      emit(sessionId, { kind: 'error', message: `steering failed, delivered as a prompt instead: ${errorMessage(error)}` })
+      return false
+    }
+    store.lastSessionId = sessionId
+    entry.lastSessionId = sessionId
+    emit(sessionId, { kind: 'user', text: deliveredText })
+    return true
+  }
+
+  async function deliverPrompt(sessionId: string, text: string, steerable = false): Promise<void> {
     const session = store.sessions.get(sessionId)
     if (!session) {
       return
@@ -1470,6 +1768,21 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // not by any caller of prompt(), so it sees the text at the one instant
     // it is truly handed to the harness.
     const deliveredText = options.transformDeliveredPrompt ? options.transformDeliveredPrompt(text) : text
+    // Mid-turn message delivery on a connection that ADVERTISED the steering
+    // extension goes through `_session/steering`: injected into the running
+    // turn, whose own settlement stays the turn's end — no prompt promise, no
+    // turn accounting. Every other case falls through to the prompt below: a
+    // forced-only adapter keeps the legacy overlapping session/prompt, a
+    // system/command run (`steerable` false) must start its own turn rather
+    // than become conversational input, and an `injected: false` answer means
+    // the turn ended in the race window, where a normal prompt is simply
+    // correct.
+    if (steerable && session.activeTurns > 0) {
+      const injected = await steerIntoRunningTurn(sessionId, session, deliveredText)
+      if (injected) {
+        return
+      }
+    }
     session.activeTurns += 1
     let connection: AgentConnection
     try {
@@ -1626,7 +1939,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // prompt had reached the harness — turning what used to be "delivered by
     // the time this resolves" into a race the caller cannot see. Drains from a
     // turn settlement have nobody waiting and keep discarding it.
-    return deliverPrompt(sessionId, text).then(
+    // Only a MESSAGE run may steer into a running turn: a system or command
+    // entry (`/compact` above all) is harness machinery that must start its
+    // own turn, never become conversational input to somebody else's.
+    return deliverPrompt(sessionId, text, first.kind === 'message').then(
       () => {
         // Only now: the durable copy is what makes a message survive a process
         // that dies, so it must outlive every step that could still fail to
@@ -2121,12 +2437,75 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return [...keys]
     },
 
+    // Session keys of every session with LIVE background work the harness
+    // reported — a subagent or async task still going with no turn active.
+    // hasActiveTurn/activeSessionKeys miss this by construction (no turn is
+    // running), so a host reads it separately to hold the idle reaper off a
+    // session that only looks idle, and to warn before stopping one.
+    backgroundWorkSessionKeys(): string[] {
+      const keys = new Set<string>()
+      for (const [sessionId, session] of store.sessions) {
+        const key = session.selection.sessionKey
+        if (key && this.hasBackgroundWork(sessionId)) {
+          keys.add(key)
+        }
+      }
+      return [...keys]
+    },
+
     // Same underlying read as activeSessionKeys, but by raw session id and for
     // a single session — for a caller that already has the id (e.g. a `force`
     // send deciding whether there's actually a turn worth cancelling) and has
     // no reason to resolve it back to a selection.sessionKey first.
     hasActiveTurn(sessionId: string): boolean {
       return (store.sessions.get(sessionId)?.activeTurns ?? 0) > 0
+    },
+
+    // Whether the session has live background work its harness reported — a
+    // subagent still running or a background task still running/paused. This
+    // is work that keeps going with no turn active, so `hasActiveTurn` misses
+    // it entirely: it is what lets a host warn before stopping a session and
+    // hold the idle reaper off one that only LOOKS idle. Only reporting
+    // harnesses populate these, so a harness that says nothing reads as no
+    // background work — the same honest blank as before the feature.
+    hasBackgroundWork(sessionId: string): boolean {
+      const session = store.sessions.get(sessionId)
+      if (!session) {
+        return false
+      }
+      for (const subagent of session.subagents?.values() ?? []) {
+        if (subagent.state === undefined) {
+          return true
+        }
+      }
+      for (const task of session.asyncTasks?.values() ?? []) {
+        if (task.state === 'running' || task.state === 'paused') {
+          return true
+        }
+      }
+      return false
+    },
+
+    // Stop ONE background task without cancelling the prompt turn, via the
+    // harness's `_session/async_task/stop` extension. A no-op (resolving
+    // false) when the session, its connection, or the extension channel is
+    // absent — the same degrade-quietly contract steering follows.
+    async stopAsyncTask(sessionId: string, asyncTaskId: string): Promise<boolean> {
+      const session = store.sessions.get(sessionId)
+      if (!session) {
+        return false
+      }
+      const entry = connEntryFor(session.selection)
+      if (typeof entry?.connection.extMethod !== 'function') {
+        return false
+      }
+      try {
+        await entry.connection.extMethod('_session/async_task/stop', { sessionId, asyncTaskId })
+        return true
+      } catch (error) {
+        emit(sessionId, { kind: 'error', message: errorMessage(error) })
+        return false
+      }
     },
 
     // Session keys of every session with a *live agent process* right now —
@@ -2569,6 +2948,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       store.sessions.delete(sessionId)
       store.nativeSessions.delete(sessionId)
       dropSessionTokens(sessionId)
+      // Drop the subagent→parent routes this session owned, so a later
+      // session id can't be misrouted as one of its subagents.
+      for (const [childId, parentId] of store.subagentParents) {
+        if (parentId === sessionId) {
+          store.subagentParents.delete(childId)
+        }
+      }
       if (store.lastSessionId === sessionId) {
         store.lastSessionId = null
       }

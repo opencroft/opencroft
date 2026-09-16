@@ -1,6 +1,6 @@
 'use client'
 
-import { Maximize2, Minimize2, Pencil, X } from 'lucide-react'
+import { Bot, Maximize2, Minimize2, Pencil, X } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
 import { useState } from 'react'
 // Both of these import types back from this file, and a type import is erased,
@@ -48,6 +48,13 @@ export type DetailItem =
   | { kind: 'assistant-text'; text: string }
   | { kind: 'thinking'; text: string }
   | { kind: 'tool'; id: string; name: string; args: unknown; result?: { text: string; isError?: boolean } }
+  // A subagent the turn spawned, drawn as a nested, bordered block: its name
+  // and task in a header with a live/terminal state badge, and its OWN reply
+  // chain (`items`, built by the host the same way the parent's is) rendered
+  // inside. `id` is the subagent's session id — its React key and identity.
+  // The host pre-renders the nested items to DetailItem so this component never
+  // learns the wire shape a subagent's transcript arrives in.
+  | { kind: 'subagent'; id: string; name: string; task: string; state?: string; items: DetailItem[] }
 
 export type DetailEntry = { kind: 'header' } | { kind: 'item'; item: DetailItem }
 
@@ -674,6 +681,57 @@ function toolDotVariant(item: DetailItem): ChainDotVariant {
   return item.result.isError ? 'destructive' : 'success'
 }
 
+// A subagent's nested transcript, in a bordered block under the parent turn.
+// Renders its own items with the SAME per-kind renderers the parent uses
+// (text as markdown, thinking via the host's block, tool via renderTool), one
+// level deep — a subagent that itself spawns a subagent nests again through
+// this same component. Live subagents show a pulsing badge; a terminal one
+// shows its outcome.
+function SubagentBlock({
+  item,
+  renderTool,
+  renderers,
+}: {
+  item: Extract<DetailItem, { kind: 'subagent' }>
+  renderTool: (item: Extract<DetailItem, { kind: 'tool' }>) => ReactNode
+  renderers: ChatTurnRenderers
+}) {
+  const { ThinkingBlock } = renderers
+  const live = item.state === undefined
+  const badge = live ? 'running' : item.state
+  const badgeClass = live
+    ? 'bg-primary/10 text-primary animate-pulse'
+    : item.state === 'completed'
+      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+      : 'bg-muted text-muted-foreground'
+  return (
+    <div className='rounded-md border border-border/60 bg-muted/20'>
+      <div className='flex items-center gap-2 px-3 py-2'>
+        <Bot className='size-3.5 shrink-0 text-muted-foreground' />
+        <span className='truncate text-xs font-medium text-foreground'>{item.name || 'Subagent'}</span>
+        <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badgeClass}`}>{badge}</span>
+      </div>
+      {item.task ? <div className='px-3 pb-2 text-xs text-muted-foreground'>{item.task}</div> : null}
+      {item.items.length > 0 ? (
+        <div className='flex flex-col gap-2 border-t border-border/40 px-3 py-2'>
+          {item.items.map((child, i) => {
+            if (child.kind === 'assistant-text') {
+              return child.text.trim() ? <Markdown key={i} text={child.text} /> : null
+            }
+            if (child.kind === 'thinking') {
+              return <ThinkingBlock key={i} text={child.text} />
+            }
+            if (child.kind === 'subagent') {
+              return <SubagentBlock key={child.id} item={child} renderTool={renderTool} renderers={renderers} />
+            }
+            return <div key={child.id}>{renderTool(child)}</div>
+          })}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export interface ChatTurnDetailsProps {
   blockId: string
   items: DetailItem[]
@@ -745,6 +803,9 @@ export function ChatTurnDetails({
     }
     if (item.kind === 'thinking') {
       return <ThinkingBlock text={item.text} pending={entryPending} />
+    }
+    if (item.kind === 'subagent') {
+      return <SubagentBlock item={item} renderTool={renderTool} renderers={renderers} />
     }
     return renderTool(item)
   }

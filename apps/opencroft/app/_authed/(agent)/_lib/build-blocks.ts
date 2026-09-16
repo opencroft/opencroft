@@ -295,22 +295,37 @@ export function buildBlocks(messages: ChatMessage[], enclosingTurnId?: number): 
       firstReplyId = m.id
     }
     for (const p of m.parts) {
-      if (p.type === 'text') {
-        const v = stripOpencroftTags(p.text || '…')
-        if (!v.trim()) {
-          continue
-        }
-        details.push({ kind: 'assistant-text', text: v })
-      } else if (p.type === 'thinking') {
-        if (!p.text.trim()) {
-          continue
-        }
-        details.push({ kind: 'thinking', text: p.text })
-      } else {
-        details.push({ kind: 'tool', id: p.id, name: p.name, args: p.args, result: p.result })
+      const item = partToDetail(p)
+      if (item) {
+        details.push(item)
       }
     }
   }
   flush()
   return blocks
+}
+
+// One reply part → the detail item that draws it, or null when it renders
+// nothing (an empty text/thinking part). Shared by the parent chain and,
+// recursively, by a subagent's nested transcript, so both draw text, thinking
+// and tools identically.
+function partToDetail(p: ChatMessage['parts'][number]): DetailItem | null {
+  if (p.type === 'text') {
+    const v = stripOpencroftTags(p.text || '…')
+    return v.trim() ? { kind: 'assistant-text', text: v } : null
+  }
+  if (p.type === 'thinking') {
+    return p.text.trim() ? { kind: 'thinking', text: p.text } : null
+  }
+  if (p.type === 'subagent') {
+    return {
+      kind: 'subagent',
+      id: p.subagentSessionId,
+      name: p.name,
+      task: p.task,
+      state: p.state,
+      items: p.parts.map(partToDetail).filter((item): item is DetailItem => item !== null),
+    }
+  }
+  return { kind: 'tool', id: p.id, name: p.name, args: p.args, result: p.result }
 }

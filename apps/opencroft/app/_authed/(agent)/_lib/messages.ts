@@ -1,14 +1,33 @@
 import type { ResolvedAuthor } from '@/app/_authed/(agent)/_lib/acp-stream'
 
 export type ChatPart =
-  | { type: 'text'; text: string }
-  | { type: 'thinking'; text: string }
+  // `messageId` is the harness's own message boundary (see ChatEvent): a text
+  // or thinking part carries the id of the message it belongs to, so a fold
+  // starts a NEW part when the id changes instead of concatenating two
+  // distinct messages into one bubble. That is what keeps a steered turn —
+  // where the model's pre- and post-injection replies are different messages
+  // — readable rather than a run-on. Absent means the harness said nothing,
+  // which merges exactly as before.
+  | { type: 'text'; text: string; messageId?: string }
+  | { type: 'thinking'; text: string; messageId?: string }
   | {
       type: 'tool-call'
       id: string
       name: string
       args: unknown
       result?: { text: string; isError?: boolean }
+    }
+  // A subagent the harness spawned under this turn (see SubagentInfo). Its own
+  // transcript is nested verbatim in `parts`, folded from the subagent's
+  // session/update stream the same way the parent's is. `state` is absent
+  // while it runs; a terminal state closes it.
+  | {
+      type: 'subagent'
+      subagentSessionId: string
+      name: string
+      task: string
+      state?: string
+      parts: ChatPart[]
     }
 
 export interface ChatMessage {

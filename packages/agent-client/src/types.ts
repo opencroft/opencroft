@@ -236,10 +236,51 @@ export interface CompactionState {
   durationMs?: number
 }
 
+/**
+ * A subagent session the harness spawned under a parent session (ACP draft
+ * `subagent_spawned` / `subagent_state_update`, gated on the client declaring
+ * the `subagents` capability). `state` is absent while the subagent is live;
+ * a terminal state closes it.
+ */
+export interface SubagentInfo {
+  subagentSessionId: string
+  name: string
+  task: string
+  state?: 'completed' | 'failed' | 'cancelled' | 'disconnected' | string
+}
+
+/**
+ * A background task the harness reported (ACP AIR draft `async_task_spawned`
+ * / `async_task_progress` / `async_task_state_update`): a background bash
+ * job, a loop, anything Claude runs detached from the prompt turn. `canStop`
+ * marks tasks the client may stop via the engine's stopAsyncTask;
+ * `showInTranscript` is the harness's own advice on whether to draw it in the
+ * conversation (a task that is pure plumbing arrives with it false).
+ */
+export interface AsyncTaskInfo {
+  asyncTaskId: string
+  name: string
+  taskType: string
+  description: string
+  state: 'running' | 'paused' | 'completed' | 'failed' | 'stopped' | string
+  canStop: boolean
+  showInTranscript: boolean
+  summary?: string
+  lastToolName?: string
+  usage?: { totalTokens: number; toolUses: number; durationMs: number }
+  outputFilePath?: string
+  toolCallId?: string
+}
+
 export type ChatEvent =
-  | { kind: 'user'; text: string }
-  | { kind: 'agent_message'; text: string }
-  | { kind: 'agent_thought'; text: string }
+  // `messageId` on the chunk-born conversation events is the harness's own
+  // message boundary (stamped per model message): two chunks with DIFFERENT
+  // defined ids belong to different messages and must not merge into one
+  // block — the signal that keeps steered turns readable. Absent means the
+  // harness said nothing, which folds exactly as before.
+  | { kind: 'user'; text: string; messageId?: string }
+  | { kind: 'agent_message'; text: string; messageId?: string }
+  | { kind: 'agent_thought'; text: string; messageId?: string }
   | {
       kind: 'tool_call'
       toolCallId: string
@@ -286,6 +327,17 @@ export type ChatEvent =
   // on every status transition, in timeline position. An entity is upserted by
   // `compactionId`: the first event places it, later ones replace its fields.
   | { kind: 'compaction'; compaction: CompactionState }
+  // A subagent's full current state — upserted by `subagentSessionId`, same
+  // shape of contract as `compaction`: the first event fixes its place in the
+  // parent transcript, later ones replace its fields.
+  | { kind: 'subagent'; subagent: SubagentInfo }
+  // One step of a subagent's own transcript, nested verbatim: the child
+  // session's update translated to the same event vocabulary and wrapped with
+  // the child's id. Folds build the subagent's live transcript from these.
+  | { kind: 'subagent_event'; subagentSessionId: string; event: ChatEvent }
+  // A background task's full current state — upserted by `asyncTaskId`, same
+  // contract as `subagent`.
+  | { kind: 'async_task'; task: AsyncTaskInfo }
   // Agent-pushed session metadata (currently just title); undefined title
   // means the agent didn't set one on this update.
   | { kind: 'session_info'; title?: string }

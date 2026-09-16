@@ -8,7 +8,9 @@ import { toEditableParts } from 'agent-chat/user-parts'
 import { compactionView, isTerminalToolStatus } from 'agent-client/fold'
 import { DEFAULT_PRESENCE } from 'agent-client/presence'
 import type {
+  AsyncTaskInfo,
   AvailableCommand,
+  ChatEvent,
   ElicitationContentValue,
   ElicitationSchema,
   PermissionOpt,
@@ -40,6 +42,7 @@ import {
   respondLocal,
   setLocalConfigOption,
   setPresenceLocal,
+  stopBackgroundTaskLocal,
   stopLocal,
 } from '@/app/_authed/(agent)/_server/acp'
 import { sendFailureMessage } from '@/app/_authed/(agent)/_shared/send-refused-error'
@@ -163,6 +166,10 @@ export interface AcpSession {
   presence: Presence
   // Context usage meter (tokens used / window) from the latest 'usage' event.
   usage?: AgentUsage
+  // Live background tasks the harness reported (running or paused) — the
+  // detached work that keeps going with no turn active. Drives the background
+  // strip and the stop-session warning. Empty for harnesses that report none.
+  backgroundTasks: AsyncTaskInfo[]
   resolvePermission: (requestId: string, optionId?: string) => void
   resolveAsk: (requestId: string, answer?: string | Record<string, ElicitationContentValue>) => void
   respondPermissionText: (requestId: string, text: string) => void
@@ -176,15 +183,82 @@ export interface AcpSession {
   // Change how often this session reads what is waiting for it. Persisted
   // server-side, so it outlives the tab that set it.
   setPresence: (presence: Presence) => void
+  // Stop one background task by id, without cancelling the running turn.
+  stopBackgroundTask: (asyncTaskId: string) => void
 }
 
 type ToolPart = Extract<ChatPart, { type: 'tool-call' }>
+type TextPart = Extract<ChatPart, { type: 'text' | 'thinking' }>
+type SubagentPart = Extract<ChatPart, { type: 'subagent' }>
 
 function toolText(output: unknown): string {
   if (typeof output === 'string') {
     return output
   }
   return JSON.stringify(output ?? '', null, 2)
+}
+
+// A text/thinking chunk continues the previous part only when it is the SAME
+// message: same kind and same harness messageId. Two chunks the harness marked
+// as different messages (a steered turn's pre- and post-injection replies)
+// never merge, even back to back. When neither carries an id it falls back to
+// kind alone — the pre-messageId behaviour, unchanged for harnesses that stamp
+// nothing.
+function continuesPart(last: ChatPart | undefined, kind: 'text' | 'thinking', messageId?: string): last is TextPart {
+  return last?.type === kind && (last as TextPart).messageId === messageId
+}
+
+// Fold one conversation event (text/thinking/tool_call/tool_update) into a
+// parts array with its own tool-correlation map. Shared by the parent
+// transcript and every subagent's nested transcript, so both group text the
+// same way and correlate tool updates within their own scope.
+function foldConversationPart(
+  parts: ChatPart[],
+  tools: Map<string, ToolPart>,
+  event: Extract<ChatEvent, { kind: 'user' | 'agent_message' | 'agent_thought' | 'tool_call' | 'tool_update' }>,
+): void {
+  switch (event.kind) {
+    case 'user':
+    case 'agent_message': {
+      const last = parts[parts.length - 1]
+      if (continuesPart(last, 'text', event.messageId)) {
+        last.text += event.text
+      } else {
+        parts.push({ type: 'text', text: event.text, ...(event.messageId ? { messageId: event.messageId } : {}) })
+      }
+      break
+    }
+    case 'agent_thought': {
+      const last = parts[parts.length - 1]
+      if (continuesPart(last, 'thinking', event.messageId)) {
+        last.text += event.text
+      } else {
+        parts.push({ type: 'thinking', text: event.text, ...(event.messageId ? { messageId: event.messageId } : {}) })
+      }
+      break
+    }
+    case 'tool_call': {
+      const part: ToolPart = { type: 'tool-call', id: event.toolCallId, name: event.title, args: event.input }
+      parts.push(part)
+      tools.set(event.toolCallId, part)
+      break
+    }
+    case 'tool_update': {
+      const part = tools.get(event.toolCallId)
+      if (part) {
+        if (event.title) {
+          part.name = event.title
+        }
+        if (event.input !== undefined) {
+          part.args = event.input
+        }
+        if (event.output !== undefined || isTerminalToolStatus(event.status)) {
+          part.result = { text: toolText(event.output), isError: event.status === 'failed' }
+        }
+      }
+      break
+    }
+  }
 }
 
 export interface Folded {
@@ -204,6 +278,10 @@ export interface Folded {
   // The last 'presence' snapshot wins, same as the queue's.
   presence: Presence
   usage?: AgentUsage
+  // Background tasks the harness reported, each folded to its latest state.
+  // Live ones drive the background-work strip and the stop-session warning;
+  // the list is in first-seen order.
+  asyncTasks: AsyncTaskInfo[]
 }
 
 // Reduce the agent-client event log into the message shape AgentChat renders,
@@ -237,6 +315,13 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
     return assistant
   }
 
+  // Subagents by their session id, each a part nested in the parent transcript
+  // plus its OWN tool-correlation map (child tool ids are child-scoped and
+  // must not collide with the parent's).
+  const subagents = new Map<string, { part: SubagentPart; tools: Map<string, ToolPart> }>()
+  // Background tasks by asyncTaskId — last state wins, surfaced as a list.
+  const asyncTasks = new Map<string, AsyncTaskInfo>()
+
   events.forEach((event, offset) => {
     const id = baseIndex + offset
     switch (event.kind) {
@@ -259,45 +344,78 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
         break
       }
       case 'agent_message': {
-        const message = ensureAssistant(id)
-        const last = message.parts[message.parts.length - 1]
-        if (last && last.type === 'text') {
-          last.text += event.text
-        } else {
-          message.parts.push({ type: 'text', text: event.text })
-        }
+        foldConversationPart(ensureAssistant(id).parts, tools, event)
         break
       }
       case 'agent_thought': {
-        const message = ensureAssistant(id)
-        const last = message.parts[message.parts.length - 1]
-        if (last && last.type === 'thinking') {
-          last.text += event.text
-        } else {
-          message.parts.push({ type: 'thinking', text: event.text })
-        }
+        foldConversationPart(ensureAssistant(id).parts, tools, event)
         break
       }
       case 'tool_call': {
-        const message = ensureAssistant(id)
-        const part: ToolPart = { type: 'tool-call', id: event.toolCallId, name: event.title, args: event.input }
-        message.parts.push(part)
-        tools.set(event.toolCallId, part)
+        foldConversationPart(ensureAssistant(id).parts, tools, event)
         break
       }
       case 'tool_update': {
-        const part = tools.get(event.toolCallId)
-        if (part) {
-          if (event.title) {
-            part.name = event.title
+        foldConversationPart(ensureAssistant(id).parts, tools, event)
+        break
+      }
+      case 'subagent': {
+        // Upsert the subagent's part in the parent transcript, keyed by its
+        // session id. The first sighting places it (its nested transcript
+        // grows in as subagent_event arrives); later ones patch name/task/state.
+        const info = event.subagent
+        const existing = subagents.get(info.subagentSessionId)
+        if (existing) {
+          existing.part.name = info.name || existing.part.name
+          existing.part.task = info.task || existing.part.task
+          existing.part.state = info.state
+        } else {
+          const part: SubagentPart = {
+            type: 'subagent',
+            subagentSessionId: info.subagentSessionId,
+            name: info.name,
+            task: info.task,
+            state: info.state,
+            parts: [],
           }
-          if (event.input !== undefined) {
-            part.args = event.input
-          }
-          if (event.output !== undefined || isTerminalToolStatus(event.status)) {
-            part.result = { text: toolText(event.output), isError: event.status === 'failed' }
-          }
+          ensureAssistant(id).parts.push(part)
+          subagents.set(info.subagentSessionId, { part, tools: new Map() })
         }
+        break
+      }
+      case 'subagent_event': {
+        // One step of a subagent's own transcript, folded into its nested
+        // parts. A step for an unseen subagent (its spawn lost to a window cut)
+        // still gets a home: a placeholder part rather than a dropped step.
+        let entry = subagents.get(event.subagentSessionId)
+        if (!entry) {
+          const part: SubagentPart = {
+            type: 'subagent',
+            subagentSessionId: event.subagentSessionId,
+            name: '',
+            task: '',
+            parts: [],
+          }
+          ensureAssistant(id).parts.push(part)
+          entry = { part, tools: new Map() }
+          subagents.set(event.subagentSessionId, entry)
+        }
+        // The engine only nests conversation kinds under a subagent (see
+        // childEventOf); the guard narrows the union and drops anything else.
+        const child = event.event
+        if (
+          child.kind === 'user' ||
+          child.kind === 'agent_message' ||
+          child.kind === 'agent_thought' ||
+          child.kind === 'tool_call' ||
+          child.kind === 'tool_update'
+        ) {
+          foldConversationPart(entry.part.parts, entry.tools, child)
+        }
+        break
+      }
+      case 'async_task': {
+        asyncTasks.set(event.task.asyncTaskId, event.task)
         break
       }
       case 'compaction': {
@@ -403,6 +521,7 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
     commands,
     presence,
     usage,
+    asyncTasks: [...asyncTasks.values()],
   }
 }
 
@@ -940,6 +1059,17 @@ export function useAcpSession(
     [sessionId],
   )
 
+  // The harness reports the task's new state via the async_task event on the
+  // stream, so there is no optimistic local state to keep in sync here either.
+  const stopBackgroundTask = useCallback(
+    (asyncTaskId: string) => {
+      if (sessionId) {
+        void stopBackgroundTaskLocal({ data: { sessionId, asyncTaskId } })
+      }
+    },
+    [sessionId],
+  )
+
   // The server confirms via a fresh 'config_options' snapshot on the stream —
   // no optimistic local state to keep in sync.
   const setConfigOption = useCallback(
@@ -978,6 +1108,10 @@ export function useAcpSession(
       // reverts to the seed after going live. Before that, the seed is what
       // ensureLocalSession resolved this tab's usage to at open time.
       usage: folded.usage ?? seedUsage,
+      // Only the LIVE ones reach the UI: a finished task is transcript
+      // history the strip would keep pinned. The strip and the stop-session
+      // warning both read this.
+      backgroundTasks: folded.asyncTasks.filter((task) => task.state === 'running' || task.state === 'paused'),
       resolvePermission,
       resolveAsk,
       respondPermissionText,
@@ -985,6 +1119,7 @@ export function useAcpSession(
       deliverQueue,
       setConfigOption,
       setPresence,
+      stopBackgroundTask,
     }),
     [
       session,
@@ -996,6 +1131,7 @@ export function useAcpSession(
       folded.commands,
       folded.presence,
       folded.usage,
+      folded.asyncTasks,
       seedUsage,
       resolvePermission,
       resolveAsk,
@@ -1004,6 +1140,7 @@ export function useAcpSession(
       deliverQueue,
       setConfigOption,
       setPresence,
+      stopBackgroundTask,
     ],
   )
 }
