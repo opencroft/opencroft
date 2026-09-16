@@ -47,7 +47,20 @@ export type ChainDotVariant = 'default' | 'success' | 'destructive'
 export type DetailItem =
   | { kind: 'assistant-text'; text: string }
   | { kind: 'thinking'; text: string }
-  | { kind: 'tool'; id: string; name: string; args: unknown; result?: { text: string; isError?: boolean } }
+  // `name` is what a reader is shown for the call — the agent's own human
+  // phrasing, which for a file tool embeds the path ("Write src/app.tsx").
+  // `toolName` is the PROGRAMMATIC name behind it ("Write"), carried separately
+  // because a host that keys a view registry on the displayed name matches
+  // nothing whose phrasing contains an argument, which is every file tool.
+  // Absent when the agent named no tool.
+  | {
+      kind: 'tool'
+      id: string
+      name: string
+      toolName?: string
+      args: unknown
+      result?: { text: string; isError?: boolean }
+    }
   // A subagent the turn spawned, drawn as a nested, bordered block: its name
   // and task in a header with a live/terminal state badge, and its OWN reply
   // chain (`items`, built by the host the same way the parent's is) rendered

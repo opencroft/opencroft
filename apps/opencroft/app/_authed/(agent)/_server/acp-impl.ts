@@ -30,7 +30,7 @@ import { getRequest } from '@tanstack/react-start/server'
 import { supportsMidTurnInput } from 'agent-client'
 import { usableContextWindow } from 'agent-client/context-window'
 import { rebuildDelivery, splitDelivery } from 'agent-client/queue-tags'
-import type { AgentSelection, Presence, PromptOrigin, QueueMode } from 'agent-client/types'
+import type { AgentSelection, Presence, PromptOrigin, QueueMode, SessionMeta } from 'agent-client/types'
 
 import type { AuthoredRecordsWindow } from '@/app/_authed/(agent)/_lib/acp-stream'
 import type { PromptOriginInput } from '@/app/_authed/(agent)/_lib/prompt-origin'
@@ -48,6 +48,7 @@ import {
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { withAuthors } from '@/app/_authed/(agent)/_server/attach-authors'
 import { queueStore } from '@/app/_authed/(agent)/_server/queue-store'
+import { clearSessionEvents, readSessionEvents } from '@/app/_authed/(agent)/_server/session-event-store'
 import {
   forceBypassMode,
   installYoloModeEnforcement,
@@ -214,6 +215,52 @@ export async function ensureLocalSessionImpl(data: { agentNodeId: string; tabKey
   }
 }
 
+/**
+ * Bring a persisted session back, by the best means available for it.
+ *
+ * Two ways, and which one runs decides how complete the reopened conversation
+ * is:
+ *
+ *  - **From our own recording.** Every event this app has shown was written
+ *    down as it was emitted (see session-event-store), so a transcript restored
+ *    from it is exactly what the reader saw, and the agent is simply reattached
+ *    underneath it. This is the path that keeps a subagent's work visible: the
+ *    Claude CLI stores a subagent's transcript in a file its own replay never
+ *    reads, so a delegation cannot survive the round trip through the harness —
+ *    but it never has to, because we watched it happen.
+ *
+ *  - **From the harness's replay.** The fallback, for a session recorded before
+ *    this existed, one whose recording aged out of the cap, or an agent that
+ *    cannot reattach without replaying. Lossy in the way above, and still far
+ *    better than opening an empty chat.
+ *
+ * The recording is dropped before a replay so the replayed events become its
+ * fresh contents. Keeping both would leave the session's own history written
+ * down twice, one copy behind the other.
+ */
+async function reopenPersistedSession(
+  tabKey: string,
+  sessionId: string,
+  selection: AgentSelection,
+): Promise<SessionMeta | null> {
+  const recorded = await readSessionEvents(tabKey).catch((error: unknown) => {
+    // A transcript that cannot be read is the state every session was in
+    // before this existed, so the replay below still has its turn.
+    console.error('Failed to read the persisted transcript for tab', tabKey, error)
+    return []
+  })
+  if (recorded.length > 0) {
+    const restored = await agentClient.restoreSession(sessionId, selection, recorded).catch(() => null)
+    if (restored) {
+      return restored
+    }
+  }
+  await clearSessionEvents(tabKey).catch((error: unknown) => {
+    console.error('Failed to clear the persisted transcript before replaying tab', tabKey, error)
+  })
+  return agentClient.loadSession(sessionId, selection).catch(() => null)
+}
+
 async function openLocalSession(data: { agentNodeId: string; tabKey: string }): Promise<OpenedSession> {
   const known = tabSessions.get(data.tabKey)
   if (known && agentClient.listSessions().some((s) => s.id === known.id)) {
@@ -295,7 +342,7 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
   // way to know the first was already on the job.
   const persisted = await readPersistedSession(data.tabKey)
   if (persisted) {
-    const resumed = await agentClient.loadSession(persisted.id, selection).catch(() => null)
+    const resumed = await reopenPersistedSession(data.tabKey, persisted.id, selection)
     if (resumed) {
       const canFork = resumed.canFork ?? false
       // A resumed session counts as new only if it was never actually spoken
@@ -710,4 +757,7 @@ export async function forgetLocalSessionImpl(tabKey: string): Promise<void> {
   // and anything still held for it must survive with it. Rows left behind by a
   // tab that is gone are orphans nothing would ever load or delete.
   await queueStore.clear(tabKey)
+  // The recorded transcript goes with it, for the same reason and with the same
+  // distinction: stopping a process keeps it, retiring the tab does not.
+  await clearSessionEvents(tabKey)
 }

@@ -327,5 +327,5 @@ function partToDetail(p: ChatMessage['parts'][number]): DetailItem | null {
       items: p.parts.map(partToDetail).filter((item): item is DetailItem => item !== null),
     }
   }
-  return { kind: 'tool', id: p.id, name: p.name, args: p.args, result: p.result }
+  return { kind: 'tool', id: p.id, name: p.name, toolName: p.toolName, args: p.args, result: p.result }
 }

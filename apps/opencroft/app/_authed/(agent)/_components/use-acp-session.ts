@@ -242,7 +242,13 @@ function foldConversationPart(
       break
     }
     case 'tool_call': {
-      const part: ToolPart = { type: 'tool-call', id: event.toolCallId, name: event.title, args: event.input }
+      const part: ToolPart = {
+        type: 'tool-call',
+        id: event.toolCallId,
+        name: event.title,
+        args: event.input,
+        ...(event.name ? { toolName: event.name } : {}),
+      }
       parts.push(part)
       tools.set(event.toolCallId, part)
       break

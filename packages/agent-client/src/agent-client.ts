@@ -48,6 +48,7 @@ import { type ResolvedPermissions, toolKey } from './permissions'
 import { DEFAULT_PRESENCE, msUntilDue, presenceWindowMs } from './presence'
 import { buildDelivery, type DeliveryNote } from './queue-tags'
 import { buildSpawnConfig, findAdapter } from './resolve'
+import { foldRestoredState, restorableEvents } from './session-restore'
 import { fileSkillHandler, fileSkills } from './skills'
 import { findTurnBoundary } from './turns'
 import type {
@@ -114,7 +115,13 @@ export interface AgentClientOptions {
   // is otherwise lost when a session is unloaded. Never drives the engine: it
   // is called inside a try/catch so a throwing host observer cannot break the
   // emit, and its return value is ignored.
-  onEvent?: (sessionId: string, event: ChatEvent) => void
+  //
+  // `sessionKey` is the session's external key (selection.sessionKey), passed
+  // because a host storing anything per conversation has to file it under the
+  // name that survives a restart — a session id does not. Without it the hook
+  // would have to look the key up on every chunk of every stream, which is a
+  // scan of the whole registry per event.
+  onEvent?: (sessionId: string, event: ChatEvent, sessionKey?: string) => void
   // Notified on every LIVE status transition of a context compaction — once
   // per status a compaction entity reaches, with its full merged state, and
   // never during a session/load history replay (a replayed `completed` is old
@@ -379,6 +386,12 @@ interface ConnEntry {
   // (session/load history replay). Clients MUST NOT call loadSession otherwise.
   // Only meaningful once `initialized` has resolved.
   loadSession: boolean
+  // Whether the agent advertised `sessionCapabilities.resume` at initialize —
+  // reattaching to a persisted session WITHOUT a history replay. The
+  // distinction from `loadSession` is the whole of restoreSession's reason to
+  // exist: load hands the transcript back, resume only hands the agent back.
+  // Only meaningful once `initialized` has resolved.
+  resumeSession: boolean
   // Whether the harness advertised the steering extension at initialize
   // (`_meta.steering.supported`). This is the harness's OWN word about
   // mid-turn input — one of the two ways it gets enabled (see
@@ -475,6 +488,28 @@ function textOf(content: ContentBlock): string {
   return `[${content.type}]`
 }
 
+/**
+ * The envelope a harness sends its own model to wake it when a background task
+ * finishes. It travels as an ordinary user message, and it is not one.
+ *
+ * Addressed to the MODEL, in the model's own vocabulary: a task id, the tool
+ * use that started it, the file its output went to, a status. The reader has
+ * already been told the same thing in their own — the harness reports the
+ * task's state as an entity alongside this, which is what the background-task
+ * strip draws. Left in the transcript it renders as the reader having pasted a
+ * block of XML into the conversation, mid-turn, saying something they did not
+ * say.
+ *
+ * Matched on the opening tag rather than the whole shape: the envelope carries
+ * different fields depending on what finished (an agent's result, a note about
+ * repeat notifications), and a reader would be shown the raw thing either way.
+ */
+const TASK_NOTIFICATION_TAG = '<task-notification>'
+
+function isTaskNotification(text: string): boolean {
+  return text.trimStart().startsWith(TASK_NOTIFICATION_TAG)
+}
+
 // Extract display text from an ACP/MCP content shape (a block, an array of
 // blocks, or a { content } envelope). Returns null when the value isn't a
 // recognizable block so the caller can pick a fallback. Non-text blocks
@@ -564,7 +599,7 @@ function endsOnSettledWork(tail: ChatEvent | undefined): boolean {
 // The host's optional observation hook (AgentClientOptions.onEvent), installed
 // by createAgentClient. Module-level, like `store`, because emit() is
 // module-level and fires for every session rather than per client instance.
-let onEventHook: ((sessionId: string, event: ChatEvent) => void) | undefined
+let onEventHook: ((sessionId: string, event: ChatEvent, sessionKey?: string) => void) | undefined
 
 // Same shape and reasoning for AgentClientOptions.onCompaction — handleUpdate,
 // its caller, is module-level too.
@@ -584,7 +619,7 @@ function emit(sessionId: string, event: ChatEvent): void {
   // or break delivery to the actual clients of the stream.
   if (onEventHook) {
     try {
-      onEventHook(sessionId, event)
+      onEventHook(sessionId, event, session.meta.sessionKey)
     } catch {}
   }
 }
@@ -660,6 +695,24 @@ function chunkMessageId(update: { messageId?: string | null }): { messageId?: st
   return update.messageId ? { messageId: update.messageId } : {}
 }
 
+// The tool's own name off a tool-call update, spread in for the same reason as
+// the message id above.
+//
+// Two places carry it and neither is guaranteed: ACP's own `name` field on the
+// notification, and the Claude bridge's `_meta.claudeCode.toolName`, which is
+// the one still present on an update that only refines a call already
+// announced. Preferring the protocol field and falling back to the extension
+// keeps this correct for any agent while still answering for the bridge we
+// actually run.
+function toolName(update: Record<string, unknown>): { name?: string } {
+  const own = update.name
+  if (typeof own === 'string' && own) {
+    return { name: own }
+  }
+  const meta = (update._meta as { claudeCode?: { toolName?: unknown } } | undefined)?.claudeCode?.toolName
+  return typeof meta === 'string' && meta ? { name: meta } : {}
+}
+
 // A subagent session's own update, translated to the event vocabulary for
 // nesting into the parent transcript. Only the conversation subset — the
 // session-state kinds (modes, config, usage, …) describe the CHILD session,
@@ -667,8 +720,14 @@ function chunkMessageId(update: { messageId?: string | null }): { messageId?: st
 // would overwrite the parent's.
 function childEventOf(update: SessionNotification['update']): ChatEvent | null {
   switch (update.sessionUpdate) {
-    case 'user_message_chunk':
-      return { kind: 'user', text: textOf(update.content), ...chunkMessageId(update) }
+    case 'user_message_chunk': {
+      // Same rule as the parent's own user chunks (see isTaskNotification): a
+      // subagent that spawns background work is woken the same way, and the
+      // envelope is no more the reader's business nested than it is at the top
+      // level.
+      const text = textOf(update.content)
+      return isTaskNotification(text) ? null : { kind: 'user', text, ...chunkMessageId(update) }
+    }
     case 'agent_message_chunk':
       return { kind: 'agent_message', text: textOf(update.content), ...chunkMessageId(update) }
     case 'agent_thought_chunk':
@@ -681,6 +740,7 @@ function childEventOf(update: SessionNotification['update']): ChatEvent | null {
         status: update.status ?? 'pending',
         toolKind: update.kind,
         input: update.rawInput,
+        ...toolName(update as unknown as Record<string, unknown>),
       }
     case 'tool_call_update':
       return {
@@ -932,12 +992,19 @@ export function handleUpdate(notification: SessionNotification): void {
       // has to skip snapshots: `emit` stores every kind, so a config or title
       // update landing mid-run would otherwise read as "not a user chunk" and
       // split the message on an event that is not part of it at all.
+      const text = textOf(update.content)
+      // Before the boundary, not after it: a notification that is not part of
+      // the conversation must not end a turn either, or a reader would be shown
+      // their own turn split in two at a message nobody sent.
+      if (isTaskNotification(text)) {
+        break
+      }
       const session = store.sessions.get(sessionId)
       const previous = session?.replaying ? lastConversationEvent(session.events) : undefined
       if (previous && previous.kind !== 'user') {
         emit(sessionId, { kind: 'turn_end', stopReason: 'replayed' })
       }
-      emit(sessionId, { kind: 'user', text: textOf(update.content), ...chunkMessageId(update) })
+      emit(sessionId, { kind: 'user', text, ...chunkMessageId(update) })
       break
     }
     case 'agent_message_chunk': {
@@ -956,6 +1023,7 @@ export function handleUpdate(notification: SessionNotification): void {
         status: update.status ?? 'pending',
         toolKind: update.kind,
         input: update.rawInput,
+        ...toolName(update as unknown as Record<string, unknown>),
       })
       break
     }
@@ -1647,6 +1715,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       connection,
       lastSessionId: null,
       loadSession: false,
+      resumeSession: false,
       steeringSupported: false,
       initialized: Promise.resolve(),
     }
@@ -1706,6 +1775,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         entry.loadSession = Boolean(
           (initResult as { agentCapabilities?: { loadSession?: boolean } }).agentCapabilities?.loadSession,
         )
+        // Presence of the key is the capability; ACP's session capabilities are
+        // empty marker objects, so `resume: {}` means supported and reading it
+        // as a boolean would make every one of them false.
+        entry.resumeSession =
+          (initResult as { agentCapabilities?: { sessionCapabilities?: { resume?: unknown } } }).agentCapabilities
+            ?.sessionCapabilities?.resume !== undefined
         // The steering extension has no ACP capability field; the harness
         // advertises it via initialize's top-level response `_meta` (see
         // claude-agent-acp's `_session/steering` contract).
@@ -2932,6 +3007,142 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // more often than not.
       const tail = loaded ? lastConversationEvent(loaded.events) : undefined
       emit(sessionId, { kind: 'turn_end', stopReason: endsOnSettledWork(tail) ? 'replayed' : 'resumed' })
+      return meta
+    },
+
+    /**
+     * Reopen a session from a transcript the HOST kept, reattaching the agent
+     * without asking it to replay history.
+     *
+     * The alternative, `loadSession`, asks the harness for the conversation and
+     * rebuilds the transcript from what comes back. That makes the UI's memory
+     * only as good as the harness's replay, and a replay can be lossy in ways
+     * nothing reports: it carries what the harness chose to persist, in the
+     * shape it chose to persist it, and whatever it leaves out is simply
+     * missing from the reopened chat with no gap where it used to be.
+     *
+     * This path inverts the dependency. The host has already seen every event
+     * as it happened — that is what `onEvent` is for — so a host that keeps
+     * them owns a transcript that is exactly what was shown the first time.
+     * What it cannot keep is the AGENT, and that is all `session/resume` is
+     * asked for here: the model's own context comes back from the harness's
+     * own store, and no history crosses the wire.
+     *
+     * Returns null when this cannot be done — a native selection, or an agent
+     * that does not advertise the resume capability — so a caller falls back to
+     * `loadSession` rather than losing the conversation. Both paths are kept
+     * because they fail differently: without a log there is nothing to restore
+     * FROM, and the harness's imperfect replay is much better than an empty
+     * chat.
+     *
+     * `events` is seeded by assignment, never re-emitted. Emitting would hand
+     * every restored event straight back to `onEvent`, and a host storing them
+     * would write its own log back into itself on every reopen.
+     */
+    async restoreSession(
+      sessionId: string,
+      selection: AgentSelection,
+      events: readonly ChatEvent[],
+      permissions?: ResolvedPermissions,
+    ): Promise<SessionMeta | null> {
+      if (isNativeSelection(selection)) {
+        return null
+      }
+      const connection = await ensureConnection(selection)
+      const entry = connEntryFor(selection)
+      if (!entry?.resumeSession) {
+        return null
+      }
+      // Mint a per-session MCP token before reattaching, mirroring createSession
+      // and loadSession — the resumed agent lists tools against this session's
+      // permissions, not the previous process's.
+      let token: string | null = null
+      let mcpServers: AcpMcpServer[] = []
+      if (supportsTools(selection)) {
+        const { internal, servers } = await buildMcpServers(selection)
+        token = randomUUID()
+        store.acpTokenPermissions.set(token, permissions)
+        store.acpTokenSession.set(token, sessionId)
+        mcpServers = tagInternal(internal, servers, token)
+      }
+      const restored = restorableEvents(events)
+      const state = foldRestoredState(restored)
+      store.titleCounter += 1
+      const restoredAt = Date.now()
+      const meta: SessionMeta = {
+        id: sessionId,
+        title: state.title ?? `New chat ${store.titleCounter}`,
+        createdAt: restoredAt,
+        lastActivityAt: restoredAt,
+        canFork: false,
+        sessionKey: selection.sessionKey,
+      }
+      store.sessions.set(sessionId, {
+        meta,
+        selection,
+        events: restored,
+        subscribers: new Set(),
+        modes: state.modes,
+        configOptions: state.configOptions,
+        commands: state.commands,
+        compactions: state.compactions,
+        subagents: state.subagents,
+        asyncTasks: state.asyncTasks,
+        permissions,
+        activeTurns: 0,
+        // Not folded from the log: the durable queue and the reading cadence
+        // are restored from their own stores by restoreSessionState below, and
+        // a queue recovered from a transcript would be the one the process was
+        // holding before it delivered them. See restorableEvents.
+        queue: [],
+        presence: DEFAULT_PRESENCE,
+        ...(state.usage ? { usage: state.usage } : {}),
+      })
+      // Subagents route by a module-level map rather than off the session, so
+      // restoring the records is not enough: without this a chunk arriving from
+      // a subagent that is STILL RUNNING has no parent to nest under and is
+      // dropped, which is the live half of the same loss this path exists to
+      // close.
+      for (const subagentSessionId of state.subagents.keys()) {
+        store.subagentParents.set(subagentSessionId, sessionId)
+      }
+      try {
+        await connection.resumeSession({ sessionId, cwd: selection.cwd, mcpServers })
+      } catch (error) {
+        // The agent could not take the session back — unwind the half-registered
+        // record so the caller can cleanly fall back to a replay or a fresh
+        // session, exactly as loadSession does.
+        store.sessions.delete(sessionId)
+        for (const subagentSessionId of state.subagents.keys()) {
+          store.subagentParents.delete(subagentSessionId)
+        }
+        if (token) {
+          store.acpTokenSession.delete(token)
+          store.acpTokenPermissions.delete(token)
+        }
+        throw error
+      }
+      // After the reattach, for the reason loadSession restores after its
+      // replay: a drain must not deliver into a session the agent has not
+      // taken back yet.
+      await restoreSessionState(sessionId)
+      // A log that ends mid-turn is a session whose process stopped while it
+      // was working, and nothing is coming to close it — the client would sit
+      // "waiting" forever on a turn that ended when the process did. A log that
+      // already ends on a boundary needs nothing, which is also what makes
+      // reopening the same session twice idempotent.
+      //
+      // Read off what was RECORDED rather than off the seeded array: the
+      // closures restorableEvents appends are bookkeeping about a dead process,
+      // and letting them stand as the transcript's tail would both hide a
+      // boundary that is there and report every such session as interrupted.
+      const tail = events.at(-1)
+      if (tail?.kind !== 'turn_end') {
+        emit(sessionId, {
+          kind: 'turn_end',
+          stopReason: endsOnSettledWork(lastConversationEvent([...events])) ? 'replayed' : 'resumed',
+        })
+      }
       return meta
     },
 

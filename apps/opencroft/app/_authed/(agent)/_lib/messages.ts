@@ -10,10 +10,15 @@ export type ChatPart =
   // which merges exactly as before.
   | { type: 'text'; text: string; messageId?: string }
   | { type: 'thinking'; text: string; messageId?: string }
+  // `name` is the agent's own phrasing for the call, which is what a reader
+  // sees; `toolName` is the programmatic name behind it, which is what decides
+  // HOW the call is drawn. See the kit's DetailItem for why they cannot be one
+  // field. Absent when the agent named no tool.
   | {
       type: 'tool-call'
       id: string
       name: string
+      toolName?: string
       args: unknown
       result?: { text: string; isError?: boolean }
     }
