@@ -1062,6 +1062,38 @@ function matchReasoningValue(options: unknown, effort: string): string | undefin
   return hit?.value
 }
 
+// Map a selection's model id to the value id of an ACP agent's model select
+// option, for adapters that carry no modelEnv (OpenCode, Codex) — there the
+// config option is the only channel a model choice can travel at all.
+// Conservative on purpose: the exact option value, or the UNIQUE value whose
+// `provider/` suffix equals the id (OpenCode spells models `provider/model`
+// while a profile stores the bare id). Anything looser risks pinning a
+// different model than the profile named, which is worse than leaving the
+// harness default. Options may be flat or grouped, like matchReasoningValue's.
+function matchModelValue(options: unknown, model: string): string | undefined {
+  if (!Array.isArray(options)) {
+    return undefined
+  }
+  const flat: Array<{ value?: string }> = []
+  for (const entry of options as Array<Record<string, unknown>>) {
+    if (Array.isArray(entry.options)) {
+      flat.push(...(entry.options as Array<{ value?: string }>))
+    } else if (typeof entry.value === 'string') {
+      flat.push(entry as { value?: string })
+    }
+  }
+  const target = model.trim().toLowerCase()
+  if (!target) {
+    return undefined
+  }
+  const exact = flat.find((option) => option.value?.toLowerCase() === target)
+  if (exact?.value) {
+    return exact.value
+  }
+  const bySuffix = flat.filter((option) => option.value?.toLowerCase().endsWith(`/${target}`))
+  return bySuffix.length === 1 ? bySuffix[0].value : undefined
+}
+
 function isNativeSelection(selection: AgentSelection): boolean {
   return findAdapter(selection.adapterId)?.kind === 'native'
 }
@@ -2268,6 +2300,23 @@ export function createAgentClient(options: AgentClientOptions = {}) {
           await this.setConfigOption(sessionId, option.id, value).catch((error: unknown) =>
             emit(sessionId, { kind: 'error', message: errorMessage(error) }),
           )
+        }
+      }
+      // Apply the selected model the same way, for ACP agents whose adapter
+      // declares no modelEnv (OpenCode, Codex): there is no env var to carry
+      // the choice, so without this the session starts on whatever the
+      // harness last used and the profile's model is silently ignored. A
+      // model that doesn't resolve to one of the advertised options leaves
+      // the harness default rather than guessing — see matchModelValue.
+      if (!native && selection.model && !findAdapter(selection.adapterId)?.modelEnv && response.configOptions) {
+        const option = response.configOptions.find((entry) => entry.category === 'model' && entry.type === 'select')
+        if (option && option.type === 'select') {
+          const value = matchModelValue(option.options, selection.model)
+          if (value && value !== option.currentValue) {
+            await this.setConfigOption(sessionId, option.id, value).catch((error: unknown) =>
+              emit(sessionId, { kind: 'error', message: errorMessage(error) }),
+            )
+          }
         }
       }
       return meta

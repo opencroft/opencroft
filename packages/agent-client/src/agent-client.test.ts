@@ -71,6 +71,7 @@ async function setup(
     openSessionForKey?: (sessionKey: string) => void | Promise<void>
     transformDeliveredPrompt?: (text: string) => string
     contextWindow?: number
+    model?: string
     onCompaction?: (sessionId: string, compaction: CompactionState) => void
     // Model a real ACP agent: cancelling ends the turn it was running, which
     // resolves the in-flight prompt promise and therefore fires settleTurn.
@@ -83,7 +84,7 @@ async function setup(
   const selection: AgentSelection = {
     providerId: 'test-provider',
     adapterId,
-    model: 'test-model',
+    model: options.model ?? 'test-model',
     apiKey: '',
     cwd: `/tmp/agent-client-test-${counter}`,
     // A harness option that silently stops arriving turns every test that reads
@@ -243,6 +244,66 @@ test('non-claude adapters get no reasoning default applied', async () => {
 
 test('an explicit "off" is never overridden by the claude default', async () => {
   const h = await setup('claude', { reasoningEffort: 'off', configOptions: THOUGHT_LEVEL_OPTIONS })
+  await settle()
+  assert.deepEqual(h.configOptionCalls, [])
+  await h.client.deleteSession(h.sessionId)
+})
+
+// ── model selection via config option (modelEnv-less ACP agents) ────────────
+
+// OpenCode/Codex carry no model env var: the profile's model can only reach
+// them through the `model` config option advertised at session start. These
+// exercise that application path (createSession's model-config step).
+const MODEL_SELECT_OPTIONS = [
+  {
+    id: 'model',
+    category: 'model',
+    type: 'select',
+    currentValue: 'opencode/big-pickle',
+    options: [
+      { name: 'Big Pickle', value: 'opencode/big-pickle' },
+      { name: 'Claude Fable 5', value: 'anthropic/claude-fable-5' },
+    ],
+  },
+]
+
+test('a modelEnv-less adapter applies the profile model by exact option value at start', async () => {
+  const h = await setup('openclaw', { model: 'anthropic/claude-fable-5', configOptions: MODEL_SELECT_OPTIONS })
+  await settle()
+  assert.deepEqual(h.configOptionCalls, [
+    { sessionId: h.sessionId, configId: 'model', value: 'anthropic/claude-fable-5' },
+  ])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('it resolves a bare model id to the unique provider/model option', async () => {
+  const h = await setup('openclaw', { model: 'claude-fable-5', configOptions: MODEL_SELECT_OPTIONS })
+  await settle()
+  assert.deepEqual(h.configOptionCalls, [
+    { sessionId: h.sessionId, configId: 'model', value: 'anthropic/claude-fable-5' },
+  ])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a model that matches no advertised option leaves the harness default', async () => {
+  const h = await setup('openclaw', { model: 'ollama/llama-99', configOptions: MODEL_SELECT_OPTIONS })
+  await settle()
+  assert.deepEqual(h.configOptionCalls, [], 'guessing a model is worse than the default the harness already has')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('the profile model already being current sends no redundant set', async () => {
+  const h = await setup('openclaw', { model: 'opencode/big-pickle', configOptions: MODEL_SELECT_OPTIONS })
+  await settle()
+  assert.deepEqual(h.configOptionCalls, [])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('an adapter WITH a model env var never applies the model via config option', async () => {
+  // Claude pins the model through ANTHROPIC_MODEL, so even when it advertises a
+  // model option the config-option path must stand off — 'off' suppresses the
+  // separate thought_level default so this asserts the model path alone.
+  const h = await setup('claude', { model: 'anthropic/claude-fable-5', reasoningEffort: 'off', configOptions: MODEL_SELECT_OPTIONS })
   await settle()
   assert.deepEqual(h.configOptionCalls, [])
   await h.client.deleteSession(h.sessionId)

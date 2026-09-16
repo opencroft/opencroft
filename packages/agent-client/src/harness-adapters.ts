@@ -143,7 +143,15 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     command: 'npx',
     args: ['-y', 'opencode-ai@latest', 'acp'],
     protocol: 'native',
-    note: 'Model and provider are configured in OpenCode itself; the key below is exported for it.',
+    // OpenCode carries NO model env var: unlike Claude Code (ANTHROPIC_MODEL),
+    // it advertises its model list as a `model` config option at session start
+    // and switches via session/set_config_option — so the chat model picker
+    // drives it live, and a profile's model is applied at start when it matches
+    // an advertised option (see createSession's model-config step, gated on the
+    // absent modelEnv). The advertised list is whatever OpenCode's own provider
+    // auth exposes (ids are `provider/model`, e.g. `anthropic/claude-fable-5`),
+    // so the key below — or an `opencode auth login` — is what populates it.
+    note: 'Models come from OpenCode itself: whatever providers you have configured there (via the key below, or `opencode auth login`) appear in the chat model picker as `provider/model`. Set the profile model to one of those ids, or leave it blank for OpenCode\'s default.',
   },
   {
     id: 'copilot',
