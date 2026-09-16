@@ -1,3 +1,9 @@
+import { adapterSupportsElicitation } from 'agent-client/agent-client'
+import {
+  type AskUserQuestionSpec,
+  contentToAnswers,
+  questionsToElicitation,
+} from 'agent-client/elicitation-form'
 import { jsonSchemaToZodShape } from 'agent-client/json-schema'
 import type { LocalTool, ToolsCaller } from 'agent-client/mcp-server'
 
@@ -126,7 +132,68 @@ export async function opencroftLocalTools(caller: ToolsCaller): Promise<LocalToo
   const staticNames = new Set(toolDefinitions.map((t) => t.name))
   const extensionDefs = await getExtensionToolDefinitions(staticNames)
   const dynamicDefs = await getAgentToolDefinitions(new Set(extensionDefs.map((t) => t.name)))
-  return [...getStaticTools(), ...extensionDefs.map(convert), ...dynamicDefs.map(convert)].map((tool) =>
-    toLocalTool(tool, callerAgent),
-  )
+  const sessionId = caller.sessionId
+  // A harness verified to ask natively (ACP elicitation) does not get the
+  // fallback question tool at all: both would render identically in the chat,
+  // but the tool path dies at the MCP request timeout and the native one
+  // doesn't — offering both just lets the model pick the worse channel.
+  const harnessAsks = adapterSupportsElicitation(caller.adapterId)
+  return [...getStaticTools(), ...extensionDefs.map(convert), ...dynamicDefs.map(convert)]
+    .filter((tool) => !(tool.name === 'ask_user' && harnessAsks))
+    .map((tool) => toLocalTool(tool, callerAgent))
+    .map((tool) => (tool.name === 'ask_user' && sessionId ? sessionAskUserTool(tool, sessionId) : tool))
+}
+
+/**
+ * Read the ask_user tool's `questions` argument into specs, or null when it is
+ * not a well-formed non-empty batch — in which case the caller delegates to
+ * the base handler so the canonical validation errors stay in one place
+ * (user-tools.ts).
+ */
+function parseAskUserQuestions(raw: unknown): AskUserQuestionSpec[] | null {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > 5) {
+    return null
+  }
+  const questions = raw.map((entry) => {
+    const record = (entry ?? {}) as Record<string, unknown>
+    return {
+      title: String(record.title ?? ''),
+      question: String(record.question ?? ''),
+      options: (Array.isArray(record.options) ? record.options : []).map(String).slice(0, 5),
+      ...(record.multiple ? { multiple: true } : {}),
+    }
+  })
+  return questions.some((q) => !q.title || !q.question || q.options.length === 0) ? null : questions
+}
+
+/**
+ * ask_user for a caller WITH a session: the question goes into that session's
+ * chat as the same form an agent-sent ACP elicitation renders as, instead of
+ * the instance-wide MCP request queue. Same questions argument, same
+ * `"question"="answer"` result text, same cancelled error — only where the
+ * form appears changes. Callers without a session (external MCP clients) keep
+ * the base handler's global path.
+ *
+ * The agent-client import is deferred to the call because this module is on
+ * the tools.ts <-> agent-client-instance import cycle (see getStaticTools).
+ */
+function sessionAskUserTool(base: LocalTool, sessionId: string): LocalTool {
+  return {
+    ...base,
+    handler: async (args) => {
+      const questions = parseAskUserQuestions(args.questions)
+      if (!questions) {
+        return base.handler(args)
+      }
+      const { agentClient } = await import('@/app/_authed/(agent)/_server/agent-client-instance')
+      const { message, schema } = questionsToElicitation(questions)
+      const content = await agentClient.askUser(sessionId, { message, form: schema })
+      if (content === null) {
+        return { content: [{ type: 'text' as const, text: 'cancelled' }], isError: true }
+      }
+      const answers = contentToAnswers(questions, content)
+      const lines = questions.map((q) => `"${q.question}"="${answers[q.title] ?? ''}"`)
+      return { content: [{ type: 'text' as const, text: `User answered to your questions:\n${lines.join('\n')}` }] }
+    },
+  }
 }

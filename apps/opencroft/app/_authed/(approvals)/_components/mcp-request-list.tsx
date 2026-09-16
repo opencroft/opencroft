@@ -3,8 +3,10 @@
 import '@/components/tool-views/builtin-views'
 
 import { Check, Crosshair, type LucideIcon, MessageCircleQuestion, ShieldQuestion, X } from 'lucide-react'
-import { type KeyboardEvent, useCallback, useEffect, useState, useTransition } from 'react'
+import { type KeyboardEvent, useCallback, useEffect, useMemo, useState, useTransition } from 'react'
 import { AskUser } from 'agent-chat/components/ask-user'
+import { contentToAnswers, questionsToElicitation } from 'agent-client/elicitation-form'
+import type { ElicitationContentValue } from 'agent-client/types'
 import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 import { Flex } from 'ui/layout/flex'
@@ -168,13 +170,19 @@ function ApprovalDetail({ request }: { request: PendingApproval }) {
 function AskUserDetail({ request }: { request: PendingAskUser }) {
   const [pending, startTransition] = useTransition()
 
+  // The queue stores the tool's own questions shape; the shared component
+  // renders schemas. Convert on the way in and fold back on the way out, so
+  // this path and the in-chat elicitation are one component with one answer
+  // shape (see agent-client/elicitation-form).
+  const { message, schema } = useMemo(() => questionsToElicitation(request.questions), [request.questions])
+
   const onSubmit = useCallback(
-    (answers: Record<string, string>) => {
+    (content: Record<string, ElicitationContentValue>) => {
       startTransition(async () => {
-        await answerAskUser({ data: { id: request.id, answers } })
+        await answerAskUser({ data: { id: request.id, answers: contentToAnswers(request.questions, content) } })
       })
     },
-    [request.id],
+    [request.id, request.questions],
   )
 
   const onCancel = useCallback(() => {
@@ -185,7 +193,7 @@ function AskUserDetail({ request }: { request: PendingAskUser }) {
 
   return (
     <div className='shrink-0 border-t max-h-96 overflow-y-auto'>
-      <AskUser questions={request.questions} onSubmit={onSubmit} onCancel={onCancel} pending={pending} />
+      <AskUser message={message} schema={schema} onSubmit={onSubmit} onCancel={onCancel} pending={pending} />
     </div>
   )
 }

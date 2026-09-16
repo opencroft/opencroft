@@ -58,6 +58,17 @@ export type SkillsInput = SkillDef[] | (() => Promise<SkillDef[]>)
  */
 export interface ToolsCaller {
   mcpIdentity?: string
+  // The calling session's own id, resolved from the same token as
+  // mcpIdentity. What a session-scoped tool (one that must reach back INTO
+  // the conversation that called it — asking the user a question is the
+  // canonical case) keys on. Same absence contract as mcpIdentity:
+  // unidentified, never a default.
+  sessionId?: string
+  // The calling session's harness adapter id — a fact about the caller, like
+  // the two above, for a host whose toolset depends on what the harness can
+  // already do itself (e.g. hiding a fallback question tool from a harness
+  // that asks natively — see adapterSupportsElicitation).
+  adapterId?: string
 }
 
 // Mirrors SkillsInput: a static array, or a function re-evaluated per request

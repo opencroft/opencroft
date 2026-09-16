@@ -678,6 +678,25 @@ test('a url elicitation surfaces its link and resolves from the agent completion
   await h.client.deleteSession(h.sessionId)
 })
 
+test('a host-raised askUser renders as the same ask_user event and answers with content or null', async () => {
+  const h = await setup('openclaw')
+  const schema = { type: 'object' as const, properties: { question_0: { type: 'string' as const } } }
+  const first = h.client.askUser(h.sessionId, { message: 'Which way?', form: schema })
+  const firstAsk = h.events.filter((event) => event.kind === 'ask_user').at(-1)
+  assert.ok(firstAsk && firstAsk.kind === 'ask_user')
+  assert.equal(firstAsk.message, 'Which way?')
+  assert.deepEqual(firstAsk.form, schema)
+  h.client.resolveElicitation(firstAsk.requestId, { question_0: 'left' })
+  assert.deepEqual(await first, { question_0: 'left' })
+  const second = h.client.askUser(h.sessionId, { message: 'Still there?' })
+  const secondAsk = h.events.filter((event) => event.kind === 'ask_user').at(-1)
+  assert.ok(secondAsk && secondAsk.kind === 'ask_user')
+  h.client.resolveElicitation(secondAsk.requestId)
+  assert.equal(await second, null)
+  assert.equal(await h.client.askUser('no-such-session', { message: 'anyone?' }), null)
+  await h.client.deleteSession(h.sessionId)
+})
+
 test('a plain-message elicitation still takes a free-text answer, and no answer still cancels', async () => {
   const h = await setup('openclaw')
   const client = buildClient(() => h.sessionId, 'local')

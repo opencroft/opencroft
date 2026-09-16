@@ -1,6 +1,6 @@
 'use client'
 
-import { AskForm, AskUrl } from './components/ask-form'
+import { AskUrl, AskUser } from './components/ask-user'
 import { AppearGuard, AskPrompt, PermissionRequest } from './messages'
 import type { AgentChatSession, PendingAsk, PendingPermission } from './session'
 
@@ -58,12 +58,14 @@ export function Approvals({ session }: { session: ApprovalsSession }) {
               it always was. Which shape an ask is came from the agent's own
               elicitation mode — see PendingAsk in the session contract. */}
           {a.form ? (
-            <AskForm
-              message={a.message}
-              schema={a.form}
-              onSubmit={(content) => session.resolveAsk(a.requestId, content)}
-              onCancel={() => session.resolveAsk(a.requestId)}
-            />
+            <div className='rounded-md border'>
+              <AskUser
+                message={a.message}
+                schema={a.form}
+                onSubmit={(content) => session.resolveAsk(a.requestId, content)}
+                onCancel={() => session.resolveAsk(a.requestId)}
+              />
+            </div>
           ) : a.url ? (
             <AskUrl
               message={a.message}

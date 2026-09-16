@@ -30,6 +30,14 @@ export interface HarnessAdapter {
   // encodes verified behavior of the specific bridge binary. Defaults to
   // false, meaning the engine queues mid-turn prompts until the turn ends.
   supportsMidTurnInput?: boolean
+  // Whether the agent actually SENDS ACP elicitations (elicitation/create)
+  // once the client declares the capability. Also not declarable over ACP —
+  // agentCapabilities carries no elicitation field, so the client only ever
+  // states its own support — hence, like supportsMidTurnInput, this encodes
+  // verified behavior of the specific bridge binary. A host uses it to hide
+  // its own fallback question tool from sessions whose harness asks natively
+  // (the native path has no MCP request timeout; the tool does).
+  supportsElicitation?: boolean
 }
 
 export const HARNESS_ADAPTERS: HarnessAdapter[] = [
@@ -66,6 +74,11 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     // pair (steering semantics + a boundary signal) before enabling any other
     // adapter.
     supportsMidTurnInput: false,
+    // Verified 2026-09-16 against claude-agent-acp 0.77.0: with the form/url
+    // client capabilities declared, AskUserQuestion arrives as a form
+    // elicitation. Implementation-defined for the same @latest reason as the
+    // note above.
+    supportsElicitation: true,
   },
   {
     id: 'claude-subscription',
@@ -77,8 +90,9 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     // OAuth token (subscription), never a provider override.
     keyEnv: 'CLAUDE_CODE_OAUTH_TOKEN',
     modelEnv: 'ANTHROPIC_MODEL',
-    // Same bridge binary as 'claude' — see the note there.
+    // Same bridge binary as 'claude' — see the notes there.
     supportsMidTurnInput: false,
+    supportsElicitation: true,
     note: 'Auth with a Claude Pro/Max subscription: run `claude setup-token`, then paste the OAuth token as the API key secret.',
   },
   {

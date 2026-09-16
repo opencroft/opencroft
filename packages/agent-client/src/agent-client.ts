@@ -983,6 +983,14 @@ export function supportsMidTurnInput(selection: AgentSelection): boolean {
   return findAdapter(selection.adapterId)?.supportsMidTurnInput === true
 }
 
+/** Whether an adapter's harness is verified to send ACP elicitations — see
+ * the flag's own note in harness-adapters. By adapter id rather than
+ * selection, because the consumer (a host's tools factory) holds a
+ * ToolsCaller, not a selection. */
+export function adapterSupportsElicitation(adapterId: string | undefined): boolean {
+  return adapterId !== undefined && findAdapter(adapterId)?.supportsElicitation === true
+}
+
 // Forward the host's external session key to bridges that route by their own
 // session key (e.g. OpenClaw's ACP bridge → Gateway). ACP agents that don't
 // recognize `_meta.sessionKey` ignore it, so this stays harness-agnostic.
@@ -1035,7 +1043,14 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     callerFor: (token) => {
       const sessionId = store.acpTokenSession.get(token)
       const session = sessionId ? store.sessions.get(sessionId) : undefined
-      return { mcpIdentity: session?.selection.mcpIdentity }
+      // sessionId only travels when it names a session that still exists —
+      // a stale token's id would let a session-scoped tool address a
+      // conversation that is gone.
+      return {
+        mcpIdentity: session?.selection.mcpIdentity,
+        ...(session && sessionId ? { sessionId } : {}),
+        ...(session ? { adapterId: session.selection.adapterId } : {}),
+      }
     },
   })
 
@@ -2801,6 +2816,45 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         pending.resolve(answer ? { action: 'accept', content: { answer } } : { action: 'cancel' })
       }
       emit(pending.sessionId, { kind: 'ask_user_resolved', requestId })
+    },
+
+    /**
+     * Raise a question in a session's chat FROM THE HOST — the same pending
+     * entry and the same `ask_user` event an agent-sent ACP elicitation gets,
+     * so it renders and resolves identically. What differs is only who is
+     * waiting: an agent elicitation resolves a protocol response back over the
+     * connection, while this resolves the host caller (a session-scoped tool
+     * like ask_user) with the accepted content, or null when the reader
+     * dismissed it or the session is unknown.
+     */
+    askUser(
+      sessionId: string,
+      params: { message: string; form?: ElicitationSchema },
+    ): Promise<Record<string, ElicitationContentValue> | null> {
+      const session = store.sessions.get(sessionId)
+      if (!session) {
+        return Promise.resolve(null)
+      }
+      return new Promise((resolveContent) => {
+        const requestId = randomUUID()
+        store.pendingElicitations.set(requestId, {
+          sessionId,
+          // Adapts the protocol-response shape the shared resolve path speaks
+          // (resolveElicitation builds it) to the host caller's answer.
+          resolve: (response) =>
+            resolveContent(
+              response.action === 'accept'
+                ? ((response as { content?: Record<string, ElicitationContentValue> | null }).content ?? {})
+                : null,
+            ),
+        })
+        emit(sessionId, {
+          kind: 'ask_user',
+          requestId,
+          message: params.message,
+          ...(params.form ? { form: params.form } : {}),
+        })
+      })
     },
 
     async cancel(sessionId: string): Promise<void> {

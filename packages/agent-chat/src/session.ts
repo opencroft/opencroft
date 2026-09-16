@@ -34,7 +34,7 @@ export interface PendingAsk {
   requestId: string
   message: string
   // ACP form elicitation: the JSON schema the answer must match. Rendered as
-  // a form (see ask-form.tsx); the answer goes back through `resolveAsk` as a
+  // a form (see components/ask-user.tsx); the answer goes back through `resolveAsk` as a
   // content object keyed by the schema's properties. Absent = free-text ask.
   form?: ElicitationSchema
   // ACP url elicitation: the link the reader is asked to visit. Usually
