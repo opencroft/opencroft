@@ -44,6 +44,7 @@ import { tabSessions } from '@/app/_authed/(agent)/_server/acp-impl'
 import { copyTabKeys, dropTabKeys, type TabKeyMove } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { moveQueueEntries } from '@/app/_authed/(agent)/_server/queue-store'
+import { moveSessionEvents } from '@/app/_authed/(agent)/_server/session-event-store'
 import { renameCompactJobKey } from '@/app/_authed/(extension-runtime)/_server/stream'
 
 export type { TabKeyMove }
@@ -98,6 +99,13 @@ export async function settleSessionKeyMoves(moves: readonly TabKeyMove[]): Promi
   // message, silently never delivered.
   await moveQueueEntries(real).catch((error) => {
     console.error('[session-key-move] failed to carry the durable queue onto the new keys', error)
+  })
+  // The recorded transcript is addressed by the same key and is its own table
+  // too. Left behind, the conversation's whole history is unreachable, and the
+  // next open silently falls back to the harness's lossy replay -- which reads
+  // as a rename having eaten the subagents out of a chat.
+  await moveSessionEvents(real).catch((error) => {
+    console.error('[session-key-move] failed to carry the recorded transcript onto the new keys', error)
   })
   for (const { from, to } of real) {
     // The in-process tab -> session pointer. Without this the reaper's unload

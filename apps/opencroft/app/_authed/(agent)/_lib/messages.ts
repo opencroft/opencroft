@@ -1,3 +1,5 @@
+import type { PlanItem } from 'agent-client/types'
+
 import type { ResolvedAuthor } from '@/app/_authed/(agent)/_lib/acp-stream'
 
 export type ChatPart =
@@ -10,10 +12,15 @@ export type ChatPart =
   // which merges exactly as before.
   | { type: 'text'; text: string; messageId?: string }
   | { type: 'thinking'; text: string; messageId?: string }
+  // `name` is the agent's own phrasing for the call, which is what a reader
+  // sees; `toolName` is the programmatic name behind it, which is what decides
+  // HOW the call is drawn. See the kit's DetailItem for why they cannot be one
+  // field. Absent when the agent named no tool.
   | {
       type: 'tool-call'
       id: string
       name: string
+      toolName?: string
       args: unknown
       result?: { text: string; isError?: boolean }
     }
@@ -29,6 +36,12 @@ export type ChatPart =
       state?: string
       parts: ChatPart[]
     }
+  // The agent's execution plan (ACP `plan` session update) as ONE part that
+  // later plan events patch in place — every event replaces `entries`
+  // wholesale, so the part is keyed by the absolute index of the event that
+  // anchored it (`id`, same terms as ChatMessage.id) and a clear (empty
+  // entries) removes it rather than leaving an empty checklist behind.
+  | { type: 'plan'; id: number; entries: PlanItem[] }
 
 export interface ChatMessage {
   // Stable across a "load older" prepend — the absolute index (in the

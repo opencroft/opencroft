@@ -113,6 +113,10 @@ export interface SessionMeta {
   presence?: Presence
 }
 
+// One entry of the agent's execution plan (ACP `plan` session update — the
+// stable one, not the draft planId-addressed `plan_update`). ACP entry status
+// spellings are 'pending' | 'in_progress' | 'completed'; the field stays a
+// string so an agent's own vocabulary still folds and renders.
 export interface PlanItem {
   content: string
   status: string
@@ -304,6 +308,17 @@ export type ChatEvent =
       status: string
       toolKind?: string
       input?: unknown
+      // The tool's PROGRAMMATIC name (`Write`, `Bash`, `mcp__local__call`) as
+      // the agent reports it, where `title` is the human sentence it wants
+      // drawn ("Write apps/opencroft/…/foo.tsx"). Both, because they answer
+      // different questions: the title is what a reader sees, and this is what
+      // a client matches on to decide HOW to draw it. A client keying a view
+      // registry on the title matches nothing whose title embeds an argument,
+      // which is every file tool.
+      //
+      // Absent when the agent did not send one — an older bridge, or an update
+      // that only refines a call already announced.
+      name?: string
     }
   | {
       kind: 'tool_update'

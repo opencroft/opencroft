@@ -1,3 +1,6 @@
+import type { AgentProvider } from './agent-providers'
+import type { AgentSelection } from './types'
+
 export type Protocol = 'anthropic' | 'openai' | 'gemini' | 'native'
 
 export interface HarnessAdapter {
@@ -38,6 +41,65 @@ export interface HarnessAdapter {
   // its own fallback question tool from sessions whose harness asks natively
   // (the native path has no MCP request timeout; the tool does).
   supportsElicitation?: boolean
+  // Builds extra spawn env from the selection's provider wiring, for harnesses
+  // whose provider configuration cannot travel through the standard base-url /
+  // key / model env vars and must instead be carried in a document of the
+  // harness's own (OpenCode's config JSON). Receives the resolved key env var
+  // name (the adapter's keyEnv, else the provider's).
+  selectionEnv?: (provider: AgentProvider, selection: AgentSelection, keyEnv?: string) => Record<string, string>
+}
+
+// OpenCode assembles its model catalog from its OWN provider configuration:
+// the standard OPENAI_* / *MODEL* env vars do nothing for it, and a provider
+// that is not configured there never appears in the advertised `model` config
+// option at all (measured against opencode-ai 1.18.31 — only its built-in
+// free models are offered, with the provider's key env var set or not). Its
+// config schema accepts an inline document through the OPENCODE_CONFIG_CONTENT
+// env var, so each spawn carries one synthesized from the selection's provider
+// wiring: an OpenAI-compatible provider entry pointing at the provider's
+// endpoint, with the API key referenced as `{env:<KEY>}` so the document
+// itself holds no secret. One empty model entry per provider-table id
+// registers that id in the picker even where OpenCode's own model catalog
+// doesn't know it; empty entries leave the catalog's names and context limits
+// standing. The context-variant bracket ids (`[1m]`-style) are skipped — they
+// are served by the provider's anthropic-style endpoints only; the
+// OpenAI-compatible endpoint rejects them with "Unknown Model" (same
+// measurement) — so advertising one would only invite a mid-turn failure.
+function opencodeSelectionEnv(
+  provider: AgentProvider,
+  selection: AgentSelection,
+  keyEnv?: string,
+): Record<string, string> {
+  const models: Record<string, object> = {}
+  for (const model of provider.models) {
+    if (!model.includes('[')) {
+      models[model] = {}
+    }
+  }
+  const baseURL = selection.baseUrl || provider.endpoints.openai
+  // Providers without an OpenAI-compatible endpoint are left to the harness's
+  // own catalog (its model registry entries plus the standard key env var,
+  // which it does honor for those) — synthesizing an entry here would override
+  // that working catalog with an endpoint-less OpenAI-compatible one.
+  if (!baseURL) {
+    return {}
+  }
+  return {
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({
+      $schema: 'https://opencode.ai/config.json',
+      provider: {
+        [provider.id]: {
+          npm: '@ai-sdk/openai-compatible',
+          name: provider.label,
+          options: {
+            ...(baseURL ? { baseURL } : {}),
+            ...(selection.apiKey && keyEnv ? { apiKey: `{env:${keyEnv}}` } : {}),
+          },
+          models,
+        },
+      },
+    }),
+  }
 }
 
 export const HARNESS_ADAPTERS: HarnessAdapter[] = [
@@ -143,15 +205,19 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     command: 'npx',
     args: ['-y', 'opencode-ai@latest', 'acp'],
     protocol: 'native',
-    // OpenCode carries NO model env var: unlike Claude Code (ANTHROPIC_MODEL),
-    // it advertises its model list as a `model` config option at session start
-    // and switches via session/set_config_option — so the chat model picker
-    // drives it live, and a profile's model is applied at start when it matches
-    // an advertised option (see createSession's model-config step, gated on the
-    // absent modelEnv). The advertised list is whatever OpenCode's own provider
-    // auth exposes (ids are `provider/model`, e.g. `anthropic/claude-fable-5`),
-    // so the key below — or an `opencode auth login` — is what populates it.
-    note: 'Models come from OpenCode itself: whatever providers you have configured there (via the key below, or `opencode auth login`) appear in the chat model picker as `provider/model`. Set the profile model to one of those ids, or leave it blank for OpenCode\'s default.',
+    // OpenCode carries NO model env var and builds its model catalog from its
+    // OWN provider configuration — the standard OPENAI_*/ANTHROPIC_* env vars
+    // do nothing for it, the provider's key env var included. Without
+    // selectionEnv below, only its built-in free models are advertised as the
+    // `model` config option at session start and a profile's model can never
+    // match (measured against opencode-ai 1.18.31). With it, the selection's
+    // provider is configured via the OPENCODE_CONFIG_CONTENT env var, the chat
+    // model picker lists its models as `provider/model`, and createSession's
+    // model-config step applies the profile model when it matches an
+    // advertised id — a model that matches nothing is reported as an error
+    // event instead of being skipped silently.
+    selectionEnv: opencodeSelectionEnv,
+    note: 'Models come from the selected provider, wired into OpenCode automatically as an OpenAI-compatible provider — the chat model picker lists them as `provider/model`. Context variants like `[1m]` are not offered (the OpenAI-compatible endpoint rejects them). Leave the model blank for OpenCode\'s default.',
   },
   {
     id: 'copilot',

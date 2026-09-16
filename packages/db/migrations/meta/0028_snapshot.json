@@ -1,6 +1,6 @@
 {
-  "id": "fa70bf6a-6efd-49bd-afe0-42804074feaf",
-  "prevId": "5118886a-cd47-4a86-93b4-5f4f10759626",
+  "id": "4aeec91f-6db6-417f-8ec6-a4b0349b4fe6",
+  "prevId": "fa70bf6a-6efd-49bd-afe0-42804074feaf",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -266,6 +266,128 @@
           "onUpdate": "no action"
         }
       },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.ChatUsageTurn": {
+      "name": "ChatUsageTurn",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "day": {
+          "name": "day",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sessionId": {
+          "name": "sessionId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "adapterId": {
+          "name": "adapterId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "inputTokens": {
+          "name": "inputTokens",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "outputTokens": {
+          "name": "outputTokens",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cacheReadTokens": {
+          "name": "cacheReadTokens",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cacheWriteTokens": {
+          "name": "cacheWriteTokens",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "totalTokens": {
+          "name": "totalTokens",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "costAmount": {
+          "name": "costAmount",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "costCurrency": {
+          "name": "costCurrency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "ChatUsageTurn_day_idx": {
+          "name": "ChatUsageTurn_day_idx",
+          "columns": [
+            {
+              "expression": "day",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ChatUsageTurn_sessionId_idx": {
+          "name": "ChatUsageTurn_sessionId_idx",
+          "columns": [
+            {
+              "expression": "sessionId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},

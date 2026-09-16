@@ -66,6 +66,12 @@ export function buildSpawnConfig(selection: AgentSelection): SpawnConfig {
         env.OPENAI_MODEL = selection.model
       }
     }
+    // Provider wiring that cannot travel through the vars above — a config
+    // document of the harness's own, carried in one env var — is built by the
+    // adapter itself (see selectionEnv in harness-adapters).
+    if (adapter.selectionEnv) {
+      Object.assign(env, adapter.selectionEnv(provider, selection, keyEnv))
+    }
   }
 
   const spawnConfig: SpawnConfig = {

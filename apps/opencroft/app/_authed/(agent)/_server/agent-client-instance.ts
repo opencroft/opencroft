@@ -7,6 +7,7 @@ import { readPersistedPresence, writePersistedUsage } from '@/app/_authed/(agent
 import { recordChatUsageTurn } from '@/app/_authed/(agent)/_server/chat-usage-store'
 import { readMcpServersForAgent } from '@/app/_authed/(agent)/_server/mcp-store'
 import { queueStore } from '@/app/_authed/(agent)/_server/queue-store'
+import { appendSessionEvent } from '@/app/_authed/(agent)/_server/session-event-store'
 import { loadSkillDefs, skillBodyHandler } from '@/app/_authed/(agent)/_server/skill-store'
 import { toolPermissionOutcome } from '@/app/_authed/(agent)/_server/tool-permission'
 import { opencroftLocalTools } from '@/app/_authed/(agent)/_server/tools-bridge'
@@ -53,6 +54,23 @@ function resolvePermission(context: PermissionContext): PermissionOutcome {
 // records the figure that actually matters — what the session holds now that
 // the turn is over. A session unloaded or a process killed mid-turn simply
 // keeps the previous turn's value, which is the correct conservative answer.
+// Everything a session emits, recorded under the key that outlives it, so a
+// reopened chat is rebuilt from what was actually shown rather than from what
+// the agent's own history replay happens to carry. See session-event-store for
+// the batching, and agent-client's restoreSession for what reads it back.
+//
+// Every kind, deliberately: a snapshot event is cheap, the read side already
+// folds the last one seen per kind, and deciding here which kinds "matter"
+// would be this file holding a second opinion about the transcript's shape.
+function persistSessionEvent(event: ChatEvent, sessionKey: string | undefined): void {
+  if (!sessionKey) {
+    // Nothing could address the rows later — the same reason the durable queue
+    // skips a keyless session.
+    return
+  }
+  appendSessionEvent(sessionKey, event)
+}
+
 function persistUsageOnTurnEnd(sessionId: string, event: ChatEvent): void {
   if (event.kind !== 'turn_end') {
     return
@@ -179,7 +197,10 @@ export const agentClient = createAgentClient({
   // The extension point itself stays in agent-client: it is a host-agnostic
   // seam in a shared package, and this product no longer using it is not a
   // reason to take it from one that might.
-  onEvent: persistUsageOnTurnEnd,
+  onEvent: (sessionId, event, sessionKey) => {
+    persistSessionEvent(event, sessionKey)
+    persistUsageOnTurnEnd(sessionId, event)
+  },
   // Live compaction transitions (never replay — the engine gates that). The
   // registered handler re-delivers the session's standing context once a
   // compaction completes; see stream.ts's restoreAfterCompaction.
