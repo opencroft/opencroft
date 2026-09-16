@@ -1,5 +1,6 @@
 'use client'
 
+import { AskForm, AskUrl } from './components/ask-form'
 import { AppearGuard, AskPrompt, PermissionRequest } from './messages'
 import type { AgentChatSession, PendingAsk, PendingPermission } from './session'
 
@@ -52,10 +53,30 @@ export function Approvals({ session }: { session: ApprovalsSession }) {
       ))}
       {session.asks.map((a) => (
         <AppearGuard key={a.requestId}>
-          <AskPrompt
-            message={{ id: a.requestId, kind: 'ask', requestId: a.requestId, message: a.message, resolved: false }}
-            onRespond={session.resolveAsk}
-          />
+          {/* Three ask shapes, one slot: a form renders its schema, a url
+              renders its link, and everything else stays the free-text prompt
+              it always was. Which shape an ask is came from the agent's own
+              elicitation mode — see PendingAsk in the session contract. */}
+          {a.form ? (
+            <AskForm
+              message={a.message}
+              schema={a.form}
+              onSubmit={(content) => session.resolveAsk(a.requestId, content)}
+              onCancel={() => session.resolveAsk(a.requestId)}
+            />
+          ) : a.url ? (
+            <AskUrl
+              message={a.message}
+              url={a.url}
+              onDone={() => session.resolveAsk(a.requestId, {})}
+              onCancel={() => session.resolveAsk(a.requestId)}
+            />
+          ) : (
+            <AskPrompt
+              message={{ id: a.requestId, kind: 'ask', requestId: a.requestId, message: a.message, resolved: false }}
+              onRespond={session.resolveAsk}
+            />
+          )}
         </AppearGuard>
       ))}
     </div>

@@ -177,7 +177,12 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
       if (message.kind === 'permission' && !message.resolved) {
         permissions.push({ requestId: message.requestId, title: message.title, options: message.options })
       } else if (message.kind === 'ask' && !message.resolved) {
-        asks.push({ requestId: message.requestId, message: message.message })
+        asks.push({
+          requestId: message.requestId,
+          message: message.message,
+          ...(message.form ? { form: message.form } : {}),
+          ...(message.url ? { url: message.url } : {}),
+        })
       }
     }
     return { permissions, asks }

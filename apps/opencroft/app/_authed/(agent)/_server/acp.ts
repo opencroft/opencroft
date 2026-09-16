@@ -5,7 +5,7 @@
 // bundle. A single plain exported function here has no stub and ships that tail
 // — see the header of acp-impl.ts, which is where plain implementations go.
 import { createServerFn } from '@tanstack/react-start'
-import type { Presence, QueueMode } from 'agent-client/types'
+import type { ElicitationContentValue, Presence, QueueMode } from 'agent-client/types'
 
 import type { AuthoredRecordsWindow } from '@/app/_authed/(agent)/_lib/acp-stream'
 import type { WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
@@ -214,7 +214,14 @@ export const getSessionHistoryPageLocal = createServerFn({ method: 'GET', strict
   )
 
 export const respondLocal = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { type: 'permission' | 'ask'; requestId: string; optionId?: string; answer?: string }) => data)
+  .inputValidator(
+    (data: {
+      type: 'permission' | 'ask'
+      requestId: string
+      optionId?: string
+      answer?: string | Record<string, ElicitationContentValue>
+    }) => data,
+  )
   .handler(async ({ data }): Promise<void> => {
     if (data.type === 'permission') {
       agentClient.resolvePermission(data.requestId, data.optionId)

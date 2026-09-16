@@ -1,8 +1,13 @@
-import type { AvailableCommand, SessionConfigOption } from '@agentclientprotocol/sdk'
+import type {
+  AvailableCommand,
+  ElicitationContentValue,
+  ElicitationSchema,
+  SessionConfigOption,
+} from '@agentclientprotocol/sdk'
 
 // Re-exported so consumers (agent-chat, hosts) can type the advertised command
-// list without depending on the protocol SDK directly.
-export type { AvailableCommand }
+// list and elicitation forms without depending on the protocol SDK directly.
+export type { AvailableCommand, ElicitationContentValue, ElicitationSchema }
 
 export interface SpawnConfig {
   command: string
@@ -234,7 +239,12 @@ export type ChatEvent =
       options: PermissionOpt[]
     }
   | { kind: 'permission_resolved'; requestId: string; optionId?: string }
-  | { kind: 'ask_user'; requestId: string; message: string }
+  // An elicitation from the agent. Plain `message` alone is a free-text ask;
+  // `form` (ACP form mode) carries the JSON schema the answer must match —
+  // resolve it with a content object keyed by the schema's properties; `url`
+  // (ACP url mode) asks the reader to visit a link, and usually resolves from
+  // the agent's own completion notification rather than a typed answer.
+  | { kind: 'ask_user'; requestId: string; message: string; form?: ElicitationSchema; url?: string }
   | { kind: 'ask_user_resolved'; requestId: string }
   | { kind: 'modes'; available: SessionMode[]; current: string }
   | { kind: 'mode_changed'; current: string }

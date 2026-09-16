@@ -7,7 +7,15 @@ import { usePaginatedHistory } from 'agent-chat/use-paginated-history'
 import { toEditableParts } from 'agent-chat/user-parts'
 import { isTerminalToolStatus } from 'agent-client/fold'
 import { DEFAULT_PRESENCE } from 'agent-client/presence'
-import type { AvailableCommand, PermissionOpt, Presence, QueuedPrompt, QueueMode } from 'agent-client/types'
+import type {
+  AvailableCommand,
+  ElicitationContentValue,
+  ElicitationSchema,
+  PermissionOpt,
+  Presence,
+  QueuedPrompt,
+  QueueMode,
+} from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 
 import type { AgentSession } from '@/app/_authed/(agent)/_components/agent-chat'
@@ -110,6 +118,11 @@ export interface PendingPermission {
 export interface PendingAsk {
   requestId: string
   message: string
+  // Elicitation shape, carried through from the event: a form schema to
+  // render, or a url to visit. Absent = free-text ask. See the package
+  // contract's PendingAsk (agent-chat/session.ts) for the full statement.
+  form?: ElicitationSchema
+  url?: string
 }
 
 // The queue lives server-side in agent-client; this is its wire shape, aliased
@@ -151,7 +164,7 @@ export interface AcpSession {
   // Context usage meter (tokens used / window) from the latest 'usage' event.
   usage?: AgentUsage
   resolvePermission: (requestId: string, optionId?: string) => void
-  resolveAsk: (requestId: string, answer?: string) => void
+  resolveAsk: (requestId: string, answer?: string | Record<string, ElicitationContentValue>) => void
   respondPermissionText: (requestId: string, text: string) => void
   // Drop a still-queued message before it's delivered.
   removeQueued: (id: string) => void
@@ -296,7 +309,12 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
         break
       }
       case 'ask_user': {
-        asks.set(event.requestId, { requestId: event.requestId, message: event.message })
+        asks.set(event.requestId, {
+          requestId: event.requestId,
+          message: event.message,
+          ...(event.form ? { form: event.form } : {}),
+          ...(event.url ? { url: event.url } : {}),
+        })
         break
       }
       case 'ask_user_resolved': {
@@ -749,7 +767,7 @@ export function useAcpSession(
     void respondLocal({ data: { type: 'permission', requestId, optionId } })
   }, [])
 
-  const resolveAsk = useCallback((requestId: string, answer?: string) => {
+  const resolveAsk = useCallback((requestId: string, answer?: string | Record<string, ElicitationContentValue>) => {
     void respondLocal({ data: { type: 'ask', requestId, answer } })
   }, [])
 

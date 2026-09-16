@@ -11,7 +11,7 @@ import {
 } from 'agent-client/permissions'
 import type { AgentProfile, ProfilesFile } from 'agent-client/profiles'
 import { rebuildDelivery, splitDelivery } from 'agent-client/queue-tags'
-import type { AgentSelection, QueueMode, SessionMeta } from 'agent-client/types'
+import type { AgentSelection, ElicitationContentValue, QueueMode, SessionMeta } from 'agent-client/types'
 
 import { getRuntime, type RoleRecord, resolveReaderName, type SkillRecord } from './runtime'
 
@@ -248,7 +248,14 @@ const _cancelAgentTurn = createServerFn({ method: 'POST' })
 export const cancelAgentTurn = (sessionId: string) => _cancelAgentTurn({ data: sessionId })
 
 const _respondAgent = createServerFn({ method: 'POST' })
-  .inputValidator((data: { type: 'permission' | 'ask'; requestId: string; optionId?: string; answer?: string }) => data)
+  .inputValidator(
+    (data: {
+      type: 'permission' | 'ask'
+      requestId: string
+      optionId?: string
+      answer?: string | Record<string, ElicitationContentValue>
+    }) => data,
+  )
   .handler(async ({ data }) => {
     const { agent } = getRuntime()
     if (data.type === 'permission') {
@@ -260,7 +267,7 @@ const _respondAgent = createServerFn({ method: 'POST' })
   })
 export const respondPermission = (requestId: string, optionId?: string) =>
   _respondAgent({ data: { type: 'permission', requestId, optionId } })
-export const respondAsk = (requestId: string, answer?: string) =>
+export const respondAsk = (requestId: string, answer?: string | Record<string, ElicitationContentValue>) =>
   _respondAgent({ data: { type: 'ask', requestId, answer } })
 
 const _setAgentMode = createServerFn({ method: 'POST' })

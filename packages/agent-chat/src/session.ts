@@ -1,4 +1,4 @@
-import type { AvailableCommand, PermissionOpt } from 'agent-client/types'
+import type { AvailableCommand, ElicitationContentValue, ElicitationSchema, PermissionOpt } from 'agent-client/types'
 
 import type { EditablePart } from './user-parts'
 
@@ -33,6 +33,14 @@ export interface PendingPermission {
 export interface PendingAsk {
   requestId: string
   message: string
+  // ACP form elicitation: the JSON schema the answer must match. Rendered as
+  // a form (see ask-form.tsx); the answer goes back through `resolveAsk` as a
+  // content object keyed by the schema's properties. Absent = free-text ask.
+  form?: ElicitationSchema
+  // ACP url elicitation: the link the reader is asked to visit. Usually
+  // resolved by the agent's own completion notification; the UI offers Done
+  // (accept) and Dismiss (cancel) regardless.
+  url?: string
 }
 
 // THE named session-shape contract for packages/agent-chat's composed
@@ -156,10 +164,13 @@ export interface AgentChatSession {
   // in the same turn — not every host offers this (a session with no way to
   // steer a denial leaves it unset).
   respondPermissionText: (requestId: string, text: string) => void
-  // Answers a pending ask. Omitting `answer` (or passing an empty string)
-  // declines it: the elicitation resolves as cancelled, so the agent receives
-  // no content at all rather than an empty answer.
-  resolveAsk: (requestId: string, answer?: string) => void
+  // Answers a pending ask. A string answers the free-text prompt; an object
+  // answers a form ask with content keyed by its schema's properties (an
+  // empty object is accept-with-nothing, the URL ask's "Done"). Omitting
+  // `answer` (or passing an empty string) declines it: the elicitation
+  // resolves as cancelled, so the agent receives no content at all rather
+  // than an empty answer.
+  resolveAsk: (requestId: string, answer?: string | Record<string, ElicitationContentValue>) => void
   // Discards this session and opens a fresh one under the same tab/entry.
   // Pending permission requests and the queue die with the old session; the
   // composer draft survives (it's owned separately, not part of session

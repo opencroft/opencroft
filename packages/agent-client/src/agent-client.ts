@@ -7,9 +7,12 @@ import { Readable, Writable } from 'node:stream'
 import type {
   McpServer as AcpMcpServer,
   Client,
+  CompleteElicitationNotification,
   ContentBlock,
   CreateElicitationRequest,
   CreateElicitationResponse,
+  ElicitationContentValue,
+  ElicitationSchema,
   ReadTextFileRequest,
   ReadTextFileResponse,
   RequestPermissionRequest,
@@ -373,6 +376,10 @@ interface ClientStore {
     {
       sessionId: string
       resolve: (response: CreateElicitationResponse) => void
+      // The agent's own id for a URL elicitation — what its
+      // elicitation/complete notification names, since the agent never
+      // learns our requestId.
+      elicitationId?: string
     }
   >
   // Native-harness conversation state, owned here (not in the harness closure)
@@ -799,7 +806,12 @@ function pickAllowOption(request: RequestPermissionRequest): string {
 // surface to the user; `mcpServerName` is the built-in server's name, which is
 // what lets a permission request for one of the host's own tools be recognised
 // as such and carry that tool's identity.
-function buildClient(
+//
+// Exported for the same reason handleUpdate is: the elicitation callbacks are
+// only reachable through a real spawned connection, which tests replace with a
+// seeded fake — driving the built Client directly is how they exercise this
+// path at all.
+export function buildClient(
   getElicitationSession: () => string | null,
   mcpServerName: string,
   permissionHandler?: PermissionHandler,
@@ -847,13 +859,41 @@ function buildClient(
           return
         }
         const requestId = randomUUID()
-        store.pendingElicitations.set(requestId, { sessionId, resolve })
+        // The mode union carries a `mode: string` catch-all, so an equality
+        // check does not narrow it — the casts read exactly the field each
+        // declared mode guarantees. An unknown mode falls through to the
+        // plain-message prompt, which is also what every elicitation was
+        // before modes existed.
+        const form = request.mode === 'form' ? (request as { requestedSchema: ElicitationSchema }).requestedSchema : undefined
+        const urlMode = request.mode === 'url' ? (request as { url: string; elicitationId: string }) : undefined
+        store.pendingElicitations.set(requestId, {
+          sessionId,
+          resolve,
+          ...(urlMode ? { elicitationId: urlMode.elicitationId } : {}),
+        })
         emit(sessionId, {
           kind: 'ask_user',
           requestId,
           message: request.message,
+          ...(form ? { form } : {}),
+          ...(urlMode ? { url: urlMode.url } : {}),
         })
       }),
+    // A URL elicitation usually ends from the agent's side — it detects the
+    // out-of-band step finished (an OAuth login landed) and notifies, naming
+    // its own elicitationId. Resolve the pending promise too: the agent races
+    // it against its own completion and ignores the loser, while an
+    // unresolved entry here would sit in the map forever.
+    completeElicitation: (notification: CompleteElicitationNotification) => {
+      for (const [requestId, pending] of store.pendingElicitations) {
+        if (pending.elicitationId !== undefined && pending.elicitationId === notification.elicitationId) {
+          store.pendingElicitations.delete(requestId)
+          pending.resolve({ action: 'accept' })
+          emit(pending.sessionId, { kind: 'ask_user_resolved', requestId })
+          break
+        }
+      }
+    },
     readTextFile: async (request: ReadTextFileRequest): Promise<ReadTextFileResponse> => {
       const content = await readFile(request.path, 'utf8')
       return { content }
@@ -1130,7 +1170,15 @@ export function createAgentClient(options: AgentClientOptions = {}) {
           protocolVersion: PROTOCOL_VERSION,
           clientCapabilities: {
             fs: { readTextFile: true, writeTextFile: true },
-            elicitation: {},
+            // Declaring form/url is the opt-in that makes agents SEND
+            // elicitations at all: claude-agent-acp only converts its
+            // AskUserQuestion tool into a form elicitation, forwards MCP
+            // elicitations, and raises URL (OAuth) elicitations for clients
+            // that advertised the matching mode — an `elicitation: {}` with
+            // neither key means those degrade to a permission dialog / an
+            // auto-decline. `{}` per mode is the spec's spelling of "supported"
+            // (presence advertises, the object is room for future detail).
+            elicitation: { form: {}, url: {} },
           },
           clientInfo,
         })
@@ -2733,13 +2781,25 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       })
     },
 
-    resolveElicitation(requestId: string, answer?: string): void {
+    // `answer` shapes, matching the three ways an ask renders:
+    // - an object — a form elicitation's content, keyed by the schema's own
+    //   property names (the agent validates it against the schema it sent).
+    //   An EMPTY object is a real answer: accept with nothing to say, which is
+    //   how a URL ask's "Done" reads.
+    // - a non-empty string — the free-text prompt's reply, delivered under the
+    //   `answer` key it has always used;
+    // - undefined or '' — cancel, exactly as before this took objects.
+    resolveElicitation(requestId: string, answer?: string | Record<string, ElicitationContentValue>): void {
       const pending = store.pendingElicitations.get(requestId)
       if (!pending) {
         return
       }
       store.pendingElicitations.delete(requestId)
-      pending.resolve(answer ? { action: 'accept', content: { answer } } : { action: 'cancel' })
+      if (answer !== undefined && typeof answer !== 'string') {
+        pending.resolve({ action: 'accept', content: answer })
+      } else {
+        pending.resolve(answer ? { action: 'accept', content: { answer } } : { action: 'cancel' })
+      }
       emit(pending.sessionId, { kind: 'ask_user_resolved', requestId })
     },
 

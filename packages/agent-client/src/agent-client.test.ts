@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
 
-import { type AgentClientOptions, createAgentClient, handleUpdate, type QueueStore } from './agent-client'
+import { type AgentClientOptions, buildClient, createAgentClient, handleUpdate, type QueueStore } from './agent-client'
 import type { AgentConnection } from './connection'
 import { decodeBatch } from './queue-tags'
 import { buildSpawnConfig, findAdapter } from './resolve'
@@ -632,6 +632,66 @@ test('an available_commands_update notification replaces session commands and em
   } as Parameters<typeof handleUpdate>[0])
   const snapshots = h.events.filter((event) => event.kind === 'available_commands')
   assert.deepEqual(snapshots.at(-1), { kind: 'available_commands', commands })
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a form elicitation surfaces its schema and resolves with the content object', async () => {
+  const h = await setup('openclaw')
+  const client = buildClient(() => h.sessionId, 'local')
+  const schema = {
+    type: 'object' as const,
+    properties: { choice: { type: 'string' as const, oneOf: [{ const: 'a', title: 'A' }] } },
+    required: ['choice'],
+  }
+  const response = client.createElicitation!({
+    mode: 'form',
+    sessionId: h.sessionId,
+    message: 'Pick one',
+    requestedSchema: schema,
+  })
+  const ask = h.events.find((event) => event.kind === 'ask_user')
+  assert.ok(ask && ask.kind === 'ask_user')
+  assert.equal(ask.message, 'Pick one')
+  assert.deepEqual(ask.form, schema)
+  h.client.resolveElicitation(ask.requestId, { choice: 'a' })
+  assert.deepEqual(await response, { action: 'accept', content: { choice: 'a' } })
+  assert.ok(h.events.some((event) => event.kind === 'ask_user_resolved' && event.requestId === ask.requestId))
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a url elicitation surfaces its link and resolves from the agent completion notification', async () => {
+  const h = await setup('openclaw')
+  const client = buildClient(() => h.sessionId, 'local')
+  const response = client.createElicitation!({
+    mode: 'url',
+    sessionId: h.sessionId,
+    message: 'Authenticate',
+    url: 'https://example.invalid/login',
+    elicitationId: 'elic-1',
+  })
+  const ask = h.events.find((event) => event.kind === 'ask_user')
+  assert.ok(ask && ask.kind === 'ask_user')
+  assert.equal(ask.url, 'https://example.invalid/login')
+  await client.completeElicitation!({ elicitationId: 'elic-1' })
+  assert.deepEqual(await response, { action: 'accept' })
+  assert.ok(h.events.some((event) => event.kind === 'ask_user_resolved' && event.requestId === ask.requestId))
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a plain-message elicitation still takes a free-text answer, and no answer still cancels', async () => {
+  const h = await setup('openclaw')
+  const client = buildClient(() => h.sessionId, 'local')
+  const first = client.createElicitation!({ mode: '_test/free-text', sessionId: h.sessionId, message: 'Say something' })
+  const firstAsk = h.events.filter((event) => event.kind === 'ask_user').at(-1)
+  assert.ok(firstAsk && firstAsk.kind === 'ask_user')
+  assert.equal(firstAsk.form, undefined)
+  h.client.resolveElicitation(firstAsk.requestId, 'hello')
+  assert.deepEqual(await first, { action: 'accept', content: { answer: 'hello' } })
+  const second = client.createElicitation!({ mode: '_test/free-text', sessionId: h.sessionId, message: 'Say more' })
+  const secondAsk = h.events.filter((event) => event.kind === 'ask_user').at(-1)
+  assert.ok(secondAsk && secondAsk.kind === 'ask_user')
+  h.client.resolveElicitation(secondAsk.requestId)
+  assert.deepEqual(await second, { action: 'cancel' })
   await h.client.deleteSession(h.sessionId)
 })
 

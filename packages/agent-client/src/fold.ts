@@ -1,4 +1,4 @@
-import type { ChatEvent, PermissionOpt, PlanItem } from './types'
+import type { ChatEvent, ElicitationSchema, PermissionOpt, PlanItem } from './types'
 
 export type ChatMessage =
   | { id: string; kind: 'user'; text: string }
@@ -28,6 +28,10 @@ export type ChatMessage =
       kind: 'ask'
       requestId: string
       message: string
+      // The ask's elicitation shape, carried through from the event: a form
+      // schema to render, or a url to visit. Absent = free-text ask.
+      form?: ElicitationSchema
+      url?: string
       resolved: boolean
     }
   | { id: string; kind: 'error'; text: string }
@@ -176,6 +180,8 @@ export function foldEvents(events: ChatEvent[]): ChatMessage[] {
           kind: 'ask',
           requestId: event.requestId,
           message: event.message,
+          ...(event.form ? { form: event.form } : {}),
+          ...(event.url ? { url: event.url } : {}),
           resolved: false,
         }
         asks.set(event.requestId, message)
