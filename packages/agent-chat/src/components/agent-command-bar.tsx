@@ -1,5 +1,6 @@
 'use client'
 
+import type { AvailableCommand } from 'agent-client/types'
 import { Check, Send, ShieldAlert, ShieldCheck, ShieldCog, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react'
 import { Fragment, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode, Ref } from 'react'
@@ -16,6 +17,8 @@ import {
 } from 'ui/components/ui/dropdown-menu'
 import { Textarea } from 'ui/components/ui/textarea'
 import { cn } from 'ui/lib/utils'
+
+import { CommandAutocomplete, commandToken, matchCommands } from './command-autocomplete'
 
 // One choice inside a setting.
 export interface CommandBarConfigOption {
@@ -200,6 +203,10 @@ export interface AgentCommandBarProps {
   // The host needs this to focus the composer -- e.g. when it stages an
   // existing message for editing.
   textareaRef?: Ref<HTMLTextAreaElement>
+  // Commands the agent advertised for this session (see the session
+  // contract's `commands`). With any given, typing `/` in an empty composer
+  // opens the autocomplete; without, `/text` is just text on its way out.
+  commands?: AvailableCommand[]
   className?: string
 }
 
@@ -380,6 +387,7 @@ export function AgentCommandBar({
   yoloMode = false,
   approvalTitles = DEFAULT_APPROVAL_TITLES,
   textareaRef,
+  commands,
   className,
 }: AgentCommandBarProps) {
   // Buffered value -- see this component's own doc comment for why and the
@@ -404,6 +412,28 @@ export function AgentCommandBar({
   const hasText = Boolean(buffered.trim())
   const canSend = hasText && !sending && !disabled
   const hasConfigs = Boolean(configs && configs.length > 0)
+
+  // Slash-command autocomplete. Derived from the buffered text every render
+  // rather than held in state: the popup is a VIEW of what is typed, and a
+  // stored copy is a second answer that can disagree with the first after a
+  // draft restore or a buffer resync. Only the keyboard cursor and an explicit
+  // dismiss are state of their own.
+  const [commandCursor, setCommandCursor] = useState(0)
+  const [dismissedToken, setDismissedToken] = useState<string | null>(null)
+  const typedToken = commandToken(buffered)
+  const commandMatches =
+    commands && typedToken !== null && typedToken !== dismissedToken ? matchCommands(commands, buffered) : null
+  const commandPopupOpen = commandMatches !== null && commandMatches.length > 0
+  // Clamp instead of resetting on every keystroke: narrowing `/re` -> `/rev`
+  // keeps the highlighted row when it survives the filter.
+  const activeCommandIndex = commandPopupOpen ? Math.min(commandCursor, commandMatches.length - 1) : 0
+
+  const insertCommand = (command: AvailableCommand) => {
+    // The trailing space settles the token, which closes the popup by the
+    // derivation above -- no state to clean up beyond the cursor.
+    setValue(`/${command.name} `)
+    setCommandCursor(0)
+  }
 
   // Stop is present for the whole turn; Send is only withheld from a turn with
   // nothing to send. Without `onStop` there is no stop button to make room for,
@@ -434,6 +464,34 @@ export function AgentCommandBar({
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    // The command popup owns navigation keys while it is open: Enter picks
+    // instead of sending, Escape closes it instead of clearing the composer.
+    // Ahead of the send branch deliberately -- Enter's meaning depends on
+    // whether a choice is on screen, and this is the one place that knows.
+    if (commandPopupOpen) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setCommandCursor((activeCommandIndex + 1) % commandMatches.length)
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setCommandCursor((activeCommandIndex - 1 + commandMatches.length) % commandMatches.length)
+        return
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault()
+        insertCommand(commandMatches[activeCommandIndex])
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        // Remembered per token, so the popup stays closed while THIS token is
+        // being typed and offers itself again for the next one.
+        setDismissedToken(typedToken)
+        return
+      }
+    }
     // On a touch device (phone soft keyboard) there's no accessible Shift key,
     // so Enter inserts a newline like in any other textarea; only fine-pointer
     // clients (mouse / physical keyboard) send on Enter. Read at event time --
@@ -533,18 +591,33 @@ export function AgentCommandBar({
           the reader cannot see is what they cannot decide about. */}
       {attachments ? <div className='flex min-w-0 flex-wrap items-center gap-1 px-1'>{attachments}</div> : null}
 
-      <Textarea
-        ref={textareaRef}
-        value={buffered}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={handleKeyDown}
-        onFocus={onFocus}
-        onBlur={onBlur}
-        placeholder={placeholder}
-        rows={1}
-        autoFocus={autoFocus}
-        className='max-h-60 min-h-8 w-full min-w-0 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:border-0 focus-visible:ring-0'
-      />
+      {/* Relative wrapper anchors the command popup to the composer's own
+          box: the popup opens ABOVE (bottom-full), matching the panel's
+          grow-upward contract -- the text never moves under the cursor. A
+          permanent wrapper, not a conditional one, so the textarea's place in
+          the child list never changes as the popup comes and goes. */}
+      <div className='relative min-w-0'>
+        {commandPopupOpen ? (
+          <CommandAutocomplete
+            items={commandMatches}
+            activeIndex={activeCommandIndex}
+            onSelect={insertCommand}
+            onHover={setCommandCursor}
+          />
+        ) : null}
+        <Textarea
+          ref={textareaRef}
+          value={buffered}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onFocus={onFocus}
+          onBlur={onBlur}
+          placeholder={placeholder}
+          rows={1}
+          autoFocus={autoFocus}
+          className='max-h-60 min-h-8 w-full min-w-0 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:border-0 focus-visible:ring-0'
+        />
+      </div>
 
       <div className='flex min-w-0 items-center gap-1 px-1'>
         <div className='flex min-w-0 flex-1 items-center gap-1 overflow-hidden'>

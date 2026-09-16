@@ -62,10 +62,10 @@ function toEntry(row: typeof agentQueueEntry.$inferSelect): QueuedPrompt | null 
   if (row.kind === 'system') {
     return { id: row.id, kind: 'system', text: row.text }
   }
-  if (row.kind === 'message') {
+  if (row.kind === 'message' || row.kind === 'command') {
     return {
       id: row.id,
-      kind: 'message',
+      kind: row.kind,
       sender: row.sender ?? '',
       // Null only for rows written as system entries, which never reach here.
       sentAt: (row.sentAt ?? new Date(0)).toISOString(),
@@ -122,9 +122,9 @@ export const queueStore: QueueStore = {
         id: entry.id,
         sessionKey,
         kind: entry.kind,
-        sender: entry.kind === 'message' ? entry.sender : null,
+        sender: entry.kind === 'system' ? null : entry.sender,
         text: entry.text,
-        sentAt: entry.kind === 'message' ? new Date(entry.sentAt) : null,
+        sentAt: entry.kind === 'system' ? null : new Date(entry.sentAt),
         position: nextPosition(sessionKey, placement),
         createdAt: new Date(),
       })

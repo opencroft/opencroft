@@ -49,6 +49,7 @@ import { fileSkillHandler, fileSkills } from './skills'
 import { findTurnBoundary } from './turns'
 import type {
   AgentSelection,
+  AvailableCommand,
   ChatEvent,
   Presence,
   PromptOrigin,
@@ -253,6 +254,11 @@ interface SessionState {
   // advertised at session start, replaced wholesale on every
   // config_option_update. ACP agents only; empty for the native harness.
   configOptions: SessionConfigOption[]
+  // Commands the agent advertised (available_commands_update), replaced
+  // wholesale on every update. Unlike configOptions these never arrive in the
+  // session/new response — the agent pushes them shortly after the session
+  // opens, and again whenever its command set changes.
+  commands: AvailableCommand[]
   // Effective per-tool / per-skill permissions; undefined = unrestricted.
   permissions?: ResolvedPermissions
   // Number of prompt promises currently in flight for this session — the
@@ -545,6 +551,12 @@ function withSnapshotPrefix(session: SessionState, windowed: ChatEvent[]): ChatE
   if (session.configOptions.length > 0 && !has('config_options')) {
     prefix.push({ kind: 'config_options', options: session.configOptions })
   }
+  // `?? []` because session records that survived a dev hot-reload may predate
+  // the field (the store outlives createStore — same backfill prompt() does
+  // for `queue`).
+  if ((session.commands ?? []).length > 0 && !has('available_commands')) {
+    prefix.push({ kind: 'available_commands', commands: session.commands })
+  }
   if (session.meta.title && !has('session_info')) {
     prefix.push({ kind: 'session_info', title: session.meta.title })
   }
@@ -724,6 +736,14 @@ export function handleUpdate(notification: SessionNotification): void {
         session.configOptions = update.configOptions
       }
       emit(sessionId, { kind: 'config_options', options: update.configOptions })
+      break
+    }
+    case 'available_commands_update': {
+      const session = store.sessions.get(sessionId)
+      if (session) {
+        session.commands = update.availableCommands
+      }
+      emit(sessionId, { kind: 'available_commands', commands: update.availableCommands })
       break
     }
     case 'session_info_update': {
@@ -1327,7 +1347,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     }
     // Presence gates MESSAGE runs only. A system entry is plumbing, not
     // conversation: compaction asked for now must not wait an hour because the
-    // agent's reading cadence is hourly.
+    // agent's reading cadence is hourly. A command is the same shape of thing —
+    // someone invoking harness machinery now, not writing to be read at the
+    // agent's cadence.
     if (run[0].kind === 'message' && !consumePresenceBypass(session)) {
       const waitMs = msUntilDue(run, presenceWindow(session), Date.now())
       if (waitMs !== null && waitMs > 0) {
@@ -1347,8 +1369,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // order among themselves is untouched, the window they are waiting on
         // keeps running, and the next drain finds them still due at the same
         // moment they always were.
-        const system = queue.find((entry) => entry.kind === 'system')
-        return system ? dispatchRun(sessionId, session, [system]) : undefined
+        const ungated = queue.find((entry) => entry.kind !== 'message')
+        return ungated ? dispatchRun(sessionId, session, [ungated]) : undefined
       }
     }
     clearPresenceTimer(session)
@@ -1646,16 +1668,25 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (origin.kind === 'system') {
       return { id: randomUUID(), kind: 'system', text }
     }
+    // A leading slash marks a harness command, never a conversational message.
+    // The harness recognises it by the prompt's FIRST characters — no trimming
+    // on its side — so the entry stores the text with the leading whitespace
+    // already gone, and delivery skips the tags and notes a message would get.
+    // The entry keeps its author for the queue UI.
+    const lead = text.trimStart()
+    if (lead.startsWith('/')) {
+      return { id: randomUUID(), kind: 'command', sender: origin.sender, sentAt: new Date().toISOString(), text: lead }
+    }
     return { id: randomUUID(), kind: 'message', sender: origin.sender, sentAt: new Date().toISOString(), text }
   }
 
-  /** The leading run: consecutive messages, or exactly one system entry. */
+  /** The leading run: consecutive messages, or exactly one system/command entry. */
   function leadingRun(queue: QueuedPrompt[]): QueuedPrompt[] {
     const first = queue[0]
     if (!first) {
       return []
     }
-    if (first.kind === 'system') {
+    if (first.kind !== 'message') {
       return [first]
     }
     const end = queue.findIndex((entry) => entry.kind !== 'message')
@@ -1665,7 +1696,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   /** Turn a run into the one prompt it delivers. */
   function buildRunDelivery(run: QueuedPrompt[], note?: DeliveryNote): string {
     const first = run[0]
-    if (first.kind === 'system') {
+    if (first.kind !== 'message') {
+      // System entries and commands go out exactly as given: a tag line or an
+      // interrupt note in front of `/anything` stops it being a command.
       return buildDelivery({ kind: 'system', text: first.text })
     }
     const messages = run.map((entry) =>
@@ -2003,6 +2036,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         subscribers: new Set(),
         modes: response.modes ? toSessionModes(response.modes) : null,
         configOptions: response.configOptions ?? [],
+        commands: [],
         permissions,
         activeTurns: 0,
         queue: [],
@@ -2101,6 +2135,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         subscribers: new Set(),
         modes: null,
         configOptions: [],
+        commands: [],
         permissions,
         activeTurns: 0,
         queue: [],
@@ -2409,6 +2444,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // write path (config_option_update, setConfigOption, the loadSession
         // seed above) replaces it wholesale rather than mutating in place.
         configOptions: session.configOptions,
+        // Same wholesale-replacement contract as configOptions.
+        commands: session.commands,
         permissions: session.permissions,
         activeTurns: 0,
         queue: [],

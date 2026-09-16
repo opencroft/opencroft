@@ -8,6 +8,7 @@ import type {
 } from 'agent-chat/components/chat-turn'
 import { ThinkingBlock } from 'agent-chat/components/thinking-block'
 import type { AgentChatEdit } from 'agent-chat/session'
+import type { AvailableCommand } from 'agent-client/types'
 import type { ComponentType } from 'react'
 
 import type { ChatMessage } from '@/app/_authed/(agent)/_lib/messages'
@@ -117,6 +118,10 @@ export interface AgentSession {
   // it. Unset for a session that has nothing to clear yet (the dashboard
   // placeholder).
   clearSession?: () => Promise<void>
+  // Commands the agent advertised for this session (the latest
+  // 'available_commands' snapshot) — the composer offers them as slash
+  // autocomplete. Unset for the dashboard placeholder session.
+  commands?: AvailableCommand[]
   // When set, the composer's send is disabled (e.g. no agent selected yet).
   disabled?: boolean
   // Whether the server has earlier history than what's currently in `messages`

@@ -1,4 +1,8 @@
-import type { SessionConfigOption } from '@agentclientprotocol/sdk'
+import type { AvailableCommand, SessionConfigOption } from '@agentclientprotocol/sdk'
+
+// Re-exported so consumers (agent-chat, hosts) can type the advertised command
+// list without depending on the protocol SDK directly.
+export type { AvailableCommand }
 
 export interface SpawnConfig {
   command: string
@@ -125,10 +129,16 @@ export interface PermissionOpt {
  *   how long the oldest one has waited.
  * - `system` — a prompt the application issues on its own behalf. It has no
  *   author, is never batched with anything, and is never gated by Presence.
+ * - `command` — a harness command somebody sent (leading `/`). Keeps its author
+ *   and time for the queue UI, but is DELIVERED verbatim like a system entry:
+ *   the harness recognises a command by its first characters, so a tag or note
+ *   in front of it stops it being a command at all. Never batched — a batch
+ *   would put other text around it.
  */
 export type QueuedPrompt =
   | { id: string; kind: 'message'; sender: string; sentAt: string; text: string }
   | { id: string; kind: 'system'; text: string }
+  | { id: string; kind: 'command'; sender: string; sentAt: string; text: string }
 
 /**
  * Who a prompt is from, which decides whether it is a message at all.
@@ -232,6 +242,11 @@ export type ChatEvent =
   // level/etc., ACP agents only), replacing any prior snapshot wholesale —
   // same "last update wins" semantics as `modes`/`queue`.
   | { kind: 'config_options'; options: SessionConfigOption[] }
+  // Full snapshot of the commands the agent advertised (ACP
+  // `available_commands_update`), replacing any prior snapshot wholesale.
+  // Composers use it for slash-command autocomplete; a command is still SENT
+  // as an ordinary prompt whose text starts with `/`.
+  | { kind: 'available_commands'; commands: AvailableCommand[] }
   // Agent-pushed session metadata (currently just title); undefined title
   // means the agent didn't set one on this update.
   | { kind: 'session_info'; title?: string }

@@ -181,7 +181,7 @@ export function buildUnread(
   authors?: Record<string, ResolvedAuthor>,
 ): ChatUnreadMessage[] {
   return queue.map((entry): ChatUnreadMessage => {
-    const author = entry.kind === 'message' ? entry.sender : undefined
+    const author = entry.kind !== 'system' ? entry.sender : undefined
     const authorAccount = author ? authors?.[author] : undefined
     // The same reading a delivered message gets, through the same function --
     // not a second one that agrees with it. A message waiting to be read and the
@@ -202,7 +202,7 @@ export function buildUnread(
       // Carried on the same terms: an empty list is absence, and a message
       // holding one would draw an empty row above its words.
       ...(attachments.length ? ({ attachments } satisfies Pick<ChatUnreadMessage, 'attachments'>) : {}),
-      sentAt: entry.kind === 'message' ? entry.sentAt : undefined,
+      sentAt: entry.kind !== 'system' ? entry.sentAt : undefined,
     }
   })
 }

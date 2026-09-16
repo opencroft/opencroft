@@ -3,7 +3,7 @@
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { buildBlocks, type ChatBlock, foldEvents } from 'agent-client/fold'
 import type { AgentProfile } from 'agent-client/profiles'
-import type { AgentSelection, ChatEvent, QueuedPrompt, SessionMode } from 'agent-client/types'
+import type { AgentSelection, AvailableCommand, ChatEvent, QueuedPrompt, SessionMode } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -66,6 +66,9 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
   // ACP agents only) — see agent-client's config_options event. Empty for
   // adapters that don't advertise any.
   const [configOptions, setConfigOptions] = useState<SessionConfigOption[]>([])
+  // Commands the agent advertised (available_commands event) — feeds the
+  // composer's slash autocomplete. Empty for adapters that advertise none.
+  const [commands, setCommands] = useState<AvailableCommand[]>([])
   const [queue, setQueue] = useState<QueuedPrompt[]>([])
   const [usage, setUsage] = useState<AgentUsage | null>(null)
   const [starting, setStarting] = useState(false)
@@ -135,6 +138,9 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
           break
         case 'config_options':
           setConfigOptions(event.options)
+          break
+        case 'available_commands':
+          setCommands(event.commands)
           break
         case 'usage':
           setUsage({ used: event.used, size: event.size })
@@ -574,6 +580,8 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
     currentMode,
     configOptions,
     setConfigOption,
+    // agent-advertised slash commands (composer autocomplete)
+    commands,
     usage,
     starting,
     canStart,

@@ -46,7 +46,17 @@ export type { ApprovalTitles }
 // without a wrapper.
 export type AgentCommandBarSession = Pick<
   AgentChatSession,
-  'sessionKey' | 'draft' | 'send' | 'waiting' | 'stop' | 'sending' | 'disabled' | 'edit' | 'cancelEdit' | 'commitEdit'
+  | 'sessionKey'
+  | 'draft'
+  | 'send'
+  | 'waiting'
+  | 'stop'
+  | 'sending'
+  | 'disabled'
+  | 'edit'
+  | 'cancelEdit'
+  | 'commitEdit'
+  | 'commands'
 >
 
 // What a `controls` render prop is handed — the primitives it needs to wire
@@ -747,6 +757,7 @@ export function useAgentCommandBar({
         yoloMode={autoApproveLocked}
         approvalTitles={approvalTitles}
         textareaRef={textareaRef}
+        commands={session.commands}
       />
     ),
     [
@@ -780,6 +791,7 @@ export function useAgentCommandBar({
       handleToggleAutoApprove,
       autoApproveLocked,
       approvalTitles,
+      session.commands,
     ],
   )
 

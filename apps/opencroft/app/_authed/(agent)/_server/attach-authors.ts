@@ -70,7 +70,7 @@ function identifiersIn(event: ChatEvent): string[] {
     return decodeBatch(event.text).flatMap((message) => (message.sender ? [message.sender] : []))
   }
   if (event.kind === 'queue') {
-    return event.items.flatMap((item) => (item.kind === 'message' && item.sender ? [item.sender] : []))
+    return event.items.flatMap((item) => (item.kind !== 'system' && item.sender ? [item.sender] : []))
   }
   return []
 }

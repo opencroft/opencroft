@@ -7,7 +7,7 @@ import { usePaginatedHistory } from 'agent-chat/use-paginated-history'
 import { toEditableParts } from 'agent-chat/user-parts'
 import { isTerminalToolStatus } from 'agent-client/fold'
 import { DEFAULT_PRESENCE } from 'agent-client/presence'
-import type { PermissionOpt, Presence, QueuedPrompt, QueueMode } from 'agent-client/types'
+import type { AvailableCommand, PermissionOpt, Presence, QueuedPrompt, QueueMode } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 
 import type { AgentSession } from '@/app/_authed/(agent)/_components/agent-chat'
@@ -141,6 +141,9 @@ export interface AcpSession {
   // the latest 'config_options' snapshot. Empty for adapters that don't
   // advertise any.
   configOptions: SessionConfigOption[]
+  // The session's agent-advertised slash commands — the latest
+  // 'available_commands' snapshot. Feeds the composer's autocomplete.
+  commands: AvailableCommand[]
   // How often this session reads what is waiting for it — the latest
   // 'presence' snapshot. Realtime until the server says otherwise, which is
   // also what a session that has never been told anything else reads at.
@@ -183,6 +186,8 @@ export interface Folded {
   queueAuthors?: Record<string, ResolvedAuthor>
   // The last 'config_options' snapshot wins.
   configOptions: SessionConfigOption[]
+  // The last 'available_commands' snapshot wins, same as config options.
+  commands: AvailableCommand[]
   // The last 'presence' snapshot wins, same as the queue's.
   presence: Presence
   usage?: AgentUsage
@@ -205,6 +210,7 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
   let queue: QueuedMessage[] = []
   let queueAuthors: Record<string, ResolvedAuthor> | undefined
   let configOptions: SessionConfigOption[] = []
+  let commands: AvailableCommand[] = []
   // Seeded with the engine's own default rather than a second copy of it, so
   // "what a session reads at until told otherwise" is stated in one place.
   let presence: Presence = DEFAULT_PRESENCE
@@ -309,6 +315,10 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
         configOptions = event.options
         break
       }
+      case 'available_commands': {
+        commands = event.commands
+        break
+      }
       case 'presence': {
         // A snapshot like the queue's, for the same reason: a reconnecting
         // client folds the last one seen and knows what it is looking at.
@@ -342,6 +352,7 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
     queue,
     queueAuthors,
     configOptions,
+    commands,
     presence,
     usage,
   }
@@ -836,6 +847,7 @@ export function useAcpSession(
       sendError,
       dismissSendError,
       clearSession,
+      commands: folded.commands,
       hasMoreHistory: paginatedHistory.hasMore,
       loadingMoreHistory: paginatedHistory.loadingMore,
       loadMoreHistory,
@@ -845,6 +857,7 @@ export function useAcpSession(
       tabKey,
       folded.messages,
       folded.waiting,
+      folded.commands,
       loading,
       sending,
       localWaiting,
@@ -909,6 +922,7 @@ export function useAcpSession(
       queue: folded.queue,
       queueAuthors: folded.queueAuthors,
       configOptions: folded.configOptions,
+      commands: folded.commands,
       presence: folded.presence,
       // A live event this connection has actually seen wins and stays won —
       // once one lands, folded.usage keeps returning it on every later render
@@ -931,6 +945,7 @@ export function useAcpSession(
       folded.queue,
       folded.queueAuthors,
       folded.configOptions,
+      folded.commands,
       folded.presence,
       folded.usage,
       seedUsage,

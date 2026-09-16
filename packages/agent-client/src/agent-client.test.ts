@@ -623,6 +623,59 @@ test('turn end drains the whole leading run as one delivery, in order', async ()
   await h.client.deleteSession(h.sessionId)
 })
 
+test('an available_commands_update notification replaces session commands and emits a snapshot', async () => {
+  const h = await setup('openclaw')
+  const commands = [{ name: 'review', description: 'Review code', input: { hint: 'path' } }]
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'available_commands_update', availableCommands: commands },
+  } as Parameters<typeof handleUpdate>[0])
+  const snapshots = h.events.filter((event) => event.kind === 'available_commands')
+  assert.deepEqual(snapshots.at(-1), { kind: 'available_commands', commands })
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a command prompt is delivered verbatim — no tag, no author, no note', async () => {
+  const h = await setup()
+  await h.client.prompt(h.sessionId, '/review src', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  // Raw equality on the wire text, not partsOf: the ABSENCE of a tag line is
+  // the property under test, and the parser reads untagged text as a message
+  // either way.
+  assert.deepEqual(h.promptCalls, ['/review src'])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('leading whitespace is stripped from a command so the harness still sees the slash first', async () => {
+  const h = await setup()
+  await h.client.prompt(h.sessionId, '  /status', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  assert.deepEqual(h.promptCalls, ['/status'])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a queued command is delivered alone and verbatim, never batched with messages', async () => {
+  const h = await setup()
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await h.client.prompt(h.sessionId, '/status', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  h.endTurn()
+  await settle()
+  // The command is its own run: raw text, no batch around it.
+  assert.equal(h.promptCalls[1], '/status')
+  h.endTurn()
+  await settle()
+  // The message behind it still goes tagged, as itself.
+  assert.deepEqual(deliveries(h)[2], ['second'])
+  // The queue snapshot carried the command with its author, for the UI.
+  const held = queueSnapshots(h.events)[1]
+  assert.deepEqual(held, ['/status', 'second'])
+  const commandItem = h.events
+    .flatMap((event) => (event.kind === 'queue' ? event.items : []))
+    .find((item) => item.text === '/status')
+  assert.equal(commandItem?.kind, 'command')
+  assert.equal(commandItem && 'sender' in commandItem ? commandItem.sender : undefined, 'Reader')
+  await h.client.deleteSession(h.sessionId)
+})
+
 test('front-queued prompt jumps the line', async () => {
   const h = await setup()
   await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })

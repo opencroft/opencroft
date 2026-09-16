@@ -1,4 +1,4 @@
-import type { PermissionOpt } from 'agent-client/types'
+import type { AvailableCommand, PermissionOpt } from 'agent-client/types'
 
 import type { EditablePart } from './user-parts'
 
@@ -135,6 +135,13 @@ export interface AgentChatSession {
   // host's own transcript state reflects it (or immediately, as a no-op,
   // while a fetch is already in flight or once `hasMoreHistory` is false).
   loadMoreHistory?: () => Promise<void>
+  // Commands the agent advertised for this session (ACP
+  // available_commands_update, folded by the host from 'available_commands'
+  // events). The composer offers them as slash autocomplete; a chosen command
+  // is still sent through `send` as ordinary text starting with `/`. Absent or
+  // empty means the agent advertised none — the composer then has nothing to
+  // offer, and a typed `/...` still sends as-is.
+  commands?: AvailableCommand[]
   // Every unresolved permission request for this session — see approvals.tsx.
   permissions: PendingPermission[]
   // Every unresolved free-text elicitation ("ask") for this session.
