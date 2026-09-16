@@ -42,11 +42,18 @@ export const MINUTES_WINDOW_MAX_MS = 3 * MINUTE_MS
  * to wait — `prompt` runs them as pushes), so this branch exists for what was
  * already held when the cadence was switched. For those, zero makes them due
  * immediately, which is what choosing the cadence means.
+ *
+ * `turn-based` is zero too, and the zero means "due at the next boundary the
+ * engine consults": now when the session is idle, its own turn's end when it
+ * is busy. What keeps a turn-based message out of a RUNNING turn is the
+ * engine's turn gate, never a window — a window here would add a wait after
+ * the turn ended, which is not what the cadence promises.
  */
 export function presenceWindowMs(presence: Presence, roll: () => number = Math.random): number {
   switch (presence.kind) {
     case 'high-attention':
     case 'realtime':
+    case 'turn-based':
       return 0
     case 'minutes':
       return MINUTES_WINDOW_MIN_MS + roll() * (MINUTES_WINDOW_MAX_MS - MINUTES_WINDOW_MIN_MS)

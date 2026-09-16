@@ -23,7 +23,7 @@ import type {
   WriteTextFileRequest,
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk'
-import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
+import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION, type Stream } from '@agentclientprotocol/sdk'
 
 import type { AgentConnection } from './connection'
 import { normalizeUsage } from './context-window'
@@ -812,6 +812,87 @@ function handleExtensionUpdate(sessionId: string, update: Record<string, unknown
   }
 }
 
+// The draft session-update kinds this client understands AHEAD of its own ACP
+// SDK: subagents (ACP draft #1992) and JetBrains AIR async tasks. Deliberately
+// the same set handleExtensionUpdate recognizes — the stream filter below
+// decides transport, that function decides meaning.
+const DRAFT_SESSION_UPDATE_KINDS = new Set([
+  'subagent_spawned',
+  'subagent_state_update',
+  'async_task_spawned',
+  'async_task_progress',
+  'async_task_state_update',
+])
+
+function isDraftSessionUpdate(message: unknown): boolean {
+  if (typeof message !== 'object' || message === null) {
+    return false
+  }
+  const frame = message as { method?: unknown; id?: unknown; params?: { update?: { sessionUpdate?: unknown } } }
+  return (
+    frame.method === 'session/update' &&
+    frame.id === undefined &&
+    typeof frame.params?.update?.sessionUpdate === 'string' &&
+    DRAFT_SESSION_UPDATE_KINDS.has(frame.params.update.sessionUpdate)
+  )
+}
+
+/**
+ * Wrap a connection stream so draft-kind session updates never reach the ACP
+ * SDK. The SDK validates every inbound session/update against the schema
+ * union of the kinds it shipped with (verified on 1.4.0: zSessionUpdate
+ * carries neither the ACP #1992 subagent kinds nor AIR's async-task kinds), and
+ * an unknown kind fails the parse — silently dropping the notification the
+ * harness only sent because we advertised the capability for it. Unit tests
+ * feeding handleUpdate directly never crossed this seam, which is how the
+ * gap shipped: the harness announced subagents and this client never heard.
+ *
+ * Draft updates are handed straight to handleUpdate and withheld from the
+ * SDK; they are notifications (no id), so swallowing them is protocol-safe.
+ * A JSON-RPC batch is split for correctness, not traffic — nothing batches
+ * today, but a filter that only looks at top-level frames would silently
+ * regress the day something does.
+ */
+export function interceptDraftSessionUpdates(stream: Stream): Stream {
+  const consume = (frame: unknown) => {
+    try {
+      handleUpdate((frame as { params: SessionNotification }).params)
+    } catch (error) {
+      console.error('[agent-client] draft session update failed', error)
+    }
+  }
+  return {
+    writable: stream.writable,
+    readable: stream.readable.pipeThrough(
+      new TransformStream({
+        transform(message, controller) {
+          if (isDraftSessionUpdate(message)) {
+            consume(message)
+            return
+          }
+          if (Array.isArray(message) && message.some(isDraftSessionUpdate)) {
+            const rest = message.filter((entry) => {
+              if (isDraftSessionUpdate(entry)) {
+                consume(entry)
+                return false
+              }
+              return true
+            })
+            if (rest.length > 0) {
+              // A batch is an AnyWireMessage; the Stream's default element
+              // type does not name it, but ndJsonStream forwards batches
+              // verbatim, so what goes back out is exactly what came in.
+              controller.enqueue(rest as unknown as typeof message)
+            }
+            return
+          }
+          controller.enqueue(message)
+        },
+      }),
+    ),
+  }
+}
+
 // Dispatches an inbound session/update notification to store state + a
 // ChatEvent. Exported so tests can drive it directly — the real caller is the
 // ACP Client wired up per spawned connection (buildClient below), which test
@@ -1341,6 +1422,9 @@ function supportsTools(selection: AgentSelection): boolean {
 // and once the connection reports in, mid-turn sends start steering. Off, the
 // engine queues mid-turn prompts and delivers them as turns end. Exported so
 // hosts adapt their turn-control UX to the same resolution the engine acts on.
+//
+// CAPABILITY only. Whether a given message actually steers is also the
+// reader's cadence's call — see steersMidTurn.
 export function supportsMidTurnInput(selection: AgentSelection): boolean {
   if (findAdapter(selection.adapterId)?.supportsMidTurnInput === true) {
     return true
@@ -1349,6 +1433,16 @@ export function supportsMidTurnInput(selection: AgentSelection): boolean {
     return false
   }
   return store.connections.get(spawnKey(buildSpawnConfig(selection)))?.steeringSupported === true
+}
+
+// Whether THIS session's messages go into a running turn: the harness must be
+// able to (supportsMidTurnInput) AND the reader must be reading `realtime` —
+// the one cadence that means "as it arrives, even mid-turn". Every other
+// cadence is a promise that messages wait: for the window, or (turn-based and
+// high-attention, each in its own way) for a turn boundary — high-attention
+// forces one, turn-based waits for the agent's own.
+function steersMidTurn(session: SessionState): boolean {
+  return session.presence.kind === 'realtime' && supportsMidTurnInput(session.selection)
 }
 
 /** Whether an adapter's harness is verified to send ACP elicitations — see
@@ -1534,9 +1628,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       failure.exit = { code, signal }
       store.connections.delete(key)
     })
-    const stream = ndJsonStream(
-      Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-      Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+    const stream = interceptDraftSessionUpdates(
+      ndJsonStream(
+        Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
+        Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+      ),
     )
     // The client factory closes over `entry.lastSessionId` to scope elicitations
     // to this connection. The factory only runs lazily (on the first message),
@@ -1586,13 +1682,24 @@ export function createAgentClient(options: AgentClientOptions = {}) {
             // notifications under its OWN subagentSessionId, instead of
             // flattening everything into the parent transcript.
             //
-            // The JetBrains AIR `asyncTasks` capability (in `_meta`, the only
-            // spelling claude-agent-acp checks): with it, background work —
-            // detached bash jobs, loops — reports as async_task_spawned /
-            // async_task_progress / async_task_state_update, instead of being
-            // completely invisible between turns.
+            // The top-level spelling does NOT actually land today: the agent
+            // side parses initialize with ITS bundled SDK's schema, whose
+            // zClientCapabilities is a stripping z.object with no `subagents`
+            // key (verified on claude-agent-acp 0.78.0 / sdk 1.4.0 — this is
+            // exactly why a live subagent turn came back flattened while the
+            // unit path worked). Kept anyway for the SDK release that adds
+            // the key; `nativeSubagentSessions` in the AIR capability list
+            // below is the spelling that survives, because `_meta` is a
+            // passthrough record.
+            //
+            // The JetBrains AIR `_meta` capabilities claude-agent-acp checks:
+            // `asyncTasks` — background work (detached bash jobs, loops)
+            // reports as async_task_spawned / async_task_progress /
+            // async_task_state_update instead of being invisible between
+            // turns; `nativeSubagentSessions` — the AIR alias for the
+            // subagents opt-in above.
             ...({ subagents: {} } as Record<string, unknown>),
-            _meta: { jetbrains: { air: { version: 1, capabilities: ['asyncTasks'] } } },
+            _meta: { jetbrains: { air: { version: 1, capabilities: ['asyncTasks', 'nativeSubagentSessions'] } } },
           },
           clientInfo,
         })
@@ -1771,13 +1878,16 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // Mid-turn message delivery on a connection that ADVERTISED the steering
     // extension goes through `_session/steering`: injected into the running
     // turn, whose own settlement stays the turn's end — no prompt promise, no
-    // turn accounting. Every other case falls through to the prompt below: a
-    // forced-only adapter keeps the legacy overlapping session/prompt, a
+    // turn accounting. Only under a `realtime` cadence (steersMidTurn): every
+    // other cadence promised the reader's messages wait for a boundary, and a
+    // drain racing a presence switch must keep that promise here, at the one
+    // point of hand-over. Every other case falls through to the prompt below:
+    // a forced-only adapter keeps the legacy overlapping session/prompt, a
     // system/command run (`steerable` false) must start its own turn rather
     // than become conversational input, and an `injected: false` answer means
     // the turn ended in the race window, where a normal prompt is simply
     // correct.
-    if (steerable && session.activeTurns > 0) {
+    if (steerable && session.activeTurns > 0 && steersMidTurn(session)) {
       const injected = await steerIntoRunningTurn(sessionId, session, deliveredText)
       if (injected) {
         return
@@ -2179,8 +2289,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // jumped the held messages started one. Delivering into it would put a
       // prompt over a live turn, which is the thing the queue exists to
       // prevent — and nothing is lost by declining, because that turn's own
-      // settlement drains whatever has come due by then.
-      if (session.activeTurns > 0 && !supportsMidTurnInput(session.selection)) {
+      // settlement drains whatever has come due by then. A windowed cadence
+      // never steers (steersMidTurn wants `realtime`, which has no window),
+      // so in practice this declines for every armed timer; the shared
+      // predicate keeps the exception in one place should that ever move.
+      if (session.activeTurns > 0 && !steersMidTurn(session)) {
         return
       }
       void drainQueue(sessionId)
@@ -3110,10 +3223,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       session.queue ??= []
       session.activeTurns ??= 0
 
-      // Steering-capable agents never queue: the prompt goes straight through
-      // and the live turn picks it up as streaming input, so there is nothing to
-      // batch and nothing worth interrupting.
-      const holding = session.activeTurns > 0 && !supportsMidTurnInput(session.selection)
+      // Under a realtime cadence a steering-capable agent never queues: the
+      // prompt goes straight through and the live turn picks it up as
+      // streaming input, so there is nothing to batch and nothing worth
+      // interrupting. Every other cadence holds even on such an agent — the
+      // reader chose a boundary, and capability is not consent.
+      const holding = session.activeTurns > 0 && !steersMidTurn(session)
       // Read once per call, next to the turn guard it modifies: while the host
       // holds delivery, an interrupt buys nothing (the drain it exists to
       // trigger is gated), so `push` must not end the running turn.

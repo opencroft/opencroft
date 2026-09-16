@@ -922,11 +922,15 @@ export function useAcpSession(
 
   // "Tell what to do different": ACP can't attach a reason to a rejection, so
   // the request is rejected and the typed guidance sent separately. On an
-  // agent that takes mid-turn input, the guidance simply streams into the
-  // live turn — the model course-corrects without losing the turn's progress.
-  // Otherwise the run is cancelled and the guidance sent with `front` set, so
-  // the server queues it ahead of anything else held for the session and
-  // delivers it as soon as the interrupted turn ends.
+  // agent that takes mid-turn input AND reads realtime, the guidance simply
+  // streams into the live turn — the model course-corrects without losing the
+  // turn's progress. Any other cadence would hold a plain send for a boundary
+  // (the engine only steers under realtime), and guidance the rejected
+  // request is waiting on must not wait with the conversation — so it takes
+  // the cancel-and-front path, whose `front` placement bypasses the reading
+  // window by design. Otherwise the run is cancelled and the guidance sent
+  // with `front` set, so the server queues it ahead of anything else held for
+  // the session and delivers it as soon as the interrupted turn ends.
   const respondPermissionText = useCallback(
     (requestId: string, text: string) => {
       resolvePermission(requestId)
@@ -934,14 +938,14 @@ export function useAcpSession(
       if (!value || !sessionId) {
         return
       }
-      if (canSteer) {
+      if (canSteer && folded.presence.kind === 'realtime') {
         deliver(value, { queue: 'wait', origin: READER_ORIGIN })
         return
       }
       void cancelLocal({ data: sessionId })
       deliver(value, { front: true, queue: 'wait', origin: READER_ORIGIN })
     },
-    [sessionId, resolvePermission, deliver, canSteer],
+    [sessionId, resolvePermission, deliver, canSteer, folded.presence],
   )
 
   // Fetches the next older page and prepends its raw events ahead of whatever

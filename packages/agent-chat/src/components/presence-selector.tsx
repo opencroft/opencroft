@@ -19,26 +19,30 @@ export type PresenceValue =
   // stopped to read it.
   | { kind: 'high-attention' }
   | { kind: 'realtime' }
+  // Below realtime: read at the agent's own turn boundary, never mid-turn.
+  | { kind: 'turn-based' }
   | { kind: 'minutes' }
   | { kind: 'hourly' }
   | { kind: 'daily' }
   | { kind: 'custom'; intervalMs: number }
 
-export type FixedPresenceKind = 'high-attention' | 'realtime' | 'minutes' | 'hourly' | 'daily'
+export type FixedPresenceKind = 'high-attention' | 'realtime' | 'turn-based' | 'minutes' | 'hourly' | 'daily'
 
 const MINUTE_MS = 60_000
 
 // Literal classes only -- a constructed name would not survive the build.
 //
-// Four colours for six cadences, deliberately. What the colour answers is
+// Five colours for seven cadences, deliberately. What the colour answers is
 // "how does this cadence read", not "which setting is selected": red stops
-// the turn to read now, green reads now, blue reads later, violet reads on an
-// interval somebody chose. Which of the three later cadences is in force is
-// not a thing to read off a 16-pixel glyph, so it is on the button's title
-// and in the popover, where an exact answer belongs.
+// the turn to read now, green reads now, amber reads at its own next turn,
+// blue reads later, violet reads on an interval somebody chose. Which of the
+// three later cadences is in force is not a thing to read off a 16-pixel
+// glyph, so it is on the button's title and in the popover, where an exact
+// answer belongs.
 const PRESENCE_COLOR = {
   'high-attention': 'text-red-500',
   realtime: 'text-green-500',
+  'turn-based': 'text-amber-500',
   minutes: 'text-blue-500',
   hourly: 'text-blue-500',
   daily: 'text-blue-500',
@@ -53,6 +57,7 @@ const PRESENCE_COLOR = {
 const FIXED: { kind: FixedPresenceKind; label: string; hint: string }[] = [
   { kind: 'high-attention', label: 'High Attention', hint: 'interrupts to read' },
   { kind: 'realtime', label: 'Realtime', hint: 'as it arrives' },
+  { kind: 'turn-based', label: 'Turn-based', hint: 'between its turns' },
   { kind: 'minutes', label: 'In minutes', hint: 'within a few' },
   { kind: 'hourly', label: 'Hourly', hint: 'once an hour' },
   { kind: 'daily', label: 'Daily', hint: 'once a day' },

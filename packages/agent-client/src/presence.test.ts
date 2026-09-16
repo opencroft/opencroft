@@ -36,6 +36,13 @@ test('the fixed cadences are the intervals they are named for', () => {
   assert.equal(presenceWindowMs({ kind: 'custom', intervalMs: 4_500 }), 4_500)
 })
 
+test('turn-based opens no window: the turn gate holds it, never a wait after', () => {
+  // Zero means "due at the next boundary the engine consults" — idle now,
+  // or the running turn's own end. A window here would ADD a wait after the
+  // turn ended, which is not what the cadence promises.
+  assert.equal(presenceWindowMs({ kind: 'turn-based' }), 0)
+})
+
 test('minutes lands inside its range at both ends of the roll', () => {
   assert.equal(presenceWindowMs({ kind: 'minutes' }, () => 0), MINUTES_WINDOW_MIN_MS)
   assert.equal(presenceWindowMs({ kind: 'minutes' }, () => 1), MINUTES_WINDOW_MAX_MS)

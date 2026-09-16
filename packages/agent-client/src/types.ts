@@ -199,6 +199,12 @@ export type QueueMode = 'wait' | 'push'
  * It is a Presence rather than a `queue` mode because the sender does not opt
  * in — the reader set the cadence, and everything sent to them lands under it.
  *
+ * `turn-based` also has no window: nothing waits longer than the turn already
+ * running. It exists because steering made `realtime` mean read MID-turn on a
+ * harness that can — turn-based is the reader keeping the turn boundary:
+ * messages land the moment the agent is idle, and a busy agent reads them the
+ * moment its own turn ends, never during it.
+ *
  * A union rather than a name plus an optional interval: only `custom` has one,
  * and an optional field would let the other four carry a number that silently
  * means nothing.
@@ -206,6 +212,7 @@ export type QueueMode = 'wait' | 'push'
 export type Presence =
   | { kind: 'high-attention' }
   | { kind: 'realtime' }
+  | { kind: 'turn-based' }
   | { kind: 'minutes' }
   | { kind: 'hourly' }
   | { kind: 'daily' }

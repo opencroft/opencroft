@@ -2,7 +2,14 @@ import assert from 'node:assert/strict'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
 
-import { type AgentClientOptions, buildClient, createAgentClient, handleUpdate, type QueueStore } from './agent-client'
+import {
+  type AgentClientOptions,
+  buildClient,
+  createAgentClient,
+  handleUpdate,
+  interceptDraftSessionUpdates,
+  type QueueStore,
+} from './agent-client'
 import type { AgentConnection } from './connection'
 import { COMPACTION_TITLE, foldEvents, isTerminalToolStatus } from './fold'
 import { decodeBatch } from './queue-tags'
@@ -3495,6 +3502,72 @@ test('without steering support a mid-turn message queues as before', async () =>
   await h.client.deleteSession(h.sessionId)
 })
 
+// Steering is a cadence choice, not only a capability: only `realtime` reads a
+// message into the running turn. The three below pin the other cadences on a
+// harness that COULD steer — each keeps its own promise instead.
+
+test('turn-based holds a mid-turn message on a steering harness and reads it between turns', async () => {
+  const h = await setup('openclaw', { steeringSupported: true })
+  h.client.setPresence(h.sessionId, { kind: 'turn-based' })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  await h.client.prompt(h.sessionId, 'between', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  assert.equal(h.extMethodCalls.length, 0, 'capability is not consent: nothing steered')
+  assert.deepEqual(deliveries(h), [['first']], 'held for the turn boundary')
+  assert.deepEqual(queueSnapshots(h.events).at(-1), ['between'], 'and shown as waiting meanwhile')
+  h.endTurn()
+  await settle()
+  assert.deepEqual(deliveries(h), [['first'], ['between']], 'read the moment its own turn ended')
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a reading window that closes mid-turn does not steer either', async () => {
+  // The timer path, not the send path: a system entry jumps the held message
+  // and starts a turn, so the armed window closes while that turn is still
+  // open. Before the cadence gate, the timer's drain injected the held
+  // message into the system turn via steering.
+  const h = await setup('openclaw', { steeringSupported: true })
+  h.client.setPresence(h.sessionId, { kind: 'custom', intervalMs: WINDOW_MS })
+  await h.client.prompt(h.sessionId, 'held', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await h.client.prompt(h.sessionId, '<restore>', { queue: 'wait', origin: { kind: 'system' } })
+  await settle()
+  assert.deepEqual(h.promptCalls, ['<restore>'], 'the system entry went alone, and started the turn')
+
+  await afterWindow()
+  assert.equal(h.extMethodCalls.length, 0, 'the elapsed window must not become an injection')
+  assert.deepEqual(h.promptCalls.length, 1, 'still held behind the running turn')
+  h.endTurn()
+  await settle()
+  assert.deepEqual(partsOf(h.promptCalls[1]), ['held'], 'the turn boundary delivers what came due')
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('High Attention still interrupts on a steering harness, never injects', async () => {
+  // The cadence promises a STOP — the compact note and all. Injecting would
+  // deliver without one, silently downgrading the reader's standing word.
+  const h = await setup('openclaw', { steeringSupported: true })
+  h.client.setPresence(h.sessionId, { kind: 'high-attention' })
+  await h.client.prompt(h.sessionId, 'running', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  const { interrupted } = await h.client.prompt(h.sessionId, 'urgent', {
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  assert.equal(interrupted, true, 'the turn was stopped, not steered around')
+  assert.equal(h.extMethodCalls.length, 0, 'no steering attempted')
+  h.endTurn()
+  await settle()
+  assert.equal(
+    h.promptCalls[1].startsWith('Your turn was interrupted to deliver the incoming messages below.'),
+    true,
+    h.promptCalls[1],
+  )
+  await h.client.deleteSession(h.sessionId)
+})
+
 test('agent message chunks with different messageIds do not merge into one block', async () => {
   const h = await setup('openclaw')
   handleUpdate({ sessionId: h.sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'before.' }, messageId: 'm1' } } as Parameters<typeof handleUpdate>[0])
@@ -3559,5 +3632,62 @@ test('a background task is reported, snapshot-prefixed while live, and stoppable
 
   sendUpdate(h.sessionId, { sessionUpdate: 'async_task_state_update', asyncTaskId: 'task-1', state: 'stopped' })
   assert.equal(h.client.hasBackgroundWork(h.sessionId), false, 'a stopped task is no longer background work')
+  await h.client.deleteSession(h.sessionId)
+})
+
+// ── the stream seam the draft kinds must cross ──────────────────────────────
+
+test('a draft-kind update is taken out of the wire stream and still lands in the session', async () => {
+  // The tests above feed handleUpdate directly, which is exactly how a live
+  // gap once shipped: the ACP SDK validates inbound session/update against
+  // its own schema union, and a draft kind fails the parse before any of
+  // that code runs. This one crosses the wire seam instead.
+  const h = await setup('openclaw')
+  const frames = [
+    {
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: h.sessionId,
+        update: { sessionUpdate: 'subagent_spawned', subagentSessionId: 'wire-child', name: 'Researcher', task: 'dig' },
+      },
+    },
+    // A kind the SDK knows must pass through untouched, draft-free batches
+    // included.
+    {
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: h.sessionId,
+        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'hi' } },
+      },
+    },
+  ]
+  const source = new ReadableStream({
+    start(controller) {
+      for (const frame of frames) {
+        controller.enqueue(frame)
+      }
+      controller.close()
+    },
+  })
+  const wrapped = interceptDraftSessionUpdates({
+    readable: source,
+    writable: new WritableStream(),
+  } as Parameters<typeof interceptDraftSessionUpdates>[0])
+  const forwarded: unknown[] = []
+  const reader = wrapped.readable.getReader()
+  for (;;) {
+    const result = await reader.read()
+    if (result.done) {
+      break
+    }
+    forwarded.push(result.value)
+  }
+  assert.equal(forwarded.length, 1, 'the draft frame was consumed, the known one forwarded')
+  assert.ok(
+    h.events.some((event) => event.kind === 'subagent' && event.subagent.subagentSessionId === 'wire-child'),
+    'the intercepted update reached the session anyway',
+  )
   await h.client.deleteSession(h.sessionId)
 })
