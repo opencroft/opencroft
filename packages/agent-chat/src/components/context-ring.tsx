@@ -151,48 +151,66 @@ const WINDOW_LABELS: Record<string, string> = {
   overage: 'Extra usage',
 }
 
+// The one state rule for the ring AND the limit gauges, decided from the
+// rounded percentage — never the raw fraction. Comparing the raw one would
+// let a mark read "70" in the neutral colour (at 69.6%, which rounds up but
+// has not crossed), and a number that reads as past the threshold while the
+// colour says otherwise reads as a bug -- correctly, since one of the two
+// would be lying.
+function usageState(pct: number, warnAtPercent: number, dangerAtPercent: number): 'default' | 'warning' | 'danger' {
+  return pct >= dangerAtPercent ? 'danger' : pct >= warnAtPercent ? 'warning' : 'default'
+}
+
 // One limit window: its line — how much of it is used, and when it comes
 // back — over a slider gauge of the same figure. The gauge is inert on
 // purpose: a limit is a measurement, not a control, so the thumb is hidden
 // and the whole thing takes no pointer or focus — what remains is the
-// slider's filled track, doing the job a bar would. A rejected window takes
-// the destructive colour on both the words and the fill; a warned one fills
-// with the warning token. An unreported utilization draws no gauge at all
-// rather than an empty one pretending to be a zero.
-function RateLimitRow({ limit }: { limit: { status: string; window: string; utilization?: number; resetsAt?: number } }) {
-  const rejected = limit.status === 'rejected'
-  const warned = limit.status === 'allowed_warning'
+// slider's filled track, doing the job a bar would.
+//
+// The fill takes the SAME thresholds as the ring — the same
+// warnAtPercent/dangerAtPercent props, through the same state rule — so a
+// window at 85% reads in the colour the ring would show at 85%. The text
+// stays uncoloured: the bar is the colour channel. An unreported
+// utilization draws no gauge at all rather than an empty one pretending to
+// be a zero.
+function RateLimitRow({
+  limit,
+  warnAtPercent,
+  dangerAtPercent,
+}: {
+  limit: { status: string; window: string; utilization?: number; resetsAt?: number }
+  warnAtPercent: number
+  dangerAtPercent: number
+}) {
   const used =
     limit.utilization !== undefined
       ? `${limit.utilization}% used`
-      : rejected
+      : limit.status === 'rejected'
         ? 'Limit reached'
         : null
   const resets = limit.resetsAt
     ? ` · resets ${new Date(limit.resetsAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
     : ''
+  const pct = limit.utilization !== undefined ? Math.max(0, Math.min(100, Math.round(limit.utilization))) : null
+  const state = pct === null ? 'default' : usageState(pct, warnAtPercent, dangerAtPercent)
   return (
     <div className='flex flex-col gap-1.5'>
       <span className='text-xs tabular-nums'>
-        <span className={cn('font-medium', rejected ? 'text-destructive' : 'text-foreground')}>
-          {WINDOW_LABELS[limit.window] ?? limit.window}
-        </span>
-        {used ? (
-          <span className={cn('text-muted-foreground', rejected && 'text-destructive')}> — {used}</span>
-        ) : null}
+        <span className='font-medium'>{WINDOW_LABELS[limit.window] ?? limit.window}</span>
+        {used ? <span className='text-muted-foreground'> — {used}</span> : null}
         <span className='text-muted-foreground'>{resets}</span>
       </span>
-      {limit.utilization !== undefined ? (
+      {pct !== null ? (
         <Slider
-          value={[Math.max(0, Math.min(100, limit.utilization))]}
+          value={[pct]}
           min={0}
           max={100}
           aria-hidden='true'
           className={cn(
             'pointer-events-none [&_[data-slot=slider-thumb]]:hidden',
-            rejected
+            state === 'danger'
               ? '[&_[data-slot=slider-range]]:bg-destructive'
-              : warned
+              : state === 'warning'
                 ? '[&_[data-slot=slider-range]]:bg-warning'
                 : null,
           )}
@@ -256,7 +274,7 @@ export function ContextRing({
   const ratio = hasLimit ? Math.min(1, Math.max(0, usedTokens / contextLimit)) : 0
   const pct = Math.round(ratio * 100)
 
-  const state = pct >= dangerAtPercent ? 'danger' : pct >= warnAtPercent ? 'warning' : 'default'
+  const state = usageState(pct, warnAtPercent, dangerAtPercent)
   const stroke =
     state === 'danger' ? 'var(--destructive)' : state === 'warning' ? 'var(--warning)' : 'var(--primary)'
 
@@ -370,7 +388,12 @@ export function ContextRing({
                 one reading per window, and the window is what distinguishes
                 them. */}
             {rateLimits.map((limit) => (
-              <RateLimitRow key={limit.window} limit={limit} />
+              <RateLimitRow
+                key={limit.window}
+                limit={limit}
+                warnAtPercent={warnAtPercent}
+                dangerAtPercent={dangerAtPercent}
+              />
             ))}
           </div>
         ) : null}
