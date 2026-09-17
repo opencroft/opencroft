@@ -288,12 +288,27 @@ export interface ChatUserMessageProps {
   //
   // One message is the one-part case, and needs no special handling anywhere.
   parts: readonly ChatUserMessagePart[]
+  // Whether EDITING is refused right now — a running turn, typically. Editing
+  // rewinds this conversation to the turn and re-runs it, which is a thing to
+  // refuse while the agent is mid-turn.
+  //
+  // Deliberately not shared with the fork below. They are different acts and
+  // one flag made them look like one: see `forkDisabled`.
   editDisabled?: boolean
   onEdit?: () => void
   // FORK the turn into a new conversation. Same turn-scoped rule as `onEdit`:
   // it belongs to the message that ends the turn, and unset means this
   // conversation offers no fork.
   onFork?: () => void
+  // Whether FORKING is refused right now, which is almost never — and that is
+  // the point of it being its own flag.
+  //
+  // A fork branches the conversation BEFORE this message, so what it copies is
+  // a turn that has already finished; the turn running now is after the cut and
+  // is not in the fork at all, delegated work included. Sharing `editDisabled`
+  // greyed Fork out for the whole of every run, which is exactly when a reader
+  // watching the agent go the wrong way wants to branch and try the other one.
+  forkDisabled?: boolean
   // Take one message back before it is ever delivered, named by its own id.
   // Its button is always visible rather than revealed on hover -- hover is not
   // a route on a touch screen, and this is the only way to undo a send.
@@ -317,6 +332,7 @@ export function ChatUserMessage({
   blockId,
   parts,
   editDisabled,
+  forkDisabled,
   onEdit,
   onFork,
   onRemove,
@@ -446,7 +462,13 @@ export function ChatUserMessage({
                 // host can serve them, copy whenever there are words.
                 const turnMenu =
                   handsOver && (onEdit || onFork) ? (
-                    <MessageMenu editDisabled={editDisabled} onEdit={onEdit} onFork={onFork} copyText={part.text} />
+                    <MessageMenu
+                      editDisabled={editDisabled}
+                      forkDisabled={forkDisabled}
+                      onEdit={onEdit}
+                      onFork={onFork}
+                      copyText={part.text}
+                    />
                   ) : null
                 return (
                   // The turn's actions — edit, copy, fork — belong to the
@@ -557,11 +579,13 @@ function MessageMenu({
   onEdit,
   editDisabled,
   onFork,
+  forkDisabled,
   copyText,
 }: {
   onEdit?: () => void
   editDisabled?: boolean
   onFork?: () => void
+  forkDisabled?: boolean
   copyText?: UserText
 }) {
   return (
@@ -592,7 +616,7 @@ function MessageMenu({
           </DropdownMenuItem>
         )}
         {onFork && (
-          <DropdownMenuItem onClick={onFork} disabled={editDisabled}>
+          <DropdownMenuItem onClick={onFork} disabled={forkDisabled}>
             <GitFork className='size-3.5' />
             Fork
           </DropdownMenuItem>

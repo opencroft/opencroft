@@ -822,6 +822,13 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
                   renderers={renderers}
                   blockId={user.id}
                   parts={user.parts}
+                  // Editing waits for the turn; forking does not, and it is
+                  // not an oversight that no `forkDisabled` is passed here.
+                  // A fork copies the conversation up to THIS message, which
+                  // finished long ago — the turn running now sits after the
+                  // cut. Branching mid-run is also when a reader most wants
+                  // to: watching one attempt go wrong is the reason to start
+                  // the other from the same point.
                   editDisabled={waiting}
                   onEdit={onEditUser ? () => onEditUser(user.id) : undefined}
                   onFork={onForkUser ? () => onForkUser(user.id) : undefined}

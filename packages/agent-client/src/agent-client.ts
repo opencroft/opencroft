@@ -1636,8 +1636,55 @@ export function supportsMidTurnInput(selection: AgentSelection): boolean {
 // cadence is a promise that messages wait: for the window, or (online and
 // high-attention, each in its own way) for a turn boundary — high-attention
 // forces one, online waits for the agent's own.
+/**
+ * Live background work the harness reported: a subagent it has not given a
+ * terminal state for, or a task still running or paused.
+ *
+ * Module-level so the steering rule below and the public `hasBackgroundWork`
+ * read the same predicate — they answer the same question for two callers, and
+ * two copies of "is anything still running" would drift on the first new kind
+ * of background work.
+ */
+function hasLiveBackgroundWork(session: SessionState): boolean {
+  for (const subagent of session.subagents?.values() ?? []) {
+    if (subagent.state === undefined) {
+      return true
+    }
+  }
+  for (const task of session.asyncTasks?.values() ?? []) {
+    if (task.state === 'running' || task.state === 'paused') {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * Whether a waiting message goes INTO the turn that is running, rather than
+ * waiting for its end.
+ *
+ * `realtime` is the cadence that asks for that, and a harness that advertised
+ * the steering extension is one that can take it. The third condition is about
+ * what a mid-turn delivery costs when the turn has delegated work out.
+ *
+ * NOT WHILE A SUBAGENT IS RUNNING. The engine never cancels anything here —
+ * steering is an injection, and the only cancels in this module are Stop, an
+ * explicit `push`, and the High Attention cadence. But the harness treats a
+ * message arriving mid-turn as a reason to reconsider what it is doing, and a
+ * delegated task is the first thing it drops: observed twice in one session,
+ * a subagent went `cancelled` in the same second a steered message landed. The
+ * reader's message was not worth the work it killed, and nothing on screen
+ * connected the two.
+ *
+ * So a session with live background work reads at its turn boundary, which is
+ * what `online` does — for as long as the delegation lasts, and no longer.
+ */
 function steersMidTurn(session: SessionState): boolean {
-  return session.presence.kind === 'realtime' && supportsMidTurnInput(session.selection)
+  return (
+    session.presence.kind === 'realtime' &&
+    supportsMidTurnInput(session.selection) &&
+    !hasLiveBackgroundWork(session)
+  )
 }
 
 /** Whether an adapter's harness is verified to send ACP elicitations — see
@@ -2898,20 +2945,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // background work — the same honest blank as before the feature.
     hasBackgroundWork(sessionId: string): boolean {
       const session = store.sessions.get(sessionId)
-      if (!session) {
-        return false
-      }
-      for (const subagent of session.subagents?.values() ?? []) {
-        if (subagent.state === undefined) {
-          return true
-        }
-      }
-      for (const task of session.asyncTasks?.values() ?? []) {
-        if (task.state === 'running' || task.state === 'paused') {
-          return true
-        }
-      }
-      return false
+      return session ? hasLiveBackgroundWork(session) : false
     },
 
     // Stop ONE background task without cancelling the prompt turn, via the

@@ -4638,6 +4638,53 @@ test('a harness that advertised steering injects a mid-turn message instead of q
   await h.client.deleteSession(h.sessionId)
 })
 
+test('a message waits for the turn boundary while the turn has a subagent running', async () => {
+  // Realtime asks to be read mid-turn, and steering is an injection rather
+  // than a cancel — but the harness treats a message arriving mid-turn as a
+  // reason to reconsider, and drops the delegated work first. Observed on a
+  // live session: a subagent went `cancelled` in the same second a steered
+  // message landed, twice.
+  //
+  // So delegation suspends the mid-turn read. The message is not lost and the
+  // turn is not touched; it waits exactly as it would under `online`.
+  const h = await setup('openclaw', { steeringSupported: true })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'subagent_spawned',
+    subagentSessionId: 'steer-guard-child',
+    name: 'Researcher',
+    task: 'dig',
+    capabilities: {},
+  })
+
+  await h.client.prompt(h.sessionId, 'while it digs', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  assert.deepEqual(
+    h.extMethodCalls.filter((call) => call.method === '_session/steering'),
+    [],
+    'nothing was injected into the turn the subagent is working in',
+  )
+  assert.equal(h.promptCalls.length, 1, 'and no second prompt turn was started either')
+  assert.deepEqual(queueSnapshots(h.events).at(-1), ['while it digs'], 'it is waiting, and says so')
+
+  // The delegation ends, and realtime is realtime again.
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'subagent_state_update',
+    subagentSessionId: 'steer-guard-child',
+    state: 'completed',
+  })
+  await h.client.prompt(h.sessionId, 'and now', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  const steered = h.extMethodCalls.filter((call) => call.method === '_session/steering')
+  assert.equal(steered.length, 1, 'the next message steers as it always did')
+  assert.match((steered[0].params.prompt as Array<{ text: string }>)[0].text, /and now/)
+
+  h.endTurn()
+  await settle()
+  await h.client.deleteSession(h.sessionId)
+})
+
 test('steering that returns promptRequired falls through to a normal prompt', async () => {
   const h = await setup('openclaw', { steeringSupported: true, steerOutcome: 'promptRequired' })
   await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
