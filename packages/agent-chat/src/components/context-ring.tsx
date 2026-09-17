@@ -161,18 +161,22 @@ function usageState(pct: number, warnAtPercent: number, dangerAtPercent: number)
   return pct >= dangerAtPercent ? 'danger' : pct >= warnAtPercent ? 'warning' : 'default'
 }
 
-// One limit window: its line — how much of it is used, and when it comes
-// back — over a slider gauge of the same figure. The gauge is inert on
-// purpose: a limit is a measurement, not a control, so the thumb is hidden
-// and the whole thing takes no pointer or focus — what remains is the
-// slider's filled track, doing the job a bar would.
+// One limit window: title and reset time on the left, the value on the
+// right, and an inert slider gauge of the utilization beneath — the thumb
+// hidden, no pointer, no focus, so what remains is the slider's filled
+// track doing a bar's job. Both the thumb selectors that can ever match are
+// spelled: the track's own data-slot spelling, and the ARIA role the Radix
+// thumb always carries — a preview pool (or a consumer build) resolving an
+// older slider without data-slot attributes would otherwise show a handle.
 //
-// The fill takes the SAME thresholds as the ring — the same
-// warnAtPercent/dangerAtPercent props, through the same state rule — so a
-// window at 85% reads in the colour the ring would show at 85%. The text
-// stays uncoloured: the bar is the colour channel. An unreported
-// utilization draws no gauge at all rather than an empty one pretending to
-// be a zero.
+// Colour source, in order: the harness's OWN verdict on the window when it
+// reports one (`rejected` → destructive, `allowed_warning` → warning), and
+// otherwise the ring's warnAtPercent/dangerAtPercent thresholds, through
+// the same state rule and the same rounded percentage the ring uses — so a
+// window the harness merely says "allowed" about still turns amber exactly
+// where the ring would. The text stays uncoloured either way: the bar is
+// the colour channel. An unreported utilization draws no gauge at all
+// rather than an empty one pretending to be a zero.
 function RateLimitRow({
   limit,
   warnAtPercent,
@@ -182,24 +186,31 @@ function RateLimitRow({
   warnAtPercent: number
   dangerAtPercent: number
 }) {
-  const used =
-    limit.utilization !== undefined
-      ? `${limit.utilization}% used`
-      : limit.status === 'rejected'
-        ? 'Limit reached'
-        : null
+  const pct = limit.utilization !== undefined ? Math.max(0, Math.min(100, Math.round(limit.utilization))) : null
+  const state =
+    limit.status === 'rejected'
+      ? 'danger'
+      : limit.status === 'allowed_warning'
+        ? 'warning'
+        : pct === null
+          ? 'default'
+          : usageState(pct, warnAtPercent, dangerAtPercent)
   const resets = limit.resetsAt
     ? ` · resets ${new Date(limit.resetsAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
     : ''
-  const pct = limit.utilization !== undefined ? Math.max(0, Math.min(100, Math.round(limit.utilization))) : null
-  const state = pct === null ? 'default' : usageState(pct, warnAtPercent, dangerAtPercent)
   return (
     <div className='flex flex-col gap-1.5'>
-      <span className='text-xs tabular-nums'>
-        <span className='font-medium'>{WINDOW_LABELS[limit.window] ?? limit.window}</span>
-        {used ? <span className='text-muted-foreground'> — {used}</span> : null}
-        <span className='text-muted-foreground'>{resets}</span>
-      </span>
+      {/* Title and reset time left, value right; the gap keeps the two
+          apart when a window name runs long. */}
+      <div className='flex items-baseline justify-between gap-3'>
+        <span className='text-xs text-muted-foreground'>
+          <span className='font-medium'>{WINDOW_LABELS[limit.window] ?? limit.window}</span>
+          {resets}
+        </span>
+        <span className='text-xs tabular-nums text-muted-foreground'>
+          {pct !== null ? `${pct}%` : limit.status === 'rejected' ? 'Limit reached' : null}
+        </span>
+      </div>
       {pct !== null ? (
         <Slider
           value={[pct]}
@@ -207,7 +218,7 @@ function RateLimitRow({
           max={100}
           aria-hidden='true'
           className={cn(
-            'pointer-events-none [&_[data-slot=slider-thumb]]:hidden',
+            'pointer-events-none [&_[data-slot=slider-thumb]]:hidden [&_[role=slider]]:hidden',
             state === 'danger'
               ? '[&_[data-slot=slider-range]]:bg-destructive'
               : state === 'warning'
