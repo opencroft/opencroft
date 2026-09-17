@@ -3329,7 +3329,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         title: state.title ?? `New chat ${store.titleCounter}`,
         createdAt: restoredAt,
         lastActivityAt: restoredAt,
-        canFork: false,
+        // Same resolution as loadSession below it: the agent's advertised
+        // `session/fork`, not the fact that history was rebuilt. This is the
+        // path every OLD conversation reopens through (the recorded transcript
+        // exists), so hardcoding false here hid the fork capability from every
+        // session that predates it.
+        canFork: connEntryFor(selection)?.forkSupported === true,
         sessionKey: selection.sessionKey,
       }
       store.sessions.set(sessionId, {

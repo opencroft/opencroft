@@ -590,7 +590,7 @@ interface RestoreHarness {
 // A connection that can do both, so a test can assert WHICH one was used —
 // "the transcript came back" is satisfied by either, and only the call log
 // distinguishes restoring from replaying.
-function restoreSetup(options: { resumable?: boolean } = {}): RestoreHarness {
+function restoreSetup(options: { resumable?: boolean; forkSupported?: boolean } = {}): RestoreHarness {
   counter += 1
   const selection: AgentSelection = {
     providerId: 'test-provider',
@@ -620,6 +620,7 @@ function restoreSetup(options: { resumable?: boolean } = {}): RestoreHarness {
     lastSessionId: null,
     loadSession: true,
     resumeSession: options.resumable !== false,
+    forkSupported: options.forkSupported === true,
     initialized: Promise.resolve(),
   })
   const observed: ChatEvent[] = []
@@ -704,6 +705,28 @@ test('restored events are not handed back to the host that recorded them', async
 
   assert.deepEqual(harness.observed, [], 'nothing restored is re-announced to the observation hook')
   await harness.client.deleteSession(harness.sessionId)
+})
+
+test('a restored session keeps the agent word on forking, not its age', async () => {
+  // The path every conversation predating the fork capability reopens through.
+  // Hardcoding false here made every old thread report an agent that cannot
+  // fork — the menu vanished for exactly the sessions with the most history.
+  const h = restoreSetup({ forkSupported: true })
+  const meta = await h.client.restoreSession(h.sessionId, h.selection, [
+    { kind: 'user', text: 'one' },
+    { kind: 'agent_message', text: 'reply' },
+  ])
+  assert.ok(meta, 'precondition: the restore reattached')
+  assert.equal(meta.canFork, true)
+
+  const plain = restoreSetup()
+  const plainMeta = await plain.client.restoreSession(plain.sessionId, plain.selection, [
+    { kind: 'user', text: 'one' },
+  ])
+  assert.ok(plainMeta)
+  assert.equal(plainMeta.canFork, false, 'no advertisement, no fork — same word a fresh session answers by')
+  await h.client.deleteSession(h.sessionId)
+  await plain.client.deleteSession(plain.sessionId)
 })
 
 test('a restored session is still live: a running subagent keeps nesting into it', async () => {
