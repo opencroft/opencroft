@@ -28,6 +28,7 @@ import {
   deleteGroupChat,
   deleteThread,
   editPin,
+  forkThreadAt,
   getGroupChat,
   getThread,
   // Aliased: the server function below carries the same name.
@@ -264,6 +265,32 @@ export const startGroupChatThread = createServerFn({ method: 'POST', strict: { o
         title: data.title,
       })
       return { ok: true, started }
+    } catch (error) {
+      if (error instanceof GroupChatAccessError) {
+        return { ok: false, code: error.code }
+      }
+      throw error
+    }
+  })
+
+/**
+ * Fork a thread at one of its messages into a new thread of the same chat and
+ * agent: the new session carries the conversation up to that message, the
+ * forked message waits in the new thread's composer as a draft, and nothing
+ * has been sent. Refusals come back as data for the same reason a send's do —
+ * a missing turn and a thread the caller cannot have are one refusal, and a
+ * thrown error would reach the browser stripped of the code that says which.
+ */
+export type ForkThreadOutcome =
+  | { ok: true; thread: GroupChatThreadSummary }
+  | { ok: false; code: GroupChatAccessFailure }
+
+export const forkGroupChatThreadAt = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { threadId: string; eventIndex: number; draft: string }) => data)
+  .handler(async ({ data }): Promise<ForkThreadOutcome> => {
+    try {
+      const thread = await forkThreadAt(getRequest(), data.threadId, data.eventIndex, data.draft)
+      return { ok: true, thread }
     } catch (error) {
       if (error instanceof GroupChatAccessError) {
         return { ok: false, code: error.code }

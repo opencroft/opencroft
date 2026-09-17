@@ -583,7 +583,6 @@
     },
     "packages/agent-chat/src/components/chat-conversation.tsx": {
       "lint/correctness/useExhaustiveDependencies": 2,
-      "lint/style/noNonNullAssertion": 1,
       "suppressions/unused": 2
     },
     "packages/agent-chat/src/components/chat-edit-bar.tsx": {

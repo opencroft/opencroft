@@ -3592,7 +3592,19 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // store; an external ACP agent forks its own transcript when it advertised
     // `session/fork` at initialize, with our turn cutoff translated into its
     // fork-point dialect (see forkCutoffMeta).
-    async forkSession(sessionId: string, dropFromTurn?: number): Promise<SessionMeta | null> {
+    //
+    // `opts.sessionKey` binds the fork to a key of the caller's choosing — the
+    // host's address for the NEW conversation a fork becomes (a group-chat
+    // thread created for it). With it, the fork's events record under that key
+    // and a reopen rebuilds it; without it the fork stays keyless, reachable
+    // only through the id this returns, which is what the adopt-in-place
+    // edit flow wants (see the meta note below on why the SOURCE key never
+    // carries over).
+    async forkSession(
+      sessionId: string,
+      dropFromTurn?: number,
+      opts?: { sessionKey?: string },
+    ): Promise<SessionMeta | null> {
       const session = store.sessions.get(sessionId)
       if (!session) {
         return null
@@ -3639,14 +3651,19 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // model mirrors carry over — they describe the spawn, not the tab.
         adapterId: session.selection.adapterId,
         model: session.selection.model,
-        // Deliberately not inherited from the source session: a fork is reached
-        // through its own tab, never through the original sessionKey (see
-        // forkLocal in acp.ts), so carrying the key forward would make a
-        // sessionKey -> session lookup ambiguous between the two.
+        // The caller's key for the fork's own conversation, when one was
+        // named. Deliberately NOT inherited from the source session otherwise:
+        // a fork is reached through its own tab, never through the original
+        // sessionKey (see forkLocal in acp.ts), so carrying the key forward
+        // would make a sessionKey -> session lookup ambiguous between the two.
+        sessionKey: opts?.sessionKey,
       }
       store.sessions.set(response.sessionId, {
         meta,
-        selection: session.selection,
+        // A keyed fork is a different conversation to the key-based reads, so
+        // its selection carries ITS key; an unkeyed one shares the source's
+        // selection object, as it always has.
+        selection: opts?.sessionKey ? { ...session.selection, sessionKey: opts.sessionKey } : session.selection,
         events: forkedEvents,
         subscribers: new Set(),
         modes: response.modes ? toSessionModes(response.modes) : session.modes,
@@ -4068,6 +4085,20 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return opts.beforeIndex === undefined
         ? tailByRecords(session.events, opts.records)
         : pageBeforeByRecords(session.events, opts.beforeIndex, opts.records)
+    },
+
+    // The session's whole event log, in order — the read side of the durable-
+    // transcript seam (a host records events as they arrive; this hands back
+    // what it would have recorded for a session that arrived already built, a
+    // fork above all). Null for an unknown session. Not a paging window: a
+    // caller seeding a store wants all of it, and a bounded tail is what
+    // getRecordsWindow is for.
+    getSessionEvents(sessionId: string): ChatEvent[] | null {
+      const session = store.sessions.get(sessionId)
+      if (!session) {
+        return null
+      }
+      return [...session.events]
     },
 
     async reset(): Promise<void> {

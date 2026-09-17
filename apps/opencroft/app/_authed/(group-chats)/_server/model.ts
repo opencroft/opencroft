@@ -33,6 +33,7 @@ import {
   agentConfiguredWindowByNodeId,
   ensureLocalSessionImpl,
   forgetLocalSessionImpl,
+  forkTurnLocalImpl,
   hasActiveTurnImpl,
   promptLocalImpl,
   stopLocalSessionProcessImpl,
@@ -1843,6 +1844,110 @@ async function createThread(
     .where(eq(groupChatThread.id, thread.id))
 
   return { thread, sessionId: opened.sessionId }
+}
+
+/**
+ * Fork a thread at one of its messages into a NEW thread of the same chat and
+ * agent, whose session carries the conversation UP TO that message and whose
+ * composer opens with the forked message waiting as a draft. Nothing is sent:
+ * the reader edits the prefill and sends it themselves, which is the whole
+ * difference from an edit commit (that rewinds THIS conversation in place and
+ * re-runs it immediately).
+ *
+ * The session is the engine's `session/fork` — the agent's own word about
+ * whether it can fork at all decides, the same `canFork` gate the edit flow
+ * answers to. The new thread inherits the source's standing-context signature
+ * rather than re-delivering topic and pins: the forked session already carries
+ * the conversation they were once attached to.
+ *
+ * The draft arrives from the browser because a draft is composer content — the
+ * one thing a browser may state. Everything else about the fork is resolved
+ * here from the delivered turn.
+ */
+export async function forkThreadAt(
+  request: Request,
+  threadId: string,
+  eventIndex: number,
+  draft: string,
+): Promise<GroupChatThreadSummary> {
+  const [source] = await db
+    .select({
+      groupChatId: groupChatThread.groupChatId,
+      agentNodeId: groupChatThread.agentNodeId,
+      sessionKey: groupChatThread.sessionKey,
+      deliveredContextSignature: groupChatThread.deliveredContextSignature,
+    })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.id, threadId))
+    .limit(1)
+  if (!source) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  const { userId } = await requireGroupChatMember(request, source.groupChatId)
+
+  // The same minting createThread does — an ad-hoc slug, a fresh key, the
+  // (chat, agent, slug) uniqueness that turns a collision into a refusal.
+  const [chatRow] = await db
+    .select({ slug: groupChat.slug })
+    .from(groupChat)
+    .where(eq(groupChat.id, source.groupChatId))
+    .limit(1)
+  if (!chatRow) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  const agentNodes = await listAgentNodesImpl()
+  const agentName = agentNodes.find((n) => n.nodeId === source.agentNodeId)?.name ?? source.agentNodeId
+  const threadSlug = mintThreadSlug()
+  const sessionKey = mintSessionKey(chatRow.slug, slugify(agentName) || source.agentNodeId, threadSlug)
+  const [slugTaken] = await db
+    .select({ id: groupChatThread.id })
+    .from(groupChatThread)
+    .where(
+      and(
+        eq(groupChatThread.groupChatId, source.groupChatId),
+        eq(groupChatThread.agentNodeId, source.agentNodeId),
+        eq(groupChatThread.slug, threadSlug),
+      ),
+    )
+    .limit(1)
+  if (slugTaken) {
+    throw new GroupChatAccessError('slug-taken', `This agent already has a thread named "${threadSlug}" here`)
+  }
+
+  // The source session must be live before anything can fork it: opening is
+  // reattach-or-create, and a thread whose session carries no such turn (never
+  // opened, or a stale client) refuses below through the missing turn.
+  const opened = await ensureLocalSessionImpl({ agentNodeId: source.agentNodeId, tabKey: source.sessionKey })
+  const forked = await forkTurnLocalImpl({
+    sessionId: opened.sessionId,
+    eventIndex,
+    sessionKey,
+  })
+  if (!forked) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+
+  // Row last, on purpose: a failure above leaves nothing behind, while a
+  // failure here leaves a forked session no row addresses — the same shape of
+  // orphan an edit fork nobody keeps becomes, unreachable and harmless. The
+  // trim the fork performed is in the engine either way.
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: source.groupChatId,
+      agentNodeId: source.agentNodeId,
+      sessionKey,
+      slug: threadSlug,
+      title: null,
+      createdByUserId: userId,
+      draft: draft.trim() || null,
+      deliveredContextSignature: source.deliveredContextSignature,
+    })
+    .returning(threadSummaryColumns)
+  if (!thread) {
+    throw new Error('The forked thread could not be created')
+  }
+  return thread
 }
 
 /**

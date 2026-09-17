@@ -592,6 +592,20 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
   }
 }
 
+/**
+ * How a fork into a NEW conversation reaches the server.
+ *
+ * Exists for the same reason SendTransport does: forking into a new group-chat
+ * thread must pass through an endpoint that checks membership and creates the
+ * thread row, and none of that is this hook's business. The hook contributes
+ * what only it knows — which turn a block names, and the words the reader
+ * wrote in it — and the host contributes the destination.
+ *
+ * OMITTING IT MUST CHANGE NOTHING: with no transport there is no fork, and the
+ * menu simply offers nothing to fork into.
+ */
+export type ForkTransport = (args: { sessionId: string; eventIndex: number; draft: string }) => Promise<unknown>
+
 export function useAcpSession(
   source: LocalSource,
   botName = 'assistant',
@@ -599,6 +613,8 @@ export function useAcpSession(
   sendTransport?: SendTransport,
   // Optional on purpose — see OpenTransport. No argument, no behaviour change.
   openTransport?: OpenTransport,
+  // Optional on purpose — see ForkTransport. No argument, no fork menu item.
+  forkTransport?: ForkTransport,
 ): AcpSession {
   const { agentNodeId, tabKey } = source
   // Held in a ref and called through it, so a caller that rebuilds the function
@@ -662,6 +678,11 @@ export function useAcpSession(
   // every render, and every callback built on it downstream with it.
   const transportRef = useRef(sendTransport)
   transportRef.current = sendTransport
+  // Held in a ref for the same reason: a host may rebuild the fork transport
+  // each render (its closure holds the thread it is for), and the fork menu
+  // must not depend on that identity.
+  const forkTransportRef = useRef<ForkTransport | undefined>(forkTransport)
+  forkTransportRef.current = forkTransport
   // sessionId is read through a ref (not closed over directly) so fetchPage's
   // identity doesn't need to change — and can't go stale — across renders.
   const sessionIdRef = useRef<string | null>(null)
@@ -928,6 +949,40 @@ export function useAcpSession(
 
   const cancelEdit = useCallback(() => setEdit(undefined), [])
 
+  // Fork a user message into a NEW conversation: the server branches the
+  // session before this turn, the forked turn goes to the new conversation's
+  // composer as a draft, and the host navigates there. Nothing is sent and
+  // THIS tab never moves — unlike an edit commit, which rewinds in place.
+  //
+  // The same block resolution and decoding the editor uses, for the same
+  // reason: the RAW delivered text is what gets decoded (per message, so the
+  // tag stripper cannot eat a newline out of a later message's opening), and
+  // the decoded words are what travel as the draft — a draft is composer
+  // content, the one thing the browser may state. Several editable messages
+  // in one turn prefill as several paragraphs; the reader separates or drops
+  // what they do not want before sending.
+  const forkMessage = useCallback(
+    (blockId: string) => {
+      const transport = forkTransportRef.current
+      if (!sessionId || !transport) {
+        return
+      }
+      const message = folded.messages.find((m) => m.role === 'user' && `u:${m.id}` === blockId)
+      const raw = message?.parts.find((part) => part.type === 'text')
+      if (!message || !raw) {
+        return
+      }
+      const parts = toEditableParts(raw.text, userText)
+      if (parts.length === 0) {
+        return
+      }
+      // `id` is the absolute position of this turn in the session's event log,
+      // the same numbering the edit commit indexes by.
+      void transport({ sessionId, eventIndex: message.id, draft: parts.join('\n\n') })
+    },
+    [sessionId, folded.messages],
+  )
+
   // Commit the open turn: the server rewinds to it and re-sends it with these
   // words in place of the messages at these positions.
   //
@@ -1080,6 +1135,7 @@ export function useAcpSession(
       canFork,
       adapterId,
       editMessage,
+      forkMessage,
       edit,
       cancelEdit,
       commitEdit,
@@ -1107,6 +1163,7 @@ export function useAcpSession(
       canFork,
       adapterId,
       editMessage,
+      forkMessage,
       edit,
       cancelEdit,
       commitEdit,

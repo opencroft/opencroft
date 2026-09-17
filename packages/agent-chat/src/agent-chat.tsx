@@ -37,6 +37,7 @@ type AgentChatCoreSession = Pick<
   | 'stop'
   | 'canFork'
   | 'editMessage'
+  | 'forkMessage'
   | 'draft'
   | 'sendError'
   | 'dismissSendError'
@@ -135,6 +136,10 @@ export function AgentChat({
   // one turn in a freshly opened chat and a different, older one as soon as
   // history had been loaded.
   const onEditUser = session.canFork === true ? session.editMessage : undefined
+  // Fork is offered only where the host can name a destination for it — the
+  // same agent capability gate as editing, on top of a handler the host sets.
+  const onForkUser =
+    session.canFork === true && session.forkMessage ? (id: string) => session.forkMessage?.(id) : undefined
 
   // Whether to fetch more history, and running the fetch, are the host's own
   // decision — this component only holds the reader's place while whatever
@@ -197,6 +202,7 @@ export function AgentChat({
       loadingMoreHistory={session.loadingMoreHistory === true}
       onLoadOlder={loadOlder}
       onEditUser={onEditUser}
+      onForkUser={onForkUser}
       defaultExpanded={defaultExpanded}
       botName={displayName}
       agentAvatar={agentAvatar}

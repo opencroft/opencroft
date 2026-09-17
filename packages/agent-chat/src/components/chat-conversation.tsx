@@ -714,6 +714,11 @@ export interface ChatConversationProps {
   // whatever this component was handed for display -- and reading it there is
   // what keeps an edit working on the same bytes the host will put back.
   onEditUser?: (blockId: string) => void
+  // FORK a delivered user turn into a new conversation, named by the same
+  // block id. Same trust boundary as `onEditUser` — the host resolves the id
+  // against its whole conversation — and the same destination rule: unset
+  // means this conversation offers no fork.
+  onForkUser?: (blockId: string) => void
   // Chains render expanded (full detail) by default instead of collapsed to
   // the last message.
   defaultExpanded?: boolean
@@ -750,6 +755,7 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
     loadingMoreHistory,
     onLoadOlder,
     onEditUser,
+    onForkUser,
     defaultExpanded,
     botName,
     agentAvatar,
@@ -796,25 +802,29 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
               reader with no way back into history. So it renders on its own
               here, which is also where it always used to render. */}
           {sections.length === 0 && loadOlder}
-          {sections.map((section, sectionIndex) => (
+          {sections.map((section, sectionIndex) => {
             // One section per turn: the user message sticks to the top of the
             // viewport while its own replies scroll under it, and the next
             // turn's section pushes it out on the way past. Bounding each
             // header to its section is what produces that hand-off, so no
             // scroll position is read anywhere.
+            //
+            // The question is hoisted so the edit/fork closures hold a
+            // narrowed local: a property chain does not carry its narrowing
+            // into a callback, which is what made the edit closure assert
+            // non-null to say what this local already knows.
+            const user = section.user
+            return (
             <Flex key={section.id} className='w-full min-w-0 gap-3'>
-              {section.user ? (
+              {user ? (
                 <ChatUserMessage
                   sticky
                   renderers={renderers}
-                  blockId={section.user.id}
-                  parts={section.user.parts}
+                  blockId={user.id}
+                  parts={user.parts}
                   editDisabled={waiting}
-                  onEdit={
-                    onEditUser && section.user
-                      ? () => onEditUser(section.user!.id)
-                      : undefined
-                  }
+                  onEdit={onEditUser ? () => onEditUser(user.id) : undefined}
+                  onFork={onForkUser ? () => onForkUser(user.id) : undefined}
                 />
               ) : (
                 // Only the first section can lack a question: the window starts
@@ -875,7 +885,8 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
                 ),
               )}
             </Flex>
-          ))}
+            )
+          })}
         </>
       )}
       {footer}

@@ -4032,6 +4032,36 @@ test('a cutoff with no agent message to anchor on forks without a fork point', a
   await h.client.deleteSession(meta.id)
 })
 
+test('a fork into a named key adopts it for the fork alone', async () => {
+  // The new-thread flow: the host mints the address of the conversation the
+  // fork becomes, and events recorded under a key must answer to the FORK —
+  // not to the session it was branched from, and not to nothing.
+  const h = await setup('openclaw', { forkSupported: true, sessionKey: 'group-chat:source' })
+  await twoTurnHistory(h)
+
+  const meta = await h.client.forkSession(h.sessionId, 1, { sessionKey: 'group-chat:forked' })
+  assert.ok(meta)
+  assert.equal(meta.sessionKey, 'group-chat:forked')
+  const forked = acpStore().sessions.get(meta.id) as { selection: { sessionKey?: string } }
+  assert.equal(forked.selection.sessionKey, 'group-chat:forked')
+  // The source keeps its own key: both sessions answer to exactly one address.
+  const source = acpStore().sessions.get(h.sessionId) as { meta: { sessionKey?: string }; selection: { sessionKey?: string } }
+  assert.equal(source.meta.sessionKey, 'group-chat:source')
+  assert.equal(source.selection.sessionKey, 'group-chat:source')
+
+  // And the key-based read finds the fork, not the source: listSessions is
+  // what the host's recorder and presence reads answer from.
+  assert.ok(h.client.listSessions().some((s) => s.id === meta.id && s.sessionKey === 'group-chat:forked'))
+  // The full log read: exactly the trimmed copy a host seeding a durable
+  // transcript under the new key would record — first turn, its reply, the
+  // turn boundary; nothing from the dropped second turn.
+  const seeded = h.client.getSessionEvents(meta.id)
+  assert.ok(seeded, 'a live fork has a log to seed a durable transcript from')
+  assert.deepEqual(kinds(seeded), kinds(sessionEvents(meta.id)))
+  await h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(meta.id)
+})
+
 // ── shouldHoldDelivery / resumeDelivery ─────────────────────────────────────
 //
 // The host's delivery gate: while it returns true nothing is drained to the

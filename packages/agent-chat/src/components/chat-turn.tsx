@@ -1,6 +1,6 @@
 'use client'
 
-import { Bot, ChevronDown, ChevronRight, ListTodo, Loader2, Maximize2, Minimize2, Pencil, Square, SquareCheck, X } from 'lucide-react'
+import { Bot, ChevronDown, ChevronRight, Copy, EllipsisVertical, GitFork, ListTodo, Loader2, Maximize2, Minimize2, Pencil, Square, SquareCheck, X } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
 import { useState } from 'react'
 // Both of these import types back from this file, and a type import is erased,
@@ -12,6 +12,12 @@ import { SelectionBadge } from './selection-badge'
 
 import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
 import { Button } from 'ui/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from 'ui/components/ui/dropdown-menu'
 import {
   CollapsingStickyHeader,
   CollapsingStickyHeaderContent,
@@ -284,6 +290,10 @@ export interface ChatUserMessageProps {
   parts: readonly ChatUserMessagePart[]
   editDisabled?: boolean
   onEdit?: () => void
+  // FORK the turn into a new conversation. Same turn-scoped rule as `onEdit`:
+  // it belongs to the message that ends the turn, and unset means this
+  // conversation offers no fork.
+  onFork?: () => void
   // Take one message back before it is ever delivered, named by its own id.
   // Its button is always visible rather than revealed on hover -- hover is not
   // a route on a touch screen, and this is the only way to undo a send.
@@ -308,6 +318,7 @@ export function ChatUserMessage({
   parts,
   editDisabled,
   onEdit,
+  onFork,
   onRemove,
   sticky,
   renderers,
@@ -430,16 +441,19 @@ export function ChatUserMessage({
             <div className='flex min-w-0 flex-col gap-1.5'>
               {run.parts.map((part, partIndex) => {
                 const handsOver = isLastRun && partIndex === run.parts.length - 1
+                // The turn's menu rides the message that ends it, and offers
+                // only what this conversation can do: edit and fork when the
+                // host can serve them, copy whenever there are words.
+                const turnMenu =
+                  handsOver && (onEdit || onFork) ? (
+                    <MessageMenu editDisabled={editDisabled} onEdit={onEdit} onFork={onFork} copyText={part.text} />
+                  ) : null
                 return (
-                  // Edit belongs to the turn and so sits on the message that
-                  // ends it; remove belongs to a message and so is asked for
+                  // The turn's actions — edit, copy, fork — belong to the
+                  // message that ends it, and live in that message's own
+                  // header; remove belongs to a message and so is asked for
                   // per part, here as everywhere else.
-                  <MessageRow
-                    key={part.id ?? partIndex}
-                    onEdit={handsOver ? onEdit : undefined}
-                    editDisabled={editDisabled}
-                    onRemove={removeFor(part)}
-                  >
+                  <MessageRow key={part.id ?? partIndex} onRemove={removeFor(part)}>
                     {handsOver && sticky ? (
                       // The last message is the one that hands over: its full
                       // form scrolls away like ordinary content, its opening
@@ -448,10 +462,10 @@ export function ChatUserMessage({
                       // taller than the screen is read rather than shrunk out
                       // from under the reader.
                       <CollapsingStickyHeaderContent preview={<UserMessageBubble part={part} preview />}>
-                        <UserMessageBubble part={part} />
+                        <UserMessageBubble part={part} menu={turnMenu} />
                       </CollapsingStickyHeaderContent>
                     ) : (
-                      <UserMessageBubble part={part} />
+                      <UserMessageBubble part={part} menu={turnMenu} />
                     )}
                   </MessageRow>
                 )
@@ -501,33 +515,21 @@ export function ChatUserMessage({
 // used to be two shapes -- a bare bubble for the earlier ones, a bubble in a
 // flex column beside a control strip for the last -- which meant the width a
 // message got depended on its position in its own turn.
+//
+// The turn's actions live INSIDE the bubble's own header (see UserMessageBubble's
+// `menu` slot) rather than in a strip beside it; this row keeps the one control
+// that is not the bubble's to draw -- remove, which acts on a message still
+// waiting and is asked for per part.
 function MessageRow({
-  onEdit,
-  editDisabled,
   onRemove,
   children,
 }: {
-  onEdit?: () => void
-  editDisabled?: boolean
   onRemove?: () => void
   children: ReactNode
 }) {
   return (
     <div className='flex items-start group w-full gap-1'>
       <div className='flex min-w-0 flex-1 flex-col gap-1.5'>{children}</div>
-      {onEdit && (
-        <Button
-          type='button'
-          size='icon'
-          variant='ghost'
-          className='h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100'
-          title='Edit message'
-          disabled={editDisabled}
-          onClick={onEdit}
-        >
-          <Pencil className='size-3.5' />
-        </Button>
-      )}
       {onRemove && (
         <Button
           type='button'
@@ -544,6 +546,63 @@ function MessageRow({
   )
 }
 
+// The turn's action menu, rendered in the bubble header where the send time
+// used to sit: edit, copy the words, fork the conversation here. Like the
+// pencil it replaced, the trigger shows on hover -- but it stays reachable
+// without a pointer (focus reveals it, and a menu that only a mouse could open
+// would be a menu half the readers could not use), and Copy is never disabled:
+// reading your own words back is not a turn-scoped act, and a menu where every
+// item greys out because the agent is busy would take the one useful thing
+// away with the rest.
+function MessageMenu({
+  onEdit,
+  editDisabled,
+  onFork,
+  copyText,
+}: {
+  onEdit?: () => void
+  editDisabled?: boolean
+  onFork?: () => void
+  copyText?: UserText
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type='button'
+          size='icon'
+          variant='ghost'
+          className='h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100'
+          title='Message actions'
+          aria-label='Message actions'
+        >
+          <EllipsisVertical className='size-3.5' />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align='end' className='min-w-36'>
+        {onEdit && (
+          <DropdownMenuItem onClick={onEdit} disabled={editDisabled}>
+            <Pencil className='size-3.5' />
+            Edit
+          </DropdownMenuItem>
+        )}
+        {copyText && (
+          <DropdownMenuItem onClick={() => void navigator.clipboard.writeText(copyText)}>
+            <Copy className='size-3.5' />
+            Copy Text
+          </DropdownMenuItem>
+        )}
+        {onFork && (
+          <DropdownMenuItem onClick={onFork} disabled={editDisabled}>
+            <GitFork className='size-3.5' />
+            Fork
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 // One message's own box, inside the turn that carried it.
 //
 // Its author and send time sit INSIDE the bubble rather than above it, so a
@@ -553,6 +612,7 @@ function MessageRow({
 function UserMessageBubble({
   part,
   preview,
+  menu,
 }: {
   part: ChatUserMessagePart
   // True for the short form that stays behind once the turn has slid away: the
@@ -560,6 +620,10 @@ function UserMessageBubble({
   // than a state of the first, so neither one's height ever depends on how far
   // the slide has gone.
   preview?: boolean
+  // The turn's action menu (edit / copy / fork), rendered in the header's right
+  // slot. Omitted for the preview form, which is a clamped look at a message
+  // whose real, interactive self is somewhere else.
+  menu?: ReactNode
 }) {
   return (
     <div className='flex flex-col relative min-w-0 gap-1.5 rounded-md bg-muted border-1 p-2'>
@@ -575,8 +639,9 @@ function UserMessageBubble({
         // header cross-fades the whole of it in.
         <div aria-hidden className='absolute inset-0 -z-1 rounded-md pointer-events-none shadow-lg shadow-black/50' />
       )}
-      {(part.author || part.authorAccount || part.sentAt) && (
-        // Author on the left, send time on the right, above the words.
+      {(part.author || part.authorAccount || part.sentAt || menu) && (
+        // Who sent it and when, together at the left; the turn's action menu
+        // at the right, in the slot the send time used to hold alone.
         //
         // Centred rather than baseline-aligned: an avatar has no baseline to
         // sit on, and one row that changes its alignment depending on whether
@@ -591,12 +656,15 @@ function UserMessageBubble({
               because they say different things: a name is somebody this
               application knows, and an identifier is a message whose sender it
               could not place -- an old tag, or an account since removed. */}
-          {part.authorAccount ? (
-            <span className='min-w-0 truncate text-xs font-medium text-foreground'>{part.authorAccount.name}</span>
-          ) : part.author ? (
-            <span className='min-w-0 truncate text-xs font-medium text-muted-foreground'>{part.author}</span>
-          ) : null}
-          {part.sentAt ? <ChatMessageTime sentAt={part.sentAt} /> : null}
+          <span className='flex min-w-0 items-center gap-2'>
+            {part.authorAccount ? (
+              <span className='min-w-0 truncate text-xs font-medium text-foreground'>{part.authorAccount.name}</span>
+            ) : part.author ? (
+              <span className='min-w-0 truncate text-xs font-medium text-muted-foreground'>{part.author}</span>
+            ) : null}
+            {part.sentAt ? <ChatMessageTime sentAt={part.sentAt} /> : null}
+          </span>
+          {menu}
         </div>
       )}
       {/* Three lines in the header form, whole everywhere else. That is the

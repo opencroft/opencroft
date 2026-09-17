@@ -50,6 +50,13 @@ function GroupChatThreadPage() {
     [navigate, groupChatId],
   )
   const onBack = useSafeBack(goToChat)
+  // Where a fork lands: the server creates the destination thread, this opens
+  // it — the reader crosses into the new conversation, whose composer already
+  // holds the forked message as its draft.
+  const onThreadForked = useCallback(
+    (threadId: string) => navigate({ to: '/group-chats/$groupChatId/$threadId', params: { groupChatId, threadId } }),
+    [navigate, groupChatId],
+  )
 
   if (data.refused) {
     return <GroupChatRefusal code={data.code} />
@@ -57,7 +64,15 @@ function GroupChatThreadPage() {
   // The session lives in its own component so its hooks are never behind the
   // refusal branch above — a hook after an early return is a different hook
   // order between renders, which React does not allow.
-  return <ThreadConversation thread={data.thread} chat={data.chat} artifacts={data.artifacts} onBack={onBack} />
+  return (
+    <ThreadConversation
+      thread={data.thread}
+      chat={data.chat}
+      artifacts={data.artifacts}
+      onBack={onBack}
+      onThreadForked={onThreadForked}
+    />
+  )
 }
 
 function ThreadConversation({
@@ -65,11 +80,13 @@ function ThreadConversation({
   chat,
   artifacts: initialArtifacts,
   onBack,
+  onThreadForked,
 }: {
   artifacts: ThreadArtifact[]
   thread: GroupChatThreadEntry & { draft: string | null }
   chat: GroupChatDetailView
   onBack: () => void
+  onThreadForked: (threadId: string) => void
 }) {
   const [artifacts, setArtifacts] = useState(initialArtifacts)
   const [openArtifactId, setOpenArtifactId] = useState<string | undefined>(undefined)
@@ -101,6 +118,7 @@ function ThreadConversation({
       <GroupChatThreadChat
         thread={thread}
         onTurnSettled={onTurnSettled}
+        onThreadForked={onThreadForked}
         renderFrame={({ conversation, composer }) => (
           <GroupChatThreadFraming
             groupChatName={chat.name}

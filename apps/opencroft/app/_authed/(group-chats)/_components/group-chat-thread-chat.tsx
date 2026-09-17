@@ -7,6 +7,7 @@ import type { CompactStatus } from 'agent-chat/use-compact-control'
 import { useCompactControl } from 'agent-chat/use-compact-control'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { toast } from 'sonner'
 import { CommandBarFrame } from 'ui/agent-chat/command-bar-frame'
 import { Flex } from 'ui/layout/flex'
 import { StickySection } from 'ui/layouts/sticky-section'
@@ -15,7 +16,12 @@ import { ScrollArea } from 'ui/scroll-area'
 import { AgentChatStatusIndicators, CHAT_RENDERERS, renderToolCall } from '@/app/_authed/(agent)/_components/agent-chat'
 import { BackgroundTaskStrip } from '@/app/_authed/(agent)/_components/background-task-strip'
 import { AgentCommandBarHost } from '@/app/_authed/(agent)/_components/command-bar-host'
-import type { LocalSource, OpenTransport, SendTransport } from '@/app/_authed/(agent)/_components/use-acp-session'
+import type {
+  ForkTransport,
+  LocalSource,
+  OpenTransport,
+  SendTransport,
+} from '@/app/_authed/(agent)/_components/use-acp-session'
 import { useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { buildBlocks, buildUnread } from '@/app/_authed/(agent)/_lib/build-blocks'
 import { wrapUserSelection } from '@/app/_authed/(agent)/_shared/message-envelope'
@@ -28,6 +34,7 @@ import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/a
 import {
   clearGroupChatThread,
   compactGroupChatThread,
+  forkGroupChatThreadAt,
   getGroupChatThreadCompactStatus,
   openGroupChatThreadSession,
   sendGroupChatThreadMessage,
@@ -63,6 +70,10 @@ interface GroupChatThreadChatProps {
    *  artifact strip off this — the cheapest signal that an agent may have
    *  written something (there is no push for artifacts). */
   onTurnSettled?: () => void
+  /** Opens the thread a FORK created, once the server has made it. Omitted,
+   *  the fork action is not offered in this surface — the menu simply has no
+   *  Fork item, the same degradation a missing handler gives Edit. */
+  onThreadForked?: (threadId: string) => void
   /** Arrange the conversation and composer inside host chrome. Omitted, the
    *  default frame renders them as a plain column: conversation scrolling,
    *  composer pinned beneath — the embedded arrangement. */
@@ -96,6 +107,7 @@ export function GroupChatThreadChat({
   thread,
   leadingBarContent,
   onTurnSettled,
+  onThreadForked,
   renderFrame,
 }: GroupChatThreadChatProps) {
   // Memoised on the two values that identify the session, not rebuilt each
@@ -161,7 +173,30 @@ export function GroupChatThreadChat({
   // resolves, and the reader sees an empty chat where their conversation was.
   // A thread's id never moves, so the server reads whatever key it has now.
   const openTransport = useCallback<OpenTransport>(() => openGroupChatThreadSession({ data: thread.id }), [thread.id])
-  const acp = useAcpSession(source, thread.agent.name, sendTransport, openTransport)
+
+  // Fork into a NEW thread: the server branches this thread's session before
+  // the chosen turn, creates the destination thread and stages the forked
+  // message as its draft; the host opens it. The outcome comes back as data —
+  // a refusal ('not-found' covers both a thread the caller cannot have and a
+  // message that is no longer there) is shown, not thrown, so a stale screen
+  // reports instead of breaking.
+  const onThreadForkedRef = useRef(onThreadForked)
+  onThreadForkedRef.current = onThreadForked
+  const forkTransport = useMemo<ForkTransport | undefined>(
+    () =>
+      onThreadForked
+        ? async ({ eventIndex, draft }) => {
+            const outcome = await forkGroupChatThreadAt({ data: { threadId: thread.id, eventIndex, draft } })
+            if (outcome.ok) {
+              onThreadForkedRef.current?.(outcome.thread.id)
+            } else {
+              toast.error(groupChatAccessMessageForCode(outcome.code))
+            }
+          }
+        : undefined,
+    [thread.id, onThreadForked],
+  )
+  const acp = useAcpSession(source, thread.agent.name, sendTransport, openTransport, forkTransport)
 
   // Computed over the FULL message list, not the visible window: turn indices
   // (for edit/fork) must stay correct regardless of how much is rendered, and

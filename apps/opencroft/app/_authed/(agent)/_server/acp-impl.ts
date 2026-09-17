@@ -48,7 +48,11 @@ import {
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { withAuthors } from '@/app/_authed/(agent)/_server/attach-authors'
 import { queueStore } from '@/app/_authed/(agent)/_server/queue-store'
-import { clearSessionEvents, readSessionEvents } from '@/app/_authed/(agent)/_server/session-event-store'
+import {
+  appendSessionEvent,
+  clearSessionEvents,
+  readSessionEvents,
+} from '@/app/_authed/(agent)/_server/session-event-store'
 import {
   forceBypassMode,
   installYoloModeEnforcement,
@@ -618,6 +622,47 @@ export async function adoptFork(tabKey: string, sessionId: string): Promise<void
     everPrompted: true,
   })
   await writePersistedSession(tabKey, sessionId, true)
+}
+
+/**
+ * Fork a session at a turn into a NEW conversation, addressed by a key the
+ * caller has minted for it — the fork-to-new-thread flow.
+ *
+ * Unlike an edit commit nothing is sent and the source tab never moves: the
+ * fork exists so its own conversation can be opened elsewhere, with the forked
+ * turn waiting in its composer as a draft. The caller owns the key (a group
+ * chat mints the thread's session key before calling) and the wording; this
+ * owns the fork and everything a later reopen of the new conversation needs:
+ * the durable session pointer, and the fork's trimmed transcript recorded
+ * under the new key — events emitted BEFORE the key existed are not recorded
+ * by the live observer, so they are seeded here, and the rebuild path works
+ * for a harness that cannot replay its own sessions (the native one) exactly
+ * as for one that can.
+ *
+ * Returns null when the turn is not there to fork — a stale client forking a
+ * conversation that has moved on gets a refusal, not somebody else's history.
+ */
+export async function forkTurnLocalImpl(data: {
+  sessionId: string
+  eventIndex: number
+  sessionKey: string
+}): Promise<{ sessionId: string } | null> {
+  const turn = agentClient.userTurnAt(data.sessionId, data.eventIndex)
+  if (!turn) {
+    return null
+  }
+  const meta = await agentClient.forkSession(data.sessionId, turn.turnIndex, { sessionKey: data.sessionKey })
+  if (!meta) {
+    return null
+  }
+  const events = agentClient.getSessionEvents(meta.id)
+  if (events) {
+    for (const event of events) {
+      appendSessionEvent(data.sessionKey, event)
+    }
+  }
+  await writePersistedSession(data.sessionKey, meta.id, true)
+  return { sessionId: meta.id }
 }
 
 // Where `{ kind: 'reader' }` becomes a name — the trust boundary, sitting

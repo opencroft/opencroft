@@ -107,6 +107,14 @@ export interface AgentChatSession {
   // instead: `edit` below says what is open, and the composer holds one
   // message of it at a time.
   editMessage?: (blockId: string) => void
+  // FORK a delivered user turn into a NEW conversation, named by the same
+  // block id `editMessage` takes. The conversation up to that message becomes
+  // the new session's history, the forked message waits in the new
+  // conversation's composer as a draft, and nothing has been sent. The host
+  // decides what "a new conversation" is (a group-chat thread, a tab) and
+  // whether the destination exists at all — unset means the menu offers no
+  // fork. The agent's own `canFork` gates it like the edit flow.
+  forkMessage?: (blockId: string) => void
   // The turn currently open for editing, if any.
   edit?: AgentChatEdit
   // Leave edit mode, dropping every pending edit in the turn.

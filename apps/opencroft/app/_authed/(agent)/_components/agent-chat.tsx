@@ -105,6 +105,13 @@ export interface AgentSession {
   // one at a time -- see `edit` below and the command bar's own edit
   // machinery.
   editMessage?: (blockId: string) => void
+  // FORK a delivered user turn into a NEW conversation (a new group-chat
+  // thread), named by the same block id. The conversation up to that message
+  // becomes the new session's history, the forked message waits in the new
+  // composer as a draft, and nothing is sent. Offered only where the host can
+  // name a destination for the fork; the agent's own `canFork` gates it like
+  // the edit flow.
+  forkMessage?: (blockId: string) => void
   // The turn currently open for editing, if any.
   edit?: AgentChatEdit
   // Leave edit mode, dropping every pending edit in the turn.
