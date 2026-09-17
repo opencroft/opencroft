@@ -146,8 +146,8 @@ function formatCost(cost: { amount: number; currency: string }): string {
 const WINDOW_LABELS: Record<string, string> = {
   five_hour: '5-hour limit',
   seven_day: 'Weekly limit',
-  seven_day_opus: 'Weekly · Opus',
-  seven_day_sonnet: 'Weekly · Sonnet',
+  seven_day_opus: 'Weekly (Opus)',
+  seven_day_sonnet: 'Weekly (Sonnet)',
   overage: 'Extra usage',
 }
 
@@ -196,7 +196,7 @@ function RateLimitRow({
           ? 'default'
           : usageState(pct, warnAtPercent, dangerAtPercent)
   const resets = limit.resetsAt
-    ? ` · resets ${new Date(limit.resetsAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
+    ? ` (resets ${new Date(limit.resetsAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })})`
     : ''
   return (
     <div className='flex flex-col gap-1.5'>
