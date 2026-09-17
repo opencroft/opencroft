@@ -5,6 +5,7 @@ import { useState } from 'react'
 
 import { Button } from 'ui/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
+import { Slider } from 'ui/components/ui/slider'
 import { cn } from 'ui/lib/utils'
 
 export interface ContextRingProps {
@@ -150,11 +151,17 @@ const WINDOW_LABELS: Record<string, string> = {
   overage: 'Extra usage',
 }
 
-// One limit window's line: how much of it is used, and when it comes back.
-// A rejected window is the one state the reader is here for, so it takes the
-// destructive colour and says so in words, not colour alone.
+// One limit window: its line — how much of it is used, and when it comes
+// back — over a slider gauge of the same figure. The gauge is inert on
+// purpose: a limit is a measurement, not a control, so the thumb is hidden
+// and the whole thing takes no pointer or focus — what remains is the
+// slider's filled track, doing the job a bar would. A rejected window takes
+// the destructive colour on both the words and the fill; a warned one fills
+// with the warning token. An unreported utilization draws no gauge at all
+// rather than an empty one pretending to be a zero.
 function RateLimitRow({ limit }: { limit: { status: string; window: string; utilization?: number; resetsAt?: number } }) {
   const rejected = limit.status === 'rejected'
+  const warned = limit.status === 'allowed_warning'
   const used =
     limit.utilization !== undefined
       ? `${limit.utilization}% used`
@@ -165,15 +172,33 @@ function RateLimitRow({ limit }: { limit: { status: string; window: string; util
     ? ` · resets ${new Date(limit.resetsAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
     : ''
   return (
-    <span className='text-xs tabular-nums'>
-      <span className={cn('font-medium', rejected ? 'text-destructive' : 'text-foreground')}>
-        {WINDOW_LABELS[limit.window] ?? limit.window}
+    <div className='flex flex-col gap-1.5'>
+      <span className='text-xs tabular-nums'>
+        <span className={cn('font-medium', rejected ? 'text-destructive' : 'text-foreground')}>
+          {WINDOW_LABELS[limit.window] ?? limit.window}
+        </span>
+        {used ? (
+          <span className={cn('text-muted-foreground', rejected && 'text-destructive')}> — {used}</span>
+        ) : null}
+        <span className='text-muted-foreground'>{resets}</span>
       </span>
-      {used ? (
-        <span className={cn('text-muted-foreground', rejected && 'text-destructive')}> — {used}</span>
+      {limit.utilization !== undefined ? (
+        <Slider
+          value={[Math.max(0, Math.min(100, limit.utilization))]}
+          min={0}
+          max={100}
+          aria-hidden='true'
+          className={cn(
+            'pointer-events-none [&_[data-slot=slider-thumb]]:hidden',
+            rejected
+              ? '[&_[data-slot=slider-range]]:bg-destructive'
+              : warned
+                ? '[&_[data-slot=slider-range]]:bg-warning'
+                : null,
+          )}
+        />
       ) : null}
-      <span className='text-muted-foreground'>{resets}</span>
-    </span>
+    </div>
   )
 }
 
