@@ -66,11 +66,12 @@ export interface RestoredSessionState {
  * Two edits, and each is about a promise that died with the process that made
  * it:
  *
- *  - **`queue` snapshots are dropped.** A queue snapshot describes what was
+ *  - **`queue` snapshots are emptied.** A queue snapshot describes what was
  *    waiting at the moment it was published, and what is waiting NOW comes from
  *    the durable queue when the session opens. Seeding one means a chat can
  *    open showing messages as unread that were handed over long ago — and
  *    unlike a stale tool status, a reader cannot tell it is looking at history.
+ *    Emptied where it sits rather than removed, for the reason below.
  *
  *  - **An unanswered permission request or elicitation is closed.** Its
  *    `resolve` lived in the memory of a process that is gone, so the buttons a
@@ -83,6 +84,23 @@ export interface RestoredSessionState {
  * restart stays `in_progress`: that is what happened, the reader can see the
  * turn ended after it, and inventing a terminal status would be this layer
  * claiming to know how the work finished.
+ *
+ * ## POSITIONS ARE PART OF THE CONTRACT
+ *
+ * The result is position-for-position the log it was given: event N in, event
+ * N out, for every N. Only the tail grows, with the closures above.
+ *
+ * That is not tidiness. A user turn is NAMED by its index in this array —
+ * that is what an edit commit and a fork send to say which message they mean
+ * (see `userTurnAt`) — and a browser holding indices from before a restart has
+ * no way to learn that they shifted. Drop one event here and every index after
+ * it is off by one: an edit rewrites the wrong message, a fork branches at the
+ * wrong turn, and when the index falls off the end the reader is told the
+ * conversation is not available. All three are silent, and the last one is the
+ * kindest of them.
+ *
+ * So an event that must not be RESTORED is emptied rather than removed, and a
+ * closure that must be ADDED goes at the end where it shifts nothing.
  */
 export function restorableEvents(events: readonly ChatEvent[]): ChatEvent[] {
   const restored: ChatEvent[] = []
@@ -91,6 +109,11 @@ export function restorableEvents(events: readonly ChatEvent[]): ChatEvent[] {
   for (const event of events) {
     switch (event.kind) {
       case 'queue':
+        // EMPTIED IN PLACE, never dropped. What it says has to go (above);
+        // where it sits has to stay (see this function's doc on positions).
+        // An empty snapshot says both: nothing is waiting, and the events
+        // after this one are still where they were.
+        restored.push({ kind: 'queue', items: [] })
         continue
       case 'permission_request':
         openPermissions.add(event.requestId)

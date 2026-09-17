@@ -1702,6 +1702,62 @@ export interface StartThreadResult {
 }
 
 /**
+ * The address a new thread will answer to: its slug within (chat, agent), and
+ * the session key built from it.
+ *
+ * ONE MINT FOR EVERY NEW THREAD, whoever is asking — a person starting one, an
+ * agent starting one for a colleague, a fork branching an existing
+ * conversation. They differ in what they then DO with the address; they must
+ * not differ in how it is chosen, because the key is the durable address of a
+ * conversation and two ways of picking it is two ways of picking it wrong.
+ *
+ * A NAMED thread takes its slug from the title; an ad-hoc one gets a short
+ * hash. Most threads are ad-hoc, so the hash is the default rather than a
+ * fallback for a missing title.
+ *
+ * The collision check comes BEFORE the key is minted, so a refused thread
+ * never resolves an agent or reads a chat it is not going to use. Scoped to
+ * (chat, agent) because that is what the key path is — only a named thread can
+ * reach it in practice, since two hashes colliding is not something to write
+ * copy for, and it refuses identically if it happens.
+ */
+async function mintThreadAddress(
+  groupChatId: string,
+  agentNodeId: string,
+  title?: string,
+): Promise<{ threadSlug: string; sessionKey: string }> {
+  const threadSlug = title ? threadSlugFromTitle(title) : mintThreadSlug()
+  const [slugTaken] = await db
+    .select({ id: groupChatThread.id })
+    .from(groupChatThread)
+    .where(
+      and(
+        eq(groupChatThread.groupChatId, groupChatId),
+        eq(groupChatThread.agentNodeId, agentNodeId),
+        eq(groupChatThread.slug, threadSlug),
+      ),
+    )
+    .limit(1)
+  if (slugTaken) {
+    throw new GroupChatAccessError('slug-taken', `This agent already has a thread named "${threadSlug}" here`)
+  }
+  const [chatRow] = await db
+    .select({ slug: groupChat.slug })
+    .from(groupChat)
+    .where(eq(groupChat.id, groupChatId))
+    .limit(1)
+  if (!chatRow) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  // The agent's slug comes from its NAME, so a key reads as a channel path.
+  // Resolved once, at creation: an agent renamed later does not move a key
+  // that already exists, and must not.
+  const agentNodes = await listAgentNodesImpl()
+  const agentName = agentNodes.find((n) => n.nodeId === agentNodeId)?.name ?? agentNodeId
+  return { threadSlug, sessionKey: mintSessionKey(chatRow.slug, slugify(agentName) || agentNodeId, threadSlug) }
+}
+
+/**
  * Start a thread and send its first message in one call — this system has no
  * notion of an empty, unaddressed thread (the existing 1:1 chat does not
  * either: opening a session and sending into it are two steps, but nothing
@@ -1770,43 +1826,8 @@ async function createThread(
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
 
-  // A NAMED thread takes its slug from the title; an ad-hoc one gets a short
-  // hash. Most threads are ad-hoc, so the hash is the default rather than a
-  // fallback for a missing title.
   const title = opts.title?.trim() || undefined
-  const threadSlug = title ? threadSlugFromTitle(title) : mintThreadSlug()
-  const [slugTaken] = await db
-    .select({ id: groupChatThread.id })
-    .from(groupChatThread)
-    .where(
-      and(
-        eq(groupChatThread.groupChatId, groupChatId),
-        eq(groupChatThread.agentNodeId, agentNodeId),
-        eq(groupChatThread.slug, threadSlug),
-      ),
-    )
-    .limit(1)
-  if (slugTaken) {
-    // Scoped to (chat, agent) because that is what the key path is. Only a
-    // named thread can reach this in practice — two hashes colliding is not
-    // something to write copy for, and it refuses identically if it happens.
-    throw new GroupChatAccessError('slug-taken', `This agent already has a thread named "${threadSlug}" here`)
-  }
-
-  const [chatRow] = await db
-    .select({ slug: groupChat.slug })
-    .from(groupChat)
-    .where(eq(groupChat.id, groupChatId))
-    .limit(1)
-  if (!chatRow) {
-    throw new GroupChatAccessError('not-found', UNAVAILABLE)
-  }
-  // The agent's slug comes from its NAME, so a key reads as a channel path.
-  // Resolved once, at creation: an agent renamed later does not move a key
-  // that already exists, and must not.
-  const agentNodes = await listAgentNodesImpl()
-  const agentName = agentNodes.find((n) => n.nodeId === agentNodeId)?.name ?? agentNodeId
-  const sessionKey = mintSessionKey(chatRow.slug, slugify(agentName) || agentNodeId, threadSlug)
+  const { threadSlug, sessionKey } = await mintThreadAddress(groupChatId, agentNodeId, title)
   // A LIVE THREAD OUTRANKS AN ALIAS. Either address this thread is about to
   // answer to may still be freeing itself for a thread renamed away from it,
   // and a real binding takes it outright. Leaving both would give one address
@@ -1918,34 +1939,12 @@ export async function forkThreadAt(
   }
   const { userId } = await requireGroupChatMember(request, source.groupChatId)
 
-  // The same minting createThread does — an ad-hoc slug, a fresh key, the
-  // (chat, agent, slug) uniqueness that turns a collision into a refusal.
-  const [chatRow] = await db
-    .select({ slug: groupChat.slug })
-    .from(groupChat)
-    .where(eq(groupChat.id, source.groupChatId))
-    .limit(1)
-  if (!chatRow) {
-    throw new GroupChatAccessError('not-found', UNAVAILABLE)
-  }
-  const agentNodes = await listAgentNodesImpl()
-  const agentName = agentNodes.find((n) => n.nodeId === source.agentNodeId)?.name ?? source.agentNodeId
-  const threadSlug = mintThreadSlug()
-  const sessionKey = mintSessionKey(chatRow.slug, slugify(agentName) || source.agentNodeId, threadSlug)
-  const [slugTaken] = await db
-    .select({ id: groupChatThread.id })
-    .from(groupChatThread)
-    .where(
-      and(
-        eq(groupChatThread.groupChatId, source.groupChatId),
-        eq(groupChatThread.agentNodeId, source.agentNodeId),
-        eq(groupChatThread.slug, threadSlug),
-      ),
-    )
-    .limit(1)
-  if (slugTaken) {
-    throw new GroupChatAccessError('slug-taken', `This agent already has a thread named "${threadSlug}" here`)
-  }
+  // The minting createThread does, because it IS that function — a fork is a
+  // thread of the same chat and agent, and it has to be addressable on the
+  // same terms. It was a second copy of these four steps; the copy had already
+  // drifted (it checked the collision after minting the key rather than
+  // before), and the next divergence would have been silent.
+  const { threadSlug, sessionKey } = await mintThreadAddress(source.groupChatId, source.agentNodeId)
 
   // The source session must be live before anything can fork it: opening is
   // reattach-or-create, and a thread whose session carries no such turn (never
@@ -1957,7 +1956,15 @@ export async function forkThreadAt(
     sessionKey,
   })
   if (!forked) {
-    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+    // NOT the collapsed refusal. The thread is right there on the reader's
+    // screen and they are plainly entitled to it; what could not be found is
+    // the message, at the position this page named it by. Answering "this
+    // group chat is not available" described the one thing that was not the
+    // problem. See the code's own comment in _shared/access-error.ts.
+    throw new GroupChatAccessError(
+      'turn-not-found',
+      'That message is no longer where this page thinks it is — reload the chat and try again.',
+    )
   }
 
   // Row last, on purpose: a failure above leaves nothing behind, while a

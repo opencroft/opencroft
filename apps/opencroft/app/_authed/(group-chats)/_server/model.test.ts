@@ -2893,9 +2893,16 @@ test('a system grant is a listable member row, and only senders that exist quali
 // bare success — needed by any test that forces the session offline
 // (stopLocalSessionProcessImpl) and then expects it to be woken back up via
 // agent-client's own session/load replay, rather than silently rebuilt fresh.
-function seedMockConnection(prompts: string[], agentName = 'Agent Session', opts?: { resumable?: boolean }): void {
+function seedMockConnection(
+  prompts: string[],
+  agentName = 'Agent Session',
+  opts?: { resumable?: boolean; forkable?: boolean },
+): void {
   const connection = {
     newSession: async () => ({ sessionId: `mock-${crypto.randomUUID()}` }),
+    // Answered only when the seeded entry advertises the capability below —
+    // the engine refuses before reaching a connection that did not.
+    unstable_forkSession: async () => ({ sessionId: `mock-fork-${crypto.randomUUID()}` }),
     prompt: async (params: { prompt: Array<{ text?: string }> }) => {
       prompts.push(params.prompt.map((b) => b.text ?? '').join(''))
       return { stopReason: 'end_turn' }
@@ -2922,6 +2929,7 @@ function seedMockConnection(prompts: string[], agentName = 'Agent Session', opts
     connection,
     lastSessionId: null,
     loadSession: Boolean(opts?.resumable),
+    forkSupported: Boolean(opts?.forkable),
     initialized: Promise.resolve(),
   })
 }
@@ -3918,6 +3926,63 @@ test("a thread's first message carries its sender and send time, exactly as ever
 
   const [later] = decodeBatch(prompts[1] ?? '')
   assert.equal(later?.sender, opening.sender, 'the same author, from the same source')
+})
+
+// ---------------------------------------------------------------------------
+// FORKING A THREAD AT A MESSAGE. A fork is a new thread of the same chat and
+// agent whose session carries the conversation up to the chosen message, with
+// that message waiting in the new composer as a draft. Nothing is sent.
+//
+// The turn is named by its POSITION in the session's event log, which is the
+// fragile part: the browser holds positions from the session it subscribed to,
+// and a session can be reloaded underneath it. What a position that no longer
+// names a turn produces is the second test here, and it is about what the
+// reader is told.
+// ---------------------------------------------------------------------------
+
+test("a fork stages the chosen message as the new thread's draft and leaves the source thread alone", async () => {
+  const owner = await makeUser('fork-draft-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'fork draft', 'the purpose')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const prompts: string[] = []
+  seedMockConnection(prompts, 'Agent Session', { forkable: true })
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'the opening message')
+  await waitForPrompts(prompts, 1)
+
+  const events = agentClient.getSessionEvents(started.sessionId) ?? []
+  const turnIndex = events.findIndex((event) => event.kind === 'user')
+  assert.ok(turnIndex >= 0, 'precondition: the turn is in the log to be forked at')
+
+  const forked = await model.forkThreadAt(reqAs(owner), started.thread.id, turnIndex, 'the words carried over')
+
+  assert.equal(forked.draft, 'the words carried over', 'the draft waits in the new composer')
+  assert.notEqual(forked.id, started.thread.id, 'a new thread, not the one forked from')
+  assert.equal(forked.agentNodeId, started.thread.agentNodeId, 'of the same agent')
+  assert.notEqual(forked.sessionKey, started.thread.sessionKey, 'addressed by its own key')
+  assert.equal(prompts.length, 1, 'nothing was sent — the reader sends the prefill themselves')
+})
+
+test('a fork aimed at a position the conversation no longer has says so, rather than that the chat is gone', async () => {
+  // The refusal a stale screen gets. It used to collapse into the code whose
+  // copy reads "This group chat is not available." — about a chat the reader
+  // is looking straight at, and which is fine. What is actually wrong is
+  // recoverable, and they have to be told that to recover from it.
+  const owner = await makeUser('fork-stale-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'fork stale', 'the purpose')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const prompts: string[] = []
+  seedMockConnection(prompts, 'Agent Session', { forkable: true })
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'the opening message')
+  await waitForPrompts(prompts, 1)
+
+  const refusal = await captureRefusal(() => model.forkThreadAt(reqAs(owner), started.thread.id, 9999, 'anything'))
+  assert.equal(refusal.code, 'turn-not-found')
+  assert.match(refusal.message, /reload/i, 'and it says what to do about it')
+
+  const threads = await db.select().from(groupChatThread).where(eq(groupChatThread.groupChatId, chat.id))
+  assert.equal(threads.length, 1, 'a refused fork leaves no half-made thread behind')
 })
 
 test('a thread an agent starts is stamped with the CALLING agent, not the one it addresses', async () => {

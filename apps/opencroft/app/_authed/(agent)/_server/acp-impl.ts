@@ -664,6 +664,22 @@ export async function forkTurnLocalImpl(data: {
 }): Promise<{ sessionId: string } | null> {
   const turn = agentClient.userTurnAt(data.sessionId, data.eventIndex)
   if (!turn) {
+    // The same evidence an edit refusal leaves, for the same reason and in the
+    // same words — these two refuse on one condition, and a fork that went
+    // quiet while an edit explained itself made the pair look like two
+    // different faults. Name what WAS at the requested position and how long
+    // the log actually is, so the divergence is stated rather than hidden.
+    const events = agentClient.getSessionEvents(data.sessionId)
+    const at = events ? events[data.eventIndex] : undefined
+    console.error(
+      'fork refused: turn not found at the requested position',
+      JSON.stringify({
+        sessionId: data.sessionId,
+        eventIndex: data.eventIndex,
+        logLength: events?.length ?? null,
+        foundKind: at?.kind ?? (events ? 'none' : 'unknown-session'),
+      }),
+    )
     return null
   }
   const meta = await agentClient.forkSession(data.sessionId, turn.turnIndex, { sessionKey: data.sessionKey })

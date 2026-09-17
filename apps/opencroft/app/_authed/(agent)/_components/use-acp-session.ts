@@ -978,7 +978,12 @@ export function useAcpSession(
       }
       // `id` is the absolute position of this turn in the session's event log,
       // the same numbering the edit commit indexes by.
-      void transport({ sessionId, eventIndex: message.id, draft: parts.join('\n\n') })
+      //
+      // `.text`, because a part is `{ index, text }` and not a string: joining
+      // the parts themselves stringifies each one and prefills the new
+      // composer with "[object Object]". The editor beside this reaches for
+      // `.text` too — see commitEdit — and this is the one place that did not.
+      void transport({ sessionId, eventIndex: message.id, draft: parts.map((part) => part.text).join('\n\n') })
     },
     [sessionId, folded.messages],
   )

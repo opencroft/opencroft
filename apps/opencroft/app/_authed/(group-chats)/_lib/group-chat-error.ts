@@ -27,6 +27,7 @@ const FAILURES = [
   'pin-limit',
   'slug-taken',
   'slug-unusable',
+  'turn-not-found',
 ] as const
 
 // Compile-time proof that the list above still matches the server's union. If
@@ -81,6 +82,10 @@ const MESSAGES: Record<GroupChatAccessFailure, string> = {
   'pin-limit': 'This group chat already holds the maximum number of pins. Unpin one to add another.',
   'slug-taken': 'That name is already taken — please choose another.',
   'slug-unusable': 'That name needs at least one letter or number.',
+  // Says what to DO, because this one is recoverable and the reader is looking
+  // straight at the conversation it is about. See the code's own comment for
+  // why it is not collapsed into "not available".
+  'turn-not-found': 'That message is no longer where this page thinks it is — reload the chat and try again.',
 }
 
 /**

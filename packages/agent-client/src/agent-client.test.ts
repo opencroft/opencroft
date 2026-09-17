@@ -811,7 +811,7 @@ test('a transcript that stops mid-turn is closed, so the chat does not sit waiti
   await harness.client.deleteSession(harness.sessionId)
 })
 
-test('a restored queue snapshot is dropped, so delivered messages do not come back unread', async () => {
+test('a restored queue snapshot carries nothing, so delivered messages do not come back unread', async () => {
   // A queue snapshot describes what was waiting when it was published. What is
   // waiting NOW comes from the durable queue when the session opens, and a
   // reader cannot tell a stale snapshot from a live one.
@@ -825,10 +825,38 @@ test('a restored queue snapshot is dropped, so delivered messages do not come ba
   const events: ChatEvent[] = []
   harness.client.subscribe(harness.sessionId, (event) => events.push(event))
   assert.deepEqual(
-    events.filter((event) => event.kind === 'queue'),
+    events.filter((event) => event.kind === 'queue').flatMap((event) => (event.kind === 'queue' ? event.items : [])),
     [],
     'nothing in the restored transcript claims a message is still waiting',
   )
+  await harness.client.deleteSession(harness.sessionId)
+})
+
+test('a restored transcript keeps every event at the position it was recorded at', async () => {
+  // A user turn is NAMED by its index in this log — that is what an edit
+  // commit and a fork send to say which message they mean — and a browser
+  // holding an index from before a restart cannot learn that it shifted.
+  //
+  // The queue snapshot in the middle is the discriminator: it is the one event
+  // the restore must not carry the CONTENTS of, and dropping it to achieve
+  // that moved every index after it down by one. The second user turn is what
+  // an edit or a fork would then land on when the reader asked for the third.
+  const harness = restoreSetup()
+  const recorded: ChatEvent[] = [
+    { kind: 'user', text: 'first' },
+    { kind: 'queue', items: [{ id: 'q1', kind: 'message', sender: 'Reader', sentAt: '2026-01-01T00:00:00.000Z', text: 'held' }] },
+    { kind: 'agent_message', text: 'working' },
+    { kind: 'user', text: 'second' },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ]
+  await harness.client.restoreSession(harness.sessionId, harness.selection, recorded)
+
+  const events = harness.client.getSessionEvents(harness.sessionId) ?? []
+  for (const [index, event] of recorded.entries()) {
+    assert.equal(events[index]?.kind, event.kind, `event ${index} is still a ${event.kind}`)
+  }
+  const second = events.findIndex((event) => event.kind === 'user' && event.text === 'second')
+  assert.equal(second, 3, 'the second turn answers to the index it was recorded at, not one lower')
   await harness.client.deleteSession(harness.sessionId)
 })
 
@@ -3992,6 +4020,35 @@ test('forkSession refuses a session whose agent never advertised session/fork', 
     return true
   })
   assert.deepEqual(h.forkCalls, [], 'the refusal happens before anything reaches the agent')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('forkSession waits for the handshake rather than calling an unconnected agent unforkable', async () => {
+  // `forkSupported` is written BY the initialize handshake, so it says nothing
+  // until that handshake has finished. A session outlives its process — the
+  // idle reaper stops a quiet agent, a harness exits on its own — so "the
+  // capability is not there yet" and "this agent cannot fork" are different
+  // facts that look identical to a read taken too early.
+  //
+  // Modelled as an entry whose handshake is still in flight, because that is
+  // the shape the connection has while it is being re-established: present,
+  // and not yet knowing what it can do.
+  const h = await setup('openclaw')
+  const entry = acpStore().connections.get(h.connectionKey) as {
+    forkSupported: boolean
+    initialized: Promise<unknown>
+  }
+  assert.equal(entry.forkSupported, false, 'precondition: nothing known about forking yet')
+  entry.initialized = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      entry.forkSupported = true
+      resolve()
+    }, 10)
+  })
+
+  const meta = await h.client.forkSession(h.sessionId, 0)
+  assert.ok(meta, 'the fork is served once the agent has said what it can do')
+  assert.equal(h.forkCalls.length, 1, 'and it reached the agent')
   await h.client.deleteSession(h.sessionId)
 })
 

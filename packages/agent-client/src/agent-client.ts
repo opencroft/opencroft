@@ -1178,14 +1178,22 @@ export function handleUpdate(notification: SessionNotification): void {
       // The raw reading is kept even when held, so settleTurn can apply it in
       // full at the turn boundary (the monotonic rule's promised decrease).
       session.pendingUsage = { used: update.used, size }
+      // THE HELD READING ITSELF, not a flag saying there is one. A boolean
+      // cannot tell the compiler that `session.usage` was present when it was
+      // computed, so the merge below read as possibly-undefined and the
+      // package's typecheck failed on both lines of it. Naming the value keeps
+      // the narrowing where it is used, and says what is being held.
+      const previous = session.usage
       const held =
-        session.activeTurns > 0 && session.usage && size === session.usage.size && update.used < session.usage.used
+        session.activeTurns > 0 && previous && size === previous.size && update.used < previous.used
+          ? previous
+          : undefined
       // A held reading keeps the displayed used/size (the monotonic rule) but
       // still merges the side state a bare reading carried — a cost or a
       // limit update is not a context reading and is never held.
       session.usage = {
-        used: held ? session.usage.used : update.used,
-        size: held ? session.usage.size : size,
+        used: held ? held.used : update.used,
+        size: held ? held.size : size,
         ...(cost ? { cost } : {}),
         ...(rateLimits ? { rateLimits } : {}),
       }
@@ -3615,11 +3623,19 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         return null
       }
       const native = isNativeSelection(session.selection)
+      // THE CONNECTION FIRST, THEN ITS CAPABILITY. `forkSupported` is written
+      // by the initialize handshake, so it only exists on an entry that has
+      // one — and a session outlives its process: the idle reaper stops a quiet
+      // agent, and a harness that exits drops its entry. Reading the capability
+      // before ensuring the connection therefore answered "no such entry" for a
+      // session whose agent was merely not running, and reported an agent that
+      // forks perfectly well as one that cannot fork at all. A reader saw
+      // `Internal error` on an edit, minutes after editing worked.
+      const connection = await ensureConnection(session.selection)
       const entry = native ? undefined : connEntryFor(session.selection)
       if (!native && entry?.forkSupported !== true) {
         throw new Error('Forking is only supported by the in-process native harness.')
       }
-      const connection = await ensureConnection(session.selection)
       // Trim our event log at the same boundary the harness trims its messages —
       // drop from the chosen user turn's event — so the fork's replayed transcript
       // matches its model history. With no prior turn, keep the leading modes event.

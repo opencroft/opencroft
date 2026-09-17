@@ -84,6 +84,20 @@ export type GroupChatAccessFailure =
    * words, not different from someone else's.
    */
   | 'slug-unusable'
+  /**
+   * The thread is there and the caller may have it — the MESSAGE the request
+   * named is not where it said. A screen names a turn by its position in the
+   * session's event log, and a session that was reloaded underneath an open
+   * tab (the idle reaper stops quiet agents) can hand back a log the tab's
+   * positions no longer describe.
+   *
+   * Outside the collapse into `not-found`, and this one is not a security
+   * nicety but the whole point: it is reached only from a thread the caller
+   * has already been granted, and telling them "this group chat is not
+   * available" about a chat plainly on their screen sends them to look for a
+   * fault that is not there. What they need to be told is to reload.
+   */
+  | 'turn-not-found'
 
 /**
  * PHASE 2 CONTRACT, verified against the actual wire format rather than
