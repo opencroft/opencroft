@@ -77,8 +77,16 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
                 }
               })
             }
+            // How many of the replayed events are live-state snapshots rather
+            // than log entries. Reported by subscribe before it delivers the
+            // first one, so it is known by the time the marker below is built;
+            // the marker is what lets the client number the rest correctly.
+            let snapshotPrefix = 0
             unsubscribe = agentClient.subscribe(sessionId, (event) => send(withAuthors(event)), {
               fromIndex: window?.startIndex,
+              onReplay: (info) => {
+                snapshotPrefix = info.snapshotPrefix
+              },
             })
             // subscribe() replays only the bounded tail window synchronously before
             // it returns (or is a noop if the session doesn't exist), so every
@@ -98,6 +106,7 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
                   window?.header
                     ? { index: window.header.index, event: await withAuthors(window.header.event) }
                     : undefined,
+                  snapshotPrefix,
                 ))(),
             )
           },

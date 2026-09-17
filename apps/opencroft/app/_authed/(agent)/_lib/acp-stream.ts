@@ -57,6 +57,20 @@ export interface HistoryEndEvent {
   // tail here instead of the full transcript.
   startIndex: number
   hasMore: boolean
+  // How many events at the FRONT of this replay are live-state snapshots
+  // (modes, the queue, the plan, usage…) rather than entries of the log —
+  // agent-client prepends them so a windowed reader is not blind to state that
+  // last changed above the cut.
+  //
+  // It is here because the two uses of `startIndex` are not the same number.
+  // As a PAGING cursor it names the first logged event, which is what
+  // `beforeIndex` must be given. As a NUMBERING origin it is wrong by exactly
+  // this count, because the client's first received event is a snapshot that
+  // has no position in the log at all — so numbering from it puts every real
+  // event too high, and an edit or a fork naming a turn by its position
+  // reaches a different one, or nothing. Absent means zero, which is what
+  // every frame written before this existed meant.
+  snapshotPrefix?: number
   // The `user` event of the turn the window starts inside, when it sits above
   // `startIndex` — so a partially-loaded turn still renders with its question.
   // Kept out of the replayed events deliberately (see RecordsWindow): the
@@ -69,6 +83,7 @@ export function historyEndEvent(
   startIndex: number,
   hasMore: boolean,
   header?: HistoryEndEvent['header'],
+  snapshotPrefix = 0,
 ): HistoryEndEvent {
   // `satisfies` for the same reason the other conditional spreads carry one:
   // the return annotation checks the keys written here and cannot reach inside
@@ -80,6 +95,7 @@ export function historyEndEvent(
     kind: HISTORY_END_KIND,
     startIndex,
     hasMore,
+    snapshotPrefix,
     ...(header ? ({ header } satisfies Pick<HistoryEndEvent, 'header'>) : {}),
   }
 }

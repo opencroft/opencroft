@@ -783,7 +783,15 @@ export function useAcpSession(
       const event = JSON.parse(e.data) as AcpStreamEvent
       if (event.kind === HISTORY_END_KIND) {
         replayingHistoryRef.current = false
-        baseIndexRef.current = event.startIndex
+        // NUMBERING, not paging, and the two differ by the snapshot prefix.
+        // The replay opens with however many live-state events the engine had
+        // to prepend (see HistoryEndEvent.snapshotPrefix); they hold no
+        // position in the log, so numbering from `startIndex` would put every
+        // real event that many slots too high — and an edit or a fork naming a
+        // turn by its position would reach a different one, or nothing. Moving
+        // the origin back by the prefix gives the first LOGGED event exactly
+        // `startIndex`, which is the number the server answers to.
+        baseIndexRef.current = event.startIndex - (event.snapshotPrefix ?? 0)
         setEvents(historyBufferRef.current)
         setLoading(false)
         // The replayed history is a bounded tail (see acp.stream.ts), not

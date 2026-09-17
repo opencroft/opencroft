@@ -4087,14 +4087,37 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // behavior). Live events (pushed after this call) are never bounded; only
     // the replay-on-connect portion is. See getEventsWindow for computing a
     // tail or older-page fromIndex to pass here.
-    subscribe(sessionId: string, subscriber: Subscriber, opts?: { fromIndex?: number }): () => void {
+    subscribe(
+      sessionId: string,
+      subscriber: Subscriber,
+      opts?: {
+        fromIndex?: number
+        /**
+         * How many of the replayed events came from the snapshot prefix rather
+         * than from the log, reported before the first of them is delivered.
+         *
+         * A caller that NUMBERS the replay needs this, and the number is not
+         * derivable at the far end: a prefixed `queue` event and a logged one
+         * are the same object, so a receiver counting positions from
+         * `fromIndex` puts every real event `snapshotPrefix` slots too high.
+         * Which is silent — until something addresses an event by its position
+         * (an edit, a fork) and reaches a different one, or none.
+         */
+        onReplay?: (info: { snapshotPrefix: number }) => void
+      },
+    ): () => void {
       const session = store.sessions.get(sessionId)
       if (!session) {
+        opts?.onReplay?.({ snapshotPrefix: 0 })
         return () => {}
       }
       const from = opts?.fromIndex ?? 0
       const windowed = from > 0 ? session.events.slice(from) : session.events
-      for (const event of withSnapshotPrefix(session, windowed)) {
+      const replay = withSnapshotPrefix(session, windowed)
+      // Before the first event goes out, so a subscriber that has to know the
+      // offset knows it while it is still reading the replay.
+      opts?.onReplay?.({ snapshotPrefix: replay.length - windowed.length })
+      for (const event of replay) {
         subscriber(event)
       }
       session.subscribers.add(subscriber)

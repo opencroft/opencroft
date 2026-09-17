@@ -4013,6 +4013,54 @@ test('createSession reports canFork only when the agent advertised session/fork'
   await forking.client.deleteSession(forking.sessionId)
 })
 
+test('a windowed subscribe says how many of its events are snapshots, so the rest can be numbered', async () => {
+  // The replay opens with live-state events the window cut off above — they
+  // are real state and belong there, but they hold no POSITION in the log. A
+  // reader numbering from `fromIndex` therefore puts every logged event that
+  // many slots too high, and nothing about the events themselves says so: a
+  // prefixed `queue` and a logged one are the same object.
+  //
+  // What that costs shows up nowhere until something addresses an event by its
+  // position — an edit, a fork — and reaches a different one, or nothing at
+  // all, which is what a reader is told.
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  h.endTurn()
+  await settle()
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+
+  const log = sessionEvents(h.sessionId)
+  const from = log.findIndex((event) => event.kind === 'user' && event.text.includes('second'))
+  assert.ok(from > 0, 'precondition: the window starts partway into the log')
+
+  const replayed: ChatEvent[] = []
+  let snapshotPrefix = -1
+  const unsubscribe = h.client.subscribe(h.sessionId, (event) => replayed.push(event), {
+    fromIndex: from,
+    onReplay: (info) => {
+      snapshotPrefix = info.snapshotPrefix
+    },
+  })
+  unsubscribe()
+
+  assert.ok(snapshotPrefix >= 0, 'the count is reported')
+  assert.ok(snapshotPrefix > 0, 'precondition: this window really is missing state that had to be prepended')
+  assert.equal(
+    replayed.length - snapshotPrefix,
+    log.length - from,
+    'everything after the prefix is the window itself, event for event',
+  )
+  // The one that matters: the first LOGGED event of the replay is the one the
+  // server answers for at `from`, so a reader numbering from `from` must start
+  // counting at this position and not at zero.
+  assert.deepEqual(replayed[snapshotPrefix], log[from], 'and it starts exactly where the window does')
+  h.endTurn()
+  await settle()
+  await h.client.deleteSession(h.sessionId)
+})
+
 test('forkSession refuses a session whose agent never advertised session/fork', async () => {
   const h = await setup()
   await assert.rejects(h.client.forkSession(h.sessionId, 0), (error: Error) => {
