@@ -1710,9 +1710,11 @@ export interface StartThreadResult {
  * rather than creating a thread that then cannot be used.
  *
  * The topic enters the agent's context exactly the way a job's context does
- * today (see message-envelope.ts) — `composeEnvelope` with `isNewSession:
- * true`, which a brand-new sessionKey guarantees here, so the topic is
- * attached to this first message and never repeated on later ones.
+ * (see message-envelope.ts), and by the same once-on-change rule every later
+ * message answers to: a thread minted here has been told nothing yet, so its
+ * standing context rides this first message and is never repeated after it.
+ * That rule lives in `deliverIntoThread`, which is also what stamps this
+ * message with who sent it and when.
  */
 export async function startThread(
   request: Request,
@@ -1725,7 +1727,17 @@ export async function startThread(
   if (!(await isAgentMember(groupChatId, agentNodeId))) {
     throw new GroupChatAccessError('agent-not-a-member', 'That agent is not a member of this group chat')
   }
-  return createThread(groupChatId, agentNodeId, firstMessage, { title: opts?.title, createdByUserId: userId })
+  return createThread(groupChatId, agentNodeId, firstMessage, {
+    title: opts?.title,
+    createdByUserId: userId,
+    // The reader's own handle, resolved from the session already required
+    // above — the same stamp `sendMessageInThread` makes for every message
+    // after this one, from the same source. Resolved BEFORE anything is
+    // minted: an account with no handle cannot be stamped on a message, and a
+    // thread whose opening message cannot be attributed is not one to create
+    // half of.
+    sender: await authorForPerson(userId),
+  })
 }
 
 /**
@@ -1747,8 +1759,12 @@ async function createThread(
   groupChatId: string,
   agentNodeId: string,
   firstMessage: string,
-  opts: { title?: string; createdByUserId: string | null },
+  opts: { title?: string; createdByUserId: string | null; sender: string },
 ): Promise<StartThreadResult> {
+  // A GATE, not the copy that gets delivered. This refuses a thread for a chat
+  // that is not there before anything is minted; what the first message
+  // actually carries is read again at delivery, from the one place that reads
+  // it for every message (see deliverIntoThread).
   const standing = await standingContextForThread(groupChatId, agentNodeId)
   if (!standing) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
@@ -1813,13 +1829,14 @@ async function createThread(
       )
     await tx.delete(groupChatThreadAlias).where(eq(groupChatThreadAlias.sessionKey, sessionKey))
     // `deliveredContextSignature` is deliberately left NULL here and written
-    // only once the prompt below has been accepted -- same rule as
-    // `sendMessageInThread`, and for the same reason. Recording it at insert
-    // time would mark the context delivered even when the first prompt throws
-    // (agent node down, gateway hiccup), leaving a thread whose agent was
-    // never told its topic or pins and will not be told until something else
-    // changes. Left NULL, a retry re-delivers through the once-on-change path
-    // without needing a second mechanism.
+    // only once the prompt below has been accepted -- now literally the same
+    // code as `sendMessageInThread` runs, not merely the same rule, since the
+    // opening message goes out through `deliverIntoThread` too. Recording it
+    // at insert time would mark the context delivered even when the first
+    // prompt throws (agent node down, gateway hiccup), leaving a thread whose
+    // agent was never told its topic or pins and will not be told until
+    // something else changes. Left NULL, a retry re-delivers through the
+    // once-on-change path without needing a second mechanism.
     return tx
       .insert(groupChatThread)
       .values({ groupChatId, agentNodeId, sessionKey, slug: threadSlug, title, createdByUserId: opts.createdByUserId })
@@ -1829,21 +1846,37 @@ async function createThread(
     throw new Error('The thread could not be created')
   }
 
-  const opened = await ensureLocalSessionImpl({ agentNodeId, tabKey: sessionKey })
-  const envelope = composeEnvelope(firstMessage, {
-    sessionInit: { jobContext: standing.jobContext, instructions: standing.instructions },
-    isNewSession: opened.created,
-  })
-  await promptLocalImpl({ sessionId: opened.sessionId, text: envelope, queue: 'wait', origin: { kind: 'system' } })
-  // Accepted, so what it carried is now on the record. A thread that starts
-  // with nothing pinned still records a signature rather than NULL, so the
-  // first pin added afterwards reads as a change.
-  await db
-    .update(groupChatThread)
-    .set({ deliveredContextSignature: standing.signature })
-    .where(eq(groupChatThread.id, thread.id))
+  // THE FIRST MESSAGE LEAVES BY THE SAME DOOR AS EVERY LATER ONE.
+  //
+  // It used to be delivered here by hand, with `origin: { kind: 'system' }` —
+  // the origin an application uses for prompts it issues on its own behalf, so
+  // the message travelled with no author and no send time. But a thread's
+  // opening message is somebody's words, and the tag those two facts live in is
+  // written at delivery from the origin (see agent-client's queue-tags): stating
+  // the wrong one loses them for good, because that tag is the only place a
+  // sender and a send time exist once a transcript is replayed. Every thread's
+  // first bubble was anonymous and undated, on screen and permanently.
+  //
+  // Handing the message to `deliverIntoThread` fixes that by construction
+  // rather than by restating the origin here, and keeps the rest of what this
+  // used to do: the standing context still rides this message, because the row
+  // was inserted with a NULL signature and the once-on-change rule therefore
+  // reads it as undelivered, and the signature is still recorded only once the
+  // prompt has been accepted.
+  const { sessionId } = await deliverIntoThread(
+    {
+      id: thread.id,
+      groupChatId,
+      agentNodeId,
+      sessionKey,
+      // Just inserted, deliberately NULL — see the transaction above.
+      deliveredContextSignature: null,
+    },
+    firstMessage,
+    { queue: 'wait', sender: opts.sender },
+  )
 
-  return { thread, sessionId: opened.sessionId }
+  return { thread, sessionId }
 }
 
 /**
@@ -2039,8 +2072,13 @@ const threadDeliveryColumns = {
 /**
  * THE ONE DELIVERY PATH INTO A THREAD. Every caller — a person in the browser,
  * an agent through the tool surface, a send-message node's graph-driven send
- * (via deliverThreadFromNode) — reaches an agent through this function and
- * nothing else.
+ * (via deliverThreadFromNode), and the thread's own opening message (via
+ * createThread) — reaches an agent through this function and nothing else.
+ *
+ * The opening message was the last one that did not, and the cost of the
+ * exception is what the rest of this comment warns about: it delivered as a
+ * `system` prompt, so it arrived with no author and no send time, and no test
+ * noticed because the path it diverged from was a copy rather than this one.
  *
  * It deliberately performs NO authorization: each entry point above answers a
  * different question ("is this user a member?", "is this agent a member?",
@@ -2057,12 +2095,16 @@ const threadDeliveryColumns = {
  * prompt below, the same point `deliverToSendMessageNode`'s own `force`
  * handling reads it at, for the same reason: once `promptLocalImpl` is called
  * activeTurns no longer reflects what was true when THIS message arrived.
+ *
+ * The session it delivered into comes back with it, because a creating caller
+ * has to hand that id to the screen that will open the conversation. It is the
+ * session this thread's key resolves to, not a new one.
  */
 async function deliverIntoThread(
   row: ThreadDeliveryTarget,
   text: string,
   opts: { front?: boolean; queue: QueueMode; sender: string },
-): Promise<{ queued: boolean }> {
+): Promise<{ queued: boolean; sessionId: string }> {
   // The agent has to still be a member, whoever is sending. Without this,
   // removing an agent is decoration: its threads survive by design, they carry
   // the sessionKey, and every send through them would keep reaching it. This
@@ -2140,7 +2182,7 @@ async function deliverIntoThread(
       .set({ deliveredContextSignature: standing.signature })
       .where(eq(groupChatThread.id, row.id))
   }
-  return { queued }
+  return { queued, sessionId: opened.sessionId }
 }
 
 /**
@@ -2860,7 +2902,15 @@ export async function startThreadAsAgent(
   if (!target) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
-  return createThread(groupChatId, target.nodeId, trimmed, { title: opts?.title, createdByUserId: null })
+  return createThread(groupChatId, target.nodeId, trimmed, {
+    title: opts?.title,
+    createdByUserId: null,
+    // THE CALLER, NOT THE TARGET. The thread is addressed TO the named agent;
+    // the opening message is FROM the one that started it, exactly as a later
+    // message through `sendMessageInThreadAsAgent` is. Its handle, never the
+    // display name it was addressed by — see authorForAgentNode.
+    sender: await authorForAgentNode(callerNodeId, callerAgentName),
+  })
 }
 
 /**

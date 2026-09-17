@@ -18,6 +18,10 @@ import test, { after } from 'node:test'
 // `@opencroft/db` connect before PGLITE_PATH is in place.
 import { handleUpdate } from 'agent-client/agent-client'
 import type { AgentConnection } from 'agent-client/connection'
+// The parser half of the delivery format, used below to read a delivered turn
+// back the way the transcript does — so a test asserts on the author and send
+// time a reader would see, rather than on the tag's spelling.
+import { decodeBatch } from 'agent-client/queue-tags'
 import { buildSpawnConfig } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
 import { and, eq } from 'drizzle-orm'
@@ -70,6 +74,10 @@ const sessionStore = await import('@/app/_authed/(agent)/_server/acp-session-sto
 // The live session registry a rename has to carry the session across -- same
 // singleton the app uses, imported dynamically for the same reason as above.
 const { agentClient } = await import('@/app/_authed/(agent)/_server/agent-client-instance')
+// The handles messages are stamped with. Dynamic for the same reason as the
+// rest: resolving one reads (and may claim) a row, so importing it statically
+// would touch the database before PGLITE_PATH is set above.
+const { authorForAgentNode, authorForPerson } = await import('@/app/_server/message-author')
 const { ensureAuth } = await import('@opencroft/auth/server')
 // The production wiring this test process never runs (it imports model.ts
 // directly, not through server.ts's ensureServerStarted) — see
@@ -3865,6 +3873,77 @@ test('an empty first message is refused before a thread is created', async () =>
   await assert.rejects(() => model.startThreadAsAgent('Agent Session', chat.id, 'Agent Session Two', '   '))
   const threads = await db.select().from(groupChatThread).where(eq(groupChatThread.groupChatId, chat.id))
   assert.equal(threads.length, 0, 'a refused start leaves no half-made thread behind')
+})
+
+// ---------------------------------------------------------------------------
+// WHO SENT THE FIRST MESSAGE, AND WHEN.
+//
+// A thread's opening message is somebody's words, and it was the one message
+// that arrived without an author or a send time: it was delivered as a `system`
+// prompt -- the origin an application uses for prompts it issues on its own
+// behalf -- so nothing stamped it. The tag written from the origin is the only
+// place those two facts survive a replay, so every thread's first bubble was
+// anonymous and undated, on screen and permanently.
+//
+// Both tests read the DELIVERED prompt back with the transcript's own parser,
+// because that is what decides what a reader sees. Asserting on the tag's
+// spelling would pass for a tag the renderer cannot read.
+// ---------------------------------------------------------------------------
+
+test("a thread's first message carries its sender and send time, exactly as every later one does", async () => {
+  const owner = await makeUser('first-message-author@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'first message identity', 'the stated purpose')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+
+  const before = Date.now()
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'open the thread')
+  await waitForPrompts(prompts, 1)
+
+  const [opening] = decodeBatch(prompts[0] ?? '')
+  assert.ok(opening)
+  assert.equal(opening.sender, await authorForPerson(owner.id), "the reader's own handle, not a display name")
+  const sentAt = Date.parse(opening.sentAt)
+  assert.ok(Number.isFinite(sentAt), 'the send time is a real instant')
+  assert.ok(sentAt >= before, 'stamped when the message was sent, not at some earlier moment')
+  assert.match(opening.text, /open the thread/, 'the words are the ones that were typed')
+  assert.match(opening.text, /the stated purpose/, "and the chat's topic still rides this first message")
+
+  // The second message is what the first one has to look like. Before this was
+  // fixed they differed, and only on the message nobody could go back and fix.
+  await model.sendMessageInThread(reqAs(owner), started.thread.id, 'and a follow-up', { queue: 'wait' })
+  await waitForPrompts(prompts, 2)
+
+  const [later] = decodeBatch(prompts[1] ?? '')
+  assert.equal(later?.sender, opening.sender, 'the same author, from the same source')
+})
+
+test('a thread an agent starts is stamped with the CALLING agent, not the one it addresses', async () => {
+  const owner = await makeUser('first-message-agent-author@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'first message agent identity', 'ship it')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session-2' })
+
+  const inbox: string[] = []
+  seedMockConnection(inbox, 'Agent Session Two')
+
+  await model.startThreadAsAgent('Agent Session', chat.id, 'Agent Session Two', 'take the kit docs sweep')
+  await waitForPrompts(inbox, 1)
+
+  const [opening] = decodeBatch(inbox[0] ?? '')
+  assert.ok(opening)
+  assert.equal(
+    opening.sender,
+    await authorForAgentNode('agent-session', 'Agent Session'),
+    'the agent that wrote the message, not the one the thread is addressed to',
+  )
+  assert.notEqual(
+    opening.sender,
+    await authorForAgentNode('agent-session-2', 'Agent Session Two'),
+    'the two are different handles, so the assertion above discriminates',
+  )
 })
 
 // ---------------------------------------------------------------------------
