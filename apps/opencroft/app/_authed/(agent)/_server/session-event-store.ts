@@ -165,13 +165,13 @@ function scheduleFlush(): void {
  * delay would reach every reader of the stream.
  */
 export function appendSessionEvent(sessionKey: string, event: ChatEvent): void {
-  const batch = buffers.get(sessionKey)
-  if (batch) {
-    batch.push(event)
-  } else {
-    buffers.set(sessionKey, [event])
+  let batch = buffers.get(sessionKey)
+  if (!batch) {
+    batch = []
+    buffers.set(sessionKey, batch)
   }
-  if ((buffers.get(sessionKey)?.length ?? 0) >= FLUSH_AT_EVENTS) {
+  batch.push(event)
+  if (batch.length >= FLUSH_AT_EVENTS) {
     void flushKey(sessionKey)
     return
   }

@@ -649,6 +649,20 @@ function emit(sessionId: string, event: ChatEvent): void {
   }
 }
 
+// A 'usage' ChatEvent spelled from a session-usage snapshot: the used/size
+// pair plus whichever of cost/rateLimits it holds. One spelling for every
+// site that publishes one (the snapshot prefix, a live reading, the turn
+// settlement), so a new field rides all of them or none.
+function usageEventOf(usage: SessionUsage): Extract<ChatEvent, { kind: 'usage' }> {
+  return {
+    kind: 'usage',
+    used: usage.used,
+    size: usage.size,
+    ...(usage.cost ? { cost: usage.cost } : {}),
+    ...(usage.rateLimits ? { rateLimits: usage.rateLimits } : {}),
+  }
+}
+
 // "Last value wins" state (modes/config/queue/title/usage) mirrored on the
 // session itself as it changes (see handleUpdate below). A subscriber replayed
 // only a windowed tail of `events` (see subscribe's `fromIndex`) would
@@ -677,13 +691,7 @@ function withSnapshotPrefix(session: SessionState, windowed: ChatEvent[]): ChatE
     prefix.push({ kind: 'session_info', title: session.meta.title })
   }
   if (session.usage && !has('usage')) {
-    prefix.push({
-      kind: 'usage',
-      used: session.usage.used,
-      size: session.usage.size,
-      ...(session.usage.cost ? { cost: session.usage.cost } : {}),
-      ...(session.usage.rateLimits ? { rateLimits: session.usage.rateLimits } : {}),
-    })
+    prefix.push(usageEventOf(session.usage))
   }
   // The live plan, for the same reason usage is here: present-tense state. A
   // window cut before every plan event would otherwise hide the one thing the
@@ -1200,13 +1208,7 @@ export function handleUpdate(notification: SessionNotification): void {
       if (held) {
         break
       }
-      emit(sessionId, {
-        kind: 'usage',
-        used: update.used,
-        size,
-        ...(cost ? { cost } : {}),
-        ...(rateLimits ? { rateLimits } : {}),
-      })
+      emit(sessionId, usageEventOf(session.usage))
       break
     }
     case 'config_option_update': {
@@ -2719,13 +2721,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         used: session.pendingUsage.used,
         size: session.pendingUsage.size,
       }
-      emit(sessionId, {
-        kind: 'usage',
-        used: session.usage.used,
-        size: session.usage.size,
-        ...(session.usage.cost ? { cost: session.usage.cost } : {}),
-        ...(session.usage.rateLimits ? { rateLimits: session.usage.rateLimits } : {}),
-      })
+      emit(sessionId, usageEventOf(session.usage))
     }
     if (outcome.stopReason !== undefined) {
       emit(sessionId, {
@@ -3219,7 +3215,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         lastActivityAt: loadedAt,
         // Same resolution as createSession: the agent's advertised
         // `session/fork`, not the fact that history was replayed.
-        canFork: connEntryFor(selection)?.forkSupported === true,
+        canFork: entry.forkSupported === true,
         adapterId: selection.adapterId,
         model: selection.model,
         sessionKey: selection.sessionKey,
@@ -3376,7 +3372,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // path every OLD conversation reopens through (the recorded transcript
         // exists), so hardcoding false here hid the fork capability from every
         // session that predates it.
-        canFork: connEntryFor(selection)?.forkSupported === true,
+        canFork: entry.forkSupported === true,
         sessionKey: selection.sessionKey,
       }
       store.sessions.set(sessionId, {

@@ -138,8 +138,7 @@ export function AgentChat({
   const onEditUser = session.canFork === true ? session.editMessage : undefined
   // Fork is offered only where the host can name a destination for it — the
   // same agent capability gate as editing, on top of a handler the host sets.
-  const onForkUser =
-    session.canFork === true && session.forkMessage ? (id: string) => session.forkMessage?.(id) : undefined
+  const onForkUser = session.canFork === true ? session.forkMessage : undefined
 
   // Whether to fetch more history, and running the fetch, are the host's own
   // decision — this component only holds the reader's place while whatever

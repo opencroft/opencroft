@@ -80,8 +80,9 @@ function persistUsageOnTurnEnd(sessionId: string, event: ChatEvent): void {
   // aggregation (see chat-usage-store). Fire-and-forget like everything else
   // here: an event observer must not hold up the emit, and a failed write
   // costs one unrecorded turn, never the turn itself.
+  // One registry read serves both records below.
+  const session = agentClient.listSessions().find((s) => s.id === sessionId)
   if (event.usage) {
-    const session = agentClient.listSessions().find((s) => s.id === sessionId)
     void recordChatUsageTurn({
       sessionId,
       adapterId: session?.adapterId,
@@ -92,7 +93,7 @@ function persistUsageOnTurnEnd(sessionId: string, event: ChatEvent): void {
       console.error('Failed to record chat usage for session', sessionId, error)
     })
   }
-  const usage = agentClient.listSessions().find((s) => s.id === sessionId)?.usage
+  const usage = session?.usage
   if (!usage) {
     return
   }

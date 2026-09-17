@@ -95,18 +95,15 @@ export function normalizeTurnUsage(usage: unknown): TurnTokenUsage | undefined {
   // Counters the harness omitted stay out of the object entirely: an absent
   // field and an undefined one deep-equal differently, and the absence is
   // the honest spelling of "not reported".
-  return {
-    totalTokens,
-    ...(finiteNumber(record.inputTokens) !== undefined ? { inputTokens: finiteNumber(record.inputTokens) } : {}),
-    ...(finiteNumber(record.outputTokens) !== undefined ? { outputTokens: finiteNumber(record.outputTokens) } : {}),
-    ...(finiteNumber(record.thoughtTokens) !== undefined ? { thoughtTokens: finiteNumber(record.thoughtTokens) } : {}),
-    ...(finiteNumber(record.cacheReadTokens) !== undefined
-      ? { cacheReadTokens: finiteNumber(record.cacheReadTokens) }
-      : {}),
-    ...(finiteNumber(record.cacheWriteTokens) !== undefined
-      ? { cacheWriteTokens: finiteNumber(record.cacheWriteTokens) }
-      : {}),
+  const result: TurnTokenUsage = { totalTokens }
+  const counters = ['inputTokens', 'outputTokens', 'thoughtTokens', 'cacheReadTokens', 'cacheWriteTokens'] as const
+  for (const counter of counters) {
+    const value = finiteNumber(record[counter])
+    if (value !== undefined) {
+      result[counter] = value
+    }
   }
+  return result
 }
 
 /**

@@ -563,7 +563,6 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
             parts: [{ type: 'text', text: `⛔ ${event.failure.title}${detail}` }],
             timestamp: 0,
           })
-          assistant = null
         }
         break
       }
