@@ -233,7 +233,18 @@ export function useAgentCommandBar({
   // insertText) — never on an ordinary keystroke, which is what keeps the
   // returned element's identity stable; see the kit component's own buffer
   // for why an ordinary keystroke doesn't need this to change at all.
-  const [value, setValue] = useState(() => savedDraft ?? '')
+  const [value, setValueText] = useState(() => savedDraft ?? '')
+  // Every call below is a LOAD — the composer being set from outside, never an
+  // echo of a keystroke (that is `onChangeText`, which touches only the ref).
+  // So every one of them counts, and a load that sets the text it already
+  // holds counts as much as any other: "put this message back the way it was"
+  // is exactly that case, and without a revision the composer cannot see it
+  // happen. See the kit component's `valueRevision`.
+  const [valueRevision, setValueRevision] = useState(0)
+  const setValue = useCallback((next: string) => {
+    setValueText(next)
+    setValueRevision((revision) => revision + 1)
+  }, [])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // The live typed text, tracked without triggering a re-render — every
@@ -279,7 +290,7 @@ export function useAgentCommandBar({
     const next = savedDraft ?? ''
     textRef.current = next
     setValue(next)
-  }, [session.sessionKey, flushPendingDraft])
+  }, [session.sessionKey, flushPendingDraft, setValue])
 
   // Flush on unmount (e.g. navigating away entirely) so the very last
   // keystrokes before the debounce would have fired aren't dropped.
@@ -334,7 +345,7 @@ export function useAgentCommandBar({
     }
     textRef.current = ''
     setValue('')
-  }, [])
+  }, [setValue])
 
   // Focus callbacks come from the caller as inline arrows, so they are a new
   // function on every one of its renders. Held in refs and called through, so
@@ -367,7 +378,7 @@ export function useAgentCommandBar({
       setValue(next)
       onChangeText(next)
     },
-    [onChangeText],
+    [onChangeText, setValue],
   )
   const sendMessage = useCallback((text: string) => sendRef.current(text), [])
   // Read through a structural type rather than narrowing the union: `find` does
@@ -539,11 +550,14 @@ export function useAgentCommandBar({
   // to overwrite while an edit is open.
   const preEditTextRef = useRef('')
 
-  const loadEditPart = useCallback((text: string) => {
-    textRef.current = text
-    setValue(text)
-    textareaRef.current?.focus()
-  }, [])
+  const loadEditPart = useCallback(
+    (text: string) => {
+      textRef.current = text
+      setValue(text)
+      textareaRef.current?.focus()
+    },
+    [setValue],
+  )
 
   // Opening a turn seeds the drafts from what its messages actually said and
   // opens the first of them. Leaving one restores the composer to whatever was
@@ -675,7 +689,7 @@ export function useAgentCommandBar({
       textRef.current = ''
       setValue('')
     },
-    [commitOpenEdit],
+    [commitOpenEdit, setValue],
   )
 
   const onSetConfigOptionRef = useRef(onSetConfigOption)
@@ -737,6 +751,7 @@ export function useAgentCommandBar({
     () => (
       <AgentCommandBar
         value={value}
+        valueRevision={valueRevision}
         onValueChange={onChangeText}
         onSend={onSend}
         onEscape={onEscape}
@@ -772,6 +787,7 @@ export function useAgentCommandBar({
     ),
     [
       value,
+      valueRevision,
       onChangeText,
       onSend,
       onEscape,

@@ -60,6 +60,42 @@ test('a host that never echoes keystrokes back through value reads as unchanged 
 })
 
 // ---------------------------------------------------------------------------
+// The load the text alone cannot express: putting back the text `value`
+// already holds.
+//
+// "Reset this message" is exactly that. The host loaded the message, the
+// reader typed over it in the buffer, and the reset loads the SAME string
+// again — an identical prop, so the comparison above reads "nothing external
+// happened" and the reader watches a button do nothing. It is not a corner
+// case of the contract; it is the one control whose whole job is to restore
+// what the prop already says.
+// ---------------------------------------------------------------------------
+
+test('reloading the identical text resyncs when the revision moves', () => {
+  assert.equal(shouldResyncBuffer('the original', 'the original', 4, 3), true)
+})
+
+test('the same revision with the same text is still not a resync', () => {
+  // The ordinary render. A revision that has not moved must not make every
+  // render a resync, which would put the buffer back to `value` mid-typing.
+  assert.equal(shouldResyncBuffer('the original', 'the original', 3, 3), false)
+})
+
+test('a host that passes no revision keeps exactly the text-only contract', () => {
+  // Both undefined, on both sides — `undefined !== undefined` is false, so
+  // nothing about this is new for a host that never adopted it.
+  assert.equal(shouldResyncBuffer('h', 'h'), false)
+  assert.equal(shouldResyncBuffer('loaded', 'h'), true)
+})
+
+test('a changed value resyncs whether or not the revision moved with it', () => {
+  // The revision is an ADDITIONAL way to say "loaded", never a gate on the
+  // existing one: a host that moves the text without bumping must not be made
+  // to wait for a bump it does not know to send.
+  assert.equal(shouldResyncBuffer('loaded draft', 'h', 7, 7), true)
+})
+
+// ---------------------------------------------------------------------------
 // The two row metrics have to express the same height, and until now nothing
 // said so. They are written out as separate literals on purpose -- a class
 // name built by joining pieces is not a literal and would never be generated

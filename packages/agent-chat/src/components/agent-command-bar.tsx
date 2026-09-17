@@ -58,6 +58,11 @@ const DEFAULT_APPROVAL_TITLES: ApprovalTitles = {
 
 export interface AgentCommandBarProps {
   value: string
+  // Bumped by the host every time it LOADS `value` from outside, as opposed to
+  // echoing back what was typed. It is what makes "reload this same text" a
+  // distinguishable event — see `shouldResyncBuffer`. Optional: a host that
+  // never needs to reload identical text can leave it unset.
+  valueRevision?: number
   onValueChange: (text: string) => void
   // Called with the trimmed text. **The value is cleared BEFORE this runs** --
   // see the clear-on-send contract in this component's doc comment. A host that
@@ -244,8 +249,24 @@ export const commandBarControlClass = 'size-7 shrink-0'
 // means an unchanged `value` reads as unchanged, however many renders pass
 // and however many self-reports happened, and only a prop the HOST actually
 // moved reads as new.
-export function shouldResyncBuffer(value: string, prevValue: string): boolean {
-  return value !== prevValue
+//
+// **AND THE TEXT ALONE CANNOT EXPRESS EVERY LOAD.** The comparison above is
+// blind to the one load whose whole purpose is to restore what `value` already
+// says: "put this message back the way it was". The host's `value` sits at the
+// text it loaded, the reader has since typed over it in the buffer, and the
+// reset loads that same text again -- an identical prop, no resync, and a
+// button that does nothing. `valueRevision` is how a host says "loaded", as a
+// fact separate from what was loaded: bump it on every external set and an
+// unchanged string still lands. Omitted on both sides it compares
+// `undefined !== undefined`, which is false, so a host that does not pass one
+// keeps exactly the behaviour above.
+export function shouldResyncBuffer(
+  value: string,
+  prevValue: string,
+  valueRevision?: number,
+  prevRevision?: number,
+): boolean {
+  return value !== prevValue || valueRevision !== prevRevision
 }
 
 // The bottom panel of an agent chat: the composer, an attachments row, and an
@@ -288,15 +309,16 @@ export function shouldResyncBuffer(value: string, prevValue: string): boolean {
 // buffer exists.
 //
 // **Reset contract:** the buffer re-syncs from `value` whenever `value`
-// differs from what it was on the PREVIOUS render -- so an external `value`
-// change (host clears the draft, loads a different session's saved text,
-// `onEscape` resets it) always lands immediately, while a host that leaves
-// `value` alone during ordinary typing (the whole point of the buffer) never
-// sees it fight back mid-keystroke. See `shouldResyncBuffer`'s own comment
-// for why the comparison has to be against last render's prop and not
-// against what this component last reported outward -- those are not the
-// same thing, and the difference is exactly the bug this contract exists to
-// avoid.
+// differs from what it was on the PREVIOUS render, or whenever
+// `valueRevision` does -- so an external `value` change (host clears the
+// draft, loads a different session's saved text, `onEscape` resets it) always
+// lands immediately, while a host that leaves `value` alone during ordinary
+// typing (the whole point of the buffer) never sees it fight back
+// mid-keystroke. The revision covers the load the text alone cannot express:
+// restoring the text `value` already holds. See `shouldResyncBuffer`'s own
+// comment for both halves -- why the comparison has to be against last
+// render's prop and not against what this component last reported outward,
+// and why a load needs an identity of its own.
 //
 // **Clear-on-send: the composer clears immediately, and the host restores on
 // failure.** `onValueChange('')` runs before `onSend`, so the composer is empty
@@ -357,6 +379,7 @@ export function shouldResyncBuffer(value: string, prevValue: string): boolean {
 // A host memoising this panel has to preserve the same property on its side.
 export function AgentCommandBar({
   value,
+  valueRevision,
   onValueChange,
   onSend,
   onEscape,
@@ -400,8 +423,10 @@ export function AgentCommandBar({
   // it; only the render-time check does.
   const [buffered, setBuffered] = useState(value)
   const prevValueRef = useRef(value)
-  if (shouldResyncBuffer(value, prevValueRef.current)) {
+  const prevRevisionRef = useRef(valueRevision)
+  if (shouldResyncBuffer(value, prevValueRef.current, valueRevision, prevRevisionRef.current)) {
     prevValueRef.current = value
+    prevRevisionRef.current = valueRevision
     setBuffered(value)
   }
   const setValue = (next: string) => {
