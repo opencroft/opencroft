@@ -530,6 +530,21 @@ export async function editTurnLocalImpl(data: {
   // same turn as soon as anything has scrolled off.
   const turn = agentClient.userTurnAt(data.sessionId, data.eventIndex)
   if (!turn) {
+    // A refusal with no evidence is unrepeatable: the reader saw their words
+    // on screen, and this branch says only "not there". Name what WAS at the
+    // requested position and how long the log actually is, so the next
+    // occurrence states the divergence instead of hiding it.
+    const events = agentClient.getSessionEvents(data.sessionId)
+    const at = events ? events[data.eventIndex] : undefined
+    console.error(
+      'edit refused: turn not found at the requested position',
+      JSON.stringify({
+        sessionId: data.sessionId,
+        eventIndex: data.eventIndex,
+        logLength: events?.length ?? null,
+        foundKind: at?.kind ?? (events ? 'none' : 'unknown-session'),
+      }),
+    )
     return null
   }
   // The old delivery stamp goes; the re-delivery gets its own, which is what

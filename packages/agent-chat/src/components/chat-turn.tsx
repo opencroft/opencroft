@@ -1,6 +1,6 @@
 'use client'
 
-import { Bot, ChevronDown, ChevronRight, Copy, EllipsisVertical, GitFork, ListTodo, Loader2, Maximize2, Minimize2, Pencil, Square, SquareCheck, X } from 'lucide-react'
+import { Bot, ChevronDown, ChevronRight, Copy, Ellipsis, GitFork, ListTodo, Loader2, Maximize2, Minimize2, Pencil, Square, SquareCheck, X } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
 import { useState } from 'react'
 // Both of these import types back from this file, and a type import is erased,
@@ -547,13 +547,12 @@ function MessageRow({
 }
 
 // The turn's action menu, rendered in the bubble header where the send time
-// used to sit: edit, copy the words, fork the conversation here. Like the
-// pencil it replaced, the trigger shows on hover -- but it stays reachable
-// without a pointer (focus reveals it, and a menu that only a mouse could open
-// would be a menu half the readers could not use), and Copy is never disabled:
-// reading your own words back is not a turn-scoped act, and a menu where every
-// item greys out because the agent is busy would take the one useful thing
-// away with the rest.
+// used to sit: edit, copy the words, fork the conversation here. The trigger is
+// always visible, not hover-revealed: a control that only appears under a
+// pointer is invisible to a touch screen, which is exactly the surface a
+// message menu is most useful on. Copy is never disabled: reading your own
+// words back is not a turn-scoped act, and a menu where every item greys out
+// because the agent is busy would take the one useful thing away with the rest.
 function MessageMenu({
   onEdit,
   editDisabled,
@@ -572,11 +571,11 @@ function MessageMenu({
           type='button'
           size='icon'
           variant='ghost'
-          className='h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100'
+          className='h-5 w-5 shrink-0'
           title='Message actions'
           aria-label='Message actions'
         >
-          <EllipsisVertical className='size-3.5' />
+          <Ellipsis className='size-3.5' />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end' className='min-w-36'>
