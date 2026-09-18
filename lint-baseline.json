@@ -445,17 +445,10 @@
       "lint/style/useNodejsImportProtocol": 3
     },
     "apps/opencroft/app/_authed/(settings)/_components/audit-settings.tsx": {
-      "assist/source/organizeImports": 1,
-      "format": 1,
-      "lint/a11y/useButtonType": 2,
       "lint/correctness/useExhaustiveDependencies": 1
     },
     "apps/opencroft/app/_authed/(settings)/_components/backup-settings.tsx": {
-      "lint/a11y/useButtonType": 1,
       "lint/correctness/useExhaustiveDependencies": 1
-    },
-    "apps/opencroft/app/_authed/(settings)/_components/extension-settings.tsx": {
-      "lint/a11y/useButtonType": 1
     },
     "apps/opencroft/app/_authed/(settings)/_components/token-settings.tsx": {
       "lint/correctness/useExhaustiveDependencies": 1
