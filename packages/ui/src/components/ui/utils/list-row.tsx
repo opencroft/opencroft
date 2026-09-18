@@ -15,6 +15,13 @@ import { cn } from 'ui/lib/utils'
 // `title`, `children` and `onSelect` are dropped from the inherited set: a div
 // names all three as well, with different meanings, and inheriting them would
 // let two definitions of the same prop disagree quietly.
+// The row's two text styles, exported as the one source for them. Anything
+// that has to read as "the same line a list row draws" -- the thread header's
+// agent line beside its breadcrumb, say -- imports these rather than spelling
+// a matching class string, so the two cannot drift by one token.
+export const LIST_ROW_TITLE_CLASS = 'truncate text-xs font-medium text-foreground'
+export const LIST_ROW_SECONDARY_CLASS = 'truncate text-xs text-muted-foreground'
+
 export interface ListRowProps extends Omit<ComponentPropsWithRef<'div'>, 'title' | 'children' | 'onSelect'> {
   // The first line. Truncates rather than wrapping, so a long title never
   // grows the row.
@@ -153,8 +160,8 @@ export function ListRow({
     >
       {leading}
       <span className='flex min-w-0 flex-1 flex-col overflow-hidden leading-tight'>
-        <span className='truncate text-xs font-medium text-foreground'>{title}</span>
-        {secondary ? <span className='truncate text-xs text-muted-foreground'>{secondary}</span> : null}
+        <span className={LIST_ROW_TITLE_CLASS}>{title}</span>
+        {secondary ? <span className={LIST_ROW_SECONDARY_CLASS}>{secondary}</span> : null}
       </span>
       {trailing}
     </div>

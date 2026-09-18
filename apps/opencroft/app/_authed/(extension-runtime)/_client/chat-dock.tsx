@@ -12,11 +12,16 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from 'ui/dropdown-menu'
+import { ThreadAgentCluster } from 'ui/group-chat/thread-agent-cluster'
+import { ThreadWorkControl } from 'ui/group-chat/thread-work-control'
 import { useIsMobile } from 'ui/hooks/use-mobile'
 import { DockPanel, type DockSide } from 'ui/layouts/dock-panel'
 
 import { ChatSelector } from '@/app/_authed/(extension-runtime)/_client/chat-selector'
-import type { EmbeddedChatSelection } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
+import type {
+  EmbeddedChatSelection,
+  EmbeddedThreadContext,
+} from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
 import { EmbeddedAgentChat } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
 import { useHistoryBackClose } from '@/hooks/utils/use-history-back-close'
 import { useLocalStorage } from '@/hooks/utils/use-local-storage'
@@ -202,6 +207,11 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
   // Until it does there is nothing to switch between, so the headers keep the
   // ChatSelector off instead of offering a chooser over a chat-to-be.
   const [chatReady, setChatReady] = useState(false)
+  // What the open thread's header says -- who it is with, where it is, what
+  // it has delegated -- as the surface reports it; null while no thread is
+  // open. Held HERE because the header is this component's: the surface has
+  // no header of its own inside the window, so it hands the facts up.
+  const [threadContext, setThreadContext] = useState<EmbeddedThreadContext | null>(null)
 
   // The window's arrangement DURING a drag, so the store is written once per
   // gesture rather than per pointer move -- the same contract the docked
@@ -285,9 +295,31 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
       thread={chatSelection}
       title={chatName}
       onChatAvailable={setChatReady}
+      onThreadContext={setThreadContext}
       className='min-h-0 flex-1'
     />
   )
+
+  // The header names the open conversation the way a chat list row does --
+  // the agent's avatar with the status dot, `{space} / {thread}` over
+  // `{agent} · {status}` -- once the surface has reported one, and falls back
+  // to the surface's title until then. ONE node for all three arrangements,
+  // so the docked panel, the phone cover and the floating window cannot say
+  // different things about one thread.
+  const cluster = threadContext ? (
+    <ThreadAgentCluster
+      agent={threadContext.agent}
+      status={threadContext.status}
+      groupChatName={threadContext.groupChatName}
+      threadTitle={threadContext.threadTitle}
+      className='min-w-0 flex-1'
+    />
+  ) : null
+  // The delegated-work control sits with the conversation controls, the same
+  // size and shape as the chat switch beside it. It draws nothing until the
+  // thread has delegated something to list.
+  const workButton = (buttonSize: 'icon' | 'icon-sm') =>
+    threadContext ? <ThreadWorkControl work={threadContext.work} size={buttonSize} /> : null
 
   const surface = <div className='flex min-h-0 min-w-0 flex-1'>{children}</div>
 
@@ -303,9 +335,10 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
         dock={mode}
         size={size}
         onSizeChange={setSize}
-        title={title}
+        title={cluster ?? title}
         actions={
           <>
+            {workButton('icon')}
             {chatReady && (
               <ChatSelector space={space} selection={chatSelection} onChange={setChatSelection} size='icon' />
             )}
@@ -338,8 +371,9 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
     <div className='fixed inset-0 z-50 flex min-h-0 flex-col bg-background'>
       {/* Touch targets, not pointer targets, on the full-screen cover. */}
       <div className='flex items-center justify-between gap-2 border-b px-3 py-2'>
-        <span className='truncate text-sm font-medium text-foreground'>{title}</span>
-        <div className='flex items-center gap-1'>
+        {cluster ?? <span className='truncate text-sm font-medium text-foreground'>{title}</span>}
+        <div className='flex shrink-0 items-center gap-1'>
+          {workButton('icon-sm')}
           {chatReady && (
             <ChatSelector space={space} selection={chatSelection} onChange={setChatSelection} size='icon-sm' />
           )}
@@ -366,8 +400,9 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
         onPointerDown={dragFloat}
         className='flex shrink-0 cursor-grab touch-none select-none items-center justify-between gap-2 border-b border-border px-2 py-1'
       >
-        <span className='truncate text-xs text-muted-foreground'>{title}</span>
+        {cluster ?? <span className='truncate text-xs text-muted-foreground'>{title}</span>}
         <div onPointerDown={(e) => e.stopPropagation()} className='flex shrink-0 items-center gap-0.5'>
+          {workButton('icon')}
           {chatReady && (
             <ChatSelector space={space} selection={chatSelection} onChange={setChatSelection} size='icon' />
           )}

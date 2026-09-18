@@ -53,6 +53,8 @@ test('an async-task part becomes a task item, Stop bound only where the harness 
         description: 'tail the log',
         state: 'running',
         canStop: true,
+        // The flag the harness sends on a background Bash run -- carried, never a gate.
+        showInTranscript: false,
       },
       {
         type: 'async-task',
@@ -62,6 +64,7 @@ test('an async-task part becomes a task item, Stop bound only where the harness 
         description: '',
         state: 'completed',
         canStop: false,
+        showInTranscript: true,
       },
     ],
     timestamp: 0,

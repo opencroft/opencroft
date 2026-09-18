@@ -236,11 +236,16 @@ test('a running task is delegation, not thinking — same as a live subagent', (
   assert.equal(during.thinking, false, 'but nothing is being generated: no dots')
 })
 
-test('a task the harness keeps out of the transcript still reaches the task list', () => {
-  // showInTranscript is the harness's own advice: a pure-plumbing task draws
-  // no block, but the live-work surfaces still have to know it is running.
-  const folded = fold([{ kind: 'user', text: 'q' }, taskEvent({ showInTranscript: false })], 0)
-  assert.equal(folded.messages.flatMap((m) => m.parts.filter((p) => p.type === 'async-task')).length, 0)
+test('a task the harness advises against drawing still gets its block', () => {
+  // The shape that made this rule: a Claude Code Bash run in the background
+  // arrives as a "shell" task with showInTranscript false on EVERY event, and
+  // gating on the flag left the session's only background work invisible.
+  // The flag rides on the part as information; the block is drawn regardless,
+  // and the out-of-band list keeps carrying the task as before.
+  const folded = fold([{ kind: 'user', text: 'q' }, taskEvent({ taskType: 'shell', showInTranscript: false })], 0)
+  const parts = folded.messages.flatMap((m) => m.parts.filter((p) => p.type === 'async-task'))
+  assert.equal(parts.length, 1)
+  assert.equal(parts[0].type === 'async-task' ? parts[0].showInTranscript : null, false)
   assert.equal(folded.asyncTasks.length, 1)
 })
 

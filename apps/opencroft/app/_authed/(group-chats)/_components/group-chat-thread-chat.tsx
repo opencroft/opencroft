@@ -10,7 +10,7 @@ import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { toast } from 'sonner'
 import { CommandBarFrame } from 'ui/agent-chat/command-bar-frame'
-import type { ThreadWork, ThreadWorkItem } from 'ui/group-chat/group-chat-thread-framing'
+import type { ThreadWork, ThreadWorkItem } from 'ui/group-chat/thread-work-control'
 import { Flex } from 'ui/layout/flex'
 import { StickySection } from 'ui/layouts/sticky-section'
 import { ScrollArea } from 'ui/scroll-area'
@@ -83,6 +83,12 @@ interface GroupChatThreadChatProps {
    *  default frame renders them as a plain column: conversation scrolling,
    *  composer pinned beneath — the embedded arrangement. */
   renderFrame?: (parts: ThreadChatParts) => ReactNode
+  /** Reports the session's delegated-work summary — the same `work` the frame
+   *  contract carries — whenever it changes, for a host whose header lives
+   *  OUTSIDE this component: the dock window already has one per arrangement,
+   *  and a second one inside the surface read as two. Read through a ref, so
+   *  an inline callback never re-arms the effect. */
+  onWorkChange?: (work: ThreadWork) => void
 }
 
 // The two halves of the selection in the composer: the quotation that rides in
@@ -114,6 +120,7 @@ export function GroupChatThreadChat({
   onTurnSettled,
   onThreadForked,
   renderFrame,
+  onWorkChange,
 }: GroupChatThreadChatProps) {
   // Memoised on the two values that identify the session, not rebuilt each
   // render: `useAcpSession` keys its effects on this object, so a fresh
@@ -301,6 +308,14 @@ export function GroupChatThreadChat({
     }),
     [workItems, jumpToWork],
   )
+
+  // Hand the summary out as it changes. `work` is memoized above, so this
+  // fires once per real change and a host may hold what it gets in state.
+  const onWorkChangeRef = useRef(onWorkChange)
+  onWorkChangeRef.current = onWorkChange
+  useEffect(() => {
+    onWorkChangeRef.current?.(work)
+  }, [work])
 
   // Compacts and clears THIS thread, membership-checked (see clearThread's
   // own comment in model.ts for why clearSession -- generic across both

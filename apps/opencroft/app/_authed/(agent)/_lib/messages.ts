@@ -40,9 +40,9 @@ export type ChatPart =
   // AsyncTaskInfo). One part per asyncTaskId, placed at the position of its
   // first event and patched in place by later ones — last value wins, the
   // same contract as `subagent`. Unlike a subagent it has no nested
-  // transcript: the fields ARE the whole of what a reader can see. Only tasks
-  // the harness advised drawing (`showInTranscript` not false) become parts;
-  // the rest still reach the out-of-band task list.
+  // transcript: the fields ARE the whole of what a reader can see. Every task
+  // becomes a part -- `showInTranscript` is carried as the harness's advice,
+  // not applied as a gate; the fold says why.
   | {
       type: 'async-task'
       asyncTaskId: string
@@ -51,6 +51,7 @@ export type ChatPart =
       description: string
       state: string
       canStop: boolean
+      showInTranscript: boolean
       summary?: string
     }
   // The agent's execution plan (ACP `plan` session update) as ONE part that

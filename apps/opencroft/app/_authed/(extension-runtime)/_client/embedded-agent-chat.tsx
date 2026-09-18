@@ -38,17 +38,17 @@
 
 import { MessageCirclePlus, UserPlus } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CommandBarFrame } from 'ui/agent-chat/command-bar-frame'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from 'ui/empty'
 import { AddMemberPicker, type MemberCandidate } from 'ui/group-chat/add-member-picker'
-import { GroupChatThreadFraming } from 'ui/group-chat/group-chat-thread-framing'
+import type { ThreadWork } from 'ui/group-chat/thread-work-control'
 import { LogoLoader } from 'ui/logo-loader'
 
 import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
-import { deriveSessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
+import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import { GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
 import { GroupChatThreadChat } from '@/app/_authed/(group-chats)/_components/group-chat-thread-chat'
@@ -83,6 +83,25 @@ import { cn } from '@/lib/utils'
  */
 export type EmbeddedChatSelection = { threadId: string } | { newId: string }
 
+/**
+ * What the open thread's header would say, for a host that draws that header
+ * itself. The dock window has a header per arrangement already, and a second
+ * one inside the surface read as two -- so the surface reports the facts and
+ * the host puts them in the header it owns. Null while no thread is open.
+ *
+ * Identity-stable per change of its parts (the surface memoizes it), so a host
+ * may hold it in state or hang an effect off it without a render loop.
+ */
+export interface EmbeddedThreadContext {
+  agent: { name: string; avatarUrl?: string | null }
+  /** The chat's display NAME -- a breadcrumb names a place, and the slug this
+   *  surface is addressed by is not what a place is called. */
+  groupChatName: string
+  threadTitle: string
+  status: SessionStatus
+  work: ThreadWork
+}
+
 export interface EmbeddedAgentChatProps {
   /** The group chat's slug — the first segment of every thread session key. */
   space: string
@@ -107,6 +126,13 @@ export interface EmbeddedAgentChatProps {
    * existing chat — the ChatSelector beside the dock buttons.
    */
   onChatAvailable?: (available: boolean) => void
+  /**
+   * Reports the open thread's header facts -- see EmbeddedThreadContext -- and
+   * null whenever there is no open thread (loading, the start composer, a
+   * refusal, or this surface going away). Same contract as `onChatAvailable`:
+   * a notification for a host that owns the chrome, never a render slot.
+   */
+  onThreadContext?: (context: EmbeddedThreadContext | null) => void
   className?: string
 }
 
@@ -118,7 +144,15 @@ type EmbedPhase =
   | { phase: 'ready'; chat: GroupChatDetailView }
   | { phase: 'error'; message: string }
 
-export function EmbeddedAgentChat({ space, id, thread, title, onChatAvailable, className }: EmbeddedAgentChatProps) {
+export function EmbeddedAgentChat({
+  space,
+  id,
+  thread,
+  title,
+  onChatAvailable,
+  onThreadContext,
+  className,
+}: EmbeddedAgentChatProps) {
   const [state, setState] = useState<EmbedPhase>({ phase: 'loading' })
   // Bumped to reload after the create flow finishes — the cheapest way to go
   // from `missing` to `ready` through the same single load path.
@@ -180,7 +214,16 @@ export function EmbeddedAgentChat({ space, id, thread, title, onChatAvailable, c
     case 'missing':
       return <CreateChatEmptyState space={space} title={title} className={className} onCreated={reload} />
     case 'ready':
-      return <EmbeddedThread chat={state.chat} id={id} selection={thread ?? undefined} className={className} />
+      return (
+        <EmbeddedThread
+          chat={state.chat}
+          id={id}
+          title={title}
+          selection={thread ?? undefined}
+          onThreadContext={onThreadContext}
+          className={className}
+        />
+      )
   }
 }
 
@@ -222,12 +265,17 @@ function CenteredSpinner({ className }: { className?: string }) {
 function EmbeddedThread({
   chat,
   id,
+  title,
   selection,
+  onThreadContext,
   className,
 }: {
   chat: GroupChatDetailView
   id: string
+  /** The host's name for the chat, when it has one -- see EmbeddedAgentChatProps. */
+  title?: string
   selection?: EmbeddedChatSelection
+  onThreadContext?: (context: EmbeddedThreadContext | null) => void
   className?: string
 }) {
   // An explicit thread is shown as-is, whatever agent it belongs to; a new id
@@ -323,37 +371,53 @@ function EmbeddedThread({
       })
     : undefined
 
+  // The open thread's delegated work, as the shared assembly reports it. Null
+  // until the assembly has folded once; the header facts below wait for it so
+  // a host never sees a context with nothing to count.
+  const [work, setWork] = useState<ThreadWork | null>(null)
+  // The header facts the host draws, memoized so a host holding them in state
+  // is told once per real change. The chat's NAME leads the breadcrumb: the
+  // host's own name for it where it passed one (the dock passes the space's
+  // name), the chat's stored name otherwise -- never the slug this surface is
+  // addressed by.
+  const context = useMemo<EmbeddedThreadContext | null>(
+    () =>
+      thread && status && work
+        ? {
+            agent: thread.agent,
+            groupChatName: title ?? chat.name,
+            threadTitle: thread.title || id,
+            status,
+            work,
+          }
+        : null,
+    [thread, status, work, title, chat.name, id],
+  )
+  // Reported through a ref so an inline callback never re-arms this, and
+  // cleared on the way out: a host that heard about a thread must hear that it
+  // is gone, or its header keeps naming a conversation nobody is looking at.
+  const onThreadContextRef = useRef(onThreadContext)
+  onThreadContextRef.current = onThreadContext
+  useEffect(() => {
+    onThreadContextRef.current?.(context)
+    return () => onThreadContextRef.current?.(null)
+  }, [context])
+
   if (thread === undefined) {
     return <CenteredSpinner className={className} />
   }
   if (thread) {
-    const openThread = thread
     return (
       <div className={cn('flex h-full min-h-0 flex-col', className)}>
         {/* No agent picker on an OPEN thread — a thread already names its
             agent, and switching conversations is the ChatSelector's job. The
             picker's one remaining home is the start composer below, where an
             agent genuinely has to be chosen. */}
-        {/* The SAME framing header the thread route wears, so an embedded
-            thread says where the reader is and who is working exactly as the
-            full-page one does. No back affordance (this surface is not a
-            navigation leaf) and no artifacts strip (the panel it opens
-            belongs to the route's wider arrangement). */}
-        <GroupChatThreadChat
-          thread={openThread}
-          renderFrame={({ conversation, composer, work }) => (
-            <GroupChatThreadFraming
-              groupChatName={chat.name}
-              threadTitle={openThread.title || id}
-              agent={{ name: openThread.agent.name, avatarUrl: openThread.agent.avatarUrl }}
-              status={status}
-              work={work}
-              composer={composer}
-            >
-              {conversation}
-            </GroupChatThreadFraming>
-          )}
-        />
+        {/* The default, chrome-less frame. Where the reader is and who is
+            working are the HOST's header's to say -- the dock window draws
+            them from `onThreadContext` -- because a header inside a window
+            that already has one read as two headers. */}
+        <GroupChatThreadChat thread={thread} onWorkChange={setWork} />
       </div>
     )
   }

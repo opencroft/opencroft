@@ -518,12 +518,18 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
         // above: the first sighting anchors a part at this event's timeline
         // position, later events patch its fields where it stands (every
         // event carries the entity's full state, so assignment is the merge).
-        // `showInTranscript` is the harness's own advice — a pure-plumbing
-        // task arrives with it false and stays out of the transcript while
-        // still reaching the `asyncTasks` list above.
-        if (info.showInTranscript === false) {
-          break
-        }
+        //
+        // EVERY task gets a part, whatever `showInTranscript` says. The flag
+        // is the harness's advice about drawing the task as a transcript
+        // entry, and it is false on the one case that matters most: a Claude
+        // Code `Bash` run with run_in_background is reported as a "shell" task
+        // with the flag false on every event, spawned through finished, and
+        // honouring it left the session's only background work invisible --
+        // no block, no header entry, no count. The tool-call block the task
+        // hangs off shows the command, not the task: its live state, its
+        // summary and its Stop control exist only here. So the block is drawn
+        // regardless (product decision, 18.09.2026) and the flag rides along
+        // on the part as information, not as a gate.
         const existing = taskParts.get(info.asyncTaskId)
         if (existing) {
           existing.name = info.name
@@ -531,6 +537,7 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
           existing.description = info.description
           existing.state = info.state
           existing.canStop = info.canStop
+          existing.showInTranscript = info.showInTranscript
           existing.summary = info.summary
         } else {
           const part: AsyncTaskPart = {
@@ -541,6 +548,7 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
             description: info.description,
             state: info.state,
             canStop: info.canStop,
+            showInTranscript: info.showInTranscript,
             ...(info.summary !== undefined ? { summary: info.summary } : {}),
           }
           ensureAssistant(id).parts.push(part)
