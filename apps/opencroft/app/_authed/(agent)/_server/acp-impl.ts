@@ -574,6 +574,19 @@ export async function editTurnLocalImpl(data: {
     return null
   }
   await adoptFork(data.tabKey, meta.id)
+  // Edit REPLACES the conversation, it does not branch it: ACP gives us no way
+  // to rewind a session in place (even the native harness forks to a fresh id —
+  // see unstable_forkSession), so the edit is a fork the tab adopts, and the
+  // pre-edit session must be torn down or it lingers as an orphaned live
+  // process no tab points at — the idle reaper is opt-in and off by default, so
+  // nothing else reliably reclaims it. The fork no longer depends on the source
+  // (its transcript was copied/forked at fork time), and the source's tab
+  // pointer was just overwritten to the fork, so deleting the source id is
+  // safe. Best-effort: a failed teardown leaks one process but must not fail an
+  // edit that already succeeded — the reader is already on the fork.
+  await agentClient.deleteSession(data.sessionId).catch((error: unknown) => {
+    console.error(`edit: failed to delete the pre-edit session ${data.sessionId}`, error)
+  })
   // Handed over verbatim, which is what `system` means here: `text` is already
   // a finished delivery body — tags, and the interrupt note if the turn opened
   // with one. A `message` send would tag it AGAIN, wrapping one new tag naming

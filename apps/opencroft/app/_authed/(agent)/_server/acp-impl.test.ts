@@ -34,7 +34,9 @@ import type { AgentSelection } from 'agent-client/types'
 import type { WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
+import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import {
+  editTurnLocalImpl,
   ensureLocalSessionImpl,
   findTargetSessionImpl,
   forgetLocalSessionImpl,
@@ -70,11 +72,15 @@ function acpStore(): AcpStoreShape {
 // Seeds a mock connection under the exact spawn-config key `openLocalSession`
 // will derive for this agent, so `agentClient.createSession` reuses it instead
 // of spawning a real process — same seam agent-client's own tests use.
-function seedMockConnection(selection: AgentSelection, options: { canLoad?: boolean } = {}): void {
+function seedMockConnection(selection: AgentSelection, options: { canLoad?: boolean; forkable?: boolean } = {}): void {
   const connection = {
     newSession: async () => ({ sessionId: `acp-session-${crypto.randomUUID()}` }),
     prompt: async () => ({ stopReason: 'end_turn' }),
     resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    // Answered only when the store entry below advertises `forkSupported` — the
+    // engine refuses before reaching a connection that did not. A fresh id, so
+    // the fork is a distinct session, exactly as the real bridge returns.
+    unstable_forkSession: async () => ({ sessionId: `acp-fork-${crypto.randomUUID()}` }),
     // `canLoad: false` is an agent that cannot bring a session back — the
     // pointer still names it, but nothing can be resumed from it. The store
     // entry below advertises the capability; this is what actually performs it.
@@ -93,6 +99,7 @@ function seedMockConnection(selection: AgentSelection, options: { canLoad?: bool
     connection,
     lastSessionId: null,
     loadSession: options.canLoad ?? false,
+    forkSupported: options.forkable ?? false,
     initialized: Promise.resolve(),
   })
 }
@@ -341,6 +348,46 @@ test('forgetLocalSessionImpl drops the durable pointer too -- unlike stopLocalSe
     null,
     'delete must drop the durable pointer -- a later restart must not resurrect this session',
   )
+})
+
+// ── edit recreates, it does not branch ──────────────────────────────────────
+//
+// ACP gives no way to rewind a session in place (even the native harness forks
+// to a fresh id), so an edit is a fork the tab adopts. The pre-edit session
+// must then be torn down: left alive it is an orphaned process no tab points
+// at, and the idle reaper is opt-in and off by default, so nothing else
+// reliably reclaims it.
+
+test('committing an edit recreates the session and deletes the pre-edit one, leaving no orphan', async () => {
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection, { forkable: true })
+  const tabKey = `edit-test-tab-${crypto.randomUUID()}`
+
+  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  await promptLocalImpl({
+    sessionId: opened.sessionId,
+    text: 'first message',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+
+  const events = agentClient.getSessionEvents(opened.sessionId) ?? []
+  const eventIndex = events.findIndex((event) => event.kind === 'user')
+  assert.ok(eventIndex >= 0, 'the delivered message is a user turn in the log')
+
+  const result = await editTurnLocalImpl({
+    tabKey,
+    sessionId: opened.sessionId,
+    eventIndex,
+    edits: [{ index: 0, text: 'edited message' }],
+  })
+  assert.ok(result, 'the edit committed')
+  assert.notEqual(result.sessionId, opened.sessionId, 'the edit recreated the session, it did not edit in place')
+  assert.equal(tabSessions.get(tabKey)?.id, result.sessionId, 'the tab now points at the recreated session')
+
+  const liveIds = agentClient.listSessions().map((meta) => meta.id)
+  assert.equal(liveIds.includes(opened.sessionId), false, 'the pre-edit session was deleted, not left orphaned')
+  assert.equal(liveIds.includes(result.sessionId), true, 'the recreated session is the live one')
 })
 
 // ── contextUsage ────────────────────────────────────────────────────────
