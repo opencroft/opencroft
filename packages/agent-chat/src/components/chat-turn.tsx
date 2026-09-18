@@ -854,13 +854,11 @@ function SubagentBlock({
 }) {
   const { ThinkingBlock } = renderers
   const live = item.state === undefined
-  // Collapsed is the ARRIVING state for a subagent that already finished — a
-  // reopened conversation shows its delegations as one line each, not as the
-  // full transcripts they streamed as. A live one starts open, because
-  // watching it work is the point of the block. Initial value only: a live
-  // block the reader is watching must not snap shut the moment its subagent
-  // completes.
-  const [open, setOpen] = useState(live)
+  // Subagent blocks start collapsed by default, live or finished — the
+  // chat stays scannable when several are spawned at once. Initial value
+  // only: expanding is a manual, one-way action from here, so a block the
+  // reader opened to watch must not snap shut when its subagent completes.
+  const [open, setOpen] = useState(false)
   const badge = live ? 'running' : item.state
   const badgeClass = live
     ? 'bg-primary/10 text-primary animate-pulse'
