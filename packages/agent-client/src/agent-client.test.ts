@@ -2583,6 +2583,41 @@ test('a cumulative cost that drops (a reset) is read as the post-reset spend, ne
   await h.client.deleteSession(h.sessionId)
 })
 
+test('a restored cumulative cost counts as already accounted for, so the first turn after a restart is not charged the history', async () => {
+  const h = await setup('openclaw', { contextWindow: 200_000 })
+  // What the host persisted from the previous process: a session already 4.00
+  // into its cumulative, every cent of it attributed to earlier turns.
+  h.client.restoreUsage(h.sessionId, { used: 8_000, size: 200_000, cost: { amount: 4, currency: 'USD' } })
+
+  // The harness resumes with its counter intact: the boundary sees only the
+  // increment.
+  await h.client.prompt(h.sessionId, 'one', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 9_000, size: 200_000, cost: { amount: 4.5, currency: 'USD' } },
+  } as Parameters<typeof handleUpdate>[0])
+  h.endTurn()
+  await settle()
+
+  // A harness that restarted its own counter on resume reads as a reset: the
+  // fresh figure is the turn's whole spend.
+  await h.client.prompt(h.sessionId, 'two', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 3_000, size: 200_000, cost: { amount: 0.25, currency: 'USD' } },
+  } as Parameters<typeof handleUpdate>[0])
+  h.endTurn()
+  await settle()
+
+  assert.deepEqual(
+    h.events
+      .filter((event): event is Extract<ChatEvent, { kind: 'turn_end' }> => event.kind === 'turn_end')
+      .map((event) => event.cost?.amount),
+    [0.5, 0.25],
+  )
+  await h.client.deleteSession(h.sessionId)
+})
+
 // ── hasActiveTurn ────────────────────────────────────────────────────────
 //
 // Same underlying read as activeSessionKeys, by raw session id — the check a

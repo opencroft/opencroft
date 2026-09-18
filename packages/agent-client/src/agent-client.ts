@@ -2948,6 +2948,15 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         ...(usage.cost ? { cost: usage.cost } : {}),
         ...(usage.rateLimits ? { rateLimits: usage.rateLimits } : {}),
       }
+      // A restored cumulative was already attributed, turn by turn, by the
+      // process that recorded it. Without marking it accounted for, the first
+      // boundary after a restart would difference against zero and hand the
+      // whole history to one turn. A harness that restarts its own counter on
+      // resume then reads as a reset at that boundary, which is the right
+      // answer for that case too.
+      if (usage.cost && Number.isFinite(usage.cost.amount)) {
+        session.costAccountedFor = usage.cost.amount
+      }
     },
 
     // Session keys (selection.sessionKey) of every session currently blocked on
