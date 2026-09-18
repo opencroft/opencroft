@@ -14,10 +14,10 @@ export interface AppInstanceContext {
   /** The instance's display name — required at add time, editable later. */
   name: string
   /**
-   * The instance's slug: derived from the name once, at creation, unique
-   * within the space — with the space it forms the instance's public address,
-   * `<space>.<slug>`. A rename never moves it; a transfer may re-slug it on
-   * collision in the target space.
+   * The instance's slug: derived from the name, unique within the space —
+   * with the space it forms the instance's public address, `<space>.<slug>`.
+   * A rename moves it; a transfer may re-slug it on collision in the target
+   * space. So a context held from before a rename is stale.
    */
   slug: string
   /** The parameter values the user entered, keyed by parameter id. */

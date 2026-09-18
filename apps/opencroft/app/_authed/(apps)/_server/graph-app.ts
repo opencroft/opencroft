@@ -9,9 +9,11 @@
 // One instance = one graph, and one address: the graph carries the
 // INSTANCE's name and slug (the platform mints the slug from the name at add
 // time and keeps it unique per space). onAdded creates the graph under that
-// slug, onRenamed follows the instance's rename -- the slug is an address
-// and never moves -- onTransferred follows a move (the platform has already
-// re-resolved the slug for the target space), and onRemoved deletes the
+// slug, onRenamed follows the instance's rename -- BOTH halves of it, since
+// the slug moves with the label and a graph left on its old
+// slug would make `<space>.<app-slug>` and `<space>.<graph-slug>` two
+// addresses for one thing -- onTransferred follows a move (the platform has
+// already re-resolved the slug for the target space), and onRemoved deletes the
 // graph with the instance. beforeRemoved vetoes removing the graph a bare
 // `<space>` address resolves to: the default has to be pointed at another
 // graph first.
@@ -43,7 +45,10 @@ export const graphAppHooks: AppServerHooks = {
   },
   async onRenamed(ctx) {
     const r = await registry()
-    await r.renameGraphByInstance(ctx.instanceId, ctx.name)
+    // ctx carries the instance's ALREADY-RESOLVED name and slug, so the graph
+    // mirrors what the platform decided rather than re-deriving it here. Two
+    // slugifications of one name is two chances to disagree.
+    await r.renameGraphByInstance(ctx.instanceId, ctx.name, ctx.slug)
   },
   async onTransferred(ctx, previousSpaceSlug) {
     const r = await registry()
