@@ -2182,11 +2182,15 @@ test('a same-size lower reading mid-turn is still held (the shipped monotonic be
 // the failure that reopened this was the two doors disagreeing: the live one
 // applied a check the restored one had never heard of.
 
-test('a bridged window is not shown, even when this reading does not contradict it', async () => {
-  // The observed failure verbatim: 185k against a reported 200k is not
-  // self-contradicting, so a rule keyed on `used > size` never fired and the
-  // bridge's number was relayed as fact — a fresh-looking session reading 93%
-  // full. Nothing about it is verifiable, so no ratio is shown.
+test('a bridged window is shown now, when this reading does not contradict it', async () => {
+  // The pre-2026-09-18 contract was the opposite: 185k against a reported 200k
+  // is not self-contradicting, yet the reported size was withheld as
+  // unverifiable, so every bridged session with no configured window read
+  // "window size not reported" forever. The decision was that hiding the
+  // window permanently costs more than the residual risk of relaying a
+  // briefly-wrong one (see context-window.ts; the module rule is in
+  // context-window.test.ts). This pins that the rule reaches session state
+  // through the live door: a bridged reading now shows the size it reported.
   const h = await setup('openclaw')
   handleUpdate({
     sessionId: h.sessionId,
@@ -2194,6 +2198,23 @@ test('a bridged window is not shown, even when this reading does not contradict 
   } as Parameters<typeof handleUpdate>[0])
   assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
     used: 185_000,
+    size: 200_000,
+  })
+})
+
+test('a bridged window the reading itself contradicts is still withheld through the live door', async () => {
+  // The surviving half of the gate the test above used to carry: trusting the
+  // reported size does not mean trusting an impossible one. 531k used against a
+  // reported 200k is self-contradicting, so displayableContextWindow drops it
+  // even with no configured window to fall back on -- the same 265% ratio the
+  // original work started from, refused at the source.
+  const h = await setup('openclaw')
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 531_737, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+  assert.deepEqual(h.client.listSessions().find((s) => s.id === h.sessionId)?.usage, {
+    used: 531_737,
     size: undefined,
   })
 })
@@ -2217,16 +2238,21 @@ test('a configured window beats the reported one whether or not the reading disp
 })
 
 test('a restored reading gets the same rule as a live one', async () => {
-  // The reported case: the session had gone offline holding history, and the
-  // first message back restored a persisted {used, size} straight into state.
-  // The restore door bypassed every check the live door applied, so the ring
-  // came back showing a window the live path would already have refused.
+  // The original bug: a session went offline holding history, the first message
+  // back restored a persisted {used, size} straight into state, and the restore
+  // door bypassed every check the live door applied. Both doors now run the
+  // same normalizeUsage, so the sanity gate that fires on the live door
+  // (531k used against a reported 200k is impossible) fires here too. A
+  // persisted size earns no more trust for having survived a restart, so a
+  // restored reading the report contradicts is withheld exactly as a live one
+  // is -- the case where "the same rule" still has teeth after the change that
+  // made an uncontradicted reported window trusted.
   const h = await setup('openclaw')
-  h.client.restoreUsage(h.sessionId, { used: 185_000, size: 200_000 })
+  h.client.restoreUsage(h.sessionId, { used: 531_737, size: 200_000 })
   assert.deepEqual(
     h.client.listSessions().find((s) => s.id === h.sessionId)?.usage,
-    { used: 185_000, size: undefined },
-    'a persisted size was written from the same untrustworthy source and earns no more trust for having survived a restart',
+    { used: 531_737, size: undefined },
+    'the restore door applies the sanity gate the live door does, rather than bypassing it',
   )
   await h.client.deleteSession(h.sessionId)
 })
