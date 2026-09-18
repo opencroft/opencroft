@@ -40,13 +40,25 @@ import { instanceSlugFor } from '@/app/_authed/(space)/_server/slug'
 const GENERATED_ROUTE_TREE = join(import.meta.dirname, '..', 'routeTree.gen.ts')
 
 /**
- * Dynamic segments that carry a USER-MINTED slug, as opposed to an opaque id.
- * `$userId`, `$groupChatId`, `$threadId` and `$filename` are deliberately absent:
- * nobody names those, so a static sibling of one is not reachable by naming
- * anything. ADD TO THIS SET when a route starts addressing something by a slug
- * a person chooses -- that is the moment its static siblings come under the rule.
+ * Dynamic segments that hold an OPAQUE id rather than a user-minted slug.
+ * Nobody names these, so a static sibling of one is not reachable by naming
+ * anything, and the rule below does not apply to it.
+ *
+ * LISTED THIS WAY ROUND ON PURPOSE. The obvious spelling is a list of the
+ * slug-carrying params instead -- and it fails open: a route that starts
+ * addressing something by a user-chosen slug drops silently out of the
+ * population, and the guard keeps reporting green over a set that no longer
+ * includes the thing it should be watching. Inverted, the default is guarded:
+ * an unclassified new param is treated as slug-carrying, so forgetting to
+ * classify one trips this file as a loud false positive. A false positive costs
+ * somebody a minute; the other direction costs a silent wrong screen, which is
+ * the exact defect this file exists for.
  */
-const SLUG_PARAMS = new Set(['$slug', '$app'])
+const OPAQUE_ID_PARAMS = new Set(['$', '$userId', '$groupChatId', '$threadId', '$filename'])
+
+function carriesSlug(segment: string): boolean {
+  return segment.startsWith('$') && !OPAQUE_ID_PARAMS.has(segment)
+}
 
 /** A static sibling this tree is known to have, so an enumerator that finds nothing cannot pass. */
 const KNOWN_SIBLING = '/space/$slug/settings/app/~add'
@@ -67,7 +79,7 @@ const EXPECTED_COLLISIONS = [
     // switch. Predates slug addresses for apps -- space slugs have been mintable and in
     // URLs all along -- and repairing it needs its own diff and its own control
     // (a space named "Active": GET returns its graph, PUT saves its graph).
-    tracked: '<pending>',
+    tracked: 'a separate fix',
   },
 ]
 
@@ -94,7 +106,7 @@ function staticSiblingsOfSlugSegments(paths: string[]): string[] {
   }
   const found: string[] = []
   for (const [parent, siblings] of childrenByParent) {
-    if (![...siblings].some((segment) => SLUG_PARAMS.has(segment))) {
+    if (![...siblings].some(carriesSlug)) {
       continue
     }
     for (const segment of siblings) {
@@ -163,8 +175,19 @@ test('CONTROL: the check catches a mintable sibling when there is one', () => {
   assert.equal(isMintable('/space/$slug/settings/app/add'), true, 'the old segment was mintable — that was the defect')
 })
 
-// And the other half of that control: quiet about the tree as it actually
-// ships, or the test above would prove only that it objects to everything.
+// The failure DIRECTION, which is the only reason for listing opaque ids rather
+// than slug ones. This is a route family that does not exist yet, carrying a
+// param nobody has classified, beside a static sibling a name could mint — and
+// the check objects to it without anyone having remembered to add anything.
+// Listed the other way round it would have said nothing at all.
+test('CONTROL: a param nobody has classified is guarded by default, not skipped', () => {
+  const routesNobodyHasClassifiedYet = ['/widgets/$widgetSlug', '/widgets/new']
+  assert.deepEqual(staticSiblingsOfSlugSegments(routesNobodyHasClassifiedYet).filter(isMintable), ['/widgets/new'])
+})
+
+// And the other half of the positive control: quiet about the tree as it
+// actually ships, or the tests above would prove only that it objects to
+// everything.
 test('CONTROL: the check is silent on the segment that replaced it', () => {
   const shipping = ['/space/$slug/app/$app', '/space/$slug/settings/app/$app', KNOWN_SIBLING]
   assert.deepEqual(staticSiblingsOfSlugSegments(shipping).filter(isMintable), [])
