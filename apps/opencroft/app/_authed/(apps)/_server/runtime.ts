@@ -14,6 +14,7 @@ import { db, spaceApp } from '@opencroft/db'
 import type { AppInstanceContext, AppServerHooks } from '@opencroft/server'
 import { asc, eq } from 'drizzle-orm'
 
+import { resolveAppAddress } from '@/app/_authed/(apps)/_server/app-address'
 import { graphAppHooks } from '@/app/_authed/(apps)/_server/graph-app'
 import { appInstanceDataDir } from '@/app/_authed/(apps)/_server/instance-paths'
 import { getExtensionModule } from '@/app/_authed/(extension-runtime)/_server/loader'
@@ -203,18 +204,18 @@ export async function appUpdatesInPlace(extensionId: string, appSlug: string): P
  * suffix. The hook's context reads the resolved name and slug, so an App
  * mirroring them into its own data (the Graph App) follows along.
  */
-export async function transferSpaceAppImpl(instanceId: string, targetSpaceSlug: string): Promise<void> {
+export async function transferSpaceAppImpl(ref: string, targetSpaceSlug: string): Promise<SpaceAppRow> {
   const r = await registry()
   const target = r.getBySlug(targetSpaceSlug)
   if (!target) {
     throw new Error(`Unknown space: ${targetSpaceSlug}`)
   }
-  const row = await db.query.spaceApp.findFirst({ where: eq(spaceApp.id, instanceId) })
+  const row = await resolveAppAddress(ref)
   if (!row) {
-    throw new Error(`Unknown app instance: ${instanceId}`)
+    throw new Error(`Unknown app instance: ${ref}`)
   }
   if (row.spaceId === target.id) {
-    return
+    return row
   }
   const previousSpace = r.list().find((s) => s.id === row.spaceId)
   const targetRows = await db.query.spaceApp.findMany({ where: eq(spaceApp.spaceId, target.id) })
@@ -251,6 +252,12 @@ export async function transferSpaceAppImpl(instanceId: string, targetSpaceSlug: 
   if (loaded) {
     loaded.ctx = await instanceContext(moved)
   }
+  // Handed back, because the reference the CALLER used may no longer name this
+  // instance: an address names it through its space, so the address that
+  // reached here stops resolving the moment the move lands. A caller that
+  // wants to say anything about the instance afterwards has to be given the
+  // row rather than left holding a string that was true a moment ago.
+  return moved
 }
 
 /** Fire onUnload for every loaded instance — the shutdown half of startSpaceApps. */
@@ -376,8 +383,8 @@ export async function addSpaceAppImpl(
  * teardown (unload, onRemoved, data directory, row) goes through whatever
  * happens. Returns false when the instance does not exist.
  */
-export async function removeSpaceAppImpl(instanceId: string): Promise<boolean> {
-  const row = await db.query.spaceApp.findFirst({ where: eq(spaceApp.id, instanceId) })
+export async function removeSpaceAppImpl(ref: string): Promise<boolean> {
+  const row = await resolveAppAddress(ref)
   if (!row) {
     return false
   }
@@ -470,7 +477,8 @@ export async function listSpaceAppInfos(spaceSlug?: string): Promise<SpaceAppInf
 
 /**
  * One live handle of one App instance — the App analogue of a node's
- * `HandleInfo`, addressed as `<instanceId>/<handleId>`. Only sources exist:
+ * `HandleInfo`, addressed as `<space>.<app-slug>/<handleId>`, or by the
+ * identity form `<instanceId>/<handleId>`. Only sources exist:
  * an App consumes contexts through its parameters, not through edges.
  */
 export interface AppHandleInfo {
@@ -551,16 +559,21 @@ function handleFields(handle: AppHandle, liveId: string) {
 }
 
 /**
- * The context value behind `<instanceId>/<handleId>`, via the extension's
- * `getHandleContext` hook. Undefined when the id is no App instance, the App
- * declares no handles, or the hook does not recognize the handle — callers
- * fall through to (or from) node resolution on it.
+ * The context value behind `<space>.<app-slug>/<handleId>` or the identity form
+ * `<instanceId>/<handleId>`, via the extension's `getHandleContext` hook. Both
+ * spellings converge in `resolveAppAddress`, so there is one definition of what
+ * an app reference means and no caller has to know which form it was handed.
+ *
+ * Undefined when the reference names no App instance, the App declares no
+ * handles, or the hook does not recognize the handle — callers fall through to
+ * (or from) node resolution on it, and owe the DOTTED form a loud failure
+ * instead, because a node id never contains a dot.
  */
 export async function resolveAppHandleContext(
-  instanceId: string,
+  ref: string,
   handleId: string,
 ): Promise<{ value: Record<string, unknown>; spaceSlug: string } | undefined> {
-  const row = await db.query.spaceApp.findFirst({ where: eq(spaceApp.id, instanceId) })
+  const row = await resolveAppAddress(ref)
   if (!row) {
     return undefined
   }
@@ -573,16 +586,19 @@ export async function resolveAppHandleContext(
   return value ? { value, spaceSlug: ctx.spaceSlug } : undefined
 }
 
-/** Dispatch one App action against one instance — the `app_call` MCP tool's code path. */
+/**
+ * Dispatch one App action against one instance — the `app_call` MCP tool's code
+ * path. Takes either spelling of an app reference; see `resolveAppAddress`.
+ */
 export async function callAppAction(
-  instanceId: string,
+  ref: string,
   actionId: string,
   params: Record<string, unknown>,
   callerAgent?: string,
 ): Promise<unknown> {
-  const row = await db.query.spaceApp.findFirst({ where: eq(spaceApp.id, instanceId) })
+  const row = await resolveAppAddress(ref)
   if (!row) {
-    throw new Error(`Unknown app instance: ${instanceId}`)
+    throw new Error(`Unknown app instance: ${ref}`)
   }
   const hooks = await hooksFor(row.extensionId, row.appSlug)
   const handler = hooks?.actions?.[actionId]

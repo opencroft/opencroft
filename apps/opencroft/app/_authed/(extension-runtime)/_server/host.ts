@@ -602,13 +602,17 @@ async function getTerminalContext(nodeId: string, handleId: string): Promise<Ter
   const node = await graphApi.getNode(nodeId)
   if (!node?.type) {
     // Not a graph node — an App instance's handle uses the same target syntax
-    // with the instance id in the node position.
+    // with the app's address, or its uuid, in the node position.
     const { resolveAppHandleContext } = await import('@/app/_authed/(apps)/_server/runtime')
     const appHandle = await resolveAppHandleContext(nodeId, handleId)
     if (appHandle) {
       return appHandle.value as TerminalContext
     }
-    throw new Error(`Node not found: ${nodeId}`)
+    // NOT `Node not found`. An app whose HANDLE is the miss was reported here
+    // as a missing node, so the one thing the message named was the one thing
+    // that was fine — and a reader went looking for a node nobody addressed.
+    const { unresolvedAppTarget } = await import('@/app/_authed/(apps)/_server/app-address')
+    throw new Error(await unresolvedAppTarget(nodeId, handleId))
   }
   const { listExtensionManifestsImpl } = await import('@/app/_authed/(extension-runtime)/_server/extension-action-impl')
   const manifests = await listExtensionManifestsImpl()

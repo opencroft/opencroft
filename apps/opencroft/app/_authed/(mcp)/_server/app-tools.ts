@@ -146,11 +146,18 @@ export const handlers: Record<string, ToolHandler> = {
     if (!targetSlug) {
       fail(-32602, `Space not found: ${target} (use a slug — see list_spaces)`)
     }
-    await transferSpaceAppImpl(instanceId, targetSlug)
+    // The MOVED row, not the reference the caller gave: an address names an
+    // instance through its space, so the caller's reference stops resolving the
+    // moment the transfer lands. Looking the graph up by it would answer "no
+    // graph" for an instance that has one — a half-done move reported as a
+    // whole one.
+    const moved = await transferSpaceAppImpl(instanceId, targetSlug)
     const registry = getSpacesRegistry()
-    const graph = registry.graphByInstance(instanceId)
+    const graph = registry.graphByInstance(moved.id)
     const movedGraphAddress = graph ? `${targetSlug}.${graph.slug}` : undefined
-    return textResult(JSON.stringify({ instanceId, space: targetSlug, movedGraphAddress }, null, 2))
+    // `moved.id`, never the caller's own reference echoed back: if they
+    // addressed it, that address now names nothing.
+    return textResult(JSON.stringify({ instanceId: moved.id, space: targetSlug, movedGraphAddress }, null, 2))
   }),
 
   // ── app_find ─────────────────────────────────────────────────────

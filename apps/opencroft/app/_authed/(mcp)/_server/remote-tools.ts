@@ -7,6 +7,7 @@
 import path from 'node:path'
 
 import { withApprovalRequired } from '@/app/_authed/(approvals)/_server/with-approval'
+import { isAppAddress, unresolvedAppTarget } from '@/app/_authed/(apps)/_server/app-address'
 import { resolveAppHandleContext } from '@/app/_authed/(apps)/_server/runtime'
 import { listLocalExtensionsImpl } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions-impl'
 import { getExtensionModule, loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
@@ -379,12 +380,19 @@ export async function resolveTerminalContext(
     return { ctx: localExtCtx, slug: ep.handle }
   }
 
-  // An App instance's handle uses the same "<id>/<handle>" syntax with the
-  // instance id in the node position. Checked before graph resolution — a
-  // miss costs one primary-key read.
+  // An App instance's handle uses the same "<left>/<handle>" syntax with the
+  // app's ADDRESS (`<space>.<app-slug>`) or its uuid in the node position.
+  // Checked before graph resolution — a miss costs one index read.
   const appHandle = await resolveAppHandleContext(ep.nodeId, ep.handle)
   if (appHandle) {
     return { ctx: appHandle.value, slug: appHandle.spaceSlug }
+  }
+  // A DOTTED left side is an app address and can be nothing else, because node
+  // ids never contain a dot. Falling through to the graph lookup would answer
+  // "no such node" about an app — pointing the reader at the wrong half of the
+  // target, and at the wrong kind of thing entirely.
+  if (isAppAddress(ep.nodeId)) {
+    fail(-32602, await unresolvedAppTarget(ep.nodeId, ep.handle))
   }
 
   const { node, slug } = await findNodeAcrossSpaces(ep.nodeId)
