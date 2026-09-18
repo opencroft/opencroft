@@ -1666,27 +1666,21 @@ function hasLiveBackgroundWork(session: SessionState): boolean {
  * waiting for its end.
  *
  * `realtime` is the cadence that asks for that, and a harness that advertised
- * the steering extension is one that can take it. The third condition is about
- * what a mid-turn delivery costs when the turn has delegated work out.
+ * the steering extension is one that can take it. Those two, and only those.
  *
- * NOT WHILE A SUBAGENT IS RUNNING. The engine never cancels anything here —
- * steering is an injection, and the only cancels in this module are Stop, an
- * explicit `push`, and the High Attention cadence. But the harness treats a
- * message arriving mid-turn as a reason to reconsider what it is doing, and a
- * delegated task is the first thing it drops: observed twice in one session,
- * a subagent went `cancelled` in the same second a steered message landed. The
- * reader's message was not worth the work it killed, and nothing on screen
- * connected the two.
- *
- * So a session with live background work reads at its turn boundary, which is
- * what `online` does — for as long as the delegation lasts, and no longer.
+ * DELIVERED EVEN MID-DELEGATION. Steering is an injection, never a cancel: the
+ * bridge pushes the message onto the running turn's input and re-applies the
+ * turn's subagent hold across it (claude-agent-acp `steer()`), so a realtime
+ * reader reaches the agent while its subagents are still running — which is the
+ * whole point of realtime, and was the exact thing a reader could not do while
+ * this was gated on `!hasLiveBackgroundWork`. What DOES finish a turn's
+ * subagents as `cancelled` is `session/cancel` (verified in the bridge's cancel
+ * handler), so the delivery mechanism, not the cadence, is what must avoid it —
+ * see deliverPrompt and the `push` paths, which steer rather than cancel
+ * wherever the harness supports it.
  */
 function steersMidTurn(session: SessionState): boolean {
-  return (
-    session.presence.kind === 'realtime' &&
-    supportsMidTurnInput(session.selection) &&
-    !hasLiveBackgroundWork(session)
-  )
+  return session.presence.kind === 'realtime' && supportsMidTurnInput(session.selection)
 }
 
 /** Whether an adapter's harness is verified to send ACP elicitations — see
@@ -2194,19 +2188,22 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // not by any caller of prompt(), so it sees the text at the one instant
     // it is truly handed to the harness.
     const deliveredText = options.transformDeliveredPrompt ? options.transformDeliveredPrompt(text) : text
-    // Mid-turn message delivery on a connection that ADVERTISED the steering
-    // extension goes through `_session/steering`: injected into the running
-    // turn, whose own settlement stays the turn's end — no prompt promise, no
-    // turn accounting. Only under a `realtime` cadence (steersMidTurn): every
-    // other cadence promised the reader's messages wait for a boundary, and a
-    // drain racing a presence switch must keep that promise here, at the one
-    // point of hand-over. Every other case falls through to the prompt below:
-    // a forced-only adapter keeps the legacy overlapping session/prompt, a
+    // Mid-turn message delivery goes through `_session/steering`: injected into
+    // the running turn, whose own settlement stays the turn's end — no prompt
+    // promise, no turn accounting. The gate here is the MECHANISM, not the
+    // cadence: WHETHER this run may deliver now (realtime passes straight
+    // through; every other cadence held it for a boundary/window) was already
+    // decided upstream in `prompt`/`drainQueue`, so by the time a message run
+    // reaches this point the only question left is HOW to hand it over. Steer
+    // whenever the harness can take it, because a steer preserves the turn's
+    // background subagents where a `session/cancel` would finish them
+    // `cancelled`. Every other case falls through to the prompt below: a
+    // forced-only adapter keeps the legacy overlapping session/prompt, a
     // system/command run (`steerable` false) must start its own turn rather
     // than become conversational input, and an `injected: false` answer means
     // the turn ended in the race window, where a normal prompt is simply
     // correct.
-    if (steerable && session.activeTurns > 0 && steersMidTurn(session)) {
+    if (steerable && session.activeTurns > 0 && supportsMidTurnInput(session.selection)) {
       const injected = await steerIntoRunningTurn(sessionId, session, deliveredText)
       if (injected) {
         return
@@ -3821,7 +3818,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
           return { interrupted: false }
         }
         session.nextDeliveryNote = noteKind
-        if (!holding) {
+        if (!holding || supportsMidTurnInput(session.selection)) {
+          // Steer the held queue into the running turn rather than cancelling
+          // it: `session/cancel` finishes the turn's background subagents as
+          // `cancelled` (verified in the bridge), and a queue push must never
+          // be what kills a delegation. The drain reaches the steer path
+          // (deliverPrompt) with the turn still live; nothing is interrupted.
           await drainQueue(sessionId)
           return { interrupted: false }
         }
@@ -3904,6 +3906,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         return { interrupted: false }
       }
       session.nextDeliveryNote = noteKind
+      if (supportsMidTurnInput(session.selection)) {
+        // Steer instead of cancelling — see the empty-push branch above: a push
+        // must not finish the turn's subagents, which `session/cancel` would.
+        await drainQueue(sessionId)
+        return { interrupted: false }
+      }
       await cancelSession(sessionId)
       return { interrupted: true }
     },

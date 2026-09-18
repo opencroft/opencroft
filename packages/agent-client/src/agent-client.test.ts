@@ -4686,15 +4686,13 @@ test('a harness that advertised steering injects a mid-turn message instead of q
   await h.client.deleteSession(h.sessionId)
 })
 
-test('a message waits for the turn boundary while the turn has a subagent running', async () => {
-  // Realtime asks to be read mid-turn, and steering is an injection rather
-  // than a cancel — but the harness treats a message arriving mid-turn as a
-  // reason to reconsider, and drops the delegated work first. Observed on a
-  // live session: a subagent went `cancelled` in the same second a steered
-  // message landed, twice.
-  //
-  // So delegation suspends the mid-turn read. The message is not lost and the
-  // turn is not touched; it waits exactly as it would under `online`.
+test('a realtime message steers into the turn even while a subagent is running', async () => {
+  // Realtime asks to be read mid-turn, and a steer is an injection, not a
+  // cancel: the bridge re-applies the turn's subagent hold across it (only
+  // `session/cancel` finishes subagents as cancelled), so the reader reaches
+  // the agent while the delegation keeps running. Gating this on "no live
+  // background work" was the exact thing that made a realtime session
+  // unreachable for as long as it had a subagent out.
   const h = await setup('openclaw', { steeringSupported: true })
   await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
   await settle()
@@ -4708,25 +4706,11 @@ test('a message waits for the turn boundary while the turn has a subagent runnin
 
   await h.client.prompt(h.sessionId, 'while it digs', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
   await settle()
-  assert.deepEqual(
-    h.extMethodCalls.filter((call) => call.method === '_session/steering'),
-    [],
-    'nothing was injected into the turn the subagent is working in',
-  )
-  assert.equal(h.promptCalls.length, 1, 'and no second prompt turn was started either')
-  assert.deepEqual(queueSnapshots(h.events).at(-1), ['while it digs'], 'it is waiting, and says so')
-
-  // The delegation ends, and realtime is realtime again.
-  sendUpdate(h.sessionId, {
-    sessionUpdate: 'subagent_state_update',
-    subagentSessionId: 'steer-guard-child',
-    state: 'completed',
-  })
-  await h.client.prompt(h.sessionId, 'and now', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
-  await settle()
   const steered = h.extMethodCalls.filter((call) => call.method === '_session/steering')
-  assert.equal(steered.length, 1, 'the next message steers as it always did')
-  assert.match((steered[0].params.prompt as Array<{ text: string }>)[0].text, /and now/)
+  assert.equal(steered.length, 1, 'the message went into the running turn, subagent and all')
+  assert.match((steered[0].params.prompt as Array<{ text: string }>)[0].text, /while it digs/)
+  assert.equal(h.promptCalls.length, 1, 'no second prompt turn was started — it steered')
+  assert.ok(h.client.hasBackgroundWork(h.sessionId), 'the subagent is untouched: no cancel was issued')
 
   h.endTurn()
   await settle()
@@ -4808,9 +4792,12 @@ test('a reading window that closes mid-turn does not steer either', async () => 
   await h.client.deleteSession(h.sessionId)
 })
 
-test('High Attention still interrupts on a steering harness, never injects', async () => {
-  // The cadence promises a STOP — the compact note and all. Injecting would
-  // deliver without one, silently downgrading the reader's standing word.
+test('High Attention pushes the queue in through steering on a harness that supports it', async () => {
+  // "Push the queue through now" is the cadence's standing word; the MECHANISM
+  // is steering wherever the harness has it, because `session/cancel` finishes
+  // the turn's subagents as cancelled and a push must not be what kills a
+  // delegation. The reader's "stop and read" survives as a steer that pre-empts
+  // the current cycle, and the compact interrupt note still rides along.
   const h = await setup('openclaw', { steeringSupported: true })
   h.client.setPresence(h.sessionId, { kind: 'high-attention' })
   await h.client.prompt(h.sessionId, 'running', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
@@ -4819,15 +4806,53 @@ test('High Attention still interrupts on a steering harness, never injects', asy
     queue: 'wait',
     origin: { kind: 'message', sender: 'Reader' },
   })
-  assert.equal(interrupted, true, 'the turn was stopped, not steered around')
-  assert.equal(h.extMethodCalls.length, 0, 'no steering attempted')
+  assert.equal(interrupted, false, 'steered around the turn rather than stopping it')
+  const steered = h.extMethodCalls.filter((call) => call.method === '_session/steering')
+  assert.equal(steered.length, 1, 'the push went in through steering')
+  assert.match(
+    (steered[0].params.prompt as Array<{ text: string }>)[0].text,
+    /^Your turn was interrupted to deliver the incoming messages below\./,
+    'and still opens with the compact interrupt note',
+  )
   h.endTurn()
   await settle()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a push delivers the held queue through steering, leaving a running subagent alive', async () => {
+  // The "deliver now" push (queue: push, no text of its own) on an online
+  // session that is mid-delegation: it must hand the held messages over without
+  // a `session/cancel`, which would finish the subagent as cancelled. This is
+  // the deliverQueue path — the Unread heading's button — and it is the case
+  // that once killed a delegation just by asking to be read.
+  const h = await setup('openclaw', { steeringSupported: true })
+  h.client.setPresence(h.sessionId, { kind: 'online' })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'subagent_spawned',
+    subagentSessionId: 'push-steer-child',
+    name: 'Researcher',
+    task: 'dig',
+    capabilities: {},
+  })
+  await h.client.prompt(h.sessionId, 'held', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
   assert.equal(
-    h.promptCalls[1].startsWith('Your turn was interrupted to deliver the incoming messages below.'),
-    true,
-    h.promptCalls[1],
+    h.extMethodCalls.filter((call) => call.method === '_session/steering').length,
+    0,
+    'online held it behind the turn; nothing steered yet',
   )
+
+  const { interrupted } = await h.client.prompt(h.sessionId, '', { queue: 'push', origin: { kind: 'system' } })
+  await settle()
+  assert.equal(interrupted, false, 'the held queue was steered in, not stopped')
+  const steered = h.extMethodCalls.filter((call) => call.method === '_session/steering')
+  assert.equal(steered.length, 1, 'the held message went in through steering')
+  assert.match((steered[0].params.prompt as Array<{ text: string }>)[0].text, /held/)
+  assert.ok(h.client.hasBackgroundWork(h.sessionId), 'the subagent is still running')
+  h.endTurn()
+  await settle()
   await h.client.deleteSession(h.sessionId)
 })
 
