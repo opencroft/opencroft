@@ -1,6 +1,7 @@
 import { chatUsageTurn, chatUsageTurnModel, db } from '@opencroft/db'
+import type { UsageTokens } from 'agent-chat/components/usage-cost'
 import type { SessionCost, TurnQuota, TurnTokenUsage } from 'agent-client/types'
-import { and, eq, gte, lte } from 'drizzle-orm'
+import { and, eq, gte, lte, sum } from 'drizzle-orm'
 import type { SpaceUsagePoint, SpaceUsageSeries, UsageGrouping, UsagePeriod } from 'ui/admin/space-usage'
 
 import { partsOfSessionKey } from '@/app/_authed/(group-chats)/_shared/session-key'
@@ -86,6 +87,46 @@ export async function recordChatUsageTurn(input: {
         ? input.quota.modelUsage.map((entry) => modelRow(entry.model, entry.tokenCount))
         : [modelRow(input.model ?? null, input.usage)],
     )
+}
+
+/**
+ * The authoritative token account for one session, as of now: a plain SUM of
+ * ChatUsageTurn's own five counters (the turn's main-loop figures, not the
+ * per-model breakdown — the same rows the account this mirrors, the ring's
+ * `sessionTokens`, has always meant), grouped down to a single row by
+ * `sessionId` in the database rather than fetched-and-summed client-side.
+ *
+ * Every recorded turn's counters default to 0, never NULL (see
+ * `tokenColumns`), so SUM is NULL here only when the session has NO row at
+ * all — reported as absent (`undefined`), never as an all-zero account, the
+ * same "absent, not measured" distinction `UsageTokens` keeps everywhere
+ * else. This is the BASE a session's client seeds its running token account
+ * from at open; the client adds its own live turn_end increments on top
+ * rather than re-fetching this on every turn (see use-acp-session's
+ * `mergeTokenAccounts`).
+ */
+export async function queryChatUsageTokensBySession(sessionId: string): Promise<UsageTokens | undefined> {
+  const [row] = await db
+    .select({
+      total: sum(chatUsageTurn.totalTokens),
+      input: sum(chatUsageTurn.inputTokens),
+      output: sum(chatUsageTurn.outputTokens),
+      cacheRead: sum(chatUsageTurn.cacheReadTokens),
+      cacheWrite: sum(chatUsageTurn.cacheWriteTokens),
+    })
+    .from(chatUsageTurn)
+    .where(eq(chatUsageTurn.sessionId, sessionId))
+
+  if (!row || row.total === null) {
+    return undefined
+  }
+  return {
+    total: Number(row.total),
+    input: Number(row.input),
+    output: Number(row.output),
+    cacheRead: Number(row.cacheRead),
+    cacheWrite: Number(row.cacheWrite),
+  }
 }
 
 // ── Read side: SpaceUsage series ────────────────────────────────────────────
@@ -203,6 +244,14 @@ function labelOf(grouping: UsageGrouping, key: string): string {
  * resolved model (chatUsageTurn.model), which can differ from some of that
  * turn's model rows (a subagent's, say) — stated attribution, not a
  * measurement, same as the schema comment on costAmount already notes.
+ *
+ * Both reads GROUP BY the full (day, agent, model) triple in SQL, regardless
+ * of `grouping` — the database sums the counters instead of every matching
+ * turn/model row crossing the wire. The result set stays one row per triple
+ * actually recorded (not one per turn), so the JS below still does the
+ * grouping-dependent work: ranking groups, folding the tail into "Other",
+ * building the date axis and padding cells — unchanged, just fed rows that
+ * are already summed instead of raw ones.
  */
 export async function queryChatUsage(grouping: UsageGrouping, period: UsagePeriod): Promise<SpaceUsageSeries[]> {
   const range = dayRangeOf(period)
@@ -218,24 +267,36 @@ export async function queryChatUsage(grouping: UsageGrouping, period: UsagePerio
         day: chatUsageTurn.day,
         agent: chatUsageTurn.agent,
         model: chatUsageTurnModel.model,
-        inputTokens: chatUsageTurnModel.inputTokens,
-        outputTokens: chatUsageTurnModel.outputTokens,
-        cacheReadTokens: chatUsageTurnModel.cacheReadTokens,
-        cacheWriteTokens: chatUsageTurnModel.cacheWriteTokens,
-        totalTokens: chatUsageTurnModel.totalTokens,
+        // sum() over a bigint column comes back as a driver string; mapWith
+        // decodes it to a number, and is only ever invoked for a non-null
+        // result — every group here has at least one contributing row (it
+        // exists because GROUP BY produced it), so these sums are never SQL
+        // NULL and mapWith(Number) never sees one.
+        inputTokens: sum(chatUsageTurnModel.inputTokens).mapWith(Number),
+        outputTokens: sum(chatUsageTurnModel.outputTokens).mapWith(Number),
+        cacheReadTokens: sum(chatUsageTurnModel.cacheReadTokens).mapWith(Number),
+        cacheWriteTokens: sum(chatUsageTurnModel.cacheWriteTokens).mapWith(Number),
+        totalTokens: sum(chatUsageTurnModel.totalTokens).mapWith(Number),
       })
       .from(chatUsageTurnModel)
       .innerJoin(chatUsageTurn, eq(chatUsageTurnModel.turnId, chatUsageTurn.id))
-      .where(where),
+      .where(where)
+      .groupBy(chatUsageTurn.day, chatUsageTurn.agent, chatUsageTurnModel.model),
     db
       .select({
         day: chatUsageTurn.day,
         agent: chatUsageTurn.agent,
         model: chatUsageTurn.model,
-        costAmount: chatUsageTurn.costAmount,
+        // Left undecoded (driver string | null): SQL SUM ignores NULL
+        // costAmount rows and itself returns NULL — not 0 — for a group
+        // where every turn was unpriced, which is the "absent, not
+        // measured" cost keeps end to end. Parsed to a number below, only
+        // once known non-null.
+        costAmount: sum(chatUsageTurn.costAmount),
       })
       .from(chatUsageTurn)
-      .where(where),
+      .where(where)
+      .groupBy(chatUsageTurn.day, chatUsageTurn.agent, chatUsageTurn.model),
   ])
 
   const dates = dateAxisOf(range, tokenRows)
@@ -282,7 +343,7 @@ export async function queryChatUsage(grouping: UsageGrouping, period: UsagePerio
       continue
     }
     const cell = cellOf(row)
-    cell.cost = (cell.cost ?? 0) + row.costAmount
+    cell.cost = (cell.cost ?? 0) + Number(row.costAmount)
   }
 
   return seriesKeys.map((seriesKey) => ({
