@@ -208,10 +208,15 @@ function RateLimitRow({
           <span className='font-medium'>{WINDOW_LABELS[limit.window] ?? limit.window}</span>
           {resets}
         </span>
-        <span className='text-xs tabular-nums text-muted-foreground'>
-          {pct !== null ? `${pct}%` : limit.status === 'rejected' ? 'Limit reached' : null}
-        </span>
+        {pct !== null ? <span className='text-xs tabular-nums text-muted-foreground'>{pct}%</span> : null}
       </div>
+      {/* A rejection with no reported utilization has no gauge to carry the
+          state, and the value slot is too narrow beside a long window title —
+          both halves wrapped there. Its own line instead, in the one colour
+          that must not be missed, since there is no bar to wear it. */}
+      {pct === null && limit.status === 'rejected' ? (
+        <span className='text-xs text-destructive'>Limit reached</span>
+      ) : null}
       {pct !== null ? (
         <Slider
           value={[pct]}
