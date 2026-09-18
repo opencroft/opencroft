@@ -91,25 +91,32 @@ const INSTANCE: SpaceAppInstance = {
 
 const APP: AppMeta = { extensionId: INSTANCE.extensionId, slug: INSTANCE.appSlug, title: 'Example' }
 
-function buildRouter() {
+// The name that caused the collision, kept as a fixture rather than as a story.
+// "Add" mints the slug `add`, so before the add-app form moved to `~add` this
+// instance's settings address and that form's address were the same string --
+// and the static route won, which meant this row's own Edit link opened the
+// form instead of these settings.
+const ADD_INSTANCE: SpaceAppInstance = { ...INSTANCE, id: 'the-app-called-add', name: 'Add', slug: 'add' }
+
+function buildRouter(instances: SpaceAppInstance[] = [INSTANCE], tab: 'installed' | 'add' = 'installed') {
   const rootRoute = createRootRoute()
   const routeTree = rootRoute.addChildren([
     createRoute({
       getParentRoute: () => rootRoute,
       path: '/',
       component: () => (
-        <SpaceApps spaceSlug={SPACE_SLUG} apps={[APP]} instances={[INSTANCE]} tab='installed' onTabChange={() => {}} />
+        <SpaceApps spaceSlug={SPACE_SLUG} apps={[APP]} instances={instances} tab={tab} onTabChange={() => {}} />
       ),
     }),
     createRoute({ getParentRoute: () => rootRoute, path: '/space/$slug/app/$app' }),
     createRoute({ getParentRoute: () => rootRoute, path: '/space/$slug/settings/app/$app' }),
-    createRoute({ getParentRoute: () => rootRoute, path: '/space/$slug/settings/app/add' }),
+    createRoute({ getParentRoute: () => rootRoute, path: '/space/$slug/settings/app/~add' }),
   ])
   return createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ['/'] }) })
 }
 
-async function mountInstalledTab() {
-  const router = buildRouter()
+async function mountInstalledTab(instances?: SpaceAppInstance[], tab?: 'installed' | 'add') {
+  const router = buildRouter(instances, tab)
   // Matching is asynchronous: a provider handed a router that has not resolved
   // its location yet renders no matches at all, which reads in an assertion as
   // a row that is missing rather than a row that has not arrived.
@@ -207,6 +214,67 @@ test('the button hands its click to the browser, and a link without a target doe
       router.state.location.pathname,
       `/space/${SPACE_SLUG}/settings/app/${INSTANCE.slug}`,
       'while a link with no target is still routed in place',
+    )
+  } finally {
+    await unmount()
+  }
+})
+
+// The collision itself, pinned with the name that causes it. Asserting the two
+// hrefs differ is not enough on its own: the addresses could differ while the
+// ROUTER still resolved the instance one onto the form, which is precisely what
+// used to happen. So this follows the click and reads which route matched.
+test('an app named "Add" opens its own settings, and the add form keeps its own address', async () => {
+  const { router, unmount } = await mountInstalledTab([ADD_INSTANCE])
+
+  try {
+    const rowLink = [...dom.container.querySelectorAll('a')].find((anchor) =>
+      anchor.textContent?.includes(ADD_INSTANCE.name),
+    )
+    assert.ok(rowLink, 'the row for the app named "Add" rendered')
+    assert.equal(
+      rowLink.getAttribute('href'),
+      `/space/${SPACE_SLUG}/settings/app/add`,
+      'its settings sit at its own slug, which is the word add',
+    )
+
+    await act(async () => {
+      rowLink.dispatchEvent(
+        new (win.MouseEvent as typeof MouseEvent)('click', { bubbles: true, cancelable: true, button: 0 }),
+      )
+    })
+    await act(async () => {
+      await router.latestLoadPromise
+    })
+
+    assert.equal(router.state.location.pathname, `/space/${SPACE_SLUG}/settings/app/add`)
+    assert.equal(
+      router.state.matches.at(-1)?.routeId,
+      '/space/$slug/settings/app/$app',
+      'and the INSTANCE route matched it -- not the add-app form, which is the defect this addresses',
+    )
+  } finally {
+    await unmount()
+  }
+})
+
+test('the add-app catalog links to the form at its own address, which no name can mint', async () => {
+  const { unmount } = await mountInstalledTab([ADD_INSTANCE], 'add')
+
+  try {
+    const catalogLink = [...dom.container.querySelectorAll('a')].find((anchor) =>
+      anchor.getAttribute('href')?.includes('/settings/app/'),
+    )
+    assert.ok(catalogLink, 'the catalog rendered a row to add from')
+    assert.equal(
+      catalogLink.getAttribute('href'),
+      `/space/${SPACE_SLUG}/settings/app/~add?app=example.example`,
+      'the form is addressed by a segment slugify cannot produce',
+    )
+    assert.notEqual(
+      catalogLink.getAttribute('href')?.split('?')[0],
+      `/space/${SPACE_SLUG}/settings/app/${ADD_INSTANCE.slug}`,
+      'so it can never collide with the settings of an app named after it',
     )
   } finally {
     await unmount()

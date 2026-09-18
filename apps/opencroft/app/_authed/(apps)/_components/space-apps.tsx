@@ -123,7 +123,7 @@ export function SpaceApps({ spaceSlug, apps, instances, tab, onTabChange }: Prop
                 return (
                   <Link
                     key={`${app.extensionId}/${app.slug}`}
-                    to='/space/$slug/settings/app/add'
+                    to='/space/$slug/settings/app/~add'
                     params={{ slug: spaceSlug }}
                     search={{ app: appRefFor(app) }}
                     className='flex w-full items-center gap-3 rounded-md border p-3 text-left hover:bg-accent'
