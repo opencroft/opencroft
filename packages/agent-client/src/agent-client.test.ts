@@ -2502,7 +2502,7 @@ test('turn_end stamps the adapter and resolves the model from the quota breakdow
   // The selection carries no model (the group-chat case); the harness's
   // per-model breakdown names what actually ran, and the heaviest row wins
   // over a lighter subagent model.
-  const h = await setup('claude')
+  const h = await setup('openclaw')
   await h.client.prompt(h.sessionId, 'hello', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
   h.endTurnWith({
     stopReason: 'end_turn',
@@ -2520,7 +2520,7 @@ test('turn_end stamps the adapter and resolves the model from the quota breakdow
   await settle()
   const turnEnd = h.events.find((event) => event.kind === 'turn_end')
   assert.ok(turnEnd && turnEnd.kind === 'turn_end')
-  assert.equal(turnEnd.adapterId, 'claude')
+  assert.equal(turnEnd.adapterId, 'openclaw')
   assert.equal(turnEnd.model, 'claude-opus-5')
   await h.client.deleteSession(h.sessionId)
 })
