@@ -19,6 +19,7 @@ import { detailEntryKeys, withHeader } from './detail-entries'
 const text = (t: string): DetailItem => ({ kind: 'assistant-text', text: t })
 const thinking = (t: string): DetailItem => ({ kind: 'thinking', text: t })
 const tool = (id: string): DetailItem => ({ kind: 'tool', id, name: 'read_file', args: {} })
+const task = (id: string): DetailItem => ({ kind: 'task', id, name: 'watcher', state: 'running' })
 
 // The header the component would render in front of these items, or not.
 // Built through the real `withHeader` so the two cannot disagree about when one
@@ -45,6 +46,18 @@ test('an item is keyed by its own position, and a tool call by its id', () => {
   // Header first, then the three items -- and the positions are the items'
   // own, so the text at items[1] is `pos:1` and not `pos:2`.
   assert.deepEqual(detailEntryKeys(entries, items), ['header', 'tool:t1', 'pos:1', 'pos:2'])
+})
+
+test('a background task is keyed by its own id, in a key space of its own', () => {
+  // A task has a real identity -- the block it draws is upserted in place as
+  // the task progresses -- so like a tool it must not be renumbered by its
+  // neighbours coming and going. The namespace keeps a task and a tool that
+  // happen to share an id string from becoming one key.
+  const items = [task('bg1'), text('a'), tool('bg1')]
+  const keys = detailEntryKeys(entriesFor(items), items)
+
+  assert.deepEqual(keys, ['header', 'task:bg1', 'pos:1', 'tool:bg1'])
+  assert.equal(new Set(keys).size, keys.length)
 })
 
 test('an item keeps its key whether or not a header sits in front of it', () => {

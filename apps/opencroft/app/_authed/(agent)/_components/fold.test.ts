@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { DEFAULT_PRESENCE } from 'agent-client/presence'
-import type { ChatEvent } from 'agent-client/types'
+import type { AsyncTaskInfo, ChatEvent } from 'agent-client/types'
 
 import { fold } from './use-acp-session'
 
@@ -185,6 +185,63 @@ test('a plain turn end adds no failure message', () => {
     messages.map((m) => m.role),
     ['user', 'assistant'],
   )
+})
+
+function taskEvent(over: Partial<AsyncTaskInfo> = {}): ChatEvent {
+  return {
+    kind: 'async_task',
+    task: {
+      asyncTaskId: 'bg-1',
+      name: 'Watch the deploy',
+      taskType: 'bash',
+      description: 'tail the deploy log',
+      state: 'running',
+      canStop: true,
+      showInTranscript: true,
+      ...over,
+    },
+  }
+}
+
+test('a background task folds to one transcript part, patched in place at its first event', () => {
+  // Every async_task event carries the entity's full state (the same
+  // contract as `subagent`), so one event per transition must not stack one
+  // block per transition — the later event patches the part the first
+  // anchored, and the block stays in the transcript where it began.
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'watch it' },
+    { kind: 'agent_message', text: 'starting a watcher' },
+    taskEvent(),
+    { kind: 'agent_message', text: 'watching' },
+    taskEvent({ state: 'completed', summary: 'deploy went clean', canStop: false }),
+  ]
+  const folded = fold(events, 0)
+  const parts = folded.messages.flatMap((m) => m.parts.filter((p) => p.type === 'async-task'))
+  assert.equal(parts.length, 1)
+  const [part] = parts
+  assert.equal(part.type === 'async-task' ? part.state : null, 'completed')
+  assert.equal(part.type === 'async-task' ? part.summary : null, 'deploy went clean')
+  assert.equal(part.type === 'async-task' ? part.canStop : null, false)
+  // The out-of-band list keeps working beside the part — the strip and the
+  // stop-session warning read it, and the part does not replace it.
+  assert.deepEqual(
+    folded.asyncTasks.map((task) => task.state),
+    ['completed'],
+  )
+})
+
+test('a running task is delegation, not thinking — same as a live subagent', () => {
+  const during = fold([{ kind: 'user', text: 'watch it' }, taskEvent()], 0)
+  assert.equal(during.waiting, true, 'the turn is still open — Stop applies')
+  assert.equal(during.thinking, false, 'but nothing is being generated: no dots')
+})
+
+test('a task the harness keeps out of the transcript still reaches the task list', () => {
+  // showInTranscript is the harness's own advice: a pure-plumbing task draws
+  // no block, but the live-work surfaces still have to know it is running.
+  const folded = fold([{ kind: 'user', text: 'q' }, taskEvent({ showInTranscript: false })], 0)
+  assert.equal(folded.messages.flatMap((m) => m.parts.filter((p) => p.type === 'async-task')).length, 0)
+  assert.equal(folded.asyncTasks.length, 1)
 })
 
 const PLAN_EVENTS: ChatEvent[] = [

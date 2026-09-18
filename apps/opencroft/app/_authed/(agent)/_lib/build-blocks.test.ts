@@ -38,6 +38,53 @@ test('the two kinds never collide, though a turn shares its id with its question
   assert.equal(new Set(blocks.map((b) => b.id)).size, blocks.length)
 })
 
+test('an async-task part becomes a task item, Stop bound only where the harness allows one', () => {
+  const reply: ChatMessage = {
+    id: 1,
+    role: 'assistant',
+    parts: [
+      // No name of its own: the reader-facing fallback is the taskType, the
+      // same one the out-of-band strip uses.
+      {
+        type: 'async-task',
+        asyncTaskId: 'bg1',
+        name: '',
+        taskType: 'bash',
+        description: 'tail the log',
+        state: 'running',
+        canStop: true,
+      },
+      {
+        type: 'async-task',
+        asyncTaskId: 'bg2',
+        name: 'Indexer',
+        taskType: 'bash',
+        description: '',
+        state: 'completed',
+        canStop: false,
+      },
+    ],
+    timestamp: 0,
+  }
+  const stopped: string[] = []
+  const blocks = buildBlocks([userMessage(0, 'q'), reply], undefined, (id) => stopped.push(id))
+  const details = blocks.find((b) => b.kind === 'details')
+  assert.ok(details && details.kind === 'details')
+  const tasks = details.items.filter((item) => item.kind === 'task')
+  assert.deepEqual(
+    tasks.map((item) => (item.kind === 'task' ? item.name : null)),
+    ['bash', 'Indexer'],
+  )
+  // The callback is pre-bound to the task's own id — the kit component never
+  // learns what the id addresses — and absent entirely where stopping is not
+  // offered, so the row draws no dead control.
+  const [running, finished] = tasks
+  assert.ok(running.kind === 'task' && running.onStop)
+  running.kind === 'task' && running.onStop?.()
+  assert.deepEqual(stopped, ['bg1'])
+  assert.equal(finished.kind === 'task' ? finished.onStop : 'set', undefined)
+})
+
 test('a page landing mid-turn does not rename the block it merges into', () => {
   // The regression this fixes. Record-granularity pages can land inside a turn,
   // and consecutive replies fold into one block — so a block named after its

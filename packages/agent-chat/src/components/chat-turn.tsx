@@ -1,6 +1,6 @@
 'use client'
 
-import { Bot, ChevronDown, ChevronRight, Copy, Ellipsis, GitFork, ListTodo, Loader2, Maximize2, Minimize2, Pencil, Square, SquareCheck, X } from 'lucide-react'
+import { Bot, ChevronDown, ChevronRight, Copy, Ellipsis, GitFork, ListTodo, Loader2, Maximize2, Minimize2, Pencil, Square, SquareCheck, TerminalSquare, X } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
 import { useState } from 'react'
 // Both of these import types back from this file, and a type import is erased,
@@ -31,6 +31,13 @@ import { cn } from 'ui/lib/utils'
 // measure how far it moved. Exported so the host queries the same name rather
 // than duplicating the literal.
 export const BLOCK_ID_ATTR = 'data-block-id'
+
+// The attribute a host's jump-to-work control uses to find a subagent's or a
+// background task's block in the transcript. Exported for the same reason as
+// BLOCK_ID_ATTR: the host queries the name this file writes, never a second
+// copy of the literal. The value is the entity's own id — a subagent's
+// session id, a task's asyncTaskId.
+export const WORK_ID_ATTR = 'data-work-id'
 
 // A user's own words, after the host has passed them through its own
 // sanitiser. Branded rather than `string` on purpose: this is the only
@@ -87,6 +94,23 @@ export type DetailItem =
   // The host pre-renders the nested items to DetailItem so this component never
   // learns the wire shape a subagent's transcript arrives in.
   | { kind: 'subagent'; id: string; name: string; task: string; state?: string; items: DetailItem[] }
+  // A background task the harness reported under the turn (a detached job, a
+  // loop), drawn as a single row in the same bordered family as a subagent.
+  // Unlike a subagent it has no transcript — the fields ARE the whole of it.
+  // `id` is the task's own id (its React key and identity); `state` is the
+  // harness's word, with running/paused live and anything else terminal.
+  // `onStop` is the host's stop-this-task call, already bound — present only
+  // while stopping is offered, so the row draws a Stop control exactly when
+  // pressing it can mean something.
+  | {
+      kind: 'task'
+      id: string
+      name: string
+      description?: string
+      summary?: string
+      state: string
+      onStop?: () => void
+    }
 
 export type DetailEntry = { kind: 'header' } | { kind: 'item'; item: DetailItem }
 
@@ -867,7 +891,9 @@ function SubagentBlock({
       : 'bg-muted text-muted-foreground'
   const Chevron = open ? ChevronDown : ChevronRight
   return (
-    <div className='rounded-md border border-border/60 bg-muted/20'>
+    // Marked with the subagent's id so a host's jump-to-work control can find
+    // this block in the DOM — same mechanism as BLOCK_ID_ATTR, one level down.
+    <div className='rounded-md border border-border/60 bg-muted/20' {...{ [WORK_ID_ATTR]: item.id }}>
       {/* The whole header is the toggle — a chevron-sized target fails on
           touch, and the header row carries nothing else pressable. */}
       <button
@@ -909,10 +935,54 @@ function SubagentBlock({
             if (child.kind === 'plan') {
               return <PlanChecklist key={child.id} item={child} />
             }
+            if (child.kind === 'task') {
+              return <TaskBlock key={child.id} item={child} />
+            }
             return <div key={child.id}>{renderTool(child)}</div>
           })}
         </div>
       ) : null}
+    </div>
+  )
+}
+
+// A background task's row, in the same bordered family as SubagentBlock. Not
+// collapsible: a task has no transcript to fold away, so the row is the whole
+// block — name and state on the header line, the latest summary (or the
+// standing description) beneath it. The badge palette is SubagentBlock's, plus
+// a paused colour of its own: paused is live work someone chose to hold, which
+// is neither running nor an outcome.
+function TaskBlock({ item }: { item: Extract<DetailItem, { kind: 'task' }> }) {
+  const running = item.state === 'running'
+  const badgeClass = running
+    ? 'bg-primary/10 text-primary animate-pulse'
+    : item.state === 'paused'
+      ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+      : item.state === 'completed'
+        ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+        : 'bg-muted text-muted-foreground'
+  // The freshest line wins: a summary is the harness talking about now, the
+  // description is what the task was asked to be.
+  const detail = item.summary || item.description
+  return (
+    // Marked with the task's id so a host's jump-to-work control can find
+    // this block in the DOM — the same contract SubagentBlock carries.
+    <div className='rounded-md border border-border/60 bg-muted/20 px-3 py-2' {...{ [WORK_ID_ATTR]: item.id }}>
+      <div className='flex w-full items-center gap-2'>
+        <TerminalSquare className='size-3.5 shrink-0 text-muted-foreground' />
+        <span className='truncate text-xs font-medium text-foreground'>{item.name || 'Task'}</span>
+        {running ? <Loader2 className='size-3.5 shrink-0 animate-spin text-primary' /> : null}
+        <span className={`ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${badgeClass}`}>
+          {item.state}
+        </span>
+        {item.onStop ? (
+          <Button variant='ghost' size='sm' className='h-6 shrink-0 gap-1 px-2 text-[11px]' onClick={item.onStop}>
+            <Square className='size-3' />
+            Stop
+          </Button>
+        ) : null}
+      </div>
+      {detail ? <div className='mt-1 truncate text-xs text-muted-foreground'>{detail}</div> : null}
     </div>
   )
 }
@@ -998,6 +1068,9 @@ export function ChatTurnDetails({
     if (item.kind === 'plan') {
       return <PlanChecklist item={item} />
     }
+    if (item.kind === 'task') {
+      return <TaskBlock item={item} />
+    }
     return renderTool(item)
   }
 
@@ -1064,6 +1137,12 @@ export function ChatTurnDetails({
                     // The plan is present-tense state: even folded away, a
                     // collapsed turn still shows where the agent stands.
                     return <PlanChecklist item={last.item} />
+                  }
+                  if (last.item.kind === 'task') {
+                    // Present-tense for the same reason as the plan: a task
+                    // that is still running is what the agent is doing NOW,
+                    // and its Stop control must not fold away with the rest.
+                    return <TaskBlock item={last.item} />
                   }
                   if (last.item.kind === 'assistant-text') {
                     return last.item.text.trim() ? (

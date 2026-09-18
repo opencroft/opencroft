@@ -252,7 +252,16 @@ export function headerFromWindow(header?: { index: number; event: AuthoredChatEv
 // page, so without it that block is renamed on every fetch and the restore
 // loses its anchor. Callers pass the `header` the window carries for exactly
 // this purpose.
-export function buildBlocks(messages: ChatMessage[], enclosingTurnId?: number): Block[] {
+// `onStopTask` is the host's stop-one-background-task call, carried into each
+// task item as a bound callback — the kit's DetailItem is plain data plus
+// callbacks, so this is the seam where a product action crosses into it.
+// Optional on purpose: a host with no stop route builds items with no Stop
+// control, which is the same degradation a missing handler gives Edit.
+export function buildBlocks(
+  messages: ChatMessage[],
+  enclosingTurnId?: number,
+  onStopTask?: (asyncTaskId: string) => void,
+): Block[] {
   const blocks: Block[] = []
   let details: DetailItem[] = []
   // The turn the current run of replies belongs to. Seeded with the enclosing
@@ -295,7 +304,7 @@ export function buildBlocks(messages: ChatMessage[], enclosingTurnId?: number): 
       firstReplyId = m.id
     }
     for (const p of m.parts) {
-      const item = partToDetail(p)
+      const item = partToDetail(p, onStopTask)
       if (item) {
         details.push(item)
       }
@@ -309,7 +318,7 @@ export function buildBlocks(messages: ChatMessage[], enclosingTurnId?: number): 
 // nothing (an empty text/thinking part). Shared by the parent chain and,
 // recursively, by a subagent's nested transcript, so both draw text, thinking
 // and tools identically.
-function partToDetail(p: ChatMessage['parts'][number]): DetailItem | null {
+function partToDetail(p: ChatMessage['parts'][number], onStopTask?: (asyncTaskId: string) => void): DetailItem | null {
   if (p.type === 'text') {
     const v = stripOpencroftTags(p.text || '…')
     return v.trim() ? { kind: 'assistant-text', text: v } : null
@@ -324,7 +333,25 @@ function partToDetail(p: ChatMessage['parts'][number]): DetailItem | null {
       name: p.name,
       task: p.task,
       state: p.state,
-      items: p.parts.map(partToDetail).filter((item): item is DetailItem => item !== null),
+      items: p.parts
+        .map((child) => partToDetail(child, onStopTask))
+        .filter((item): item is DetailItem => item !== null),
+    }
+  }
+  if (p.type === 'async-task') {
+    // The same name fallback the out-of-band strip uses, applied at the same
+    // seam every other part crosses: the kit item carries what a reader sees,
+    // and `taskType` is all a task that never named itself has.
+    return {
+      kind: 'task',
+      id: p.asyncTaskId,
+      name: p.name || p.taskType || 'Task',
+      description: p.description,
+      summary: p.summary,
+      state: p.state,
+      // Bound here rather than carried as (id, callback) so the kit component
+      // never learns what a task id addresses — it presses what it is given.
+      onStop: onStopTask && p.canStop ? () => onStopTask(p.asyncTaskId) : undefined,
     }
   }
   if (p.type === 'plan') {

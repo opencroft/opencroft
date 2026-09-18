@@ -3,6 +3,8 @@ import { useCallback, useRef, useState } from 'react'
 import { GroupChatThreadFraming } from 'ui/group-chat/group-chat-thread-framing'
 import { ScrollPage } from 'ui/layout/scrollpage'
 
+import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
+import { deriveSessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { GroupChatThreadChat } from '@/app/_authed/(group-chats)/_components/group-chat-thread-chat'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
@@ -90,6 +92,17 @@ function ThreadConversation({
 }) {
   const [artifacts, setArtifacts] = useState(initialArtifacts)
   const [openArtifactId, setOpenArtifactId] = useState<string | undefined>(undefined)
+  // The shared session-activity poll, exactly as the group-chat screen reads
+  // it for its thread list — one status vocabulary, one source. The header's
+  // status line and the list row a reader just came from must never disagree
+  // about the same session.
+  const { pendingKeys, activeKeys, backgroundKeys, aliveKeys } = useSessionActivityKeys(true)
+  const status = deriveSessionStatus(thread.sessionKey, {
+    pending: pendingKeys,
+    active: activeKeys,
+    background: backgroundKeys,
+    alive: aliveKeys,
+  })
   // An agent writes its notes DURING a turn, so the loader's copy is stale the
   // moment one lands. Refetching when a turn finishes is the cheapest signal
   // that something might have changed -- there is no push for artifacts, and
@@ -119,11 +132,13 @@ function ThreadConversation({
         thread={thread}
         onTurnSettled={onTurnSettled}
         onThreadForked={onThreadForked}
-        renderFrame={({ conversation, composer }) => (
+        renderFrame={({ conversation, composer, work }) => (
           <GroupChatThreadFraming
             groupChatName={chat.name}
             threadTitle={thread.title}
             agent={{ name: thread.agent.name, avatarUrl: thread.agent.avatarUrl }}
+            status={status}
+            work={work}
             artifacts={artifacts}
             openArtifactId={openArtifactId}
             onOpenArtifact={setOpenArtifactId}

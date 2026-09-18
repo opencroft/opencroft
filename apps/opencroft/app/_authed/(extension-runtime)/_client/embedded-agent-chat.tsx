@@ -44,8 +44,11 @@ import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from 'ui/empty'
 import { AddMemberPicker, type MemberCandidate } from 'ui/group-chat/add-member-picker'
+import { GroupChatThreadFraming } from 'ui/group-chat/group-chat-thread-framing'
 import { LogoLoader } from 'ui/logo-loader'
 
+import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
+import { deriveSessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import { GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
 import { GroupChatThreadChat } from '@/app/_authed/(group-chats)/_components/group-chat-thread-chat'
@@ -307,17 +310,50 @@ function EmbeddedThread({
 
   const onThreadStarted = useCallback(() => setThreadTick((tick) => tick + 1), [])
 
+  // The same shared session-activity poll (and the same derivation) the
+  // group-chat screens read — one status vocabulary, one source. Enabled only
+  // once there is a thread whose session the status could be about.
+  const { pendingKeys, activeKeys, backgroundKeys, aliveKeys } = useSessionActivityKeys(Boolean(thread))
+  const status = thread
+    ? deriveSessionStatus(thread.sessionKey, {
+        pending: pendingKeys,
+        active: activeKeys,
+        background: backgroundKeys,
+        alive: aliveKeys,
+      })
+    : undefined
+
   if (thread === undefined) {
     return <CenteredSpinner className={className} />
   }
   if (thread) {
+    const openThread = thread
     return (
       <div className={cn('flex h-full min-h-0 flex-col', className)}>
         {/* No agent picker on an OPEN thread — a thread already names its
             agent, and switching conversations is the ChatSelector's job. The
             picker's one remaining home is the start composer below, where an
             agent genuinely has to be chosen. */}
-        <GroupChatThreadChat thread={thread} />
+        {/* The SAME framing header the thread route wears, so an embedded
+            thread says where the reader is and who is working exactly as the
+            full-page one does. No back affordance (this surface is not a
+            navigation leaf) and no artifacts strip (the panel it opens
+            belongs to the route's wider arrangement). */}
+        <GroupChatThreadChat
+          thread={openThread}
+          renderFrame={({ conversation, composer, work }) => (
+            <GroupChatThreadFraming
+              groupChatName={chat.name}
+              threadTitle={openThread.title || id}
+              agent={{ name: openThread.agent.name, avatarUrl: openThread.agent.avatarUrl }}
+              status={status}
+              work={work}
+              composer={composer}
+            >
+              {conversation}
+            </GroupChatThreadFraming>
+          )}
+        />
       </div>
     )
   }

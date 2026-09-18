@@ -221,6 +221,7 @@ export interface AcpSession {
 type ToolPart = Extract<ChatPart, { type: 'tool-call' }>
 type TextPart = Extract<ChatPart, { type: 'text' | 'thinking' }>
 type SubagentPart = Extract<ChatPart, { type: 'subagent' }>
+type AsyncTaskPart = Extract<ChatPart, { type: 'async-task' }>
 
 function toolText(output: unknown): string {
   if (typeof output === 'string') {
@@ -409,6 +410,11 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
   const subagents = new Map<string, { part: SubagentPart; tools: Map<string, ToolPart> }>()
   // Background tasks by asyncTaskId — last state wins, surfaced as a list.
   const asyncTasks = new Map<string, AsyncTaskInfo>()
+  // The tasks' transcript parts by asyncTaskId — the subagent contract again:
+  // the first event fixes the part's place in the timeline, later ones patch
+  // it in place. Kept beside (not instead of) `asyncTasks`: the list is what
+  // the out-of-band surfaces read, the parts are what the transcript draws.
+  const taskParts = new Map<string, AsyncTaskPart>()
   // The live plan part and the assistant message it sits in, so later plan
   // events patch it in place — see the 'plan' case below.
   let plan: { message: ChatMessage; part: Extract<ChatPart, { type: 'plan' }> } | null = null
@@ -506,7 +512,40 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
         break
       }
       case 'async_task': {
-        asyncTasks.set(event.task.asyncTaskId, event.task)
+        const info = event.task
+        asyncTasks.set(info.asyncTaskId, info)
+        // The task's place in the conversation, mirroring the subagent upsert
+        // above: the first sighting anchors a part at this event's timeline
+        // position, later events patch its fields where it stands (every
+        // event carries the entity's full state, so assignment is the merge).
+        // `showInTranscript` is the harness's own advice — a pure-plumbing
+        // task arrives with it false and stays out of the transcript while
+        // still reaching the `asyncTasks` list above.
+        if (info.showInTranscript === false) {
+          break
+        }
+        const existing = taskParts.get(info.asyncTaskId)
+        if (existing) {
+          existing.name = info.name
+          existing.taskType = info.taskType
+          existing.description = info.description
+          existing.state = info.state
+          existing.canStop = info.canStop
+          existing.summary = info.summary
+        } else {
+          const part: AsyncTaskPart = {
+            type: 'async-task',
+            asyncTaskId: info.asyncTaskId,
+            name: info.name,
+            taskType: info.taskType,
+            description: info.description,
+            state: info.state,
+            canStop: info.canStop,
+            ...(info.summary !== undefined ? { summary: info.summary } : {}),
+          }
+          ensureAssistant(id).parts.push(part)
+          taskParts.set(info.asyncTaskId, part)
+        }
         break
       }
       case 'plan': {

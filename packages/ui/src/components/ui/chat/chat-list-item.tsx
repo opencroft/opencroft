@@ -3,10 +3,10 @@
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { Pencil, Square, X } from 'lucide-react'
 
-import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
-import { ListRow } from 'ui/components/ui/utils/list-row'
-import { RowContextMenu, type RowMenuEntry } from 'ui/components/ui/utils/row-context-menu'
-import type { StatusVariant } from 'ui/components/ui/utils/status-indicator'
+import { AgentAvatar } from '../media/agent-avatar'
+import { ListRow } from '../utils/list-row'
+import { RowContextMenu, type RowMenuEntry } from '../utils/row-context-menu'
+import type { StatusVariant } from '../utils/status-indicator'
 
 export interface ChatListItemAction {
   label: string
@@ -68,14 +68,20 @@ interface ChatListItemProps {
 //   working  -> active turn         -> "Working",  green (success) dot
 //   waiting  -> pending approval    -> "Waiting",  blue (primary) dot
 // The concrete dot colours live in the shared status-indicator primitive.
-const STATUS_WORD: Record<ChatStatus, string> = {
+//
+// Exported because this row's status line is THE vocabulary for a session's
+// process state, and other surfaces (the thread framing's header) say the
+// same thing about the same session -- importing these is what keeps a word
+// and a dot from drifting between a list row and the header a press on it
+// opens.
+export const STATUS_WORD: Record<ChatStatus, string> = {
   offline: 'Offline',
   idle: 'Idle',
   working: 'Working',
   waiting: 'Waiting',
 }
 // A dot is shown only for the active states; offline/idle rely on the text.
-const STATUS_DOT: Partial<Record<ChatStatus, StatusVariant>> = {
+export const STATUS_DOT: Partial<Record<ChatStatus, StatusVariant>> = {
   working: 'success',
   waiting: 'primary',
 }

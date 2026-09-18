@@ -2,6 +2,7 @@
 
 import { AgentChat } from 'agent-chat/agent-chat'
 import { Approvals } from 'agent-chat/approvals'
+import { WORK_ID_ATTR } from 'agent-chat/components/chat-turn'
 import { useClearControl } from 'agent-chat/use-clear-control'
 import type { CompactStatus } from 'agent-chat/use-compact-control'
 import { useCompactControl } from 'agent-chat/use-compact-control'
@@ -9,12 +10,12 @@ import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { toast } from 'sonner'
 import { CommandBarFrame } from 'ui/agent-chat/command-bar-frame'
+import type { ThreadWork, ThreadWorkItem } from 'ui/group-chat/group-chat-thread-framing'
 import { Flex } from 'ui/layout/flex'
 import { StickySection } from 'ui/layouts/sticky-section'
 import { ScrollArea } from 'ui/scroll-area'
 
 import { AgentChatStatusIndicators, CHAT_RENDERERS, renderToolCall } from '@/app/_authed/(agent)/_components/agent-chat'
-import { BackgroundTaskStrip } from '@/app/_authed/(agent)/_components/background-task-strip'
 import { AgentCommandBarHost } from '@/app/_authed/(agent)/_components/command-bar-host'
 import type {
   ForkTransport,
@@ -52,12 +53,16 @@ import {
 // embedded variant takes the default frame below — same scroll and
 // sticky-composer arrangement, no group-chat chrome.
 
-/** The two parts a frame arranges. The composer must stay pinned while the
+/** The parts a frame arranges. The composer must stay pinned while the
  *  conversation scrolls — see the default frame for the arrangement a frame
- *  is expected to keep. */
+ *  is expected to keep. `work` is the session's delegated-work summary
+ *  (subagents and background tasks, with a jump to each one's block) for a
+ *  frame with a header to put it in; the default frame has none and simply
+ *  doesn't read it. */
 export interface ThreadChatParts {
   conversation: ReactNode
   composer: ReactNode
+  work: ThreadWork
 }
 
 interface GroupChatThreadChatProps {
@@ -202,8 +207,8 @@ export function GroupChatThreadChat({
   // (for edit/fork) must stay correct regardless of how much is rendered, and
   // folding/building is cheap next to the cost of actually rendering blocks.
   const blocks = useMemo(
-    () => buildBlocks(acp.session.messages, acp.session.historyHeader?.index),
-    [acp.session.messages, acp.session.historyHeader?.index],
+    () => buildBlocks(acp.session.messages, acp.session.historyHeader?.index, acp.stopBackgroundTask),
+    [acp.session.messages, acp.session.historyHeader?.index, acp.stopBackgroundTask],
   )
 
   const unread = useMemo(() => buildUnread(acp.queue, acp.queueAuthors), [acp.queue, acp.queueAuthors])
@@ -212,6 +217,89 @@ export function GroupChatThreadChat({
   const presence = useMemo(
     () => ({ value: acp.presence, onSelect: acp.setPresence, steering: acp.canSteer }),
     [acp.presence, acp.setPresence, acp.canSteer],
+  )
+
+  // The header's delegated-work panel, derived from the FOLDED parts rather
+  // than the out-of-band task list: every entry here names a block the jump
+  // below can land on, which a task the harness kept out of the transcript
+  // (showInTranscript false) deliberately is not.
+  const workItems = useMemo(() => {
+    const items: ThreadWorkItem[] = []
+    for (const message of acp.session.messages) {
+      for (const part of message.parts) {
+        if (part.type === 'subagent') {
+          items.push({
+            id: part.subagentSessionId,
+            kind: 'subagent',
+            name: part.name || 'Subagent',
+            // The same reading the block gives it: no state yet IS running.
+            state: part.state ?? 'running',
+            live: part.state === undefined,
+          })
+        } else if (part.type === 'async-task') {
+          items.push({
+            id: part.asyncTaskId,
+            kind: 'task',
+            name: part.name || part.taskType || 'Task',
+            state: part.state,
+            live: part.state === 'running' || part.state === 'paused',
+          })
+        }
+      }
+    }
+    return items
+  }, [acp.session.messages])
+
+  // The session read through a ref so `jumpToWork` keeps ONE identity for the
+  // life of the component — it feeds the memoized `work` object below, and a
+  // dependency on the session would rebuild both on every folded event.
+  const acpSessionRef = useRef(acp.session)
+  acpSessionRef.current = acp.session
+
+  // Scroll to a subagent's or task's block, paging older history in until it
+  // is in the DOM. Bounded twice: by the history cursor itself (hasMoreHistory
+  // goes false at the true start) and by a hard page cap, so a cursor that
+  // never settles cannot spin this forever.
+  const jumpToWork = useCallback(async (id: string) => {
+    const find = () => document.querySelector<HTMLElement>(`[${WORK_ID_ATTR}="${CSS.escape(id)}"]`)
+    // loadMoreHistory resolves when the page's events are handed to React,
+    // not when the DOM shows them — wait out a paint before asking the DOM.
+    const afterPaint = () =>
+      new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+    const MAX_PAGES = 40
+    let target = find()
+    for (let page = 0; !target && acpSessionRef.current.hasMoreHistory && page < MAX_PAGES; page++) {
+      // Optional on the session contract; a session with more history but no
+      // way to load it has nothing else this loop could do, so stop.
+      if (!acpSessionRef.current.loadMoreHistory) {
+        break
+      }
+      await acpSessionRef.current.loadMoreHistory()
+      await afterPaint()
+      target = find()
+    }
+    if (!target) {
+      return
+    }
+    target.scrollIntoView({ block: 'center' })
+    // A brief ring so the eye lands on the right block after the jump. The
+    // classes are removed rather than toggled by state: the flash is not a
+    // fact about the block, just the landing light.
+    const el = target
+    el.classList.add('ring-2', 'ring-primary')
+    window.setTimeout(() => el.classList.remove('ring-2', 'ring-primary'), 1500)
+  }, [])
+
+  // The badge counts live TASKS (running or paused) — the panel lists live
+  // subagents too, but a live subagent is already the turn the reader is
+  // watching, where a task is the work that outlives it.
+  const work = useMemo<ThreadWork>(
+    () => ({
+      items: workItems,
+      liveCount: workItems.filter((item) => item.kind === 'task' && item.live).length,
+      onJump: jumpToWork,
+    }),
+    [workItems, jumpToWork],
   )
 
   // Compacts and clears THIS thread, membership-checked (see clearThread's
@@ -361,12 +449,11 @@ export function GroupChatThreadChat({
           component and the same position relative to the conversation the
           1:1 host uses, so the two surfaces cannot drift. */}
       <Approvals session={acp} />
-      <BackgroundTaskStrip tasks={acp.backgroundTasks} onStop={acp.stopBackgroundTask} />
     </>
   )
 
   if (renderFrame) {
-    return <>{renderFrame({ conversation, composer })}</>
+    return <>{renderFrame({ conversation, composer, work })}</>
   }
   // The default (embedded) frame: the same scroll-and-pin arrangement the
   // kit's thread framing keeps, minus its chrome. The scroll-area selector

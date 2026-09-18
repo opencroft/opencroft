@@ -36,6 +36,23 @@ export type ChatPart =
       state?: string
       parts: ChatPart[]
     }
+  // A background task the harness reported under this turn (see
+  // AsyncTaskInfo). One part per asyncTaskId, placed at the position of its
+  // first event and patched in place by later ones — last value wins, the
+  // same contract as `subagent`. Unlike a subagent it has no nested
+  // transcript: the fields ARE the whole of what a reader can see. Only tasks
+  // the harness advised drawing (`showInTranscript` not false) become parts;
+  // the rest still reach the out-of-band task list.
+  | {
+      type: 'async-task'
+      asyncTaskId: string
+      name: string
+      taskType: string
+      description: string
+      state: string
+      canStop: boolean
+      summary?: string
+    }
   // The agent's execution plan (ACP `plan` session update) as ONE part that
   // later plan events patch in place — every event replaces `entries`
   // wholesale, so the part is keyed by the absolute index of the event that
