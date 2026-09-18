@@ -428,12 +428,21 @@ export async function renameSpaceAppImpl(instanceId: string, name: string): Prom
  * agent's context.
  */
 export interface SpaceAppInfo {
-  instanceId: string
+  /**
+   * The instance's PUBLIC ADDRESS, `<space>.<slug>` — what a caller spends to
+   * reach it, and the only identifier this listing hands out.
+   *
+   * The uuid is deliberately absent. It still resolves everywhere the address
+   * does and always will, but an agent spends what the listings give it, so
+   * emitting the uuid here is what kept it in circulation. Acceptance is not
+   * vocabulary; emission is.
+   */
+  address: string
   extensionId: string
   appSlug: string
   /** The instance's own name — what the user called it, not the App's title. */
   name: string
-  /** The instance's slug — with `space` it forms the public address `<space>.<slug>`. */
+  /** The instance's slug — with `space` it forms `address`. */
   slug: string
   title: string
   description?: string
@@ -456,7 +465,7 @@ export async function listSpaceAppInfos(spaceSlug?: string): Promise<SpaceAppInf
     }
     const entry = provided.find((p) => p.extensionId === row.extensionId && p.value.slug === row.appSlug)?.value
     infos.push({
-      instanceId: row.id,
+      address: `${space}.${row.slug}`,
       extensionId: row.extensionId,
       appSlug: row.appSlug,
       name: row.name,
