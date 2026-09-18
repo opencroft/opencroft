@@ -12,10 +12,25 @@ import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 
 // The add-app form — where a row of the settings' Add tab lands. Which App is
 // being added rides in the `app` search param as `<extension-slug>.<app-slug>`
-// (see _lib/app-ref.ts). The static `add` segment outranks the sibling
-// `$instanceId` route, so this page wins the address; instance ids are opaque
-// and never the word "add".
-export const Route = createFileRoute('/_authed/(apps)/space_/$slug/settings_/app/add')({
+// (see _lib/app-ref.ts).
+//
+// THE SEGMENT IS `~add` RATHER THAN `add`, AND THE TILDE IS THE WHOLE POINT.
+// This route is a static sibling of `$app`, which carries a user-minted
+// instance slug — so the two share one namespace, and a static segment that a
+// NAME COULD MINT is reachable by naming an app after it. The static route
+// outranks the dynamic one, so that app's own settings link would open this
+// form instead: no error, no 404, wrong screen. `add` was exactly that from the
+// moment app addresses became slugs, and the comment that used to sit here
+// argued the opposite ("instance ids are opaque and never the word add") on a
+// premise slug routing deleted.
+//
+// The invariant, stated once: EVERY STATIC SIBLING OF A DYNAMIC SLUG SEGMENT
+// MUST BE A STRING `instanceSlugFor` CANNOT PRODUCE. `slugify` collapses
+// everything outside [a-z0-9] to `-` and trims the ends, so no name mints
+// `~add`. This comment describes the rule; `_lib/static-route-segments.test.ts`
+// enforces it across the whole route tree, so the next one is a failing build
+// rather than someone finding it in the UI.
+export const Route = createFileRoute('/_authed/(apps)/space_/$slug/settings_/app/~add')({
   validateSearch: (search: Record<string, unknown>): { app: string } => ({
     app: typeof search.app === 'string' ? search.app : '',
   }),

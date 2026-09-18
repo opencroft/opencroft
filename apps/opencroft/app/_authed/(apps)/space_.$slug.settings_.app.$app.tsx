@@ -5,15 +5,16 @@ import { Flex } from 'ui/layout/flex'
 import { ScrollContent, ScrollHeader, ScrollPage } from 'ui/layout/scrollpage'
 
 import { AppSettings } from '@/app/_authed/(apps)/_components/app-settings'
+import { instanceBySlug } from '@/app/_authed/(apps)/_lib/instance-by-slug'
 import { listApps, listSpaceApps } from '@/app/_authed/(apps)/_server/actions'
 import { settleSpaceRoute } from '@/app/_authed/(space)/_lib/space-route'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 
 // One App instance's settings — where the Apps list's Edit button lands.
-// Standalone under /space/$slug/settings/app/$instanceId rather than nested in
+// Standalone under /space/$slug/settings/app/$app rather than nested in
 // the settings screen: the list is a section there, this is a full page of its
 // own, and Back returns to that section.
-export const Route = createFileRoute('/_authed/(apps)/space_/$slug/settings_/app/$instanceId')({
+export const Route = createFileRoute('/_authed/(apps)/space_/$slug/settings_/app/$app')({
   loader: async ({ params }) => {
     // An unknown SPACE is settled first (settleSpaceRoute); an unknown INSTANCE
     // in a space that exists is this loader's own notFound, below. Both 404.
@@ -23,7 +24,7 @@ export const Route = createFileRoute('/_authed/(apps)/space_/$slug/settings_/app
       Promise.all([listApps(), listSpaceApps({ data: params.slug })]),
     )
     const [apps, instances] = data
-    const instance = instances.find((entry) => entry.id === params.instanceId)
+    const instance = instanceBySlug(instances, params.app)
     if (!instance) {
       throw notFound()
     }
