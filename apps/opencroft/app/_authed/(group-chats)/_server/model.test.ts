@@ -2175,17 +2175,44 @@ test("a thread's contextUsage mirrors its session's own usage, the same source t
     ?.threads.find((t) => t.ref === expectedRef)
   assert.deepEqual(
     after?.contextUsage,
-    { usedTokens: 12_345, contextLimit: null },
+    { usedTokens: 12_345, contextLimit: 200_000 },
     // The tokens are the thread's own session's, via the same mechanism
     // ordinary sessions use — that is what this test is for, and it still
-    // holds. The window is null because this fixture's agent has no configured
-    // context window and the session is bridged, so the 200_000 it reported is
-    // a figure nobody established: agent-client withholds it rather than let a
-    // ratio be drawn against it (see context-window.ts). Configure a window on
-    // the agent to get a percentage back.
-    "the exact token figure the thread's own session reported; its window is withheld as unverified",
+    // holds. The window now comes with them: under the current rule an
+    // uncontradicted harness-reported size is relayed rather than withheld
+    // (12_345 against 200_000 does not disprove it — see context-window.ts;
+    // the module rule is pinned in context-window.test.ts), and the thread
+    // view reads the same live usage the ring renders, so it shows what the
+    // ring shows.
+    "the exact token figure the thread's own session reported, with the window it reported alongside",
   )
   assert.equal(after?.queuedMessages, 0, 'an idle thread holds no server-side prompts — 0 is a fact, not unknown')
+})
+
+test("a window the thread's own reading disproves is withheld from the thread view", async () => {
+  // The surviving half of the gate the test above used to carry: trusting an
+  // uncontradicted reported size does not mean trusting an impossible one.
+  // 531_737 used against a reported 200_000 is self-contradicting, so
+  // agent-client drops the size before the thread view ever sees it — the
+  // same sanity gate the ring's own read applies.
+  const owner = await makeUser('context-window-gate-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'watched for lies', 'stay small')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message')
+  await waitForPrompts(prompts, 1)
+
+  handleUpdate({
+    sessionId: started.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 531_737, size: 200_000 },
+  } as Parameters<typeof handleUpdate>[0])
+
+  const view = (await model.listGroupChatsForAgentView('Agent Session'))
+    .find((c) => c.ref === chat.id)
+    ?.threads.find((t) => t.ref === model.threadRefFromSessionKey(started.thread.sessionKey))
+  assert.deepEqual(view?.contextUsage, { usedTokens: 531_737, contextLimit: null })
 })
 
 test('an offline thread with prior activity reports its last-known usage with asOf, not null', async () => {
@@ -3393,13 +3420,14 @@ test('renaming a chat re-keys every thread in it, and the live session comes wit
 
   // The ring, through the same read the composer makes. The tokens are what
   // this assertion is about: they survived the re-key, which a rename that
-  // moved only the row would have lost. The window is null for the same reason
-  // as in the contextUsage test above — an unconfigured bridged session has no
-  // window anyone established, so none is shown.
+  // moved only the row would have lost. The window rides along for the same
+  // reason as in the contextUsage test above — an uncontradicted reported
+  // size is relayed under the current window rule — and losing IT to a re-key
+  // would be the same bug wearing a different field.
   const view = (await model.listGroupChatsForAgentView('Agent Session'))
     .find((c) => c.ref === chat.id)
     ?.threads.find((t) => t.ref === model.threadRefFromSessionKey(newKey))
-  assert.deepEqual(view?.contextUsage, { usedTokens: 4_321, contextLimit: null })
+  assert.deepEqual(view?.contextUsage, { usedTokens: 4_321, contextLimit: 200_000 })
 
   // And a send lands in the session that was already there -- the whole point.
   // A migration that missed the pointer would pass every assertion above that
