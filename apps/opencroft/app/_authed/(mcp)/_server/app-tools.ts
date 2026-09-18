@@ -1,6 +1,7 @@
 /** The App family: listing, calling, transferring, finding and adding App instances. */
 
 import { withApprovalRequired } from '@/app/_authed/(approvals)/_server/with-approval'
+import { appAddressOf, resolveAppAddress } from '@/app/_authed/(apps)/_server/app-address'
 import {
   addSpaceAppImpl,
   callAppAction,
@@ -19,7 +20,7 @@ export const definitions = [
   {
     name: 'app_list',
     description:
-      'List the App instances added to a space — an App is an extension-provided application a user adds to a space with its own parameters and private data. Each entry names the instance (instanceId), its App, its space, the parameter values it was added with, and the actions it exposes (with input schemas). Use this to discover which instance to target before app_call.',
+      'List the App instances added to a space — an App is an extension-provided application a user adds to a space with its own parameters and private data. Each entry carries the instance’s address (`<space>.<app-slug>`), its App, its space, the parameter values it was added with, and the actions it exposes (with input schemas). That address is what every other tool takes to reach the instance, including the `<space>.<app-slug>/<handle-id>` target form the remote_* tools accept. Use this to discover which instance to target before app_call.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -37,7 +38,7 @@ export const definitions = [
     inputSchema: {
       type: 'object' as const,
       properties: {
-        instanceId: { type: 'string', description: 'App instance ID from app_list.' },
+        instanceId: { type: 'string', description: 'The instance’s address, `<space>.<app-slug>` — see app_list.' },
         action: { type: 'string', description: 'Action ID from the instance’s actions list.' },
         params: {
           type: 'object',
@@ -51,11 +52,11 @@ export const definitions = [
   {
     name: 'app_transfer',
     description:
-      'Move one App instance to another space, with whatever space-scoped data its App owns — a Graph instance moves its whole graph (the graph keeps its slug when free in the target, otherwise takes its donor space’s name and slug). A transfer the App refuses (e.g. a Graph that is its space’s default while other graphs remain) rolls back whole. Use app_list to find the instanceId.',
+      'Move one App instance to another space, with whatever space-scoped data its App owns — a Graph instance moves its whole graph (the graph keeps its slug when free in the target, otherwise takes its donor space’s name and slug). A transfer the App refuses (e.g. a Graph that is its space’s default while other graphs remain) rolls back whole. Use app_list to find the instance’s address.',
     inputSchema: {
       type: 'object' as const,
       properties: {
-        instanceId: { type: 'string', description: 'The App instance to move — see app_list.' },
+        instanceId: { type: 'string', description: 'The instance to move, as `<space>.<app-slug>` — see app_list.' },
         target: { type: 'string', description: 'Slug of the space to move it to.' },
       },
       required: ['instanceId', 'target'],
@@ -94,11 +95,11 @@ export const definitions = [
   {
     name: 'app_remove',
     description:
-      'Remove an App instance from its space, with whatever data it owns — removing a Graph instance removes its graph and every node on it. The App can refuse (e.g. a Graph that is its space’s default while other graphs remain); a refusal leaves the instance whole. Use app_list to find the instanceId.',
+      'Remove an App instance from its space, with whatever data it owns — removing a Graph instance removes its graph and every node on it. The App can refuse (e.g. a Graph that is its space’s default while other graphs remain); a refusal leaves the instance whole. Use app_list to find the instance’s address.',
     inputSchema: {
       type: 'object' as const,
       properties: {
-        instanceId: { type: 'string', description: 'The App instance to remove — see app_list.' },
+        instanceId: { type: 'string', description: 'The instance to remove, as `<space>.<app-slug>` — see app_list.' },
       },
       required: ['instanceId'],
     },
@@ -155,9 +156,12 @@ export const handlers: Record<string, ToolHandler> = {
     const registry = getSpacesRegistry()
     const graph = registry.graphByInstance(moved.id)
     const movedGraphAddress = graph ? `${targetSlug}.${graph.slug}` : undefined
-    // `moved.id`, never the caller's own reference echoed back: if they
-    // addressed it, that address now names nothing.
-    return textResult(JSON.stringify({ instanceId: moved.id, space: targetSlug, movedGraphAddress }, null, 2))
+    // The instance's address AFTER the move, never the caller's own reference
+    // echoed back: an address names an instance through its space, so the one
+    // they sent now names nothing. Handing it back would teach the dead form.
+    return textResult(
+      JSON.stringify({ app: `${targetSlug}.${moved.slug}`, space: targetSlug, movedGraphAddress }, null, 2),
+    )
   }),
 
   // ── app_find ─────────────────────────────────────────────────────
@@ -190,7 +194,6 @@ export const handlers: Record<string, ToolHandler> = {
     return textResult(
       JSON.stringify(
         {
-          instanceId: row.id,
           space: spaceSlug,
           app: `${extensionId}/${appSlug}`,
           name: row.name,
@@ -209,7 +212,14 @@ export const handlers: Record<string, ToolHandler> = {
     if (!instanceId) {
       fail(-32602, 'Missing required param: instanceId')
     }
+    // Resolved before the removal so the result can name the instance by its
+    // ADDRESS. Echoing the caller's own argument back would print a uuid
+    // whenever they sent one, which is the one thing an emitter must not do —
+    // and an argument that resolved to nothing is simply left out, because
+    // `removed: false` already says everything true about it.
+    const row = await resolveAppAddress(instanceId)
+    const app = row ? await appAddressOf(row) : undefined
     const removed = await removeSpaceAppImpl(instanceId)
-    return textResult(JSON.stringify({ instanceId, removed }, null, 2))
+    return textResult(JSON.stringify({ app, removed }, null, 2))
   }),
 }

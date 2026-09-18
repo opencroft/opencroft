@@ -167,7 +167,7 @@ test('resolveTerminalContext rejects a slash-smuggling extension handle', async 
 
 test('resolveTerminalContext rejects a bare "extensions" target with no handle', async () => {
   await assert.rejects(resolveTerminalContext({ target: 'extensions' }), (err: { message?: string }) => {
-    assert.match(err.message ?? '', /target must include handle/)
+    assert.match(err.message ?? '', /must include a handle/)
     return true
   })
 })

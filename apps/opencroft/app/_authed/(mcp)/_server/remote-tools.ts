@@ -55,13 +55,14 @@ export const definitions = [
   {
     name: 'remote_read',
     description:
-      'Read a file from a remote node. The target is a terminal-context output handle in "node-id/handle-id" format (e.g. "localhost_abc/terminal"). Output is line-numbered (cat -n style). Optional offset/limit slice by 1-indexed line. A file too large for one read comes back cut, with an unnumbered "(truncated …)" note as the last line — when you see it, the file continues past what you were shown, so do not conclude anything from where it appears to end.',
+      'Read a file from a remote node. The target is a terminal-context output handle, "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>" (e.g. "localhost_abc/terminal"). Output is line-numbered (cat -n style). Optional offset/limit slice by 1-indexed line. A file too large for one read comes back cut, with an unnumbered "(truncated …)" note as the last line — when you see it, the file continues past what you were shown, so do not conclude anything from where it appears to end.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         target: {
           type: 'string',
-          description: 'Terminal-context output handle (format: "node-id/handle-id").',
+          description:
+            'Terminal-context output handle: "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
         },
         path: {
           type: 'string',
@@ -77,13 +78,14 @@ export const definitions = [
   {
     name: 'remote_glob',
     description:
-      'Find file paths by glob on a remote node\'s filesystem (`**` spans directories, `*` doesn\'t, `?` = one char), e.g. "src/**/*.tsx". The target is a terminal-context output handle in "node-id/handle-id" format. Read-only. Returns one matching path per line, relative to `path`. Dependency/VCS/build directories (node_modules, .git, dist, …) are skipped unless `includeIgnored` is set or `path` points inside one. No matches (or a missing `path`) return "(no matches)" rather than an error.',
+      'Find file paths by glob on a remote node\'s filesystem (`**` spans directories, `*` doesn\'t, `?` = one char), e.g. "src/**/*.tsx". The target is a terminal-context output handle, "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>". Read-only. Returns one matching path per line, relative to `path`. Dependency/VCS/build directories (node_modules, .git, dist, …) are skipped unless `includeIgnored` is set or `path` points inside one. No matches (or a missing `path`) return "(no matches)" rather than an error.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         target: {
           type: 'string',
-          description: 'Terminal-context output handle (format: "node-id/handle-id").',
+          description:
+            'Terminal-context output handle: "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
         },
         pattern: {
           type: 'string',
@@ -110,13 +112,14 @@ export const definitions = [
   {
     name: 'remote_grep',
     description:
-      'Search file contents by regular expression (POSIX extended, i.e. `grep -E`) on a remote node\'s filesystem, recursively under `path`. The target is a terminal-context output handle in "node-id/handle-id" format. Read-only. Returns matching lines as "path:line:text", one per line, with paths echoed in the same form `path` was given (relative when omitted). Dependency/VCS/build directories (node_modules, .git, dist, …) are skipped unless `includeIgnored` is set or `path` points inside one; overlong lines are column-truncated. No matches (or a missing `path`) return "(no matches)" rather than an error.',
+      'Search file contents by regular expression (POSIX extended, i.e. `grep -E`) on a remote node\'s filesystem, recursively under `path`. The target is a terminal-context output handle, "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>". Read-only. Returns matching lines as "path:line:text", one per line, with paths echoed in the same form `path` was given (relative when omitted). Dependency/VCS/build directories (node_modules, .git, dist, …) are skipped unless `includeIgnored` is set or `path` points inside one; overlong lines are column-truncated. No matches (or a missing `path`) return "(no matches)" rather than an error.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         target: {
           type: 'string',
-          description: 'Terminal-context output handle (format: "node-id/handle-id").',
+          description:
+            'Terminal-context output handle: "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
         },
         pattern: {
           type: 'string',
@@ -155,13 +158,14 @@ export const definitions = [
   {
     name: 'remote_write',
     description:
-      'Write or overwrite a file on a remote node. The target is a terminal-context output handle in "node-id/handle-id" format.',
+      'Write or overwrite a file on a remote node. The target is a terminal-context output handle, "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>".',
     inputSchema: {
       type: 'object' as const,
       properties: {
         target: {
           type: 'string',
-          description: 'Terminal-context output handle (format: "node-id/handle-id").',
+          description:
+            'Terminal-context output handle: "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
         },
         path: {
           type: 'string',
@@ -182,7 +186,8 @@ export const definitions = [
       properties: {
         target: {
           type: 'string',
-          description: 'Terminal-context output handle (format: "node-id/handle-id").',
+          description:
+            'Terminal-context output handle: "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
         },
         path: {
           type: 'string',
@@ -199,13 +204,14 @@ export const definitions = [
   {
     name: 'remote_exec',
     description:
-      'Execute a shell command on a remote node. The target is a terminal-context output handle in "node-id/handle-id" format. Optionally inject secret values from any Secrets Store as env vars (reference them in the command via "$NAME"). Very large output is cut, with a "(truncated …)" note as the last line — treat the result as incomplete rather than as the command\'s full output.',
+      'Execute a shell command on a remote node. The target is a terminal-context output handle, "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>". Optionally inject secret values from any Secrets Store as env vars (reference them in the command via "$NAME"). Very large output is cut, with a "(truncated …)" note as the last line — treat the result as incomplete rather than as the command\'s full output.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         target: {
           type: 'string',
-          description: 'Terminal-context output handle (format: "node-id/handle-id").',
+          description:
+            'Terminal-context output handle: "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
         },
         command: { type: 'string', description: 'Shell command to execute.' },
         cwd: {
@@ -231,13 +237,14 @@ export const definitions = [
   {
     name: 'remote_script',
     description:
-      'Execute a multiline bash script on a remote node. Unlike remote_exec, the script body is written to a temp file first, so it avoids quoting/escaping issues with heredocs, loops, and nested quotes. The target is a terminal-context output handle in "node-id/handle-id" format. Optionally inject secret values from any Secrets Store as env vars (reference them in the script via "$NAME"). Very large output is cut, with a "(truncated …)" note as the last line — treat the result as incomplete rather than as the script\'s full output.',
+      'Execute a multiline bash script on a remote node. Unlike remote_exec, the script body is written to a temp file first, so it avoids quoting/escaping issues with heredocs, loops, and nested quotes. The target is a terminal-context output handle, "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>". Optionally inject secret values from any Secrets Store as env vars (reference them in the script via "$NAME"). Very large output is cut, with a "(truncated …)" note as the last line — treat the result as incomplete rather than as the script\'s full output.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         target: {
           type: 'string',
-          description: 'Terminal-context output handle (format: "node-id/handle-id").',
+          description:
+            'Terminal-context output handle: "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
         },
         script: { type: 'string', description: 'Multiline bash script body to execute.' },
         args: {
@@ -372,7 +379,10 @@ export async function resolveTerminalContext(
   }
   const ep = parseEndpoint(target)
   if (!ep.handle) {
-    fail(-32602, 'target must include handle (format: "node-id/handle-id")')
+    fail(
+      -32602,
+      'target must include a handle: "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — run app_list for addresses',
+    )
   }
 
   const localExtCtx = await resolveLocalExtensionContext(ep)

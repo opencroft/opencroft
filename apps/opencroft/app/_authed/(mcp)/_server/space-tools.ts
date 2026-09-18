@@ -15,7 +15,7 @@ export const definitions = [
   {
     name: 'list_spaces',
     description:
-      'List all spaces with their graphs. A space can hold several graphs (each one is a Graph App instance); every node tool addresses one graph — a bare space slug means its default graph, "<space>.<graph>" a named one. Each graph entry carries its address, name, whether it is the default, and its App instanceId.',
+      'List all spaces with their graphs. A space can hold several graphs (each one is a Graph App instance); every node tool addresses one graph — a bare space slug means its default graph, "<space>.<graph>" a named one. Each graph entry carries its address, its name, and whether it is the default — the address is what every graph-addressed tool takes.',
     inputSchema: { type: 'object' as const, properties: {} },
   },
   {
@@ -65,7 +65,6 @@ export const handlers: Record<string, ToolHandler> = {
         address: `${space.slug}.${graph.slug}`,
         name: graph.name,
         default: registry.getBySlug(space.slug)?.defaultGraphSlug === graph.slug,
-        instanceId: graph.instanceId,
       })),
     }))
     return textResult(JSON.stringify(withGraphs, null, 2))

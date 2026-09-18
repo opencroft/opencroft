@@ -70,6 +70,17 @@ export async function resolveAppAddress(ref: string): Promise<SpaceAppRow | null
 }
 
 /**
+ * The public address of a row — the inverse of `resolveAppAddress`, and the one
+ * place a row becomes `<space>.<slug>`. Undefined when the owning space is not
+ * in the registry, which is a broken invariant rather than a normal outcome:
+ * callers say nothing rather than composing an address around a blank.
+ */
+export async function appAddressOf(row: SpaceAppRow): Promise<string | undefined> {
+  const space = (await registry()).getById(row.spaceId)
+  return space ? `${space.slug}.${row.slug}` : undefined
+}
+
+/**
  * Why one app target did not resolve, said precisely enough to act on.
  *
  * THE DISTINCTION IS THE POINT. A target whose app resolves but whose HANDLE
