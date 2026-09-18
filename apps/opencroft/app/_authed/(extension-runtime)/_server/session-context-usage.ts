@@ -1,3 +1,4 @@
+import type { UsageTokens } from 'agent-chat/components/usage-cost'
 import { displayableContextWindow } from 'agent-client/context-window'
 import type { RateLimitWindow, SessionCost } from 'agent-client/types'
 
@@ -24,6 +25,16 @@ export interface ContextUsage {
    * until the first report, never cleared by a reading that lacks them.
    */
   rateLimits?: RateLimitWindow[]
+  /**
+   * The session's authoritative token account as of now — a grouped SUM of
+   * ChatUsageTurn's own counters for this session (see
+   * chat-usage-store's queryChatUsageTokensBySession), independent of the
+   * used/size context window above. Absent when the session has never
+   * recorded a turn. This is the BASE the client seeds a session's running
+   * token account from at open and adds its own live increments onto — see
+   * use-acp-session's seedUsage/mergeTokenAccounts.
+   */
+  tokens?: UsageTokens
   /**
    * Wall-clock time (ms since epoch) this figure was reported, present ONLY
    * on a last-known reading served from the persisted store for an offline

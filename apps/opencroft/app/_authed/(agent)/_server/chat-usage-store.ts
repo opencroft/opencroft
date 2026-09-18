@@ -1,4 +1,5 @@
 import { chatUsageTurn, chatUsageTurnModel, db } from '@opencroft/db'
+import type { UsageTokens } from 'agent-chat/components/usage-cost'
 import type { SessionCost, TurnQuota, TurnTokenUsage } from 'agent-client/types'
 import { and, eq, gte, lte, sum } from 'drizzle-orm'
 import type { SpaceUsagePoint, SpaceUsageSeries, UsageGrouping, UsagePeriod } from 'ui/admin/space-usage'
@@ -86,6 +87,46 @@ export async function recordChatUsageTurn(input: {
         ? input.quota.modelUsage.map((entry) => modelRow(entry.model, entry.tokenCount))
         : [modelRow(input.model ?? null, input.usage)],
     )
+}
+
+/**
+ * The authoritative token account for one session, as of now: a plain SUM of
+ * ChatUsageTurn's own five counters (the turn's main-loop figures, not the
+ * per-model breakdown — the same rows the account this mirrors, the ring's
+ * `sessionTokens`, has always meant), grouped down to a single row by
+ * `sessionId` in the database rather than fetched-and-summed client-side.
+ *
+ * Every recorded turn's counters default to 0, never NULL (see
+ * `tokenColumns`), so SUM is NULL here only when the session has NO row at
+ * all — reported as absent (`undefined`), never as an all-zero account, the
+ * same "absent, not measured" distinction `UsageTokens` keeps everywhere
+ * else. This is the BASE a session's client seeds its running token account
+ * from at open; the client adds its own live turn_end increments on top
+ * rather than re-fetching this on every turn (see use-acp-session's
+ * `mergeTokenAccounts`).
+ */
+export async function queryChatUsageTokensBySession(sessionId: string): Promise<UsageTokens | undefined> {
+  const [row] = await db
+    .select({
+      total: sum(chatUsageTurn.totalTokens),
+      input: sum(chatUsageTurn.inputTokens),
+      output: sum(chatUsageTurn.outputTokens),
+      cacheRead: sum(chatUsageTurn.cacheReadTokens),
+      cacheWrite: sum(chatUsageTurn.cacheWriteTokens),
+    })
+    .from(chatUsageTurn)
+    .where(eq(chatUsageTurn.sessionId, sessionId))
+
+  if (!row || row.total === null) {
+    return undefined
+  }
+  return {
+    total: Number(row.total),
+    input: Number(row.input),
+    output: Number(row.output),
+    cacheRead: Number(row.cacheRead),
+    cacheWrite: Number(row.cacheWrite),
+  }
 }
 
 // ── Read side: SpaceUsage series ────────────────────────────────────────────

@@ -114,6 +114,11 @@ export interface OpenedSessionResult {
     contextLimit: number | null
     cost?: { amount: number; currency: string }
     rateLimits?: { status: string; window: string; utilization?: number; resetsAt?: number }[]
+    // The session's authoritative token account as of open time (see
+    // ContextUsage.tokens's own doc, server-side) — the base seedUsage.tokens
+    // carries, onto which live turn_end increments are added (see
+    // mergeTokenAccounts below).
+    tokens?: UsageTokens
     asOf?: number
   } | null
 }
@@ -146,10 +151,19 @@ export type QueuedMessage = QueuedPrompt
 //
 // - `cost` and `rateLimits` ride the same 'usage' event as the context pair and
 //   persist across readings that lack them (the engine merges, not replaces).
-// - `tokens` is accumulated here rather than reported: unlike `cost`/`used`/
-//   `size`, ACP has no "session token total" event, so fold sums every
-//   'turn_end' it sees (see tokenTotals). Replaying a reopened session's
-//   persisted turn_end log reproduces the same sum, so it survives a reconnect.
+// - `tokens` is NOT summed from whatever window of history happens to be
+//   loaded — a paginated-from-the-tail transcript can hold less than the
+//   whole session, and a sum over it would silently miss turns that are not
+//   loaded yet (the bug this replaced). Instead it is `mergeTokenAccounts`ed
+//   from two sources with a clean split: `seedUsage.tokens`, the database's
+//   own SUM over every ChatUsageTurn row for this session as of open time
+//   (see ContextUsage.tokens / queryChatUsageTokensBySession), plus this
+//   connection's own live 'turn_end' increments (see the stream effect's
+//   `replayingHistoryRef` branch) — never events replayed from history,
+//   which the base already accounts for. Neither half is a running window
+//   sum, so nothing here needs to "survive" a reconnect: the base is fixed
+//   at open and the live half only ever grows from turns this connection
+//   itself watched finish.
 // - `asOf` is set only on the last-known reading ensureLocalSession seeded while
 //   the session was offline, never on a figure a live 'usage' event reported
 //   this connection. Mirrors ContextUsage's own `asOf` (session-context-usage.ts).
@@ -313,20 +327,48 @@ export interface Folded {
   asyncTasks: AsyncTaskInfo[]
 }
 
-// Adds one turn's token spend into a running per-session total. A counter
-// stays absent only while every turn folded so far left it unreported -- the
-// harness's way of saying "no data", never "zero" -- so once any turn reports
-// a counter the running sum is defined and keeps adding; a later turn that
-// omits it just contributes nothing rather than resetting the sum to absent.
+// A counter stays absent only while every contribution folded so far left it
+// unreported -- the harness's way of saying "no data", never "zero" -- so
+// once any contribution reports a counter the running total is defined and
+// keeps adding; a later contribution that omits it just adds nothing rather
+// than resetting the total to absent.
+const addOptional = (a: number | undefined, b: number | undefined) =>
+  a === undefined && b === undefined ? undefined : (a ?? 0) + (b ?? 0)
+
+// Adds one turn's token spend onto a running per-session total. Used ONLY for
+// this connection's own live 'turn_end' events (see the stream effect's
+// `replayingHistoryRef` branch below) -- never for events replayed from
+// history, which the server-side base (see mergeTokenAccounts) already
+// accounts for.
 function addTurnTokens(totals: UsageTokens | undefined, usage: TurnTokenUsage): UsageTokens {
-  const add = (a: number | undefined, b: number | undefined) =>
-    a === undefined && b === undefined ? undefined : (a ?? 0) + (b ?? 0)
   return {
-    total: add(totals?.total, usage.totalTokens),
-    input: add(totals?.input, usage.inputTokens),
-    output: add(totals?.output, usage.outputTokens),
-    cacheRead: add(totals?.cacheRead, usage.cacheReadTokens),
-    cacheWrite: add(totals?.cacheWrite, usage.cacheWriteTokens),
+    total: addOptional(totals?.total, usage.totalTokens),
+    input: addOptional(totals?.input, usage.inputTokens),
+    output: addOptional(totals?.output, usage.outputTokens),
+    cacheRead: addOptional(totals?.cacheRead, usage.cacheReadTokens),
+    cacheWrite: addOptional(totals?.cacheWrite, usage.cacheWriteTokens),
+  }
+}
+
+// Combines the database's authoritative base for this session (as of the
+// moment this tab opened it — see ContextUsage.tokens / seedUsage) with this
+// connection's own live increments since (see addTurnTokens) into the one
+// account the ring shows. Neither half is a window sum, so there is nothing
+// to reconcile: the base is fixed at open and the live half only ever grows
+// from turns this connection itself watched finish.
+function mergeTokenAccounts(base: UsageTokens | undefined, live: UsageTokens | undefined): UsageTokens | undefined {
+  if (!base) {
+    return live
+  }
+  if (!live) {
+    return base
+  }
+  return {
+    total: addOptional(base.total, live.total),
+    input: addOptional(base.input, live.input),
+    output: addOptional(base.output, live.output),
+    cacheRead: addOptional(base.cacheRead, live.cacheRead),
+    cacheWrite: addOptional(base.cacheWrite, live.cacheWrite),
   }
 }
 
@@ -352,10 +394,6 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
   // "what a session reads at until told otherwise" is stated in one place.
   let presence: Presence = DEFAULT_PRESENCE
   let usage: AgentUsage | undefined
-  // Summed across every 'turn_end' seen below (see addTurnTokens) — merged
-  // into `usage` at the end so a 'usage' event folded afterwards (which
-  // rebuilds `usage` wholesale) can never wipe it back out.
-  let tokenTotals: UsageTokens | undefined
 
   const ensureAssistant = (id: number): ChatMessage => {
     if (!assistant) {
@@ -579,9 +617,10 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
       case 'turn_end': {
         assistant = null
         waiting = false
-        if (event.usage) {
-          tokenTotals = addTurnTokens(tokenTotals, event.usage)
-        }
+        // Token accounting for this event does NOT happen here -- see
+        // AgentUsage's own doc comment for why fold() (replayed on every
+        // reopen and prepend, over whatever window happens to be loaded) is
+        // the wrong place for it, and where it happens instead.
         // A typed session failure (quota exhausted, auth required, …) is the
         // turn's actual outcome: the harness settled the prompt as a normal
         // end_turn with no answer, so without this the turn reads as dead.
@@ -626,11 +665,10 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
     configOptions,
     commands,
     presence,
-    // Nothing to attach a token account to without a context reading to begin
-    // with (AgentCommandBar only renders the ring at all once `usage` is
-    // set) -- see the field's own note on why this is folded in here rather
-    // than reported by the harness.
-    usage: usage && tokenTotals ? { ...usage, tokens: tokenTotals } : usage,
+    // `tokens` is deliberately NOT attached here -- see AgentUsage's own doc.
+    // The caller (useAcpSession) layers the merged base+live account onto
+    // whichever of this and `seedUsage` it ends up using.
+    usage,
     asyncTasks: [...asyncTasks.values()],
   }
 }
@@ -758,8 +796,15 @@ export function useAcpSession(
   // before it went offline). Shown until a live 'usage' event streams in over
   // THIS connection (folded.usage below), which then takes over permanently —
   // reset alongside the rest of this tab's state so a previous tab's seed
-  // never leaks into a freshly resolving one.
+  // never leaks into a freshly resolving one. `seedUsage.tokens`, specifically,
+  // is the database's authoritative account as of open time — see
+  // mergeTokenAccounts for how it combines with `liveTokens` below.
   const [seedUsage, setSeedUsage] = useState<AgentUsage | undefined>(undefined)
+  // This connection's own live 'turn_end' increments onto seedUsage.tokens —
+  // see addTurnTokens and the stream effect's `replayingHistoryRef` branch.
+  // Reset alongside seedUsage: a new tab/session starts this at absent, same
+  // as the base it adds onto.
+  const [liveTokens, setLiveTokens] = useState<UsageTokens | undefined>(undefined)
 
   // Resolve (or lazily create) the live ACP session for this tab.
   // biome-ignore lint/correctness/useExhaustiveDependencies(generation): not read in the body -- it exists purely to force this effect to re-run for the SAME tab after clearSession, which agentNodeId/tabKey alone would not trigger
@@ -772,6 +817,7 @@ export function useAcpSession(
     setCanFork(false)
     setCanSteer(false)
     setSeedUsage(undefined)
+    setLiveTokens(undefined)
     sendChainRef.current = Promise.resolve()
     open({ agentNodeId, tabKey })
       .then((result) => {
@@ -787,6 +833,7 @@ export function useAcpSession(
                   size: result.contextUsage.contextLimit ?? undefined,
                   ...(result.contextUsage.cost ? { cost: result.contextUsage.cost } : {}),
                   ...(result.contextUsage.rateLimits ? { rateLimits: result.contextUsage.rateLimits } : {}),
+                  ...(result.contextUsage.tokens ? { tokens: result.contextUsage.tokens } : {}),
                   asOf: result.contextUsage.asOf,
                 }
               : undefined,
@@ -851,6 +898,13 @@ export function useAcpSession(
         return
       }
       setEvents((prev) => [...prev, event])
+      // A LIVE turn_end (this branch only -- replayed ones return above, and
+      // the base already accounts for them) adds its spend onto the running
+      // account. See AgentUsage's own doc and mergeTokenAccounts.
+      if (event.kind === 'turn_end' && event.usage) {
+        const turnUsage = event.usage
+        setLiveTokens((prev) => addTurnTokens(prev, turnUsage))
+      }
       // turn_end / error: the turn is over, so whatever the client optimistically
       // marked working is not working. A NON-EMPTY queue snapshot is the other
       // half of the same correction: the engine saying a message is WAITING
@@ -1282,6 +1336,21 @@ export function useAcpSession(
     [sessionId],
   )
 
+  // `used`/`size`/`cost`/`rateLimits` come from whichever of folded.usage /
+  // seedUsage currently applies: a live event this connection has actually
+  // seen wins and stays won — once one lands, folded.usage keeps returning it
+  // on every later render (it's derived from the accumulated event log), so
+  // the ring never reverts to the seed after going live. Before that, the
+  // seed is what ensureLocalSession resolved this tab's reading to at open
+  // time. `tokens` is layered on separately, from its own base+live source —
+  // see mergeTokenAccounts and AgentUsage's own doc.
+  const usageBase = folded.usage ?? seedUsage
+  const sessionTokens = useMemo(() => mergeTokenAccounts(seedUsage?.tokens, liveTokens), [seedUsage, liveTokens])
+  const usage = useMemo(
+    () => (usageBase ? { ...usageBase, tokens: sessionTokens } : undefined),
+    [usageBase, sessionTokens],
+  )
+
   return useMemo(
     () => ({
       session,
@@ -1293,12 +1362,7 @@ export function useAcpSession(
       commands: folded.commands,
       presence: folded.presence,
       canSteer,
-      // A live event this connection has actually seen wins and stays won —
-      // once one lands, folded.usage keeps returning it on every later render
-      // (it's derived from the accumulated event log), so the ring never
-      // reverts to the seed after going live. Before that, the seed is what
-      // ensureLocalSession resolved this tab's usage to at open time.
-      usage: folded.usage ?? seedUsage,
+      usage,
       // Only the LIVE ones reach the UI: a finished task is transcript
       // history the strip would keep pinned. The strip and the stop-session
       // warning both read this.
@@ -1322,9 +1386,8 @@ export function useAcpSession(
       folded.commands,
       folded.presence,
       canSteer,
-      folded.usage,
+      usage,
       folded.asyncTasks,
-      seedUsage,
       resolvePermission,
       resolveAsk,
       respondPermissionText,

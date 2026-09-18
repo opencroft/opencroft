@@ -47,6 +47,7 @@ import {
 } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { withAuthors } from '@/app/_authed/(agent)/_server/attach-authors'
+import { queryChatUsageTokensBySession } from '@/app/_authed/(agent)/_server/chat-usage-store'
 import { queueStore } from '@/app/_authed/(agent)/_server/queue-store'
 import {
   appendSessionEvent,
@@ -191,17 +192,32 @@ async function resolveSecret(key: string): Promise<string> {
 // key instead of the whole registry. Read fresh at each return point below —
 // not cached across them — since a resume can call restoreUsage in between,
 // which this must see.
-async function currentContextUsage(tabKey: string, agentNodeId: string): Promise<ContextUsage | null> {
+//
+// `sessionId` (the ACP session's own id, distinct from `tabKey`/sessionKey)
+// is what ChatUsageTurn rows are keyed by, so the token account is looked up
+// by it separately from the tabKey-keyed context-window resolution above,
+// and merged into the same reading only once one exists at all — a session
+// with no context reading yet has nothing to attach a token account to
+// either (see ContextUsage.tokens's own doc).
+async function currentContextUsage(
+  sessionId: string,
+  tabKey: string,
+  agentNodeId: string,
+): Promise<ContextUsage | null> {
   const live = agentClient.listSessions().find((m) => m.sessionKey === tabKey)
-  if (live) {
-    // Already normalised on its way into session state; nothing to resolve.
-    return toContextUsage(live.usage)
+  // Already normalised on its way into session state; nothing to resolve.
+  const usage = live
+    ? toContextUsage(live.usage)
+    : toContextUsage(
+        undefined,
+        (await readLastKnownUsage(tabKey)) ?? undefined,
+        await agentConfiguredWindowByNodeId(agentNodeId),
+      )
+  if (!usage) {
+    return null
   }
-  return toContextUsage(
-    undefined,
-    (await readLastKnownUsage(tabKey)) ?? undefined,
-    await agentConfiguredWindowByNodeId(agentNodeId),
-  )
+  const tokens = await queryChatUsageTokensBySession(sessionId)
+  return tokens ? { ...usage, tokens } : usage
 }
 
 // Build the agent's selection in memory from its node data + Secrets Store key
@@ -283,7 +299,7 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
       // in which case there is nothing to classify anyway.
       adapterId: known.adapterId ?? agentClient.sessionModes(known.id)?.adapterId ?? '',
       created: !(known.everPrompted ?? true),
-      contextUsage: await currentContextUsage(data.tabKey, data.agentNodeId),
+      contextUsage: await currentContextUsage(known.id, data.tabKey, data.agentNodeId),
     }
   }
   const agent = await findNodeData<AgentNodeData>(data.agentNodeId)
@@ -391,7 +407,7 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
         canSteer,
         adapterId,
         created: !persisted.prompted,
-        contextUsage: await currentContextUsage(data.tabKey, data.agentNodeId),
+        contextUsage: await currentContextUsage(resumed.id, data.tabKey, data.agentNodeId),
       }
     }
     // The pointer resolved but the session is gone — the agent can no longer
@@ -417,7 +433,7 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
     canSteer,
     adapterId,
     created: true,
-    contextUsage: await currentContextUsage(data.tabKey, data.agentNodeId),
+    contextUsage: await currentContextUsage(meta.id, data.tabKey, data.agentNodeId),
   }
 }
 
