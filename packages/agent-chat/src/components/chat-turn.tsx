@@ -8,10 +8,12 @@ import { useState } from 'react'
 import { type AuthorRun, authorRuns } from './author-runs'
 import { detailEntryKeys, withHeader } from './detail-entries'
 import { Markdown } from './markdown'
+
 import { SelectionBadge } from './selection-badge'
 
 import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
 import { Button } from 'ui/components/ui/button'
+import { TypingDots } from 'ui/components/ui/chat/typing-dots'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -878,13 +880,20 @@ function SubagentBlock({
       >
         <Chevron className='size-3.5 shrink-0 text-muted-foreground' />
         <Bot className='size-3.5 shrink-0 text-muted-foreground' />
+        {/* Title, then the working dots while it runs, then everything else
+            pushed to the right: the step count and the status badge. */}
         <span className='truncate text-xs font-medium text-foreground'>{item.name || 'Subagent'}</span>
-        <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badgeClass}`}>{badge}</span>
-        {!open && item.items.length > 0 ? (
+        {live ? <TypingDots className='shrink-0' variant='primary' size='sm' /> : null}
+        {item.items.length > 0 ? (
           <span className='ml-auto shrink-0 text-[10px] text-muted-foreground'>
             {item.items.length} step{item.items.length === 1 ? '' : 's'}
           </span>
         ) : null}
+        <span
+          className={`${item.items.length > 0 ? '' : 'ml-auto '}shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${badgeClass}`}
+        >
+          {badge}
+        </span>
       </button>
       {open && item.task ? <div className='px-3 pb-2 text-xs text-muted-foreground'>{item.task}</div> : null}
       {open && item.items.length > 0 ? (
