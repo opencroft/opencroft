@@ -15,7 +15,7 @@ import test from 'node:test'
 import { chatUsageTurn, chatUsageTurnModel, db } from '@opencroft/db'
 import { eq } from 'drizzle-orm'
 
-import { queryChatUsage, recordChatUsageTurn, usageDay } from './chat-usage-store'
+import { deleteChatUsage, queryChatUsage, recordChatUsageTurn, usageDay } from './chat-usage-store'
 
 /** The model rows a session's one recorded turn produced, reached the way a read does — through the turn. */
 async function modelRowsOf(sessionId: string) {
@@ -125,4 +125,41 @@ test('model grouping sums the breakdown, so a subagent model the turn row never 
   const haiku = series.find((s) => s.key === 'claude-haiku-5')
   assert.ok(haiku, 'the subagent-only model gets its own series, even though no turn ever resolved to it')
   assert.equal(haiku.points[0].totalTokens, 40)
+})
+
+test('a reset removes the turns inside its period, their model rows with them, and nothing outside it', async () => {
+  // Two turns either side of the window's edge, on days no other test here
+  // records on, so the population this proves over is exactly these two.
+  await recordChatUsageTurn({
+    sessionId: 'sess-usage-6-inside',
+    usage: { totalTokens: 10 },
+    at: new Date('2026-08-02T10:00:00.000Z'),
+  })
+  await recordChatUsageTurn({
+    sessionId: 'sess-usage-6-outside',
+    usage: { totalTokens: 20 },
+    at: new Date('2026-08-05T10:00:00.000Z'),
+  })
+  const [inside] = await db.select().from(chatUsageTurn).where(eq(chatUsageTurn.sessionId, 'sess-usage-6-inside'))
+  assert.ok(inside)
+
+  const removed = await deleteChatUsage({ kind: 'custom', from: '2026-08-01', to: '2026-08-03' })
+
+  assert.equal(removed, 1, 'exactly the turn inside the window is counted')
+  assert.equal(
+    (await db.select().from(chatUsageTurn).where(eq(chatUsageTurn.sessionId, 'sess-usage-6-inside'))).length,
+    0,
+    'the turn inside the window is gone',
+  )
+  assert.equal(
+    (await db.select().from(chatUsageTurnModel).where(eq(chatUsageTurnModel.turnId, inside.id))).length,
+    0,
+    'its model rows went with it — a model-grouped read has nothing orphaned to sum',
+  )
+  assert.equal((await modelRowsOf('sess-usage-6-outside')).length, 1, 'the turn past the edge, and its model row, stay')
+})
+
+test('a reset refuses a half-picked custom period rather than deleting to the edge of time', async () => {
+  await assert.rejects(deleteChatUsage({ kind: 'custom', from: '2026-08-01' }))
+  await assert.rejects(deleteChatUsage({ kind: 'custom' }))
 })

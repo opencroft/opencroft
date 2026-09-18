@@ -1,9 +1,19 @@
 'use client'
 
-import { Calendar as CalendarIcon } from 'lucide-react'
+import { Calendar as CalendarIcon, Trash2 } from 'lucide-react'
 import { useRef, useState } from 'react'
 
 import { SegmentedButton } from 'ui/components/experimental/segmented-button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from 'ui/components/ui/alert-dialog'
 import { Button } from 'ui/components/ui/button'
 import { Calendar } from 'ui/components/ui/calendar'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
@@ -62,6 +72,16 @@ export interface SpaceUsageProps {
    */
   period: UsagePeriod
   onPeriodChange: (period: UsagePeriod) => void
+  /**
+   * Wipes the accounting behind the window shown. The reader confirms here;
+   * the host deletes the rows and comes back with the (now empty) series, the
+   * same round trip a period change makes — the component removes nothing
+   * itself. The period is handed back rather than read off state so the host
+   * deletes exactly what the reader was looking at. Absent, no reset control
+   * is drawn: a host whose reader may not destroy the record simply does not
+   * pass it.
+   */
+  onReset?: (period: UsagePeriod) => void | Promise<void>
   /** ISO currency code for the cost figures. */
   currency?: string
   className?: string
@@ -131,6 +151,21 @@ function formatDay(date: string): string {
   return Number.isNaN(parsed.getTime())
     ? date
     : parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+
+// The period as it reads inside a sentence — "Reset usage for the last 7
+// days?" — so a confirmation names the very window the switch is showing.
+function periodLabel(period: UsagePeriod): string {
+  switch (period.kind) {
+    case 'today':
+      return 'today'
+    case '7d':
+      return 'the last 7 days'
+    case '30d':
+      return 'the last 30 days'
+    case 'custom':
+      return period.from && period.to ? `${formatDay(period.from)} – ${formatDay(period.to)}` : 'this range'
+  }
 }
 
 function StatTile({ label, value }: { label: string; value: string }) {
@@ -365,16 +400,24 @@ function ChartCard({
 // follows the series across every chart on the page: whichever line Ada is
 // in the tokens chart, she is in the cost chart too, named once in the one
 // legend all four share.
+//
+// The reset control is the one thing on the page that writes, and it writes
+// through the same door everything reads: it asks, then hands the period to
+// the host, and the host comes back with the series the way it does after
+// any other switch. Drawn only when a host offers it.
 export function SpaceUsage({
   series,
   grouping,
   onGroupingChange,
   period,
   onPeriodChange,
+  onReset,
   currency = 'USD',
   className,
 }: SpaceUsageProps) {
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [resetOpen, setResetOpen] = useState(false)
+  const [resetting, setResetting] = useState(false)
   const dates = series[0]?.points.map((p) => p.date) ?? []
   const coloured = series.map((s, i) => ({ ...s, color: seriesColor(i) }))
 
@@ -388,6 +431,21 @@ export function SpaceUsage({
 
   const chartSeries = (metric: (p: SpaceUsagePoint) => number | undefined): ChartSeries[] =>
     coloured.map((s) => ({ label: s.label, color: s.color, values: s.points.map(metric) }))
+
+  // A half-picked custom range names no window, so there is nothing yet to
+  // confirm wiping; an empty window has nothing to wipe at all.
+  const bounded = period.kind !== 'custom' || Boolean(period.from && period.to)
+  const handleReset = async () => {
+    if (!onReset) {
+      return
+    }
+    setResetting(true)
+    try {
+      await onReset(period)
+    } finally {
+      setResetting(false)
+    }
+  }
 
   return (
     <div className={cn('flex flex-col gap-3', className)}>
@@ -452,16 +510,34 @@ export function SpaceUsage({
             </Popover>
           ) : null}
         </div>
-        <SegmentedButton
-          size='sm'
-          value={grouping}
-          onChange={onGroupingChange}
-          options={[
-            { value: 'all', label: 'All' },
-            { value: 'agent', label: 'Per agent' },
-            { value: 'model', label: 'Per model' },
-          ]}
-        />
+        <div className='flex flex-wrap items-center gap-2'>
+          <SegmentedButton
+            size='sm'
+            value={grouping}
+            onChange={onGroupingChange}
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'agent', label: 'Per agent' },
+              { value: 'model', label: 'Per model' },
+            ]}
+          />
+          {onReset ? (
+            // Quiet in the row — an outline in the destructive ink, not a
+            // filled red button standing beside two switches — because the
+            // confirmation beneath is what carries the weight of the act.
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              className='gap-1.5 font-normal text-destructive hover:text-destructive'
+              disabled={dates.length === 0 || !bounded || resetting}
+              onClick={() => setResetOpen(true)}
+            >
+              <Trash2 aria-hidden='true' className='size-3.5' />
+              Reset
+            </Button>
+          ) : null}
+        </div>
       </div>
       {coloured.length > 1 ? (
         <div className='flex flex-wrap items-center gap-3'>
@@ -528,6 +604,23 @@ export function SpaceUsage({
           </div>
         </>
       )}
+      {onReset ? (
+        <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Reset usage for {periodLabel(period)}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Every turn recorded in this window is deleted — its cost and token figures go back to zero, and
+                nothing brings them back.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={() => void handleReset()}>Reset</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
     </div>
   )
 }

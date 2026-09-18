@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { SpaceUsage, type SpaceUsageSeries, type UsageGrouping, type UsagePeriod } from 'ui/admin/space-usage'
 
-import { getSpaceUsage } from '@/app/_authed/(space)/_server/usage-actions'
+import { getSpaceUsage, resetSpaceUsage } from '@/app/_authed/(space)/_server/usage-actions'
 
 /**
  * The Usage section of a space's settings: token and cost trends over the
@@ -19,20 +19,22 @@ export function SpaceUsageSettings() {
   const [period, setPeriod] = useState<UsagePeriod>({ kind: '7d' })
   const [series, setSeries] = useState<SpaceUsageSeries[]>([])
 
-  useEffect(() => {
-    // Each change starts its own query and a superseded one still lands — a
-    // half-picked custom range in particular queries everything since its start
-    // — so only the newest request is allowed to write the result.
-    let latest = true
-    void getSpaceUsage({ data: { grouping, period } }).then((next) => {
-      if (latest) {
-        setSeries(next)
-      }
-    })
-    return () => {
-      latest = false
+  // One query, run on every change and again after a reset. Each run starts
+  // its own request and a superseded one still lands — a half-picked custom
+  // range in particular queries everything since its start — so only the
+  // newest request is allowed to write the result.
+  const latestRequest = useRef(0)
+  const load = useCallback(async () => {
+    const request = ++latestRequest.current
+    const next = await getSpaceUsage({ data: { grouping, period } })
+    if (request === latestRequest.current) {
+      setSeries(next)
     }
   }, [grouping, period])
+
+  useEffect(() => {
+    void load()
+  }, [load])
 
   return (
     <SpaceUsage
@@ -41,6 +43,12 @@ export function SpaceUsageSettings() {
       onGroupingChange={setGrouping}
       period={period}
       onPeriodChange={setPeriod}
+      // Re-queried rather than edited in place, so what the page shows after
+      // the write is what the store holds — the same way it is after a switch.
+      onReset={async (target) => {
+        await resetSpaceUsage({ data: { period: target } })
+        await load()
+      }}
     />
   )
 }

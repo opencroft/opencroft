@@ -169,6 +169,14 @@ function dayRangeOf(period: UsagePeriod): { from?: string; to?: string } {
   }
 }
 
+/** The bounds as one turn-table predicate — the read and the reset select the same rows by construction. */
+function dayWhereOf(range: { from?: string; to?: string }) {
+  return and(
+    range.from ? gte(chatUsageTurn.day, range.from) : undefined,
+    range.to ? lte(chatUsageTurn.day, range.to) : undefined,
+  )
+}
+
 function fullDayRange(from: string, to: string): string[] {
   const days: string[] = []
   for (let day = from; day <= to; day = addDaysUTC(day, 1)) {
@@ -255,10 +263,7 @@ function labelOf(grouping: UsageGrouping, key: string): string {
  */
 export async function queryChatUsage(grouping: UsageGrouping, period: UsagePeriod): Promise<SpaceUsageSeries[]> {
   const range = dayRangeOf(period)
-  const where = and(
-    range.from ? gte(chatUsageTurn.day, range.from) : undefined,
-    range.to ? lte(chatUsageTurn.day, range.to) : undefined,
-  )
+  const where = dayWhereOf(range)
 
   // Nothing links the two reads, so they go out together.
   const [tokenRows, costRows] = await Promise.all([
@@ -351,4 +356,26 @@ export async function queryChatUsage(grouping: UsageGrouping, period: UsagePerio
     label: labelOf(grouping, seriesKey),
     points: dates.map((date) => ({ date, ...(cells.get(cellKey(seriesKey, date)) ?? emptyCell()) })),
   }))
+}
+
+// ── Reset ───────────────────────────────────────────────────────────────────
+
+/**
+ * Deletes every turn recorded in the period — the Usage page's reset, and the
+ * one write this module makes that is not a recording. Same v1 scope as the
+ * read: instance-wide. The turn's model rows go with it (the foreign key
+ * cascades), so a model-grouped read afterwards has nothing orphaned to sum.
+ *
+ * Only a BOUNDED period is accepted. The read tolerates a half-picked custom
+ * range by leaving that end open; a delete that did the same would wipe to
+ * the start (or end) of time on a choice the reader had not finished making.
+ * Returns how many turns went.
+ */
+export async function deleteChatUsage(period: UsagePeriod): Promise<number> {
+  const range = dayRangeOf(period)
+  if (!range.from || !range.to) {
+    throw new Error('A usage reset needs both ends of its period')
+  }
+  const removed = await db.delete(chatUsageTurn).where(dayWhereOf(range)).returning({ id: chatUsageTurn.id })
+  return removed.length
 }
