@@ -390,6 +390,25 @@ export type ChatEvent =
       quota?: TurnQuota
       /** A typed session failure the harness attached to the turn (e.g. a quota exhaustion). */
       failure?: SessionFailure
+      // The session's harness and its RESOLVED model, carried on the event so a
+      // consumer records what actually ran without a separate lookup against the
+      // live session (which a session created without a model mirror — a
+      // group-chat thread — answers as unknown). `adapterId` is the selection's;
+      // `model` is resolved at the boundary from what the turn really used, in
+      // order: the largest model in the harness's per-model quota breakdown (a
+      // real id, subagents included), then the model config option's current
+      // value (a live switch the selection mirror never saw), then the
+      // selection's own model. Absent only when none of the three is known.
+      adapterId?: string
+      model?: string
+      // The turn's OWN cost, in the session's currency — the increment this turn
+      // added, not the running total. Harnesses report cost cumulatively per
+      // session, so the engine differences consecutive readings and hands over
+      // the delta, which is the figure day/model accounting sums. A compaction
+      // or conversation reset drops the cumulative back down; the boundary reads
+      // that as the post-reset spend rather than a negative turn. Absent when the
+      // harness does not price the session.
+      cost?: SessionCost
     }
   | { kind: 'error'; message: string }
 

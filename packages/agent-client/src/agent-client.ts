@@ -393,6 +393,12 @@ interface SessionState {
   // monotonic-within-turn rule held back from `usage` — settleTurn applies it
   // in full at the turn boundary. See the usage_update case for why.
   pendingUsage?: { used: number; size?: number }
+  // Cumulative session cost already attributed to earlier turns, so the next
+  // turn boundary can hand over just its own increment (see settleTurn). Starts
+  // absent — the first priced turn's delta is the whole figure — and tracks the
+  // running total as reported. A drop below it is a compaction/conversation
+  // reset, after which the fresh cumulative IS the turn's cost.
+  costAccountedFor?: number
 }
 
 interface ConnEntry {
@@ -1547,6 +1553,25 @@ function matchModelValue(options: unknown, model: string): string | undefined {
   }
   const bySuffix = flat.filter((option) => option.value?.toLowerCase().endsWith(`/${target}`))
   return bySuffix.length === 1 ? bySuffix[0].value : undefined
+}
+
+// The model that did most of the turn's work, off the harness's per-model
+// quota breakdown: the entry with the largest total token count. The breakdown
+// counts subagents and internal calls too, so the main loop's own model is the
+// heaviest row in the ordinary case; picking by weight rather than position is
+// what keeps a subagent-only model from being read as the turn's model. Absent
+// when the harness sent no breakdown.
+function largestQuotaModel(quota: TurnQuota | undefined): string | undefined {
+  if (!quota?.modelUsage?.length) {
+    return undefined
+  }
+  let best = quota.modelUsage[0]
+  for (const row of quota.modelUsage) {
+    if (row.tokenCount.totalTokens > best.tokenCount.totalTokens) {
+      best = row
+    }
+  }
+  return best.model
 }
 
 function isNativeSelection(selection: AgentSelection): boolean {
@@ -2737,12 +2762,46 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       emit(sessionId, usageEventOf(session.usage))
     }
     if (outcome.stopReason !== undefined) {
+      // The model the turn actually ran on, resolved at the boundary rather
+      // than read off the selection mirror — which is empty for a session
+      // created without one (a group-chat thread) and stale after a live
+      // switch. Preference order, most authoritative first: the largest model
+      // in the harness's per-model quota breakdown (a real id that also names
+      // the model when the selection never did), then the model config
+      // option's current value (which a live switch DID update), then the
+      // selection's own model.
+      const quotaModel = largestQuotaModel(outcome.quota)
+      const modelOption = session.configOptions.find(
+        (entry) => entry.category === 'model' && entry.type === 'select',
+      )
+      const optionModel =
+        modelOption && modelOption.type === 'select' && typeof modelOption.currentValue === 'string'
+          ? modelOption.currentValue
+          : undefined
+      const selectionModel = session.selection.model || undefined
+      const resolvedModel = quotaModel ?? optionModel ?? selectionModel
+      // The turn's OWN cost: the session's cumulative reading less what earlier
+      // turns already claimed. A cumulative that dropped below the running
+      // total is a compaction/conversation reset, and the fresh figure is then
+      // the whole of this turn's spend. Tracked only at the boundary, so the
+      // repeated mid-turn cost readings never double-count.
+      let turnCost: SessionCost | undefined
+      const cumulative = session.usage?.cost
+      if (cumulative && Number.isFinite(cumulative.amount)) {
+        const prior = session.costAccountedFor ?? 0
+        const amount = cumulative.amount < prior ? cumulative.amount : cumulative.amount - prior
+        session.costAccountedFor = cumulative.amount
+        turnCost = { amount, currency: cumulative.currency }
+      }
       emit(sessionId, {
         kind: 'turn_end',
         stopReason: outcome.stopReason,
         ...(outcome.usage ? { usage: outcome.usage } : {}),
         ...(outcome.quota ? { quota: outcome.quota } : {}),
         ...(outcome.failure ? { failure: outcome.failure } : {}),
+        adapterId: session.selection.adapterId,
+        ...(resolvedModel ? { model: resolvedModel } : {}),
+        ...(turnCost ? { cost: turnCost } : {}),
       })
     }
     if (session.pendingMcpRefresh) {
