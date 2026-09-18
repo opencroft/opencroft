@@ -197,12 +197,11 @@ export async function appUpdatesInPlace(extensionId: string, appSlug: string): P
  * space-settings UI and the MCP surface both land here.
  *
  * The SLUG survives when the target has it free. When it clashes, the
- * instance takes its DONOR SPACE's name and slug instead -- an instance
- * called "Default" arriving beside the target's own default is
- * disambiguated by where it came from, which is the one meaningful name a
- * transfer can derive -- and a further clash falls back to a numbered
- * suffix. The hook's context reads the resolved name and slug, so an App
- * mirroring them into its own data (the Graph App) follows along.
+ * instance keeps its OWN name and slug and takes a numbered suffix instead
+ * -- "OpenCroft" arriving beside a target that already has an "opencroft"
+ * becomes "OpenCroft 2" / `opencroft-2`, incremented until the target has no
+ * sibling holding it. The hook's context reads the resolved name and slug,
+ * so an App mirroring them into its own data (the Graph App) follows along.
  */
 export async function transferSpaceAppImpl(ref: string, targetSpaceSlug: string): Promise<SpaceAppRow> {
   const r = await registry()
@@ -223,15 +222,12 @@ export async function transferSpaceAppImpl(ref: string, targetSpaceSlug: string)
   let slug = row.slug
   let name = row.name
   if (taken.has(slug)) {
-    slug = previousSpace?.slug ?? slug
-    name = previousSpace?.name ?? name
-    if (taken.has(slug)) {
-      let i = 2
-      while (taken.has(`${slug}-${i}`)) {
-        i += 1
-      }
-      slug = `${slug}-${i}`
+    let i = 2
+    while (taken.has(`${slug}-${i}`)) {
+      i += 1
     }
+    slug = `${slug}-${i}`
+    name = `${row.name} ${i}`
   }
   const [moved] = await db
     .update(spaceApp)

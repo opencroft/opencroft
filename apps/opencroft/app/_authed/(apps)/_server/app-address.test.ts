@@ -9,6 +9,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { db, spaceApp } from '@opencroft/db'
+import { eq } from 'drizzle-orm'
 
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import { GRAPH_APP_EXTENSION_ID, GRAPH_APP_SLUG } from '@/app/_authed/(space)/_server/types'
@@ -153,4 +154,35 @@ test('a transfer hands back the moved row, and the address that reached it stops
     origin.row.id,
     'and the instance answers at its new one',
   )
+})
+
+// The collision case the bug report is about: a transfer landing on a slug
+// the target already holds must disambiguate using the TRANSFERRED
+// instance's own name/slug, not the donor space's -- an instance called
+// "OpenCroft" arriving beside a target's own "opencroft" becomes
+// "OpenCroft 2" / `opencroft-2`, never "Service" / `service` just because
+// that happened to be the space it came from.
+test('a transfer onto a taken slug suffixes its OWN name and slug, not the donor space\'s', async () => {
+  // Donor space is named "Service" on purpose -- an implementation that
+  // falls back to the donor's own name/slug on collision would produce
+  // "Service" / `service` here, which is the exact bug being guarded against.
+  const donor = await spaceHolding(`Service-${suffix}`, 'placeholder-donor')
+  await db
+    .update(spaceApp)
+    .set({ name: 'OpenCroft', slug: 'opencroft' })
+    .where(eq(spaceApp.id, donor.row.id))
+  await getSpacesRegistry().createGraph(donor.space.slug, 'OpenCroft', 'opencroft', donor.row.id)
+  const from = `${donor.space.slug}.opencroft`
+
+  const target = await spaceHolding(`OpenCroft-${suffix}`, 'placeholder-target')
+  await db
+    .update(spaceApp)
+    .set({ name: 'Design Kit', slug: 'opencroft' })
+    .where(eq(spaceApp.id, target.row.id))
+  await getSpacesRegistry().createGraph(target.space.slug, 'Design Kit', 'opencroft', target.row.id)
+
+  const moved = await transferSpaceAppImpl(from, target.space.slug)
+
+  assert.equal(moved.slug, 'opencroft-2', 'own slug, numbered -- not the donor space slug ("service")')
+  assert.equal(moved.name, 'OpenCroft 2', 'own name, numbered -- not the donor space name ("Service")')
 })
