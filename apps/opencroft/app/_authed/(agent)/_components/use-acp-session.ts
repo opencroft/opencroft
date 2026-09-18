@@ -287,6 +287,12 @@ export interface Folded {
   permissions: PendingPermission[]
   asks: PendingAsk[]
   waiting: boolean
+  // The agent's OWN step is executing right now — the thinking indicator's
+  // flag, deliberately narrower than `waiting`: a turn held open only for
+  // delegated work (a live subagent, a running background task) is still
+  // `waiting` (the turn is real, Stop applies) but not `thinking` (nothing is
+  // being generated; the session can be written to).
+  thinking: boolean
   // Server-held prompts awaiting delivery — the last 'queue' snapshot wins.
   queue: QueuedMessage[]
   // What that snapshot's senders resolve to. Travels with the snapshot rather
@@ -576,11 +582,19 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
     }
   })
 
+  // Live background work: a subagent the harness has not given a terminal
+  // state, or a task still running/paused — the same predicate the engine's
+  // hasBackgroundWork answers server-side.
+  const liveBackgroundWork =
+    [...subagents.values()].some((entry) => entry.part.state === undefined) ||
+    [...asyncTasks.values()].some((task) => task.state === 'running' || task.state === 'paused')
+
   return {
     messages,
     permissions: [...permissions.values()],
     asks: [...asks.values()],
     waiting,
+    thinking: waiting && !liveBackgroundWork,
     queue,
     queueAuthors,
     configOptions,
@@ -1141,6 +1155,9 @@ export function useAcpSession(
       loading,
       sending,
       waiting: folded.waiting || localWaiting,
+      // A just-sent message not yet folded back still shows the dots — the
+      // reader's own send is the parent's step until the stream answers.
+      thinking: folded.thinking || localWaiting,
       botName,
       send,
       stop,
@@ -1165,6 +1182,7 @@ export function useAcpSession(
       tabKey,
       folded.messages,
       folded.waiting,
+      folded.thinking,
       folded.commands,
       loading,
       sending,

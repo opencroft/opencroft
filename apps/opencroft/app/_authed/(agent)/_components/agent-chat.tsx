@@ -88,6 +88,11 @@ export interface AgentSession {
   loading: boolean
   sending: boolean
   waiting: boolean
+  // The agent's own step is executing right now — narrower than `waiting`,
+  // which stays true while a turn is held open for delegated subagents or
+  // background tasks. Drives the thinking indicator; `waiting` keeps driving
+  // Stop. See the package contract's note (agent-chat/src/session.ts).
+  thinking?: boolean
   botName: string
   send: (text: string) => void
   // Turn control and message editing, provided by the ACP (local) backend; the

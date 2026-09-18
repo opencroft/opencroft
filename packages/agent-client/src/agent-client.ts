@@ -2700,6 +2700,22 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (session.activeTurns > 0) {
       return
     }
+    // The turn boundary is the authoritative end of everything the turn
+    // delegated: the harness holds the prompt open while its subagents run and
+    // settles only once they have drained (or the turn was cancelled, which
+    // finishes them itself with a terminal update). So a subagent still
+    // lacking a terminal state HERE lost its state_update, not its life.
+    // Reconciled off the boundary rather than a timer, so a stale record can
+    // never pin "background work" — and with it the Working badge and the
+    // idle-reaper guard — forever. Async tasks are left alone: their lifecycle
+    // is genuinely detached from turns, and they carry their own terminal
+    // states.
+    for (const subagent of session.subagents?.values() ?? []) {
+      if (subagent.state === undefined) {
+        subagent.state = 'completed'
+        emit(sessionId, { kind: 'subagent', subagent: { ...subagent } })
+      }
+    }
     // The turn boundary the usage_update case's monotonic rule promises
     // decreases for: apply the turn's true final reading now, even if it's
     // one that rule held back mid-turn. A no-op when the last applied

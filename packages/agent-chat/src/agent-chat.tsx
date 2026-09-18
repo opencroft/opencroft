@@ -32,6 +32,7 @@ type AgentChatCoreSession = Pick<
   | 'loading'
   | 'sending'
   | 'waiting'
+  | 'thinking'
   | 'botName'
   | 'send'
   | 'stop'
@@ -153,7 +154,7 @@ export function AgentChat({
 
   const footer = (
     <>
-      {showThinkingIndicator && session.waiting && <ThinkingIndicator />}
+      {showThinkingIndicator && (session.thinking ?? session.waiting) && <ThinkingIndicator />}
       {/* Unconditional: the section renders nothing with nothing waiting, so
           guarding it here would only duplicate a check it already makes. */}
       <ChatUnread messages={unread ?? []} onRemove={onRemoveUnread} onDeliver={onDeliverUnread} renderers={renderers} />

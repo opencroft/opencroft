@@ -101,7 +101,9 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
 
   // The same shared poll the group-chat screen's list reads, so a row here
   // shows the same live state as the same thread there.
-  const { pendingKeys, activeKeys, aliveKeys } = useSessionActivityKeys(open && (threads?.length ?? 0) > 0)
+  const { pendingKeys, activeKeys, backgroundKeys, aliveKeys } = useSessionActivityKeys(
+    open && (threads?.length ?? 0) > 0,
+  )
 
   // EVERY thread of the chat, newest first — the menu is bounded by its own
   // scroll box (the kit's CommandList, 300px) rather than by a count.
@@ -132,7 +134,12 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
     agent: t.agent,
     createdAt: new Date(t.createdAt),
     disabled: !t.agentIsMember,
-    status: deriveSessionStatus(t.sessionKey, { pending: pendingKeys, active: activeKeys, alive: aliveKeys }),
+    status: deriveSessionStatus(t.sessionKey, {
+      pending: pendingKeys,
+      active: activeKeys,
+      background: backgroundKeys,
+      alive: aliveKeys,
+    }),
     hasDraft: t.hasDraft,
   }))
   const activeThreadId = selection && 'threadId' in selection ? selection.threadId : undefined

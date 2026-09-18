@@ -85,14 +85,22 @@ function GroupChatDetailPage() {
   // sessionKey is exactly the tab key that poll already reports on; nothing
   // about it is group-chat-specific.
   const threads = data.refused ? [] : data.threads
-  const { pendingKeys, activeKeys, aliveKeys } = useSessionActivityKeys(threads.length > 0)
+  const { pendingKeys, activeKeys, backgroundKeys, aliveKeys } = useSessionActivityKeys(threads.length > 0)
   const threadStatusById = useMemo(() => {
     const map = new Map<string, ReturnType<typeof deriveSessionStatus>>()
     for (const t of threads) {
-      map.set(t.id, deriveSessionStatus(t.sessionKey, { pending: pendingKeys, active: activeKeys, alive: aliveKeys }))
+      map.set(
+        t.id,
+        deriveSessionStatus(t.sessionKey, {
+          pending: pendingKeys,
+          active: activeKeys,
+          background: backgroundKeys,
+          alive: aliveKeys,
+        }),
+      )
     }
     return map
-  }, [threads, pendingKeys, activeKeys, aliveKeys])
+  }, [threads, pendingKeys, activeKeys, backgroundKeys, aliveKeys])
 
   const goToThread = (threadId: string) =>
     navigate({ to: '/group-chats/$groupChatId/$threadId', params: { groupChatId, threadId } })

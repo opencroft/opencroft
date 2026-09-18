@@ -7,12 +7,14 @@ import { listSessionActivity } from '@/app/_authed/(agent)/_server/acp'
 export interface SessionActivityKeys {
   pendingKeys: Set<string>
   activeKeys: Set<string>
+  backgroundKeys: Set<string>
   aliveKeys: Set<string>
 }
 
 const EMPTY_SNAPSHOT: SessionActivityKeys = {
   pendingKeys: new Set(),
   activeKeys: new Set(),
+  backgroundKeys: new Set(),
   aliveKeys: new Set(),
 }
 
@@ -40,6 +42,7 @@ function poll(): void {
       snapshot = {
         pendingKeys: new Set(result.pending),
         activeKeys: new Set(result.active),
+        backgroundKeys: new Set(result.background),
         aliveKeys: new Set(result.alive),
       }
       emit()

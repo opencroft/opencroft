@@ -4819,6 +4819,37 @@ test('High Attention pushes the queue in through steering on a harness that supp
   await h.client.deleteSession(h.sessionId)
 })
 
+test('the turn boundary closes out a subagent that never sent its terminal state', async () => {
+  // The harness settles a prompt only once the subagents it spawned have
+  // drained (or the turn was cancelled, which finishes them itself), so a
+  // subagent still "live" at turn_end lost its state_update, not its life.
+  // Reconciling at the boundary — not on a timer — is what keeps a lost event
+  // from pinning background work (the Working badge, the idle-reaper guard)
+  // forever.
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'delegate', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'subagent_spawned',
+    subagentSessionId: 'orphaned-child',
+    name: 'Researcher',
+    task: 'dig',
+    capabilities: {},
+  })
+  assert.ok(h.client.hasBackgroundWork(h.sessionId), 'the spawned subagent is live background work')
+
+  h.endTurn()
+  await settle()
+  assert.equal(h.client.hasBackgroundWork(h.sessionId), false, 'the boundary reconciled it')
+  const lastSubagent = h.events.filter((event) => event.kind === 'subagent').at(-1)
+  assert.equal(
+    lastSubagent?.kind === 'subagent' ? lastSubagent.subagent.state : undefined,
+    'completed',
+    'and said so in the transcript, so a fold sees the terminal state',
+  )
+  await h.client.deleteSession(h.sessionId)
+})
+
 test('a push delivers the held queue through steering, leaving a running subagent alive', async () => {
   // The "deliver now" push (queue: push, no text of its own) on an online
   // session that is mid-delegation: it must hand the held messages over without

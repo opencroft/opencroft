@@ -43,6 +43,27 @@ test('a message keeps the same id when the same events are re-folded with a lowe
   assert.deepEqual(combinedTailIds, tailIds)
 })
 
+test('thinking is waiting minus delegation: dots drop while a subagent runs, waiting stays', () => {
+  const spawned: ChatEvent[] = [
+    { kind: 'user', text: 'delegate this' },
+    { kind: 'agent_message', text: 'spawning a worker' },
+    { kind: 'subagent', subagent: { subagentSessionId: 'child-1', name: 'Worker', task: 'dig' } },
+  ]
+  const during = fold(spawned, 0)
+  assert.equal(during.waiting, true, 'the turn is still open — Stop applies')
+  assert.equal(during.thinking, false, 'but nothing is being generated: no dots')
+
+  const closed = fold(
+    [...spawned, { kind: 'subagent', subagent: { subagentSessionId: 'child-1', name: 'Worker', task: 'dig', state: 'completed' } }],
+    0,
+  )
+  assert.equal(closed.thinking, true, 'the delegation over, the open turn is the agent thinking again')
+
+  const ended = fold([...spawned, { kind: 'turn_end', stopReason: 'end_turn' }], 0)
+  assert.equal(ended.waiting, false)
+  assert.equal(ended.thinking, false)
+})
+
 test('a multi-chunk assistant reply keeps the id of its FIRST chunk, not its last', () => {
   const events: ChatEvent[] = [
     { kind: 'user', text: 'q' },

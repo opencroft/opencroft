@@ -141,6 +141,7 @@ export const listLiveSessions = createServerFn({ method: 'GET', strict: { output
     const keys = {
       pending: new Set(agentClient.pendingPermissionSessionKeys()),
       active: new Set(agentClient.activeSessionKeys()),
+      background: new Set(agentClient.backgroundWorkSessionKeys()),
       alive: new Set(agentClient.aliveSessionKeys()),
     }
     const rows: LiveSessionRow[] = []

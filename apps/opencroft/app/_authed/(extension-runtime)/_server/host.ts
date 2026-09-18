@@ -404,6 +404,7 @@ export function turnsPageForSessionKey(
   const sessionStatus = deriveSessionStatus(sessionKey, {
     pending: new Set(agentClient.pendingPermissionSessionKeys()),
     active: new Set(agentClient.activeSessionKeys()),
+    background: new Set(agentClient.backgroundWorkSessionKeys()),
     alive: new Set(agentClient.aliveSessionKeys()),
   })
   const meta = agentClient.listSessions().find((m) => m.sessionKey === sessionKey)

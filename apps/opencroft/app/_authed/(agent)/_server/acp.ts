@@ -175,16 +175,19 @@ export const editTurnLocal = createServerFn({ method: 'POST', strict: { output: 
   .handler(async ({ data }): Promise<{ sessionId: string } | null> => editTurnLocalImpl(data))
 
 // Tab keys of chat sessions currently blocked on an unresolved permission
-// request, tab keys with a turn actively running, and tab keys with a live
-// agent process at all (alive is a superset of the other two — see
-// aliveSessionKeys) — polled once, from a shared module every chat list
-// surface reads (use-session-activity.ts), to set each chat's
-// process-visibility indicator: warning (pending), primary (active),
-// success (alive but neither), or none (not in `alive`).
+// request, tab keys with a turn actively running, tab keys with live
+// background work (a subagent or task the harness reported still running —
+// Working even with no turn open), and tab keys with a live agent process at
+// all (alive is a superset of the others — see aliveSessionKeys) — polled
+// once, from a shared module every chat list surface reads
+// (use-session-activity.ts), to set each chat's process-visibility indicator:
+// warning (pending), primary (active/background), success (alive but
+// neither), or none (not in `alive`).
 export const listSessionActivity = createServerFn({ method: 'GET', strict: { output: false } }).handler(
-  async (): Promise<{ pending: string[]; active: string[]; alive: string[] }> => ({
+  async (): Promise<{ pending: string[]; active: string[]; background: string[]; alive: string[] }> => ({
     pending: agentClient.pendingPermissionSessionKeys(),
     active: agentClient.activeSessionKeys(),
+    background: agentClient.backgroundWorkSessionKeys(),
     alive: agentClient.aliveSessionKeys(),
   }),
 )

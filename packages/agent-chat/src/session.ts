@@ -69,9 +69,15 @@ export interface AgentChatSession {
   // True while a message is in flight to the host but not yet acknowledged
   // (distinct from `waiting`, which covers the whole turn).
   sending: boolean
-  // True while a turn is running — drives the thinking indicator and the
-  // composer's busy/stop affordance.
+  // True while a turn is running — drives the composer's busy/stop affordance.
   waiting: boolean
+  // True while the agent's OWN step is executing right now — the thinking
+  // indicator's flag, deliberately narrower than `waiting`: a turn held open
+  // only for delegated work (a live subagent, a background task) is still
+  // `waiting` (Stop applies) but not `thinking` (nothing is being generated).
+  // Optional: a host that does not track delegation leaves it unset and the
+  // indicator falls back to `waiting`, exactly the pre-split behaviour.
+  thinking?: boolean
   // Display name shown as the conversation's speaker when the host does not
   // override it with its own `agentName` prop.
   botName: string

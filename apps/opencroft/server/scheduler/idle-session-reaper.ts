@@ -74,6 +74,7 @@ function currentStatuses(sessionKeys: string[]): Map<string, SessionStatus> {
   const keys = {
     pending: new Set(agentClient.pendingPermissionSessionKeys()),
     active: new Set(agentClient.activeSessionKeys()),
+    background: new Set(agentClient.backgroundWorkSessionKeys()),
     alive: new Set(agentClient.aliveSessionKeys()),
   }
   return new Map(sessionKeys.map((key) => [key, deriveSessionStatus(key, keys)]))
@@ -133,21 +134,16 @@ async function reapOne(sessionKey: string): Promise<void> {
   }
   inFlight.add(sessionKey)
   try {
+    // `background` is part of the status itself (live background work reads as
+    // `working` — see deriveSessionStatus), so a session mid-delegation can
+    // never classify as idle here: unloading it would kill that work silently.
     const fresh = deriveSessionStatus(sessionKey, {
       pending: new Set(agentClient.pendingPermissionSessionKeys()),
       active: new Set(agentClient.activeSessionKeys()),
+      background: new Set(agentClient.backgroundWorkSessionKeys()),
       alive: new Set(agentClient.aliveSessionKeys()),
     })
     if (fresh !== 'idle') {
-      return
-    }
-    // A session with no turn running can still have live background work its
-    // harness reported — a subagent or a detached task. Unloading the process
-    // would kill that work silently, which is exactly what this guard exists
-    // to prevent: an "idle" session that is only idle at the prompt level is
-    // not idle. Re-read fresh here, beside the status check, for the same
-    // reason that one is fresh.
-    if (agentClient.backgroundWorkSessionKeys().includes(sessionKey)) {
       return
     }
     await stopLocalSessionProcessImpl(sessionKey)
