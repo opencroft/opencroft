@@ -606,18 +606,16 @@ function NativeProfileFields({ data, updateData }: { data: AgentData; updateData
  *
  * It used to sit inside the native-only block above, and the comment that
  * justifies that block names system prompt and temperature and not this: the
- * window was swept into the gate by proximity rather than by a reason. The
- * consequence was the opposite of the intent. `knownContextWindow` consults a
- * configured window first and never asks which adapter is in use, and for a
- * bridged session it is the ONLY authority there is — a bridged harness's own
- * reported size is withheld deliberately, because nothing in the protocol
- * separates the bridge's seeded family default from the corrected value that
- * replaces it. So the gate put the single available remedy out of reach of
- * exactly the sessions that cannot do without it.
+ * window was swept into the gate by proximity rather than by a reason.
+ * `knownContextWindow` consults a configured window first and never asks
+ * which adapter is in use — and since 2026-09-18 the harness-reported size is
+ * the trusted fallback for every harness, so this field is the OVERRIDE for a
+ * figure the harness gets wrong or never sends, no longer the only source a
+ * bridged session had while reported sizes were withheld.
  *
- * Empty stays meaningful and is the normal case for a bridged agent nobody has
- * configured: the chat shows tokens used and no proportion, rather than a ratio
- * against a figure nobody established.
+ * Empty stays meaningful and is the normal case: the chat renders against
+ * whatever window the harness reports, and for a harness that reports none it
+ * shows tokens used with no proportion.
  *
  * THERE IS A SECOND FIELD FOR THE SAME VALUE: agent-chat's `AgentPresetForm`
  * ("Max context") writes the same `contextWindow`. It is not mounted in this
@@ -639,13 +637,13 @@ function ContextWindowField({ data, updateData }: { data: AgentData; updateData:
         onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
           updateData({ contextWindow: e.target.value === '' ? undefined : Number(e.target.value) })
         }
-        placeholder='Unknown'
+        placeholder='Reported by the harness'
       />
-      {/* "Unknown" rather than a number, because that is what empty MEANS
-          here: the chat shows tokens used and no percentage, instead of a
-          ratio against a figure nobody established. */}
+      {/* Empty means "use what the harness reports", so the placeholder says
+          where the figure will come from rather than pretending nobody has
+          one. */}
       <span className='text-[10px] text-muted-foreground'>
-        Tokens. Leave empty if you do not know it — the chat then shows usage without a percentage.
+        Tokens. Leave empty to use the window the harness reports; set it to override that figure.
       </span>
     </div>
   )

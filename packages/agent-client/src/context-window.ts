@@ -1,53 +1,33 @@
-import { findAdapter } from './resolve'
 import type { AgentSelection } from './types'
 
 // Which context window a session may show a ratio against, given whatever its
-// harness reported alongside the reading.
-//
-// The test is provenance, not arithmetic. A window is displayed only when it
-// comes from an authority we can stand behind — never because a reported
-// figure happens to look plausible, and never merely because this particular
-// reading has not yet contradicted it.
-//
-// A harness `size` is not such an authority on its own. An external ACP bridge
-// seeds a family default and reports it as fact until a completed turn hands
-// back the model's real window; nothing in the protocol distinguishes that
-// seeded guess from the corrected value that replaces it. So a bridged `size`
-// is a claim, not evidence, and relaying it is how a session ends up rendered
-// against a window nobody established.
-//
-// The two authorities, in order:
+// harness reported alongside the reading. Two sources, in order:
 //
 //  1. `selection.contextWindow` — a window somebody configured for this model.
-//     Deliberate by construction, and the agent node's own field already
-//     states what leaving it empty means: "the chat then shows usage without a
-//     percentage."
-//  2. For an in-process (native) session, the reported size itself — because we
-//     computed it. `resolveContextWindow` in native-harness.ts returns the
-//     configured value, or the one discovered from the endpoint's `/models`,
-//     and 0 when it has neither. It cannot return a guess, so a native `size`
-//     is the discovery authority arriving over the only channel it has. This
-//     holds only while that function refuses to invent a number; if it ever
-//     gains a fallback that guesses, this stops being sound.
+//     Deliberate by construction, and it wins over anything reported.
+//  2. The size the harness reported with the reading itself.
 //
-// Anything else yields `undefined`: tokens used, no ratio. That is an existing
-// rendering — the same one a model with no configured window already gets —
-// rather than a new state to design for.
+// The reported size used to be withheld for external ACP bridges: the old
+// claude bridge seeded a family default and reported it as fact, with nothing
+// on the wire distinguishing the guess from a later corrected value, so every
+// bridged session without a configured window permanently read "window size
+// not reported". The rule now is that hiding the window
+// forever costs more than the residual risk of briefly relaying a wrong one —
+// and the risk has narrowed since the rule was written: the bridge now learns
+// each model's real window from the harness's own per-model usage and caches
+// it across sessions on the same provider, so a reported figure is the seeded
+// guess only until the first completed turn corrects it.
 //
-// This deliberately withholds windows that may well be correct. A bridge that
-// has already corrected itself reports a true figure we still cannot tell from
-// its guess, and that figure is dropped with the rest. Showing a number we
-// cannot vouch for is the failure this exists to prevent; the remedy is to
-// configure the window, not to trust the wire harder.
+// What deliberately does NOT come back is a client-side table of per-model
+// windows: maintaining one is the failure mode this module replaced. And the
+// claim/evidence distinction did not vanish, it moved: a figure this very
+// reading contradicts is still dropped (displayableContextWindow), a
+// non-positive or non-finite figure never passes (usableContextWindow), and
+// the bridge already tracks internally which of its figures are authoritative
+// — exposing that flag on the wire is proposed upstream, at which point this
+// can tighten to authoritative-only without any client table.
 export function knownContextWindow(selection: AgentSelection, reportedSize?: number): number | undefined {
-  const configured = usableContextWindow(selection.contextWindow)
-  if (configured !== undefined) {
-    return configured
-  }
-  if (findAdapter(selection.adapterId)?.kind === 'native') {
-    return usableContextWindow(reportedSize)
-  }
-  return undefined
+  return usableContextWindow(selection.contextWindow) ?? usableContextWindow(reportedSize)
 }
 
 /**
