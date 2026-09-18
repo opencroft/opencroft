@@ -127,9 +127,11 @@ export const addSpaceApp = createServerFn({ method: 'POST', strict: { output: fa
   })
 
 /**
- * Rename one instance in place: display name only — the slug is an address
- * and never moves. Never recreates, whatever the App's update mode; an App
- * mirroring the name into its own data follows through onRenamed.
+ * Rename one instance in place: the name and the address, since the slug now
+ * follows the label. Refused if the new slug is taken in the
+ * space, changing nothing. Never recreates, whatever the App's update mode;
+ * an App mirroring the name and slug into its own data follows through
+ * onRenamed.
  */
 export const renameSpaceApp = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { spaceSlug: string; instanceId: string; name: string }) => data)

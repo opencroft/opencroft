@@ -109,8 +109,14 @@ export const spaceSlugAlias = pgTable(
 // Every instance carries a NAME (required, human-facing) and a SLUG derived
 // from it once, at creation -- the instance's public address within its
 // space, unique there, in the same grammar graphs use: <space>.<slug>.
-// Renaming changes only the name; the slug never moves with it (an address
-// outlives its label). A transfer may re-slug on collision in the target
+// RENAMING MOVES THE SLUG, so an instance's address follows its label and
+// previously saved or shared links stop resolving. This reverses the rule
+// this comment used to state -- "an address outlives its label" -- and the
+// reversal was the maintainer's, made deliberately with that
+// consequence put to him. It is not to be softened into an alias table or a
+// redirect: a slug that no longer resolves does exactly what a nonexistent
+// uuid does. A rename onto a taken slug is refused outright, changing
+// nothing, not even the name. A transfer may re-slug on collision in the target
 // space, through the same resolution graphs established.
 export const spaceApp = pgTable(
   'SpaceApp',

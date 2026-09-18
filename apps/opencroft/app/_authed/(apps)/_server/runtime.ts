@@ -391,9 +391,22 @@ export async function removeSpaceAppImpl(ref: string): Promise<boolean> {
 }
 
 /**
- * Rename one instance: the display name only — the slug is an address, fixed
- * at creation, and never moves with the label. Apps that mirror the name into
- * data they own (the Graph App's graph row) react through onRenamed.
+ * Rename one instance: the name AND the address it is reachable at.
+ *
+ * The slug used to be fixed at creation, so everything written down elsewhere
+ * kept resolving. That was reversed deliberately, with the
+ * consequence stated — previously saved or shared links stop resolving — so
+ * it is not to be softened into an alias or a redirect by whoever reads this
+ * next. A slug that no longer resolves does exactly what a nonexistent uuid
+ * does: 404, the address left as typed, nothing substituted.
+ *
+ * A taken slug is REFUSED and nothing changes, not even the display name.
+ * Handing back a suffixed slug would leave the instance answering to an
+ * address nobody named, which is the same reason the add path refuses.
+ *
+ * Apps that mirror the name and slug into data they own (the Graph App's
+ * graph row) follow through onRenamed, and a hook that refuses rolls the row
+ * back — the instance does not keep an address its App would not take.
  */
 export async function renameSpaceAppImpl(instanceId: string, name: string): Promise<SpaceAppRow> {
   const trimmedName = name.trim()
@@ -407,13 +420,30 @@ export async function renameSpaceAppImpl(instanceId: string, name: string): Prom
   if (row.name === trimmedName) {
     return row
   }
+  const slug = instanceSlugFor(trimmedName)
+  if (slug !== row.slug) {
+    const siblings = await db.query.spaceApp.findMany({ where: eq(spaceApp.spaceId, row.spaceId) })
+    if (siblings.some((sibling) => sibling.id !== row.id && sibling.slug === slug)) {
+      const space = (await registry()).getById(row.spaceId)
+      throw new AppSlugTakenError(`${space?.slug ?? ''}.${slug}`)
+    }
+  }
   const [updated] = await db
     .update(spaceApp)
-    .set({ name: trimmedName, updatedAt: new Date() })
+    .set({ name: trimmedName, slug, updatedAt: new Date() })
     .where(eq(spaceApp.id, row.id))
     .returning()
   const hooks = await hooksFor(row.extensionId, row.appSlug)
-  await hooks?.onRenamed?.(await instanceContext(updated), row.name)
+  try {
+    await hooks?.onRenamed?.(await instanceContext(updated), row.name)
+  } catch (error) {
+    // The App refused the new address, so the instance does not keep it. Same
+    // compensating shape as the add and transfer paths: an instance whose slug
+    // moved while the graph it owns stayed put would be one instance answering
+    // to two addresses, which is worse than the rename not happening.
+    await db.update(spaceApp).set({ name: row.name, slug: row.slug }).where(eq(spaceApp.id, row.id))
+    throw error
+  }
   const loaded = loadedInstances().get(row.id)
   if (loaded) {
     loaded.ctx = await instanceContext(updated)

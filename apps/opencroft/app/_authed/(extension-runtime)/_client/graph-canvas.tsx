@@ -15,7 +15,13 @@ import type { GraphInstanceView } from '@/app/_authed/(space)/_server/actions-im
  * page draws (editor, chat, providers and all), pointed at the instance's
  * graph. The instance id is the only input -- the graph's address, names and
  * owning space are resolved server-side, so the client never re-derives a
- * slug from a parameter and a renamed graph keeps resolving.
+ * slug from a parameter.
+ *
+ * That matters MORE since the slug started moving on rename,
+ * not less: an already-open canvas holds the instance id, which a rename
+ * cannot invalidate, so it keeps working while the address it was reached by
+ * stops resolving. The identity is what makes the open session survive; the
+ * address is what dies.
  *
  * Exposed through the host API for the builtin extension's App component --
  * the platform's window onto a graph is host UI, not something an extension

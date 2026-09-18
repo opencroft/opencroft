@@ -497,19 +497,58 @@ class SpacesRegistry {
   }
 
   /**
-   * A graph's DISPLAY name -- the onUpdated hook's job when an instance's
-   * name parameter changes. The slug never moves with it: it is an address,
-   * fixed at creation, and everything written down outside this process
-   * (canvas URLs, agent notes, MCP calls) keeps resolving.
+   * A graph's name AND its address -- the onRenamed hook's job when an
+   * instance's name changes.
+   *
+   * THE SLUG MOVES WITH THE NAME. It did not used to: the slug was an address
+   * fixed at creation, so everything written down outside this process kept
+   * resolving. That was reversed deliberately, knowing the
+   * consequence -- previously saved links stop resolving -- so this is not an
+   * oversight to soften later with an alias or a redirect.
+   *
+   * It moves HERE, driven by the instance's own rename, because one instance
+   * is one graph is one address. The platform has already re-slugged the
+   * instance by the time this runs; a graph left on its old slug would make
+   * `<space>.<app-slug>` and `<space>.<graph-slug>` two different addresses
+   * for the same thing, which is the invariant the whole Graph App rests on.
+   *
+   * Refused when the new slug is taken, for the reason the add path refuses:
+   * answering to an address nobody named is worse than refusing to move.
+   *
+   * THE DEFAULT-GRAPH POINTER FOLLOWS, and that is not a detail. It is stored
+   * as a slug, so renaming a space's default graph without moving it would
+   * leave the bare `<space>` address resolving to nothing -- the space's own
+   * canvas, gone, from a rename. Both writes go in one transaction so a
+   * failure cannot leave the pointer aimed at a slug that no longer exists.
    */
-  async renameGraphByInstance(instanceId: string, name: string): Promise<GraphRuntime | null> {
+  async renameGraphByInstance(instanceId: string, name: string, slug: string): Promise<GraphRuntime | null> {
     const graph = this.graphsByInstance.get(instanceId)
     if (!graph) {
       return null
     }
-    const [row] = await db.update(spaceGraph).set({ name }).where(eq(spaceGraph.id, graph.id)).returning()
+    const owner = this.spaces.get(graph.spaceId)
+    if (slug !== graph.slug && owner?.graphs.has(slug)) {
+      throw new GraphSlugTakenError(`${owner.slug}.${slug}`)
+    }
+    const previousSlug = graph.slug
+    const movesDefault = owner?.defaultGraphSlug === previousSlug
+    const row = await db.transaction(async (tx) => {
+      const [updated] = await tx.update(spaceGraph).set({ name, slug }).where(eq(spaceGraph.id, graph.id)).returning()
+      if (movesDefault && owner) {
+        await tx.update(space).set({ defaultGraphSlug: slug }).where(eq(space.id, owner.id))
+      }
+      return updated
+    })
     graph.name = row.name
+    graph.slug = row.slug
     graph.updatedAt = row.updatedAt
+    if (owner) {
+      owner.graphs.delete(previousSlug)
+      owner.graphs.set(graph.slug, graph)
+      if (movesDefault) {
+        owner.defaultGraphSlug = graph.slug
+      }
+    }
     return graph
   }
 
