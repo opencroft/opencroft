@@ -18,13 +18,13 @@ export interface ContextRingProps {
   // distinguishes them, which is one more reason it exists.
   contextLimit: number
   // The session's cumulative cost, when the harness prices the session. Shown
-  // in the popover, under the context counts — the ring's own mark stays the
+  // in the popover, under the context counts -- the ring's own mark stays the
   // percentage, so one control keeps answering one question.
   sessionCost?: { amount: number; currency: string }
   // The account's subscription rate-limit windows, when the harness reports
   // them (Claude's five-hour and weekly limits, per model where it says so).
   // Each window renders its own line: how much of it is used, and when it
-  // resets. Absent means the harness reports none — never "all used up".
+  // resets. Absent means the harness reports none -- never "all used up".
   rateLimits?: { status: string; window: string; utilization?: number; resetsAt?: number }[]
   // Wall-clock time (ms since epoch) this figure was reported. Present ONLY on a
   // last-known reading served for a session that is offline -- never on a live
@@ -134,9 +134,9 @@ function formatAsOf(asOf: number): string {
   return `Reported ${new Date(asOf).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
 }
 
-// "$0.42" / "$12.50" — the harness reports a number and an ISO currency code,
-// and Intl renders both in one place. Two decimals: usage costs live in the
-// cents-to-tens range, where the integer dollars would read as "0" all day.
+// "$0.42" -- the harness reports a number and an ISO currency code, and Intl
+// renders both in one place. Two decimals: usage costs live in the
+// cents-to-tens range, where integer dollars would read as "0" all day.
 function formatCost(cost: { amount: number; currency: string }): string {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: cost.currency }).format(cost.amount)
 }
@@ -197,7 +197,7 @@ function RateLimitRow({
           ? 'default'
           : usageState(pct, warnAtPercent, dangerAtPercent)
   const resets = limit.resetsAt
-    ? `, resets ${new Date(limit.resetsAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
+    ? ` resets ${new Date(limit.resetsAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
     : ''
   return (
     <div className='flex flex-col gap-1.5'>
