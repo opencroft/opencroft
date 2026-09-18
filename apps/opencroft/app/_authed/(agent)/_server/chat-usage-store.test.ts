@@ -1,19 +1,28 @@
-// ChatUsageTurn writes, against a real database.
+// ChatUsageTurn / ChatUsageTurnModel writes, against a real database.
 //
 // What only a database can get wrong is the round trip: that a recorded turn
 // reads back with the counters it was given, that the optional halves (model,
-// cost) degrade to their null spelling rather than blocking the write, and
-// that the day bucket is UTC — the same day key UsageRollupDay groups by,
-// so the two tables answer with one vocabulary.
+// cost) degrade to their null spelling rather than blocking the write, that
+// the day bucket is UTC — the same day key UsageRollupDay groups by, so the
+// two tables answer with one vocabulary — and that the per-model table always
+// ends up with at least one row, whether or not the harness reported a
+// breakdown.
 import '@opencroft/db/test-env'
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { chatUsageTurn, db } from '@opencroft/db'
+import { chatUsageTurn, chatUsageTurnModel, db } from '@opencroft/db'
 import { eq } from 'drizzle-orm'
 
-import { recordChatUsageTurn, usageDay } from './chat-usage-store'
+import { queryChatUsage, recordChatUsageTurn, usageDay } from './chat-usage-store'
+
+/** The model rows a session's one recorded turn produced, reached the way a read does — through the turn. */
+async function modelRowsOf(sessionId: string) {
+  const [turn] = await db.select().from(chatUsageTurn).where(eq(chatUsageTurn.sessionId, sessionId))
+  assert.ok(turn, `no turn row recorded for ${sessionId}`)
+  return db.select().from(chatUsageTurnModel).where(eq(chatUsageTurnModel.turnId, turn.id))
+}
 
 test('usageDay buckets by UTC calendar date', () => {
   assert.equal(usageDay(new Date('2026-09-16T00:00:30.000Z')), '2026-09-16')
@@ -55,4 +64,65 @@ test('a harness that reports only the total still records a row', async () => {
   assert.equal(row.model, null)
   assert.equal(row.costAmount, null)
   assert.equal(row.inputTokens, 0, 'an unreported counter stores as zero, never as an invented measurement')
+})
+
+test('with no reported breakdown, the turn synthesizes its own usage as its one model row', async () => {
+  await recordChatUsageTurn({
+    sessionId: 'sess-usage-3',
+    adapterId: 'claude-subscription',
+    model: 'claude-sonnet-5',
+    usage: { totalTokens: 900, inputTokens: 700, outputTokens: 200 },
+    at: new Date('2026-09-16T10:00:00.000Z'),
+  })
+  const modelRows = await modelRowsOf('sess-usage-3')
+  assert.equal(modelRows.length, 1, 'no breakdown still means exactly one model row, never zero')
+  assert.equal(modelRows[0].model, 'claude-sonnet-5')
+  assert.equal(modelRows[0].totalTokens, 900)
+  assert.equal(modelRows[0].inputTokens, 700)
+})
+
+test("a harness's per-model breakdown becomes one ChatUsageTurnModel row per model", async () => {
+  await recordChatUsageTurn({
+    sessionId: 'sess-usage-4',
+    adapterId: 'claude-subscription',
+    model: 'claude-sonnet-5',
+    usage: { totalTokens: 100, inputTokens: 80, outputTokens: 20 },
+    at: new Date('2026-09-16T10:00:00.000Z'),
+    // The breakdown totals more than the turn row does -- subagents and
+    // internal calls, which is the point of the table, not a discrepancy to
+    // reconcile (see the ChatUsageTurnModel schema comment).
+    quota: {
+      tokenCount: { totalTokens: 100, inputTokens: 80, outputTokens: 20 },
+      modelUsage: [
+        { model: 'claude-sonnet-5', tokenCount: { totalTokens: 100, inputTokens: 80, outputTokens: 20 } },
+        { model: 'claude-haiku-5', tokenCount: { totalTokens: 50, inputTokens: 40, outputTokens: 10 } },
+      ],
+    },
+  })
+  const modelRows = await modelRowsOf('sess-usage-4')
+  assert.equal(modelRows.length, 2)
+  const byModel = new Map(modelRows.map((row) => [row.model, row] as const))
+  assert.equal(byModel.get('claude-sonnet-5')?.totalTokens, 100)
+  assert.equal(byModel.get('claude-haiku-5')?.totalTokens, 50)
+})
+
+test('model grouping sums the breakdown, so a subagent model the turn row never named still shows up', async () => {
+  await recordChatUsageTurn({
+    sessionId: 'sess-usage-5',
+    adapterId: 'claude-subscription',
+    model: 'claude-sonnet-5',
+    usage: { totalTokens: 100 },
+    at: new Date('2026-09-18T10:00:00.000Z'),
+    quota: {
+      tokenCount: { totalTokens: 100 },
+      modelUsage: [
+        { model: 'claude-sonnet-5', tokenCount: { totalTokens: 100 } },
+        { model: 'claude-haiku-5', tokenCount: { totalTokens: 40 } },
+      ],
+    },
+  })
+  const series = await queryChatUsage('model', { kind: 'custom', from: '2026-09-18', to: '2026-09-18' })
+  const haiku = series.find((s) => s.key === 'claude-haiku-5')
+  assert.ok(haiku, 'the subagent-only model gets its own series, even though no turn ever resolved to it')
+  assert.equal(haiku.points[0].totalTokens, 40)
 })

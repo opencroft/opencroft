@@ -189,20 +189,55 @@ export const chatUsageTurn = pgTable(
     sessionId: text().notNull(),
     adapterId: text().notNull(),
     model: text(),
+    // The group-chat agent this turn ran under, from the session key's
+    // `agentSlug` segment (see partsOfSessionKey) — null for a 1:1 chat
+    // session, whose key names no agent. Enables grouping usage by agent
+    // without re-deriving it from sessionId at read time.
+    agent: text(),
     inputTokens: bigint({ mode: 'number' }).notNull(),
     outputTokens: bigint({ mode: 'number' }).notNull(),
     cacheReadTokens: bigint({ mode: 'number' }).notNull(),
     cacheWriteTokens: bigint({ mode: 'number' }).notNull(),
     totalTokens: bigint({ mode: 'number' }).notNull(),
-    // The session cost the harness reported at the turn's end, when it
-    // prices sessions at all (cumulative for the session, not this turn's
-    // increment). Kept as reported: a per-turn cost would be a derived
-    // figure pretending to be a measurement.
+    // This turn's OWN spend — the increment agent-client's turn_end event
+    // carries, already differenced from the harness's cumulative session
+    // reading (see SessionCost on ChatEvent). NOT cumulative: summing this
+    // column across a session's turns reproduces the session total, which is
+    // what makes a plain per-bucket SUM at read time correct.
     costAmount: doublePrecision(),
     costCurrency: text(),
     createdAt: createdAt(),
   },
   (t) => [index('ChatUsageTurn_day_idx').on(t.day), index('ChatUsageTurn_sessionId_idx').on(t.sessionId)],
+)
+
+// The per-model breakdown behind one ChatUsageTurn row, from the harness's
+// `_meta.quota.modelUsage` (see TurnQuota) when it reports one. A claude
+// turn's breakdown counts subagents and internal calls the main-loop figure
+// on ChatUsageTurn excludes, so THIS table -- not the turn row -- is where
+// grouping by model reads its counters (see queryChatUsage). No day/agent/
+// cost columns: those are the turn's own and are reached by joining to it —
+// the agent of every model row IS its turn's agent, by construction.
+//
+// Always at least one row per recorded turn, even with no breakdown: the
+// write path synthesizes a single row from the turn's own usage and resolved
+// model, so a read never needs a fallback branch for "no model rows yet".
+// CASCADE on the turn: a model row has no meaning once its turn is gone.
+export const chatUsageTurnModel = pgTable(
+  'ChatUsageTurnModel',
+  {
+    id: text().primaryKey().notNull().$defaultFn(uuid),
+    turnId: text()
+      .notNull()
+      .references(() => chatUsageTurn.id, { onDelete: 'cascade' }),
+    model: text(),
+    inputTokens: bigint({ mode: 'number' }).notNull(),
+    outputTokens: bigint({ mode: 'number' }).notNull(),
+    cacheReadTokens: bigint({ mode: 'number' }).notNull(),
+    cacheWriteTokens: bigint({ mode: 'number' }).notNull(),
+    totalTokens: bigint({ mode: 'number' }).notNull(),
+  },
+  (t) => [index('ChatUsageTurnModel_turnId_idx').on(t.turnId)],
 )
 
 export const mcpAuditLog = pgTable(
@@ -890,6 +925,7 @@ export const schema = {
   groupChatThreadArtifact,
   usageRollupDay,
   chatUsageTurn,
+  chatUsageTurnModel,
   agentQueueEntry,
   agentSessionEvent,
   ...authSchema,
@@ -912,6 +948,7 @@ export type GroupChatSlugAlias = typeof groupChatSlugAlias.$inferSelect
 export type GroupChatThreadAlias = typeof groupChatThreadAlias.$inferSelect
 export type UsageRollupDay = typeof usageRollupDay.$inferSelect
 export type ChatUsageTurn = typeof chatUsageTurn.$inferSelect
+export type ChatUsageTurnModel = typeof chatUsageTurnModel.$inferSelect
 export type Username = typeof username.$inferSelect
 
 // Better Auth's tables, declared separately because their shape is the

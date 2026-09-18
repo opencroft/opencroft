@@ -71,29 +71,35 @@ function persistSessionEvent(event: ChatEvent, sessionKey: string | undefined): 
   appendSessionEvent(sessionKey, event)
 }
 
-function persistUsageOnTurnEnd(sessionId: string, event: ChatEvent): void {
+function persistUsageOnTurnEnd(sessionId: string, event: ChatEvent, sessionKey: string | undefined): void {
   if (event.kind !== 'turn_end') {
     return
   }
   // The turn's own spend, when the harness reported one — written as a row
-  // into ChatUsageTurn, the accounting record behind any later day/model
-  // aggregation (see chat-usage-store). Fire-and-forget like everything else
-  // here: an event observer must not hold up the emit, and a failed write
-  // costs one unrecorded turn, never the turn itself.
-  // One registry read serves both records below.
-  const session = agentClient.listSessions().find((s) => s.id === sessionId)
+  // into ChatUsageTurn, the accounting record behind any later day/agent/model
+  // aggregation (see chat-usage-store). adapterId/model/cost come off the
+  // event rather than the session registry below: agent-client's settleTurn
+  // already resolves them at the boundary (real harness + resolved model +
+  // this turn's own cost delta), and a group-chat thread has no selection
+  // mirror for the registry to answer from. sessionKey and quota ride along
+  // for the store to decode — the turn's `agent` and its per-model rows (see
+  // recordChatUsageTurn). Fire-and-forget like everything else here: an event
+  // observer must not hold up the emit, and a failed write costs one
+  // unrecorded turn, never the turn itself.
   if (event.usage) {
     void recordChatUsageTurn({
       sessionId,
-      adapterId: session?.adapterId,
-      model: session?.model,
+      sessionKey,
+      adapterId: event.adapterId,
+      model: event.model,
       usage: event.usage,
-      cost: session?.usage?.cost,
+      cost: event.cost,
+      quota: event.quota,
     }).catch((error) => {
       console.error('Failed to record chat usage for session', sessionId, error)
     })
   }
-  const usage = session?.usage
+  const usage = agentClient.listSessions().find((s) => s.id === sessionId)?.usage
   if (!usage) {
     return
   }
@@ -209,7 +215,7 @@ export const agentClient = createAgentClient({
   // reason to take it from one that might.
   onEvent: (sessionId, event, sessionKey) => {
     persistSessionEvent(event, sessionKey)
-    persistUsageOnTurnEnd(sessionId, event)
+    persistUsageOnTurnEnd(sessionId, event, sessionKey)
   },
   // Live compaction transitions (never replay — the engine gates that). The
   // registered handler re-delivers the session's standing context once a

@@ -2490,6 +2490,134 @@ test('a plain turn end carries no usage, quota or failure', async () => {
   await h.client.deleteSession(h.sessionId)
 })
 
+// ── turn_end attribution: adapter, resolved model, per-turn cost ─────────
+//
+// A consumer accounting for a turn needs what ran and what it cost without a
+// second lookup against the live session — which a group-chat thread, created
+// with no model mirror, answers as unknown. So the boundary stamps the
+// selection's adapter, the RESOLVED model (from the turn's real quota
+// breakdown ahead of the selection mirror), and the turn's OWN cost delta.
+
+test('turn_end stamps the adapter and resolves the model from the quota breakdown', async () => {
+  // The selection carries no model (the group-chat case); the harness's
+  // per-model breakdown names what actually ran, and the heaviest row wins
+  // over a lighter subagent model.
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'hello', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  h.endTurnWith({
+    stopReason: 'end_turn',
+    usage: { totalTokens: 5_000 },
+    _meta: {
+      quota: {
+        token_count: { totalTokens: 5_000 },
+        model_usage: [
+          { model: 'claude-haiku-4-5', token_count: { totalTokens: 800 } },
+          { model: 'claude-opus-5', token_count: { totalTokens: 6_000 } },
+        ],
+      },
+    },
+  })
+  await settle()
+  const turnEnd = h.events.find((event) => event.kind === 'turn_end')
+  assert.ok(turnEnd && turnEnd.kind === 'turn_end')
+  assert.equal(turnEnd.adapterId, 'openclaw')
+  assert.equal(turnEnd.model, 'claude-opus-5')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('turn_end reports each turn its OWN cost, differenced from the cumulative reading', async () => {
+  const h = await setup('openclaw', { contextWindow: 200_000 })
+  const turnCosts = () =>
+    h.events
+      .filter((event): event is Extract<ChatEvent, { kind: 'turn_end' }> => event.kind === 'turn_end')
+      .map((event) => event.cost?.amount)
+
+  // First priced turn: the whole cumulative is its own spend. (Amounts are
+  // binary-exact halves so the delta below is checked without a float epsilon —
+  // the engine differences faithfully, it does not round.)
+  await h.client.prompt(h.sessionId, 'one', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 12_000, size: 200_000, cost: { amount: 0.5, currency: 'USD' } },
+  } as Parameters<typeof handleUpdate>[0])
+  h.endTurn()
+  await settle()
+
+  // Second turn: cumulative climbs; the delta is this turn's alone.
+  await h.client.prompt(h.sessionId, 'two', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 20_000, size: 200_000, cost: { amount: 2, currency: 'USD' } },
+  } as Parameters<typeof handleUpdate>[0])
+  h.endTurn()
+  await settle()
+
+  assert.deepEqual(turnCosts(), [0.5, 1.5])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a cumulative cost that drops (a reset) is read as the post-reset spend, never a negative turn', async () => {
+  const h = await setup('openclaw', { contextWindow: 200_000 })
+  await h.client.prompt(h.sessionId, 'one', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 12_000, size: 200_000, cost: { amount: 5, currency: 'USD' } },
+  } as Parameters<typeof handleUpdate>[0])
+  h.endTurn()
+  await settle()
+
+  // A compaction reset the harness's cumulative; the fresh figure is the whole
+  // of the turn's spend, not a 5 → 0.3 negative.
+  await h.client.prompt(h.sessionId, 'two', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 3_000, size: 200_000, cost: { amount: 0.3, currency: 'USD' } },
+  } as Parameters<typeof handleUpdate>[0])
+  h.endTurn()
+  await settle()
+
+  const last = h.events
+    .filter((event): event is Extract<ChatEvent, { kind: 'turn_end' }> => event.kind === 'turn_end')
+    .at(-1)
+  assert.equal(last?.cost?.amount, 0.3)
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a restored cumulative cost counts as already accounted for, so the first turn after a restart is not charged the history', async () => {
+  const h = await setup('openclaw', { contextWindow: 200_000 })
+  // What the host persisted from the previous process: a session already 4.00
+  // into its cumulative, every cent of it attributed to earlier turns.
+  h.client.restoreUsage(h.sessionId, { used: 8_000, size: 200_000, cost: { amount: 4, currency: 'USD' } })
+
+  // The harness resumes with its counter intact: the boundary sees only the
+  // increment.
+  await h.client.prompt(h.sessionId, 'one', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 9_000, size: 200_000, cost: { amount: 4.5, currency: 'USD' } },
+  } as Parameters<typeof handleUpdate>[0])
+  h.endTurn()
+  await settle()
+
+  // A harness that restarted its own counter on resume reads as a reset: the
+  // fresh figure is the turn's whole spend.
+  await h.client.prompt(h.sessionId, 'two', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  handleUpdate({
+    sessionId: h.sessionId,
+    update: { sessionUpdate: 'usage_update', used: 3_000, size: 200_000, cost: { amount: 0.25, currency: 'USD' } },
+  } as Parameters<typeof handleUpdate>[0])
+  h.endTurn()
+  await settle()
+
+  assert.deepEqual(
+    h.events
+      .filter((event): event is Extract<ChatEvent, { kind: 'turn_end' }> => event.kind === 'turn_end')
+      .map((event) => event.cost?.amount),
+    [0.5, 0.25],
+  )
+  await h.client.deleteSession(h.sessionId)
+})
+
 // ── hasActiveTurn ────────────────────────────────────────────────────────
 //
 // Same underlying read as activeSessionKeys, by raw session id — the check a
