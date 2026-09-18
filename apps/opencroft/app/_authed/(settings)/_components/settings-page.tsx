@@ -4,26 +4,24 @@ import { useRouteContext } from '@tanstack/react-router'
 import { Archive, ScrollText, User, Users } from 'lucide-react'
 import type React from 'react'
 import { Suspense, useCallback } from 'react'
-import { MenuLayout } from 'ui/layout/menulayout'
-import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
+import { ExtensionSettingsMenu } from 'ui/settings/extension-settings-menu'
+import { type SettingsSection, SettingsShell } from 'ui/settings/settings-shell'
 
 import AccountSettings from '@/app/_authed/(settings)/_components/account-settings'
 import AuditSettings from '@/app/_authed/(settings)/_components/audit-settings'
 import BackupSettings from '@/app/_authed/(settings)/_components/backup-settings'
 import {
-  ExtensionSettingsMenu,
+  extensionMenuEntries,
   findExtensionPage,
   useExtensionSettings,
 } from '@/app/_authed/(settings)/_components/extension-settings'
 import UsersSettings from '@/app/_authed/(settings)/_components/users-settings'
 import { useUrlState } from '@/components/hooks/use-url-state'
-import { cn } from '@/lib/utils'
 
 // A section that swaps the panel beside the menu, staying on /settings.
-interface BuiltinPage {
-  id: string
-  label: string
-  icon: React.ElementType
+// The frame is the kit's SettingsShell; what stays here is which sections
+// exist, which of them this reader may see, and which component each one is.
+interface BuiltinPage extends SettingsSection {
   component: React.ComponentType
   /** Rendered only for an administrator — see the visibility note below. */
   adminOnly?: boolean
@@ -35,8 +33,6 @@ const BUILTIN_PAGES: BuiltinPage[] = [
   { id: 'backup', label: 'Backup & Restore', icon: Archive, component: BackupSettings },
   { id: 'users', label: 'Users', icon: Users, component: UsersSettings, adminOnly: true },
 ]
-
-const ENTRY_CLASS = 'w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors'
 
 function SettingsContent() {
   const [section, setSection] = useUrlState<string>('section', '')
@@ -55,32 +51,19 @@ function SettingsContent() {
   const extensionPage = !builtin ? findExtensionPage(settings, value) : null
   const ActiveComponent = builtin?.component ?? extensionPage?.component
 
-  const menu = (
-    <nav className='p-2 space-y-1'>
-      {builtinPages.map((page) => {
-        const Icon = page.icon
-        return (
-          <button
-            type='button'
-            key={page.id}
-            onClick={() => setSection(page.id)}
-            className={cn(ENTRY_CLASS, value === page.id ? 'bg-accent font-medium' : 'hover:bg-accent/50')}
-          >
-            <Icon className='h-4 w-4 shrink-0' />
-            {page.label}
-          </button>
-        )
-      })}
-      <ExtensionSettingsMenu activeId={value} onSelect={setSection} />
-    </nav>
-  )
-
   return (
-    <MenuLayout isOpened={!!section} onClosed={onClosed} menu={menu}>
-      <ScrollPage>
-        <ScrollContent className='p-4'>{ActiveComponent && <ActiveComponent />}</ScrollContent>
-      </ScrollPage>
-    </MenuLayout>
+    <SettingsShell
+      sections={builtinPages}
+      value={value}
+      onValueChange={setSection}
+      isOpened={!!section}
+      onClosed={onClosed}
+      menuExtra={
+        <ExtensionSettingsMenu entries={extensionMenuEntries(settings)} activeId={value} onSelect={setSection} />
+      }
+    >
+      {ActiveComponent && <ActiveComponent />}
+    </SettingsShell>
   )
 }
 
