@@ -29,7 +29,12 @@ export type UsagePeriod =
   | { kind: 'custom'; from?: string; to?: string }
 
 export interface SpaceUsagePoint {
-  /** The bucket's place on the time axis — a UTC day such as 2026-03-07. */
+  /**
+   * The bucket's start on the time axis, at whatever resolution the host
+   * bucketed the window: a UTC day such as `2026-03-07`, or a UTC hour such
+   * as `2026-03-07T14` for a window short enough to read by the hour. A day
+   * is labelled as that day; an hour is labelled in the reader's own clock.
+   */
   date: string
   totalTokens: number
   inputTokens: number
@@ -68,7 +73,8 @@ export interface SpaceUsageProps {
   /**
    * The reporting window. Same contract as the grouping: the choice leaves
    * as a callback and the host comes back with different rows — the
-   * component never filters points itself.
+   * component never filters points itself, and it draws the buckets at
+   * whatever resolution they come back in (see SpaceUsagePoint.date).
    */
   period: UsagePeriod
   onPeriodChange: (period: UsagePeriod) => void
@@ -151,6 +157,22 @@ function formatDay(date: string): string {
   return Number.isNaN(parsed.getTime())
     ? date
     : parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+
+const HOUR_BUCKET = /^\d{4}-\d{2}-\d{2}T\d{2}$/
+
+// A bucket start as its axis label. A day stays the UTC day it names; an
+// hour is shown in the reader's own clock — "Mar 7, 14:00" — because an hour
+// is the resolution at which the zone stops being noise and starts being the
+// difference between lunch and midnight.
+function formatBucket(bucket: string): string {
+  if (!HOUR_BUCKET.test(bucket)) {
+    return formatDay(bucket)
+  }
+  const parsed = new Date(`${bucket}:00:00Z`)
+  return Number.isNaN(parsed.getTime())
+    ? bucket
+    : parsed.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 // The period as it reads inside a sentence — "Reset usage for the last 7
@@ -353,7 +375,7 @@ function ChartCard({
                 className='pointer-events-none absolute top-1 z-10 flex -translate-x-1/2 flex-col gap-0.5 rounded-md border border-border bg-popover px-2.5 py-1.5 text-xs shadow-md'
                 style={{ left: `clamp(3.5rem, ${x(hover)}%, calc(100% - 3.5rem))` }}
               >
-                <span className='text-muted-foreground'>{formatDay(dates[hover])}</span>
+                <span className='text-muted-foreground'>{formatBucket(dates[hover])}</span>
                 {series.map((s) => {
                   const v = s.values[hover]
                   if (v === undefined) {
@@ -373,8 +395,8 @@ function ChartCard({
             ) : null}
           </div>
           <div className='flex justify-between text-[10px] text-muted-foreground'>
-            <span>{formatDay(dates[0])}</span>
-            {n > 1 ? <span>{formatDay(dates[n - 1])}</span> : null}
+            <span>{formatBucket(dates[0])}</span>
+            {n > 1 ? <span>{formatBucket(dates[n - 1])}</span> : null}
           </div>
         </div>
       )}
@@ -489,11 +511,12 @@ export function SpaceUsage({
               </PopoverTrigger>
               <PopoverContent align='start' className='w-auto p-0'>
                 {/* Opens on the data's own month rather than the calendar's
-                    idea of now, so the reader lands where the rows are. The
+                    idea of now, so the reader lands where the rows are — the
+                    last bucket's day, whatever resolution it came in at. The
                     popover dismisses itself once both ends are picked. */}
                 <Calendar
                   mode='range'
-                  defaultMonth={fromDay(period.from) ?? fromDay(dates[dates.length - 1])}
+                  defaultMonth={fromDay(period.from) ?? fromDay(dates[dates.length - 1]?.slice(0, 10))}
                   selected={{ from: fromDay(period.from), to: fromDay(period.to) }}
                   onSelect={(range) => {
                     onPeriodChange({

@@ -1,7 +1,7 @@
 import { chatUsageTurn, chatUsageTurnModel, db } from '@opencroft/db'
 import type { UsageTokens } from 'agent-chat/components/usage-cost'
 import type { SessionCost, TurnQuota, TurnTokenUsage } from 'agent-client/types'
-import { and, eq, gte, lte, sum } from 'drizzle-orm'
+import { and, eq, gte, lte, sql, sum } from 'drizzle-orm'
 import type { SpaceUsagePoint, SpaceUsageSeries, UsageGrouping, UsagePeriod } from 'ui/admin/space-usage'
 
 import { partsOfSessionKey } from '@/app/_authed/(group-chats)/_shared/session-key'
@@ -61,10 +61,15 @@ export async function recordChatUsageTurn(input: {
    */
   quota?: TurnQuota
 }): Promise<void> {
+  // One instant for both time columns: the day key a range filters on and the
+  // timestamp an hourly read cuts from must never disagree about which
+  // bucket a turn is in, so neither is left to a column default.
+  const at = input.at ?? new Date()
   const [turn] = await db
     .insert(chatUsageTurn)
     .values({
-      day: usageDay(input.at),
+      day: usageDay(at),
+      createdAt: at,
       sessionId: input.sessionId,
       adapterId: input.adapterId ?? 'unknown',
       model: input.model ?? null,
@@ -185,21 +190,75 @@ function fullDayRange(from: string, to: string): string[] {
   return days
 }
 
+// ── Bucket resolution ──────────────────────────────────────────────────────
+//
+// A window short enough to read by the hour is bucketed by the hour, the
+// rest by the day: 24 points a day on a small multiple, while a week of hours
+// is already a comb. A row carries both keys — `day`, the UTC day a range
+// filters on, and `createdAt`, the instant an hourly cut comes from — written
+// from one timestamp (see recordChatUsageTurn), so the two never disagree.
+
+type Resolution = 'hour' | 'day'
+
+/** Up to this many days a bounded window reads by the hour. */
+const MAX_HOURLY_DAYS = 3
+
+function resolutionOf(range: { from?: string; to?: string }): Resolution {
+  return range.from && range.to && fullDayRange(range.from, range.to).length <= MAX_HOURLY_DAYS ? 'hour' : 'day'
+}
+
+/** An hour bucket key — the UTC day and hour, `2026-03-07T14` — the same prefix rule usageDay applies. */
+function usageHour(at: Date): string {
+  return at.toISOString().slice(0, 13)
+}
+
+function addHoursUTC(hour: string, delta: number): string {
+  const date = new Date(`${hour}:00:00Z`)
+  date.setUTCHours(date.getUTCHours() + delta)
+  return usageHour(date)
+}
+
+/** Every bucket from the first day's start to the last day's end, at the resolution. */
+function fullRange(resolution: Resolution, from: string, to: string): string[] {
+  if (resolution === 'day') {
+    return fullDayRange(from, to)
+  }
+  const hours: string[] = []
+  const last = `${to}T23`
+  for (let hour = `${from}T00`; hour <= last; hour = addHoursUTC(hour, 1)) {
+    hours.push(hour)
+  }
+  return hours
+}
+
+// The bucket a turn falls in, as the axis key the chart is handed. `at time
+// zone 'UTC'` comes first: date_trunc on a timestamptz would otherwise cut on
+// the connection's zone, and `day` — the other key — is a UTC key.
+function bucketOf(resolution: Resolution) {
+  return resolution === 'day'
+    ? chatUsageTurn.day
+    : sql<string>`to_char(date_trunc('hour', ${chatUsageTurn.createdAt} at time zone 'UTC'), 'YYYY-MM-DD"T"HH24')`
+}
+
 /**
  * The one date axis every series in the response shares (see SpaceUsageProps'
  * doc on why they must). A bounded period is zero-filled in full, even over
- * days with no rows; an open-ended custom bound falls back to the earliest/
- * latest day actually recorded, so an unbounded query does not walk to the
- * start of time.
+ * buckets with no rows; an open-ended custom bound — always day-bucketed, see
+ * resolutionOf — falls back to the earliest/latest day actually recorded, so
+ * an unbounded query does not walk to the start of time.
  */
-function dateAxisOf(range: { from?: string; to?: string }, rows: { day: string }[]): string[] {
+function dateAxisOf(
+  resolution: Resolution,
+  range: { from?: string; to?: string },
+  rows: { bucket: string }[],
+): string[] {
   if (range.from && range.to) {
-    return fullDayRange(range.from, range.to)
+    return fullRange(resolution, range.from, range.to)
   }
   if (rows.length === 0) {
     return []
   }
-  const days = rows.map((row) => row.day).sort()
+  const days = rows.map((row) => row.bucket).sort()
   return fullDayRange(range.from ?? days[0], range.to ?? days[days.length - 1])
 }
 
@@ -222,9 +281,9 @@ function groupKeyOf(grouping: UsageGrouping, agent: string | null, model: string
   return (grouping === 'agent' ? agent : model) ?? UNKNOWN_GROUP_KEY
 }
 
-// The day is a fixed-width suffix, so whatever a series is named, two
-// different (series, day) pairs cannot produce the same key.
-const cellKey = (seriesKey: string, day: string) => `${seriesKey}|${day}`
+// Within one read every bucket is the same width, so whatever a series is
+// named, two different (series, bucket) pairs cannot produce the same key.
+const cellKey = (seriesKey: string, bucket: string) => `${seriesKey}|${bucket}`
 
 function labelOf(grouping: UsageGrouping, key: string): string {
   if (key === OTHER_SERIES_KEY) {
@@ -253,23 +312,26 @@ function labelOf(grouping: UsageGrouping, key: string): string {
  * turn's model rows (a subagent's, say) — stated attribution, not a
  * measurement, same as the schema comment on costAmount already notes.
  *
- * Both reads GROUP BY the full (day, agent, model) triple in SQL, regardless
- * of `grouping` — the database sums the counters instead of every matching
- * turn/model row crossing the wire. The result set stays one row per triple
- * actually recorded (not one per turn), so the JS below still does the
- * grouping-dependent work: ranking groups, folding the tail into "Other",
+ * Both reads GROUP BY the full (bucket, agent, model) triple in SQL,
+ * regardless of `grouping` — the database sums the counters instead of every
+ * matching turn/model row crossing the wire. The bucket is a UTC day or, for
+ * a short window, a UTC hour (see resolutionOf). The result set stays one row
+ * per triple actually recorded (not one per turn), so the JS below still does
+ * the grouping-dependent work: ranking groups, folding the tail into "Other",
  * building the date axis and padding cells — unchanged, just fed rows that
  * are already summed instead of raw ones.
  */
 export async function queryChatUsage(grouping: UsageGrouping, period: UsagePeriod): Promise<SpaceUsageSeries[]> {
   const range = dayRangeOf(period)
   const where = dayWhereOf(range)
+  const resolution = resolutionOf(range)
+  const bucket = bucketOf(resolution)
 
   // Nothing links the two reads, so they go out together.
   const [tokenRows, costRows] = await Promise.all([
     db
       .select({
-        day: chatUsageTurn.day,
+        bucket,
         agent: chatUsageTurn.agent,
         model: chatUsageTurnModel.model,
         // sum() over a bigint column comes back as a driver string; mapWith
@@ -286,10 +348,10 @@ export async function queryChatUsage(grouping: UsageGrouping, period: UsagePerio
       .from(chatUsageTurnModel)
       .innerJoin(chatUsageTurn, eq(chatUsageTurnModel.turnId, chatUsageTurn.id))
       .where(where)
-      .groupBy(chatUsageTurn.day, chatUsageTurn.agent, chatUsageTurnModel.model),
+      .groupBy(bucket, chatUsageTurn.agent, chatUsageTurnModel.model),
     db
       .select({
-        day: chatUsageTurn.day,
+        bucket,
         agent: chatUsageTurn.agent,
         model: chatUsageTurn.model,
         // Left undecoded (driver string | null): SQL SUM ignores NULL
@@ -301,10 +363,10 @@ export async function queryChatUsage(grouping: UsageGrouping, period: UsagePerio
       })
       .from(chatUsageTurn)
       .where(where)
-      .groupBy(chatUsageTurn.day, chatUsageTurn.agent, chatUsageTurn.model),
+      .groupBy(bucket, chatUsageTurn.agent, chatUsageTurn.model),
   ])
 
-  const dates = dateAxisOf(range, tokenRows)
+  const dates = dateAxisOf(resolution, range, tokenRows)
   if (dates.length === 0) {
     return []
   }
@@ -322,12 +384,12 @@ export async function queryChatUsage(grouping: UsageGrouping, period: UsagePerio
   const seriesKeys = ranked.length > MAX_SERIES ? [...kept, OTHER_SERIES_KEY] : kept
   const seriesKeyOf = (group: string) => (keptSet.has(group) ? group : OTHER_SERIES_KEY)
 
-  // One cell per (series, day). Tokens and cost are summed over two different
-  // row sets (see the function doc on why cost cannot share the model rows'
-  // grouping) into the SAME cell map.
+  // One cell per (series, bucket). Tokens and cost are summed over two
+  // different row sets (see the function doc on why cost cannot share the
+  // model rows' grouping) into the SAME cell map.
   const cells = new Map<string, UsageCell>()
-  const cellOf = (row: { day: string; agent: string | null; model: string | null }): UsageCell => {
-    const key = cellKey(seriesKeyOf(groupKeyOf(grouping, row.agent, row.model)), row.day)
+  const cellOf = (row: { bucket: string; agent: string | null; model: string | null }): UsageCell => {
+    const key = cellKey(seriesKeyOf(groupKeyOf(grouping, row.agent, row.model)), row.bucket)
     let cell = cells.get(key)
     if (!cell) {
       cell = emptyCell()

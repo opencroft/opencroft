@@ -124,7 +124,45 @@ test('model grouping sums the breakdown, so a subagent model the turn row never 
   const series = await queryChatUsage('model', { kind: 'custom', from: '2026-09-18', to: '2026-09-18' })
   const haiku = series.find((s) => s.key === 'claude-haiku-5')
   assert.ok(haiku, 'the subagent-only model gets its own series, even though no turn ever resolved to it')
-  assert.equal(haiku.points[0].totalTokens, 40)
+  // A one-day window reads by the hour, so the turn sits in its 10:00 bucket.
+  assert.equal(haiku.points.find((p) => p.date === '2026-09-18T10')?.totalTokens, 40)
+})
+
+test('a short window is bucketed by the hour, a long one by the day', async () => {
+  // Two turns on one day no other test records on, hours apart.
+  await recordChatUsageTurn({
+    sessionId: 'sess-usage-7-early',
+    usage: { totalTokens: 30 },
+    at: new Date('2026-08-10T03:30:00.000Z'),
+  })
+  await recordChatUsageTurn({
+    sessionId: 'sess-usage-7-late',
+    usage: { totalTokens: 50 },
+    at: new Date('2026-08-10T21:05:00.000Z'),
+  })
+
+  const [hourly] = await queryChatUsage('all', { kind: 'custom', from: '2026-08-10', to: '2026-08-10' })
+  assert.deepEqual(
+    hourly.points.map((p) => p.date),
+    Array.from({ length: 24 }, (_, h) => `2026-08-10T${String(h).padStart(2, '0')}`),
+    'one bounded day is 24 hourly buckets, zero-filled, in UTC',
+  )
+  assert.deepEqual(
+    hourly.points.filter((p) => p.totalTokens > 0).map((p) => [p.date, p.totalTokens]),
+    [
+      ['2026-08-10T03', 30],
+      ['2026-08-10T21', 50],
+    ],
+    'each turn lands in the hour it ended, cut from its own timestamp',
+  )
+
+  const [daily] = await queryChatUsage('all', { kind: 'custom', from: '2026-08-08', to: '2026-08-14' })
+  assert.deepEqual(
+    daily.points.map((p) => p.date),
+    ['2026-08-08', '2026-08-09', '2026-08-10', '2026-08-11', '2026-08-12', '2026-08-13', '2026-08-14'],
+    'a week is past the hourly limit, so it reads by the day',
+  )
+  assert.equal(daily.points[2].totalTokens, 80, 'and both turns fold into their day')
 })
 
 test('a reset removes the turns inside its period, their model rows with them, and nothing outside it', async () => {
