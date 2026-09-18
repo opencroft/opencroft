@@ -33,11 +33,12 @@ import { FastModeToggle } from './components/fast-mode-toggle'
 import { ModeSelector } from './components/mode-selector'
 import { ModelSelector } from './components/model-selector'
 import { PresenceSelector, type PresenceValue } from './components/presence-selector'
+import type { UsageTokens } from './components/usage-cost'
 import { ConfigOptionsBar } from './config-options-bar'
 import type { AgentChatSession } from './session'
 import type { CompactRenderState } from './use-compact-control'
 
-export type { ApprovalTitles }
+export type { ApprovalTitles, UsageTokens }
 
 // The minimal Pick of the named session-shape contract (session.ts) this hook
 // actually reads — not the host's full session controller. `sessionKey` is
@@ -71,6 +72,26 @@ export interface AgentCommandBarControlsContext {
   streaming: boolean
 }
 
+// The context/cost reading the bar hands to its ring. Declared once and
+// exported because the shape crosses two more layers on its way here — a host's
+// command-bar wrapper and whatever produces the reading — and all three have to
+// agree; a field added for the ring is then added in one place.
+export interface CommandBarUsage {
+  used: number
+  size?: number
+  /** Session cost and rate-limit windows, when the harness reports them at all. */
+  cost?: { amount: number; currency: string }
+  /** The session's token account so far (summed from the turns the host
+   *  recorded) — forwarded to the ring as `sessionTokens`. Absent counters
+   *  draw as dashes there, never zeros. */
+  tokens?: UsageTokens
+  rateLimits?: { status: string; window: string; utilization?: number; resetsAt?: number }[]
+  /** Wall-clock time (ms since epoch) this figure was last known — set only on
+   *  a last-known reading from before the session went offline, never on one a
+   *  live session reported. Forwarded to the ring unchanged. */
+  asOf?: number
+}
+
 export interface UseAgentCommandBarOptions {
   session: AgentCommandBarSession
   placeholder?: string
@@ -88,13 +109,7 @@ export interface UseAgentCommandBarOptions {
    *  reading from before the session went offline rather than a live one —
    *  forwarded to the ring, which renders it dimmed with the time in its
    *  popover. Absent on every live reading. */
-  usage?: {
-    used: number
-    size?: number
-    cost?: { amount: number; currency: string }
-    rateLimits?: { status: string; window: string; utilization?: number; resetsAt?: number }[]
-    asOf?: number
-  }
+  usage?: CommandBarUsage
   /** This session's persisted composer draft, loaded once when the session
    *  (identified by `session.sessionKey`) opens. Distinct from
    *  `session.draft` (edit-message staging, see the contract's own note). */
@@ -720,6 +735,7 @@ export function useAgentCommandBar({
             usedTokens={usage.used}
             contextLimit={usage.size ?? 0}
             sessionCost={usage.cost}
+            sessionTokens={usage.tokens}
             rateLimits={usage.rateLimits}
             asOf={usage.asOf}
             onCompact={compact?.onCompact}

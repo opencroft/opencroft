@@ -3,6 +3,8 @@
 import { Loader2 } from 'lucide-react'
 import { useState } from 'react'
 
+import { UsageCost, type UsageTokens } from './usage-cost'
+
 import { Button } from 'ui/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
 import { Slider } from 'ui/components/ui/slider'
@@ -21,6 +23,12 @@ export interface ContextRingProps {
   // in the popover, under the context counts -- the ring's own mark stays the
   // percentage, so one control keeps answering one question.
   sessionCost?: { amount: number; currency: string }
+  // The session's token account so far -- total, input, output, cache reads
+  // and writes -- when the host keeps one (summed from the turns it recorded).
+  // Drawn with the cost as one block, the same block a subagent's step count
+  // opens, so the session and its delegations account for themselves in one
+  // shape. Absent counters draw as dashes, never zeros.
+  sessionTokens?: UsageTokens
   // The account's subscription rate-limit windows, when the harness reports
   // them (Claude's five-hour and weekly limits, per model where it says so).
   // Each window renders its own line: how much of it is used, and when it
@@ -132,13 +140,6 @@ function formatAsOf(asOf: number): string {
   const diffHour = Math.round(diffMin / 60)
   if (diffHour < 24) return `Reported ${diffHour}h ago`
   return `Reported ${new Date(asOf).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
-}
-
-// "$0.42" -- the harness reports a number and an ISO currency code, and Intl
-// renders both in one place. Two decimals: usage costs live in the
-// cents-to-tens range, where integer dollars would read as "0" all day.
-function formatCost(cost: { amount: number; currency: string }): string {
-  return new Intl.NumberFormat(undefined, { style: 'currency', currency: cost.currency }).format(cost.amount)
 }
 
 // Human labels for the window names harnesses actually send; anything else
@@ -275,6 +276,7 @@ export function ContextRing({
   usedTokens,
   contextLimit,
   sessionCost,
+  sessionTokens,
   rateLimits,
   asOf,
   warnAtPercent = 70,
@@ -392,10 +394,9 @@ export function ContextRing({
               off about this figure; this is the line that says what. */}
           {freshness ? <span className='text-xs text-muted-foreground'>{freshness}</span> : null}
         </div>
-        {sessionCost ? (
-          <div className='flex flex-col gap-0.5 border-t border-border p-3'>
-            <span className='text-xs text-muted-foreground'>Session cost</span>
-            <span className='text-sm font-medium tabular-nums'>{formatCost(sessionCost)}</span>
+        {sessionCost || sessionTokens ? (
+          <div className='border-t border-border p-3'>
+            <UsageCost cost={sessionCost} tokens={sessionTokens} />
           </div>
         ) : null}
         {rateLimits && rateLimits.length > 0 ? (

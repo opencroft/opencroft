@@ -1,7 +1,9 @@
 'use client'
 
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
+import type { CommandBarUsage } from 'agent-chat/agent-command-bar'
 import type { ChatUserMessagePart } from 'agent-chat/components/chat-turn'
+import type { UsageTokens } from 'agent-chat/components/usage-cost'
 import type { AgentChatEdit } from 'agent-chat/session'
 import { usePaginatedHistory } from 'agent-chat/use-paginated-history'
 import { toEditableParts } from 'agent-chat/user-parts'
@@ -17,6 +19,7 @@ import type {
   Presence,
   QueuedPrompt,
   QueueMode,
+  TurnTokenUsage,
 } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 
@@ -138,20 +141,19 @@ export interface PendingAsk {
 // (not redeclared) so there is a single source of truth for the fields.
 export type QueuedMessage = QueuedPrompt
 
-export interface AgentUsage {
-  used: number
-  size?: number
-  // Session cost and rate-limit windows, when the harness reports them. They
-  // ride the same 'usage' event as the context pair and persist across
-  // readings that lack them (the engine merges rather than replaces).
-  cost?: { amount: number; currency: string }
-  rateLimits?: { status: string; window: string; utilization?: number; resetsAt?: number }[]
-  // Wall-clock time (ms since epoch) this figure was last known -- present
-  // only when it's the last-known reading ensureLocalSession seeded while
-  // the session was offline, never on a figure a live 'usage' event reported
-  // this connection. Mirrors ContextUsage's own `asOf` (session-context-usage.ts).
-  asOf?: number
-}
+// The reading the command bar's ring renders, aliased (not redeclared) from the
+// package that consumes it so the two cannot drift. What THIS app puts in it:
+//
+// - `cost` and `rateLimits` ride the same 'usage' event as the context pair and
+//   persist across readings that lack them (the engine merges, not replaces).
+// - `tokens` is accumulated here rather than reported: unlike `cost`/`used`/
+//   `size`, ACP has no "session token total" event, so fold sums every
+//   'turn_end' it sees (see tokenTotals). Replaying a reopened session's
+//   persisted turn_end log reproduces the same sum, so it survives a reconnect.
+// - `asOf` is set only on the last-known reading ensureLocalSession seeded while
+//   the session was offline, never on a figure a live 'usage' event reported
+//   this connection. Mirrors ContextUsage's own `asOf` (session-context-usage.ts).
+export type AgentUsage = CommandBarUsage
 
 export interface AcpSession {
   session: AgentSession
@@ -311,6 +313,23 @@ export interface Folded {
   asyncTasks: AsyncTaskInfo[]
 }
 
+// Adds one turn's token spend into a running per-session total. A counter
+// stays absent only while every turn folded so far left it unreported -- the
+// harness's way of saying "no data", never "zero" -- so once any turn reports
+// a counter the running sum is defined and keeps adding; a later turn that
+// omits it just contributes nothing rather than resetting the sum to absent.
+function addTurnTokens(totals: UsageTokens | undefined, usage: TurnTokenUsage): UsageTokens {
+  const add = (a: number | undefined, b: number | undefined) =>
+    a === undefined && b === undefined ? undefined : (a ?? 0) + (b ?? 0)
+  return {
+    total: add(totals?.total, usage.totalTokens),
+    input: add(totals?.input, usage.inputTokens),
+    output: add(totals?.output, usage.outputTokens),
+    cacheRead: add(totals?.cacheRead, usage.cacheReadTokens),
+    cacheWrite: add(totals?.cacheWrite, usage.cacheWriteTokens),
+  }
+}
+
 // Reduce the agent-client event log into the message shape AgentChat renders,
 // plus the set of still-pending approval / elicitation prompts. `baseIndex` is
 // the absolute (server-side) index of `events[0]` — each created message is
@@ -333,6 +352,10 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
   // "what a session reads at until told otherwise" is stated in one place.
   let presence: Presence = DEFAULT_PRESENCE
   let usage: AgentUsage | undefined
+  // Summed across every 'turn_end' seen below (see addTurnTokens) — merged
+  // into `usage` at the end so a 'usage' event folded afterwards (which
+  // rebuilds `usage` wholesale) can never wipe it back out.
+  let tokenTotals: UsageTokens | undefined
 
   const ensureAssistant = (id: number): ChatMessage => {
     if (!assistant) {
@@ -556,6 +579,9 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
       case 'turn_end': {
         assistant = null
         waiting = false
+        if (event.usage) {
+          tokenTotals = addTurnTokens(tokenTotals, event.usage)
+        }
         // A typed session failure (quota exhausted, auth required, …) is the
         // turn's actual outcome: the harness settled the prompt as a normal
         // end_turn with no answer, so without this the turn reads as dead.
@@ -600,7 +626,11 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
     configOptions,
     commands,
     presence,
-    usage,
+    // Nothing to attach a token account to without a context reading to begin
+    // with (AgentCommandBar only renders the ring at all once `usage` is
+    // set) -- see the field's own note on why this is folded in here rather
+    // than reported by the harness.
+    usage: usage && tokenTotals ? { ...usage, tokens: tokenTotals } : usage,
     asyncTasks: [...asyncTasks.values()],
   }
 }
