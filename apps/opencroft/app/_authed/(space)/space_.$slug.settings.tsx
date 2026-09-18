@@ -8,6 +8,7 @@ import { cn } from 'ui/lib/utils'
 import { SpaceApps } from '@/app/_authed/(apps)/_components/space-apps'
 import { listApps, listSpaceApps } from '@/app/_authed/(apps)/_server/actions'
 import { SpaceGeneralSettings } from '@/app/_authed/(space)/_components/space-general-settings'
+import { SpaceUsageSettings } from '@/app/_authed/(space)/_components/space-usage-settings'
 import { settleSpaceRoute } from '@/app/_authed/(space)/_lib/space-route'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 
@@ -35,10 +36,11 @@ export const Route = createFileRoute('/_authed/(space)/space_/$slug/settings')({
 })
 
 // Categories in a panel down the LEFT, not tabs across the top: General
-// (identity and the danger zone) and Apps today, with room for more.
+// (identity and the danger zone), Apps, and Usage today, with room for more.
 const SECTIONS = [
   { id: 'general', label: 'General' },
   { id: 'apps', label: 'Apps' },
+  { id: 'usage', label: 'Usage' },
 ] as const
 
 type SectionId = (typeof SECTIONS)[number]['id']
@@ -87,6 +89,8 @@ function SpaceSettingsPage() {
           <div className='min-w-0 flex-1'>
             {section === 'general' ? (
               <SpaceGeneralSettings space={space} spaces={spaces} />
+            ) : section === 'usage' ? (
+              <SpaceUsageSettings />
             ) : (
               <SpaceApps
                 spaceSlug={space.slug}
