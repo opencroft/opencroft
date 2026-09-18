@@ -1,0 +1,1 @@
+ALTER TABLE "ChatUsageTurn" ADD COLUMN "agent" text;
