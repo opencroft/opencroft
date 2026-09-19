@@ -153,6 +153,23 @@ const WINDOW_LABELS: Record<string, string> = {
   overage: 'Extra usage',
 }
 
+// `_overage_included` is a SUFFIX on a window, not a window of its own: the
+// harness reports `seven_day_overage_included` beside `seven_day`, the same
+// week counted with extra usage included. Looked up whole it matched nothing
+// and the raw key reached the panel, which is where it was spotted. Stripped,
+// it labels the window it is a variant of and says what was counted in — and
+// a per-model weekly window arriving with the same suffix reads the same way,
+// rather than needing its own entry above.
+const OVERAGE_SUFFIX = '_overage_included'
+
+export function windowLabel(window: string): string {
+  if (!window.endsWith(OVERAGE_SUFFIX)) {
+    return WINDOW_LABELS[window] ?? window
+  }
+  const base = window.slice(0, -OVERAGE_SUFFIX.length)
+  return `${WINDOW_LABELS[base] ?? base} + extra usage`
+}
+
 // The one state rule for the ring AND the limit gauges, decided from the
 // rounded percentage — never the raw fraction. Comparing the raw one would
 // let a mark read "70" in the neutral colour (at 69.6%, which rounds up but
@@ -206,7 +223,7 @@ function RateLimitRow({
           apart when a window name runs long. */}
       <div className='flex items-baseline justify-between gap-3'>
         <span className='text-xs text-muted-foreground'>
-          <span className='font-medium'>{WINDOW_LABELS[limit.window] ?? limit.window}</span>
+          <span className='font-medium'>{windowLabel(limit.window)}</span>
           {resets}
         </span>
         {pct !== null ? <span className='text-xs tabular-nums text-muted-foreground'>{pct}%</span> : null}
