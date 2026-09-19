@@ -51,12 +51,28 @@ interface TextChunk {
   final: boolean
 }
 
+// The wired terminal context, or local when nothing is wired. A wired input
+// that did not resolve is refused rather than run locally: "local" here is the
+// server's own process, so the script would run against the wrong machine and
+// report success.
+function terminalContextOf(ctx: ActionCtx): TerminalContext {
+  const context = ctx.input<TerminalContext>('ctx-in')
+  if (context) {
+    return context
+  }
+  const [source] = ctx.connectedSources('ctx-in')
+  if (source) {
+    throw new Error(`Target ${source.nodeId}/${source.handleId} is connected but has no resolved terminal context`)
+  }
+  return { type: 'local' }
+}
+
 async function scriptRun(ctx: ActionCtx): Promise<ScriptResult> {
   const data = ctx.data as unknown as ScriptData
   if (!data.script?.trim()) {
     throw new Error('Script is empty')
   }
-  const context = ctx.input<TerminalContext>('ctx-in') ?? { type: 'local' }
+  const context = terminalContextOf(ctx)
 
   // Resolve secrets
   const secretNames = (data.secrets ?? '')

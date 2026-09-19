@@ -165,6 +165,7 @@ async function resolveEnv(node: ExecDispatchNode): Promise<{ env: Record<string,
 async function dispatchToTarget(
   spaceSlug: string,
   node: ExecDispatchNode,
+  edges: ExecDispatchEdge[],
   event: unknown,
 ): Promise<ExecDispatchResult> {
   if (await hasHandleAction(node.type)) {
@@ -192,14 +193,20 @@ async function dispatchToTarget(
   }
 
   const resolvedContexts = data.__resolvedContexts as Record<string, { value?: Record<string, unknown> }> | undefined
-  const context = resolvedContexts?.['ctx-in']?.value ?? { type: 'local' }
+  const context = resolvedContexts?.['ctx-in']?.value
+  // A wired target that did not resolve is refused rather than run locally:
+  // "local" is the server's own process, the wrong machine for a handler
+  // written for the container it is connected to.
+  if (!context && edges.some((e) => e.target === node.id && e.targetHandle === 'ctx-in')) {
+    return { status: 500, error: `Handler ${node.id} has a connected target but no resolved terminal context` }
+  }
 
   let result: ExecDispatchResult
   try {
     result = ((await invokeExtensionActionImpl({
       extensionId: 'builtin/core',
       actionName: 'handler.run',
-      args: [{ script: (data.script as string) ?? '', language, context, event, env }],
+      args: [{ script: (data.script as string) ?? '', language, context: context ?? { type: 'local' }, event, env }],
     })) ?? {}) as ExecDispatchResult
   } catch (err) {
     return { status: 500, error: err instanceof Error ? err.message : String(err) }
@@ -259,7 +266,7 @@ export async function dispatchExecutionContext(params: ExecDispatchParams): Prom
     connectedEdges.map(async (edge) => {
       const node = nodesById.get(edge.target)
       const result = node
-        ? await dispatchToTarget(found.slug, node, event)
+        ? await dispatchToTarget(found.slug, node, found.edges, event)
         : { status: 500, error: `Handler node not found: ${edge.target}` }
       return { edge, result }
     }),
