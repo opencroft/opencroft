@@ -102,7 +102,7 @@ export function GroupChatPinsEditor({
       {pins.length > 0 ? (
         // Height-capped and scrolling inside itself: the open panel costs the
         // same whether two notes are pinned or ten.
-        <ItemGroup className='max-h-56 gap-1 overflow-y-auto'>
+        <ItemGroup className='max-h-56 overflow-y-auto'>
           {pins.map((pin) =>
             editingId === pin.id ? (
               <InputGroup key={pin.id}>
@@ -131,7 +131,10 @@ export function GroupChatPinsEditor({
                 </InputGroupAddon>
               </InputGroup>
             ) : (
-              <Item key={pin.id} size='sm' variant='outline'>
+              // No border and no card: a note is a line of text. The inset
+              // matches the add field below it (the input's own px-3), so the
+              // notes and the field they are written in share one left edge.
+              <Item key={pin.id} size='sm' className='gap-1 px-3 py-1.5'>
                 <ItemContent>
                   {/* Notes wrap in full rather than truncating: a pin exists to
                       be read, and a half-read reminder is not one. */}
