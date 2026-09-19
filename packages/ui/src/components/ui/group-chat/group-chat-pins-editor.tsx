@@ -1,11 +1,9 @@
 'use client'
 
-import { Check, Pencil, Plus, X } from 'lucide-react'
+import { Plus, X } from 'lucide-react'
 import { useState } from 'react'
 
-import { Button } from 'ui/components/ui/button'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from 'ui/components/ui/input-group'
-import { Item, ItemActions, ItemContent, ItemGroup, ItemTitle } from 'ui/components/ui/item'
 import { cn } from 'ui/lib/utils'
 
 // Word for word the server's `pin-limit` refusal. The editor stops the press
@@ -43,14 +41,19 @@ export interface GroupChatPinsEditorProps {
   className?: string
 }
 
-// The standing notes pinned to a group chat, as a list of items with a field
-// under it.
+// The standing notes pinned to a group chat: one field per note, and an empty
+// one at the end that adds.
 //
-// Built from the kit's own pieces and nothing else: each note is an Item (its
-// text, a pencil, an X), a note being edited is an InputGroup with its save
-// button in the addon, and the last row is always the InputGroup that adds one
-// to the end -- type, Enter (or the plus). No form, no dialog, no spacing of
-// this component's own: the primitives' insets are the layout.
+// EVERY ROW IS THE SAME ROW -- an InputGroup with one button in its addon --
+// so there is no edit mode to enter, nothing grows when a note is touched,
+// and the list does not gain a scrollbar because a row changed shape. A note
+// is edited by typing in it; Enter or leaving the field saves, Escape puts
+// the note back.
+//
+// The inputs are uncontrolled, keyed on the note's text: a keystroke does not
+// travel through the host, and a note changed elsewhere (another member's
+// edit, arriving on the next refresh) re-mounts the row with the new text
+// rather than sitting stale under an unchanged id.
 //
 // Any member may pin, edit and unpin ANY note -- the same symmetric rule as
 // membership -- so nothing here carries admin framing, and no note is drawn as
@@ -66,107 +69,58 @@ export function GroupChatPinsEditor({
   capMessage = CAP_MESSAGE,
   className,
 }: GroupChatPinsEditorProps) {
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [draft, setDraft] = useState('')
   const [next, setNext] = useState('')
   const atCap = pins.length >= max
 
-  const beginEdit = (pin: GroupChatPin) => {
-    setEditingId(pin.id)
-    setDraft(pin.text)
-  }
-  const cancelEdit = () => {
-    setEditingId(null)
-    setDraft('')
-  }
-  const saveEdit = async (pin: GroupChatPin) => {
-    const text = draft.trim()
-    if (!text || text === pin.text) {
-      cancelEdit()
-      return
+  const save = (pin: GroupChatPin, value: string) => {
+    const text = value.trim()
+    if (text && text !== pin.text) {
+      void onEdit(pin.id, text)
     }
-    await onEdit(pin.id, text)
-    cancelEdit()
   }
   const add = async () => {
     const text = next.trim()
-    if (!text) {
-      return
+    if (text) {
+      await onAdd(text)
+      setNext('')
     }
-    await onAdd(text)
-    setNext('')
   }
 
   return (
-    <div className={cn('flex min-w-0 flex-col gap-2', className)}>
-      {pins.length > 0 ? (
-        // Height-capped and scrolling inside itself: the open panel costs the
-        // same whether two notes are pinned or ten.
-        <ItemGroup className='max-h-56 overflow-y-auto'>
-          {pins.map((pin) =>
-            editingId === pin.id ? (
-              <InputGroup key={pin.id}>
-                <InputGroupInput
-                  autoFocus
-                  value={draft}
-                  disabled={pending}
-                  aria-label='Edit pinned note'
-                  onChange={(event) => setDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault()
-                      void saveEdit(pin)
-                    } else if (event.key === 'Escape') {
-                      cancelEdit()
-                    }
-                  }}
-                />
-                <InputGroupAddon align='inline-end'>
-                  <InputGroupButton size='icon-xs' aria-label='Save note' disabled={pending} onClick={() => void saveEdit(pin)}>
-                    <Check />
-                  </InputGroupButton>
-                  <InputGroupButton size='icon-xs' aria-label='Cancel' disabled={pending} onClick={cancelEdit}>
-                    <X />
-                  </InputGroupButton>
-                </InputGroupAddon>
-              </InputGroup>
-            ) : (
-              // No border and no card: a note is a line of text. The inset
-              // matches the add field below it (the input's own px-3), so the
-              // notes and the field they are written in share one left edge.
-              <Item key={pin.id} size='sm' className='gap-1 px-3 py-1.5'>
-                <ItemContent>
-                  {/* Notes wrap in full rather than truncating: a pin exists to
-                      be read, and a half-read reminder is not one. */}
-                  <ItemTitle className='whitespace-pre-wrap font-normal wrap-break-word'>{pin.text}</ItemTitle>
-                </ItemContent>
-                <ItemActions>
-                  <Button
-                    type='button'
-                    variant='ghost'
-                    size='icon-xs'
-                    aria-label={`Edit pinned note: ${pin.text}`}
-                    disabled={pending}
-                    onClick={() => beginEdit(pin)}
-                  >
-                    <Pencil />
-                  </Button>
-                  <Button
-                    type='button'
-                    variant='ghost'
-                    size='icon-xs'
-                    aria-label={`Unpin note: ${pin.text}`}
-                    disabled={pending}
-                    onClick={() => onUnpin(pin.id)}
-                  >
-                    <X />
-                  </Button>
-                </ItemActions>
-              </Item>
-            ),
-          )}
-        </ItemGroup>
-      ) : null}
+    <div className={cn('flex min-w-0 flex-col gap-1', className)}>
+      {/* Height-capped and scrolling inside itself: the panel costs the same
+          whether two notes are pinned or ten. */}
+      <div className='flex max-h-56 min-w-0 flex-col gap-1 overflow-y-auto'>
+        {pins.map((pin) => (
+          <InputGroup key={`${pin.id}:${pin.text}`}>
+            <InputGroupInput
+              defaultValue={pin.text}
+              disabled={pending}
+              aria-label='Pinned note'
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  event.currentTarget.blur()
+                } else if (event.key === 'Escape') {
+                  event.currentTarget.value = pin.text
+                  event.currentTarget.blur()
+                }
+              }}
+              onBlur={(event) => save(pin, event.target.value)}
+            />
+            <InputGroupAddon align='inline-end'>
+              <InputGroupButton
+                size='icon-xs'
+                aria-label={`Unpin note: ${pin.text}`}
+                disabled={pending}
+                onClick={() => onUnpin(pin.id)}
+              >
+                <X />
+              </InputGroupButton>
+            </InputGroupAddon>
+          </InputGroup>
+        ))}
+      </div>
 
       <InputGroup>
         <InputGroupInput
