@@ -443,8 +443,9 @@ export interface SessionCost {
  * the set of windows is the provider's business, not ours.
  *
  * `utilization` is percent of the window USED (0-100), so remaining is its
- * complement. `resetsAt` is epoch ms, normalized from whatever unit the
- * harness sent (see normalizeResetsAt in usage-meta).
+ * complement — converted from the fraction the claude bridge sends (see
+ * normalizeUtilization in usage-meta). `resetsAt` is epoch ms, normalized
+ * from whatever unit the harness sent (see normalizeResetsAt there too).
  */
 export interface RateLimitWindow {
   /** `allowed` | `allowed_warning` | `rejected` — the harness's own verdict. */

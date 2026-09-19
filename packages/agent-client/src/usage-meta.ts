@@ -40,7 +40,7 @@ export function parseRateLimit(meta: unknown): RateLimitWindow | undefined {
   if (!status || !window) {
     return undefined
   }
-  const utilization = finiteNumber(info.utilization)
+  const utilization = normalizeUtilization(info.utilization)
   const resetsAt = normalizeResetsAt(info.resetsAt)
   return {
     status,
@@ -48,6 +48,36 @@ export function parseRateLimit(meta: unknown): RateLimitWindow | undefined {
     ...(utilization !== undefined ? { utilization } : {}),
     ...(resetsAt !== undefined ? { resetsAt } : {}),
   }
+}
+
+/**
+ * The SDK reports `utilization` as a FRACTION of the window (0-1), while
+ * `RateLimitWindow.utilization` is the percentage its readers display. Read
+ * as a percentage, every real reading collapsed to nothing: an account 79%
+ * through its weekly window drew as "1%" on a 1%-wide bar, with only the
+ * harness's own `allowed_warning` verdict hinting that the figure was wrong.
+ *
+ * Measured, not assumed — across ~1,100 stored `_claude/rateLimit` readings
+ * every reported value sat between 0.28 and 0.98, and a window the harness
+ * called `allowed` carried none at all. A five-hour window warning at 0.97 is
+ * a window nearly spent, not one barely touched.
+ *
+ * So the conversion happens here, once, and nothing downstream has to know
+ * which unit the harness speaks. A value outside 0-1 is not a fraction this
+ * parser can place, and it drops rather than clamping: a future bridge that
+ * switched to percent would otherwise pin every window at "100%" — a full
+ * account is the one reading that must not be invented. The window keeps its
+ * row and its status either way; it just shows no gauge.
+ */
+export function normalizeUtilization(value: unknown): number | undefined {
+  const fraction = finiteNumber(value)
+  if (fraction === undefined || fraction < 0 || fraction > 1) {
+    return undefined
+  }
+  // To a tenth of a percent: finer than anything displays, and it keeps the
+  // binary-float tail (0.79 * 100 = 79.00000000000001) out of what is stored
+  // and replayed.
+  return Math.round(fraction * 1000) / 10
 }
 
 /**

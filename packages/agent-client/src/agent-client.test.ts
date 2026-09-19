@@ -2350,9 +2350,11 @@ test('a _claude/rateLimit decoration becomes a rate-limit window on the reading'
       size: 200_000,
       _meta: {
         '_claude/rateLimit': {
+          // A fraction on the wire, a percentage on the reading — see
+          // normalizeUtilization.
           status: 'allowed',
           rateLimitType: 'five_hour',
-          utilization: 34,
+          utilization: 0.34,
           resetsAt: 1_760_000_000,
         },
       },
@@ -2374,7 +2376,7 @@ test('rate-limit windows merge by window name, one event per window', async () =
         sessionUpdate: 'usage_update',
         used: 12_000,
         size: 200_000,
-        _meta: { '_claude/rateLimit': { status: 'allowed_warning', rateLimitType, utilization: 90 } },
+        _meta: { '_claude/rateLimit': { status: 'allowed_warning', rateLimitType, utilization: 0.9 } },
       },
     } as Parameters<typeof handleUpdate>[0])
   }
@@ -2401,7 +2403,7 @@ test('a held mid-turn reading keeps the displayed tokens but still merges limit 
       sessionUpdate: 'usage_update',
       used: 1_000,
       size: 200_000,
-      _meta: { '_claude/rateLimit': { status: 'rejected', rateLimitType: 'seven_day', utilization: 100 } },
+      _meta: { '_claude/rateLimit': { status: 'rejected', rateLimitType: 'seven_day', utilization: 1 } },
     },
   } as Parameters<typeof handleUpdate>[0])
   const usage = h.client.listSessions().find((s) => s.id === h.sessionId)?.usage

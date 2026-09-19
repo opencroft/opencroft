@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   normalizeResetsAt,
   normalizeTurnUsage,
+  normalizeUtilization,
   parseRateLimit,
   parseSessionFailure,
   parseTurnQuota,
@@ -35,6 +36,35 @@ test('parseRateLimit needs a status and a window name', () => {
   assert.equal(parseRateLimit({}), undefined)
   assert.equal(parseRateLimit(undefined), undefined)
   assert.equal(parseRateLimit('nonsense'), undefined)
+})
+
+test('parseRateLimit reads the wire fraction as the percentage it means', () => {
+  // The shape a live account actually sends: 0.79 of the weekly window, which
+  // is 79% used and not the 1% a straight read rounds to.
+  assert.deepEqual(
+    parseRateLimit({
+      '_claude/rateLimit': {
+        status: 'allowed_warning',
+        rateLimitType: 'seven_day_overage_included',
+        utilization: 0.79,
+      },
+    }),
+    { status: 'allowed_warning', window: 'seven_day_overage_included', utilization: 79 },
+  )
+})
+
+test('normalizeUtilization converts the ends of the range and drops what is not a fraction', () => {
+  assert.equal(normalizeUtilization(0), 0)
+  assert.equal(normalizeUtilization(1), 100)
+  // The tail of 0.79 * 100 never reaches a stored reading.
+  assert.equal(normalizeUtilization(0.79), 79)
+  assert.equal(normalizeUtilization(0.1234), 12.3)
+  // Out of range: a percentage-shaped value would pin the window at full, so
+  // it drops instead and the row shows no gauge.
+  assert.equal(normalizeUtilization(79), undefined)
+  assert.equal(normalizeUtilization(-0.1), undefined)
+  assert.equal(normalizeUtilization('0.5'), undefined)
+  assert.equal(normalizeUtilization(undefined), undefined)
 })
 
 test('normalizeTurnUsage reads the cache counters under every name they arrive by', () => {
