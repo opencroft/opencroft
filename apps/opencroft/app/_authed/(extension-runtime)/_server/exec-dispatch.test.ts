@@ -39,20 +39,19 @@ test('pickPrimaryEdge returns undefined for an empty list', () => {
 })
 
 // ── unsupportedHandlerError ─────────────────────────────────────────────
-// Exact wording every producer returned before unification — preserved so
-// existing API/tool consumers don't see their error text change.
+// One wording for every producer, naming the languages a handler can be.
 
 test('unsupportedHandlerError reports the given language', () => {
   assert.equal(
-    unsupportedHandlerError('bash'),
-    'Unsupported handler language: bash. Only Python and Node.js scripts support ExecutionContext.',
+    unsupportedHandlerError('ruby'),
+    'Unsupported handler language: ruby. Only Bash, Python and Node.js scripts support ExecutionContext.',
   )
 })
 
 test('unsupportedHandlerError reports "none" when no language is set', () => {
   assert.equal(
     unsupportedHandlerError(undefined),
-    'Unsupported handler language: none. Only Python and Node.js scripts support ExecutionContext.',
+    'Unsupported handler language: none. Only Bash, Python and Node.js scripts support ExecutionContext.',
   )
 })
 

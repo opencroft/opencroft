@@ -186,6 +186,7 @@
       "icon": "TerminalSquare",
       "handles": [
         { "id": "ctx-in", "contextType": "terminal-context", "role": "target", "label": "Target" },
+        { "id": "exec-in", "contextType": "execution-context", "role": "target", "label": "Handler" },
         { "id": "stdout-out", "contextType": "text-stream", "role": "source", "label": "Output" }
       ],
       "actions": [

@@ -43,7 +43,7 @@ export async function runScript(params: ScriptRunParams): Promise<ScriptResult> 
 
 export interface HandlerRunParams {
   script: string
-  language: 'python' | 'node'
+  language: 'bash' | 'python' | 'node'
   context: TerminalContext
   event: unknown
   env?: Record<string, string>
@@ -106,21 +106,33 @@ function splitStdout(stdout: string): SplitOutput {
   return { result, logs: before + after }
 }
 
-export async function runHandler(params: HandlerRunParams): Promise<HandlerResult> {
+// Python and Node.js handlers are a `handler(event)` function the bootstrap
+// appended here calls, reporting its return value on a RESULT_MARKER line. A
+// bash handler is the script itself: it reads the event as JSON from
+// OPENCROFT_EVENT, and its stdout is the response body unless it prints a
+// RESULT_MARKER line of its own, which is then read the same way.
+function runHandlerScript(params: HandlerRunParams): Promise<string> {
   const { script, language, context, event, env } = params
+  if (language === 'bash') {
+    return host.terminal.run(context, ['bash', '-c', script], { ...env, OPENCROFT_EVENT: JSON.stringify(event) })
+  }
   const eventB64 = Buffer.from(JSON.stringify(event), 'utf-8').toString('base64')
+  if (language === 'python') {
+    return host.terminal.run(context, ['python', '-c', script + pythonHandlerBootstrap(eventB64)], env)
+  }
+  if (language === 'node') {
+    return host.terminal.run(context, ['node', '-e', script + nodeHandlerBootstrap(eventB64)], env)
+  }
+  throw new Error(`Unsupported language: ${language}`)
+}
+
+export async function runHandler(params: HandlerRunParams): Promise<HandlerResult> {
+  const { language, env } = params
 
   try {
-    let fullScript: string
-    let stdout: string
-    if (language === 'python') {
-      fullScript = script + pythonHandlerBootstrap(eventB64)
-      stdout = await host.terminal.run(context, ['python', '-c', fullScript], env)
-    } else if (language === 'node') {
-      fullScript = script + nodeHandlerBootstrap(eventB64)
-      stdout = await host.terminal.run(context, ['node', '-e', fullScript], env)
-    } else {
-      return { status: 500, body: { error: `Unsupported language: ${language}` } }
+    const stdout = await runHandlerScript(params)
+    if (language === 'bash' && !stdout.includes(RESULT_MARKER)) {
+      return { status: 200, body: stdout }
     }
 
     const { result, logs } = splitStdout(stdout)

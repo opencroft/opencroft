@@ -11,9 +11,9 @@
 //   1. Its owning extension exports a `nodeActions[typeId].handle` action
 //      (the same mechanism gitea-handler and other extensions already use
 //      for Agent Tool calls) -> dispatched via `dispatchNodeAction`.
-//   2. It is a built-in script node (`data.language` is 'python' or 'node')
-//      -> dispatched via the `builtin/core` extension's `handler.run` action,
-//      unchanged from today's per-producer behavior.
+//   2. It is a built-in script node (`data.language` is one of the script
+//      languages) -> dispatched via the `builtin/core` extension's
+//      `handler.run` action, unchanged from today's per-producer behavior.
 //   3. Neither -> the same "Unsupported handler language" error producers
 //      have always returned, scoped to that one target.
 
@@ -81,8 +81,11 @@ export function pickPrimaryEdge<T extends { id: string }>(edges: T[]): T | undef
   return [...edges].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0]
 }
 
+/** The built-in script node languages, every one of which can be a handler. */
+const SCRIPT_LANGUAGES = new Set(['bash', 'python', 'node'])
+
 export function unsupportedHandlerError(language: string | undefined): string {
-  return `Unsupported handler language: ${language ?? 'none'}. Only Python and Node.js scripts support ExecutionContext.`
+  return `Unsupported handler language: ${language ?? 'none'}. Only Bash, Python and Node.js scripts support ExecutionContext.`
 }
 
 /** Parse a script node's `env` field: one `KEY=VALUE` pair per line. */
@@ -183,7 +186,7 @@ async function dispatchToTarget(
 
   const data = node.data ?? {}
   const language = data.language as string | undefined
-  if (language !== 'python' && language !== 'node') {
+  if (!language || !SCRIPT_LANGUAGES.has(language)) {
     return { status: 400, error: unsupportedHandlerError(language) }
   }
 

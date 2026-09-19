@@ -75,8 +75,6 @@ function ScriptNode({ id, data, selected }: { id: string; data: ScriptData; sele
     }
   }, [id, data.script])
 
-  const supportsExec = data.language === 'python' || data.language === 'node'
-
   return (
     <NodeFrame
       icon={lang.icon}
@@ -85,13 +83,7 @@ function ScriptNode({ id, data, selected }: { id: string; data: ScriptData; sele
       selected={selected ?? false}
       loading={running}
       errors={errors}
-      input={
-        supportsExec ? (
-          <InputHandle type='execution-context' id='exec-in' />
-        ) : (
-          <InputHandle type='terminal-context' id='ctx-in' />
-        )
-      }
+      input={<InputHandle type='execution-context' id='exec-in' />}
       extra={
         <div className='flex items-center gap-1'>
           <Button
@@ -116,11 +108,9 @@ function ScriptNode({ id, data, selected }: { id: string; data: ScriptData; sele
     >
       <div className='flex gap-3'>
         <div className='flex flex-col gap-1.5 shrink-0'>
-          {supportsExec ? (
-            <InputHandle type='terminal-context' id='ctx-in'>
-              <span className='text-[10px] text-muted-foreground'>Target</span>
-            </InputHandle>
-          ) : null}
+          <InputHandle type='terminal-context' id='ctx-in'>
+            <span className='text-[10px] text-muted-foreground'>Target</span>
+          </InputHandle>
         </div>
         <div className='flex flex-col gap-1 flex-1 min-w-0 items-end'>
           <OutputHandle type='text-stream' id='stdout-out'>
