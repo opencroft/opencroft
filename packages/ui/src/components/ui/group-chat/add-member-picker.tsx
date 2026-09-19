@@ -1,13 +1,13 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { useId, useState } from 'react'
-import { Search } from 'lucide-react'
+import { useState } from 'react'
+import { Plus, X } from 'lucide-react'
 
 import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
 import { Button } from 'ui/components/ui/button'
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from 'ui/components/ui/command'
 import { FieldError } from 'ui/components/ui/field'
-import { Input } from 'ui/components/ui/input'
 import { cn } from 'ui/lib/utils'
 
 // The same MemberRef shape the phase-2 components render, and the same one for
@@ -44,17 +44,17 @@ export interface AddMemberPickerProps {
   className?: string
 }
 
-const principalKey = (principal: { kind: string; id: string }) => `${principal.kind}:${principal.id}`
-
 // Who is in a group chat, and adding to it. Any member may add another, so
 // this is ordinary member UI and carries no admin framing.
 //
-// Two states, one field. With nothing typed it is the MEMBER LIST: who is in,
-// each removable. Typing turns it into the search that adds: the people and
-// agents that match and are not in yet, each addable. The two are never on
-// screen together -- the previous shape listed every account and every agent
-// under a filter, each with its own Add, and finding out who was actually in
-// the chat meant reading the whole directory for the "Added" marks.
+// The kit's Command, as the space selector and the chat selector wear it: the
+// search on a divider, flat rows beneath. Two states, one field. With nothing
+// typed the rows are the MEMBER LIST: who is in, each with an X when the host
+// allows removing. Typing turns the rows into the search that adds: the people
+// and agents that match and are not in yet, chosen by press or Enter. The two
+// are never on screen together -- the previous shape listed every account and
+// every agent under a filter, each with its own Add, and finding out who was
+// actually in the chat meant reading the whole directory for the marks.
 //
 // People and agents are one list, searched together. Nothing beyond a name and
 // an avatar exists for either, so a split would be two lists distinguished by a
@@ -71,106 +71,93 @@ export function AddMemberPicker({
   emptyState,
   className,
 }: AddMemberPickerProps) {
-  const filterId = useId()
   const [query, setQuery] = useState('')
+  const principalKey = (principal: { kind: string; id: string }) => `${principal.kind}:${principal.id}`
 
-  const memberKeys = new Set((members ?? []).map(principalKey))
-  const byKey = new Map(candidates.map((candidate) => [principalKey(candidate), candidate]))
+  const memberKeys = (members ?? []).map(principalKey)
   // A member the directory no longer resolves (a deleted account, an agent
   // node that is gone) is still IN the chat and still removable, so it is drawn
   // by its id rather than dropped from the list.
   const current: MemberCandidate[] = (members ?? []).map(
-    (member) => byKey.get(principalKey(member)) ?? { ...member, name: member.id, avatarUrl: null },
+    (member) =>
+      candidates.find((candidate) => principalKey(candidate) === principalKey(member)) ?? {
+        ...member,
+        name: member.id,
+        avatarUrl: null,
+      },
   )
   const needle = query.trim().toLowerCase()
   const matches = needle
     ? candidates.filter(
-        (candidate) => !memberKeys.has(principalKey(candidate)) && candidate.name.toLowerCase().includes(needle),
+        (candidate) =>
+          !memberKeys.includes(principalKey(candidate)) && candidate.name.toLowerCase().includes(needle),
       )
     : []
 
-  const row = (person: MemberCandidate, control: ReactNode) => (
-    <li key={principalKey(person)} className='flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5'>
+  const person = (entry: MemberCandidate) => (
+    <>
       {/* One avatar atom for both kinds -- a person's avatar needs nothing an
           agent's does, which is the same reason the member cluster is built
           from this one. */}
-      <AgentAvatar avatar={person.avatarUrl} name={person.name} size='sm' />
-      <span className='flex min-w-0 flex-1 flex-col overflow-hidden leading-tight'>
-        <span className='truncate text-sm text-foreground'>{person.name}</span>
-        {/* The only thing distinguishing the two kinds. */}
-        <span className='truncate text-xs text-muted-foreground'>{person.kind}</span>
-      </span>
-      {control}
-    </li>
+      <AgentAvatar avatar={entry.avatarUrl} name={entry.name} size='sm' />
+      <span className='min-w-0 flex-1 truncate'>{entry.name}</span>
+      {/* The only thing distinguishing the two kinds. */}
+      <span className='text-xs text-muted-foreground'>{entry.kind}</span>
+    </>
   )
 
   return (
-    <div className={cn('flex min-w-0 flex-col gap-2', className)}>
-      <div className='relative min-w-0'>
-        <Search className='pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-muted-foreground' />
-        <Input
-          id={filterId}
-          type='search'
-          value={query}
-          aria-label='Search people and agents to add'
-          placeholder='Search to add…'
-          className='pl-8'
-          onChange={(event) => setQuery(event.target.value)}
-        />
-      </div>
-
-      {needle ? (
-        matches.length === 0 ? (
-          <p className='px-2 py-4 text-center text-sm text-muted-foreground'>No one matches that.</p>
-        ) : (
-          <ul className='flex max-h-64 min-w-0 flex-col gap-0.5 overflow-y-auto'>
-            {matches.map((candidate) =>
-              row(
-                candidate,
-                <Button
-                  type='button'
-                  size='sm'
-                  variant='outline'
-                  className='shrink-0'
+    // Filtering stays this component's own (the query decides which of the
+    // two lists is drawn, and against whom), hence shouldFilter off.
+    <Command shouldFilter={false} className={cn('bg-transparent', className)}>
+      <CommandInput value={query} onValueChange={setQuery} placeholder='Search to add…' />
+      <CommandList>
+        {needle ? (
+          matches.length === 0 ? (
+            <CommandEmpty>No one matches that.</CommandEmpty>
+          ) : (
+            <CommandGroup heading='Add'>
+              {matches.map((candidate) => (
+                <CommandItem
+                  key={principalKey(candidate)}
+                  value={principalKey(candidate)}
                   disabled={adding}
-                  onClick={() => onAdd({ kind: candidate.kind, id: candidate.id })}
+                  onSelect={() => onAdd({ kind: candidate.kind, id: candidate.id })}
                 >
-                  Add
-                </Button>,
-              ),
-            )}
-          </ul>
-        )
-      ) : current.length === 0 ? (
-        (emptyState ?? <p className='px-2 py-4 text-center text-sm text-muted-foreground'>Nobody is in yet.</p>)
-      ) : (
-        <div className='flex min-w-0 flex-col gap-1'>
-          <p className='px-2 text-xs font-medium text-muted-foreground'>
-            {current.length === 1 ? '1 member' : `${current.length} members`}
-          </p>
-          <ul className='flex max-h-64 min-w-0 flex-col gap-0.5 overflow-y-auto'>
-            {current.map((member) =>
-              row(
-                member,
-                onRemove ? (
+                  {person(candidate)}
+                  <Plus className='text-muted-foreground' />
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )
+        ) : current.length === 0 ? (
+          <CommandEmpty>{emptyState ?? 'Nobody is in yet.'}</CommandEmpty>
+        ) : (
+          <CommandGroup heading={current.length === 1 ? '1 member' : `${current.length} members`}>
+            {current.map((member) => (
+              <CommandItem key={principalKey(member)} value={principalKey(member)} onSelect={() => {}}>
+                {person(member)}
+                {onRemove ? (
                   <Button
                     type='button'
-                    size='sm'
                     variant='ghost'
-                    className='shrink-0 text-muted-foreground'
+                    size='icon-xs'
+                    aria-label={`Remove ${member.name}`}
                     disabled={removing}
-                    onClick={() => onRemove({ kind: member.kind, id: member.id })}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onRemove({ kind: member.kind, id: member.id })
+                    }}
                   >
-                    Remove
+                    <X />
                   </Button>
-                ) : null,
-              ),
-            )}
-          </ul>
-        </div>
-      )}
-
-      <FieldError>{error}</FieldError>
-    </div>
+                ) : null}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+      </CommandList>
+      {error ? <FieldError className='px-3 pb-2'>{error}</FieldError> : null}
+    </Command>
   )
 }

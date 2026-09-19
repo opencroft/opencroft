@@ -1,9 +1,11 @@
 'use client'
 
-import { X } from 'lucide-react'
+import { Check, Pencil, Plus, X } from 'lucide-react'
 import { useState } from 'react'
 
-import { Input } from 'ui/components/ui/input'
+import { Button } from 'ui/components/ui/button'
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from 'ui/components/ui/input-group'
+import { Item, ItemActions, ItemContent, ItemGroup, ItemTitle } from 'ui/components/ui/item'
 import { cn } from 'ui/lib/utils'
 
 // Word for word the server's `pin-limit` refusal. The editor stops the press
@@ -33,7 +35,7 @@ export interface GroupChatPinsEditorProps {
   /** Unpin one. This DESTROYS the note -- there is no unpinned-notes shelf to
    * recover it from -- so a host that wants a confirmation puts one here. */
   onUnpin: (id: string) => void
-  /** A write in flight: the fields go inert. */
+  /** A write in flight: the fields and controls go inert. */
   pending?: boolean
   /** A failure to show: a refused pin, an unpin that did not land. */
   error?: string
@@ -41,13 +43,14 @@ export interface GroupChatPinsEditorProps {
   className?: string
 }
 
-// The standing notes pinned to a group chat, as lines of text.
+// The standing notes pinned to a group chat, as a list of items with a field
+// under it.
 //
-// Each note is a line: press it and the line is a field -- Enter saves, Escape
-// puts the note back. The last line is always the empty field that adds one:
-// type, Enter, and the note joins the end of the list. No buttons, no form, no
-// dialog -- a note is a sentence of standing guidance, and the editor is the
-// size of one.
+// Built from the kit's own pieces and nothing else: each note is an Item (its
+// text, a pencil, an X), a note being edited is an InputGroup with its save
+// button in the addon, and the last row is always the InputGroup that adds one
+// to the end -- type, Enter (or the plus). No form, no dialog, no spacing of
+// this component's own: the primitives' insets are the layout.
 //
 // Any member may pin, edit and unpin ANY note -- the same symmetric rule as
 // membership -- so nothing here carries admin framing, and no note is drawn as
@@ -94,76 +97,106 @@ export function GroupChatPinsEditor({
     setNext('')
   }
 
-  const field = 'h-7 border-0 bg-transparent px-1.5 text-xs shadow-none focus-visible:ring-1'
-
   return (
-    <div className={cn('flex min-w-0 flex-col', className)}>
-      {/* Height-capped and scrolling inside itself: the open panel costs the
-          same whether two notes are pinned or ten. */}
-      <ul className='flex max-h-48 min-w-0 flex-col overflow-y-auto'>
-        {pins.map((pin) => (
-          <li key={pin.id} className='flex min-w-0 items-center gap-1'>
-            {editingId === pin.id ? (
-              <Input
-                autoFocus
-                value={draft}
-                disabled={pending}
-                aria-label='Edit pinned note'
-                className={cn(field, '-ml-1.5 flex-1')}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault()
-                    void saveEdit(pin)
-                  } else if (event.key === 'Escape') {
-                    cancelEdit()
-                  }
-                }}
-                onBlur={() => void saveEdit(pin)}
-              />
+    <div className={cn('flex min-w-0 flex-col gap-2', className)}>
+      {pins.length > 0 ? (
+        // Height-capped and scrolling inside itself: the open panel costs the
+        // same whether two notes are pinned or ten.
+        <ItemGroup className='max-h-56 gap-1 overflow-y-auto'>
+          {pins.map((pin) =>
+            editingId === pin.id ? (
+              <InputGroup key={pin.id}>
+                <InputGroupInput
+                  autoFocus
+                  value={draft}
+                  disabled={pending}
+                  aria-label='Edit pinned note'
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      void saveEdit(pin)
+                    } else if (event.key === 'Escape') {
+                      cancelEdit()
+                    }
+                  }}
+                />
+                <InputGroupAddon align='inline-end'>
+                  <InputGroupButton size='icon-xs' aria-label='Save note' disabled={pending} onClick={() => void saveEdit(pin)}>
+                    <Check />
+                  </InputGroupButton>
+                  <InputGroupButton size='icon-xs' aria-label='Cancel' disabled={pending} onClick={cancelEdit}>
+                    <X />
+                  </InputGroupButton>
+                </InputGroupAddon>
+              </InputGroup>
             ) : (
-              <button
-                type='button'
-                onClick={() => beginEdit(pin)}
-                aria-label={`Edit pinned note: ${pin.text}`}
-                className='-ml-1.5 min-w-0 flex-1 truncate rounded-md px-1.5 py-1 text-left text-xs text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring'
-              >
-                {pin.text}
-              </button>
-            )}
-            {/* Never hover-revealed -- it would not exist on touch. */}
-            <button
-              type='button'
-              onClick={() => onUnpin(pin.id)}
-              aria-label={`Unpin note: ${pin.text}`}
-              disabled={pending}
-              className='inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50'
-            >
-              <X className='size-3.5' />
-            </button>
-          </li>
-        ))}
-        <li className='flex min-w-0 items-center gap-1'>
-          <Input
-            value={next}
-            disabled={pending || atCap}
-            aria-label='Pin a note'
-            placeholder={atCap ? capMessage : 'Pin a note…'}
-            className={cn(field, '-ml-1.5 flex-1')}
-            onChange={(event) => setNext(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault()
-                void add()
-              }
-            }}
-          />
-          {/* Keeps the field's right edge on the X column above it. */}
-          <span aria-hidden className='size-6 shrink-0' />
-        </li>
-      </ul>
+              <Item key={pin.id} size='sm' variant='outline'>
+                <ItemContent>
+                  {/* Notes wrap in full rather than truncating: a pin exists to
+                      be read, and a half-read reminder is not one. */}
+                  <ItemTitle className='whitespace-pre-wrap font-normal wrap-break-word'>{pin.text}</ItemTitle>
+                </ItemContent>
+                <ItemActions>
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='icon-xs'
+                    aria-label={`Edit pinned note: ${pin.text}`}
+                    disabled={pending}
+                    onClick={() => beginEdit(pin)}
+                  >
+                    <Pencil />
+                  </Button>
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='icon-xs'
+                    aria-label={`Unpin note: ${pin.text}`}
+                    disabled={pending}
+                    onClick={() => onUnpin(pin.id)}
+                  >
+                    <X />
+                  </Button>
+                </ItemActions>
+              </Item>
+            ),
+          )}
+        </ItemGroup>
+      ) : null}
+
+      <InputGroup>
+        <InputGroupInput
+          value={next}
+          disabled={pending || atCap}
+          aria-label='Pin a note'
+          placeholder='Pin a note…'
+          onChange={(event) => setNext(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              void add()
+            }
+          }}
+        />
+        <InputGroupAddon align='inline-end'>
+          <InputGroupButton
+            size='icon-xs'
+            aria-label='Pin'
+            disabled={pending || atCap || next.trim().length === 0}
+            onClick={() => void add()}
+          >
+            <Plus />
+          </InputGroupButton>
+        </InputGroupAddon>
+      </InputGroup>
+
+      {/* Why the add is inert, in words, always visible -- a disabled control
+          with the reason on a tooltip is a dead end on a touch device. It
+          names the way out (unpin one) rather than only stating the rule. */}
+      {atCap ? <p className='text-xs text-muted-foreground'>{capMessage}</p> : null}
       {error ? (
-        <p role='alert' className='px-0 pt-1 text-xs text-destructive'>
+        <p role='alert' className='text-xs text-destructive'>
           {error}
         </p>
       ) : null}

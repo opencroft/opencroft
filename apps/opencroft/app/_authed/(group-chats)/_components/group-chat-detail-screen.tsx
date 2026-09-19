@@ -24,7 +24,8 @@ import { Button } from 'ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
 import { GroupChatDetail } from 'ui/group-chat/group-chat-detail'
 import { GroupChatThreadList } from 'ui/group-chat/group-chat-thread-list'
-import { Input } from 'ui/input'
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from 'ui/input-group'
+import { Toggle } from 'ui/toggle'
 
 import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
 import { stopProcessLocal } from '@/app/_authed/(agent)/_server/acp'
@@ -210,8 +211,8 @@ export function GroupChatDetailScreen({
       setQuery('')
     }
     const title = searching ? (
-      <div className='flex items-center gap-1'>
-        <Input
+      <InputGroup className='h-8'>
+        <InputGroupInput
           autoFocus
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -221,12 +222,13 @@ export function GroupChatDetailScreen({
             }
           }}
           placeholder='Search threads…'
-          className='h-8'
         />
-        <Button type='button' variant='ghost' size='icon-sm' aria-label='Close search' onClick={closeSearch}>
-          <X />
-        </Button>
-      </div>
+        <InputGroupAddon align='inline-end'>
+          <InputGroupButton size='icon-xs' aria-label='Close search' onClick={closeSearch}>
+            <X />
+          </InputGroupButton>
+        </InputGroupAddon>
+      </InputGroup>
     ) : null
     const actions = searching ? null : (
       <>
@@ -242,17 +244,15 @@ export function GroupChatDetailScreen({
             <Search />
           </Button>
         ) : null}
-        <Button
-          type='button'
-          variant={pinsOpen ? 'secondary' : 'ghost'}
-          size='icon-sm'
-          aria-pressed={pinsOpen}
+        <Toggle
+          size='sm'
+          pressed={pinsOpen}
+          onPressedChange={setPinsOpen}
           aria-label={pinsOpen ? 'Hide pinned notes' : 'Show pinned notes'}
           title='Pinned notes'
-          onClick={() => setPinsOpen((open) => !open)}
         >
           <Pin />
-        </Button>
+        </Toggle>
         <GroupChatMenu groupChatId={groupChatId} members={chat.members} directory={directory} agents={agents} />
       </>
     )

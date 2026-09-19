@@ -145,9 +145,11 @@ export function GroupChatMenu({ groupChatId, members, directory, agents }: Props
           <EllipsisVertical />
         </Button>
       </PopoverTrigger>
-      <PopoverContent side='bottom' align='end' className='w-80 p-3'>
-        <div className='flex flex-col gap-3'>
-          <p className='text-sm font-medium text-foreground'>Members</p>
+      {/* The same dress the space selector's and the chat selector's menus
+          wear: a Command with its search on a divider and flat rows, no inset
+          of this menu's own. */}
+      <PopoverContent side='bottom' align='end' className='w-72 p-0'>
+        <div className='flex flex-col'>
           <AddMemberPicker
             candidates={candidates}
             members={members.map((m) => ({ kind: m.kind, id: m.id }))}
@@ -168,7 +170,7 @@ export function GroupChatMenu({ groupChatId, members, directory, agents }: Props
             error={error}
           />
           {systemGrants.length > 0 || ungrantedSenders.length > 0 ? (
-            <div className='space-y-2 border-t pt-3'>
+            <div className='space-y-2 border-t p-3'>
               <p className='text-xs text-muted-foreground'>
                 Automated senders — a grant lets a scheduled pipeline or webhook deliver into this chat's threads.
               </p>
