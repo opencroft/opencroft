@@ -5,7 +5,6 @@
 // draws the affordances, this owns what they open and the data flow behind
 // them.
 
-import { useRouter } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from 'ui/dialog'
@@ -13,6 +12,7 @@ import { GroupChatPinForm } from 'ui/group-chat/group-chat-pin-form'
 import { GroupChatPins } from 'ui/group-chat/group-chat-pins'
 
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
+import { useGroupChatRefresh } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
 import { memberActionRefusal } from '@/app/_authed/(group-chats)/_lib/member-action-refusal'
 import type { GroupChatPinSummary } from '@/app/_authed/(group-chats)/_server/actions'
 import { addGroupChatPin, editGroupChatPin, removeGroupChatPin } from '@/app/_authed/(group-chats)/_server/actions'
@@ -27,7 +27,7 @@ interface GroupChatPinsPanelProps {
 }
 
 export function GroupChatPinsPanel({ groupChatId, pins }: GroupChatPinsPanelProps) {
-  const router = useRouter()
+  const refresh = useGroupChatRefresh()
   const [formTarget, setFormTarget] = useState<PinFormTarget | null>(null)
   const [text, setText] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -65,7 +65,7 @@ export function GroupChatPinsPanel({ groupChatId, pins }: GroupChatPinsPanelProp
         return
       }
       closeForm()
-      await router.invalidate()
+      await refresh()
     } catch (e) {
       setFormError(e instanceof Error ? e.message : 'That note could not be saved.')
     } finally {
@@ -87,7 +87,7 @@ export function GroupChatPinsPanel({ groupChatId, pins }: GroupChatPinsPanelProp
         return
       }
       setUnpinTarget(null)
-      await router.invalidate()
+      await refresh()
     } catch (e) {
       setPanelError(e instanceof Error ? e.message : 'That note could not be unpinned.')
     } finally {

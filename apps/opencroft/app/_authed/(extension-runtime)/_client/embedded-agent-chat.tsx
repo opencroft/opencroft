@@ -26,15 +26,25 @@
 //                           unchanged. Whether Join belongs on an arbitrary
 //                           chat is a separate, unanswered question; the
 //                           server decides which case this is.
-//   - no thread yet       → the SAME start composer the group-chat screen's
-//                           footer renders (its agent picker doubles as this
-//                           surface's picker); the first send creates the
-//                           thread through the membership-checked startThread
-//                           path, titled with `id` so the slug — and so the
-//                           session key's tail — reads as the id.
+//   - no thread yet, or
+//     the chat's home
+//     was chosen          → the group chat's OWN screen -- topic, members,
+//                           pins, the thread list and the start composer --
+//                           the same one the group-chats route draws, loaded
+//                           here. A thread chosen or started there opens in
+//                           this panel; the host's Back leads back to it.
+//                           This is the second of the two windows the
+//                           group-chats section has always had, and the
+//                           embedded surface used to offer a bare "New chat"
+//                           composer in its place.
+//   - a new id was asked
+//     for explicitly      → the SAME start composer the group-chat screen's
+//                           footer renders, titled with that id (fixed, so the
+//                           slug and the session key's tail read as the id);
+//                           the first send creates the thread.
 //   - thread exists       → the shared assembly reattaches to it. No agent
 //                           picker: the thread names its agent, and switching
-//                           conversations is the ChatSelector's job.
+//                           conversations is the chat's home screen's job.
 
 import { MessageCirclePlus, UserPlus } from 'lucide-react'
 import type { ReactNode } from 'react'
@@ -49,11 +59,16 @@ import { LogoLoader } from 'ui/logo-loader'
 
 import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
+import {
+  type GroupChatDetailData,
+  GroupChatDetailScreen,
+} from '@/app/_authed/(group-chats)/_components/group-chat-detail-screen'
 import { GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
 import { GroupChatThreadChat } from '@/app/_authed/(group-chats)/_components/group-chat-thread-chat'
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
+import { GroupChatRefreshProvider } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
 import type {
   DirectoryUser,
   GroupChatDetailView,
@@ -65,9 +80,13 @@ import {
   createMyGroupChat,
   findGroupChatEmbedThread,
   getGroupChatEmbedView,
+  getGroupChatThreadLayout,
   getGroupChatThreadView,
+  getMyGroupChatView,
   joinSpaceGroupChat,
   listDirectoryUsersForPicker,
+  listGroupChatThreadsView,
+  listMyGroupChatPins,
 } from '@/app/_authed/(group-chats)/_server/actions'
 import type { AgentNodeRef } from '@/app/_authed/(space)/_server/agents'
 import { listAgentNodes } from '@/app/_authed/(space)/_server/agents'
@@ -77,11 +96,13 @@ import { cn } from '@/lib/utils'
 /**
  * Which conversation an embedded surface shows, when not its default thread:
  * an EXISTING thread by its id (any thread of the chat, whatever agent it
- * belongs to), or a NEW one — an id no thread carries yet, so the surface
- * shows the start composer and the first send creates it. Produced by the
- * ChatSelector beside the surface's dock controls.
+ * belongs to), a NEW one — an id no thread carries yet, so the surface shows
+ * the start composer and the first send creates it — or the chat's HOME: the
+ * group chat's own screen, where the threads are listed and started. Produced
+ * by the surface itself (a row chosen on the home screen), by the host's Back
+ * (home again) and by the ChatSelector, for hosts that still mount one.
  */
-export type EmbeddedChatSelection = { threadId: string } | { newId: string }
+export type EmbeddedChatSelection = { threadId: string } | { newId: string } | { home: true }
 
 /**
  * What the open thread's header would say, for a host that draws that header
@@ -109,6 +130,12 @@ export interface EmbeddedAgentChatProps {
   id: string
   /** Override the shown conversation — see EmbeddedChatSelection. Unset = the default thread. */
   thread?: EmbeddedChatSelection | null
+  /**
+   * The surface asks to show something else: a thread chosen or started on
+   * the chat's home screen. A host that owns `thread` (the dock does) applies
+   * it there; a host that passes none lets the surface keep the choice itself.
+   */
+  onSelectionChange?: (selection: EmbeddedChatSelection) => void
   /**
    * What to NAME the chat if this surface has to create it. The address is
    * always `space`; this is only the display name, and it defaults to the slug
@@ -148,6 +175,7 @@ export function EmbeddedAgentChat({
   space,
   id,
   thread,
+  onSelectionChange,
   title,
   onChatAvailable,
   onThreadContext,
@@ -220,6 +248,7 @@ export function EmbeddedAgentChat({
           id={id}
           title={title}
           selection={thread ?? undefined}
+          onSelectionChange={onSelectionChange}
           onThreadContext={onThreadContext}
           className={className}
         />
@@ -266,7 +295,8 @@ function EmbeddedThread({
   chat,
   id,
   title,
-  selection,
+  selection: hostSelection,
+  onSelectionChange,
   onThreadContext,
   className,
 }: {
@@ -275,13 +305,23 @@ function EmbeddedThread({
   /** The host's name for the chat, when it has one -- see EmbeddedAgentChatProps. */
   title?: string
   selection?: EmbeddedChatSelection
+  onSelectionChange?: (selection: EmbeddedChatSelection) => void
   onThreadContext?: (context: EmbeddedThreadContext | null) => void
   className?: string
 }) {
+  // A choice made on the home screen goes to the host when it takes them --
+  // the dock holds the selection and remembers it -- and is kept here
+  // otherwise, so a host that only ever passed `thread` still gets a working
+  // home screen.
+  const [ownSelection, setOwnSelection] = useState<EmbeddedChatSelection | undefined>(undefined)
+  const selection = onSelectionChange ? hostSelection : (ownSelection ?? hostSelection)
+  const choose = onSelectionChange ?? setOwnSelection
+  const home = selection !== undefined && 'home' in selection
   // An explicit thread is shown as-is, whatever agent it belongs to; a new id
   // replaces the default one on the ordinary find-or-start path.
   const explicitThreadId = selection && 'threadId' in selection ? selection.threadId : null
-  const effectiveId = selection && 'newId' in selection ? selection.newId : id
+  const newId = selection && 'newId' in selection ? selection.newId : null
+  const effectiveId = newId ?? id
   // MEMBER agents only: any other agent is refused by startThread, so
   // offering one would be offering a choice that cannot succeed.
   const memberAgents = useMemo(
@@ -315,8 +355,13 @@ function EmbeddedThread({
     let cancelled = false
     setThread(undefined)
     setThreadError(undefined)
+    // The home screen names no thread; nothing to resolve.
+    if (home) {
+      setThread(null)
+      return
+    }
     // A selected thread is loaded by its own id — no (agent, slug) mapping,
-    // because the selector offers every thread of the chat, not just the
+    // because the home screen offers every thread of the chat, not just the
     // picked agent's.
     if (explicitThreadId) {
       getGroupChatThreadView({ data: explicitThreadId })
@@ -354,9 +399,10 @@ function EmbeddedThread({
     return () => {
       cancelled = true
     }
-  }, [chat.id, selectedAgent, effectiveId, explicitThreadId, threadTick])
+  }, [chat.id, selectedAgent, effectiveId, explicitThreadId, home, threadTick])
 
   const onThreadStarted = useCallback(() => setThreadTick((tick) => tick + 1), [])
+  const openThread = useCallback((threadId: string) => choose({ threadId }), [choose])
 
   // The same shared session-activity poll (and the same derivation) the
   // group-chat screens read — one status vocabulary, one source. Enabled only
@@ -434,13 +480,20 @@ function EmbeddedThread({
       </Empty>
     )
   }
-  // The pre-thread state: the same start composer the group-chat screen's
-  // footer renders, in the same CommandBarFrame every chat footer sits in —
-  // so this state looks like the composer the thread will have, not like a
-  // bare form. Configured for this surface: the thread is titled with the id
-  // (fixed, so the slug and the session key's tail read as the id), and the
-  // agent selection is the SAME state the live thread's picker switches, so
-  // the two controls cannot disagree.
+  // No thread to show: the chat's home screen, unless a specific new id was
+  // asked for. The default thread not existing yet lands here too -- the
+  // reader picks a thread or starts one from the home screen's composer,
+  // which is what "New chat" used to be a bare stand-in for.
+  if (home || !newId) {
+    return <EmbeddedChatHome chat={chat} onOpenThread={openThread} className={className} />
+  }
+  // The explicit-new-id state: the same start composer the group-chat
+  // screen's footer renders, in the same CommandBarFrame every chat footer
+  // sits in — so this state looks like the composer the thread will have, not
+  // like a bare form. Configured for this surface: the thread is titled with
+  // the id (fixed, so the slug and the session key's tail read as the id),
+  // and the agent selection is the SAME state the live thread's picker
+  // switches, so the two controls cannot disagree.
   return (
     <div className={cn('flex h-full min-h-0 flex-col', className)}>
       {/* The slack above the composer carries the same empty-state family the
@@ -475,6 +528,85 @@ function EmbeddedThread({
         </CommandBarFrame>
       </div>
     </div>
+  )
+}
+
+// ── The chat's home screen inside the panel ──────────────────────────────
+
+/**
+ * The group chat's own screen -- topic, members, pins, threads, the start
+ * composer -- drawn inside the panel. The route loads the same data in a
+ * loader; here it is loaded on mount and reloaded through the group-chat
+ * refresh context, which is what the pins panel, the members dialog and the
+ * rename / delete dialogs call after a write. Without the provider they would
+ * invalidate the host page's route, which knows nothing about this chat.
+ */
+function EmbeddedChatHome({
+  chat,
+  onOpenThread,
+  className,
+}: {
+  chat: GroupChatDetailView
+  onOpenThread: (threadId: string) => void
+  className?: string
+}) {
+  const [data, setData] = useState<GroupChatDetailData | null>(null)
+  const [error, setError] = useState<string>()
+  const load = useCallback(async () => {
+    const [fresh, threads, directory, agents, pins, layout] = await Promise.all([
+      getMyGroupChatView({ data: chat.id }),
+      listGroupChatThreadsView({ data: chat.id }),
+      listDirectoryUsersForPicker(),
+      listAgentNodes(),
+      listMyGroupChatPins({ data: chat.id }),
+      getGroupChatThreadLayout({ data: chat.id }),
+    ])
+    setData({ chat: fresh, threads, directory, agents, pins, layout })
+  }, [chat.id])
+  useEffect(() => {
+    let cancelled = false
+    setData(null)
+    setError(undefined)
+    load().catch((e) => {
+      if (!cancelled) {
+        setError(failureMessage(e, 'This chat could not be loaded.'))
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [load])
+
+  if (error) {
+    return (
+      <Empty className={cn('h-full', className)}>
+        <EmptyHeader>
+          <EmptyTitle>Something went wrong</EmptyTitle>
+          <EmptyDescription>{error}</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    )
+  }
+  if (!data) {
+    return <CenteredSpinner className={className} />
+  }
+  return (
+    <GroupChatRefreshProvider refresh={load}>
+      <div className={cn('flex h-full min-h-0 flex-col', className)}>
+        <GroupChatDetailScreen
+          className='min-h-0 flex-1'
+          groupChatId={chat.id}
+          chat={data.chat}
+          threads={data.threads}
+          directory={data.directory}
+          agents={data.agents}
+          pins={data.pins}
+          layout={data.layout}
+          onOpenThread={onOpenThread}
+          onThreadStarted={onOpenThread}
+        />
+      </div>
+    </GroupChatRefreshProvider>
   )
 }
 

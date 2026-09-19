@@ -13,13 +13,13 @@
 // shown in place, which is the whole reason these are dialogs rather than
 // in-row editing: there is somewhere to put the answer.
 
-import { useRouter } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Input } from 'ui/input'
 
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
+import { useGroupChatRefresh } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
 import { memberActionRefusal } from '@/app/_authed/(group-chats)/_lib/member-action-refusal'
 import type { GroupChatWriteResult } from '@/app/_authed/(group-chats)/_server/actions'
 import {
@@ -55,7 +55,7 @@ function EditFieldDialog({
   description,
   submit,
 }: EditFieldDialogProps) {
-  const router = useRouter()
+  const refresh = useGroupChatRefresh()
   const [draft, setDraft] = useState(value)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string>()
@@ -82,7 +82,7 @@ function EditFieldDialog({
         return
       }
       onOpenChange(false)
-      await router.invalidate()
+      await refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'That could not be saved.')
     } finally {
@@ -197,7 +197,7 @@ export function GroupChatThreadDeleteDialog({
   onOpenChange: (open: boolean) => void
   threadId: string
 }) {
-  const router = useRouter()
+  const refresh = useGroupChatRefresh()
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string>()
 
@@ -207,7 +207,7 @@ export function GroupChatThreadDeleteDialog({
     try {
       await deleteGroupChatThread({ data: threadId })
       onOpenChange(false)
-      await router.invalidate()
+      await refresh()
     } catch (e) {
       setError(failureMessage(e, 'The thread could not be deleted.'))
     } finally {

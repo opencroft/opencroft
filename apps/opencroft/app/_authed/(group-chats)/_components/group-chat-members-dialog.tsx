@@ -11,7 +11,6 @@
 // derivation -- app-side because it is a fact about this group chat rather than
 // a shape decision.
 
-import { useRouter } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 'ui/dialog'
@@ -19,6 +18,7 @@ import { AddMemberPicker, type MemberCandidate } from 'ui/group-chat/add-member-
 import { MemberAvatarGroup } from 'ui/group-chat/member-avatar-group'
 
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
+import { useGroupChatRefresh } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
 import { memberActionRefusal } from '@/app/_authed/(group-chats)/_lib/member-action-refusal'
 import type { DirectoryUser, GroupChatWriteResult, MemberRef } from '@/app/_authed/(group-chats)/_server/actions'
 import {
@@ -45,7 +45,7 @@ function toPrincipal(principal: { kind: 'user' | 'agent'; id: string }) {
 }
 
 export function GroupChatMembersDialog({ groupChatId, members, directory, agents }: Props) {
-  const router = useRouter()
+  const refresh = useGroupChatRefresh()
 
   // Both principal kinds in one list, which is what the picker takes -- the
   // designer's note that splitting them makes the reader work out which half
@@ -132,7 +132,7 @@ export function GroupChatMembersDialog({ groupChatId, members, directory, agents
       }
       // Stay open: managing several people in a row is the common case, and the
       // picker re-marks each one once the loader data refreshes.
-      await router.invalidate()
+      await refresh()
     } catch (e) {
       setError(failureMessage(e, fallback))
     } finally {

@@ -16,8 +16,8 @@ import { ThreadAgentCluster } from 'ui/group-chat/thread-agent-cluster'
 import { ThreadWorkControl } from 'ui/group-chat/thread-work-control'
 import { useIsMobile } from 'ui/hooks/use-mobile'
 import { DockPanel, type DockSide } from 'ui/layouts/dock-panel'
+import { BackButton } from 'ui/utils/back-button'
 
-import { ChatSelector } from '@/app/_authed/(extension-runtime)/_client/chat-selector'
 import type {
   EmbeddedChatSelection,
   EmbeddedThreadContext,
@@ -203,10 +203,6 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
     undefined,
   )
 
-  // Whether the group chat actually exists (and is visible to the caller).
-  // Until it does there is nothing to switch between, so the headers keep the
-  // ChatSelector off instead of offering a chooser over a chat-to-be.
-  const [chatReady, setChatReady] = useState(false)
   // What the open thread's header says -- who it is with, where it is, what
   // it has delegated -- as the surface reports it; null while no thread is
   // open. Held HERE because the header is this component's: the surface has
@@ -293,8 +289,8 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
       space={space}
       id={id}
       thread={chatSelection}
+      onSelectionChange={setChatSelection}
       title={chatName}
-      onChatAvailable={setChatReady}
       onThreadContext={setThreadContext}
       className='min-h-0 flex-1'
     />
@@ -306,14 +302,27 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
   // to the surface's title until then. ONE node for all three arrangements,
   // so the docked panel, the phone cover and the floating window cannot say
   // different things about one thread.
+  //
+  // Back leads it: an open thread is the second of the panel's two windows,
+  // and the arrow returns to the first -- the chat's home, where the threads
+  // are listed, searched and started. That home is what replaced the "Choose
+  // a chat" menu this header used to carry. The buttons stop the pointer so
+  // the floating window's drag handle does not read a press as a slide.
   const cluster = threadContext ? (
-    <ThreadAgentCluster
-      agent={threadContext.agent}
-      status={threadContext.status}
-      groupChatName={threadContext.groupChatName}
-      threadTitle={threadContext.threadTitle}
-      className='min-w-0 flex-1'
-    />
+    <div className='flex min-w-0 flex-1 items-center gap-1'>
+      <BackButton
+        label='Back to the chat'
+        onClick={() => setChatSelection({ home: true })}
+        onPointerDown={(e) => e.stopPropagation()}
+      />
+      <ThreadAgentCluster
+        agent={threadContext.agent}
+        status={threadContext.status}
+        groupChatName={threadContext.groupChatName}
+        threadTitle={threadContext.threadTitle}
+        className='min-w-0 flex-1'
+      />
+    </div>
   ) : null
   // The delegated-work control sits with the conversation controls, the same
   // size and shape as the chat switch beside it. It draws nothing until the
@@ -339,9 +348,6 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
         actions={
           <>
             {workButton('icon')}
-            {chatReady && (
-              <ChatSelector space={space} selection={chatSelection} onChange={setChatSelection} size='icon' />
-            )}
             <ModeMenu mode={mode} onModeChange={setMode} />
             {closeButton('icon')}
           </>
@@ -374,9 +380,6 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
         {cluster ?? <span className='truncate text-sm font-medium text-foreground'>{title}</span>}
         <div className='flex shrink-0 items-center gap-1'>
           {workButton('icon-sm')}
-          {chatReady && (
-            <ChatSelector space={space} selection={chatSelection} onChange={setChatSelection} size='icon-sm' />
-          )}
           {closeButton('icon-sm')}
         </div>
       </div>
@@ -403,9 +406,6 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
         {cluster ?? <span className='truncate text-xs text-muted-foreground'>{title}</span>}
         <div onPointerDown={(e) => e.stopPropagation()} className='flex shrink-0 items-center gap-0.5'>
           {workButton('icon')}
-          {chatReady && (
-            <ChatSelector space={space} selection={chatSelection} onChange={setChatSelection} size='icon' />
-          )}
           <ModeMenu mode={mode} onModeChange={setMode} />
           {closeButton('icon')}
         </div>

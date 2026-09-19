@@ -21,18 +21,6 @@ import { threadSessionKey } from '@/app/_authed/(group-chats)/_lib/thread-sessio
 import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import { getGroupChatEmbedView, listGroupChatThreadsView } from '@/app/_authed/(group-chats)/_server/actions'
 
-/**
- * The id a "New chat" starts under. It doubles as the thread's title (the
- * embedded surface titles a thread with its id), so it is a readable stamp
- * rather than an opaque token; seconds keep two quick clicks apart.
- */
-function newChatId(): string {
-  const now = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
-  return `Chat ${date} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
-}
-
 export interface ChatSelectorProps {
   /** The group chat's slug — same address the embedded chat surface takes. */
   space: string
@@ -185,7 +173,11 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
             <CommandInput value={query} onValueChange={setQuery} placeholder='Search chats…' />
             <CommandList>
               <CommandGroup>
-                <CommandItem onSelect={() => pick({ newId: newChatId() })}>
+                {/* The chat's home screen, where a thread is started -- the
+                    embedded surface draws it in place of the bare "New chat"
+                    composer it used to offer, so this leads there rather than
+                    minting a titled thread of its own. */}
+                <CommandItem onSelect={() => pick({ home: true })}>
                   <SquarePen />
                   New chat
                 </CommandItem>
