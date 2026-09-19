@@ -61,6 +61,7 @@ import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-a
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import {
   type GroupChatDetailData,
+  type GroupChatDetailHeader,
   GroupChatDetailScreen,
 } from '@/app/_authed/(group-chats)/_components/group-chat-detail-screen'
 import { GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
@@ -160,6 +161,14 @@ export interface EmbeddedAgentChatProps {
    * a notification for a host that owns the chrome, never a render slot.
    */
   onThreadContext?: (context: EmbeddedThreadContext | null) => void
+  /**
+   * Reports the chat home screen's header parts -- its title area and its
+   * controls -- while that screen is open, and null otherwise. A host that
+   * passes this draws them in its own header, and the home screen draws none:
+   * the same arrangement `onThreadContext` gives an open thread, so the window
+   * has one header whichever screen is up.
+   */
+  onHomeHeader?: (header: GroupChatDetailHeader | null) => void
   className?: string
 }
 
@@ -179,6 +188,7 @@ export function EmbeddedAgentChat({
   title,
   onChatAvailable,
   onThreadContext,
+  onHomeHeader,
   className,
 }: EmbeddedAgentChatProps) {
   const [state, setState] = useState<EmbedPhase>({ phase: 'loading' })
@@ -250,6 +260,7 @@ export function EmbeddedAgentChat({
           selection={thread ?? undefined}
           onSelectionChange={onSelectionChange}
           onThreadContext={onThreadContext}
+          onHomeHeader={onHomeHeader}
           className={className}
         />
       )
@@ -298,6 +309,7 @@ function EmbeddedThread({
   selection: hostSelection,
   onSelectionChange,
   onThreadContext,
+  onHomeHeader,
   className,
 }: {
   chat: GroupChatDetailView
@@ -307,6 +319,7 @@ function EmbeddedThread({
   selection?: EmbeddedChatSelection
   onSelectionChange?: (selection: EmbeddedChatSelection) => void
   onThreadContext?: (context: EmbeddedThreadContext | null) => void
+  onHomeHeader?: (header: GroupChatDetailHeader | null) => void
   className?: string
 }) {
   // A choice made on the home screen goes to the host when it takes them --
@@ -485,7 +498,7 @@ function EmbeddedThread({
   // reader picks a thread or starts one from the home screen's composer,
   // which is what "New chat" used to be a bare stand-in for.
   if (home || !newId) {
-    return <EmbeddedChatHome chat={chat} onOpenThread={openThread} className={className} />
+    return <EmbeddedChatHome chat={chat} onOpenThread={openThread} onHeader={onHomeHeader} className={className} />
   }
   // The explicit-new-id state: the same start composer the group-chat
   // screen's footer renders, in the same CommandBarFrame every chat footer
@@ -544,10 +557,12 @@ function EmbeddedThread({
 function EmbeddedChatHome({
   chat,
   onOpenThread,
+  onHeader,
   className,
 }: {
   chat: GroupChatDetailView
   onOpenThread: (threadId: string) => void
+  onHeader?: (header: GroupChatDetailHeader | null) => void
   className?: string
 }) {
   const [data, setData] = useState<GroupChatDetailData | null>(null)
@@ -602,6 +617,7 @@ function EmbeddedChatHome({
           agents={data.agents}
           pins={data.pins}
           layout={data.layout}
+          onHeader={onHeader}
           onOpenThread={onOpenThread}
           onThreadStarted={onOpenThread}
         />

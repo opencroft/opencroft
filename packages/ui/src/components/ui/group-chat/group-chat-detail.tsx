@@ -44,6 +44,12 @@ export interface GroupChatDetailProps {
    * panel's inset, and it read as a different kind of surface from the composer
    * one screen away. */
   composer?: ReactNode
+  /** Draw no header of this screen's own. For a host that already has one --
+   * the embedded chat panel's window -- and puts the name, the search field
+   * and the controls there, the way it puts an open thread's header there.
+   * `onBack`, `name`, `searchField` and `actions` are then the host's to
+   * place, and this renders the panel, the threads and the composer alone. */
+  headerless?: boolean
   className?: string
 }
 
@@ -66,6 +72,7 @@ export function GroupChatDetail({
   threads,
   emptyState,
   composer,
+  headerless = false,
   className,
 }: GroupChatDetailProps) {
   return (
@@ -74,18 +81,20 @@ export function GroupChatDetail({
           the thread area and the composer below -- the 1:1 conversation uses
           the same, so a group chat and a 1:1 chat line up on one left edge
           rather than each having its own. */}
-      <header className='flex shrink-0 items-center gap-2 border-b border-border px-4 py-2'>
-        {onBack ? <BackButton onClick={onBack} /> : null}
-        {searchField ? (
-          <div className='min-w-0 flex-1'>{searchField}</div>
-        ) : (
-          <h2 className='min-w-0 flex-1 truncate text-base font-semibold text-foreground'>{name}</h2>
-        )}
-        {/* Never allowed to shrink: past the controls, the name gives up its
-            space first, because a truncated name is still readable and a
-            squeezed control is not. */}
-        {actions ? <div className='flex shrink-0 items-center gap-1'>{actions}</div> : null}
-      </header>
+      {headerless ? null : (
+        <header className='flex shrink-0 items-center gap-2 border-b border-border px-4 py-2'>
+          {onBack ? <BackButton onClick={onBack} /> : null}
+          {searchField ? (
+            <div className='min-w-0 flex-1'>{searchField}</div>
+          ) : (
+            <h2 className='min-w-0 flex-1 truncate text-base font-semibold text-foreground'>{name}</h2>
+          )}
+          {/* Never allowed to shrink: past the controls, the name gives up its
+              space first, because a truncated name is still readable and a
+              squeezed control is not. */}
+          {actions ? <div className='flex shrink-0 items-center gap-1'>{actions}</div> : null}
+        </header>
+      )}
       {panel ? <div className='shrink-0 border-b border-border px-4 py-2'>{panel}</div> : null}
       <div className='min-h-0 flex-1 overflow-y-auto'>
         {/* A full-height flex column INSIDE the scroll region, and the reason

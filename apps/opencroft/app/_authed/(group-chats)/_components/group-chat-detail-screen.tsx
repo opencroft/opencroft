@@ -18,7 +18,8 @@
 // list page's row menu, not this screen's; the topic is gone.
 
 import { Pin, Search, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from 'ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
 import { GroupChatDetail } from 'ui/group-chat/group-chat-detail'
@@ -57,10 +58,26 @@ export interface GroupChatDetailData {
   layout: Awaited<ReturnType<typeof getGroupChatThreadLayout>>
 }
 
+/**
+ * What the screen's header holds, for a host that draws that header itself:
+ * the title area (the name, or the search field while a search is open) and
+ * the controls. The embedded chat panel puts these in its window's header, the
+ * way it puts an open thread's cluster there, so the panel has one header
+ * rather than two. Identity-stable per change of its parts, so a host may
+ * hold it in state without a render loop.
+ */
+export interface GroupChatDetailHeader {
+  title: ReactNode
+  actions: ReactNode
+}
+
 export interface GroupChatDetailScreenProps extends GroupChatDetailData {
   groupChatId: string
   /** The back affordance, when this screen nests inside something. */
   onBack?: () => void
+  /** Take the header: when given, the screen draws none of its own and
+   *  reports what it would have held, and null on the way out. */
+  onHeader?: (header: GroupChatDetailHeader | null) => void
   /** A thread row was chosen. */
   onOpenThread: (threadId: string) => void
   /** The composer started a thread. The host decides what follows -- the
@@ -80,6 +97,7 @@ export function GroupChatDetailScreen({
   pins,
   layout: loadedLayout,
   onBack,
+  onHeader,
   onOpenThread,
   onThreadStarted,
   activeThreadId,
@@ -182,29 +200,77 @@ export function GroupChatDetailScreen({
         hasDraft: t.hasDraft,
       }))
   }, [threads, trimmedQuery, threadStatusById])
-  const closeSearch = () => {
-    setSearching(false)
-    setQuery('')
-  }
-  const searchField = searching ? (
-    <div className='flex items-center gap-1'>
-      <Input
-        autoFocus
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            closeSearch()
-          }
-        }}
-        placeholder='Search threads…'
-        className='h-8'
-      />
-      <Button type='button' variant='ghost' size='icon-sm' aria-label='Close search' onClick={closeSearch}>
-        <X />
-      </Button>
-    </div>
-  ) : undefined
+  // The header's two parts, memoized on exactly what they read so a host that
+  // holds them in state is told once per real change. While a search is open
+  // the field is the whole header: the other controls step aside, and the
+  // field's own X is the way out.
+  const header = useMemo<GroupChatDetailHeader>(() => {
+    const closeSearch = () => {
+      setSearching(false)
+      setQuery('')
+    }
+    const title = searching ? (
+      <div className='flex items-center gap-1'>
+        <Input
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              closeSearch()
+            }
+          }}
+          placeholder='Search threads…'
+          className='h-8'
+        />
+        <Button type='button' variant='ghost' size='icon-sm' aria-label='Close search' onClick={closeSearch}>
+          <X />
+        </Button>
+      </div>
+    ) : null
+    const actions = searching ? null : (
+      <>
+        {threads.length > 0 ? (
+          <Button
+            type='button'
+            variant='ghost'
+            size='icon-sm'
+            aria-label='Search threads'
+            title='Search threads'
+            onClick={() => setSearching(true)}
+          >
+            <Search />
+          </Button>
+        ) : null}
+        <Button
+          type='button'
+          variant={pinsOpen ? 'secondary' : 'ghost'}
+          size='icon-sm'
+          aria-pressed={pinsOpen}
+          aria-label={pinsOpen ? 'Hide pinned notes' : 'Show pinned notes'}
+          title='Pinned notes'
+          onClick={() => setPinsOpen((open) => !open)}
+        >
+          <Pin />
+        </Button>
+        <GroupChatMenu groupChatId={groupChatId} members={chat.members} directory={directory} agents={agents} />
+      </>
+    )
+    return { title, actions }
+  }, [searching, query, pinsOpen, threads.length, groupChatId, chat.members, directory, agents])
+  // Reported through a ref so an inline callback never re-arms this, and
+  // cleared on the way out: a host that took the header must hear that it is
+  // gone, or its window keeps a search field over nothing.
+  const onHeaderRef = useRef(onHeader)
+  onHeaderRef.current = onHeader
+  const hostDrawsHeader = onHeader !== undefined
+  useEffect(() => {
+    if (!hostDrawsHeader) {
+      return
+    }
+    onHeaderRef.current?.(header)
+    return () => onHeaderRef.current?.(null)
+  }, [header, hostDrawsHeader])
   const threadArea = trimmedQuery ? (
     matches.length > 0 ? (
       <GroupChatThreadList
@@ -237,46 +303,9 @@ export function GroupChatDetailScreen({
         className={className}
         onBack={onBack}
         name={chat.name}
-        searchField={searchField}
-        actions={
-          <>
-            {!searching && threads.length > 0 ? (
-              <Button
-                type='button'
-                variant='ghost'
-                size='icon-sm'
-                aria-label='Search threads'
-                title='Search threads'
-                onClick={() => setSearching(true)}
-              >
-                <Search />
-              </Button>
-            ) : null}
-            <Button
-              type='button'
-              variant={pinsOpen ? 'secondary' : 'ghost'}
-              size='icon-sm'
-              aria-pressed={pinsOpen}
-              aria-label={
-                pins.length === 0 ? 'Pinned notes' : `Pinned notes (${pins.length}) — ${pinsOpen ? 'hide' : 'show'}`
-              }
-              title='Pinned notes'
-              className='relative'
-              onClick={() => setPinsOpen((open) => !open)}
-            >
-              <Pin />
-              {/* The count rides the toggle so a closed panel still announces
-                  that the chat carries standing notes; with none there is
-                  nothing to announce and the button is just the way in. */}
-              {pins.length > 0 ? (
-                <span className='absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium leading-none text-primary-foreground'>
-                  {pins.length}
-                </span>
-              ) : null}
-            </Button>
-            <GroupChatMenu groupChatId={groupChatId} members={chat.members} directory={directory} agents={agents} />
-          </>
-        }
+        searchField={header.title ?? undefined}
+        actions={header.actions ?? undefined}
+        headerless={hostDrawsHeader}
         panel={pinsOpen ? <GroupChatPinsPanel groupChatId={groupChatId} pins={pins} /> : undefined}
         threads={threadArea}
         emptyState={

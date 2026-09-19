@@ -23,6 +23,7 @@ import type {
   EmbeddedThreadContext,
 } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
 import { EmbeddedAgentChat } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
+import type { GroupChatDetailHeader } from '@/app/_authed/(group-chats)/_components/group-chat-detail-screen'
 import { useHistoryBackClose } from '@/hooks/utils/use-history-back-close'
 import { useLocalStorage } from '@/hooks/utils/use-local-storage'
 
@@ -208,6 +209,11 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
   // open. Held HERE because the header is this component's: the surface has
   // no header of its own inside the window, so it hands the facts up.
   const [threadContext, setThreadContext] = useState<EmbeddedThreadContext | null>(null)
+  // The chat's home screen's header -- its name or search field, and its
+  // controls -- as the surface reports it while the home screen is open; null
+  // otherwise. Held here for the same reason as the thread context: the
+  // window has one header, and both screens put their parts in it.
+  const [homeHeader, setHomeHeader] = useState<GroupChatDetailHeader | null>(null)
 
   // The window's arrangement DURING a drag, so the store is written once per
   // gesture rather than per pointer move -- the same contract the docked
@@ -292,9 +298,24 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
       onSelectionChange={setChatSelection}
       title={chatName}
       onThreadContext={setThreadContext}
+      onHomeHeader={setHomeHeader}
       className='min-h-0 flex-1'
     />
   )
+
+  // The home screen's header parts, placed in the window's header exactly as
+  // an open thread's cluster and work button are: its title area (the chat's
+  // name, or the search field while a search is open) where the cluster
+  // goes, its controls ahead of the window's own. The title area stops the
+  // pointer too -- in the floating window the header is the drag handle, and
+  // typing into a search field must not slide the window.
+  const stopPointer = (e: React.PointerEvent) => e.stopPropagation()
+  const homeTitle = homeHeader?.title ? (
+    <div onPointerDown={stopPointer} className='min-w-0 flex-1'>
+      {homeHeader.title}
+    </div>
+  ) : null
+  const homeActions = homeHeader?.actions ?? null
 
   // The header names the open conversation the way a chat list row does --
   // the agent's avatar with the status dot, `{space} / {thread}` over
@@ -344,9 +365,10 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
         dock={mode}
         size={size}
         onSizeChange={setSize}
-        title={cluster ?? title}
+        title={cluster ?? homeTitle ?? title}
         actions={
           <>
+            {homeActions}
             {workButton('icon')}
             <ModeMenu mode={mode} onModeChange={setMode} />
             {closeButton('icon')}
@@ -377,8 +399,9 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
     <div className='fixed inset-0 z-50 flex min-h-0 flex-col bg-background'>
       {/* Touch targets, not pointer targets, on the full-screen cover. */}
       <div className='flex items-center justify-between gap-2 border-b px-3 py-2'>
-        {cluster ?? <span className='truncate text-sm font-medium text-foreground'>{title}</span>}
+        {cluster ?? homeTitle ?? <span className='truncate text-sm font-medium text-foreground'>{title}</span>}
         <div className='flex shrink-0 items-center gap-1'>
+          {homeActions}
           {workButton('icon-sm')}
           {closeButton('icon-sm')}
         </div>
@@ -403,8 +426,9 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
         onPointerDown={dragFloat}
         className='flex shrink-0 cursor-grab touch-none select-none items-center justify-between gap-2 border-b border-border px-2 py-1'
       >
-        {cluster ?? <span className='truncate text-xs text-muted-foreground'>{title}</span>}
-        <div onPointerDown={(e) => e.stopPropagation()} className='flex shrink-0 items-center gap-0.5'>
+        {cluster ?? homeTitle ?? <span className='truncate text-xs text-muted-foreground'>{title}</span>}
+        <div onPointerDown={stopPointer} className='flex shrink-0 items-center gap-0.5'>
+          {homeActions}
           {workButton('icon')}
           <ModeMenu mode={mode} onModeChange={setMode} />
           {closeButton('icon')}

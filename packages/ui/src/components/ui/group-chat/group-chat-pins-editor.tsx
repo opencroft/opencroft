@@ -1,10 +1,9 @@
 'use client'
 
-import { Pencil, Plus, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { useState } from 'react'
 
-import { Button } from 'ui/components/ui/button'
-import { GroupChatPinForm } from 'ui/components/ui/group-chat/group-chat-pin-form'
+import { Input } from 'ui/components/ui/input'
 import { cn } from 'ui/lib/utils'
 
 // Word for word the server's `pin-limit` refusal. The editor stops the press
@@ -21,19 +20,20 @@ export interface GroupChatPin {
 export interface GroupChatPinsEditorProps {
   pins: GroupChatPin[]
   /** How many may be pinned at once. Bounded because every pin is injected
-   * into the agents' context -- and spent VISIBLY: at the cap the add goes
-   * inert and says why, rather than letting the press travel and come back
-   * refused. */
+   * into the agents' context -- and spent VISIBLY: at the cap the add field
+   * goes inert and says why, rather than letting the press travel and come
+   * back refused. */
   max?: number
-  /** Pin a new note with this text. The editor closes its form once the
-   * promise settles; a rejection is the host's to report through `error`. */
+  /** Pin a new note with this text. The field clears once the promise
+   * settles; a rejection keeps the text and is the host's to report through
+   * `error`. */
   onAdd: (text: string) => void | Promise<void>
   /** Save an edited note. Same contract as `onAdd`. */
   onEdit: (id: string, text: string) => void | Promise<void>
   /** Unpin one. This DESTROYS the note -- there is no unpinned-notes shelf to
    * recover it from -- so a host that wants a confirmation puts one here. */
   onUnpin: (id: string) => void
-  /** A write in flight: the forms' submit goes inert. */
+  /** A write in flight: the fields go inert. */
   pending?: boolean
   /** A failure to show: a refused pin, an unpin that did not land. */
   error?: string
@@ -41,14 +41,13 @@ export interface GroupChatPinsEditorProps {
   className?: string
 }
 
-// The standing notes pinned to a group chat, edited where they are read.
+// The standing notes pinned to a group chat, as lines of text.
 //
-// Opened from the header's pin toggle and drawn under it, so a note is one
-// press away rather than two dialogs deep: press the pencil and the note's row
-// becomes the form, press Pin a note and a form grows at the bottom. With no
-// notes at all the form is simply there -- the panel was opened to write one,
-// and a line saying nothing is pinned would only stand between the reader and
-// the field.
+// Each note is a line: press it and the line is a field -- Enter saves, Escape
+// puts the note back. The last line is always the empty field that adds one:
+// type, Enter, and the note joins the end of the list. No buttons, no form, no
+// dialog -- a note is a sentence of standing guidance, and the editor is the
+// size of one.
 //
 // Any member may pin, edit and unpin ANY note -- the same symmetric rule as
 // membership -- so nothing here carries admin framing, and no note is drawn as
@@ -65,120 +64,109 @@ export function GroupChatPinsEditor({
   className,
 }: GroupChatPinsEditorProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
+  const [next, setNext] = useState('')
   const atCap = pins.length >= max
-  const composing = adding || (pins.length === 0 && !atCap)
 
   const beginEdit = (pin: GroupChatPin) => {
-    setAdding(false)
     setEditingId(pin.id)
     setDraft(pin.text)
   }
-  const beginAdd = () => {
+  const cancelEdit = () => {
     setEditingId(null)
-    setAdding(true)
     setDraft('')
   }
-  const cancel = () => {
-    setEditingId(null)
-    setAdding(false)
-    setDraft('')
+  const saveEdit = async (pin: GroupChatPin) => {
+    const text = draft.trim()
+    if (!text || text === pin.text) {
+      cancelEdit()
+      return
+    }
+    await onEdit(pin.id, text)
+    cancelEdit()
   }
-  const submitEdit = async (id: string) => {
-    await onEdit(id, draft)
-    cancel()
-  }
-  const submitAdd = async () => {
-    await onAdd(draft)
-    cancel()
+  const add = async () => {
+    const text = next.trim()
+    if (!text) {
+      return
+    }
+    await onAdd(text)
+    setNext('')
   }
 
+  const field = 'h-7 border-0 bg-transparent px-1.5 text-xs shadow-none focus-visible:ring-1'
+
   return (
-    <div className={cn('flex min-w-0 flex-col gap-1', className)}>
+    <div className={cn('flex min-w-0 flex-col', className)}>
       {/* Height-capped and scrolling inside itself: the open panel costs the
-          same whether two notes are pinned or ten, so opening it is not a
-          decision anyone has to undo to get the thread list back. */}
-      <ul className='flex max-h-48 min-w-0 flex-col gap-0.5 overflow-y-auto'>
-        {pins.map((pin) =>
-          editingId === pin.id ? (
-            <li key={pin.id} className='py-1'>
-              <GroupChatPinForm
-                text={draft}
-                onTextChange={setDraft}
-                onSubmit={() => void submitEdit(pin.id)}
-                onCancel={cancel}
-                mode='edit'
-                submitting={pending}
-                error={error}
+          same whether two notes are pinned or ten. */}
+      <ul className='flex max-h-48 min-w-0 flex-col overflow-y-auto'>
+        {pins.map((pin) => (
+          <li key={pin.id} className='flex min-w-0 items-center gap-1'>
+            {editingId === pin.id ? (
+              <Input
+                autoFocus
+                value={draft}
+                disabled={pending}
+                aria-label='Edit pinned note'
+                className={cn(field, '-ml-1.5 flex-1')}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    void saveEdit(pin)
+                  } else if (event.key === 'Escape') {
+                    cancelEdit()
+                  }
+                }}
+                onBlur={() => void saveEdit(pin)}
               />
-            </li>
-          ) : (
-            <li key={pin.id} className='flex min-w-0 items-start gap-1'>
+            ) : (
               <button
                 type='button'
                 onClick={() => beginEdit(pin)}
                 aria-label={`Edit pinned note: ${pin.text}`}
-                className='-ml-1.5 flex min-w-0 flex-1 items-start gap-1.5 rounded-md px-1.5 py-1 text-left text-xs text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring'
+                className='-ml-1.5 min-w-0 flex-1 truncate rounded-md px-1.5 py-1 text-left text-xs text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring'
               >
-                {/* Notes wrap in full rather than truncating: a pin exists to
-                    be read, and a half-read reminder is not one. Line breaks
-                    the author typed are kept. */}
-                <span className='min-w-0 flex-1 whitespace-pre-wrap wrap-break-word'>{pin.text}</span>
-                <Pencil className='mt-0.5 size-3 shrink-0 text-muted-foreground' aria-hidden='true' />
+                {pin.text}
               </button>
-              {/* Separated from the text on purpose: the text is pressed to
-                  edit and this is pressed to destroy, so they do not share an
-                  edge. Never hover-revealed -- it would not exist on touch. */}
-              <button
-                type='button'
-                onClick={() => onUnpin(pin.id)}
-                aria-label={`Unpin note: ${pin.text}`}
-                disabled={pending}
-                className='mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50'
-              >
-                <X className='size-3.5' />
-              </button>
-            </li>
-          ),
-        )}
+            )}
+            {/* Never hover-revealed -- it would not exist on touch. */}
+            <button
+              type='button'
+              onClick={() => onUnpin(pin.id)}
+              aria-label={`Unpin note: ${pin.text}`}
+              disabled={pending}
+              className='inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50'
+            >
+              <X className='size-3.5' />
+            </button>
+          </li>
+        ))}
+        <li className='flex min-w-0 items-center gap-1'>
+          <Input
+            value={next}
+            disabled={pending || atCap}
+            aria-label='Pin a note'
+            placeholder={atCap ? capMessage : 'Pin a note…'}
+            className={cn(field, '-ml-1.5 flex-1')}
+            onChange={(event) => setNext(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                void add()
+              }
+            }}
+          />
+          {/* Keeps the field's right edge on the X column above it. */}
+          <span aria-hidden className='size-6 shrink-0' />
+        </li>
       </ul>
-
-      {composing ? (
-        <GroupChatPinForm
-          text={draft}
-          onTextChange={setDraft}
-          onSubmit={() => void submitAdd()}
-          onCancel={pins.length > 0 ? cancel : undefined}
-          mode='create'
-          submitting={pending}
-          error={editingId === null ? error : undefined}
-          className='pt-1'
-        />
-      ) : (
-        <div className='flex min-w-0 flex-col'>
-          <Button
-            type='button'
-            size='sm'
-            variant='ghost'
-            className='-ml-1.5 w-fit'
-            disabled={atCap || pending}
-            onClick={beginAdd}
-          >
-            <Plus /> Pin a note
-          </Button>
-          {/* Why the add is inert, in words, always visible -- a disabled
-              control with the reason on a tooltip is a dead end on a touch
-              device. It names the way out (unpin one) rather than only
-              stating the rule. */}
-          {atCap ? <p className='min-w-0 px-1.5 text-xs wrap-break-word text-muted-foreground'>{capMessage}</p> : null}
-          {error && editingId === null ? (
-            <p role='alert' className='px-1.5 pt-1 text-xs text-destructive'>
-              {error}
-            </p>
-          ) : null}
-        </div>
-      )}
+      {error ? (
+        <p role='alert' className='px-0 pt-1 text-xs text-destructive'>
+          {error}
+        </p>
+      ) : null}
     </div>
   )
 }
