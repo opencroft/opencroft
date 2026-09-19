@@ -96,14 +96,38 @@ export function normalizeTurnUsage(usage: unknown): TurnTokenUsage | undefined {
   // field and an undefined one deep-equal differently, and the absence is
   // the honest spelling of "not reported".
   const result: TurnTokenUsage = { totalTokens }
-  const counters = ['inputTokens', 'outputTokens', 'thoughtTokens', 'cacheReadTokens', 'cacheWriteTokens'] as const
-  for (const counter of counters) {
+  for (const counter of ['inputTokens', 'outputTokens', 'thoughtTokens'] as const) {
     const value = finiteNumber(record[counter])
     if (value !== undefined) {
       result[counter] = value
     }
   }
+  // The cache counters go by more than one name on the wire, and none of
+  // them is ours. ACP's experimental `Usage` spells them `cachedReadTokens` /
+  // `cachedWriteTokens` (the claude bridge's prompt response does exactly
+  // that); the bridge's `_meta.quota.token_count` mirrors codex-acp instead,
+  // where cache reads are `cachedInputTokens`. Reading only our own spelling
+  // found neither, so every turn recorded zero cache traffic while the
+  // harness was reporting it all along.
+  const cacheRead = firstFinite(record, ['cachedReadTokens', 'cachedInputTokens', 'cacheReadTokens'])
+  if (cacheRead !== undefined) {
+    result.cacheReadTokens = cacheRead
+  }
+  const cacheWrite = firstFinite(record, ['cachedWriteTokens', 'cacheWriteTokens'])
+  if (cacheWrite !== undefined) {
+    result.cacheWriteTokens = cacheWrite
+  }
   return result
+}
+
+function firstFinite(record: Record<string, unknown>, keys: readonly string[]): number | undefined {
+  for (const key of keys) {
+    const value = finiteNumber(record[key])
+    if (value !== undefined) {
+      return value
+    }
+  }
+  return undefined
 }
 
 /**

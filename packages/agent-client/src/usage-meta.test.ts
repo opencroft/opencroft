@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { normalizeResetsAt, parseRateLimit, parseSessionFailure, parseTurnQuota } from './usage-meta'
+import {
+  normalizeResetsAt,
+  normalizeTurnUsage,
+  parseRateLimit,
+  parseSessionFailure,
+  parseTurnQuota,
+} from './usage-meta'
 
 // These pin the parsers at the boundary they exist for: wire data shaped by
 // another program, where a malformed decoration must drop, never throw, and
@@ -29,6 +35,34 @@ test('parseRateLimit needs a status and a window name', () => {
   assert.equal(parseRateLimit({}), undefined)
   assert.equal(parseRateLimit(undefined), undefined)
   assert.equal(parseRateLimit('nonsense'), undefined)
+})
+
+test('normalizeTurnUsage reads the cache counters under every name they arrive by', () => {
+  // ACP's own experimental `Usage` — what the claude bridge puts on the
+  // prompt response.
+  assert.deepEqual(
+    normalizeTurnUsage({
+      totalTokens: 100,
+      inputTokens: 10,
+      outputTokens: 20,
+      cachedReadTokens: 60,
+      cachedWriteTokens: 10,
+    }),
+    { totalTokens: 100, inputTokens: 10, outputTokens: 20, cacheReadTokens: 60, cacheWriteTokens: 10 },
+  )
+  // The bridge's `_meta.quota.token_count`, in codex-acp's spelling.
+  assert.deepEqual(
+    normalizeTurnUsage({
+      totalTokens: 100,
+      inputTokens: 10,
+      cachedInputTokens: 60,
+      cachedWriteTokens: 10,
+      outputTokens: 20,
+    }),
+    { totalTokens: 100, inputTokens: 10, outputTokens: 20, cacheReadTokens: 60, cacheWriteTokens: 10 },
+  )
+  // A reading with no cache figures at all keeps them absent, not zero.
+  assert.deepEqual(normalizeTurnUsage({ totalTokens: 5, inputTokens: 5 }), { totalTokens: 5, inputTokens: 5 })
 })
 
 test('parseTurnQuota keeps a bare token_count and drops malformed model rows', () => {
