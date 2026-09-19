@@ -1,20 +1,23 @@
 'use client'
 
-// Inside one group chat: its topic, who is taking part, its pinned notes, its
-// threads and the composer that starts one. The screen the group-chat route
-// draws -- and, since the embedded chat gained the same two windows, the one
-// a space canvas or an extension view draws inside its chat panel before a
-// thread is open.
+// Inside one group chat: its name, its pinned notes, its threads and the
+// composer that starts one. The screen the group-chat route draws -- and, since
+// the embedded chat gained the same two windows, the one a space canvas or an
+// extension view draws inside its chat panel before a thread is open.
 //
 // One component for both because they were one screen: the route used to hold
 // all of this inline, and the embedded surface offered a bare "New chat"
-// composer in its place, which is how the panel came to have no pins, no thread
-// list and no way to rename anything. The data arrives as props -- the route
-// loads it in its loader, the embedded panel loads it itself -- and every write
-// refreshes through the group-chat refresh context, which is what lets the
-// dialogs and panels inside work the same on both hosts.
+// composer in its place. The data arrives as props -- the route loads it in
+// its loader, the embedded panel loads it itself -- and every write refreshes
+// through the group-chat refresh context, which is what lets the panels and
+// dialogs inside work the same on both hosts.
+//
+// The header is one line: back, the name, then three controls -- search (the
+// field takes the name's place while open), the pins toggle (opens the editor
+// under the header) and the chat's menu (members). Renaming the chat is the
+// list page's row menu, not this screen's; the topic is gone.
 
-import { Search, X } from 'lucide-react'
+import { Pin, Search, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Button } from 'ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
@@ -26,12 +29,10 @@ import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-a
 import { stopProcessLocal } from '@/app/_authed/(agent)/_server/acp'
 import { deriveSessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import {
-  GroupChatRenameDialog,
   GroupChatThreadDeleteDialog,
   GroupChatThreadRenameDialog,
-  GroupChatTopicDialog,
 } from '@/app/_authed/(group-chats)/_components/group-chat-edit-dialogs'
-import { GroupChatMembersDialog } from '@/app/_authed/(group-chats)/_components/group-chat-members-dialog'
+import { GroupChatMenu } from '@/app/_authed/(group-chats)/_components/group-chat-menu'
 import { GroupChatPinsPanel } from '@/app/_authed/(group-chats)/_components/group-chat-pins-panel'
 import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
 import { GroupChatThreadTree } from '@/app/_authed/(group-chats)/_components/group-chat-thread-tree'
@@ -86,19 +87,20 @@ export function GroupChatDetailScreen({
 }: GroupChatDetailScreenProps) {
   // Which thread's Delete was chosen — the shared confirm dialog takes over.
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
-  const [renaming, setRenaming] = useState(false)
-  const [editingTopic, setEditingTopic] = useState(false)
   // Which thread's Rename was chosen. The kit's row reports the id and stops
   // there -- renaming can be refused, so the dialog is where the new title is
   // collected and where a refusal has somewhere to be shown.
   const [renameThreadId, setRenameThreadId] = useState<string | null>(null)
-  // The thread search: a header button opens a field over the list, and a
-  // query narrows the threads to the ones whose title or agent matches. It
-  // replaced the chat panel's "Choose a chat" menu, whose search was the one
-  // part of it worth keeping -- and it lives here, on the screen that lists
-  // the threads, rather than in a popover beside it.
+  // The thread search: the header's search button puts a field in the name's
+  // place, and a query narrows the threads to the ones whose title or agent
+  // matches. It replaced the chat panel's "Choose a chat" menu, whose search
+  // was the one part of it worth keeping.
   const [searching, setSearching] = useState(false)
   const [query, setQuery] = useState('')
+  // The pins editor, under the header, behind the header's pin toggle. Closed
+  // by default: standing notes must not eat the thread area, and the toggle
+  // wears the count so a closed panel still says the chat carries some.
+  const [pinsOpen, setPinsOpen] = useState(false)
 
   // The shared session-activity poll, not a second mechanism invented for this
   // screen — one status vocabulary, one source. A thread's sessionKey is
@@ -121,6 +123,22 @@ export function GroupChatDetailScreen({
     return map
   }, [threads, pendingKeys, activeKeys, backgroundKeys, aliveKeys])
 
+  const stopThread = (threadId: string) => {
+    // The kit hands back the row id -- the THREAD id, not the session key
+    // this has to act on; `sessionKey` rides on every list entry. Same server
+    // fn the sidebar chat list's own Stop process calls, so there is one way
+    // to stop a process, not two. Nothing is invalidated afterwards: the row's
+    // state comes from the shared activity poll, which reports the process
+    // gone on its next tick.
+    const sessionKey = threadSessionKey(threads, threadId)
+    if (!sessionKey) {
+      return
+    }
+    stopProcessLocal({ data: sessionKey }).catch((err) => {
+      console.error('Failed to stop thread process', threadId, err)
+    })
+  }
+
   // The arrangement is owned here rather than inside the list, so the list
   // stays presentational and every write goes through one hook, one store and
   // one compare-and-swap guard. A refused write is answered by adopting the
@@ -134,24 +152,7 @@ export function GroupChatDetailScreen({
       onChange={persist}
       activeId={activeThreadId}
       onSelect={onOpenThread}
-      // The kit hands back the row id -- the THREAD id, not the session key
-      // this has to act on. That split is deliberate on its side (the kit knows
-      // nothing about session keys) and the mapping is already here:
-      // `sessionKey` rides on every list entry.
-      //
-      // Same server fn the sidebar chat list's own Stop process calls, so there
-      // is one way to stop a process, not two. Nothing is invalidated
-      // afterwards: the row's state comes from the shared activity poll, which
-      // reports the process gone on its next tick.
-      onStopProcess={(threadId) => {
-        const sessionKey = threadSessionKey(threads, threadId)
-        if (!sessionKey) {
-          return
-        }
-        stopProcessLocal({ data: sessionKey }).catch((err) => {
-          console.error('Failed to stop thread process', threadId, err)
-        })
-      }}
+      onStopProcess={stopThread}
       onRename={(threadId) => setRenameThreadId(threadId)}
       onDelete={(threadId) => setDeleteTarget(threadId)}
     />
@@ -186,7 +187,7 @@ export function GroupChatDetailScreen({
     setQuery('')
   }
   const searchField = searching ? (
-    <div className='mb-2 flex items-center gap-1'>
+    <div className='flex items-center gap-1'>
       <Input
         autoFocus
         value={query}
@@ -203,7 +204,7 @@ export function GroupChatDetailScreen({
         <X />
       </Button>
     </div>
-  ) : null
+  ) : undefined
   const threadArea = trimmedQuery ? (
     matches.length > 0 ? (
       <GroupChatThreadList
@@ -211,14 +212,7 @@ export function GroupChatDetailScreen({
         activeId={activeThreadId}
         onSelect={onOpenThread}
         onRename={(threadId) => setRenameThreadId(threadId)}
-        onStopProcess={(threadId) => {
-          const sessionKey = threadSessionKey(threads, threadId)
-          if (sessionKey) {
-            stopProcessLocal({ data: sessionKey }).catch((err) => {
-              console.error('Failed to stop thread process', threadId, err)
-            })
-          }
-        }}
+        onStopProcess={stopThread}
         onDelete={(threadId) => setDeleteTarget(threadId)}
       />
     ) : (
@@ -243,46 +237,48 @@ export function GroupChatDetailScreen({
         className={className}
         onBack={onBack}
         name={chat.name}
-        topic={chat.topic}
-        onEditName={() => setRenaming(true)}
-        onEditTopic={() => setEditingTopic(true)}
-        members={chat.members}
-        // The cluster replaces the old "Add member" button entirely: it is
-        // both who is taking part and the way to change it. `members` above
-        // is still passed because the kit falls back to a read-only cluster
-        // when no slot is given, and it should not need this screen to know
-        // that to stay correct.
-        membersSlot={
-          <GroupChatMembersDialog
-            groupChatId={groupChatId}
-            members={chat.members}
-            directory={directory}
-            agents={agents}
-          />
-        }
+        searchField={searchField}
         actions={
-          threads.length > 0 && !searching ? (
+          <>
+            {!searching && threads.length > 0 ? (
+              <Button
+                type='button'
+                variant='ghost'
+                size='icon-sm'
+                aria-label='Search threads'
+                title='Search threads'
+                onClick={() => setSearching(true)}
+              >
+                <Search />
+              </Button>
+            ) : null}
             <Button
               type='button'
-              variant='ghost'
+              variant={pinsOpen ? 'secondary' : 'ghost'}
               size='icon-sm'
-              aria-label='Search threads'
-              title='Search threads'
-              onClick={() => setSearching(true)}
+              aria-pressed={pinsOpen}
+              aria-label={
+                pins.length === 0 ? 'Pinned notes' : `Pinned notes (${pins.length}) — ${pinsOpen ? 'hide' : 'show'}`
+              }
+              title='Pinned notes'
+              className='relative'
+              onClick={() => setPinsOpen((open) => !open)}
             >
-              <Search />
+              <Pin />
+              {/* The count rides the toggle so a closed panel still announces
+                  that the chat carries standing notes; with none there is
+                  nothing to announce and the button is just the way in. */}
+              {pins.length > 0 ? (
+                <span className='absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium leading-none text-primary-foreground'>
+                  {pins.length}
+                </span>
+              ) : null}
             </Button>
-          ) : undefined
+            <GroupChatMenu groupChatId={groupChatId} members={chat.members} directory={directory} agents={agents} />
+          </>
         }
-        pins={<GroupChatPinsPanel groupChatId={groupChatId} pins={pins} />}
-        threads={
-          searchField || threadArea ? (
-            <>
-              {searchField}
-              {threadArea}
-            </>
-          ) : undefined
-        }
+        panel={pinsOpen ? <GroupChatPinsPanel groupChatId={groupChatId} pins={pins} /> : undefined}
+        threads={threadArea}
         emptyState={
           <Empty className='py-8'>
             <EmptyHeader>
@@ -302,7 +298,6 @@ export function GroupChatDetailScreen({
         }
       />
 
-      <GroupChatRenameDialog open={renaming} onOpenChange={setRenaming} groupChatId={groupChatId} name={chat.name} />
       {/* Keyed on the thread id so the dialog's draft is seeded from the row
           actually chosen -- without it, opening Rename on a second thread would
           reuse the first one's mounted state and offer the wrong title. */}
@@ -319,12 +314,6 @@ export function GroupChatDetailScreen({
           title={threadBeingRenamed.title ?? ''}
         />
       ) : null}
-      <GroupChatTopicDialog
-        open={editingTopic}
-        onOpenChange={setEditingTopic}
-        groupChatId={groupChatId}
-        topic={chat.topic}
-      />
 
       {deleteTarget ? (
         <GroupChatThreadDeleteDialog

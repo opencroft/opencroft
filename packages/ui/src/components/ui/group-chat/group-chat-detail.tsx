@@ -1,58 +1,40 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { Pencil } from 'lucide-react'
 
 import { BackButton } from 'ui/components/ui/utils/back-button'
 import { CommandBarFrame } from 'ui/components/ui/agent-chat/command-bar-frame'
 import { ListEmpty } from 'ui/components/ui/utils/list-empty'
-import { MemberAvatarGroup, type MemberRef } from 'ui/components/ui/group-chat/member-avatar-group'
 import { StickySection } from 'ui/components/ui/layouts/sticky-section'
 import { cn } from 'ui/lib/utils'
 
 export interface GroupChatDetailProps {
-  /** Back out of this group chat -- to the group-chat list. Omit on a surface
-   * that has no "out" (there is none today, but the header should not assume
-   * one exists). Draws the shared BackButton, so this is literally the same
-   * control the list and the thread screen use rather than a matching one. */
+  /** Back out of this group chat -- to the group-chat list, or to whatever
+   * holds this screen. Draws the shared BackButton, so this is literally the
+   * same control the list and the thread screen use rather than a matching one. */
   onBack?: () => void
-  /** What this chat is called. The title, and what every other surface shows.
-   * Renaming is pure presentation -- it reaches no agent. */
+  /** What this chat is called. The title, plain: renaming happens where the
+   * chats are listed, from a row's menu, not on this screen. */
   name: string
-  /** What this chat is for. A secondary muted line beneath the name, and the
-   * statement of purpose agents are given as context -- which is why it is
-   * editable separately from the name and why the two are not the same field.
-   * Empty, or identical to the name, and the line is not printed; see below. */
-  topic: string
-  /** When given, the name carries an edit affordance. The host owns whatever it
-   * opens -- same split as the members dialog and the delete confirm, and what
-   * lets this match the 1:1 chat's rename dialog without the kit knowing that
-   * dialog exists. */
-  onEditName?: () => void
-  /** The same for the topic. Note that this is also the ONLY way the topic can
-   * be reached while it still echoes the name, since that line is not printed
-   * -- see the comment on the topic line below. */
-  onEditTopic?: () => void
-  members: MemberRef[]
-  /** Replaces the read-only avatar cluster with a host-supplied control --
-   * typically the cluster made interactive, so tapping it opens member
-   * management (add / remove). Omit to render the cluster read-only. */
-  membersSlot?: ReactNode
-  /** Standing notes pinned to this chat, rendered between the header and the
-   * threads. A slot rather than data, because what is pinned is its own
-   * component with its own affordances -- see group-chat-pins. */
-  pins?: ReactNode
+  /** A search field drawn IN THE TITLE'S PLACE while a search is open -- the
+   * host owns the field, its query and whether it is open, and this screen only
+   * gives it the title's room. The threads below are then whatever the host
+   * hands over for that query. */
+  searchField?: ReactNode
+  /** The header's controls, after the title: the search toggle, the pins
+   * toggle, the chat's menu. Any member may use all of them, so these are
+   * ordinary member controls, not admin ones. Starting a thread is the composer
+   * below, not a header button: a thread begins with a first message. */
+  actions?: ReactNode
+  /** A panel opened from the header -- the pinned notes, edited in place --
+   * drawn between the header and the threads. Above the scroll region, not in
+   * it: standing context that scrolls away with the threads stops standing. */
+  panel?: ReactNode
   /** The thread list (or any content) for this group chat. Omit/leave null to
    * show `emptyState` instead -- the group chat itself holds no messages, so a
    * chat with no threads yet is an empty state, not a blank. */
   threads?: ReactNode
   emptyState?: ReactNode
-  /** Header affordances -- adding a member. Any member may add another, so
-   * these are ordinary member controls, not admin ones. Starting a thread is
-   * the composer below, not a header button: a thread begins with a first
-   * message, and a form opened in a dialog would put that message somewhere
-   * other than where the thread is about to land. */
-  actions?: ReactNode
   /** Pinned beneath the threads -- the new-thread composer. It stays put while
    * the thread list scrolls above it, the way a chat composer stays put while
    * the conversation scrolls.
@@ -65,139 +47,46 @@ export interface GroupChatDetailProps {
   className?: string
 }
 
-// One line of the header, in its two forms: a button when the host can edit it,
-// plain text when it cannot. Both carry the same padding so the text lands on
-// the same left edge either way -- the -ml pulls that padding back out, so the
-// press target is wider than the text without the text moving.
-function HeaderLine({
-  onEdit,
-  label,
-  className,
-  iconClassName,
-  children,
-}: {
-  onEdit?: () => void
-  label: string
-  className?: string
-  iconClassName?: string
-  children: ReactNode
-}) {
-  const box = '-ml-1.5 flex min-w-0 max-w-full items-center gap-1.5 rounded-md px-1.5 py-0.5'
-
-  if (!onEdit) {
-    return <span className={cn(box, className)}>
-      <span className='min-w-0 truncate'>{children}</span>
-    </span>
-  }
-
-  return (
-    // A real, always-visible pencil rather than a hover-reveal: a reveal that
-    // needs a cursor does not exist on a touch device, where this header is at
-    // its most cramped. The whole line is the press target, so the pencil marks
-    // the affordance without being the thing you have to hit.
-    <button
-      type='button'
-      onClick={onEdit}
-      aria-label={label}
-      className={cn(
-        box,
-        'text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring',
-        className,
-      )}
-    >
-      <span className='min-w-0 truncate'>{children}</span>
-      <Pencil className={cn('size-3.5 shrink-0 text-muted-foreground', iconClassName)} aria-hidden='true' />
-    </button>
-  )
-}
-
-// The view inside one group chat. Name and topic header, the participants
-// taking part (users and agents together, shown as participants -- never as an
-// access list), and a slot for the thread list. The group chat itself holds no
-// messages, so there is nothing else on this screen; that emptiness is part of
-// the design and worth seeing. No locks, no "members only" copy -- the member
-// list is who is taking part, not who is permitted.
+// The view inside one group chat: a one-line header (back, the name, the
+// controls), an optional panel under it, and the thread list over the composer.
+// The group chat itself holds no messages, so there is nothing else on this
+// screen; that emptiness is part of the design and worth seeing.
+//
+// What the header used to carry and no longer does, on purpose: an editable
+// name (renaming moved to the list's row menu), a topic line (retired), the
+// avatar cluster of who is taking part (the chat's menu holds the members now,
+// as a list that is searched to add to). The header is one line at any width
+// because everything that needed room moved behind a control.
 export function GroupChatDetail({
   onBack,
   name,
-  topic,
-  onEditName,
-  onEditTopic,
-  members,
-  membersSlot,
-  pins,
+  searchField,
+  actions,
+  panel,
   threads,
   emptyState,
-  actions,
   composer,
   className,
 }: GroupChatDetailProps) {
-  // Every chat starts with its topic seeded from its name, so on this screen
-  // the honest default is two identical strings -- and printing a string twice
-  // reads as a rendering fault, not as a chat whose purpose is its name. So the
-  // echo is not printed. What replaces it is a prompt rather than nothing,
-  // because the topic is the one field here that is invisible to the person
-  // setting it and visible to every agent in the chat: hiding the line without
-  // leaving a way in would make the topic unreachable exactly while it is still
-  // untouched, which is when it most needs saying.
-  const trimmedTopic = topic.trim()
-  const topicEchoesName = trimmedTopic.length === 0 || trimmedTopic === name.trim()
-
   return (
     <div className={cn('flex h-full min-h-0 flex-col', className)}>
       {/* px-4 is the chat surface's horizontal rhythm, shared by the header,
           the thread area and the composer below -- the 1:1 conversation uses
           the same, so a group chat and a 1:1 chat line up on one left edge
           rather than each having its own. */}
-      <header className='flex shrink-0 flex-col gap-3 border-b border-border px-4 py-3'>
-        <div className='flex min-w-0 items-center gap-3'>
-          {onBack ? <BackButton onClick={onBack} /> : null}
-          <div className='flex min-w-0 flex-1 flex-col items-start'>
-            <h2 className='flex min-w-0 max-w-full text-base font-semibold text-foreground'>
-              <HeaderLine onEdit={onEditName} label={`Rename group chat: ${name}`}>
-                {name}
-              </HeaderLine>
-            </h2>
-            {topicEchoesName ? (
-              onEditTopic ? (
-                <HeaderLine
-                  onEdit={onEditTopic}
-                  label='Add a topic'
-                  className='text-xs text-muted-foreground'
-                >
-                  Add a topic
-                </HeaderLine>
-              ) : null
-            ) : (
-              <HeaderLine
-                onEdit={onEditTopic}
-                label={`Edit topic: ${trimmedTopic}`}
-                className='text-xs text-muted-foreground'
-              >
-                {topic}
-              </HeaderLine>
-            )}
-          </div>
-          {/* The avatar cluster is the single handle for who is taking part:
-              the participants at a glance, and -- when the host makes it
-              interactive -- the entry point for adding and removing members.
-              The host owns that interaction (it needs the directory and the
-              add/remove actions), so it can replace this with a clickable
-              cluster through `membersSlot`; left plain it is read-only. The
-              full member list lives behind it rather than as a row of names, so
-              the header is one line at any width. */}
-          {membersSlot ?? <MemberAvatarGroup members={members} max={6} size='md' />}
-          {/* Kept out of the scroll region and never allowed to shrink: past
-              the cluster, the name and topic give up their space first, because
-              a truncated name is still readable and a squeezed control is not. */}
-          {actions ? <div className='flex shrink-0 items-center gap-1'>{actions}</div> : null}
-        </div>
+      <header className='flex shrink-0 items-center gap-2 border-b border-border px-4 py-2'>
+        {onBack ? <BackButton onClick={onBack} /> : null}
+        {searchField ? (
+          <div className='min-w-0 flex-1'>{searchField}</div>
+        ) : (
+          <h2 className='min-w-0 flex-1 truncate text-base font-semibold text-foreground'>{name}</h2>
+        )}
+        {/* Never allowed to shrink: past the controls, the name gives up its
+            space first, because a truncated name is still readable and a
+            squeezed control is not. */}
+        {actions ? <div className='flex shrink-0 items-center gap-1'>{actions}</div> : null}
       </header>
-      {/* Above the scroll region, not in it: pins are standing context for the
-          whole chat, and standing context that scrolls away with the threads
-          stops standing. It is also why the panel collapses itself rather than
-          growing -- see group-chat-pins. */}
-      {pins ? <div className='shrink-0 border-b border-border px-4 py-2'>{pins}</div> : null}
+      {panel ? <div className='shrink-0 border-b border-border px-4 py-2'>{panel}</div> : null}
       <div className='min-h-0 flex-1 overflow-y-auto'>
         {/* A full-height flex column INSIDE the scroll region, and the reason
             the composer below sits on the bottom edge rather than under the
@@ -228,12 +117,8 @@ export function GroupChatDetail({
           {/* Inside the scroll region, not below it -- a sticky dock so the
               composer overlays the thread list as it scrolls, the same shape
               the 1:1 chat's ChatBar and the thread screen's own footer use
-              (see group-chat-thread-framing, including the same reasoning for
-              one `--flex-padding` inset layer rather than two -- this screen
-              runs full pane width with no centering cap, and the halved value
-              is the nearest preset step, not a new constant). A layout block
-              here, reserving its own row beneath the list, was the bug this
-              replaces. */}
+              (see group-chat-thread-framing). A layout block here, reserving
+              its own row beneath the list, was the bug this replaces. */}
           {composer ? (
             <StickySection side='bottom' fade>
               <CommandBarFrame>{composer}</CommandBarFrame>

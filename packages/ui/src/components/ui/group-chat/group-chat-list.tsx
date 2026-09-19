@@ -1,6 +1,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
+import { Pencil } from 'lucide-react'
 
 import { BackButton } from 'ui/components/ui/utils/back-button'
 import { ListEmpty } from 'ui/components/ui/utils/list-empty'
@@ -36,6 +37,11 @@ export interface GroupChatListRowProps {
      is being destroyed and how much of it -- which is the host's knowledge, not
      this list's. Omit the handler and no menu appears at all. */
   onDelete?: (id: string) => void
+  /** Per-row rename, in the same menu. The row reports the id and stops there:
+     renaming can be refused, so the host's dialog is where the new name is
+     collected and where a refusal has somewhere to be shown. This is where a
+     chat is renamed -- its own screen no longer carries an editable title. */
+  onRename?: (id: string) => void
 }
 
 function threadLabel(n: number) {
@@ -66,6 +72,7 @@ export function GroupChatListRow({
   active = false,
   onSelect,
   onDelete,
+  onRename,
 }: GroupChatListRowProps) {
   const row = (
     <ListRow
@@ -85,7 +92,12 @@ export function GroupChatListRow({
   // No handler, no menu: with `onDelete` omitted the menu component returns the
   // row untouched, so a host that offers no delete pays nothing for the option.
   return (
-    <RowContextMenu onDelete={onDelete ? () => onDelete(id) : undefined}>{row}</RowContextMenu>
+    <RowContextMenu
+      entries={onRename ? [{ key: 'rename', label: 'Rename', icon: <Pencil />, onSelect: () => onRename(id) }] : undefined}
+      onDelete={onDelete ? () => onDelete(id) : undefined}
+    >
+      {row}
+    </RowContextMenu>
   )
 }
 
@@ -103,6 +115,9 @@ export interface GroupChatListProps {
   /** Per-row delete, forwarded to every row's context menu. See the row's own
      prop for why the confirmation is the host's and not this list's. */
   onDelete?: (id: string) => void
+  /** Per-row rename, forwarded to every row's context menu. The host's dialog
+     collects the name; this is where a chat is renamed. */
+  onRename?: (id: string) => void
   emptyState?: ReactNode
   className?: string
 }
@@ -123,6 +138,7 @@ export function GroupChatList({
   onBack,
   action,
   onDelete,
+  onRename,
   emptyState,
   className,
 }: GroupChatListProps) {
@@ -154,6 +170,7 @@ export function GroupChatList({
               active={chat.id === activeId}
               onSelect={onSelect}
               onDelete={onDelete}
+              onRename={onRename}
             />
           ))}
         </div>

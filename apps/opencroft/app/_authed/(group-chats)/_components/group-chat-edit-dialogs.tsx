@@ -26,7 +26,6 @@ import {
   deleteGroupChatThread,
   renameMyGroupChat,
   renameMyGroupChatThread,
-  setMyGroupChatTopic,
 } from '@/app/_authed/(group-chats)/_server/actions'
 
 interface EditFieldDialogProps {
@@ -152,31 +151,6 @@ export function GroupChatRenameDialog({
       value={name}
       description='This also moves the address the chat is known by. Anything still using the old one keeps working.'
       submit={(value) => renameMyGroupChat({ data: { groupChatId, name: value } })}
-    />
-  )
-}
-
-export function GroupChatTopicDialog({
-  open,
-  onOpenChange,
-  groupChatId,
-  topic,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  groupChatId: string
-  topic: string
-}) {
-  return (
-    <EditFieldDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title='Edit topic'
-      label='Group chat topic'
-      placeholder='What is this chat for?'
-      value={topic}
-      description="Every agent in this chat is told this as what it's for. It isn't shown anywhere else for you beyond this screen."
-      submit={(value) => setMyGroupChatTopic({ data: { groupChatId, topic: value } })}
     />
   )
 }

@@ -7,6 +7,7 @@ import { GroupChatList } from 'ui/group-chat/group-chat-list'
 import { ScrollContent, ScrollPage } from 'ui/layout/scrollpage'
 
 import { CreateGroupChatAction } from '@/app/_authed/(group-chats)/_components/create-group-chat-action'
+import { GroupChatRenameDialog } from '@/app/_authed/(group-chats)/_components/group-chat-edit-dialogs'
 import { GroupChatErrorState, GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
@@ -42,6 +43,12 @@ function GroupChatsPage() {
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string>()
+  // Rename, from the same row menu. This is where a chat is renamed now: its
+  // own screen no longer carries an editable title. The dialog is the one the
+  // chat screen used to open, moved here whole -- it refreshes through the
+  // group-chat refresh context, which on this route is the router's
+  // invalidate.
+  const [renameTarget, setRenameTarget] = useState<{ id: string; name: string } | null>(null)
 
   const confirmDelete = async () => {
     if (!deleteTarget) {
@@ -80,6 +87,12 @@ function GroupChatsPage() {
             setDeleteError(undefined)
             setDeleteTarget({ id: chat.id, name: chat.name })
           }}
+          onRename={(id) => {
+            const chat = chats.find((c: { id: string }) => c.id === id)
+            if (chat) {
+              setRenameTarget({ id: chat.id, name: chat.name })
+            }
+          }}
           action={<CreateGroupChatAction />}
           emptyState={
             <Empty className='py-12'>
@@ -93,6 +106,22 @@ function GroupChatsPage() {
           }
         />
       </ScrollContent>
+
+      {/* Keyed on the chat id so the draft is seeded from the row actually
+          chosen rather than from a previously mounted dialog's state. */}
+      {renameTarget ? (
+        <GroupChatRenameDialog
+          key={renameTarget.id}
+          open
+          onOpenChange={(next) => {
+            if (!next) {
+              setRenameTarget(null)
+            }
+          }}
+          groupChatId={renameTarget.id}
+          name={renameTarget.name}
+        />
+      ) : null}
 
       <Dialog
         open={deleteTarget !== null}
