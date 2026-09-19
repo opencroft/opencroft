@@ -29,6 +29,7 @@ import {
   type AuthoredChatEvent,
   HISTORY_END_KIND,
   type ResolvedAuthor,
+  SESSION_GONE_KIND,
 } from '@/app/_authed/(agent)/_lib/acp-stream'
 import { headerFromWindow, userText } from '@/app/_authed/(agent)/_lib/build-blocks'
 import type { ChatMessage, ChatPart } from '@/app/_authed/(agent)/_lib/messages'
@@ -794,6 +795,14 @@ export function useAcpSession(
   // as older pages are prepended by loadMoreHistory. Live-appended events don't
   // move events[0], so they never touch this.
   const baseIndexRef = useRef(0)
+  // Whether the stream's "no such session" answer has already sent this tab
+  // back through ensureLocalSession once without a transcript coming back.
+  // One reopen per gap: the session the server lost is restored from its
+  // recording and streamed again under the id that gives, which clears this
+  // the moment history_end arrives. A second gone in a row means the reopen
+  // itself hands out a session the engine will not stream, and going round
+  // again would only spin — so that one is shown as it is, empty.
+  const reopenedAfterGoneRef = useRef(false)
   // Outgoing prompts are serialized through this chain. The server assigns
   // queue/turn order by request arrival, so two concurrent promptLocal calls
   // could otherwise arrive reordered on the network and invert the messages.
@@ -918,8 +927,28 @@ export function useAcpSession(
     }
     eventSource.onmessage = (e) => {
       const event = JSON.parse(e.data) as AcpStreamEvent
+      if (event.kind === SESSION_GONE_KIND) {
+        // The engine no longer holds this id (server restart, stopped
+        // process, idle unload). Close before anything else: the server has
+        // ended the stream and a native EventSource would reconnect to the
+        // same dead id forever. Then reopen the tab's session, which brings
+        // the recorded transcript back and re-runs this effect under the id
+        // it hands out. The open effect clears the screen for the moment the
+        // reopen takes and fills it from the recording — where the empty
+        // replay this frame replaced left it blank for good.
+        eventSource.close()
+        if (reopenedAfterGoneRef.current) {
+          console.warn('The reopened session is not streamable either; leaving the chat as it is', sessionId)
+          setLoading(false)
+          return
+        }
+        reopenedAfterGoneRef.current = true
+        setGeneration((g) => g + 1)
+        return
+      }
       if (event.kind === HISTORY_END_KIND) {
         replayingHistoryRef.current = false
+        reopenedAfterGoneRef.current = false
         // NUMBERING, not paging, and the two differ by the snapshot prefix.
         // The replay opens with however many live-state events the engine had
         // to prepend (see HistoryEndEvent.snapshotPrefix); they hold no

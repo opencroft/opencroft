@@ -100,4 +100,18 @@ export function historyEndEvent(
   }
 }
 
-export type AcpStreamEvent = AuthoredChatEvent | HistoryEndEvent
+// The route's answer when the session id it was asked for is not in the
+// engine's memory at all — the process it lived in restarted, its process was
+// stopped, or it was unloaded — as opposed to a session with an empty log.
+// Before this frame existed the two were indistinguishable on the wire: an
+// unknown session replayed nothing and closed its history at index 0, and the
+// reader's transcript was replaced with that nothing. A client that receives
+// this reopens the tab's session (ensureLocalSession restores the recorded
+// transcript) and connects again under whatever id that hands back.
+export const SESSION_GONE_KIND = 'session_gone' as const
+
+export interface SessionGoneEvent {
+  kind: typeof SESSION_GONE_KIND
+}
+
+export type AcpStreamEvent = AuthoredChatEvent | HistoryEndEvent | SessionGoneEvent

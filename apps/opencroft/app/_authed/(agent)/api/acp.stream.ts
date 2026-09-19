@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { historyEndEvent } from '@/app/_authed/(agent)/_lib/acp-stream'
+import { historyEndEvent, SESSION_GONE_KIND } from '@/app/_authed/(agent)/_lib/acp-stream'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { withAuthors } from '@/app/_authed/(agent)/_server/attach-authors'
 import { requireSession } from '@/app/_server/require-session'
@@ -33,6 +33,18 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
             const window = agentClient.getRecordsWindow(sessionId, { records: INITIAL_HISTORY_RECORDS })
+            // Null means the engine holds no such session — not an empty one.
+            // A browser tab keeps its session id across a server restart, a
+            // stopped process and an idle unload, and its EventSource
+            // reconnects on its own; answering that reconnect with an empty
+            // history closed at index 0 is what wiped open chats blank. Say
+            // so instead, and end the stream: the client reopens the tab's
+            // session and connects again under the id that gives it.
+            if (!window) {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ kind: SESSION_GONE_KIND })}\n\n`))
+              controller.close()
+              return
+            }
             // Resolving a message's authors reads the database, and `subscribe`
             // hands events over synchronously — so frames are queued onto one
             // promise chain rather than enqueued directly. The chain is what
@@ -83,7 +95,7 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
             // the marker is what lets the client number the rest correctly.
             let snapshotPrefix = 0
             unsubscribe = agentClient.subscribe(sessionId, (event) => send(withAuthors(event)), {
-              fromIndex: window?.startIndex,
+              fromIndex: window.startIndex,
               onReplay: (info) => {
                 snapshotPrefix = info.snapshotPrefix
               },
@@ -101,9 +113,9 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
             send(
               (async () =>
                 historyEndEvent(
-                  window?.startIndex ?? 0,
-                  window?.hasMore ?? false,
-                  window?.header
+                  window.startIndex,
+                  window.hasMore,
+                  window.header
                     ? { index: window.header.index, event: await withAuthors(window.header.event) }
                     : undefined,
                   snapshotPrefix,
