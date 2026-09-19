@@ -5097,6 +5097,42 @@ test('a spawned subagent routes its own transcript into the parent and closes on
   await h.client.deleteSession(h.sessionId)
 })
 
+test("a subagent's permission request is asked in the parent chat and answered from there", async () => {
+  // The harness raises the request under the SUBAGENT's session id — a session
+  // nobody subscribes to. Before routing, the event was emitted into the void
+  // and the promise never settled: the subagent sat waiting forever unless the
+  // session bypassed permissions altogether.
+  const h = await setup('openclaw', { sessionKey: 'agent:perm-parent' })
+  const childId = 'child-sess-perm'
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'subagent_spawned',
+    subagentSessionId: childId,
+    name: 'Builder',
+    task: 'run it',
+    capabilities: {},
+  })
+  const client = buildClient(() => h.sessionId, 'local')
+  const response = client.requestPermission({
+    sessionId: childId,
+    toolCall: { toolCallId: 'call-1', title: 'Run a command' },
+    options: [
+      { optionId: 'yes', name: 'Allow', kind: 'allow_once' },
+      { optionId: 'no', name: 'Deny', kind: 'reject_once' },
+    ],
+  })
+  const asked = h.events.find((event) => event.kind === 'permission_request')
+  assert.ok(asked && asked.kind === 'permission_request', 'the request reached the parent session')
+  assert.equal(asked.title, 'Run a command')
+  assert.deepEqual(h.client.pendingPermissionSessionKeys(), ['agent:perm-parent'], 'the PARENT is the blocked one')
+  h.client.resolvePermission(asked.requestId, 'yes')
+  assert.deepEqual(await response, { outcome: { outcome: 'selected', optionId: 'yes' } })
+  assert.ok(
+    h.events.some((event) => event.kind === 'permission_resolved' && event.requestId === asked.requestId),
+    'the answer is recorded in the parent session too',
+  )
+  await h.client.deleteSession(h.sessionId)
+})
+
 // ── background tasks (AIR async_task_* ) ────────────────────────────────────
 
 test('a background task is reported, snapshot-prefixed while live, and stoppable', async () => {

@@ -297,13 +297,12 @@ export function GroupChatThreadChat({
     window.setTimeout(() => el.classList.remove('ring-2', 'ring-primary'), 1500)
   }, [])
 
-  // The badge counts live TASKS (running or paused) — the panel lists live
-  // subagents too, but a live subagent is already the turn the reader is
-  // watching, where a task is the work that outlives it.
+  // The badge counts everything live in the panel — running subagents and
+  // running/paused tasks alike — so it reads as "how many things are going".
   const work = useMemo<ThreadWork>(
     () => ({
       items: workItems,
-      liveCount: workItems.filter((item) => item.kind === 'task' && item.live).length,
+      liveCount: workItems.filter((item) => item.live).length,
       onJump: jumpToWork,
     }),
     [workItems, jumpToWork],

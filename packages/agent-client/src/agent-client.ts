@@ -1389,7 +1389,14 @@ export function buildClient(
       handleUpdate(notification)
     },
     requestPermission: async (request: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
-      const perms = store.sessions.get(request.sessionId)?.permissions
+      // A subagent asks under its OWN session id (ACP #1992), which no
+      // subscriber watches — the prompt belongs in the parent's chat, the
+      // session whose turn the subagent is part of, exactly as its transcript
+      // steps are nested there (see handleUpdate). Emitting to the child id
+      // would drop the event on the floor and leave the harness waiting on an
+      // answer nobody can give.
+      const sessionId = store.subagentParents.get(request.sessionId) ?? request.sessionId
+      const perms = store.sessions.get(sessionId)?.permissions
       const title = request.toolCall.title ?? ''
       if (isAlwaysAllowed(perms, title)) {
         return { outcome: { outcome: 'selected', optionId: pickAllowOption(request) } }
@@ -1404,10 +1411,10 @@ export function buildClient(
       return new Promise<RequestPermissionResponse>((resolve) => {
         const requestId = randomUUID()
         store.pendingPermissions.set(requestId, {
-          sessionId: request.sessionId,
+          sessionId,
           resolve,
         })
-        emit(request.sessionId, {
+        emit(sessionId, {
           kind: 'permission_request',
           requestId,
           title: title || 'tool call',
