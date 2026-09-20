@@ -85,7 +85,7 @@ export function UsageCost({ cost, tokens, className }: UsageCostProps) {
     <div className={cn('flex flex-col gap-1.5', className)}>
       <span className='text-xs text-muted-foreground'>Costs</span>
       {reported ? (
-        <div className='grid grid-cols-3 gap-x-4 gap-y-1.5'>
+        <div className='grid grid-cols-3 gap-x-2 gap-y-1.5'>
           <Cell label='Cost' value={cost ? formatCost(cost) : '—'} />
           {COUNTERS.map(({ key, label }) => {
             const value = tokens?.[key]
