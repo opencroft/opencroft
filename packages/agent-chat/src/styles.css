@@ -164,3 +164,44 @@
   border-radius: var(--radius);
   margin: 0.5em 0;
 }
+
+/*
+ * Code blocks rendered by `CodeBlock`. The component marks its own `pre` with
+ * `data-code-block`, and everything below hangs on that mark.
+ *
+ * These rules come last on purpose: `.prose-chat pre` and `pre[data-code-block]`
+ * have the same specificity, so order is what decides, and inside chat content
+ * the code block's answer has to be the one that stands.
+ */
+pre[data-code-block] {
+  /* Code does not wrap. Chat prose wraps its `pre` because quoted output reads
+     better that way, but a wrapped line of code loses the indentation the
+     reader is following, so this one scrolls sideways instead. */
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+  /* The box, for the surfaces that have no chat prose around them at all --
+     an install snippet, a settings panel. Inside prose these repeat what the
+     prose already said, which is why they are the same values. */
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  padding: 0.6em 0.75em;
+  margin: 0.5em 0;
+  font-size: 0.85em;
+}
+
+/*
+ * Shiki writes BOTH themes into every token as custom properties and leaves the
+ * choice to CSS. That is what makes switching light/dark free: nothing is
+ * re-highlighted, one declaration changes which colour is in force.
+ */
+pre[data-code-block],
+pre[data-code-block] span {
+  color: var(--shiki-light);
+}
+
+.dark pre[data-code-block],
+.dark pre[data-code-block] span {
+  color: var(--shiki-dark);
+}

@@ -24,22 +24,26 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.3.0",
-    "agent-client": "*",
-    "ui": "*",
-    "@tiptap/react": "^2.11.5",
-    "@tiptap/pm": "^2.11.5",
-    "@tiptap/starter-kit": "^2.11.5",
+    "@monaco-editor/react": "^4.7.0",
+    "@shikijs/langs": "^4.4.3",
+    "@shikijs/themes": "^4.4.3",
     "@tiptap/extension-link": "^2.11.5",
-    "tiptap-markdown": "^0.8.10",
+    "@tiptap/pm": "^2.11.5",
+    "@tiptap/react": "^2.11.5",
+    "@tiptap/starter-kit": "^2.11.5",
+    "agent-client": "*",
+    "mermaid": "^12.0.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "@monaco-editor/react": "^4.7.0"
+    "shiki": "^4.4.3",
+    "tiptap-markdown": "^0.8.10",
+    "ui": "*"
   },
   "peerDependencies": {
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
     "@tanstack/react-start": "*",
     "lucide-react": "*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "sonner": "*"
   },
   "devDependencies": {
