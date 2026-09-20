@@ -1758,19 +1758,28 @@ async function mintThreadAddress(
 }
 
 /**
- * Start a thread and send its first message in one call — this system has no
- * notion of an empty, unaddressed thread (the existing 1:1 chat does not
- * either: opening a session and sending into it are two steps, but nothing
- * ever leaves a session open with nothing said). Both the calling user and
- * the named agent must be members; either failing refuses the whole call
- * rather than creating a thread that then cannot be used.
+ * Start a thread, and send its first message in the same call when there is
+ * one. Both the calling user and the named agent must be members; either
+ * failing refuses the whole call rather than creating a thread that then
+ * cannot be used.
+ *
+ * AN EMPTY `firstMessage` MINTS THE THREAD AND SENDS NOTHING. This note used
+ * to say the opposite — that the system had no notion of an empty thread,
+ * because a thread WAS its opening message and nothing ever left a session
+ * open with nothing said. One thing changed it: a harness advertises the
+ * settings a session can be configured with — its models, its reasoning
+ * efforts, its permission modes — only for a session that EXISTS, so there was
+ * nowhere to choose any of them before the first message. Minting the thread
+ * is what makes them reachable, and the composer offering that press says so
+ * on the button. See `createThread` for what is skipped and what is not.
  *
  * The topic enters the agent's context exactly the way a job's context does
  * (see message-envelope.ts), and by the same once-on-change rule every later
  * message answers to: a thread minted here has been told nothing yet, so its
- * standing context rides this first message and is never repeated after it.
- * That rule lives in `deliverIntoThread`, which is also what stamps this
- * message with who sent it and when.
+ * standing context rides its first message — this call's, or a later one's if
+ * this call carried none — and is never repeated after it. That rule lives in
+ * `deliverIntoThread`, which is also what stamps the message with who sent it
+ * and when.
  */
 export async function startThread(
   request: Request,
@@ -1797,9 +1806,9 @@ export async function startThread(
 }
 
 /**
- * Mint a thread and deliver its first message. THE ONLY PLACE A THREAD IS
- * CREATED — `startThread` and `startThreadAsAgent` are gates in front of this,
- * not two implementations of it.
+ * Mint a thread and deliver its first message, where it has one. THE ONLY
+ * PLACE A THREAD IS CREATED — `startThread` and `startThreadAsAgent` are gates
+ * in front of this, not two implementations of it.
  *
  * It has NO gate of its own, which is the point and the hazard: every caller
  * must have already established that whoever is asking may create a thread
@@ -1865,6 +1874,30 @@ async function createThread(
   })
   if (!thread) {
     throw new Error('The thread could not be created')
+  }
+
+  // A THREAD MINTED WITH NOTHING TO SAY YET.
+  //
+  // The session is opened and left waiting. That is the whole point of the
+  // press: a harness advertises what a session can be configured with -- which
+  // models, which reasoning efforts, which permission modes -- only for a
+  // session that exists, so a person who wants to choose before writing has
+  // nowhere to choose until one does.
+  //
+  // The SAME open `deliverIntoThread` makes below, not a second way to start a
+  // session for a thread. What is skipped is the prompt, and only the prompt.
+  //
+  // The standing context needs no handling here: the row went in with a NULL
+  // signature, so the once-on-change rule reads it as undelivered and the
+  // first real message carries it -- exactly as it would have carried it here.
+  //
+  // Reachable from `startThread` alone. `startThreadAsAgent` refuses an empty
+  // message before it ever gets here, and deliberately: an agent starting a
+  // thread for a colleague has something to say, and a thread nobody was told
+  // about is not a delegation.
+  if (!firstMessage.trim()) {
+    const opened = await resolveOrCreateSession(sessionKey, { agentNodeId, tabKey: sessionKey })
+    return { thread, sessionId: opened.sessionId }
   }
 
   // THE FIRST MESSAGE LEAVES BY THE SAME DOOR AS EVERY LATER ONE.

@@ -519,7 +519,9 @@ function EmbeddedThread({
               <MessageCirclePlus className='size-6 text-muted-foreground' />
             </EmptyMedia>
             <EmptyTitle>New chat</EmptyTitle>
-            <EmptyDescription>Send the first message to start the conversation.</EmptyDescription>
+            <EmptyDescription>
+              Send the first message to start the conversation — or start it empty and set the agent up first.
+            </EmptyDescription>
           </EmptyHeader>
         </Empty>
       </div>

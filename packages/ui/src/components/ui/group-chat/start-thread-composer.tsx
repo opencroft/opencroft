@@ -51,8 +51,30 @@ export interface StartThreadComposerProps {
   // title of its own, so with nowhere to report one the feature cannot work
   // and must not be offered.
   onTitleChange?: (value: string) => void
-  // Reports that the user asked to start the thread. Validates nothing.
-  onSubmit: () => void
+  // Reports that the user asked to start the thread, carrying the message as
+  // the command bar handed it over: trimmed, and empty when the thread is
+  // being started without one. Validates nothing.
+  //
+  // A PARAMETER rather than something the host reads back off `value`, because
+  // of the clear-on-send contract above: by the time this runs the host has
+  // already been told the composer is empty. A bare report was enough while a
+  // host could keep its own copy of the last non-empty value -- and that copy
+  // is exactly what stops being safe once an empty submit is possible, since
+  // it would resend text the person had deleted.
+  onSubmit: (message: string) => void
+  // Offer starting the thread with NOTHING typed. Default false.
+  //
+  // With it, send stays available on an empty composer and `onSubmit` fires
+  // with `value` empty. The thread and its session exist from that press, and
+  // the agent is configured -- model, reasoning effort, permission mode -- in
+  // the thread's own composer before a word is written. That is the whole
+  // reason it is worth a press: a harness advertises those settings only for a
+  // session that exists, so before one there is nothing to configure.
+  //
+  // The HOST's, because only the host knows whether its start accepts an empty
+  // first message. The wording is not: this composer knows what starting one
+  // means, so it names the press itself -- see the bar's `emptySendLabel`.
+  allowEmptyStart?: boolean
   submitting?: boolean
   // A failure shown above the composer. Displayed, not decided -- including a
   // refused title (one already taken, or one that slugifies to nothing).
@@ -90,6 +112,8 @@ export interface StartThreadComposerProps {
 //                         session yet to pick.
 //   approval={false}   -- nothing has been asked for approval; a shield here
 //                         would describe a setting this press cannot be about.
+// A third, `emptySendLabel`, is passed only under `allowEmptyStart` -- see the
+// prop for what an empty start is for.
 // The agent picker goes in `leading`, the command bar's slot at the start of
 // the action row, so it sits under the full-width message rather than stealing
 // width from it.
@@ -121,6 +145,7 @@ export function StartThreadComposer({
   title,
   onTitleChange,
   onSubmit,
+  allowEmptyStart = false,
   submitting,
   error,
   onDismissError,
@@ -182,13 +207,19 @@ export function StartThreadComposer({
       <AgentCommandBar
         value={value}
         onValueChange={onValueChange}
-        // The command bar hands over the trimmed text; this component's contract
-        // is a bare report, and the host already holds the value it published.
-        onSend={() => onSubmit()}
+        // The command bar hands over the trimmed text and this passes it
+        // straight on -- see `onSubmit` for why it is not left to the host to
+        // remember.
+        onSend={onSubmit}
         placeholder={placeholder ?? 'Message…'}
         sending={submitting}
         startIcon={false}
         approval={false}
+        // The bar takes the permission and the wording as one string, so a
+        // composer cannot allow the press and leave the button calling itself
+        // Send. Undefined -- not an empty string -- is how the offer is
+        // withheld.
+        emptySendLabel={allowEmptyStart ? 'Start the thread without a message' : undefined}
         leading={picker}
         configExtra={attachmentControls}
         sendError={error}

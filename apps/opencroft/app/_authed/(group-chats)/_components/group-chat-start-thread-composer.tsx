@@ -11,7 +11,7 @@
 // title field disappears) and shares its agent selection with the live
 // thread's own picker through the controlled props.
 
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { StartThreadComposer } from 'ui/group-chat/start-thread-composer'
 
 import { wrapUserSelection } from '@/app/_authed/(agent)/_shared/message-envelope'
@@ -95,26 +95,26 @@ export function GroupChatStartThreadComposer({
   // (the group-chat screen has none), which makes this a no-op there.
   const selectionScope = useOptionalSelection()
 
-  // The composer clears itself (onValueChange('')) BEFORE onSubmit fires --
-  // the command bar's clear-on-send contract. `onSubmit` takes no text, so by
-  // the time it runs `value` may already read '' -- this mirrors it in a ref,
-  // skipping the clear itself, so submit always has the text that was actually
-  // typed to send and, on failure, to put back.
-  const lastTypedRef = useRef('')
-
-  const submit = async () => {
-    const text = lastTypedRef.current
-    if (!selectedAgent || !text.trim()) {
-      setError('Choose an agent and write a message.')
+  // The text comes from the composer rather than from this component's own
+  // state, because clear-on-send has already emptied `value` by the time this
+  // runs -- see the kit composer's `onSubmit`. It arrives trimmed, and EMPTY
+  // when the thread is being started without a message at all.
+  const submit = async (text: string) => {
+    if (!selectedAgent) {
+      setError('Choose an agent to start a thread with.')
       return
     }
     setError(undefined)
     setSubmitting(true)
     try {
+      // A selection rides the opening message when there is one. An empty
+      // start carries none: there is no message for the quotation to be
+      // attached to, and attaching it to whatever is typed next is the
+      // thread's own composer's job rather than this one's.
       const firstMessage =
-        selectionScope?.selection && selectionScope.passEnabled
-          ? wrapUserSelection(text.trim(), selectionScope.selection.content)
-          : text.trim()
+        text && selectionScope?.selection && selectionScope.passEnabled
+          ? wrapUserSelection(text, selectionScope.selection.content)
+          : text
       const result = await startGroupChatThread({
         data: {
           groupChatId,
@@ -164,9 +164,6 @@ export function GroupChatStartThreadComposer({
         onSelectAgent={onSelectAgent ?? setRememberedAgent}
         value={value}
         onValueChange={(next) => {
-          if (next !== '') {
-            lastTypedRef.current = next
-          }
           setValue(next)
           if (error) {
             setError(undefined)
@@ -175,7 +172,13 @@ export function GroupChatStartThreadComposer({
         // No onTitleChange, no title field — see fixedTitle above.
         title={fixedTitle === undefined ? title : undefined}
         onTitleChange={fixedTitle === undefined ? setTitle : undefined}
-        onSubmit={() => void submit()}
+        onSubmit={(text) => void submit(text)}
+        // Offered on BOTH start surfaces, and not behind a prop: each of them
+        // is a screen for starting a new chat, and the reason to start one
+        // empty -- reaching the agent's settings, which only exist once its
+        // session does -- is the same on either. A switch no caller would ever
+        // turn off is a choice nobody makes.
+        allowEmptyStart
         submitting={submitting}
         error={error}
         onDismissError={() => setError(undefined)}

@@ -185,6 +185,27 @@ export interface AgentCommandBarProps {
   // Presentation only: the gate is unchanged, so a commit needs text in the
   // composer exactly as a send does.
   submitMode?: 'send' | 'commit'
+  // What pressing Send on an EMPTY composer means, if it means anything.
+  //
+  // Unset -- the default -- keeps Send withheld until something is typed:
+  // handing nothing to an agent is not an action, and a live button that does
+  // nothing is worse than an unavailable one.
+  //
+  // Given, Send stays available on an empty composer and `onSend('')` is
+  // called. The string is what the button then calls itself, because a press
+  // that sends no message must not say "Send". The new-thread composer uses
+  // this to mint the thread -- and with it the agent's session, and the
+  // settings that only a live session can advertise -- before there is a first
+  // message to send.
+  //
+  // ONE PROP RATHER THAN A FLAG BESIDE A LABEL: the permission and the wording
+  // cannot then be set apart, so there is no way to allow the press and leave
+  // the button describing the one thing it will not do.
+  //
+  // Enter is deliberately NOT covered by it. This is a deliberate press on a
+  // button that says what it does; a reflex Enter in an empty composer is not,
+  // and it is the one keystroke a person makes without looking.
+  emptySendLabel?: string
   // Show the approval toggle at all. Default true; false removes it for a
   // composer where there is nothing to approve -- starting a thread sends one
   // message to an agent that has not been asked for a tool call yet, so a
@@ -404,6 +425,7 @@ export function AgentCommandBar({
   editBar,
   attachments,
   submitMode = 'send',
+  emptySendLabel,
   approval,
   autoApprove = false,
   onToggleAutoApprove,
@@ -435,7 +457,10 @@ export function AgentCommandBar({
   }
 
   const hasText = Boolean(buffered.trim())
-  const canSend = hasText && !sending && !disabled
+  // An empty composer is sendable only where the host has said what sending it
+  // would mean -- see `emptySendLabel`.
+  const emptySendOffered = Boolean(emptySendLabel)
+  const canSend = (hasText || emptySendOffered) && !sending && !disabled
   const hasConfigs = Boolean(configs && configs.length > 0)
 
   // Slash-command autocomplete. Derived from the buffered text every render
@@ -464,7 +489,7 @@ export function AgentCommandBar({
   // nothing to send. Without `onStop` there is no stop button to make room for,
   // so `busy` alone changes nothing -- the row stays the resting one.
   const showStop = busy && Boolean(onStop)
-  const showSend = !showStop || hasText
+  const showSend = !showStop || hasText || emptySendOffered
 
   // The button carries an icon and no text, so its current values have to live
   // somewhere reachable -- otherwise the only way to read the model you are on
@@ -479,9 +504,12 @@ export function AgentCommandBar({
           .join(' · ')
       : 'Settings'
 
-  const send = () => {
+  // `allowEmpty` belongs to the CALLER rather than to the composer: the button
+  // passes it and Enter does not, which is the whole of the keystroke rule
+  // stated on `emptySendLabel`.
+  const send = (allowEmpty = false) => {
     const text = buffered.trim()
-    if (!text || sending || disabled) return
+    if ((!text && !allowEmpty) || sending || disabled) return
     // Cleared before the send so a host persisting drafts sees the empty value
     // and the send in the same turn, rather than racing its own save.
     setValue('')
@@ -535,6 +563,12 @@ export function AgentCommandBar({
       else setValue('')
     }
   }
+
+  // An empty composer's press is not a send, so it is not named one. With text
+  // in it the button is the ordinary Send (or Commit) whatever the host allows
+  // on an empty one.
+  const sendTitle =
+    !hasText && emptySendLabel ? emptySendLabel : submitMode === 'commit' ? 'Commit edits' : 'Send'
 
   const approvalTitle = yoloMode ? approvalTitles.yolo : autoApprove ? approvalTitles.on : approvalTitles.off
 
@@ -781,14 +815,14 @@ export function AgentCommandBar({
               variant='ghost'
               className={commandBarControlClass}
               onMouseDown={(e) => e.preventDefault()}
-              onClick={send}
+              onClick={() => send(emptySendOffered)}
               disabled={!canSend}
               // Both carry an explicit name as well as a title. `title` alone
               // does name a button with no text, but weakly -- and these two
               // are now adjacent icons a press apart, one of which ends the
               // turn. Same shape as the settings button above.
-              title={submitMode === 'commit' ? 'Commit edits' : 'Send'}
-              aria-label={submitMode === 'commit' ? 'Commit edits' : 'Send'}
+              title={sendTitle}
+              aria-label={sendTitle}
             >
               {submitMode === 'commit' ? <Check className='size-4' /> : <Send className='size-4' />}
             </Button>

@@ -1521,6 +1521,77 @@ test('a changed topic rides the next send into an open thread, once', async () =
   assert.doesNotMatch(prompts[4] ?? '', /the first purpose/)
 })
 
+// A THREAD MINTED WITH NOTHING SAID. The press that does it exists so that the
+// agent's settings -- which a harness advertises only for a session that
+// EXISTS -- can be reached before the first message is written. So the two
+// halves worth pinning are that the session is opened, and that nothing at all
+// is said into it.
+//
+// The second half is the one a green suite would otherwise be silent about: an
+// empty prompt is still a prompt, and a session opened by delivering `''` would
+// look identical from the outside while having spent the thread's standing
+// context on a message nobody sent.
+test('a thread started with no message opens its session and says nothing into it', async () => {
+  const owner = await makeUser('empty-start-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'empty start', 'the standing purpose')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const prompts: string[] = []
+  const opened: string[] = []
+  const connection = {
+    newSession: async () => {
+      const sessionId = `empty-start-session-${crypto.randomUUID()}`
+      opened.push(sessionId)
+      return { sessionId }
+    },
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      prompts.push(params.prompt.map((block) => block.text ?? '').join(''))
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+
+  const workspaceSlug = slug('Agent Session')
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store, 'agent-client global store must exist after import')
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', '')
+  assert.ok(started.thread.id, 'the thread exists')
+  assert.equal(started.sessionId, opened.at(-1), 'and it answers to the session opened for it')
+
+  // WHAT THE FIRST PROMPT IS, not how many have arrived by now. A prompt is
+  // sent without being awaited here (see waitForPrompts), so an assertion that
+  // the list is still empty the instant this call returns would hold just as
+  // well for a delivery that was merely in flight -- and an empty prompt IS a
+  // prompt. If the empty start had gone through the delivery path, the first
+  // thing this agent ever saw would be that empty message, carrying the
+  // standing context and not a word the reader typed.
+  await model.sendMessageInThread(reqAs(owner), started.thread.id, 'now something', { queue: 'wait' })
+  await waitForPrompts(prompts, 1)
+  assert.match(prompts[0] ?? '', /now something/, 'the first thing said into the session is the first message sent')
+  // ...and it carries the topic, because the empty start did not spend it: the
+  // row stayed marked undelivered, so the once-on-change rule is reached one
+  // message later than usual rather than skipped.
+  assert.match(prompts[0] ?? '', /the standing purpose/, 'with the standing context still riding it')
+})
+
 test('a changed pin set rides the next send the same way the topic does', async () => {
   const owner = await makeUser('pin-change-owner@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'pin change', 'the purpose')
