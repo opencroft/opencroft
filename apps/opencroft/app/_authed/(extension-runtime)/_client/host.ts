@@ -11,6 +11,8 @@ import {
   useReactFlow,
   useUpdateNodeInternals,
 } from '@xyflow/react'
+import { CodeBlock } from 'agent-chat/components/code-block'
+import { Markdown } from 'agent-chat/components/markdown'
 import type * as icons from 'lucide-react'
 import * as React from 'react'
 import { createPortal } from 'react-dom'
@@ -360,10 +362,20 @@ export const extensionUiApi = {
   // SearchableDropdown, Popover, Command, Combobox, …) — see `ui/ext`.
   ...uiKit,
   // App-provided components that live outside the `ui` package (or override it).
+  //
+  // The chat's code renderer, handed out rather than copied: the highlighter
+  // behind it keeps one instance and one grammar cache for the page, so an
+  // extension bundling its own would re-download grammars the chat already has.
+  CodeBlock,
   CodeEditor,
   ControlledInput,
   FileBrowser,
   FileManagerProvider,
+  // The chat's markdown renderer -- fenced blocks through `CodeBlock`, mermaid
+  // fences as diagrams. Shared for the highlighter reason above and for one
+  // more: the `rel="noopener noreferrer"` it puts on every link is a security
+  // property, and a second copy of the renderer loses it with no symptom.
+  Markdown,
   SecretSelector,
   Terminal,
   TerminalSelector,

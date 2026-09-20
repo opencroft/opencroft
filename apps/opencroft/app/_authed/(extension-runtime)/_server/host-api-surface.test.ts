@@ -12,6 +12,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test, { after } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 // Statically, and deliberately -- do not make this a dynamic import inside a
 // test. The compiler loads this module on demand to read the API objects, and
@@ -93,6 +94,41 @@ test('every capability on the host object is importable by name from @ext/host',
 
 test('every component on the ui object is importable by name from @ext/ui', async () => {
   await buildImportingEveryName('ui-surface', '@ext/ui', Object.keys(extensionUiApi))
+})
+
+const here = path.dirname(fileURLToPath(import.meta.url))
+// _server -> (extension-runtime) -> _authed -> app -> apps/opencroft -> apps -> the repo root.
+const CLIENT_ENTRY = path.resolve(here, '../../../../../..', 'packages/client/src/index.ts')
+
+/**
+ * The components `@opencroft/client` declares at its root.
+ *
+ * Read with a pattern rather than through the type checker, unlike the sibling
+ * declarations suite: the names wanted here are the ones that file declares
+ * ITSELF, which is exactly what the pattern matches. There is no `export *`
+ * hop to follow, because a name re-exported from elsewhere is not something
+ * the modern shim forwards.
+ */
+async function declaredComponentNames(): Promise<string[]> {
+  const source = await fs.readFile(CLIENT_ENTRY, 'utf-8')
+  return [...source.matchAll(/^export declare const (\w+): FC</gm)].map((match) => match[1])
+}
+
+test('every component the client package declares is importable by name from @opencroft/client', async () => {
+  // The two enumerations this suite exists for, in the one place they are
+  // still two: the modern shim forwards a hand-written list, because the root
+  // of `@opencroft/client` is a curated subset of the UI object rather than
+  // the whole of it. A component declared for extension authors and never
+  // forwarded typechecks everywhere and fails to build for the first
+  // extension that imports it.
+  const names = await declaredComponentNames()
+
+  // Without this, a pattern that matched nothing would build an empty import
+  // and pass while checking no name at all.
+  assert.ok(names.length >= 3, `expected the declared components to be read; found ${names.length}`)
+  assert.ok(names.includes('Terminal'), 'Terminal is declared at the client package root and must be found')
+
+  await buildImportingEveryName('client-surface', '@opencroft/client', names)
 })
 
 test('a name @ext/host binds to the extension keeps its own shape', async () => {

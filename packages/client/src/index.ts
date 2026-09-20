@@ -53,6 +53,54 @@ export interface TerminalSelectorProps {
  */
 export declare const TerminalSelector: FC<TerminalSelectorProps>
 
+export interface CodeBlockProps {
+  /** The code to render, exactly as it was written. */
+  code: string
+  /**
+   * The fence's info string or a bare language name (`ts`, `bash`, `json`).
+   * Aliases are resolved for you; anything unrecognised renders as plain text.
+   */
+  language?: string
+  /** Offer the copy control, on by default. */
+  copyable?: boolean
+  /** Added to the block's wrapper, for the layout your surface needs. */
+  className?: string
+}
+
+/**
+ * A static, highlighted code block — the one the chat renders.
+ *
+ * The host owns it because the highlighter behind it is a shared resource: one
+ * instance and one grammar cache serve the whole page, and a grammar is
+ * fetched once, the first time something asks for that language. An extension
+ * that bundled its own renderer would run a second highlighter and re-download
+ * the grammars the chat already holds — again per extension.
+ */
+export declare const CodeBlock: FC<CodeBlockProps>
+
+export interface MarkdownProps {
+  /** The markdown source. */
+  text: string
+  /**
+   * Added to the prose wrapper, for the width constraints and clamps your
+   * surface needs — not for restyling the prose, which is shared on purpose so
+   * that everything rendered this way reads as one voice.
+   */
+  className?: string
+}
+
+/**
+ * Markdown, rendered the way the chat renders it: GFM, fenced blocks as
+ * `CodeBlock`, and a `mermaid` fence as the diagram it describes.
+ *
+ * The host owns it for the highlighter reason above, and for one the types
+ * cannot show: links are given `rel="noopener noreferrer"` with their
+ * `target="_blank"`. That is a security property, and a second copy of the
+ * renderer drops it with nothing to see — the links still open. Reaching for
+ * this one keeps the guarantee instead of asking every surface to remember it.
+ */
+export declare const Markdown: FC<MarkdownProps>
+
 /** Props the host passes to an App's component when rendering it in a space. */
 export interface AppComponentProps {
   /** Which added instance is being rendered — matches the server hooks' `instanceId`. */

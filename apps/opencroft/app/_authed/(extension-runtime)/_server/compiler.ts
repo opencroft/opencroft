@@ -450,6 +450,14 @@ export default __ui;
     // `legacy` carries the same six extension-scoped names `@ext/host` exports,
     // as properties instead of exports -- from the one list, so the two
     // surfaces cannot come to disagree about what `createStorage` takes.
+    //
+    // The root forwards below are written out instead of being read off the UI
+    // object, because the root is a curated subset of it: packages/client's
+    // index decides what has graduated out of `legacy`, and no object holds
+    // only that. So this is the one list here that can fall behind the surface
+    // it serves -- host-api-surface.test.ts builds a probe importing every
+    // component that file declares, and a declaration with no forwarding line
+    // fails it.
     const scoped = extensionScopedExports(extensionId)
     return {
       contents: `
@@ -460,6 +468,8 @@ const __ui = __api.ui;
 export const Terminal = __ui.Terminal;
 export const SecretSelector = __ui.SecretSelector;
 export const TerminalSelector = __ui.TerminalSelector;
+export const CodeBlock = __ui.CodeBlock;
+export const Markdown = __ui.Markdown;
 export const legacy = {
   ...__host,
   ...__ui,
