@@ -139,8 +139,8 @@ function formatCost(amount: number, currency: string): string {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(amount)
 }
 
-// Level labels drop the cents a round figure does not have; the tiles keep
-// theirs, because a sum is a measurement and a level is a scale mark.
+// Level labels drop the cents a round figure does not have; a card's own sum
+// keeps them, because a sum is a measurement and a level is a scale mark.
 function formatCostTick(amount: number, currency: string): string {
   return new Intl.NumberFormat(undefined, {
     style: 'currency',
@@ -190,17 +190,6 @@ function periodLabel(period: UsagePeriod): string {
   }
 }
 
-function StatTile({ label, value }: { label: string; value: string }) {
-  return (
-    <div className='flex flex-col gap-1 rounded-lg border border-border p-4'>
-      <span className='text-xs text-muted-foreground'>{label}</span>
-      {/* xl rather than 2xl: six of these stand in one row on a wide screen,
-          and the row is an index of the charts, not one hero figure. */}
-      <span className='text-xl font-semibold tabular-nums'>{value}</span>
-    </div>
-  )
-}
-
 function pad2(n: number): string {
   return String(n).padStart(2, '0')
 }
@@ -236,10 +225,9 @@ function linePoints(values: (number | undefined)[], x: (i: number) => number, y:
   return pts.join(' ')
 }
 
-// One small-multiple: the metric's name in the header — its period total
-// stands in the tile row above the charts, so it is not repeated here — thin
-// 2px lines over five evenly spaced, labelled levels at a computed round
-// step (see niceStep), and a crosshair that follows the
+// One small-multiple: the metric's name and its period sum in the header,
+// thin 2px lines over five evenly spaced, labelled levels at a computed
+// round step (see niceStep), and a crosshair that follows the
 // pointer — a vertical guide, a ringed dot per series, and a tooltip naming
 // the bucket and each value. The whole plot is the hit target, so no mark
 // needs to be hit precisely. Text stays in the ink tokens throughout; the
@@ -251,12 +239,15 @@ function linePoints(values: (number | undefined)[], x: (i: number) => number, y:
 // drawn in the stretched space would render as an ellipse.
 function ChartCard({
   title,
+  total,
   dates,
   series,
   format,
   tickFormat,
 }: {
   title: string
+  /** The metric's period sum, already formatted — the card's headline figure. */
+  total: string
   dates: string[]
   series: ChartSeries[]
   format: (value: number) => string
@@ -285,7 +276,18 @@ function ChartCard({
 
   return (
     <div className='flex flex-col gap-3 rounded-lg border border-border p-4'>
-      <span className='text-sm font-medium'>{title}</span>
+      {/* The metric's name where it has always been, its period sum opposite
+          it on the same line. One row rather than a stacked pair: the name is
+          short and the figure is short, and stacking them spends a second
+          line on the header while leaving the right half of every card empty.
+          Baseline-aligned, so the small name and the large figure sit on one
+          line instead of centring against each other. xl rather than 2xl —
+          six cards carry one each, so it is this chart's figure and not one
+          hero number for the page. */}
+      <div className='flex items-baseline justify-between gap-3'>
+        <span className='text-sm font-medium'>{title}</span>
+        <span className='text-xl font-semibold tabular-nums'>{total}</span>
+      </div>
       {empty ? (
         <div className='flex h-32 items-center justify-center text-xs text-muted-foreground'>Not reported</div>
       ) : (
@@ -406,12 +408,14 @@ function ChartCard({
 
 // The usage page for a space's settings: what was spent, then how it moved.
 //
-// The reading order is the design. The tile row answers the question the
-// page is opened with — six sums, one per chart — so every figure has its
-// number before it has its curve; the six small multiples beneath then
-// show the same figures over time: cost and totals, then the decomposition
-// — input and output, cache reads and writes — that explains where token
-// counts of that size come from. Separate single-axis charts rather than anything
+// The reading order is the design, and it lives inside each card: the
+// metric's period sum stands in the card's header, in the largest type on
+// the page, directly over the curve that produced it — so a figure has its
+// number before it has its shape, and the number is ON the chart it belongs
+// to rather than in a separate row the reader has to match back. Six of
+// them: cost and totals, then the decomposition — input and output, cache
+// reads and writes — that explains where token counts of that size come
+// from. Separate single-axis charts rather than anything
 // combined: tokens and currency do not share a scale, and a second y-axis
 // is how one chart lies twice.
 //
@@ -577,55 +581,51 @@ export function SpaceUsage({
           No usage recorded yet
         </div>
       ) : (
-        <>
-          <div className='grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6'>
-            <StatTile label='Cost' value={hasCost ? formatCost(totalCost, currency) : '—'} />
-            <StatTile label='Tokens used' value={formatTokens(totalOf((p) => p.totalTokens))} />
-            <StatTile label='Input tokens' value={formatTokens(totalOf((p) => p.inputTokens))} />
-            <StatTile label='Output tokens' value={formatTokens(totalOf((p) => p.outputTokens))} />
-            <StatTile label='Cache reads' value={formatTokens(totalOf((p) => p.cacheReadTokens))} />
-            <StatTile label='Cache writes' value={formatTokens(totalOf((p) => p.cacheWriteTokens))} />
-          </div>
-          <div className='grid gap-3 sm:grid-cols-2'>
-            <ChartCard
-              title='Cost'
-              dates={dates}
-              series={chartSeries((p) => p.cost)}
-              format={(v) => formatCost(v, currency)}
-              tickFormat={(v) => formatCostTick(v, currency)}
-            />
-            <ChartCard
-              title='Total tokens'
-              dates={dates}
-              series={chartSeries((p) => p.totalTokens)}
-              format={formatTokens}
-            />
-            <ChartCard
-              title='Input tokens'
-              dates={dates}
-              series={chartSeries((p) => p.inputTokens)}
-              format={formatTokens}
-            />
-            <ChartCard
-              title='Output tokens'
-              dates={dates}
-              series={chartSeries((p) => p.outputTokens)}
-              format={formatTokens}
-            />
-            <ChartCard
-              title='Cache reads'
-              dates={dates}
-              series={chartSeries((p) => p.cacheReadTokens)}
-              format={formatTokens}
-            />
-            <ChartCard
-              title='Cache writes'
-              dates={dates}
-              series={chartSeries((p) => p.cacheWriteTokens)}
-              format={formatTokens}
-            />
-          </div>
-        </>
+        <div className='grid gap-3 sm:grid-cols-2'>
+          <ChartCard
+            title='Cost'
+            total={hasCost ? formatCost(totalCost, currency) : '—'}
+            dates={dates}
+            series={chartSeries((p) => p.cost)}
+            format={(v) => formatCost(v, currency)}
+            tickFormat={(v) => formatCostTick(v, currency)}
+          />
+          <ChartCard
+            title='Total tokens'
+            total={formatTokens(totalOf((p) => p.totalTokens))}
+            dates={dates}
+            series={chartSeries((p) => p.totalTokens)}
+            format={formatTokens}
+          />
+          <ChartCard
+            title='Input tokens'
+            total={formatTokens(totalOf((p) => p.inputTokens))}
+            dates={dates}
+            series={chartSeries((p) => p.inputTokens)}
+            format={formatTokens}
+          />
+          <ChartCard
+            title='Output tokens'
+            total={formatTokens(totalOf((p) => p.outputTokens))}
+            dates={dates}
+            series={chartSeries((p) => p.outputTokens)}
+            format={formatTokens}
+          />
+          <ChartCard
+            title='Cache reads'
+            total={formatTokens(totalOf((p) => p.cacheReadTokens))}
+            dates={dates}
+            series={chartSeries((p) => p.cacheReadTokens)}
+            format={formatTokens}
+          />
+          <ChartCard
+            title='Cache writes'
+            total={formatTokens(totalOf((p) => p.cacheWriteTokens))}
+            dates={dates}
+            series={chartSeries((p) => p.cacheWriteTokens)}
+            format={formatTokens}
+          />
+        </div>
       )}
       {onReset ? (
         <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
