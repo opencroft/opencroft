@@ -204,12 +204,19 @@ function AppCard({ app }: { app: ProvidedApp }) {
         {app.description ? <p className='max-w-prose text-xs text-muted-foreground'>{app.description}</p> : null}
       </div>
 
+      {/* Name first and the id after it in muted mono — the order the card's
+          own heading reads in, and the one every row on this page now uses.
+          The id is how a caller addresses the thing; the name is how a reader
+          finds it, and a column of ids with the names trailing is a column
+          sorted by the wrong half. */}
       <DetailGroup label='parameter' count={parameters.length}>
         {parameters.map((parameter) => (
           <div key={parameter.id ?? parameter.label} className='flex min-w-0 flex-col'>
-            <span className='flex items-baseline gap-2 text-xs'>
-              <span className='font-mono'>{parameter.id}</span>
-              <span className='text-muted-foreground'>{parameter.label}</span>
+            <span className='flex flex-wrap items-baseline gap-2 text-xs'>
+              <span>{parameter.label ?? parameter.id}</span>
+              {parameter.label && parameter.id ? (
+                <span className='font-mono text-muted-foreground'>{parameter.id}</span>
+              ) : null}
               {parameter.required ? <span className='text-amber-600'>required</span> : null}
             </span>
             {parameter.description ? (
@@ -225,8 +232,10 @@ function AppCard({ app }: { app: ProvidedApp }) {
           return (
             <div key={action.id ?? action.label} className='flex min-w-0 flex-col'>
               <span className='flex flex-wrap items-baseline gap-2 text-xs'>
-                <span className='font-mono'>{action.id}</span>
-                <span className='text-muted-foreground'>{action.label}</span>
+                <span>{action.label ?? action.id}</span>
+                {action.label && action.id ? (
+                  <span className='font-mono text-muted-foreground'>{action.id}</span>
+                ) : null}
               </span>
               {params.length > 0 ? (
                 <span className='font-mono text-xs text-muted-foreground'>({params.join(', ')})</span>
@@ -239,22 +248,29 @@ function AppCard({ app }: { app: ProvidedApp }) {
         })}
       </DetailGroup>
 
-      <DetailGroup label='handle' count={handles.length}>
-        {handles.map((handle) => (
-          <div key={handle.id ?? handle.label} className='flex min-w-0 flex-wrap items-baseline gap-2 text-xs'>
-            {/* Type first, as in a node's handle columns: the same row means
-                the same thing on both screens. */}
-            {handle.contextType ? (
-              <Badge variant='outline' className='font-mono text-xs'>
-                {handle.contextType}
-              </Badge>
-            ) : null}
-            <span className='font-mono'>{handle.id}</span>
-            <span className='text-muted-foreground'>{handle.label}</span>
-            {handle.dynamic ? <span className='text-muted-foreground'>dynamic</span> : null}
-          </div>
-        ))}
-      </DetailGroup>
+      {/* Never behind a summary line, as on a node: an app declares one or
+          two handles, and a press to reveal two rows saves nothing. They are
+          all sources — an app consumes contexts through its parameters, not
+          through edges — so there is no second column to put beside them. */}
+      {handles.length > 0 ? (
+        <div className='flex flex-col gap-1.5 border-t px-4 py-3'>
+          <span className='text-xs font-medium'>Output</span>
+          {handles.map((handle) => (
+            <div key={handle.id ?? handle.label} className='flex min-w-0 flex-wrap items-baseline gap-2 text-xs'>
+              {/* Type first, as in a node's handle columns: the same row means
+                  the same thing on both screens. */}
+              {handle.contextType ? (
+                <Badge variant='outline' className='font-mono text-xs'>
+                  {handle.contextType}
+                </Badge>
+              ) : null}
+              {handle.label ? <span>{handle.label}</span> : null}
+              <span className='font-mono text-muted-foreground'>{handle.id}</span>
+              {handle.dynamic ? <span className='text-muted-foreground'>dynamic</span> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -272,13 +288,13 @@ function HandleColumn({ title, handles }: { title: string; handles: ExtensionHan
           <div key={handle.id} className='flex min-w-0 flex-wrap items-baseline gap-2 text-xs'>
             {/* The type leads the row. It is what decides whether two handles
                 can be joined at all, so it is the thing a reader is scanning
-                for; the id and the label say which one it is once the type
+                for; the name and the id say which one it is once the type
                 already matches. */}
             <Badge variant='outline' className='font-mono text-xs'>
               {handle.contextType}
             </Badge>
-            <span className='font-mono'>{handle.id}</span>
-            {handle.label ? <span className='text-muted-foreground'>{handle.label}</span> : null}
+            {handle.label ? <span>{handle.label}</span> : null}
+            <span className='font-mono text-muted-foreground'>{handle.id}</span>
             {/* A prefix rather than an id: the node draws one of these per
                 instance of whatever it is exposing, and the declared id is
                 where each one starts. */}
@@ -316,26 +332,31 @@ function NodeCardList({ nodes }: { nodes: NodeMetadata[] }) {
               ) : null}
             </div>
 
-            <DetailGroup label='handle' count={handles.length}>
-              {/* Two columns, because a node's handles are two different
-                  things: what it takes in and what it hands on. As one list
-                  each row had to carry its own direction, and reading "which
-                  of these can I connect to" meant scanning a word at the end
-                  of every line. Both columns are drawn whenever the node has
-                  any handle at all — a node with no inputs says so, which is
-                  worth knowing about a source. */}
-              <div className='grid gap-4 sm:grid-cols-2'>
+            {/* Two columns, because a node's handles are two different
+                things: what it takes in and what it hands on. As one list
+                each row had to carry its own direction, and reading "which of
+                these can I connect to" meant scanning a word at the end of
+                every line. Both columns are drawn whenever the node has any
+                handle at all — a node with no inputs says so, which is worth
+                knowing about a source.
+ 
+                Not behind a summary line like the actions below: what a node
+                connects to IS what a node is, and it is a handful of short
+                rows. A group that costs a press only earns it by saving
+                room. */}
+            {handles.length > 0 ? (
+              <div className='grid gap-4 border-t px-4 py-3 sm:grid-cols-2'>
                 <HandleColumn title='Input' handles={handles.filter((handle) => handle.role === 'target')} />
                 <HandleColumn title='Output' handles={handles.filter((handle) => handle.role === 'source')} />
               </div>
-            </DetailGroup>
+            ) : null}
 
             <DetailGroup label='action' count={actions.length}>
               {actions.map((action) => (
                 <div key={action.id} className='flex min-w-0 flex-col'>
                   <span className='flex flex-wrap items-baseline gap-2 text-xs'>
-                    <span className='font-mono'>{action.id}</span>
-                    <span className='text-muted-foreground'>{action.label}</span>
+                    <span>{action.label || action.id}</span>
+                    {action.label ? <span className='font-mono text-muted-foreground'>{action.id}</span> : null}
                   </span>
                   {action.description ? (
                     <span className='max-w-prose text-xs text-muted-foreground'>{action.description}</span>
