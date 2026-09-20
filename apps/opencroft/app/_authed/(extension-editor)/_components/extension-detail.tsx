@@ -1,5 +1,6 @@
 'use client'
 
+import { Markdown } from 'agent-chat/components/markdown'
 import {
   ArrowDownToLine,
   Cable,
@@ -21,6 +22,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/collapsi
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from 'ui/item'
 import { ScrollArea } from 'ui/layout/scroll-area'
 import { PanelTabStrip } from 'ui/layouts/panel-tab-strip'
+import { Separator } from 'ui/separator'
 
 import type {
   InstalledExtensionRecord,
@@ -336,6 +338,20 @@ function HandleTypeList({ contexts }: { contexts: ExtensionContextType[] }) {
   )
 }
 
+/**
+ * The extension's README, when it ships one.
+ *
+ * Read from the record's files rather than fetched: they are already here,
+ * and this is the file an author writes when the manifest's one-line
+ * description is not enough. Root level only, and `.md` or `.mdx` — a readme
+ * inside a subdirectory documents that subdirectory.
+ */
+function readmeOf(files: Record<string, string>): string | null {
+  const key = Object.keys(files).find((file) => /^readme\.mdx?$/i.test(file))
+  const text = key ? files[key].trim() : ''
+  return text.length > 0 ? text : null
+}
+
 // What the extension is, before anything is done to it: its identity, what it
 // contributes to the product, and where its source stands. Editing, updating
 // and deleting are offered from here rather than from the list, so a row press
@@ -371,6 +387,7 @@ export function ExtensionDetail({
   const apps = provided<ProvidedApp>(manifest, 'apps')
   const dashboards = provided<ProvidedDashboard>(manifest, 'dashboards')
   const dependencies = manifest.extensionDependencies ?? []
+  const readme = readmeOf(record.files)
   const hasUpdate = updateCheck?.hasUpdate ?? false
   // A local checkout is offered an update only when origin has a commit it
   // does not, and nothing is in the way of taking it.
@@ -451,13 +468,12 @@ export function ExtensionDetail({
         <div className='flex flex-col gap-6 px-6 py-5'>
           {tab === 'description' ? (
             <>
-              {manifest.description ? (
-                <p className='max-w-prose text-sm'>{manifest.description}</p>
-              ) : (
+              {manifest.description ? <p className='max-w-prose text-sm'>{manifest.description}</p> : null}
+              {!manifest.description && !readme ? (
                 <p className='text-sm text-muted-foreground italic'>
-                  This extension's manifest carries no description.
+                  This extension carries no description and no README.
                 </p>
-              )}
+              ) : null}
               {dependencies.length > 0 ? (
                 <div className='flex flex-col gap-1.5'>
                   <Field label='Depends on'>
@@ -470,6 +486,18 @@ export function ExtensionDetail({
                     </span>
                   </Field>
                 </div>
+              ) : null}
+              {/* The README under the manifest's one line, with a rule between
+                  them: the description is what the extension says it is in a
+                  sentence, and this is the same author saying it at length.
+                  Rendered with the chat's markdown component, so a document
+                  here reads as the product's prose rather than as a second
+                  treatment of markdown. */}
+              {readme ? (
+                <>
+                  <Separator />
+                  <Markdown text={readme} className='max-w-prose' />
+                </>
               ) : null}
             </>
           ) : null}
