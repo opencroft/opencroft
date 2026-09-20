@@ -195,13 +195,19 @@ pre[data-code-block] {
  * Shiki writes BOTH themes into every token as custom properties and leaves the
  * choice to CSS. That is what makes switching light/dark free: nothing is
  * re-highlighted, one declaration changes which colour is in force.
+ *
+ * Keyed on shiki's own class rather than on `data-code-block`, because the two
+ * say different things: the mark says "this block owns its box", the class says
+ * "these tokens carry both themes". A surface that brings its own box -- an
+ * editor layering a textarea over the text -- drops the mark and still needs
+ * the colours.
  */
-pre[data-code-block],
-pre[data-code-block] span {
+pre.shiki,
+pre.shiki span {
   color: var(--shiki-light);
 }
 
-.dark pre[data-code-block],
-.dark pre[data-code-block] span {
+.dark pre.shiki,
+.dark pre.shiki span {
   color: var(--shiki-dark);
 }

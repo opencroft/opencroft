@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { resolveLanguage } from './code-highlight'
+import { highlight, resolveLanguage } from './code-highlight'
 
 // What a fence resolves to decides whether a block is coloured at all, and the
 // inputs are whatever an agent happened to type above the code. These are the
@@ -76,4 +76,33 @@ test('an alias never resolves to a grammar that is not loadable', () => {
     assert.ok(resolved, `alias ${alias} resolved to nothing`)
     assert.equal(resolveLanguage(resolved), resolved, `alias ${alias} resolved to ${resolved}, which is not a grammar`)
   }
+})
+
+// The two shapes of output. `code-block` relies on the mark for its box and its
+// wrapping; `code-block-editor` relies on there being NO mark, because it draws
+// its own box and has to own the padding for the caret to land correctly. Both
+// rely on the colours, which is why the colours hang on shiki's own class and
+// not on the mark.
+
+test('a highlighted block marks itself as owning its box', async () => {
+  const html = await highlight('const answer = 42\n', 'typescript')
+  assert.ok(html, 'typescript should highlight')
+  assert.match(html, /data-code-block/)
+  assert.match(html, /class="shiki/)
+  assert.match(html, /--shiki-light:/)
+  assert.match(html, /--shiki-dark:/)
+})
+
+test('a plain highlight keeps the colours and drops the box', async () => {
+  const html = await highlight('const answer = 42\n', 'typescript', { plain: true })
+  assert.ok(html, 'typescript should highlight')
+  assert.doesNotMatch(html, /data-code-block/)
+  // Still coloured: the stylesheet keys colour off shiki's class, so dropping
+  // the mark must not drop the theme variables with it.
+  assert.match(html, /class="shiki/)
+  assert.match(html, /--shiki-light:/)
+  // And the user-agent's own `pre` margin and font are overridden inline,
+  // because a stylesheet rule would not travel into the design kit copy.
+  assert.match(html, /margin:0;padding:0/)
+  assert.match(html, /font:inherit/)
 })

@@ -136,6 +136,16 @@ function loadGrammar(instance: HighlighterCore, name: string): Promise<boolean> 
   return load
 }
 
+export interface HighlightOptions {
+  /**
+   * Leave out the mark that gives a block its box, for a caller that draws its
+   * own -- an editor layering a textarea over the highlighted text has to own
+   * the padding and line height itself, because the caret only lands on the
+   * right glyph while both elements agree on them exactly.
+   */
+  plain?: boolean
+}
+
 /**
  * The code as highlighted HTML, or null when it cannot be highlighted.
  *
@@ -145,7 +155,11 @@ function loadGrammar(instance: HighlighterCore, name: string): Promise<boolean> 
  * the code and renders it either way -- highlighting is decoration, and a
  * decoration that fails must not cost anybody the thing being decorated.
  */
-export async function highlight(code: string, language: string): Promise<string | null> {
+export async function highlight(
+  code: string,
+  language: string,
+  options?: HighlightOptions,
+): Promise<string | null> {
   try {
     const instance = await highlighter()
     if (!(await loadGrammar(instance, language))) {
@@ -155,19 +169,34 @@ export async function highlight(code: string, language: string): Promise<string 
       lang: language,
       themes: { light: LIGHT_THEME, dark: DARK_THEME },
       defaultColor: false,
-      // Marks the element as this component's own. Chat prose wraps long lines
-      // in a `pre`, which is right for quoted output and wrong for code: a
-      // wrapped line breaks the indentation the reader is using to follow it.
-      // The mark is what the stylesheet hangs `white-space: pre` and horizontal
-      // scrolling on, and what gives the block its box when it is rendered
-      // outside chat prose entirely.
-      transformers: [
-        {
-          pre(node) {
-            node.properties['data-code-block'] = ''
-          },
-        },
-      ],
+      // Marks the element as a block that owns its own box. Chat prose wraps
+      // long lines in a `pre`, which is right for quoted output and wrong for
+      // code: a wrapped line breaks the indentation the reader is following.
+      // The mark is what the stylesheet hangs `white-space: pre`, horizontal
+      // scrolling and the border on. The colours do not hang on it -- they hang
+      // on shiki's own class -- so a caller that brings its own box still gets
+      // coloured text.
+      transformers: options?.plain
+        ? [
+            {
+              pre(node) {
+                // The caller owns the typography here, and has to: a caret only
+                // lands on the right glyph while the text under it and the text
+                // being typed agree on font, size, line height and padding. The
+                // user-agent stylesheet gives every `pre` a margin and a font of
+                // its own, so they are overridden inline -- a stylesheet rule
+                // would not travel with this file into the design kit.
+                node.properties.style = `${node.properties.style ?? ''};margin:0;padding:0;background:transparent;font:inherit;line-height:inherit;`
+              },
+            },
+          ]
+        : [
+            {
+              pre(node) {
+                node.properties['data-code-block'] = ''
+              },
+            },
+          ],
     })
   } catch {
     return null
