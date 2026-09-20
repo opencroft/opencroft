@@ -38,18 +38,24 @@ function formatCost(cost: { amount: number; currency: string }): string {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: cost.currency }).format(cost.amount)
 }
 
+// Ordered for the three-column grid below rather than for reading: the grid
+// fills row-major and `Cost` takes the first cell, so this list lands as the
+// rest of row one and the whole of row two -- which is what pairs each
+// column (cost over total, input over output, cache reads over cache
+// writes). Sorting it back into reading order leaves the grid looking
+// intact and scatters the pairs, which are the whole of what it says.
 const COUNTERS: { key: keyof UsageTokens; label: string }[] = [
-  { key: 'total', label: 'Total' },
   { key: 'input', label: 'Input' },
-  { key: 'output', label: 'Output' },
   { key: 'cacheRead', label: 'Cache reads' },
+  { key: 'total', label: 'Total' },
+  { key: 'output', label: 'Output' },
   { key: 'cacheWrite', label: 'Cache writes' },
 ]
 
-// The label above its figure, the shape every cell in the block shares. The
-// labels are short, so the cells run horizontally and wrap to the width they
-// are given -- one line in a wide host, two or three in a popover -- rather
-// than spending a tall label column on six one-word names.
+// The label above its figure, the shape every cell in the block shares. Six
+// one-word labels in a column beside their figures would spend the block's
+// height on the names rather than on the numbers; stacked, a cell is two
+// short lines and three of them stand on a row.
 function Cell({ label, value }: { label: string; value: string }) {
   return (
     <div className='flex flex-col'>
@@ -59,22 +65,27 @@ function Cell({ label, value }: { label: string; value: string }) {
   )
 }
 
-// What a piece of work cost, in one shape wherever it is shown: a row of
-// label-over-figure cells -- the money first, then the token account (total,
-// input, output, cache reads, cache writes). The same block stands in the
-// context ring's panel for the session and anywhere else a spend is opened,
-// so no two surfaces say it two ways.
+// What a piece of work cost, in one shape wherever it is shown: a grid of
+// label-over-figure cells -- the money first, then the token account. The
+// same block stands in the context ring's panel for the session and anywhere
+// else a spend is opened, so no two surfaces say it two ways.
+//
+// Three columns, fixed, in two rows: the figures line up in columns the way
+// wrapped cells never quite do, and the count is the same in a popover and
+// in a full-width panel, so the block reads as one shape rather than as a
+// layout that rearranges itself per host. Which figure sits above which is
+// the COUNTERS order above, and it is load-bearing -- see the note there.
 //
 // A figure the harness did not report draws as a dash, never as a zero: an
 // unpriced session is not a free one. With nothing reported at all the block
-// says so in words rather than drawing a row of dashes.
+// says so in words rather than drawing a grid of dashes.
 export function UsageCost({ cost, tokens, className }: UsageCostProps) {
   const reported = cost !== undefined || COUNTERS.some(({ key }) => tokens?.[key] !== undefined)
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
       <span className='text-xs text-muted-foreground'>Costs</span>
       {reported ? (
-        <div className='flex flex-wrap gap-x-4 gap-y-1.5'>
+        <div className='grid grid-cols-3 gap-x-4 gap-y-1.5'>
           <Cell label='Cost' value={cost ? formatCost(cost) : '—'} />
           {COUNTERS.map(({ key, label }) => {
             const value = tokens?.[key]
