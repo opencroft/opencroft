@@ -34,7 +34,12 @@ import type {
   LocalExtensionSummary,
   LocalRemoteState,
 } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions'
-import type { ExtensionContextType, ExtensionManifest, NodeMetadata } from '@/app/_authed/(extension-runtime)/_types'
+import type {
+  ExtensionContextType,
+  ExtensionHandle,
+  ExtensionManifest,
+  NodeMetadata,
+} from '@/app/_authed/(extension-runtime)/_types'
 
 export type ExtensionRecord = LocalExtensionRecord | InstalledExtensionRecord
 export type ExtensionSummary = LocalExtensionSummary | InstalledExtensionSummary
@@ -252,6 +257,33 @@ function AppCard({ app }: { app: ProvidedApp }) {
   )
 }
 
+/** One side of a node's edges: the handles it takes in, or the ones it hands
+ *  on. The heading states the direction, so a row does not have to. */
+function HandleColumn({ title, handles }: { title: string; handles: ExtensionHandle[] }) {
+  return (
+    <div className='flex min-w-0 flex-col gap-1.5'>
+      <span className='text-xs font-medium'>{title}</span>
+      {handles.length === 0 ? (
+        <span className='text-xs text-muted-foreground'>None</span>
+      ) : (
+        handles.map((handle) => (
+          <div key={handle.id} className='flex min-w-0 flex-wrap items-baseline gap-2 text-xs'>
+            <span className='font-mono'>{handle.id}</span>
+            {handle.label ? <span className='text-muted-foreground'>{handle.label}</span> : null}
+            <Badge variant='outline' className='font-mono text-xs'>
+              {handle.contextType}
+            </Badge>
+            {/* A prefix rather than an id: the node draws one of these per
+                instance of whatever it is exposing, and the declared id is
+                where each one starts. */}
+            {handle.dynamic ? <span className='text-muted-foreground'>dynamic</span> : null}
+          </div>
+        ))
+      )}
+    </div>
+  )
+}
+
 // Same card as an app's, for the same reason: a node's handles and actions are
 // declared in the manifest, so a count of them is a fact the page is holding
 // back rather than one it does not have.
@@ -279,22 +311,17 @@ function NodeCardList({ nodes }: { nodes: NodeMetadata[] }) {
             </div>
 
             <DetailGroup label='handle' count={handles.length}>
-              {handles.map((handle) => (
-                <div
-                  key={`${handle.role}:${handle.id}`}
-                  className='flex min-w-0 flex-wrap items-baseline gap-2 text-xs'
-                >
-                  <span className='font-mono'>{handle.id}</span>
-                  <span className='text-muted-foreground'>{handle.label}</span>
-                  <Badge variant='outline' className='font-mono text-xs'>
-                    {handle.contextType}
-                  </Badge>
-                  {/* Which way it points, in the graph's own words: a source
-                      hands a value on, a target takes one in. */}
-                  <span className='text-muted-foreground'>{handle.role === 'source' ? 'out' : 'in'}</span>
-                  {handle.dynamic ? <span className='text-muted-foreground'>dynamic</span> : null}
-                </div>
-              ))}
+              {/* Two columns, because a node's handles are two different
+                  things: what it takes in and what it hands on. As one list
+                  each row had to carry its own direction, and reading "which
+                  of these can I connect to" meant scanning a word at the end
+                  of every line. Both columns are drawn whenever the node has
+                  any handle at all — a node with no inputs says so, which is
+                  worth knowing about a source. */}
+              <div className='grid gap-4 sm:grid-cols-2'>
+                <HandleColumn title='Input' handles={handles.filter((handle) => handle.role === 'target')} />
+                <HandleColumn title='Output' handles={handles.filter((handle) => handle.role === 'source')} />
+              </div>
             </DetailGroup>
 
             <DetailGroup label='action' count={actions.length}>
