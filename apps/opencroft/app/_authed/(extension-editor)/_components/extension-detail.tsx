@@ -9,24 +9,37 @@ import { ScrollArea } from 'ui/layout/scroll-area'
 
 import type {
   InstalledExtensionRecord,
+  InstalledExtensionSummary,
   UpdateCheck,
 } from '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
-import type { LocalExtensionRecord } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions'
+import type {
+  LocalExtensionRecord,
+  LocalExtensionSummary,
+  LocalRemoteState,
+} from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions'
 
 export type ExtensionRecord = LocalExtensionRecord | InstalledExtensionRecord
+export type ExtensionSummary = LocalExtensionSummary | InstalledExtensionSummary
 
 /** An installed extension carries a sidecar naming where it came from; a local
  *  one is a checkout on this instance and carries git state instead. Which of
  *  the two is open decides what this page can say about its source, and which
  *  destructive act it offers — delete removes a checkout, uninstall removes a
- *  copy of somebody else's repository. */
-export function isInstalledRecord(record: ExtensionRecord): record is InstalledExtensionRecord {
+ *  copy of somebody else's repository.
+ *
+ *  Declared over the summaries so one guard serves both: a record is a summary
+ *  with files, so narrowing a record narrows to the record. */
+export function isInstalledRecord(record: ExtensionSummary): record is InstalledExtensionSummary {
   return 'sidecar' in record
 }
 
 interface ExtensionDetailProps {
   record: ExtensionRecord
+  /** For an installed extension: which tags the remote has. */
   updateCheck?: UpdateCheck
+  /** For a local extension: where its checkout stands against origin. */
+  remote?: LocalRemoteState | null
+  remoteChecking?: boolean
   busy?: boolean
   onEdit: () => void
   onUpdate: () => void
@@ -62,12 +75,14 @@ function shortCommit(commit: string | null): string | null {
 }
 
 // What the extension is, before anything is done to it: its identity, what it
-// contributes to the product, and where its source stands. Editing and
-// deleting are offered from here rather than from the list, so a row press is
-// navigation and an act is always made with the extension in front of you.
+// contributes to the product, and where its source stands. Editing, updating
+// and deleting are offered from here rather than from the list, so a row press
+// is navigation and an act is always made with the extension in front of you.
 export function ExtensionDetail({
   record,
   updateCheck,
+  remote,
+  remoteChecking = false,
   busy = false,
   onEdit,
   onUpdate,
@@ -81,6 +96,9 @@ export function ExtensionDetail({
   const provides = Object.entries(manifest.provides ?? {})
   const fileCount = Object.keys(record.files).length
   const hasUpdate = updateCheck?.hasUpdate ?? false
+  // A local checkout is offered an update only when origin has a commit it
+  // does not, and nothing is in the way of taking it.
+  const canPull = !installed && (remote?.behind ?? false)
 
   return (
     <div className='flex min-w-0 flex-1 flex-col'>
@@ -105,6 +123,21 @@ export function ExtensionDetail({
             <Button size='sm' variant='outline' disabled={busy} onClick={onUpdate}>
               {hasUpdate ? <ArrowDownToLine className='size-3.5' /> : <RefreshCw className='size-3.5' />}
               {hasUpdate ? `Update to ${updateCheck?.latest}` : 'Reinstall'}
+            </Button>
+          ) : null}
+          {canPull ? (
+            // Disabled rather than absent while something is in the way: the
+            // update exists either way, and the reason it cannot be taken is
+            // what the reader needs — it is on the button and in Source below.
+            <Button
+              size='sm'
+              variant='outline'
+              disabled={busy || remote?.blocked !== null}
+              title={remote?.blocked ?? undefined}
+              onClick={onUpdate}
+            >
+              {busy ? <Loader2 className='size-3.5 animate-spin' /> : <ArrowDownToLine className='size-3.5' />}
+              Update
             </Button>
           ) : null}
           <Button size='sm' onClick={onEdit}>
@@ -203,7 +236,7 @@ export function ExtensionDetail({
           ) : null}
 
           <Section title='Source'>
-            {installed ? (
+            {isInstalledRecord(record) ? (
               <div className='flex flex-col gap-1.5'>
                 <Field label='Repository'>
                   <a
@@ -244,13 +277,53 @@ export function ExtensionDetail({
                 {record.sourceCommit ? (
                   <Field label='Working tree'>
                     {record.sourceDirty ? (
-                      <span className='text-amber-600'>
-                        {record.sourceDirtyPaths.length} uncommitted file
-                        {record.sourceDirtyPaths.length === 1 ? '' : 's'}
+                      <span className='flex flex-col gap-0.5'>
+                        <span className='text-amber-600'>
+                          {record.sourceDirtyPaths.length} uncommitted file
+                          {record.sourceDirtyPaths.length === 1 ? '' : 's'}
+                        </span>
+                        {/* The files themselves, under the count rather than
+                            inside a sentence: this is a list, and a list of
+                            paths in prose is unreadable at three and useless
+                            at ten. */}
+                        {record.sourceDirtyPaths.map((dirtyPath) => (
+                          <span key={dirtyPath} className='truncate font-mono text-xs text-muted-foreground'>
+                            {dirtyPath}
+                          </span>
+                        ))}
                       </span>
                     ) : (
                       <span className='text-muted-foreground'>Clean</span>
                     )}
+                  </Field>
+                ) : null}
+                {record.sourceCommit ? (
+                  <Field label='Updates'>
+                    {remoteChecking ? (
+                      <span className='flex items-center gap-1.5 text-muted-foreground'>
+                        <Loader2 className='size-3 animate-spin' />
+                        Checking origin…
+                      </span>
+                    ) : remote?.error ? (
+                      <span className='text-muted-foreground'>{remote.error}</span>
+                    ) : remote?.behind ? (
+                      <span className='text-amber-600'>
+                        origin/{remote.branch} has newer commits ({shortCommit(remote.remoteCommit)})
+                      </span>
+                    ) : remote ? (
+                      <span className='text-muted-foreground'>Up to date with origin/{remote.branch}</span>
+                    ) : (
+                      <span className='text-muted-foreground'>Not checked</span>
+                    )}
+                  </Field>
+                ) : null}
+                {/* Why the update is not on offer, when there is one to take.
+                    Said here as well as on the button, because the button is
+                    the thing somebody presses and this is the thing they read
+                    when it does not respond. */}
+                {remote?.behind && remote.blocked ? (
+                  <Field label=''>
+                    <span className='text-xs text-muted-foreground'>{remote.blocked}</span>
                   </Field>
                 ) : null}
                 <Field label='Running build'>
@@ -267,15 +340,26 @@ export function ExtensionDetail({
             )}
           </Section>
 
-          {/* Why the running bundle is being held apart from the checkout, in
-              the compiler's own words. Stated on the page rather than only at
-              the moment a build is refused: the extension goes on running the
-              older bundle in the meantime, and that is the part a reader is
-              otherwise left to infer. */}
-          {!installed && record.refusal ? (
+          {/* Why the running bundle is being held apart from the checkout.
+              Composed from the refusal's own reasons rather than printed as
+              its message: the message names the uncommitted files inline, and
+              they are listed above under the tree they belong to. */}
+          {!isInstalledRecord(record) && record.refusal ? (
             <div className='rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs'>
               <p className='font-medium'>The automatic rebuild is refusing this checkout.</p>
-              <p className='pt-0.5 text-muted-foreground'>{record.refusal.message}</p>
+              <ul className='list-inside list-disc pt-0.5 text-muted-foreground'>
+                {record.refusal.reasons.map((reason) => (
+                  <li key={reason}>
+                    {reason === 'unclean'
+                      ? 'It carries uncommitted changes.'
+                      : `It is on branch "${record.refusal?.branch}", not the default branch "${record.refusal?.defaultBranch}".`}
+                  </li>
+                ))}
+              </ul>
+              <p className='pt-1 text-muted-foreground'>
+                Compiling publishes this directory to the running instance as it stands, so the instance goes on running
+                the last build until the checkout is settled.
+              </p>
             </div>
           ) : null}
         </div>

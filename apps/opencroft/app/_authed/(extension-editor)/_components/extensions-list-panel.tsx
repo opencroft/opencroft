@@ -7,12 +7,14 @@ import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 import { ScrollArea } from 'ui/layout/scroll-area'
 import { Separator } from 'ui/separator'
+import { Skeleton } from 'ui/skeleton'
 
 import type {
   InstalledExtensionRecord,
+  InstalledExtensionSummary,
   UpdateCheck,
 } from '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
-import type { LocalExtensionRecord } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions'
+import type { LocalExtensionSummary } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions'
 import {
   installRegistryExtension,
   listRegistryExtensions,
@@ -25,10 +27,16 @@ import { cn } from '@/lib/utils'
 // it — edit, update, uninstall — belongs to its own page, where the extension
 // being acted on is the thing on screen rather than one row of thirty.
 interface ExtensionsListPanelProps {
-  records: LocalExtensionRecord[]
-  installed: InstalledExtensionRecord[]
+  records: LocalExtensionSummary[]
+  installed: InstalledExtensionSummary[]
   updateChecks: Record<string, UpdateCheck>
   selectedId: string | null
+  /** The first read has not come back yet. Distinguished from an empty
+   *  instance, which it used to be drawn as: "No extensions yet. Click + to
+   *  create one" is a statement about the instance, and saying it while the
+   *  list is still loading told everyone with nine extensions that they had
+   *  none. */
+  loading?: boolean
   onSelect: (extensionId: string) => void
   onNew: () => void
   onInstall: () => void
@@ -40,6 +48,7 @@ export function ExtensionsListPanel({
   installed,
   updateChecks,
   selectedId,
+  loading = false,
   onSelect,
   onNew,
   onInstall,
@@ -222,7 +231,17 @@ export function ExtensionsListPanel({
                 })}
               </div>
             ) : null}
-            {records.length === 0 && installed.length === 0 ? (
+            {/* Only once the read has come back: until then this instance's
+                extensions are unknown, and the sentence below states that it
+                has none. */}
+            {loading && records.length === 0 && installed.length === 0 ? (
+              <div className='space-y-1.5 p-3' aria-hidden='true'>
+                <Skeleton className='h-3.5 w-4/5' />
+                <Skeleton className='h-3.5 w-3/5' />
+                <Skeleton className='h-3.5 w-2/3' />
+              </div>
+            ) : null}
+            {!loading && records.length === 0 && installed.length === 0 ? (
               <div className='px-3 py-4 text-xs text-muted-foreground italic'>
                 No extensions yet. Click + to create or search to find extensions.
               </div>

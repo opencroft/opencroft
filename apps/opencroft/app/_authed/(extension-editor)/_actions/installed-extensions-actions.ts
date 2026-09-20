@@ -1,50 +1,33 @@
-import { execFile as execFileCb } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { promisify } from 'node:util'
 
 import { createServerFn } from '@tanstack/react-start'
 
+import {
+  type InstallAuth,
+  type InstalledSidecar,
+  type InstalledSource,
+  installNodeDeps,
+  type ResolvedAuth,
+  readSidecar,
+  resolveAuth,
+  writeSidecar,
+} from '@/app/_authed/(extension-editor)/_actions/extension-checkout'
 import { MANIFEST_FILE, rewriteManifestId } from '@/app/_authed/(extension-editor)/_actions/manifest-file'
 import { buildExtension } from '@/app/_authed/(extension-runtime)/_server/compiler'
 import { runGit, withGitAuth } from '@/app/_authed/(extension-runtime)/_server/git-exec'
 import { flushCache } from '@/app/_authed/(extension-runtime)/_server/loader'
-// SIDECAR_FILE is named alongside the other generated files, so the check that
-// discounts them from "someone is working here" cannot drift from the code that
-// writes them.
-import { extDir, installedExtRoot, localExtRoot, SIDECAR_FILE } from '@/app/_authed/(extension-runtime)/_server/paths'
+import { extDir, installedExtRoot, localExtRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
 import type { ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
-import { getSecretValue } from '@/app/_authed/(secrets-store)/_server/actions'
 import { toastStore } from '@/lib/toast-store'
-
-const execFile = promisify(execFileCb)
 
 const GIT_BUFFER = 64 * 1024 * 1024
 
-export interface InstalledSource {
-  type: 'git'
-  url: string
-  name: string
-}
-
-export interface InstallAuth {
-  type: 'secret'
-  storeId: string
-  usernameKey?: string
-  tokenKey?: string
-}
-
-interface ResolvedAuth {
-  username: string
-  token: string
-}
-
-export interface InstalledSidecar {
-  source: InstalledSource
-  auth?: InstallAuth
-  ref: string
-  installedAt: number
-}
+// The checkout's own vocabulary — where an extension came from, and how to
+// reach that remote — lives in extension-checkout.ts, so the local extensions
+// can use it too. Re-exported here because this is where every caller already
+// imports it from.
+export type { InstallAuth, InstalledSidecar, InstalledSource }
 
 export interface InstalledExtensionRecord {
   id: string
@@ -54,6 +37,13 @@ export interface InstalledExtensionRecord {
   files: Record<string, string>
   updatedAt: number
 }
+
+/** An installed extension without its files — what a list of them draws. The
+ *  files are read when one is opened. */
+export type InstalledExtensionSummary = Omit<InstalledExtensionRecord, 'files'>
+
+/** See readSourceFile below: the size past which a file is not source. */
+const MAX_SOURCE_FILE_BYTES = 512 * 1024
 
 export interface UpdateCheck {
   current: string
@@ -126,22 +116,6 @@ function semverCmp(a: string, b: string): number {
   return 0
 }
 
-async function resolveAuth(auth?: InstallAuth): Promise<ResolvedAuth | null> {
-  if (!auth) {
-    return null
-  }
-  const tokenKey = auth.tokenKey ?? 'token'
-  const usernameKey = auth.usernameKey ?? 'username'
-  const [token, username] = await Promise.all([
-    getSecretValue({ data: { storeId: auth.storeId, key: tokenKey } }),
-    getSecretValue({ data: { storeId: auth.storeId, key: usernameKey } }),
-  ])
-  if (!token) {
-    throw new Error(`Secret ${auth.storeId}/${tokenKey} not found or empty`)
-  }
-  return { username: username ?? 'x-access-token', token }
-}
-
 async function listRemoteTags(url: string, creds: ResolvedAuth | null): Promise<string[]> {
   const { url: authedUrl, env, cleanup } = await withGitAuth(url, creds)
   let stdout: string
@@ -180,26 +154,6 @@ async function resolveInstallRef(url: string, creds: ResolvedAuth | null, reques
   return { ref: tags[tags.length - 1], kind: 'tag' }
 }
 
-async function installNodeDeps(dir: string): Promise<void> {
-  try {
-    await fs.access(path.join(dir, 'package.json'))
-  } catch {
-    return
-  }
-  try {
-    await execFile('npm', ['install', '--omit=dev', '--legacy-peer-deps', '--no-audit', '--no-fund', '--no-progress'], {
-      cwd: dir,
-      maxBuffer: 32 * 1024 * 1024,
-      shell: true,
-    })
-  } catch (err) {
-    const e = err as { stderr?: string; stdout?: string; message?: string }
-    const text = e.stderr || e.stdout || e.message || String(err)
-    const tail = text.split('\n').slice(-15).join('\n')
-    throw new Error(`npm install failed in ${dir}:\n${tail}`)
-  }
-}
-
 async function gitClone(
   url: string,
   refKind: 'tag' | 'head',
@@ -234,19 +188,6 @@ async function gitClone(
 // the source file's own indent and trailing-newline convention keeps the diff
 // to exactly the fields that actually changed.
 
-async function writeSidecar(dir: string, sidecar: InstalledSidecar): Promise<void> {
-  await fs.writeFile(path.join(dir, SIDECAR_FILE), JSON.stringify(sidecar, null, 2) + '\n', 'utf-8')
-}
-
-async function readSidecar(dir: string): Promise<InstalledSidecar | null> {
-  try {
-    const raw = await fs.readFile(path.join(dir, SIDECAR_FILE), 'utf-8')
-    return JSON.parse(raw) as InstalledSidecar
-  } catch {
-    return null
-  }
-}
-
 async function dirMtime(dir: string): Promise<number> {
   try {
     const stat = await fs.stat(dir)
@@ -275,16 +216,37 @@ async function listFilesRecursive(dir: string, base: string = ''): Promise<Recor
       Object.assign(out, await listFilesRecursive(full, rel))
       continue
     }
-    try {
-      out[rel] = await fs.readFile(full, 'utf-8')
-    } catch {
-      out[rel] = ''
+    const content = await readSourceFile(full)
+    if (content !== null) {
+      out[rel] = content
     }
   }
   return out
 }
 
-async function readRecord(slug: string, root: string, idPrefix: string): Promise<InstalledExtensionRecord | null> {
+/** See MAX_SOURCE_FILE_BYTES and readSourceFile in local-extensions-actions-impl:
+ *  same rule, same reason — a record is read to be edited, and a compiled asset
+ *  is neither text nor something anyone edits here. */
+async function readSourceFile(file: string): Promise<string | null> {
+  let size: number
+  try {
+    size = (await fs.stat(file)).size
+  } catch {
+    return null
+  }
+  if (size > MAX_SOURCE_FILE_BYTES) {
+    return null
+  }
+  let buffer: Buffer
+  try {
+    buffer = await fs.readFile(file)
+  } catch {
+    return null
+  }
+  return buffer.includes(0) ? null : buffer.toString('utf-8')
+}
+
+async function readSummary(slug: string, root: string, idPrefix: string): Promise<InstalledExtensionSummary | null> {
   const dir = path.join(root, slug)
   const sidecar = await readSidecar(dir)
   if (!sidecar) {
@@ -296,15 +258,21 @@ async function readRecord(slug: string, root: string, idPrefix: string): Promise
   } catch {
     return null
   }
-  const manifest = JSON.parse(manifestRaw) as ExtensionManifest
   return {
     id: `${idPrefix}/${slug}`,
     slug,
-    manifest,
+    manifest: JSON.parse(manifestRaw) as ExtensionManifest,
     sidecar,
-    files: await listFilesRecursive(dir),
     updatedAt: await dirMtime(dir),
   }
+}
+
+async function readRecord(slug: string, root: string, idPrefix: string): Promise<InstalledExtensionRecord | null> {
+  const summary = await readSummary(slug, root, idPrefix)
+  if (!summary) {
+    return null
+  }
+  return { ...summary, files: await listFilesRecursive(path.join(root, slug)) }
 }
 
 // A `local/<slug>` extension should end up with the same id regardless of how it got installed —
@@ -400,6 +368,34 @@ export const listInstalledExtensions = createServerFn({ strict: { output: false 
     return records
   },
 )
+
+// What the extensions list loads — the records without their files.
+export const listInstalledExtensionSummaries = createServerFn({ strict: { output: false } }).handler(
+  async (): Promise<InstalledExtensionSummary[]> => {
+    let entries: string[]
+    try {
+      entries = await fs.readdir(installedExtRoot())
+    } catch {
+      return []
+    }
+    const summaries: InstalledExtensionSummary[] = []
+    for (const slug of entries) {
+      const summary = await readSummary(slug, installedExtRoot(), 'installed')
+      if (summary) {
+        summaries.push(summary)
+      }
+    }
+    return summaries
+  },
+)
+
+// One installed extension with its files, for the page that opens it.
+export const getInstalledExtension = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((extensionId: string) => extensionId)
+  .handler(
+    async ({ data: extensionId }): Promise<InstalledExtensionRecord | null> =>
+      readRecord(slugFromInstalledId(extensionId), installedExtRoot(), 'installed'),
+  )
 
 function slugFromInstalledId(extensionId: string): string {
   const [scope, slug] = extensionId.split('/')

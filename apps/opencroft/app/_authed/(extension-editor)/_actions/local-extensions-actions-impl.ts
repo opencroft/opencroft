@@ -87,12 +87,43 @@ function extDirPath(slug: string): string {
   return path.join(localExtRoot(), slug)
 }
 
-async function readFileOrEmpty(file: string): Promise<string> {
+/**
+ * The size past which a file in an extension is not treated as source.
+ *
+ * Every path here ends up in a record that is serialized to a browser, and
+ * the only thing that reads one is an editor. Half a megabyte is far above
+ * any file a person edits and far below the assets that made this expensive:
+ * one extension ships a 27 MB WebAssembly build, and reading it as UTF-8
+ * turned it into 137 MB of replacement characters in the response.
+ */
+const MAX_SOURCE_FILE_BYTES = 512 * 1024
+
+/**
+ * A file's text, or null when it is not text.
+ *
+ * Size is checked before the read, so a large binary is never loaded at all,
+ * and a NUL byte decides the rest: it cannot occur in a UTF-8 text file and
+ * occurs almost immediately in anything compiled. Skipped files are simply
+ * absent from the record — no caller writes back what it did not read, since
+ * updating an extension writes the files it is handed and deletes nothing.
+ */
+async function readSourceFile(file: string): Promise<string | null> {
+  let size: number
   try {
-    return await fs.readFile(file, 'utf-8')
+    size = (await fs.stat(file)).size
   } catch {
-    return ''
+    return null
   }
+  if (size > MAX_SOURCE_FILE_BYTES) {
+    return null
+  }
+  let buffer: Buffer
+  try {
+    buffer = await fs.readFile(file)
+  } catch {
+    return null
+  }
+  return buffer.includes(0) ? null : buffer.toString('utf-8')
 }
 
 async function dirMtime(dir: string): Promise<number> {
@@ -126,10 +157,51 @@ async function listFilesRecursive(dir: string, base: string = ''): Promise<Recor
       const sub = await listFilesRecursive(fullPath, rel)
       Object.assign(files, sub)
     } else {
-      files[rel] = await readFileOrEmpty(fullPath)
+      const content = await readSourceFile(fullPath)
+      if (content !== null) {
+        files[rel] = content
+      }
     }
   }
   return files
+}
+
+/**
+ * A local extension without its files — everything a list of extensions has
+ * to draw, and nothing it does not.
+ *
+ * The files are the expensive half of a record by two orders of magnitude,
+ * and a list shows none of them: it draws names. They are read when one
+ * extension is opened, by `getLocalExtensionImpl`.
+ */
+export type LocalExtensionSummary = Omit<LocalExtensionRecord, 'files'>
+
+async function loadExtensionSummary(slug: string): Promise<LocalExtensionSummary | null> {
+  const dir = extDirPath(slug)
+  let manifestRaw: string
+  try {
+    manifestRaw = await fs.readFile(path.join(dir, MANIFEST_FILE), 'utf-8')
+  } catch {
+    return null
+  }
+  const manifest = JSON.parse(manifestRaw) as ExtensionManifest
+  const checkout = await readCheckoutState(dir)
+  const built = await readBuiltProvenance(dir)
+  return {
+    id: `local/${slug}`,
+    slug,
+    manifest,
+    updatedAt: await dirMtime(dir),
+    ...checkout,
+    builtCommit: built.commit,
+    builtDirty: built.dirty,
+    builtDirtyPaths: built.dirtyPaths,
+    // The refusal the automatic rebuild would raise for this checkout as it
+    // stands — the reason the running bundle is held apart from the checkout.
+    // No override here: the record reports what the automatic path would do, and
+    // that path has no override.
+    refusal: refuseCompile(checkout, false),
+  }
 }
 
 async function loadExtension(slug: string): Promise<LocalExtensionRecord | null> {
@@ -185,6 +257,24 @@ export async function listLocalExtensionsImpl(): Promise<LocalExtensionRecord[]>
     }
   }
   return records
+}
+
+export async function listLocalExtensionSummariesImpl(): Promise<LocalExtensionSummary[]> {
+  const root = localExtRoot()
+  let entries: string[]
+  try {
+    entries = await fs.readdir(root)
+  } catch {
+    return []
+  }
+  const summaries: LocalExtensionSummary[] = []
+  for (const slug of entries) {
+    const summary = await loadExtensionSummary(slug)
+    if (summary) {
+      summaries.push(summary)
+    }
+  }
+  return summaries
 }
 
 export async function getLocalExtensionImpl(extensionId: string): Promise<LocalExtensionRecord | null> {
