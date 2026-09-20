@@ -9,7 +9,7 @@ import { readRemoteFile } from '@/app/_authed/(approvals)/_server/actions'
 import { useCanvasNodes } from '@/app/_authed/(dashboard)/_canvas/canvas-nodes-context'
 import { NodeCard } from '@/app/_authed/(dashboard)/_canvas/node-card'
 import { useOptionalOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
-import { CodeEditor, type CodeEditorProps } from '@/components/code-editor'
+import { CodeEditor, type CodeEditorProps, languageFromPath } from '@/components/code-editor'
 import { cn } from '@/lib/utils'
 import { exceedsClamp, OpBlock, OpRow } from './op-block'
 import { registerToolView, type ToolViewProps } from './registry'
@@ -137,7 +137,7 @@ function ToolDiffPanel({
         <NodeCard className='w-full'>
           <div className='px-3 py-2 space-y-2'>
             {label && <div className='font-mono text-xs'>{label}</div>}
-            <CanvasSafeDiffEditor original={current} value={next} />
+            <CanvasSafeDiffEditor original={current} value={next} language={languageFromPath(label)} />
           </div>
         </NodeCard>
       </div>
@@ -409,7 +409,9 @@ function RemoteEditView({ args, requestId, mode, result }: ToolViewProps) {
       pending={!result}
       overflowing={current !== null}
     >
-      {current !== null && <CanvasSafeDiffEditor original={current} value={next} />}
+      {current !== null && (
+        <CanvasSafeDiffEditor original={current} value={next} language={languageFromPath(filePath)} />
+      )}
     </OpBlock>
   )
 }

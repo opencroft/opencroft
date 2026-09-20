@@ -47,6 +47,11 @@ export { loader }
 // every call site and throw away the only thing a closed union is for.
 export type CodeEditorLanguage = 'typescript' | 'javascript' | 'python' | 'shell' | 'json' | 'plaintext' | (string & {})
 
+// Re-exported so a caller needs one import for the editor and the thing that
+// tells it what language to use, while the table itself stays in a module that
+// can be loaded — and tested — without pulling Monaco in behind it.
+export { languageFromPath } from './code-language'
+
 /**
  * Handed the editor and the `monaco` namespace once the editor is live —
  * @monaco-editor/react's own mount signature, passed straight through.
