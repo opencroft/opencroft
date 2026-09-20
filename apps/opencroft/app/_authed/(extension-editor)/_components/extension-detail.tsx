@@ -242,13 +242,15 @@ function AppCard({ app }: { app: ProvidedApp }) {
       <DetailGroup label='handle' count={handles.length}>
         {handles.map((handle) => (
           <div key={handle.id ?? handle.label} className='flex min-w-0 flex-wrap items-baseline gap-2 text-xs'>
-            <span className='font-mono'>{handle.id}</span>
-            <span className='text-muted-foreground'>{handle.label}</span>
+            {/* Type first, as in a node's handle columns: the same row means
+                the same thing on both screens. */}
             {handle.contextType ? (
               <Badge variant='outline' className='font-mono text-xs'>
                 {handle.contextType}
               </Badge>
             ) : null}
+            <span className='font-mono'>{handle.id}</span>
+            <span className='text-muted-foreground'>{handle.label}</span>
             {handle.dynamic ? <span className='text-muted-foreground'>dynamic</span> : null}
           </div>
         ))}
@@ -268,11 +270,15 @@ function HandleColumn({ title, handles }: { title: string; handles: ExtensionHan
       ) : (
         handles.map((handle) => (
           <div key={handle.id} className='flex min-w-0 flex-wrap items-baseline gap-2 text-xs'>
-            <span className='font-mono'>{handle.id}</span>
-            {handle.label ? <span className='text-muted-foreground'>{handle.label}</span> : null}
+            {/* The type leads the row. It is what decides whether two handles
+                can be joined at all, so it is the thing a reader is scanning
+                for; the id and the label say which one it is once the type
+                already matches. */}
             <Badge variant='outline' className='font-mono text-xs'>
               {handle.contextType}
             </Badge>
+            <span className='font-mono'>{handle.id}</span>
+            {handle.label ? <span className='text-muted-foreground'>{handle.label}</span> : null}
             {/* A prefix rather than an id: the node draws one of these per
                 instance of whatever it is exposing, and the declared id is
                 where each one starts. */}
