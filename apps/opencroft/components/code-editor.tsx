@@ -30,7 +30,58 @@ import { cn } from '@/lib/utils'
 // during app start-up — re-exported here so there is one place to do it.
 export { loader }
 
-export type CodeEditorLanguage = 'typescript' | 'javascript' | 'python' | 'shell' | 'json' | 'plaintext'
+// Whatever this is, it reaches Monaco verbatim, and Monaco registers around
+// forty languages and accepts every one of them at run time. So this union was
+// never the set that works — it was a ceiling on the set you were allowed to
+// ask for, and the six below are simply the ones the host's own surfaces
+// happened to need.
+//
+// `(string & {})` opens it to the other thirty-odd while keeping the six as
+// autocomplete. The alternative — naming all forty — was rejected twice over.
+// It would put a copy of Monaco's registry in a file that does not own it, so
+// every entry is either a lie until the next Monaco upgrade or a truth nobody
+// re-checked. And it buys nothing for the callers that need the width, because
+// they compute the language at run time from something that is already a
+// string: the git extension maps a file path through `langFromPath`, whose
+// return type is `string`, so a closed union would meet it with a cast at
+// every call site and throw away the only thing a closed union is for.
+export type CodeEditorLanguage = 'typescript' | 'javascript' | 'python' | 'shell' | 'json' | 'plaintext' | (string & {})
+
+/**
+ * Handed the editor and the `monaco` namespace once the editor is live —
+ * @monaco-editor/react's own mount signature, passed straight through.
+ *
+ * The editor is a union because the two modes are two different editors, and
+ * which one arrives follows `original`: given -> a diff editor, omitted -> an
+ * ordinary one. A caller that takes both narrows at run time on the method
+ * only the diff has — `'getModifiedEditor' in editor`.
+ *
+ * `monaco` is the second argument for a reason beyond convenience. Reaching
+ * the namespace is the only way to construct the values its own APIs take
+ * (`new monaco.Range(...)` for a decoration, say), and an extension bundle has
+ * no runtime module resolver, so importing `monaco-editor` for it is not open
+ * to one. Receiving it here is what lets a caller install the `window.monaco`
+ * shim it would otherwise have no way to obtain.
+ */
+export type CodeEditorOnMount = (
+  editor: Parameters<OnMount>[0] | Parameters<DiffOnMount>[0],
+  monaco: Parameters<OnMount>[1],
+) => void
+
+/**
+ * Monaco's folding of long runs of untouched context, in diff mode.
+ *
+ * Every field is optional and what is left out keeps the host's default, so a
+ * caller that cares about one number does not have to restate the other two.
+ */
+export interface CodeEditorHideUnchangedRegions {
+  /** Fold at all. Defaults to true. */
+  enabled?: boolean
+  /** Runs shorter than this are never folded — folding them saves nothing. Defaults to 4. */
+  minimumLineCount?: number
+  /** Unchanged lines kept either side of a change. Defaults to 3. */
+  contextLineCount?: number
+}
 
 export interface CodeEditorProps {
   /** In diff mode (`original` given) this is the modified side. */
@@ -58,6 +109,52 @@ export interface CodeEditorProps {
    * MIN_HEIGHT / MAX_HEIGHT), because diffs render inline in a chat transcript.
    */
   height?: string | number
+  /**
+   * The escape hatch out of this component's props and into Monaco itself, for
+   * the things no prop here can express: decorations, diff-change enumeration,
+   * mouse and cursor and scroll subscriptions, pixel positions for an overlay.
+   * Without it, a surface that needs any of those has to mount its own editor,
+   * which is the one thing this component exists to prevent.
+   *
+   * See `CodeEditorOnMount` for which editor arrives and how to tell.
+   */
+  onMount?: CodeEditorOnMount
+  /**
+   * Which diff rendering to show. Omitted, the mode is this component's own
+   * state and its overlaid toggle drives it; given, the caller owns it and
+   * this becomes an ordinary controlled prop.
+   *
+   * For a surface whose diff mode is not the reader's private business but
+   * part of a larger state — one already persisted, shared across several
+   * diffs at once, or driven from a toolbar that belongs to the caller.
+   */
+  diffMode?: CodeEditorDiffMode
+  /**
+   * Fired when this component's own toggle is pressed. The way to keep that
+   * toggle working while `diffMode` is controlled — without it a controlled
+   * caller's toggle renders and does nothing, since the state it writes is not
+   * the state being displayed.
+   */
+  onDiffModeChange?: (mode: CodeEditorDiffMode) => void
+  /**
+   * Draw the overlaid unified/split toggle. Defaults to true.
+   *
+   * Set false by a caller that already has this control in its own toolbar —
+   * otherwise `diffMode` gets it a second toggle sitting on top of the diff,
+   * competing with the one it drew itself.
+   */
+  showModeToggle?: boolean
+  /**
+   * Folding of long runs of untouched context, in diff mode. Defaults to
+   * `{ enabled: true, minimumLineCount: 4, contextLineCount: 3 }`; an object
+   * given here is merged over that, so naming one field keeps the others.
+   *
+   * `false` is the shorthand for showing the whole file, which is what a
+   * caller offering its own "show full file" control needs — and also what a
+   * caller revealing a deep-linked `line` needs, because folding can close
+   * over the very line being revealed.
+   */
+  hideUnchangedRegions?: false | CodeEditorHideUnchangedRegions
 }
 
 export function CodeEditor({ original, ...props }: CodeEditorProps) {
@@ -90,15 +187,19 @@ function PlainEditor({
   onChange,
   line,
   height = '100%',
+  onMount,
 }: Omit<CodeEditorProps, 'original'>) {
   const { resolvedTheme } = useTheme()
 
-  const handleMount: OnMount | undefined = line
-    ? (editor) => {
-        editor.revealLineInCenter(line)
-        editor.setPosition({ lineNumber: line, column: 1 })
-      }
-    : undefined
+  // `line` is applied before the caller's hook runs, so a caller that moves the
+  // cursor itself moves it from the resting position rather than racing it.
+  const handleMount: OnMount = (editor, monaco) => {
+    if (line) {
+      editor.revealLineInCenter(line)
+      editor.setPosition({ lineNumber: line, column: 1 })
+    }
+    onMount?.(editor, monaco)
+  }
 
   return (
     <Editor
@@ -130,7 +231,8 @@ function PlainEditor({
   )
 }
 
-type DiffMode = 'unified' | 'split'
+/** Which of the two renderings of the same pair of documents is on screen. */
+export type CodeEditorDiffMode = 'unified' | 'split'
 
 // Diffs render inline in a chat transcript, so the editor is sized to its
 // content rather than given a fixed box. The floor keeps a one-line diff from
@@ -141,7 +243,7 @@ type DiffMode = 'unified' | 'split'
 const MIN_HEIGHT = 56
 const MAX_HEIGHT = 400
 
-function ModeToggle({ mode, onChange }: { mode: DiffMode; onChange: (mode: DiffMode) => void }) {
+function ModeToggle({ mode, onChange }: { mode: CodeEditorDiffMode; onChange: (mode: CodeEditorDiffMode) => void }) {
   return (
     <div className='flex gap-0.5 rounded-md border bg-background/90 p-0.5 shadow-sm backdrop-blur-sm'>
       <Button
@@ -166,6 +268,14 @@ function ModeToggle({ mode, onChange }: { mode: DiffMode; onChange: (mode: DiffM
   )
 }
 
+// The folding this component has always applied. Named so the merge below has
+// something to merge over, and so a caller passing one field keeps the rest.
+const HIDE_UNCHANGED_DEFAULT: CodeEditorHideUnchangedRegions = {
+  enabled: true,
+  minimumLineCount: 4,
+  contextLineCount: 3,
+}
+
 function DiffView({
   value,
   original,
@@ -174,6 +284,11 @@ function DiffView({
   onChange,
   line,
   height,
+  onMount,
+  diffMode,
+  onDiffModeChange,
+  showModeToggle = true,
+  hideUnchangedRegions,
 }: Omit<CodeEditorProps, 'original'> & { original: string }) {
   // The chat package's diff editor tracked dark mode itself, watching <html>
   // for the `dark` class with a MutationObserver — it has to, being usable by
@@ -188,10 +303,27 @@ function DiffView({
   // is unreadable on a phone even when it fits; the toggle keeps it one press
   // away. Deliberately unconditional rather than chosen from the viewport — a
   // default that flips under a resize is state to reason about, and nothing
-  // here needs it. Internal state, not a prop: which of two renderings of the
-  // same pair of documents you are looking at is the reader's business, and no
-  // caller has an opinion worth honouring.
-  const [mode, setMode] = useState<DiffMode>('unified')
+  // here needs it.
+  //
+  // Held here only while no caller claims it. The usual case is still that
+  // which of two renderings of one pair of documents you are looking at is the
+  // reader's business and nobody else's — but a surface where the choice
+  // belongs to a toolbar of its own, spans several diffs, or outlives this
+  // mount does have an opinion, and `diffMode` is how it states it.
+  const [ownMode, setOwnMode] = useState<CodeEditorDiffMode>('unified')
+  const mode = diffMode ?? ownMode
+  const setMode = useCallback(
+    (next: CodeEditorDiffMode) => {
+      // Skipped while controlled, so the value on screen has exactly one
+      // owner: writing both would leave a stale copy here to be shown again
+      // the moment the prop went away.
+      if (diffMode === undefined) {
+        setOwnMode(next)
+      }
+      onDiffModeChange?.(next)
+    },
+    [diffMode, onDiffModeChange],
+  )
   const [contentHeight, setContentHeight] = useState(MIN_HEIGHT)
 
   const editorRef = useRef<Parameters<DiffOnMount>[0] | null>(null)
@@ -202,11 +334,16 @@ function DiffView({
   // on measuring for the mode it was registered in. (Kept in step by the effect
   // below rather than during render, so that the re-measure it has to do anyway
   // is the same piece of work.)
-  const modeRef = useRef<DiffMode>(mode)
+  const modeRef = useRef<CodeEditorDiffMode>(mode)
   // Same reason, for the change subscription: it is registered once on mount
   // and must see the current props, not the ones it was created with.
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
+  // And the same again for the caller's mount hook, so an inline arrow — which
+  // is a new function on every render — does not rebuild `handleMount` and the
+  // subscriptions memoised alongside it.
+  const onMountRef = useRef(onMount)
+  onMountRef.current = onMount
   const valueRef = useRef(value)
   valueRef.current = value
 
@@ -225,7 +362,7 @@ function DiffView({
   }, [])
 
   const handleMount = useCallback<DiffOnMount>(
-    (editor) => {
+    (editor, monaco) => {
       editorRef.current = editor
       const modified = editor.getModifiedEditor()
       disposablesRef.current = [
@@ -248,6 +385,10 @@ function DiffView({
         modified.setPosition({ lineNumber: line, column: 1 })
       }
       syncHeight()
+      // Last, and after the height is settled: a caller that measures the
+      // editor from here — for an overlay placed against `getTopForLineNumber`
+      // and `getLayoutInfo` — would otherwise be reading a box about to change.
+      onMountRef.current?.(editor, monaco)
     },
     [syncHeight, line],
   )
@@ -274,10 +415,14 @@ function DiffView({
   return (
     <>
       {/* Overlaid on top of the diff instead of its own row, so it doesn't cost
-          a whole line of vertical space. */}
-      <div className='absolute right-2 top-2 z-10'>
-        <ModeToggle mode={mode} onChange={setMode} />
-      </div>
+          a whole line of vertical space — which is also why it has to be
+          suppressible: a caller with its own toggle cannot move this one out of
+          the way, only end up with two of them stacked over the same diff. */}
+      {showModeToggle && (
+        <div className='absolute right-2 top-2 z-10'>
+          <ModeToggle mode={mode} onChange={setMode} />
+        </div>
+      )}
       {/* `contain: inline-size` makes this box's width computable without
           looking at its contents, so a long line can't propagate outward
           through every ancestor whose width is content-derived and widen the
@@ -314,8 +459,16 @@ function DiffView({
             // means scrolling stalls whenever the pointer crosses a diff.
             scrollbar: { alwaysConsumeMouseWheel: false },
             // Long diffs are mostly untouched context; collapse it the way the
-            // previous implementation's `collapseUnchanged` did.
-            hideUnchangedRegions: { enabled: true, minimumLineCount: 4, contextLineCount: 3 },
+            // previous implementation's `collapseUnchanged` did. Merged rather
+            // than replaced so a caller adjusting one number is not made to
+            // restate defaults it has no opinion about; `false` is the
+            // shorthand for the whole file, since that is the thing a caller
+            // actually asks for and `{ enabled: false }` is how Monaco spells
+            // it rather than how anyone means it.
+            hideUnchangedRegions:
+              hideUnchangedRegions === false
+                ? { enabled: false }
+                : { ...HIDE_UNCHANGED_DEFAULT, ...hideUnchangedRegions },
             minimap: { enabled: false },
             overviewRulerLanes: 0,
             scrollBeyondLastLine: false,

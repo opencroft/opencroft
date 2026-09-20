@@ -469,7 +469,9 @@ export const Terminal = __ui.Terminal;
 export const SecretSelector = __ui.SecretSelector;
 export const TerminalSelector = __ui.TerminalSelector;
 export const CodeBlock = __ui.CodeBlock;
+export const CodeBlockEditor = __ui.CodeBlockEditor;
 export const Markdown = __ui.Markdown;
+export const MermaidDiagram = __ui.MermaidDiagram;
 export const legacy = {
   ...__host,
   ...__ui,

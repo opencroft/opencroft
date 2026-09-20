@@ -387,7 +387,71 @@ export declare const CommandBar: ComponentType<Record<string, unknown>>
 export declare const CommandBarMenu: ComponentType<Record<string, unknown>>
 export declare const CommandBarMenuItem: ComponentType<Record<string, unknown>>
 
-export type CodeEditorLanguage = 'typescript' | 'javascript' | 'python' | 'shell' | 'json' | 'plaintext'
+// Whatever this is, it reaches Monaco verbatim, and Monaco registers around
+// forty languages and accepts every one of them at run time. So this union was
+// never the set that works — it was a ceiling on the set you were allowed to
+// ask for, and the six below are simply the ones the host's own surfaces
+// happened to need.
+//
+// `(string & {})` opens it to the other thirty-odd while keeping the six as
+// autocomplete. The alternative — naming all forty — was rejected twice over.
+// It would put a copy of Monaco's registry in a file that does not own it, so
+// every entry is either a lie until the next Monaco upgrade or a truth nobody
+// re-checked. And it buys nothing for the callers that need the width, because
+// they compute the language at run time from something that is already a
+// string: an extension mapping a file path to a language has a `string` in
+// hand, so a closed union would meet it with a cast at every call site and
+// throw away the only thing a closed union is for.
+//
+// Kept identical to the host component's own declaration in
+// apps/opencroft/components/code-editor.tsx — the two are the same type
+// written twice, because this package deliberately declares rather than
+// imports the runtime it describes.
+export type CodeEditorLanguage = 'typescript' | 'javascript' | 'python' | 'shell' | 'json' | 'plaintext' | (string & {})
+
+/** Which of the two renderings of the same pair of documents is on screen. */
+export type CodeEditorDiffMode = 'unified' | 'split'
+
+/**
+ * Handed the editor and the `monaco` namespace once the editor is live —
+ * @monaco-editor/react's own mount signature, passed straight through.
+ *
+ * The editor is a union because the two modes are two different editors, and
+ * which one arrives follows `original`: given -> a diff editor, omitted -> an
+ * ordinary one. A caller that takes both narrows at run time on the method
+ * only the diff has — `'getModifiedEditor' in editor`.
+ *
+ * `monaco` is the second argument for a reason beyond convenience. Reaching
+ * the namespace is the only way to construct the values its own APIs take
+ * (`new monaco.Range(...)` for a decoration, say), and an extension bundle is
+ * a browser ESM bundle with no runtime module resolver, so importing
+ * `monaco-editor` for it is not open to you. Receiving it here is what lets an
+ * extension install the `window.monaco` shim it would otherwise have no way to
+ * obtain — and it is the host's one namespace, not a second copy.
+ */
+export type MonacoNamespace = typeof import('monaco-editor')
+/** What `onMount` hands over when `original` is omitted. */
+export type MonacoCodeEditor = import('monaco-editor').editor.IStandaloneCodeEditor
+/** What `onMount` hands over when `original` is given. */
+export type MonacoDiffEditor = import('monaco-editor').editor.IStandaloneDiffEditor
+
+export type CodeEditorOnMount = (editor: MonacoCodeEditor | MonacoDiffEditor, monaco: MonacoNamespace) => void
+
+/**
+ * Monaco's folding of long runs of untouched context, in diff mode.
+ *
+ * Every field is optional and what is left out keeps the host's default, so a
+ * caller that cares about one number does not have to restate the other two.
+ */
+export interface CodeEditorHideUnchangedRegions {
+  /** Fold at all. Defaults to true. */
+  enabled?: boolean
+  /** Runs shorter than this are never folded — folding them saves nothing. Defaults to 4. */
+  minimumLineCount?: number
+  /** Unchanged lines kept either side of a change. Defaults to 3. */
+  contextLineCount?: number
+}
+
 export interface CodeEditorProps {
   /** In diff mode (`original` given) this is the modified side. */
   value: string
@@ -414,13 +478,64 @@ export interface CodeEditorProps {
    * diffs are meant to sit inline in a column of other content.
    */
   height?: string | number
+  /**
+   * The escape hatch out of these props and into Monaco itself, for the things
+   * no prop here can express: decorations, diff-change enumeration, mouse and
+   * cursor and scroll subscriptions, pixel positions for an overlay. Without
+   * it, an extension that needs any of those has to mount its own editor —
+   * which is the one thing sharing this component exists to prevent.
+   *
+   * See `CodeEditorOnMount` for which editor arrives and how to tell.
+   */
+  onMount?: CodeEditorOnMount
+  /**
+   * Which diff rendering to show. Omitted, the mode is the component's own
+   * state and its overlaid toggle drives it; given, you own it and this
+   * becomes an ordinary controlled prop.
+   *
+   * For a surface whose diff mode is not the reader's private business but
+   * part of a larger state — one already persisted, shared across several
+   * diffs at once, or driven from a toolbar that belongs to you.
+   */
+  diffMode?: CodeEditorDiffMode
+  /**
+   * Fired when the component's own toggle is pressed. The way to keep that
+   * toggle working while `diffMode` is controlled — without it a controlled
+   * caller's toggle renders and does nothing, since the state it writes is not
+   * the state being displayed.
+   */
+  onDiffModeChange?: (mode: CodeEditorDiffMode) => void
+  /**
+   * Draw the overlaid unified/split toggle. Defaults to true.
+   *
+   * Set false when you already have this control in your own toolbar —
+   * otherwise `diffMode` gets you a second toggle sitting on top of the diff,
+   * competing with the one you drew yourself.
+   */
+  showModeToggle?: boolean
+  /**
+   * Folding of long runs of untouched context, in diff mode. Defaults to
+   * `{ enabled: true, minimumLineCount: 4, contextLineCount: 3 }`; an object
+   * given here is merged over that, so naming one field keeps the others.
+   *
+   * `false` is the shorthand for showing the whole file, which is what a
+   * caller offering its own "show full file" control needs — and also what a
+   * caller revealing a deep-linked `line` needs, because folding can close
+   * over the very line being revealed.
+   */
+  hideUnchangedRegions?: false | CodeEditorHideUnchangedRegions
 }
 /**
  * The host's code editor, in either of two modes: an ordinary editor, or —
- * given `original` — a diff against it, with its own unified/split toggle.
+ * given `original` — a diff against it, with a unified/split toggle of its own
+ * that `diffMode` / `showModeToggle` let you take over.
  *
  * Provided here rather than imported from an editor package so every surface
  * shares one editor runtime — an extension bundle has no runtime module
  * resolver, so its own copy would initialise a second one.
+ *
+ * `onMount` is the way out of these props when they run out: it hands over the
+ * editor and the `monaco` namespace, which between them reach everything
+ * Monaco can do without a second editor being mounted to get at it.
  */
 export declare const CodeEditor: FC<CodeEditorProps>

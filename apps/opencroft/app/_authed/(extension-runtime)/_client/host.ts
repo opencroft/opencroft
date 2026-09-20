@@ -12,7 +12,9 @@ import {
   useUpdateNodeInternals,
 } from '@xyflow/react'
 import { CodeBlock } from 'agent-chat/components/code-block'
+import { CodeBlockEditor } from 'agent-chat/components/code-block-editor'
 import { Markdown } from 'agent-chat/components/markdown'
+import { MermaidDiagram } from 'agent-chat/components/mermaid-diagram'
 import type * as icons from 'lucide-react'
 import * as React from 'react'
 import { createPortal } from 'react-dom'
@@ -367,6 +369,10 @@ export const extensionUiApi = {
   // behind it keeps one instance and one grammar cache for the page, so an
   // extension bundling its own would re-download grammars the chat already has.
   CodeBlock,
+  // The same highlighter again, with a textarea over it. Handed out beside
+  // `CodeEditor` rather than in place of it: this one costs nothing to appear,
+  // so a surface can carry a dozen, where each `CodeEditor` is a Monaco mount.
+  CodeBlockEditor,
   CodeEditor,
   ControlledInput,
   FileBrowser,
@@ -376,6 +382,11 @@ export const extensionUiApi = {
   // more: the `rel="noopener noreferrer"` it puts on every link is a security
   // property, and a second copy of the renderer loses it with no symptom.
   Markdown,
+  // What `Markdown` already renders a `mermaid` fence with, exposed on its own
+  // for a surface holding diagram source that never was markdown. Shared
+  // because mermaid is a megabyte-class dependency fetched on first use, and
+  // because the host's copy is pinned to `securityLevel: 'strict'`.
+  MermaidDiagram,
   SecretSelector,
   Terminal,
   TerminalSelector,

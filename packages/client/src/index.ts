@@ -101,6 +101,66 @@ export interface MarkdownProps {
  */
 export declare const Markdown: FC<MarkdownProps>
 
+export interface CodeBlockEditorProps {
+  /** The code being edited. Controlled — the caller holds it. */
+  value: string
+  onChange: (value: string) => void
+  /**
+   * The fence's info string or a bare language name, resolved exactly the way
+   * `CodeBlock` resolves it. An unknown language edits fine, uncoloured.
+   */
+  language?: string
+  /** The shortest the editor gets, in lines, so an empty one is not a slot. Defaults to 6. */
+  minLines?: number
+  /** Added to the editor's own box, for the layout your surface needs. */
+  className?: string
+}
+
+/**
+ * Code that can be edited in place, coloured by the same highlighter as
+ * `CodeBlock`.
+ *
+ * A transparent textarea layered over highlighted text rather than a mounted
+ * editor, and that is the reason to reach for this instead of `CodeEditor`: it
+ * costs nothing to appear, so a surface can carry a dozen of them and any one
+ * can be typed into the instant it renders. `CodeEditor` buys line numbers,
+ * find and an undo stack of its own and pays for them with a Monaco mount —
+ * the right trade for one editor on a page and the wrong one for twelve.
+ *
+ * Shared from the host for `CodeBlock`'s reason too: the highlighter under it
+ * is one instance and one grammar cache for the whole page.
+ */
+export declare const CodeBlockEditor: FC<CodeBlockEditorProps>
+
+export interface MermaidDiagramProps {
+  /** The diagram source, exactly as it was written inside the fenced block. */
+  chart: string
+  /**
+   * Added to the wrapper, for the width constraints and clamps your surface
+   * needs — not for the diagram's own colours, which come from the mermaid
+   * theme. That theme follows the host's light/dark and is deliberately not
+   * stylable from here.
+   */
+  className?: string
+}
+
+/**
+ * A mermaid diagram, rendered from its source. Presentational and fully
+ * controlled: it fetches nothing and never rewrites the text it was handed.
+ * Source that does not parse falls back to showing that source with the parse
+ * error beneath it — the same fallback as a diagram that has not drawn yet,
+ * because to a reader those are the same situation.
+ *
+ * The host owns it for two reasons the types cannot show. mermaid is fetched
+ * through a dynamic import the first time a diagram appears, because it costs
+ * on the order of a megabyte gzipped — an extension bundling its own would pay
+ * that again, once per extension. And it is initialised at `securityLevel:
+ * 'strict'`, which is what keeps agent-authored source from rendering label
+ * text as raw HTML or installing a `click` handler; a second copy configured
+ * by hand is one option away from losing that with nothing to see.
+ */
+export declare const MermaidDiagram: FC<MermaidDiagramProps>
+
 /** Props the host passes to an App's component when rendering it in a space. */
 export interface AppComponentProps {
   /** Which added instance is being rendered — matches the server hooks' `instanceId`. */
