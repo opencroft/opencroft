@@ -1,22 +1,5 @@
 'use client'
 
-import { DiffEditor } from 'agent-chat/diff-editor'
-
-// @xyflow/react's `useKeyPress` calls `preventDefault()` on the keys it watches
-// unless the event came from an element its `isInputDOMNode` recognises —
-// INPUT / SELECT / TEXTAREA, `contenteditable`, or a `.nokey` ancestor. Monaco
-// takes input through the EditContext API on a plain div, so a caret inside a
-// diff would send Backspace to the canvas as node deletion. `nokey` is xyflow's
-// own opt-out, applied here rather than in agent-chat: the canvas is a host
-// concern and that package stays host-agnostic.
-function CanvasSafeDiffEditor(props: { current: string; next: string }) {
-  return (
-    <div className='nokey'>
-      <DiffEditor {...props} />
-    </div>
-  )
-}
-
 import { GitCompare, Loader2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
@@ -26,9 +9,35 @@ import { readRemoteFile } from '@/app/_authed/(approvals)/_server/actions'
 import { useCanvasNodes } from '@/app/_authed/(dashboard)/_canvas/canvas-nodes-context'
 import { NodeCard } from '@/app/_authed/(dashboard)/_canvas/node-card'
 import { useOptionalOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
+import { CodeEditor, type CodeEditorProps } from '@/components/code-editor'
 import { cn } from '@/lib/utils'
 import { exceedsClamp, OpBlock, OpRow } from './op-block'
 import { registerToolView, type ToolViewProps } from './registry'
+
+// The host's one editor, in diff mode: `original` is the before side, `value`
+// the after. Nothing here mounts a second editor component — see
+// components/code-editor for why that matters.
+//
+// @xyflow/react's `useKeyPress` calls `preventDefault()` on the keys it watches
+// unless the event came from an element its `isInputDOMNode` recognises —
+// INPUT / SELECT / TEXTAREA, `contenteditable`, or a `.nokey` ancestor. Monaco
+// takes input through the EditContext API on a plain div, so a caret inside a
+// diff would send Backspace to the canvas as node deletion. `nokey` is xyflow's
+// own opt-out. The editor now sets it on its own root as well, so this wrapper
+// is belt-and-braces — kept because the class is the contract the canvas reads,
+// and these diffs render inside the canvas whatever the editor does internally.
+//
+// Defaulted to `plaintext` rather than the editor's own default: these diffs
+// carry whatever the agent wrote — file contents, node property values, skill
+// bodies — and highlighting all of that as TypeScript is worse than not
+// highlighting it. Callers that know what they are showing pass `language`.
+function CanvasSafeDiffEditor({ language = 'plaintext', ...props }: CodeEditorProps) {
+  return (
+    <div className='nokey'>
+      <CodeEditor {...props} language={language} />
+    </div>
+  )
+}
 
 function FieldRow({ label, value }: { label: string; value: string }) {
   return (
@@ -128,7 +137,7 @@ function ToolDiffPanel({
         <NodeCard className='w-full'>
           <div className='px-3 py-2 space-y-2'>
             {label && <div className='font-mono text-xs'>{label}</div>}
-            <CanvasSafeDiffEditor current={current} next={next} />
+            <CanvasSafeDiffEditor original={current} value={next} />
           </div>
         </NodeCard>
       </div>
@@ -400,7 +409,7 @@ function RemoteEditView({ args, requestId, mode, result }: ToolViewProps) {
       pending={!result}
       overflowing={current !== null}
     >
-      {current !== null && <CanvasSafeDiffEditor current={current} next={next} />}
+      {current !== null && <CanvasSafeDiffEditor original={current} value={next} />}
     </OpBlock>
   )
 }
@@ -762,7 +771,11 @@ function NodeDiff({ mode, update }: { mode: ToolViewProps['mode']; update: NodeU
   return (
     <div className='px-3 py-2 space-y-2'>
       <div className='font-mono text-xs'>{label}</div>
-      <CanvasSafeDiffEditor current={JSON.stringify(current, null, 2)} next={JSON.stringify(next, null, 2)} />
+      <CanvasSafeDiffEditor
+        original={JSON.stringify(current, null, 2)}
+        value={JSON.stringify(next, null, 2)}
+        language='json'
+      />
     </div>
   )
 }

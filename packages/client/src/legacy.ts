@@ -389,18 +389,38 @@ export declare const CommandBarMenuItem: ComponentType<Record<string, unknown>>
 
 export type CodeEditorLanguage = 'typescript' | 'javascript' | 'python' | 'shell' | 'json' | 'plaintext'
 export interface CodeEditorProps {
+  /** In diff mode (`original` given) this is the modified side. */
   value: string
+  /**
+   * The unchanged side of a diff. Given -> this renders a diff; omitted -> an
+   * ordinary editor.
+   *
+   * Note that the two modes are two different components underneath
+   * (@monaco-editor/react's `Editor` and `DiffEditor`), so flipping `original`
+   * between undefined and defined remounts the editor and drops its undo
+   * history. That is acceptable for the intended use — a file does not turn
+   * into a diff mid-edit — but nothing in the type says so, so it is said here.
+   */
+  original?: string
   language?: CodeEditorLanguage
+  /** Applies to the editable side only; `original` is always read-only. */
   readOnly?: boolean
   onChange?: (value: string) => void
   /** Reveal and place the cursor on this 1-based line once, on mount. */
   line?: number
-  /** Defaults to filling its container, which must have a definite height. */
+  /**
+   * Defaults to filling its container, which must have a definite height — in
+   * diff mode it instead defaults to the content's own height, bounded, because
+   * diffs are meant to sit inline in a column of other content.
+   */
   height?: string | number
 }
 /**
- * The host's code editor. Provided here rather than imported from an editor
- * package so every surface shares one editor runtime — an extension bundle has
- * no runtime module resolver, so its own copy would initialise a second one.
+ * The host's code editor, in either of two modes: an ordinary editor, or —
+ * given `original` — a diff against it, with its own unified/split toggle.
+ *
+ * Provided here rather than imported from an editor package so every surface
+ * shares one editor runtime — an extension bundle has no runtime module
+ * resolver, so its own copy would initialise a second one.
  */
 export declare const CodeEditor: FC<CodeEditorProps>
