@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowDownToLine, Box, Download, Loader2, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
+import { Box, Download, Loader2, Plus, Search } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from 'ui/button'
@@ -13,10 +13,17 @@ import type {
   UpdateCheck,
 } from '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
 import type { LocalExtensionRecord } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions'
-import { installRegistryExtension, listRegistryExtensions } from '@/app/_authed/(extension-editor)/_actions/registry-actions'
+import {
+  installRegistryExtension,
+  listRegistryExtensions,
+} from '@/app/_authed/(extension-editor)/_actions/registry-actions'
 import type { RegistryExtension } from '@/app/_authed/(extension-runtime)/_server/registry'
 import { cn } from '@/lib/utils'
 
+// The index of what is installed on this instance, and the way to add more.
+// Rows are NAVIGATION and nothing else: what an extension is, and every act on
+// it — edit, update, uninstall — belongs to its own page, where the extension
+// being acted on is the thing on screen rather than one row of thirty.
 interface ExtensionsListPanelProps {
   records: LocalExtensionRecord[]
   installed: InstalledExtensionRecord[]
@@ -25,9 +32,6 @@ interface ExtensionsListPanelProps {
   onSelect: (extensionId: string) => void
   onNew: () => void
   onInstall: () => void
-  onDelete: (extensionId: string) => void
-  onUpdate: (extensionId: string) => void
-  onUninstall: (extensionId: string) => void
   onInstalled: (record: InstalledExtensionRecord) => void
 }
 
@@ -39,9 +43,6 @@ export function ExtensionsListPanel({
   onSelect,
   onNew,
   onInstall,
-  onDelete,
-  onUpdate,
-  onUninstall,
   onInstalled,
 }: ExtensionsListPanelProps) {
   const [query, setQuery] = useState('')
@@ -164,33 +165,18 @@ export function ExtensionsListPanel({
                 {records.map((record) => {
                   const isSelected = selectedId === record.id
                   return (
-                    <div
+                    <button
                       key={record.id}
+                      type='button'
+                      onClick={() => onSelect(record.id)}
                       className={cn(
-                        'group flex items-center px-3 py-1.5 text-xs hover:bg-accent/50 transition-colors',
+                        'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent/50',
                         isSelected && 'bg-accent/60',
                       )}
                     >
-                      <button
-                        onClick={() => onSelect(record.id)}
-                        className='flex-1 flex items-center gap-2 text-left min-w-0'
-                      >
-                        <Box className='size-3.5 shrink-0' />
-                        <span className='truncate'>{record.manifest.name}</span>
-                      </button>
-                      <Button
-                        size='icon'
-                        variant='ghost'
-                        className='size-5 opacity-60 text-muted-foreground hover:text-destructive'
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onDelete(record.id)
-                        }}
-                        title='Delete extension'
-                      >
-                        <Trash2 className='size-3' />
-                      </Button>
-                    </div>
+                      <Box className='size-3.5 shrink-0' />
+                      <span className='truncate'>{record.manifest.name}</span>
+                    </button>
                   )
                 })}
               </div>
@@ -203,69 +189,35 @@ export function ExtensionsListPanel({
                   const check = updateChecks[record.id]
                   const hasUpdate = check?.hasUpdate ?? false
                   return (
-                    <div
+                    <button
                       key={record.id}
+                      type='button'
+                      onClick={() => onSelect(record.id)}
+                      title={
+                        hasUpdate
+                          ? `${record.sidecar.source.name} · ${check?.latest} available`
+                          : record.sidecar.source.name
+                      }
                       className={cn(
-                        'group flex items-center px-3 py-1.5 text-xs hover:bg-accent/50 transition-colors',
+                        'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent/50',
                         isSelected && 'bg-accent/60',
                       )}
                     >
-                      <button
-                        onClick={() => onSelect(record.id)}
-                        className='flex-1 flex items-center gap-2 text-left min-w-0'
-                        title={record.sidecar.source.name}
+                      <Box className='size-3.5 shrink-0' />
+                      <span className='min-w-0 flex-1 truncate'>{record.manifest.name}</span>
+                      {/* The version, amber when a newer one exists. Stated
+                          rather than actioned: updating happens on the
+                          extension's own page, where what it replaces is
+                          visible. */}
+                      <span
+                        className={cn(
+                          'shrink-0 text-[10px] tabular-nums',
+                          hasUpdate ? 'text-amber-500' : 'text-muted-foreground',
+                        )}
                       >
-                        <Box className='size-3.5 shrink-0' />
-                        <span className='truncate flex-1'>{record.manifest.name}</span>
-                        <span
-                          className={cn(
-                            'shrink-0 text-[10px] tabular-nums',
-                            hasUpdate ? 'text-amber-500' : 'text-muted-foreground',
-                          )}
-                        >
-                          {record.sidecar.ref}
-                        </span>
-                      </button>
-                      {hasUpdate ? (
-                        <Button
-                          size='icon'
-                          variant='ghost'
-                          className='size-5 text-amber-500 hover:text-amber-400'
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onUpdate(record.id)
-                          }}
-                          title={`Update to ${check?.latest}`}
-                        >
-                          <ArrowDownToLine className='size-3' />
-                        </Button>
-                      ) : (
-                        <Button
-                          size='icon'
-                          variant='ghost'
-                          className='size-5 opacity-60 text-muted-foreground'
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onUpdate(record.id)
-                          }}
-                          title='Reinstall current version'
-                        >
-                          <RefreshCw className='size-3' />
-                        </Button>
-                      )}
-                      <Button
-                        size='icon'
-                        variant='ghost'
-                        className='size-5 opacity-60 text-muted-foreground hover:text-destructive'
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onUninstall(record.id)
-                        }}
-                        title='Uninstall'
-                      >
-                        <Trash2 className='size-3' />
-                      </Button>
-                    </div>
+                        {record.sidecar.ref}
+                      </span>
+                    </button>
                   )
                 })}
               </div>

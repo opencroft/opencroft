@@ -4,6 +4,7 @@ import type { BuildResult } from '@/app/_authed/(extension-runtime)/_types'
 import {
   compileLocalExtensionImpl,
   createLocalExtensionImpl,
+  deleteLocalExtensionFileImpl,
   deleteLocalExtensionImpl,
   getLocalExtensionImpl,
   type LocalExtensionRecord,
@@ -30,6 +31,10 @@ export const updateLocalExtension = createServerFn({ method: 'POST', strict: { o
 export const createLocalExtension = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((files: Record<string, string>) => files)
   .handler(async ({ data: files }): Promise<LocalExtensionRecord> => createLocalExtensionImpl(files))
+
+export const deleteLocalExtensionFile = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { extensionId: string; path: string }) => data)
+  .handler(async ({ data }): Promise<LocalExtensionRecord> => deleteLocalExtensionFileImpl(data))
 
 export const deleteLocalExtension = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((extensionId: string) => extensionId)

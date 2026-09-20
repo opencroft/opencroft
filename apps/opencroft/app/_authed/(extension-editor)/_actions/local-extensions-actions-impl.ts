@@ -247,6 +247,41 @@ export async function createLocalExtensionImpl(files: Record<string, string>): P
   return record
 }
 
+/**
+ * Remove ONE file from a local extension.
+ *
+ * Its own operation rather than a consequence of `updateLocalExtensionImpl`,
+ * which writes the files it is handed and touches nothing else: a caller that
+ * sends a subset — an MCP tool writing a single file — must not have the rest
+ * of the extension deleted out from under it. So an omission never deletes,
+ * and deleting is asked for by name.
+ */
+export async function deleteLocalExtensionFileImpl(data: {
+  extensionId: string
+  path: string
+}): Promise<LocalExtensionRecord> {
+  const { extensionId } = data
+  const slug = slugFromId(extensionId)
+  const dir = extDirPath(slug)
+  const target = path.resolve(dir, data.path)
+  const relative = path.relative(dir, target)
+  // A path that climbs out of the extension's own directory is refused rather
+  // than normalised: there is no reading of "../../etc" this should serve.
+  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(`Refusing to delete a path outside ${extensionId}: ${data.path}`)
+  }
+  if (relative === MANIFEST_FILE) {
+    throw new Error(`Refusing to delete ${MANIFEST_FILE} — it is what makes ${extensionId} an extension`)
+  }
+  await fs.rm(target, { recursive: true, force: true })
+  flushCache(extensionId)
+  const record = await loadExtension(slug)
+  if (!record) {
+    throw new Error(`Failed to read extension ${extensionId} after deleting ${data.path}`)
+  }
+  return record
+}
+
 export async function deleteLocalExtensionImpl(extensionId: string): Promise<void> {
   const slug = slugFromId(extensionId)
   const dir = extDirPath(slug)

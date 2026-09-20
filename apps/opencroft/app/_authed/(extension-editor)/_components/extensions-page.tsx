@@ -1,7 +1,18 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from 'ui/alert-dialog'
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
 import { Flex } from 'ui/layout/flex'
 
 import {
@@ -13,26 +24,20 @@ import {
   updateInstalledExtension,
 } from '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
 import {
-  compileLocalExtension,
   createLocalExtension,
   deleteLocalExtension,
   type LocalExtensionRecord,
   listLocalExtensions,
-  updateLocalExtension,
 } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions'
-import { ExtensionWorkspace } from '@/app/_authed/(extension-editor)/_components/extension-workspace'
+import {
+  ExtensionDetail,
+  type ExtensionRecord,
+  isInstalledRecord,
+} from '@/app/_authed/(extension-editor)/_components/extension-detail'
+import { ExtensionSourceEditor } from '@/app/_authed/(extension-editor)/_components/extension-source-editor'
 import { ExtensionsListPanel } from '@/app/_authed/(extension-editor)/_components/extensions-list-panel'
 import { InstallExtensionDialog } from '@/app/_authed/(extension-editor)/_components/install-extension-dialog'
 import { extensionTemplate } from '@/app/_authed/(extension-editor)/_templates/template'
-import { loadExtension } from '@/app/_authed/(extension-runtime)/_client/loader'
-import type { CompileError } from '@/app/_authed/(extension-runtime)/_types'
-
-function recordSignature(files: Record<string, string>): string {
-  return Object.entries(files)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}\n${v}`)
-    .join('\n\u0000\n')
-}
 
 function pickUntitledSlug(existing: LocalExtensionRecord[]): string {
   const taken = new Set(existing.map((r) => r.slug))
@@ -43,22 +48,22 @@ function pickUntitledSlug(existing: LocalExtensionRecord[]): string {
   return i === 1 ? 'untitled' : `untitled-${i}`
 }
 
+// The extensions section: the list on the left, and what is selected on the
+// right. A row press opens the extension's PAGE — what it is, what it
+// contributes and where its source stands — and editing and deleting are acts
+// offered there, with the extension in front of you, rather than from a row.
+//
+// The editor takes the whole surface when it opens, like the design kit's
+// does: three panes need the room, and the way back is the header's own.
 export default function ExtensionsPage() {
   const [records, setRecords] = useState<LocalExtensionRecord[]>([])
   const [installed, setInstalled] = useState<InstalledExtensionRecord[]>([])
   const [updateChecks, setUpdateChecks] = useState<Record<string, UpdateCheck>>({})
   const [installDialogOpen, setInstallDialogOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [files, setFiles] = useState<Record<string, string>>({})
-  const [savedSignature, setSavedSignature] = useState<string>('')
-  const [activeFile, setActiveFile] = useState<string>('extension.json')
+  const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [errors, setErrors] = useState<CompileError[]>([])
-  const [warnings, setWarnings] = useState<CompileError[]>([])
-  const [previewTypeId, setPreviewTypeId] = useState<string | null>(null)
-  const [previewVersion, setPreviewVersion] = useState(0)
-  const autoPersistTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const lastAutoSignature = useRef<string>('')
+  const [deleteTarget, setDeleteTarget] = useState<ExtensionRecord | null>(null)
 
   const refresh = useCallback(async (): Promise<{
     local: LocalExtensionRecord[]
@@ -95,130 +100,33 @@ export default function ExtensionsPage() {
     })
   }, [refresh, checkAllUpdates])
 
-  const selected = useMemo(
+  const selected = useMemo<ExtensionRecord | null>(
     () => records.find((r) => r.id === selectedId) ?? installed.find((r) => r.id === selectedId) ?? null,
     [records, installed, selectedId],
   )
 
-  // Load files when selection changes
-  useEffect(() => {
-    setPreviewTypeId(null)
-    if (selected) {
-      setFiles({ ...selected.files })
-      setSavedSignature(recordSignature(selected.files))
-      setErrors([])
-      setWarnings([])
-      const fileKeys = Object.keys(selected.files).sort()
-      const firstNonManifest = fileKeys.find((f) => f !== 'extension.json')
-      setActiveFile(firstNonManifest ?? 'extension.json')
-    } else {
-      setFiles({})
-      setActiveFile('extension.json')
-    }
-  }, [selectedId, selected])
-
-  const dirty = useMemo(() => {
-    return recordSignature(files) !== savedSignature
-  }, [files, savedSignature])
-
-  const autoPersistAndCompile = useCallback(async () => {
-    if (!selectedId || Object.keys(files).length === 0) {
-      return
-    }
-    if (selectedId.startsWith('installed/')) {
-      return
-    }
-    try {
-      JSON.parse(files['extension.json'] ?? '{}')
-    } catch {
-      return
-    }
-    const signature = recordSignature(files)
-    if (signature === lastAutoSignature.current) {
-      return
-    }
-    lastAutoSignature.current = signature
-    setBusy(true)
-    setErrors([])
-    setWarnings([])
-    try {
-      const record = await updateLocalExtension({ data: { extensionId: selectedId, files } })
-      setSavedSignature(recordSignature(record.files))
-      setRecords((prev) => prev.map((r) => (r.id === record.id ? record : r)))
-      const result = await compileLocalExtension({ data: selectedId })
-      setErrors(result.errors)
-      setWarnings(result.warnings)
-      if (result.success) {
-        const decl = await loadExtension(record.manifest)
-        if (decl && decl.nodes && decl.nodes[0]) {
-          setPreviewTypeId(decl.nodes[0].typeId)
-          setPreviewVersion((v) => v + 1)
-        }
-      }
-    } catch (err) {
-      console.error('[editor] auto-compile failed', err)
-    } finally {
-      setBusy(false)
-    }
-  }, [files, selectedId])
-
-  useEffect(() => {
-    if (!dirty || Object.keys(files).length === 0 || !selectedId) {
-      return
-    }
-    if (autoPersistTimer.current) {
-      clearTimeout(autoPersistTimer.current)
-    }
-    autoPersistTimer.current = setTimeout(() => {
-      autoPersistAndCompile()
-    }, 700)
-    return () => {
-      if (autoPersistTimer.current) {
-        clearTimeout(autoPersistTimer.current)
-      }
-    }
-  }, [dirty, files, selectedId, autoPersistAndCompile])
-
-  useEffect(() => {
-    lastAutoSignature.current = savedSignature
-  }, [selectedId, savedSignature])
-
-  const handleChange = useCallback((file: string, value: string) => {
-    setFiles((prev) => ({ ...prev, [file]: value }))
+  const handleSelect = useCallback((extensionId: string) => {
+    setSelectedId(extensionId)
+    setEditing(false)
   }, [])
 
-  const handleCreateFile = useCallback((filePath: string) => {
-    setFiles((prev) => ({ ...prev, [filePath]: '' }))
-    setActiveFile(filePath)
+  // A save in the editor makes the list's copy of that extension stale — the
+  // manifest it was renamed in, the files the detail page counts.
+  const handleSaved = useCallback((saved: LocalExtensionRecord) => {
+    setRecords((prev) => prev.map((record) => (record.id === saved.id ? saved : record)))
   }, [])
-
-  const handleDeleteFile = useCallback(
-    (filePath: string) => {
-      setFiles((prev) => {
-        const next = { ...prev }
-        delete next[filePath]
-        return next
-      })
-      setActiveFile((current) => {
-        if (current === filePath) {
-          const remaining = Object.keys(files).filter((f) => f !== filePath)
-          return remaining[0] ?? 'extension.json'
-        }
-        return current
-      })
-    },
-    [files],
-  )
 
   const handleNew = useCallback(async () => {
     setBusy(true)
     try {
       const list = await listLocalExtensions()
       const slug = pickUntitledSlug(list)
-      const templateFiles = extensionTemplate(slug)
-      const record = await createLocalExtension({ data: templateFiles })
+      const record = await createLocalExtension({ data: extensionTemplate(slug) })
       await refresh()
       setSelectedId(record.id)
+      // Straight into the editor: a template has nothing to read about yet,
+      // and writing it is the only reason it was created.
+      setEditing(true)
       toast.success(`Created ${record.manifest.name}`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -227,34 +135,11 @@ export default function ExtensionsPage() {
     }
   }, [refresh])
 
-  const handleDelete = useCallback(
-    async (extensionId: string) => {
-      const record = records.find((r) => r.id === extensionId)
-      if (!confirm(`Delete ${record?.manifest.name ?? extensionId}?`)) {
-        return
-      }
-      setBusy(true)
-      try {
-        await deleteLocalExtension({ data: extensionId })
-        await refresh()
-        if (selectedId === extensionId) {
-          setSelectedId(null)
-          setFiles({})
-        }
-        toast.success('Extension deleted')
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err))
-      } finally {
-        setBusy(false)
-      }
-    },
-    [records, selectedId, refresh],
-  )
-
   const handleInstalled = useCallback(
     async (record: InstalledExtensionRecord) => {
       const { installed: list } = await refresh()
       setSelectedId(record.id)
+      setEditing(false)
       checkAllUpdates(list)
     },
     [refresh, checkAllUpdates],
@@ -278,78 +163,113 @@ export default function ExtensionsPage() {
     [updateChecks, refresh, checkAllUpdates],
   )
 
-  const handleUninstall = useCallback(
-    async (extensionId: string) => {
-      const record = installed.find((r) => r.id === extensionId)
-      if (!confirm(`Uninstall ${record?.manifest.name ?? extensionId}?`)) {
-        return
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget) {
+      return
+    }
+    const target = deleteTarget
+    setDeleteTarget(null)
+    setBusy(true)
+    try {
+      if (isInstalledRecord(target)) {
+        await uninstallExtension({ data: target.id })
+      } else {
+        await deleteLocalExtension({ data: target.id })
       }
-      setBusy(true)
-      try {
-        await uninstallExtension({ data: extensionId })
-        const { installed: list } = await refresh()
-        if (selectedId === extensionId) {
-          setSelectedId(null)
-          setFiles({})
-        }
-        checkAllUpdates(list)
-        toast.success('Extension uninstalled')
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err))
-      } finally {
-        setBusy(false)
+      const { installed: list } = await refresh()
+      if (selectedId === target.id) {
+        setSelectedId(null)
+        setEditing(false)
       }
-    },
-    [installed, selectedId, refresh, checkAllUpdates],
-  )
+      checkAllUpdates(list)
+      toast.success(isInstalledRecord(target) ? 'Extension uninstalled' : 'Extension deleted')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }, [deleteTarget, selectedId, refresh, checkAllUpdates])
 
-  const title = selected ? `${selected.manifest.name} · ${selected.id}` : 'Select a local extension'
+  if (editing && selected) {
+    return (
+      <ExtensionSourceEditor
+        key={selected.id}
+        record={selected}
+        onBack={() => setEditing(false)}
+        onSaved={handleSaved}
+      />
+    )
+  }
 
   return (
-    <Flex expanded className='h-full w-full'>
-      <Flex row align='center' className='gap-2 p-3 border-b'>
-        <span className='text-sm font-semibold'>Extensions</span>
-      </Flex>
-      <Flex row expanded className='min-h-0'>
-        <ExtensionsListPanel
-          records={records}
-          installed={installed}
-          updateChecks={updateChecks}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-          onNew={handleNew}
-          onInstall={() => setInstallDialogOpen(true)}
-          onDelete={handleDelete}
-          onUpdate={handleUpdate}
-          onUninstall={handleUninstall}
-          onInstalled={handleInstalled}
+    <Flex row expanded className='h-full w-full min-h-0'>
+      <ExtensionsListPanel
+        records={records}
+        installed={installed}
+        updateChecks={updateChecks}
+        selectedId={selectedId}
+        onSelect={handleSelect}
+        onNew={handleNew}
+        onInstall={() => setInstallDialogOpen(true)}
+        onInstalled={handleInstalled}
+      />
+      <InstallExtensionDialog
+        open={installDialogOpen}
+        onOpenChange={setInstallDialogOpen}
+        onInstalled={handleInstalled}
+      />
+
+      {selected ? (
+        <ExtensionDetail
+          key={selected.id}
+          record={selected}
+          updateCheck={updateChecks[selected.id]}
+          busy={busy}
+          onEdit={() => setEditing(true)}
+          onUpdate={() => handleUpdate(selected.id)}
+          onDelete={() => setDeleteTarget(selected)}
         />
-        <InstallExtensionDialog
-          open={installDialogOpen}
-          onOpenChange={setInstallDialogOpen}
-          onInstalled={handleInstalled}
-        />
-        {selectedId && Object.keys(files).length > 0 ? (
-          <ExtensionWorkspace
-            title={title}
-            files={files}
-            activeFile={activeFile}
-            busy={busy}
-            errors={errors}
-            warnings={warnings}
-            previewTypeId={previewTypeId}
-            previewVersion={previewVersion}
-            onFileSelect={setActiveFile}
-            onCreateFile={handleCreateFile}
-            onDeleteFile={handleDeleteFile}
-            onChange={handleChange}
-          />
-        ) : (
-          <Flex expanded align='center' justify='center' className='text-sm text-muted-foreground'>
-            Select a local extension from the list, or click + to create a new one.
-          </Flex>
-        )}
-      </Flex>
+      ) : (
+        <Flex expanded align='center' justify='center' className='min-w-0'>
+          <Empty>
+            <EmptyHeader>
+              <EmptyTitle>No extension selected</EmptyTitle>
+              <EmptyDescription>
+                Choose an extension to see what it provides, or create one with + to start from a template.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </Flex>
+      )}
+
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null)
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {deleteTarget && isInstalledRecord(deleteTarget) ? 'Uninstall' : 'Delete'}{' '}
+              {deleteTarget?.manifest.name ?? 'this extension'}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget && isInstalledRecord(deleteTarget)
+                ? 'The installed copy is removed from this instance. Its nodes disappear from the palette, and graphs using them stop resolving until it is installed again.'
+                : 'The extension directory and its files are deleted from this instance. Its nodes disappear from the palette, and this cannot be undone.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void confirmDelete()}>
+              {deleteTarget && isInstalledRecord(deleteTarget) ? 'Uninstall' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Flex>
   )
 }
