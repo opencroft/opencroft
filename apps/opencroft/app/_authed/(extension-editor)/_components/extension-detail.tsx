@@ -3,6 +3,7 @@
 import {
   ArrowDownToLine,
   Cable,
+  ChevronRight,
   ExternalLink,
   FileText,
   LayoutGrid,
@@ -16,6 +17,7 @@ import {
 import { type ReactNode, useState } from 'react'
 import { Badge } from 'ui/badge'
 import { Button } from 'ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/collapsible'
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from 'ui/item'
 import { ScrollArea } from 'ui/layout/scroll-area'
 import { PanelTabStrip } from 'ui/layouts/panel-tab-strip'
@@ -54,9 +56,33 @@ interface ProvidedApp {
   slug?: string
   title?: string
   description?: string
-  parameters?: unknown[]
-  handles?: unknown[]
-  actions?: unknown[]
+  parameters?: ProvidedAppParameter[]
+  handles?: ProvidedAppHandle[]
+  actions?: ProvidedAppAction[]
+}
+
+/** What an app is added with. */
+interface ProvidedAppParameter {
+  id?: string
+  label?: string
+  description?: string
+  required?: boolean
+}
+
+/** What an app answers — the same shape an MCP caller sees. */
+interface ProvidedAppAction {
+  id?: string
+  label?: string
+  description?: string
+  inputSchema?: { properties?: Record<string, unknown>; required?: string[] }
+}
+
+/** What an app puts on the canvas. */
+interface ProvidedAppHandle {
+  id?: string
+  label?: string
+  contextType?: string
+  dynamic?: boolean
 }
 
 /** `provides.dashboards` — the other provider point anything here uses. */
@@ -114,35 +140,178 @@ function shortCommit(commit: string | null): string | null {
   return commit ? commit.slice(0, 7) : null
 }
 
-function NodeList({ nodes }: { nodes: NodeMetadata[] }) {
+/** One group of what something declares — an app's parameters, actions or
+ *  handles, a node's handles or actions — behind its own summary line.
+ *
+ *  Closed by default. The tab answers "what does this extension contribute"
+ *  first, and one app here declares twenty-three actions with a paragraph
+ *  each; opening them all by default would bury the second app below a screen
+ *  of the first one's reference documentation. */
+function DetailGroup({ label, count, children }: { label: string; count: number; children: ReactNode }) {
+  if (count === 0) {
+    return null
+  }
   return (
-    <ItemGroup className='divide-y rounded-md border'>
+    <Collapsible className='group/detailgroup border-t'>
+      {/* The whole line is the toggle, not the chevron: a 14px glyph is a poor
+          press target and the words beside it are a good one. */}
+      <CollapsibleTrigger className='flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground'>
+        <ChevronRight
+          aria-hidden='true'
+          className='size-3.5 shrink-0 transition-transform group-data-[state=open]/detailgroup:rotate-90'
+        />
+        {count} {label}
+        {count === 1 ? '' : 's'}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className='flex flex-col gap-2 px-4 pb-3'>{children}</div>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+/** An action's own parameters, read off its JSON schema: the names, with the
+ *  optional ones marked. The schema itself is a tool's contract and belongs in
+ *  the editor; what a reader of this page wants is what the action takes. */
+function schemaParams(action: ProvidedAppAction): string[] {
+  const properties = action.inputSchema?.properties
+  if (!properties || typeof properties !== 'object') {
+    return []
+  }
+  const required = Array.isArray(action.inputSchema?.required) ? action.inputSchema.required : []
+  return Object.keys(properties).map((name) => (required.includes(name) ? name : `${name}?`))
+}
+
+function AppCard({ app }: { app: ProvidedApp }) {
+  const parameters = app.parameters ?? []
+  const actions = app.actions ?? []
+  const handles = app.handles ?? []
+
+  return (
+    <div className='rounded-md border'>
+      <div className='flex flex-col gap-1 px-4 py-3'>
+        <div className='flex min-w-0 items-baseline gap-2'>
+          <span className='text-sm font-medium'>{app.title ?? app.slug}</span>
+          {app.slug ? <span className='truncate font-mono text-xs text-muted-foreground'>{app.slug}</span> : null}
+        </div>
+        {app.description ? <p className='max-w-prose text-xs text-muted-foreground'>{app.description}</p> : null}
+      </div>
+
+      <DetailGroup label='parameter' count={parameters.length}>
+        {parameters.map((parameter) => (
+          <div key={parameter.id ?? parameter.label} className='flex min-w-0 flex-col'>
+            <span className='flex items-baseline gap-2 text-xs'>
+              <span className='font-mono'>{parameter.id}</span>
+              <span className='text-muted-foreground'>{parameter.label}</span>
+              {parameter.required ? <span className='text-amber-600'>required</span> : null}
+            </span>
+            {parameter.description ? (
+              <span className='text-xs text-muted-foreground'>{parameter.description}</span>
+            ) : null}
+          </div>
+        ))}
+      </DetailGroup>
+
+      <DetailGroup label='action' count={actions.length}>
+        {actions.map((action) => {
+          const params = schemaParams(action)
+          return (
+            <div key={action.id ?? action.label} className='flex min-w-0 flex-col'>
+              <span className='flex flex-wrap items-baseline gap-2 text-xs'>
+                <span className='font-mono'>{action.id}</span>
+                <span className='text-muted-foreground'>{action.label}</span>
+              </span>
+              {params.length > 0 ? (
+                <span className='font-mono text-xs text-muted-foreground'>({params.join(', ')})</span>
+              ) : null}
+              {action.description ? (
+                <span className='max-w-prose text-xs text-muted-foreground'>{action.description}</span>
+              ) : null}
+            </div>
+          )
+        })}
+      </DetailGroup>
+
+      <DetailGroup label='handle' count={handles.length}>
+        {handles.map((handle) => (
+          <div key={handle.id ?? handle.label} className='flex min-w-0 flex-wrap items-baseline gap-2 text-xs'>
+            <span className='font-mono'>{handle.id}</span>
+            <span className='text-muted-foreground'>{handle.label}</span>
+            {handle.contextType ? (
+              <Badge variant='outline' className='font-mono text-xs'>
+                {handle.contextType}
+              </Badge>
+            ) : null}
+            {handle.dynamic ? <span className='text-muted-foreground'>dynamic</span> : null}
+          </div>
+        ))}
+      </DetailGroup>
+    </div>
+  )
+}
+
+// Same card as an app's, for the same reason: a node's handles and actions are
+// declared in the manifest, so a count of them is a fact the page is holding
+// back rather than one it does not have.
+function NodeCardList({ nodes }: { nodes: NodeMetadata[] }) {
+  return (
+    <div className='flex flex-col gap-3'>
       {nodes.map((node) => {
         const handles = node.handles ?? []
         const actions = node.actions ?? []
         return (
-          <Item key={node.typeId} size='sm'>
-            <ItemContent>
-              <ItemTitle>{node.name}</ItemTitle>
-              <ItemDescription className='font-mono'>{node.typeId}</ItemDescription>
-              {node.description ? <ItemDescription>{node.description}</ItemDescription> : null}
-              {handles.length > 0 || actions.length > 0 ? (
-                <ItemDescription>
-                  {handles.length > 0 ? `${handles.length} handle${handles.length === 1 ? '' : 's'}` : null}
-                  {handles.length > 0 && actions.length > 0 ? ' · ' : null}
-                  {actions.length > 0 ? `${actions.length} action${actions.length === 1 ? '' : 's'}` : null}
-                </ItemDescription>
+          <div key={node.typeId} className='rounded-md border'>
+            <div className='flex flex-col gap-1 px-4 py-3'>
+              <div className='flex min-w-0 items-baseline gap-2'>
+                <span className='text-sm font-medium'>{node.name}</span>
+                <span className='truncate font-mono text-xs text-muted-foreground'>{node.typeId}</span>
+                {node.category ? (
+                  <Badge variant='secondary' className='ml-auto shrink-0'>
+                    {node.category}
+                  </Badge>
+                ) : null}
+              </div>
+              {node.description ? (
+                <p className='max-w-prose text-xs text-muted-foreground'>{node.description}</p>
               ) : null}
-            </ItemContent>
-            {node.category ? (
-              <Badge variant='secondary' className='shrink-0'>
-                {node.category}
-              </Badge>
-            ) : null}
-          </Item>
+            </div>
+
+            <DetailGroup label='handle' count={handles.length}>
+              {handles.map((handle) => (
+                <div
+                  key={`${handle.role}:${handle.id}`}
+                  className='flex min-w-0 flex-wrap items-baseline gap-2 text-xs'
+                >
+                  <span className='font-mono'>{handle.id}</span>
+                  <span className='text-muted-foreground'>{handle.label}</span>
+                  <Badge variant='outline' className='font-mono text-xs'>
+                    {handle.contextType}
+                  </Badge>
+                  {/* Which way it points, in the graph's own words: a source
+                      hands a value on, a target takes one in. */}
+                  <span className='text-muted-foreground'>{handle.role === 'source' ? 'out' : 'in'}</span>
+                  {handle.dynamic ? <span className='text-muted-foreground'>dynamic</span> : null}
+                </div>
+              ))}
+            </DetailGroup>
+
+            <DetailGroup label='action' count={actions.length}>
+              {actions.map((action) => (
+                <div key={action.id} className='flex min-w-0 flex-col'>
+                  <span className='flex flex-wrap items-baseline gap-2 text-xs'>
+                    <span className='font-mono'>{action.id}</span>
+                    <span className='text-muted-foreground'>{action.label}</span>
+                  </span>
+                  {action.description ? (
+                    <span className='max-w-prose text-xs text-muted-foreground'>{action.description}</span>
+                  ) : null}
+                </div>
+              ))}
+            </DetailGroup>
+          </div>
         )
       })}
-    </ItemGroup>
+    </div>
   )
 }
 
@@ -309,26 +478,11 @@ export function ExtensionDetail({
             <>
               {apps.length > 0 ? (
                 <Section title={`Apps (${apps.length})`}>
-                  <ItemGroup className='divide-y rounded-md border'>
+                  <div className='flex flex-col gap-3'>
                     {apps.map((app) => (
-                      <Item key={app.slug ?? app.title} size='sm'>
-                        <ItemContent>
-                          <ItemTitle>{app.title ?? app.slug}</ItemTitle>
-                          {app.slug ? <ItemDescription className='font-mono'>{app.slug}</ItemDescription> : null}
-                          {app.description ? <ItemDescription>{app.description}</ItemDescription> : null}
-                          <ItemDescription>
-                            {[
-                              app.parameters?.length ? `${app.parameters.length} parameters` : null,
-                              app.actions?.length ? `${app.actions.length} actions` : null,
-                              app.handles?.length ? `${app.handles.length} handles` : null,
-                            ]
-                              .filter(Boolean)
-                              .join(' · ')}
-                          </ItemDescription>
-                        </ItemContent>
-                      </Item>
+                      <AppCard key={app.slug ?? app.title} app={app} />
                     ))}
-                  </ItemGroup>
+                  </div>
                 </Section>
               ) : null}
               {/* A dashboard is the other thing an extension contributes to a
@@ -356,7 +510,7 @@ export function ExtensionDetail({
             </>
           ) : null}
 
-          {tab === 'nodes' ? <NodeList nodes={nodes} /> : null}
+          {tab === 'nodes' ? <NodeCardList nodes={nodes} /> : null}
 
           {tab === 'handles' ? (
             <>
