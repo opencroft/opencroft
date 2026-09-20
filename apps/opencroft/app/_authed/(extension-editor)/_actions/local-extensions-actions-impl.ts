@@ -7,6 +7,7 @@ import {
   refuseCompile,
 } from '@/app/_authed/(extension-runtime)/_server/checkout-state'
 import { buildExtension } from '@/app/_authed/(extension-runtime)/_server/compiler'
+import { runGit } from '@/app/_authed/(extension-runtime)/_server/git-exec'
 import { flushCache } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { BUILD_PROVENANCE_FILE, localExtRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
 import type { BuildResult, CompileRefusal, ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
@@ -48,6 +49,18 @@ export interface LocalExtensionRecord extends CheckoutState {
    * `sourceCommit` says the two differ; this says why they are being kept apart.
    */
   refusal: CompileRefusal | null
+  /**
+   * When `sourceCommit` was committed, ISO 8601, or null when there is no
+   * checkout to ask.
+   *
+   * Read for ONE extension rather than for a list — it is a fourth git call
+   * per directory and nothing in a list shows it. It exists because the page
+   * used to report the extension directory's mtime as "Updated", which is not
+   * when the extension last changed: a directory's mtime moves when an entry
+   * in it is added or removed and stays put while a file three levels down is
+   * rewritten. The commit date is the question that was being asked.
+   */
+  sourceCommitDate: string | null
 }
 
 interface BuiltProvenance {
@@ -126,6 +139,16 @@ async function readSourceFile(file: string): Promise<string | null> {
   return buffer.includes(0) ? null : buffer.toString('utf-8')
 }
 
+/** When HEAD was committed, ISO 8601, or null when this is not a checkout. */
+async function readCommitDate(dir: string): Promise<string | null> {
+  try {
+    const { stdout } = await runGit(['-C', dir, 'log', '-1', '--format=%cI'])
+    return stdout.trim() || null
+  } catch {
+    return null
+  }
+}
+
 async function dirMtime(dir: string): Promise<number> {
   try {
     const stat = await fs.stat(dir)
@@ -174,7 +197,7 @@ async function listFilesRecursive(dir: string, base: string = ''): Promise<Recor
  * and a list shows none of them: it draws names. They are read when one
  * extension is opened, by `getLocalExtensionImpl`.
  */
-export type LocalExtensionSummary = Omit<LocalExtensionRecord, 'files'>
+export type LocalExtensionSummary = Omit<LocalExtensionRecord, 'files' | 'sourceCommitDate'>
 
 async function loadExtensionSummary(slug: string): Promise<LocalExtensionSummary | null> {
   const dir = extDirPath(slug)
@@ -215,6 +238,7 @@ async function loadExtension(slug: string): Promise<LocalExtensionRecord | null>
   const manifest = JSON.parse(manifestRaw) as ExtensionManifest
   const files = await listFilesRecursive(dir)
   const checkout = await readCheckoutState(dir)
+  const commitDate = await readCommitDate(dir)
   const built = await readBuiltProvenance(dir)
   return {
     id: `local/${slug}`,
@@ -231,6 +255,7 @@ async function loadExtension(slug: string): Promise<LocalExtensionRecord | null>
     // No override here: the record reports what the automatic path would do, and
     // that path has no override.
     refusal: refuseCompile(checkout, false),
+    sourceCommitDate: commitDate,
   }
 }
 

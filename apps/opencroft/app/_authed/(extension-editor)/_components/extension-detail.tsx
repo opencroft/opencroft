@@ -202,7 +202,6 @@ export function ExtensionDetail({
   const apps = provided<ProvidedApp>(manifest, 'apps')
   const dashboards = provided<ProvidedDashboard>(manifest, 'dashboards')
   const dependencies = manifest.extensionDependencies ?? []
-  const fileCount = Object.keys(record.files).length
   const hasUpdate = updateCheck?.hasUpdate ?? false
   // A local checkout is offered an update only when origin has a commit it
   // does not, and nothing is in the way of taking it.
@@ -290,13 +289,8 @@ export function ExtensionDetail({
                   This extension's manifest carries no description.
                 </p>
               )}
-              <div className='flex flex-col gap-1.5'>
-                <Field label='Identifier'>
-                  <Mono>{manifest.id}</Mono>
-                </Field>
-                <Field label='Files'>{fileCount}</Field>
-                <Field label='Updated'>{new Date(record.updatedAt).toLocaleString()}</Field>
-                {dependencies.length > 0 ? (
+              {dependencies.length > 0 ? (
+                <div className='flex flex-col gap-1.5'>
                   <Field label='Depends on'>
                     <span className='flex flex-wrap gap-1'>
                       {dependencies.map((dep) => (
@@ -306,8 +300,8 @@ export function ExtensionDetail({
                       ))}
                     </span>
                   </Field>
-                ) : null}
-              </div>
+                </div>
+              ) : null}
             </>
           ) : null}
 
@@ -411,9 +405,21 @@ export function ExtensionDetail({
                   <>
                     <Field label='Checkout'>
                       {record.sourceCommit ? (
-                        <Mono>
-                          {record.branch ?? 'detached'} · {shortCommit(record.sourceCommit)}
-                        </Mono>
+                        <span className='flex flex-wrap items-baseline gap-2'>
+                          <Mono>
+                            {record.branch ?? 'detached'} · {shortCommit(record.sourceCommit)}
+                          </Mono>
+                          {/* When that commit was made — the honest version of
+                              the "Updated" this page used to print, which was
+                              the extension directory's mtime and moved for
+                              reasons that had nothing to do with the
+                              extension changing. */}
+                          {record.sourceCommitDate ? (
+                            <span className='text-xs text-muted-foreground'>
+                              committed {new Date(record.sourceCommitDate).toLocaleString()}
+                            </span>
+                          ) : null}
+                        </span>
                       ) : (
                         <span className='text-muted-foreground'>Not a git checkout</span>
                       )}
