@@ -4603,3 +4603,85 @@ test('asleep, group_chat_send returns exactly the result it returns awake', asyn
     setSleepMode(false)
   }
 })
+
+// The negative control for the pair above, and it guards a different mistake
+// than reintroducing the flag. Both tests above are satisfied by a `queued`
+// that is hardwired to false — delete the turn check entirely and they still
+// pass. So this one proves the value is still REACHABLE: awake, an idle
+// session reports delivered and a session with a turn actually running reports
+// queued. Without it, "the mode no longer moves this field" is indistinguishable
+// from "nothing moves this field".
+test('awake, the status still tracks the running turn — delivered when idle, queued behind a turn', async () => {
+  const { isSleepMode } = await import('@/app/_authed/(mcp)/_server/sleep-mode')
+  const owner = await makeUser('awake-control-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'awake status control')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, NODE_PRINCIPAL)
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({
+      groupChatId: chat.id,
+      agentNodeId: 'agent-session',
+      sessionKey: `group-chat:${chat.id}:agent-session:awake-control-fixture`,
+      createdByUserId: owner.id,
+    })
+    .returning()
+  assert.ok(thread)
+
+  const prompts: string[] = []
+  let releaseTurn: (() => void) | undefined
+  const heldTurn = new Promise<void>((resolve) => {
+    releaseTurn = resolve
+  })
+  let promptCalls = 0
+  const connection = {
+    newSession: async () => ({ sessionId: `awake-${crypto.randomUUID()}` }),
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      // Recorded BEFORE the wait, so waitForPrompts below returns while this
+      // turn is still in flight — which is the state the second delivery has
+      // to meet.
+      prompts.push(params.prompt.map((b) => b.text ?? '').join(''))
+      promptCalls += 1
+      if (promptCalls === 1) {
+        await heldTurn
+      }
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', slug('Agent Session')),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store)
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  try {
+    assert.equal(isSleepMode(), false, 'precondition: awake, so the turn is the only thing that can move the status')
+
+    const idle = await model.deliverThreadFromNode(thread.sessionKey, 'first', NODE_PRINCIPAL, 'wait', 'Node')
+    assert.equal(idle.status, 'delivered', 'an idle session reports delivered')
+
+    await waitForPrompts(prompts, 1)
+    const behind = await model.deliverThreadFromNode(thread.sessionKey, 'second', NODE_PRINCIPAL, 'wait', 'Node')
+    assert.equal(behind.status, 'queued', 'and a session with a turn running reports queued — the value is still produced')
+  } finally {
+    releaseTurn?.()
+  }
+
+  await waitForPrompts(prompts, 2)
+  assert.match(prompts[1] ?? '', /second/, 'and what queued behind the turn is delivered once it ends')
+})
