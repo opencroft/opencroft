@@ -1562,6 +1562,28 @@ function matchModelValue(options: unknown, model: string): string | undefined {
   return bySuffix.length === 1 ? bySuffix[0].value : undefined
 }
 
+// Which config option carries which meaning. ACP marks it with `category`, and
+// every bridge measured on this instance sends one, but the spec is explicit
+// that the field is "UX only", MUST NOT be required for correctness, and that
+// clients MUST handle a missing or unknown one gracefully. So the conventional
+// id -- the same id the chat's own controls key on -- is the fallback. Category
+// is tried first because it is the protocol's own statement of meaning, where
+// an id is a name two unrelated options could both pick.
+interface ConfigSelector {
+  category: string
+  id: string
+}
+
+const MODEL_SELECTOR: ConfigSelector = { category: 'model', id: 'model' }
+const THOUGHT_LEVEL_SELECTOR: ConfigSelector = { category: 'thought_level', id: 'effort' }
+
+function findSelectOption(options: readonly SessionConfigOption[], selector: ConfigSelector) {
+  const hit =
+    options.find((entry) => entry.type === 'select' && entry.category === selector.category) ??
+    options.find((entry) => entry.type === 'select' && entry.id === selector.id)
+  return hit?.type === 'select' ? hit : undefined
+}
+
 // The model that did most of the turn's work, off the harness's per-model
 // quota breakdown: the entry with the largest total token count. The breakdown
 // counts subagents and internal calls too, so the main loop's own model is the
@@ -2778,13 +2800,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // option's current value (which a live switch DID update), then the
       // selection's own model.
       const quotaModel = largestQuotaModel(outcome.quota)
-      const modelOption = session.configOptions.find(
-        (entry) => entry.category === 'model' && entry.type === 'select',
-      )
-      const optionModel =
-        modelOption && modelOption.type === 'select' && typeof modelOption.currentValue === 'string'
-          ? modelOption.currentValue
-          : undefined
+      const modelOption = findSelectOption(session.configOptions, MODEL_SELECTOR)
+      const optionModel = typeof modelOption?.currentValue === 'string' ? modelOption.currentValue : undefined
       const selectionModel = session.selection.model || undefined
       const resolvedModel = quotaModel ?? optionModel ?? selectionModel
       // The turn's OWN cost: the session's cumulative reading less what earlier
@@ -3222,10 +3239,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // config option (the native harness handles reasoning via providerOptions).
       const effort = resolveReasoningEffort(selection)
       if (!native && effort && response.configOptions) {
-        const option = response.configOptions.find(
-          (entry) => entry.category === 'thought_level' && entry.type === 'select',
-        )
-        const value = option && option.type === 'select' ? matchReasoningValue(option.options, effort) : undefined
+        const option = findSelectOption(response.configOptions, THOUGHT_LEVEL_SELECTOR)
+        const value = option ? matchReasoningValue(option.options, effort) : undefined
         if (option && value) {
           await this.setConfigOption(sessionId, option.id, value).catch((error: unknown) =>
             emit(sessionId, { kind: 'error', message: errorMessage(error) }),
@@ -3242,8 +3257,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // provider used to hide, the session just running on the harness's
       // own pick.
       if (!native && selection.model && !findAdapter(selection.adapterId)?.modelEnv && response.configOptions) {
-        const option = response.configOptions.find((entry) => entry.category === 'model' && entry.type === 'select')
-        if (option && option.type === 'select') {
+        const option = findSelectOption(response.configOptions, MODEL_SELECTOR)
+        if (option) {
           const value = matchModelValue(option.options, selection.model)
           if (value && value !== option.currentValue) {
             await this.setConfigOption(sessionId, option.id, value).catch((error: unknown) =>

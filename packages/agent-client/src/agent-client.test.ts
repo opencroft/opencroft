@@ -338,6 +338,34 @@ test('a model that matches no advertised option leaves the harness default', asy
   await h.client.deleteSession(h.sessionId)
 })
 
+test('a selector that names only its id is still found, category being UX-only', async () => {
+  // ACP's `category` is optional and the spec requires clients to cope without
+  // it, so the conventional id has to be enough on its own. Both selectors are
+  // exercised in one session: the profile's model gets applied and its
+  // reasoning preference lands on the effort option beside it. The effort is
+  // stated rather than defaulted — only the claude adapters carry a default,
+  // and those pin the model through an env var instead of the option.
+  const uncategorized = [
+    {
+      id: 'model',
+      type: 'select',
+      currentValue: 'a',
+      options: [
+        { name: 'A', value: 'a' },
+        { name: 'B', value: 'b' },
+      ],
+    },
+    { id: 'effort', type: 'select', options: [{ name: 'Medium', value: 'medium' }] },
+  ]
+  const h = await setup('openclaw', { model: 'b', reasoningEffort: 'medium', configOptions: uncategorized })
+  await settle()
+  assert.deepEqual(h.configOptionCalls, [
+    { sessionId: h.sessionId, configId: 'effort', value: 'medium' },
+    { sessionId: h.sessionId, configId: 'model', value: 'b' },
+  ])
+  await h.client.deleteSession(h.sessionId)
+})
+
 test('the profile model already being current sends no redundant set', async () => {
   const h = await setup('openclaw', { model: 'opencode/big-pickle', configOptions: MODEL_SELECT_OPTIONS })
   await settle()
