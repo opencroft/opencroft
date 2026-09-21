@@ -3,7 +3,7 @@
 import { type DiffOnMount, Editor, loader, DiffEditor as MonacoDiffEditor, type OnMount } from '@monaco-editor/react'
 import { Columns2, Rows2 } from 'lucide-react'
 import { useTheme } from 'next-themes'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from 'ui/button'
 
 import { cn } from '@/lib/utils'
@@ -25,10 +25,64 @@ import { cn } from '@/lib/utils'
 // second one: a diff is the same editor runtime with a second model, and every
 // surface that shows one should reach it through here.
 //
-// Monaco's runtime is fetched by @monaco-editor/loader, which defaults to a
-// public CDN. To serve it from this origin instead, call `loader.config()` once
-// during app start-up — re-exported here so there is one place to do it.
+// Monaco's runtime comes from this app's own build rather than from the public
+// CDN @monaco-editor/loader defaults to. ./monaco-runtime is what decides that:
+// it calls `loader.config({ monaco })` with the namespace imported from the npm
+// package, so the version in the lockfile is the version that runs.
+// Still re-exported, because this stays the one place that owns that decision
+// and a caller may need the handle — but note that configuring it again after
+// the first editor has mounted does nothing, since `init()` is one-shot.
 export { loader }
+
+// Monaco's runtime is behind one dynamic import, and this is the only one.
+//
+// Static would be wrong twice over. This module is in the static graph of
+// surfaces that merely MIGHT show code — the chat transcript's tool views, the
+// extension host's UI surface — so `import * as monaco from 'monaco-editor'`
+// here would put the whole editor on the first load of a page whose reader
+// never opens one. And the extension compiler imports the host surface under
+// bare `tsx` to read what the host offers: Monaco's ESM imports stylesheets, and
+// a runtime with no CSS loader cannot follow that edge at all. Both are pinned
+// by host-import-graph.test.ts, which walks static imports only.
+//
+// The module configures the loader at its own module scope, so once this promise
+// resolves `loader.config({ monaco })` has already run and an editor may mount:
+// @monaco-editor/react calls `loader.init()` from its mount effect, and `init()`
+// with an instance already configured resolves with it immediately and injects
+// no script. Config after that point is silently ignored, which is why nothing
+// below renders an editor until `ready`.
+let monacoRuntime: Promise<void> | undefined
+let monacoRuntimeLoaded = false
+
+function loadMonacoRuntime(): Promise<void> {
+  monacoRuntime ??= import('./monaco-runtime').then(() => {
+    monacoRuntimeLoaded = true
+  })
+  return monacoRuntime
+}
+
+// Seeded from the module flag so the second and later editors of a session
+// render Monaco on their first render instead of flashing the skeleton again.
+// It is false on the server and on the first client render — the import runs in
+// an effect, which the server never reaches — so hydration stays in step.
+function useMonacoRuntime(): boolean {
+  const [ready, setReady] = useState(monacoRuntimeLoaded)
+  useEffect(() => {
+    if (ready) {
+      return
+    }
+    let live = true
+    loadMonacoRuntime().then(() => {
+      if (live) {
+        setReady(true)
+      }
+    })
+    return () => {
+      live = false
+    }
+  }, [ready])
+  return ready
+}
 
 // Whatever this is, it reaches Monaco verbatim, and Monaco registers around
 // forty languages and accepts every one of them at run time. So this union was
@@ -163,6 +217,25 @@ export interface CodeEditorProps {
 }
 
 export function CodeEditor({ original, ...props }: CodeEditorProps) {
+  const ready = useMonacoRuntime()
+
+  // The skeleton is the one @monaco-editor/react's own `loading` prop shows
+  // below, hoisted a level: the wait it covers is now the runtime's download
+  // rather than the editor's mount, and it has to be drawn by something that
+  // is not itself Monaco.
+  let body: ReactNode
+  if (!ready) {
+    body = (
+      <div
+        className={cn('w-full animate-pulse bg-muted', original === undefined ? 'h-full' : 'h-14 rounded-md border')}
+      />
+    )
+  } else if (original === undefined) {
+    body = <PlainEditor {...props} />
+  } else {
+    body = <DiffView {...props} original={original} />
+  }
+
   return (
     // `nokey` is @xyflow/react's opt-out: its `useKeyPress` calls
     // `preventDefault()` on any key it watches unless the event came from an
@@ -179,9 +252,7 @@ export function CodeEditor({ original, ...props }: CodeEditorProps) {
     // Diff mode is `relative` for the overlaid mode toggle, and `min-w-0
     // max-w-full` guard the cases where this box is a flex item or has a
     // definite containing block.
-    <div className={cn('nokey', original === undefined ? 'h-full w-full' : 'relative min-w-0 max-w-full')}>
-      {original === undefined ? <PlainEditor {...props} /> : <DiffView {...props} original={original} />}
-    </div>
+    <div className={cn('nokey', original === undefined ? 'h-full w-full' : 'relative min-w-0 max-w-full')}>{body}</div>
   )
 }
 
