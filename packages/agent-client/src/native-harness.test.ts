@@ -104,6 +104,23 @@ test('the permission mode is always advertised, at the id the composer reads', (
   )
 })
 
+test('every option names the ACP category for its meaning, not only its id', () => {
+  // The id is what the composer keys on; `category` is what the protocol marks
+  // the meaning with, and what the engine reads to find the model a session is
+  // running. With the categories missing, a Custom session kept reporting its
+  // profile's model after a live switch — the option held the new one and
+  // nothing looked at it.
+  const options = buildConfigOptions(sessionFor(), selectionFor('gpt-5'))
+  assert.deepEqual(
+    options.map((option) => [option.id, option.category]),
+    [
+      ['mode', 'mode'],
+      ['model', 'model'],
+      ['effort', 'thought_level'],
+    ],
+  )
+})
+
 test('a model with no known reasoning levels advertises no effort option at all', () => {
   // An empty dropdown is worse than no control: it invites a choice that does
   // not exist.

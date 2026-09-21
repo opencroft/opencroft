@@ -330,9 +330,14 @@ function labelFor(value: string): string {
 }
 
 // What this harness advertises over the same config-option surface an ACP agent
-// uses. The client picks these out by id -- 'mode', 'model', 'effort' -- and
-// renders each as its own control, so naming them anything else would leave
-// them in the generic settings row instead.
+// uses. Each option carries both halves of how it gets recognised: the id the
+// composer reads -- 'mode', 'model', 'effort' -- so it renders as its own
+// control rather than one more row in the generic settings dropdown, and the
+// ACP `category` that states what the selector MEANS. The category is the
+// protocol's own marker and the engine keys on it (which model a turn ran on,
+// for one); the ids are a convention every bridge measured here happens to
+// share, nothing the protocol fixes. An option that names only its id renders
+// fine and goes unread.
 //
 // An option is advertised only when it has something to offer: a model with no
 // known reasoning levels contributes no effort option at all, rather than an
@@ -346,6 +351,7 @@ export function buildConfigOptions(
   const options: SessionConfigOption[] = [
     {
       id: 'mode',
+      category: 'mode',
       name: 'Permission',
       type: 'select',
       currentValue: session.mode,
@@ -363,6 +369,7 @@ export function buildConfigOptions(
   if (modelValues.length > 1) {
     options.push({
       id: 'model',
+      category: 'model',
       name: 'Model',
       type: 'select',
       currentValue: model,
@@ -373,6 +380,8 @@ export function buildConfigOptions(
   if (efforts.length > 0) {
     options.push({
       id: 'effort',
+      // 'thought_level' is the spec's name for this meaning; 'effort' is ours.
+      category: 'thought_level',
       name: 'Reasoning effort',
       type: 'select',
       // Only the grades this model takes. `off` would mean an instruction not
