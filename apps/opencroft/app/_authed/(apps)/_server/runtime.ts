@@ -14,10 +14,11 @@ import { db, spaceApp } from '@opencroft/db'
 import type { AppInstanceContext, AppServerHooks } from '@opencroft/server'
 import { asc, eq } from 'drizzle-orm'
 
-import { resolveAppAddress } from '@/app/_authed/(apps)/_server/app-address'
+import { appAddressOf, isAppAddress, resolveAppAddress } from '@/app/_authed/(apps)/_server/app-address'
 import { graphAppHooks } from '@/app/_authed/(apps)/_server/graph-app'
 import { appInstanceDataDir } from '@/app/_authed/(apps)/_server/instance-paths'
 import { getExtensionModule } from '@/app/_authed/(extension-runtime)/_server/loader'
+import type { Provided } from '@/app/_authed/(extension-runtime)/_server/provides'
 import { getProvided } from '@/app/_authed/(extension-runtime)/_server/provides'
 import { registry } from '@/app/_authed/(space)/_server/actions-impl'
 import { instanceSlugFor } from '@/app/_authed/(space)/_server/slug'
@@ -279,7 +280,25 @@ export interface AppCatalogEntry {
   appSlug: string
   title: string
   description?: string
-  parameters: Array<{ id: string; label: string; required?: boolean; description?: string }>
+  parameters: AppParameterSpec[]
+}
+
+/** One parameter an App declares — the field an add fills in and `app_get` shows the value of. */
+export interface AppParameterSpec {
+  id: string
+  label: string
+  required?: boolean
+  description?: string
+}
+
+/** The fields an App takes, as the catalog and `app_get` both report them. */
+function parameterSpecs(entry: AppEntry | undefined): AppParameterSpec[] {
+  return (entry?.parameters ?? []).map((spec) => ({
+    id: spec.id,
+    label: spec.label,
+    required: spec.required,
+    description: spec.description,
+  }))
 }
 
 /** Every App any extension provides — what an `app_add` can instantiate. */
@@ -290,12 +309,7 @@ export async function listAppCatalog(): Promise<AppCatalogEntry[]> {
     appSlug: value.slug,
     title: value.title,
     description: value.description,
-    parameters: (value.parameters ?? []).map((spec) => ({
-      id: spec.id,
-      label: spec.label,
-      required: spec.required,
-      description: spec.description,
-    })),
+    parameters: parameterSpecs(value),
   }))
 }
 
@@ -451,63 +465,176 @@ export async function renameSpaceAppImpl(instanceId: string, name: string): Prom
   return updated
 }
 
-/**
- * One instance as the MCP surface reports it to agents: identity, the space
- * it lives in, its parameter values, and the actions its App declares in the
- * manifest. Compact by design — this is what `app_list` prints into an
- * agent's context.
- */
-export interface SpaceAppInfo {
-  /**
-   * The instance's PUBLIC ADDRESS, `<space>.<slug>` — what a caller spends to
-   * reach it, and the only identifier this listing hands out.
-   *
-   * The uuid is deliberately absent. It still resolves everywhere the address
-   * does and always will, but an agent spends what the listings give it, so
-   * emitting the uuid here is what kept it in circulation. Acceptance is not
-   * vocabulary; emission is.
-   */
-  address: string
-  extensionId: string
-  appSlug: string
-  /** The instance's own name — what the user called it, not the App's title. */
-  name: string
-  /** The instance's slug — with `space` it forms `address`. */
-  slug: string
-  title: string
-  description?: string
-  space: string
-  params: Record<string, string>
-  actions: AppActionMeta[]
+/** The manifest entry a row's App was declared in, or undefined when its extension is gone. */
+function appEntryFor(provided: Provided<AppEntry>[], row: SpaceAppRow): AppEntry | undefined {
+  return provided.find((p) => p.extensionId === row.extensionId && p.value.slug === row.appSlug)?.value
 }
 
-/** Every added instance, optionally narrowed to one space slug. */
-export async function listSpaceAppInfos(spaceSlug?: string): Promise<SpaceAppInfo[]> {
+/**
+ * One app as the MCP surface reports it to agents. Compact by design — this is
+ * what `app_list` prints into an agent's context, so it carries what a caller
+ * needs to CHOOSE a target and nothing else. The parameter values an app was
+ * configured with answer a different question, and `app_get` answers it.
+ *
+ * Listed under its PUBLIC ADDRESS, `<space>.<slug>` — so the address and the
+ * space are the key rather than fields, and the uuid appears nowhere. The uuid
+ * still resolves everywhere the address does and always will, but an agent
+ * spends what the listings give it, so emitting it here is what kept it in
+ * circulation. Acceptance is not vocabulary; emission is.
+ */
+export interface SpaceAppInfo {
+  /** The App this is an instance of, in the manifest's slug form — its type. */
+  type: string
+  /** The instance's own name — what the user called it, not the App's title. */
+  name: string
+  /**
+   * The context sources this app exposes RIGHT NOW, as the ids a
+   * `<address>/<handle-id>` target takes, with dynamic declarations already
+   * expanded. Absent when the App declares none.
+   */
+  handles?: string[]
+}
+
+/**
+ * What `app_list` hands back: the apps, and the action ids each TYPE exposes.
+ *
+ * Actions hang off the type rather than off each app because that is what
+ * declares them — one manifest entry, however many apps are added from it.
+ * Repeating them per app is what made this listing too large to read: a space
+ * holding twelve apps of one type printed twelve identical copies of its
+ * action list. What each action DOES and what it takes is a second question,
+ * answered by `app_actions` for the ones a caller has settled on.
+ */
+export interface SpaceAppListing {
+  apps: Record<string, SpaceAppInfo>
+  actions: Record<string, string[]>
+}
+
+/** Every added app, optionally narrowed to one space slug. */
+export async function listSpaceApps(spaceSlug?: string): Promise<SpaceAppListing> {
   const rows = await db.query.spaceApp.findMany({ orderBy: asc(spaceApp.createdAt) })
   const r = await registry()
   const slugById = new Map(r.list().map((s) => [s.id, s.slug]))
   const provided = await getProvided<AppEntry>('apps')
-  const infos: SpaceAppInfo[] = []
+  const apps: Record<string, SpaceAppInfo> = {}
+  const actions: Record<string, string[]> = {}
   for (const row of rows) {
     const space = slugById.get(row.spaceId) ?? ''
     if (spaceSlug && space !== spaceSlug) {
       continue
     }
-    const entry = provided.find((p) => p.extensionId === row.extensionId && p.value.slug === row.appSlug)?.value
-    infos.push({
-      address: `${space}.${row.slug}`,
-      extensionId: row.extensionId,
-      appSlug: row.appSlug,
-      name: row.name,
-      slug: row.slug,
-      title: entry?.title ?? row.appSlug,
-      description: entry?.description,
-      space,
-      params: JSON.parse(row.params) as Record<string, string>,
-      actions: entry?.actions ?? [],
-    })
+    const entry = appEntryFor(provided, row)
+    const info: SpaceAppInfo = { type: row.appSlug, name: row.name }
+    const handles = await liveHandles(row, entry)
+    if (handles.length > 0) {
+      info.handles = handles.map(({ handleId }) => handleId)
+    }
+    apps[`${space}.${row.slug}`] = info
+    actions[row.appSlug] = (entry?.actions ?? []).map((action) => action.id)
   }
-  return infos
+  return { apps, actions }
+}
+
+/**
+ * One app in full — what `app_list` leaves out because choosing a target does
+ * not need it, and configuring one cannot do without it: the values this app
+ * was added with, and the fields those values fill.
+ */
+export interface SpaceAppDetail extends SpaceAppInfo {
+  address: string
+  extensionId: string
+  title: string
+  description?: string
+  params: Record<string, string>
+  parameters: AppParameterSpec[]
+}
+
+/** The row one app reference names, or a refusal that says how apps are addressed. */
+async function requireAppRow(ref: string): Promise<SpaceAppRow> {
+  const row = await resolveAppAddress(ref)
+  if (!row) {
+    throw new Error(`Unknown app: ${ref}. An app is addressed <space>.<app-slug> — run app_list to see them.`)
+  }
+  return row
+}
+
+/** One app's configuration, by address or identity. */
+export async function appDetail(ref: string): Promise<SpaceAppDetail> {
+  const row = await requireAppRow(ref)
+  const address = await appAddressOf(row)
+  if (!address) {
+    throw new Error(`App "${ref}" belongs to no registered space.`)
+  }
+  const entry = appEntryFor(await getProvided<AppEntry>('apps'), row)
+  const detail: SpaceAppDetail = {
+    address,
+    type: row.appSlug,
+    name: row.name,
+    extensionId: row.extensionId,
+    title: entry?.title ?? row.appSlug,
+    description: entry?.description,
+    params: JSON.parse(row.params) as Record<string, string>,
+    parameters: parameterSpecs(entry),
+  }
+  const handles = await liveHandles(row, entry)
+  if (handles.length > 0) {
+    detail.handles = handles.map(({ handleId }) => handleId)
+  }
+  return detail
+}
+
+/**
+ * The single App a bare type names. Two extensions may each provide an App
+ * called `git`, and they declare different actions under that one name — so an
+ * ambiguous type is refused rather than resolved to whichever manifest loaded
+ * first.
+ */
+function soleAppOfType(provided: Provided<AppEntry>[], type: string): AppEntry {
+  const matches = provided.filter((p) => p.value.slug === type)
+  if (matches.length === 0) {
+    throw new Error(`No App type "${type}" — run app_list to see the types in use.`)
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `"${type}" is provided by ${matches.map((p) => p.extensionId).join(' and ')}. Pass an app's address instead of its type.`,
+    )
+  }
+  return matches[0].value
+}
+
+/**
+ * What an app's actions DO and what they take — the half `app_list` leaves
+ * behind, loaded for the actions a caller has settled on.
+ *
+ * `app` is an app's address or its type, because both are in hand at the point
+ * this is needed: the listing gives the type, and the caller already knows the
+ * address it means to call. An app whose extension no longer provides its App
+ * is a refusal rather than an empty list — no actions declared and no manifest
+ * to declare them are different answers, and only one of them is about this
+ * app.
+ */
+export async function listAppActions(app: string, ids?: string[]): Promise<AppActionMeta[]> {
+  const provided = await getProvided<AppEntry>('apps')
+  let entry: AppEntry
+  if (isAppAddress(app)) {
+    const row = await requireAppRow(app)
+    const found = appEntryFor(provided, row)
+    if (!found) {
+      throw new Error(`"${app}" is an app of type "${row.appSlug}", which ${row.extensionId} no longer provides.`)
+    }
+    entry = found
+  } else {
+    entry = soleAppOfType(provided, app)
+  }
+  const actions = entry.actions ?? []
+  if (!ids) {
+    return actions
+  }
+  const missing = ids.filter((id) => !actions.some((action) => action.id === id))
+  if (missing.length > 0) {
+    throw new Error(`"${app}" has no action ${missing.map((id) => `"${id}"`).join(', ')}.`)
+  }
+  return actions.filter((action) => ids.includes(action.id))
 }
 
 /**
@@ -532,11 +659,44 @@ export interface AppHandleInfo {
 }
 
 /**
- * Every live handle every App instance exposes, with dynamic declarations
- * expanded through the extension's `listHandles` hook. Uncached for the same
- * reason node handle discovery is: expansion asks each App what exists right
- * now. One instance failing to expand is logged and skipped, not fatal.
+ * What one app's handles ARE right now: its App's declarations, with dynamic
+ * ones expanded through the extension's `listHandles` hook. Uncached for the
+ * same reason node handle discovery is — expansion asks the App what exists at
+ * this moment. An instance that cannot be asked is logged and contributes
+ * nothing rather than failing the listing it is part of.
+ *
+ * The one definition of "live", shared by the two listings that need it: the
+ * ids `app_list` prints, and the descriptions `listAppHandles` builds.
  */
+async function liveHandles(
+  row: SpaceAppRow,
+  entry: AppEntry | undefined,
+  contextType?: string,
+): Promise<Array<{ handle: AppHandle; handleId: string }>> {
+  const declared = (entry?.handles ?? []).filter(
+    (handle) => contextType === undefined || handle.contextType === contextType,
+  )
+  if (declared.length === 0) {
+    return []
+  }
+  let liveIds: string[] = []
+  if (declared.some((handle) => handle.dynamic)) {
+    try {
+      const hooks = await hooksFor(row.extensionId, row.appSlug)
+      liveIds = (await hooks?.listHandles?.(await instanceContext(row))) ?? []
+    } catch (error) {
+      console.error(`[apps] listHandles failed for ${row.extensionId}/${row.appSlug} (${row.id})`, error)
+      return []
+    }
+  }
+  return declared.flatMap((handle) =>
+    handle.dynamic
+      ? liveIds.filter((id) => id.startsWith(handle.id)).map((handleId) => ({ handle, handleId }))
+      : [{ handle, handleId: handle.id }],
+  )
+}
+
+/** Every live handle every App instance exposes, described for a handle picker. */
 export async function listAppHandles(contextType?: string): Promise<AppHandleInfo[]> {
   const rows = await db.query.spaceApp.findMany({ orderBy: asc(spaceApp.createdAt) })
   if (rows.length === 0) {
@@ -547,37 +707,15 @@ export async function listAppHandles(contextType?: string): Promise<AppHandleInf
   const provided = await getProvided<AppEntry>('apps')
   const results: AppHandleInfo[] = []
   for (const row of rows) {
-    const entry = provided.find((p) => p.extensionId === row.extensionId && p.value.slug === row.appSlug)?.value
-    const declared = (entry?.handles ?? []).filter(
-      (handle) => contextType === undefined || handle.contextType === contextType,
-    )
-    if (declared.length === 0) {
-      continue
-    }
+    const entry = appEntryFor(provided, row)
     const base = {
       instanceId: row.id,
       spaceSlug: slugById.get(row.spaceId) ?? '',
       appSlug: row.appSlug,
       title: entry?.title ?? row.appSlug,
     }
-    let liveIds: string[] = []
-    if (declared.some((handle) => handle.dynamic)) {
-      try {
-        const hooks = await hooksFor(row.extensionId, row.appSlug)
-        liveIds = (await hooks?.listHandles?.(await instanceContext(row))) ?? []
-      } catch (error) {
-        console.error(`[apps] listHandles failed for ${row.extensionId}/${row.appSlug} (${row.id})`, error)
-        continue
-      }
-    }
-    for (const handle of declared) {
-      if (!handle.dynamic) {
-        results.push({ ...base, ...handleFields(handle, handle.id) })
-        continue
-      }
-      for (const liveId of liveIds.filter((id) => id.startsWith(handle.id))) {
-        results.push({ ...base, ...handleFields(handle, liveId) })
-      }
+    for (const { handle, handleId } of await liveHandles(row, entry, contextType)) {
+      results.push({ ...base, ...handleFields(handle, handleId) })
     }
   }
   return results

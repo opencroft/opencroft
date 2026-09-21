@@ -133,6 +133,8 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'list_edges',
   'list_actions',
   'app_list',
+  'app_get',
+  'app_actions',
   'app_find',
   // Extension and registry reads: manifests and listings, no install path.
   'list_extensions',
