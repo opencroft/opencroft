@@ -26,12 +26,10 @@ import { Separator } from 'ui/separator'
 
 import type {
   InstalledExtensionRecord,
-  InstalledExtensionSummary,
   UpdateCheck,
 } from '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
 import type {
   LocalExtensionRecord,
-  LocalExtensionSummary,
   LocalRemoteState,
 } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions'
 import type {
@@ -42,17 +40,12 @@ import type {
 } from '@/app/_authed/(extension-runtime)/_types'
 
 export type ExtensionRecord = LocalExtensionRecord | InstalledExtensionRecord
-export type ExtensionSummary = LocalExtensionSummary | InstalledExtensionSummary
 
 /** An installed extension carries a sidecar naming where it came from; a local
  *  one is a checkout on this instance and carries git state instead. Which of
- *  the two is open decides what this page can say about its source, and which
- *  destructive act it offers — delete removes a checkout, uninstall removes a
- *  copy of somebody else's repository.
- *
- *  Declared over the summaries so one guard serves both: a record is a summary
- *  with files, so narrowing a record narrows to the record. */
-export function isInstalledRecord(record: ExtensionSummary): record is InstalledExtensionSummary {
+ *  the two is open decides what this page can say about its source, and — in
+ *  the editor — whether the files it holds can be written back. */
+export function isInstalledRecord(record: ExtensionRecord): record is InstalledExtensionRecord {
   return 'sidecar' in record
 }
 

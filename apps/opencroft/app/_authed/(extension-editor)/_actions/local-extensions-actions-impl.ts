@@ -190,43 +190,14 @@ async function listFilesRecursive(dir: string, base: string = ''): Promise<Recor
 }
 
 /**
- * A local extension without its files — everything a list of extensions has
- * to draw, and nothing it does not.
+ * One local extension, whole: its manifest, its files, and the state of the
+ * checkout they live in.
  *
- * The files are the expensive half of a record by two orders of magnitude,
- * and a list shows none of them: it draws names. They are read when one
- * extension is opened, by `getLocalExtensionImpl`.
+ * Read for the extension somebody opens, never for a list of them — the files
+ * are the expensive half by two orders of magnitude and the git calls are the
+ * slow half, and a list draws names. What a list needs is
+ * `listExtensionsIndex`.
  */
-export type LocalExtensionSummary = Omit<LocalExtensionRecord, 'files' | 'sourceCommitDate'>
-
-async function loadExtensionSummary(slug: string): Promise<LocalExtensionSummary | null> {
-  const dir = extDirPath(slug)
-  let manifestRaw: string
-  try {
-    manifestRaw = await fs.readFile(path.join(dir, MANIFEST_FILE), 'utf-8')
-  } catch {
-    return null
-  }
-  const manifest = JSON.parse(manifestRaw) as ExtensionManifest
-  const checkout = await readCheckoutState(dir)
-  const built = await readBuiltProvenance(dir)
-  return {
-    id: `local/${slug}`,
-    slug,
-    manifest,
-    updatedAt: await dirMtime(dir),
-    ...checkout,
-    builtCommit: built.commit,
-    builtDirty: built.dirty,
-    builtDirtyPaths: built.dirtyPaths,
-    // The refusal the automatic rebuild would raise for this checkout as it
-    // stands — the reason the running bundle is held apart from the checkout.
-    // No override here: the record reports what the automatic path would do, and
-    // that path has no override.
-    refusal: refuseCompile(checkout, false),
-  }
-}
-
 async function loadExtension(slug: string): Promise<LocalExtensionRecord | null> {
   const dir = extDirPath(slug)
   let manifestRaw: string
@@ -282,24 +253,6 @@ export async function listLocalExtensionsImpl(): Promise<LocalExtensionRecord[]>
     }
   }
   return records
-}
-
-export async function listLocalExtensionSummariesImpl(): Promise<LocalExtensionSummary[]> {
-  const root = localExtRoot()
-  let entries: string[]
-  try {
-    entries = await fs.readdir(root)
-  } catch {
-    return []
-  }
-  const summaries: LocalExtensionSummary[] = []
-  for (const slug of entries) {
-    const summary = await loadExtensionSummary(slug)
-    if (summary) {
-      summaries.push(summary)
-    }
-  }
-  return summaries
 }
 
 export async function getLocalExtensionImpl(extensionId: string): Promise<LocalExtensionRecord | null> {

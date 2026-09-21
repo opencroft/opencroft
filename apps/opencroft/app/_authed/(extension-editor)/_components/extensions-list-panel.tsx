@@ -7,14 +7,12 @@ import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 import { ScrollArea } from 'ui/layout/scroll-area'
 import { Separator } from 'ui/separator'
-import { Skeleton } from 'ui/skeleton'
 
+import type { ExtensionIndexEntry } from '@/app/_authed/(extension-editor)/_actions/extensions-index'
 import type {
   InstalledExtensionRecord,
-  InstalledExtensionSummary,
   UpdateCheck,
 } from '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
-import type { LocalExtensionSummary } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions'
 import {
   installRegistryExtension,
   listRegistryExtensions,
@@ -27,16 +25,10 @@ import { cn } from '@/lib/utils'
 // it — edit, update, uninstall — belongs to its own page, where the extension
 // being acted on is the thing on screen rather than one row of thirty.
 interface ExtensionsListPanelProps {
-  records: LocalExtensionSummary[]
-  installed: InstalledExtensionSummary[]
+  local: ExtensionIndexEntry[]
+  installed: ExtensionIndexEntry[]
   updateChecks: Record<string, UpdateCheck>
   selectedId: string | null
-  /** The first read has not come back yet. Distinguished from an empty
-   *  instance, which it used to be drawn as: "No extensions yet. Click + to
-   *  create one" is a statement about the instance, and saying it while the
-   *  list is still loading told everyone with nine extensions that they had
-   *  none. */
-  loading?: boolean
   onSelect: (extensionId: string) => void
   onNew: () => void
   onInstall: () => void
@@ -44,11 +36,10 @@ interface ExtensionsListPanelProps {
 }
 
 export function ExtensionsListPanel({
-  records,
+  local,
   installed,
   updateChecks,
   selectedId,
-  loading = false,
   onSelect,
   onNew,
   onInstall,
@@ -60,7 +51,7 @@ export function ExtensionsListPanel({
   const [installing, setInstalling] = useState<string | null>(null)
 
   const hasQuery = query.trim().length > 0
-  const installedRepos = new Set(installed.map((r) => r.sidecar.source.url))
+  const installedRepos = new Set(installed.map((entry) => entry.sourceUrl).filter(Boolean))
 
   const doSearch = useCallback(async (q: string) => {
     setSearching(true)
@@ -168,52 +159,44 @@ export function ExtensionsListPanel({
         ) : (
           /* Local + Installed when no search query */
           <>
-            {records.length > 0 ? (
+            {local.length > 0 ? (
               <div>
                 <div className='px-3 pt-2 text-[10px] uppercase tracking-wider text-muted-foreground'>Local</div>
-                {records.map((record) => {
-                  const isSelected = selectedId === record.id
-                  return (
-                    <button
-                      key={record.id}
-                      type='button'
-                      onClick={() => onSelect(record.id)}
-                      className={cn(
-                        'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent/50',
-                        isSelected && 'bg-accent/60',
-                      )}
-                    >
-                      <Box className='size-3.5 shrink-0' />
-                      <span className='truncate'>{record.manifest.name}</span>
-                    </button>
-                  )
-                })}
+                {local.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type='button'
+                    onClick={() => onSelect(entry.id)}
+                    className={cn(
+                      'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent/50',
+                      selectedId === entry.id && 'bg-accent/60',
+                    )}
+                  >
+                    <Box className='size-3.5 shrink-0' />
+                    <span className='truncate'>{entry.name}</span>
+                  </button>
+                ))}
               </div>
             ) : null}
             {installed.length > 0 ? (
               <div>
                 <div className='px-3 pt-3 text-[10px] uppercase tracking-wider text-muted-foreground'>Installed</div>
-                {installed.map((record) => {
-                  const isSelected = selectedId === record.id
-                  const check = updateChecks[record.id]
+                {installed.map((entry) => {
+                  const check = updateChecks[entry.id]
                   const hasUpdate = check?.hasUpdate ?? false
                   return (
                     <button
-                      key={record.id}
+                      key={entry.id}
                       type='button'
-                      onClick={() => onSelect(record.id)}
-                      title={
-                        hasUpdate
-                          ? `${record.sidecar.source.name} · ${check?.latest} available`
-                          : record.sidecar.source.name
-                      }
+                      onClick={() => onSelect(entry.id)}
+                      title={hasUpdate ? `${check?.latest} available` : undefined}
                       className={cn(
                         'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent/50',
-                        isSelected && 'bg-accent/60',
+                        selectedId === entry.id && 'bg-accent/60',
                       )}
                     >
                       <Box className='size-3.5 shrink-0' />
-                      <span className='min-w-0 flex-1 truncate'>{record.manifest.name}</span>
+                      <span className='min-w-0 flex-1 truncate'>{entry.name}</span>
                       {/* The version, amber when a newer one exists. Stated
                           rather than actioned: updating happens on the
                           extension's own page, where what it replaces is
@@ -224,24 +207,16 @@ export function ExtensionsListPanel({
                           hasUpdate ? 'text-amber-500' : 'text-muted-foreground',
                         )}
                       >
-                        {record.sidecar.ref}
+                        {entry.ref}
                       </span>
                     </button>
                   )
                 })}
               </div>
             ) : null}
-            {/* Only once the read has come back: until then this instance's
-                extensions are unknown, and the sentence below states that it
-                has none. */}
-            {loading && records.length === 0 && installed.length === 0 ? (
-              <div className='space-y-1.5 p-3' aria-hidden='true'>
-                <Skeleton className='h-3.5 w-4/5' />
-                <Skeleton className='h-3.5 w-3/5' />
-                <Skeleton className='h-3.5 w-2/3' />
-              </div>
-            ) : null}
-            {!loading && records.length === 0 && installed.length === 0 ? (
+            {/* No loading state to distinguish this from: the list arrives
+                with the page, so an empty one is an empty instance. */}
+            {local.length === 0 && installed.length === 0 ? (
               <div className='px-3 py-4 text-xs text-muted-foreground italic'>
                 No extensions yet. Click + to create or search to find extensions.
               </div>

@@ -38,9 +38,9 @@ export interface InstalledExtensionRecord {
   updatedAt: number
 }
 
-/** An installed extension without its files — what a list of them draws. The
- *  files are read when one is opened. */
-export type InstalledExtensionSummary = Omit<InstalledExtensionRecord, 'files'>
+/** An installed extension before its files are read — the half of a record
+ *  that costs nothing. `readRecord` is this plus the files. */
+type InstalledExtensionSummary = Omit<InstalledExtensionRecord, 'files'>
 
 /** See readSourceFile below: the size past which a file is not source. */
 const MAX_SOURCE_FILE_BYTES = 512 * 1024
@@ -366,26 +366,6 @@ export const listInstalledExtensions = createServerFn({ strict: { output: false 
       }
     }
     return records
-  },
-)
-
-// What the extensions list loads — the records without their files.
-export const listInstalledExtensionSummaries = createServerFn({ strict: { output: false } }).handler(
-  async (): Promise<InstalledExtensionSummary[]> => {
-    let entries: string[]
-    try {
-      entries = await fs.readdir(installedExtRoot())
-    } catch {
-      return []
-    }
-    const summaries: InstalledExtensionSummary[] = []
-    for (const slug of entries) {
-      const summary = await readSummary(slug, installedExtRoot(), 'installed')
-      if (summary) {
-        summaries.push(summary)
-      }
-    }
-    return summaries
   },
 )
 

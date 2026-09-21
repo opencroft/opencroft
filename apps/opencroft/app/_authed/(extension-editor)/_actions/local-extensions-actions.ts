@@ -14,25 +14,16 @@ import {
   deleteLocalExtensionImpl,
   getLocalExtensionImpl,
   type LocalExtensionRecord,
-  type LocalExtensionSummary,
-  listLocalExtensionSummariesImpl,
   listLocalExtensionsImpl,
   updateLocalExtensionImpl,
 } from './local-extensions-actions-impl'
 
-export type { LocalExtensionRecord, LocalExtensionSummary, LocalPullResult, LocalRemoteState }
+export type { LocalExtensionRecord, LocalPullResult, LocalRemoteState }
 
 // Client-callable wrapper — see local-extensions-actions-impl.ts's listLocalExtensionsImpl
 // for why the plain implementation lives in its own module, separate from this file.
 export const listLocalExtensions = createServerFn({ strict: { output: false } }).handler(
   async (): Promise<LocalExtensionRecord[]> => listLocalExtensionsImpl(),
-)
-
-// What the extensions list loads: the same records without their files. The
-// list draws names, and shipping every extension's source to draw them made
-// the page wait on tens of megabytes of it.
-export const listLocalExtensionSummaries = createServerFn({ strict: { output: false } }).handler(
-  async (): Promise<LocalExtensionSummary[]> => listLocalExtensionSummariesImpl(),
 )
 
 export const getLocalExtension = createServerFn({ method: 'POST', strict: { output: false } })

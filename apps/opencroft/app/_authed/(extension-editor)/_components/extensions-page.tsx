@@ -1,5 +1,6 @@
 'use client'
 
+import { useRouter } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import {
@@ -17,11 +18,13 @@ import { Flex } from 'ui/layout/flex'
 import { Spinner } from 'ui/spinner'
 
 import {
+  type ExtensionIndexEntry,
+  listExtensionsIndex,
+} from '@/app/_authed/(extension-editor)/_actions/extensions-index'
+import {
   checkInstalledForUpdates,
   getInstalledExtension,
   type InstalledExtensionRecord,
-  type InstalledExtensionSummary,
-  listInstalledExtensionSummaries,
   type UpdateCheck,
   uninstallExtension,
   updateInstalledExtension,
@@ -32,17 +35,10 @@ import {
   deleteLocalExtension,
   getLocalExtension,
   type LocalExtensionRecord,
-  type LocalExtensionSummary,
   type LocalRemoteState,
-  listLocalExtensionSummaries,
   pullLocalExtension,
 } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions'
-import {
-  ExtensionDetail,
-  type ExtensionRecord,
-  type ExtensionSummary,
-  isInstalledRecord,
-} from '@/app/_authed/(extension-editor)/_components/extension-detail'
+import { ExtensionDetail, type ExtensionRecord } from '@/app/_authed/(extension-editor)/_components/extension-detail'
 import { ExtensionSourceEditor } from '@/app/_authed/(extension-editor)/_components/extension-source-editor'
 import { ExtensionsListPanel } from '@/app/_authed/(extension-editor)/_components/extensions-list-panel'
 import { InstallExtensionDialog } from '@/app/_authed/(extension-editor)/_components/install-extension-dialog'
@@ -61,23 +57,27 @@ function isInstalledId(extensionId: string): boolean {
   return extensionId.startsWith('installed/')
 }
 
+interface ExtensionsPageProps {
+  /** The list, as the route's loader read it — on screen from the first paint. */
+  index: ExtensionIndexEntry[]
+}
+
 // The extensions section: the list on the left, and what is selected on the
 // right. A row press opens the extension's PAGE — what it is, what it
 // contributes and where its source stands — and editing, updating and deleting
 // are acts offered there, with the extension in front of you.
 //
-// The list loads SUMMARIES: the same records without their files. One
-// extension in this instance ships a 27 MB WebAssembly build, and reading
-// every file of every extension to draw nine names made the response 140 MB
-// and the page look empty for as long as it took to arrive. Files are read for
-// the one extension that is opened.
+// The list is an INDEX — ids, names, versions — and it arrives with the
+// document, from the manifest cache the instance already keeps. Everything
+// heavier is read for the one extension somebody opens: its files, its
+// checkout, what it is running, where it stands against origin. Acts refresh
+// the index rather than re-reading the world.
 //
 // The editor takes the whole surface when it opens, like the design kit's
 // does: three panes need the room, and the way back is the header's own.
-export default function ExtensionsPage() {
-  const [records, setRecords] = useState<LocalExtensionSummary[]>([])
-  const [installed, setInstalled] = useState<InstalledExtensionSummary[]>([])
-  const [listLoading, setListLoading] = useState(true)
+export default function ExtensionsPage({ index }: ExtensionsPageProps) {
+  const router = useRouter()
+  const [entries, setEntries] = useState<ExtensionIndexEntry[]>(index)
   const [updateChecks, setUpdateChecks] = useState<Record<string, UpdateCheck>>({})
   const [installDialogOpen, setInstallDialogOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -87,51 +87,59 @@ export default function ExtensionsPage() {
   const [remoteChecking, setRemoteChecking] = useState(false)
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<ExtensionSummary | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<ExtensionIndexEntry | null>(null)
 
-  const refresh = useCallback(async (): Promise<{
-    local: LocalExtensionSummary[]
-    installed: InstalledExtensionSummary[]
-  }> => {
-    const [local, installedList] = await Promise.all([listLocalExtensionSummaries(), listInstalledExtensionSummaries()])
-    setRecords(local)
-    setInstalled(installedList)
-    setListLoading(false)
-    return { local, installed: installedList }
-  }, [])
+  // The loader is the source; this state is what acts on this page update in
+  // between its runs. Navigating back to the route re-runs the loader, and the
+  // list follows it rather than holding an older copy.
+  useEffect(() => {
+    setEntries(index)
+  }, [index])
 
-  const checkAllUpdates = useCallback(async (list: InstalledExtensionSummary[]) => {
+  const localEntries = useMemo(() => entries.filter((entry) => entry.kind === 'local'), [entries])
+  const installedEntries = useMemo(() => entries.filter((entry) => entry.kind === 'installed'), [entries])
+
+  const refresh = useCallback(async (): Promise<ExtensionIndexEntry[]> => {
+    const next = await listExtensionsIndex()
+    setEntries(next)
+    // The loader's copy is now stale, and it is what a later navigation to this
+    // route would draw. Not awaited: the list on screen is already current.
+    void router.invalidate()
+    return next
+  }, [router])
+
+  const checkAllUpdates = useCallback(async (list: ExtensionIndexEntry[]) => {
     const results = await Promise.all(
-      list.map(async (record) => {
+      list.map(async (entry) => {
         try {
-          return [record.id, await checkInstalledForUpdates({ data: record.id })] as const
+          return [entry.id, await checkInstalledForUpdates({ data: entry.id })] as const
         } catch {
           return null
         }
       }),
     )
     const map: Record<string, UpdateCheck> = {}
-    for (const entry of results) {
-      if (entry) {
-        map[entry[0]] = entry[1]
+    for (const result of results) {
+      if (result) {
+        map[result[0]] = result[1]
       }
     }
     setUpdateChecks(map)
   }, [])
 
+  // Installed extensions are checked against their remote once the page is up.
+  // It is a network call per extension, so it never holds the list back — the
+  // version a row shows is what is installed, and the amber says a newer tag
+  // exists once the answer arrives.
   useEffect(() => {
-    refresh()
-      .then(({ installed: list }) => {
-        checkAllUpdates(list)
-      })
-      .catch((err) => {
-        setListLoading(false)
-        toast.error(err instanceof Error ? err.message : String(err))
-      })
-  }, [refresh, checkAllUpdates])
+    const installed = index.filter((entry) => entry.kind === 'installed')
+    if (installed.length > 0) {
+      void checkAllUpdates(installed)
+    }
+  }, [index, checkAllUpdates])
 
   // The open extension, with its files. Loaded per selection rather than with
-  // the list, which is what keeps the list cheap.
+  // the list, which is what keeps the list instant.
   const loadSelected = useCallback(async (extensionId: string): Promise<ExtensionRecord | null> => {
     return isInstalledId(extensionId)
       ? await getInstalledExtension({ data: extensionId })
@@ -198,36 +206,31 @@ export default function ExtensionsPage() {
     void checkRemote(selectedId)
   }, [selectedId, checkRemote])
 
-  const selectedSummary = useMemo<ExtensionSummary | null>(
-    () => records.find((r) => r.id === selectedId) ?? installed.find((r) => r.id === selectedId) ?? null,
-    [records, installed, selectedId],
-  )
+  const selectedEntry = useMemo(() => entries.find((entry) => entry.id === selectedId) ?? null, [entries, selectedId])
 
   const handleSelect = useCallback((extensionId: string) => {
     setSelectedId(extensionId)
     setEditing(false)
   }, [])
 
-  // A save in the editor makes the list's copy of that extension stale — the
-  // manifest it was renamed in, the files the detail page counts.
+  // A save in the editor can rename the extension or move its version, and the
+  // row beside it is drawn from the index. Updated in place rather than by
+  // re-reading the list: the save already returned the record it wrote.
   const handleSaved = useCallback((saved: LocalExtensionRecord) => {
     setSelected((current) => (current && current.id === saved.id ? saved : current))
-    setRecords((prev) =>
-      prev.map((record) => {
-        if (record.id !== saved.id) {
-          return record
-        }
-        const { files: _files, ...summary } = saved
-        return summary
-      }),
+    setEntries((prev) =>
+      prev.map((entry) =>
+        entry.id === saved.id
+          ? { ...entry, name: saved.manifest.name || entry.slug, version: saved.manifest.version }
+          : entry,
+      ),
     )
   }, [])
 
   const handleNew = useCallback(async () => {
     setBusy(true)
     try {
-      const slug = pickUntitledSlug(await listLocalExtensionSummaries())
-      const record = await createLocalExtension({ data: extensionTemplate(slug) })
+      const record = await createLocalExtension({ data: extensionTemplate(pickUntitledSlug(localEntries)) })
       await refresh()
       setSelectedId(record.id)
       // Straight into the editor: a template has nothing to read about yet,
@@ -239,14 +242,14 @@ export default function ExtensionsPage() {
     } finally {
       setBusy(false)
     }
-  }, [refresh])
+  }, [localEntries, refresh])
 
   const handleInstalled = useCallback(
     async (record: InstalledExtensionRecord) => {
-      const { installed: list } = await refresh()
+      const next = await refresh()
       setSelectedId(record.id)
       setEditing(false)
-      checkAllUpdates(list)
+      void checkAllUpdates(next.filter((entry) => entry.kind === 'installed'))
     },
     [refresh, checkAllUpdates],
   )
@@ -265,8 +268,8 @@ export default function ExtensionsPage() {
         const record = await updateInstalledExtension({
           data: { extensionId: selectedId, ref: check?.latest ?? undefined },
         })
-        const { installed: list } = await refresh()
-        checkAllUpdates(list)
+        const next = await refresh()
+        void checkAllUpdates(next.filter((entry) => entry.kind === 'installed'))
         setSelected(await loadSelected(selectedId))
         toast.success(`Updated ${record.manifest.name ?? record.id} to ${record.sidecar.ref}`)
       } else {
@@ -301,24 +304,23 @@ export default function ExtensionsPage() {
     setDeleteTarget(null)
     setBusy(true)
     try {
-      if (isInstalledRecord(target)) {
+      if (target.kind === 'installed') {
         await uninstallExtension({ data: target.id })
       } else {
         await deleteLocalExtension({ data: target.id })
       }
-      const { installed: list } = await refresh()
+      await refresh()
       if (selectedId === target.id) {
         setSelectedId(null)
         setEditing(false)
       }
-      checkAllUpdates(list)
-      toast.success(isInstalledRecord(target) ? 'Extension uninstalled' : 'Extension deleted')
+      toast.success(target.kind === 'installed' ? 'Extension uninstalled' : 'Extension deleted')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
     }
-  }, [deleteTarget, selectedId, refresh, checkAllUpdates])
+  }, [deleteTarget, selectedId, refresh])
 
   if (editing) {
     return selected ? (
@@ -338,11 +340,10 @@ export default function ExtensionsPage() {
   return (
     <Flex row expanded className='h-full min-h-0 w-full'>
       <ExtensionsListPanel
-        records={records}
-        installed={installed}
+        local={localEntries}
+        installed={installedEntries}
         updateChecks={updateChecks}
         selectedId={selectedId}
-        loading={listLoading}
         onSelect={handleSelect}
         onNew={handleNew}
         onInstall={() => setInstallDialogOpen(true)}
@@ -364,7 +365,7 @@ export default function ExtensionsPage() {
           busy={busy}
           onEdit={() => setEditing(true)}
           onUpdate={() => void handleUpdate()}
-          onDelete={() => setDeleteTarget(selectedSummary ?? selected)}
+          onDelete={() => setDeleteTarget(selectedEntry)}
         />
       ) : selectedLoading ? (
         <Flex expanded align='center' justify='center' className='min-w-0'>
@@ -394,11 +395,10 @@ export default function ExtensionsPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {deleteTarget && isInstalledRecord(deleteTarget) ? 'Uninstall' : 'Delete'}{' '}
-              {deleteTarget?.manifest.name ?? 'this extension'}?
+              {deleteTarget?.kind === 'installed' ? 'Uninstall' : 'Delete'} {deleteTarget?.name ?? 'this extension'}?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteTarget && isInstalledRecord(deleteTarget)
+              {deleteTarget?.kind === 'installed'
                 ? 'The installed copy is removed from this instance. Its nodes disappear from the palette, and graphs using them stop resolving until it is installed again.'
                 : 'The extension directory and its files are deleted from this instance. Its nodes disappear from the palette, and this cannot be undone.'}
             </AlertDialogDescription>
@@ -406,7 +406,7 @@ export default function ExtensionsPage() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={() => void confirmDelete()}>
-              {deleteTarget && isInstalledRecord(deleteTarget) ? 'Uninstall' : 'Delete'}
+              {deleteTarget?.kind === 'installed' ? 'Uninstall' : 'Delete'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
