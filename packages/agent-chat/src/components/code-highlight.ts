@@ -105,18 +105,30 @@ export function resolveLanguage(info?: string): string | null {
 // one set of loaded grammars, so the second TypeScript block in a conversation
 // costs nothing the first one has not already paid.
 let core: Promise<HighlighterCore> | null = null
+// The resolved instance, kept beside the promise it came from. A caller that
+// renders HTML can await; one building a ProseMirror decoration set cannot,
+// because decorations are produced inside a transaction where there is nowhere
+// to suspend. `tokenize` answers from whatever has arrived and the caller asks
+// again when `prepareLanguage` resolves.
+let ready: HighlighterCore | null = null
 // A plain object rather than a Map on purpose: the design kit's preview sandbox
 // puts every lucide icon in scope by its bare name, and one of those icons is
 // called `Map`, so `new Map()` is a TypeError in a preview and nowhere else.
 // Nothing here needs Map's semantics, and a component that cannot be previewed
 // is a component nobody can review.
 const grammarLoads: Record<string, Promise<boolean>> = {}
+// Which grammars finished loading, for the same synchronous caller: the promise
+// in `grammarLoads` says a load was started, this says it can be used now.
+const grammarsReady: Record<string, boolean> = {}
 
 function highlighter(): Promise<HighlighterCore> {
   core ??= createHighlighterCore({
     themes: [import('@shikijs/themes/github-light-default'), import('@shikijs/themes/dark-plus')],
     langs: [],
     engine,
+  }).then((instance) => {
+    ready = instance
+    return instance
   })
   return core
 }
@@ -130,7 +142,10 @@ function loadGrammar(instance: HighlighterCore, name: string): Promise<boolean> 
   // not worth re-fetching for every block in the conversation that uses it.
   const load = instance
     .loadLanguage(GRAMMARS[name]() as Parameters<HighlighterCore['loadLanguage']>[0])
-    .then(() => true)
+    .then(() => {
+      grammarsReady[name] = true
+      return true
+    })
     .catch(() => false)
   grammarLoads[name] = load
   return load
@@ -198,6 +213,72 @@ export async function highlight(
             },
           ],
     })
+  } catch {
+    return null
+  }
+}
+
+/** One highlighted run of a code block, as offsets into the code it came from. */
+export interface CodeToken {
+  /** Offset of the run's first character. */
+  start: number
+  /** Offset one past its last character. */
+  end: number
+  /**
+   * Both themes' colours as custom properties, ready for a `style` attribute --
+   * the same pair `highlight` writes into its markup, so the same stylesheet
+   * rule chooses between them.
+   */
+  style: string
+}
+
+/**
+ * Load `language`'s grammar, resolving to whether it can now be tokenized.
+ *
+ * Separate from `tokenize` because the two callers need different shapes of the
+ * same thing. Rendering HTML can await the grammar; a ProseMirror decoration
+ * set is built inside a transaction, where there is nowhere to await -- so that
+ * caller asks for what is ready, starts the load, and asks again here.
+ */
+export function prepareLanguage(language: string): Promise<boolean> {
+  return highlighter()
+    .then((instance) => loadGrammar(instance, language))
+    .catch(() => false)
+}
+
+/**
+ * The code's coloured runs, or null when nothing can be said about it yet.
+ *
+ * Synchronous on purpose, and null is an ordinary answer: an engine that has
+ * not finished starting, a grammar still in flight and a grammar that failed to
+ * arrive all mean the same thing to the caller, which is that this block is
+ * plain text for now. Runs that carry no colour are left out rather than
+ * returned empty, so a caller decorating a document adds nothing for them.
+ */
+export function tokenize(code: string, language: string): CodeToken[] | null {
+  const instance = ready
+  if (!instance || !grammarsReady[language]) {
+    return null
+  }
+  try {
+    const { tokens } = instance.codeToTokens(code, {
+      lang: language,
+      themes: { light: LIGHT_THEME, dark: DARK_THEME },
+      defaultColor: false,
+    })
+    const runs: CodeToken[] = []
+    for (const line of tokens) {
+      for (const token of line) {
+        const declarations = Object.entries(token.htmlStyle ?? {})
+          .map(([property, colour]) => `${property}:${colour}`)
+          .join(';')
+        if (!declarations || !token.content) {
+          continue
+        }
+        runs.push({ start: token.offset, end: token.offset + token.content.length, style: declarations })
+      }
+    }
+    return runs
   } catch {
     return null
   }

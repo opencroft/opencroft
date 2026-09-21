@@ -56,6 +56,7 @@ import {
 } from '@/app/_authed/(sse)/_lib/sse-events-store'
 import { useUrlParam } from '@/app/_lib/use-url-param'
 import { CodeEditor } from '@/components/code-editor'
+import { MarkdownEditor } from '@/components/markdown-editor'
 import { ControlledInput } from '@/components/ui/input/controlled-input'
 
 // What extension code actually receives as `icons` -- see safe-icons.ts for
@@ -382,6 +383,15 @@ export const extensionUiApi = {
   // more: the `rel="noopener noreferrer"` it puts on every link is a security
   // property, and a second copy of the renderer loses it with no symptom.
   Markdown,
+  // The other end of that renderer: the product's one markdown WYSIWYG, which
+  // both the skills editor and the documentation extension's page editor now
+  // are. Shared because TipTap is a large dependency to bundle per extension,
+  // and because an extension's own editor drifts into its own markdown dialect
+  // -- what this writes has to be what `Markdown` above renders. It comes in
+  // through `@/components/markdown-editor`, which defers the module: this
+  // object is built wherever the host surface is asked for, and most of those
+  // places never edit anything.
+  MarkdownEditor,
   // What `Markdown` already renders a `mermaid` fence with, exposed on its own
   // for a surface holding diagram source that never was markdown. Shared
   // because mermaid is a megabyte-class dependency fetched on first use, and

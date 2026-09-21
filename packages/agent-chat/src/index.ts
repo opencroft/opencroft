@@ -27,7 +27,6 @@ export {
   canStartSelection,
   EMPTY_SELECTION,
 } from './preset-form'
-export { SkillEditor, type SkillEditorProps } from './skill-editor'
 export { type SkillRecord, SkillsManager, type SkillsManagerProps } from './skills-manager'
 export { ThinkingIndicator } from './thinking-indicator'
 export { previewArg, ToolCallBlock, type ToolCallBlockProps, type ToolCallResult } from './tool-block'

@@ -29,6 +29,7 @@ const appRoot = path.resolve(here, '../../../..')
 const HOST = path.join(appRoot, 'app/_authed/(extension-runtime)/_client/host.ts')
 const SPACE_CANVAS = path.join(appRoot, 'app/_authed/(space)/_components/space-canvas.tsx')
 const FLOW_EDITOR = path.join(appRoot, 'app/_authed/(dashboard)/_canvas/flow-editor.tsx')
+const MARKDOWN_EDITOR = path.join(appRoot, 'components/markdown-editor.tsx')
 
 interface Graph {
   /** Every file inside this app reachable from the entry by static import. */
@@ -164,6 +165,57 @@ test('CONTROL: the walk from the host actually covers the host graph', () => {
   assert.ok(
     fromHost.externals.has('@xyflow/react'),
     'the host does still use xyflow directly, for handles and hooks -- externals are being collected',
+  )
+})
+
+// The same property for Monaco, which arrives by a different route and costs
+// something different. `@/components/code-editor` IS statically in this graph
+// and has to be — it is what `legacy.CodeEditor` hands extensions — but it
+// reaches Monaco's runtime through a dynamic `import()`, so `monaco-editor`
+// itself is not an edge. Two things ride on that. Node: monaco's ESM imports
+// stylesheets, so a static edge would put this app's host surface back out of
+// reach of every runtime without a CSS loader, which is the failure the whole
+// file is about. Browser: monaco is megabytes, and the surfaces that pull the
+// host surface in are ones that merely might show code rather than ones that
+// do.
+//
+// The pair of assertions is the point. Dropping the editor out of the host
+// graph entirely would satisfy "no monaco-editor" just as well as deferring it,
+// so the presence of the wrapper is asserted alongside the absence of what it
+// wraps.
+test('asking the host what it offers does not reach monaco itself', () => {
+  assert.ok(
+    fromHost.externals.has('@monaco-editor/react'),
+    "the host does still offer the editor component -- if it does not, the next assertion isn't about anything",
+  )
+  assert.deepEqual(
+    [...fromHost.externals].filter(
+      (specifier) => specifier === 'monaco-editor' || specifier.startsWith('monaco-editor/'),
+    ),
+    [],
+    "monaco's runtime must stay behind the dynamic import in code-editor.tsx -- see ./monaco-runtime",
+  )
+})
+
+// The same property a third time, for the markdown WYSIWYG.
+// `@/components/markdown-editor` IS statically in this graph -- it is what
+// `MarkdownEditor` hands extensions -- while the module it wraps, and the
+// TipTap and ProseMirror tree behind that, sit behind a `lazy(() => import())`.
+// The cost is the browser's rather than Node's: the surfaces that ask the host
+// what it offers are ones that merely might show an extension, and almost none
+// of them edit markdown.
+//
+// A pair again, for the Monaco test's reason: deleting the wrapper satisfies
+// "the editor module is not imported" exactly as well as deferring it does.
+test('asking the host what it offers does not reach the markdown editor module', () => {
+  assert.ok(
+    fromHost.files.has(MARKDOWN_EDITOR),
+    "the host does still offer the editor wrapper -- if it does not, the next assertion isn't about anything",
+  )
+  assert.deepEqual(
+    [...fromHost.externals].filter((specifier) => specifier.startsWith('agent-chat/markdown-editor')),
+    [],
+    'TipTap must stay behind the dynamic import in components/markdown-editor.tsx',
   )
 })
 

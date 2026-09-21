@@ -12,8 +12,8 @@ import { ScrollContent, ScrollHeader, ScrollPage } from 'ui/components/ui/layout
 import { SidebarMenuButton } from 'ui/components/ui/sidebar'
 
 import { AddImportFooter } from './add-import-footer'
+import { MarkdownEditor } from './markdown-editor'
 import type { SkillRecord } from './server/runtime'
-import { SkillEditor } from './skill-editor'
 
 export type { SkillRecord }
 
@@ -170,7 +170,12 @@ export function SkillsManager({ skills: incoming, onCreate, onUpdate, onDelete }
             </Field>
             <Field className='flex-1 min-h-0'>
               <FieldLabel>Instructions</FieldLabel>
-              <SkillEditor value={content} onChange={setContent} className='flex-1 min-h-100' />
+              <MarkdownEditor
+                value={content}
+                onChange={setContent}
+                placeholder='Markdown instructions loaded when the agent invokes this skill…'
+                className='flex-1 min-h-100'
+              />
             </Field>
           </ScrollContent>
         </ScrollPage>

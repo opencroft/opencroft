@@ -7,7 +7,7 @@
  */
 import type { AppEntry } from '@opencroft/core'
 import type { TerminalProps } from '@opencroft/terminal/client'
-import type { ComponentType, FC } from 'react'
+import type { ComponentType, FC, ReactNode } from 'react'
 
 export * from '@opencroft/core'
 export type { TerminalConfig, TerminalProps, TerminalStatus } from '@opencroft/terminal/client'
@@ -160,6 +160,65 @@ export interface MermaidDiagramProps {
  * by hand is one option away from losing that with nothing to see.
  */
 export declare const MermaidDiagram: FC<MermaidDiagramProps>
+
+/**
+ * A group of toolbar controls. Named rather than listed one by one so a surface
+ * can ask for less without enumerating buttons it does not know about yet.
+ */
+export type MarkdownEditorToolbarGroup = 'history' | 'marks' | 'headings' | 'blocks' | 'links' | 'table'
+
+export interface MarkdownEditorProps {
+  /** The markdown being edited. Controlled — the caller holds it. */
+  value: string
+  /** The markdown after an edit. Fires for edits, never for loading `value`. */
+  onChange: (markdown: string) => void
+  /** Shown while the document is empty. Read once, when the editor is created. */
+  placeholder?: string
+  /** Editable by default; `false` shows the same prose read-only. */
+  editable?: boolean
+  /** Put the caret at the end of the document on mount. */
+  autoFocus?: boolean
+  /** Which toolbar groups to offer, in the order given. All of them by default; `false` for none. */
+  toolbar?: false | MarkdownEditorToolbarGroup[]
+  /**
+   * Rendered at the end of the toolbar row, after a spacer — for a surface
+   * whose own actions belong on that row rather than above it.
+   */
+  toolbarExtra?: ReactNode
+  /**
+   * Added to the toolbar row — for a surface where the editor grows with its
+   * content and the page scrolls rather than the editor, where the toolbar has
+   * to be `sticky` to stay reachable. The editor cannot decide that for itself:
+   * it depends on which box around it is the scrolling one.
+   */
+  toolbarClassName?: string
+  /** Added to the editor's outer box, for the layout your surface needs. */
+  className?: string
+  /**
+   * Classes for the editable area, REPLACING the default prose styling rather
+   * than adding to it: a surface with prose rules of its own would otherwise
+   * render under both sets.
+   */
+  contentClassName?: string
+}
+
+/**
+ * A markdown WYSIWYG: rich text to edit, markdown to store.
+ *
+ * Controlled on markdown in both directions, because markdown is what the
+ * surfaces editing this way actually persist. Legacy HTML in a stored body is
+ * read as the rich text it describes and written back as markdown on the next
+ * save, so nothing has to be migrated ahead of the editor.
+ *
+ * The host owns it for three reasons, in order of how much they cost to get
+ * wrong. TipTap and ProseMirror are a large dependency, and an extension
+ * bundling its own pays for the whole editor again — per extension. Code blocks
+ * inside it are coloured by the page's one shiki highlighter, the same instance
+ * and grammar cache `CodeBlock` and `Markdown` use, so a block typed here and
+ * the same block once rendered are coloured by the same thing. And one editor
+ * means one markdown dialect: what this writes is what `Markdown` renders.
+ */
+export declare const MarkdownEditor: FC<MarkdownEditorProps>
 
 /** Props the host passes to an App's component when rendering it in a space. */
 export interface AppComponentProps {

@@ -211,3 +211,48 @@ pre.shiki span {
 .dark pre.shiki span {
   color: var(--shiki-dark);
 }
+
+/*
+ * `MarkdownEditor`'s editable area. Everything the prose itself looks like
+ * comes from the class the caller picked (`.prose-chat` by default), so what is
+ * left here is the two things only an editor has.
+ */
+
+/* The placeholder. TipTap's Placeholder extension marks the first node of an
+   empty document and hangs the text on `data-placeholder`; it has to be drawn
+   by CSS, because a real text node would be content the caller never wrote. */
+.markdown-editor p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--muted-foreground);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* A code block's coloured runs, which arrive as ProseMirror decorations rather
+   than as shiki's own markup -- the text has to stay editable, so it cannot be
+   replaced by rendered HTML. Both themes ride on the decoration as custom
+   properties and this chooses between them, exactly as `pre.shiki` above does
+   for the rendered kind. */
+.shiki-token {
+  color: var(--shiki-light);
+}
+
+.dark .shiki-token {
+  color: var(--shiki-dark);
+}
+
+/* The cells of a selected range, which ProseMirror marks and leaves to the
+   document to draw. Without it a multi-cell selection is invisible. */
+.markdown-editor .selectedCell {
+  position: relative;
+}
+
+.markdown-editor .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--primary);
+  opacity: 0.15;
+  pointer-events: none;
+}
