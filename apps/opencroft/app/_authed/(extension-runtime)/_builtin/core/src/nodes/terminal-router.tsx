@@ -14,7 +14,6 @@ const {
   ItemActions,
   ItemContent,
   ItemGroup,
-  ItemMedia,
   ItemTitle,
   NodeFrame,
   OutputHandle,
@@ -128,9 +127,6 @@ export function TerminalRouterInspector({
           <ItemGroup>
             {routes.map((route) => (
               <Item key={route.id} size='sm' className='px-0 py-1.5'>
-                <ItemMedia variant='icon'>
-                  <icons.TerminalSquare />
-                </ItemMedia>
                 <ItemContent className='min-w-0'>
                   <ItemTitle className='w-full min-w-0'>
                     <TerminalRef target={route.target} />
