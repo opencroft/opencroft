@@ -328,14 +328,14 @@ export function AgentPresetForm({
           value is worse than none, which is why nothing is guessed from the
           model name to fill it.
 
-          THERE IS A SECOND FIELD FOR THE SAME VALUE. The agent node's own
-          Inspector (core's `nodes/agent.tsx`, `ContextWindowField`) writes the
-          same `contextWindow`, and in the opencroft app that one is the surface
-          a person actually reaches — this form is not mounted there. Ungating
-          this one alone left the defect exactly as it was, from the user's side,
-          because the reachable copy kept its harness gate. If a harness gate is
-          ever argued for again, it has to be argued for in both places at once,
-          or the two disagree and only one of them is visible. */}
+          A HOST MAY CARRY A SECOND FIELD FOR THE SAME VALUE, and one did:
+          another surface of its own wrote the same `contextWindow`, was the
+          one a person actually reached, and this form was not mounted there at
+          all. Ungating this one alone left the defect exactly as it was from
+          the user's side, because the reachable copy kept its harness gate. If
+          a harness gate is ever argued for again, it has to be argued for in
+          every place the value is written, or they disagree and only one of
+          them is visible. */}
       <Field>
         <FieldLabel>Max context</FieldLabel>
         <ControlledInput

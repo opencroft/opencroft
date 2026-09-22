@@ -310,7 +310,7 @@ export type ChatEvent =
       input?: unknown
       // The tool's PROGRAMMATIC name (`Write`, `Bash`, `mcp__local__call`) as
       // the agent reports it, where `title` is the human sentence it wants
-      // drawn ("Write apps/opencroft/…/foo.tsx"). Both, because they answer
+      // drawn ("Write src/checkout/form.tsx"). Both, because they answer
       // different questions: the title is what a reader sees, and this is what
       // a client matches on to decide HOW to draw it. A client keying a view
       // registry on the title matches nothing whose title embeds an argument,

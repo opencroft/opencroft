@@ -19,9 +19,9 @@ const T1 = '2026-08-21T01:00:00.000Z'
 const T2 = '2026-08-21T01:01:00.000Z'
 const T3 = '2026-08-21T01:02:00.000Z'
 
-// A host's own last step from a raw message to the words a reader sees --
-// the same seam the OpenCroft app fills with its `<opencroft-*>` stripper.
-// A message that is nothing but context renders nothing at all.
+// A host's own last step from a raw message to the words a reader sees -- the
+// same seam a host fills with its own stripper for whatever tags it puts in a
+// message. A message that is nothing but context renders nothing at all.
 const render = (raw: string): string | null => {
   const stripped = raw.replace(/<ctx>[\s\S]*?<\/ctx>\s*/g, '')
   return stripped.trim() ? stripped : null
