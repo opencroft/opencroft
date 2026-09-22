@@ -1,6 +1,8 @@
 // Shared types for the extension system. Safe to import from both server and
 // client — contains no runtime imports of Node-only or React APIs.
 
+import type { ExecutionMode } from '@opencroft/core'
+
 /** Generic node data — all node data objects extend this. */
 export type NodeData = Record<string, unknown>
 
@@ -62,6 +64,8 @@ export interface NodeAction {
   description?: string
   icon?: string
   inputSchema?: Record<string, unknown>
+  /** How callers wait for it. Absent means `sync` — see {@link ExecutionMode}. */
+  execution?: ExecutionMode
 }
 
 export interface NodeMetadata {

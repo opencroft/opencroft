@@ -31,6 +31,22 @@ export interface AppParameter {
 }
 
 /**
+ * How a caller waits for an action or a tool.
+ *
+ * - `sync` — the call returns the result, and the caller waits for it.
+ * - `awaitable` — the caller chooses per call. The input schema gains a
+ *   `background` flag; a backgrounded call returns at once while the work
+ *   carries on, and the caller is told when it ends.
+ * - `async` — always detached: the call returns at once and the caller is told
+ *   when the work ends. Its schema is the same as a `sync` one's, so it asks
+ *   nothing new of a caller; only its description says there is a wait.
+ *
+ * Absent means `sync`, so everything declared before this existed behaves as
+ * it did.
+ */
+export type ExecutionMode = 'sync' | 'awaitable' | 'async'
+
+/**
  * An action one instance of an App exposes to agents (via the host's
  * `list_apps`/`app_call` MCP tools). Declared in the manifest so the host can
  * list it without loading the extension; the handler lives in the server
@@ -42,6 +58,8 @@ export interface AppActionMeta {
   description?: string
   /** JSON schema for the action's params, surfaced to agents by `list_apps`. */
   inputSchema?: Record<string, unknown>
+  /** How callers wait for it. Absent means `sync` — see {@link ExecutionMode}. */
+  execution?: ExecutionMode
 }
 
 /**
