@@ -187,8 +187,8 @@ export function AppSettings({ spaceSlug, instance, meta, spaces }: Props) {
           </Button>
         </Flex>
         <p className='text-xs text-muted-foreground'>
-          Saving a new name moves the address above with it. Links and agent targets written against
-          the old address stop working — they are not redirected.
+          Saving a new name moves the address above with it. Links and agent targets written against the old address
+          stop working — they are not redirected.
         </p>
         {renameError && <p className='text-sm text-destructive'>{renameError}</p>}
       </Flex>

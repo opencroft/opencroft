@@ -6,7 +6,7 @@ import nodePath from 'node:path'
 
 import { db, spaceApp } from '@opencroft/db'
 import type { ExtensionServerHost, HostSecretsApi } from '@opencroft/server'
-import type { ExecOptions, ExecResult, ServerConfig, TerminalContext } from '@opencroft/terminal'
+import type { ServerConfig, TerminalContext } from '@opencroft/terminal'
 import {
   exec,
   resolveKeyContent,
