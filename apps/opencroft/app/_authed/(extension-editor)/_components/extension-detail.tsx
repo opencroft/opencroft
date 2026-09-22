@@ -1,5 +1,6 @@
 'use client'
 
+import type { ExecutionMode } from '@opencroft/core'
 import { Markdown } from 'agent-chat/components/markdown'
 import {
   ArrowDownToLine,
@@ -75,6 +76,8 @@ interface ProvidedAppAction {
   label?: string
   description?: string
   inputSchema?: { properties?: Record<string, unknown>; required?: string[] }
+  /** How a caller waits for it. Absent means `sync`. */
+  execution?: ExecutionMode
 }
 
 /** What an app puts on the canvas. */
@@ -175,6 +178,30 @@ function schemaParams(action: ProvidedAppAction): string[] {
   return Object.keys(properties).map((name) => (required.includes(name) ? name : `${name}?`))
 }
 
+/** The word an action's badge carries for how a caller waits for it.
+ *
+ *  Absent reads as Sync because that is what the contract says absent means
+ *  (see ExecutionMode), so an action declared before modes existed is labelled
+ *  as what it still is. A value that is none of the three is shown as written
+ *  rather than as Sync: the manifest reaches this page unvalidated, and a
+ *  misspelt mode wearing the default would look like a choice its author made. */
+function executionLabel(execution: unknown): string {
+  switch (execution ?? 'sync') {
+    case 'sync':
+      return 'Sync'
+    case 'awaitable':
+      return 'Awaitable'
+    case 'async':
+      return 'Async'
+    default:
+      return String(execution)
+  }
+}
+
+function ExecutionBadge({ execution }: { execution: unknown }) {
+  return <Badge variant='outline'>{executionLabel(execution)}</Badge>
+}
+
 function AppCard({ app }: { app: ProvidedApp }) {
   const parameters = app.parameters ?? []
   const actions = app.actions ?? []
@@ -222,6 +249,10 @@ function AppCard({ app }: { app: ProvidedApp }) {
                 {action.label && action.id ? (
                   <span className='font-mono text-muted-foreground'>{action.id}</span>
                 ) : null}
+                {/* On every action, Sync included: an action that declares
+                    nothing has still declared sync, and a row without a badge
+                    would say less than the manifest does. */}
+                <ExecutionBadge execution={action.execution} />
               </span>
               {params.length > 0 ? (
                 <span className='font-mono text-xs text-muted-foreground'>({params.join(', ')})</span>
@@ -343,6 +374,7 @@ function NodeCardList({ nodes }: { nodes: NodeMetadata[] }) {
                   <span className='flex flex-wrap items-baseline gap-2 text-xs'>
                     <span>{action.label || action.id}</span>
                     {action.label ? <span className='font-mono text-muted-foreground'>{action.id}</span> : null}
+                    <ExecutionBadge execution={action.execution} />
                   </span>
                   {action.description ? (
                     <span className='max-w-prose text-xs text-muted-foreground'>{action.description}</span>
