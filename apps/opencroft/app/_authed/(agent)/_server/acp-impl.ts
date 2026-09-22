@@ -27,7 +27,7 @@ import { join } from 'node:path'
 
 import { getSessionUser } from '@opencroft/auth/server'
 import { getRequest } from '@tanstack/react-start/server'
-import { supportsMidTurnInput } from 'agent-client'
+import { supportsImagePrompt, supportsMidTurnInput } from 'agent-client'
 import { usableContextWindow } from 'agent-client/context-window'
 import { rebuildDelivery, splitDelivery } from 'agent-client/queue-tags'
 import type { AgentSelection, Presence, PromptOrigin, QueueMode, SessionMeta } from 'agent-client/types'
@@ -47,7 +47,12 @@ import {
 } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { withAuthors } from '@/app/_authed/(agent)/_server/attach-authors'
-import { clearAttachments } from '@/app/_authed/(agent)/_server/attachment-store'
+import {
+  clearAttachments,
+  readAttachment,
+  type StoredAttachment,
+  saveAttachment,
+} from '@/app/_authed/(agent)/_server/attachment-store'
 import { queryChatUsageTokensBySession } from '@/app/_authed/(agent)/_server/chat-usage-store'
 import { queueStore } from '@/app/_authed/(agent)/_server/queue-store'
 import {
@@ -86,6 +91,11 @@ export interface OpenedSession {
   sessionId: string
   canFork: boolean
   canSteer: boolean
+  // Whether a message to this session may carry an attached image — ACP's
+  // `promptCapabilities.image`, as the harness answered at initialize.
+  // Resolved here rather than guessed at the composer, so the attach control
+  // and what the engine will actually send cannot disagree.
+  canAttachImages: boolean
   // The adapter this session runs. Carried to the client because a session mode
   // id only means something against the adapter that advertised it — the client
   // needs it to classify modes (see agent-client's session-modes), and has no
@@ -119,6 +129,10 @@ export interface TabSession {
   // Whether this tab's agent accepts mid-turn prompts as live-turn input
   // (adapter-declared; see agent-client's supportsMidTurnInput).
   canSteer: boolean
+  // Whether this tab's agent advertised image prompts. Kept on the tab because
+  // it is only knowable AFTER the harness has handshaken, and the branch that
+  // finds an already-open session never builds a selection to ask about.
+  canAttachImages: boolean
   // Whether a prompt has ever been delivered into this session. Session
   // creation and "has the first message gone out yet" are different events —
   // ensureLocalSessionImpl can be (and routinely is) called more than once for
@@ -283,6 +297,37 @@ async function reopenPersistedSession(
   return agentClient.loadSession(sessionId, selection).catch(() => null)
 }
 
+/**
+ * Store an image the reader attached, and answer with the reference a message
+ * will carry.
+ *
+ * Filed under the tab key rather than the session id, because that is what the
+ * picture has to outlive: a session reopened tomorrow is a new id, and a
+ * message written today still names this row.
+ */
+export async function attachImageImpl(data: {
+  tabKey: string
+  name: string
+  mimeType: string
+  data: string
+}): Promise<StoredAttachment> {
+  return saveAttachment({ sessionKey: data.tabKey, name: data.name, mimeType: data.mimeType, data: data.data })
+}
+
+/**
+ * One stored image, for a surface that draws it.
+ *
+ * Answers the bytes rather than a URL: the transcript needs the picture while
+ * it renders a message that names it, and a second route serving these would be
+ * a second place to get the session scoping wrong.
+ */
+export async function readChatAttachmentImpl(data: {
+  tabKey: string
+  id: string
+}): Promise<{ name: string; mimeType: string; data: string } | null> {
+  return readAttachment(data.tabKey, data.id)
+}
+
 async function openLocalSession(data: { agentNodeId: string; tabKey: string }): Promise<OpenedSession> {
   const known = tabSessions.get(data.tabKey)
   if (known && agentClient.listSessions().some((s) => s.id === known.id)) {
@@ -295,6 +340,7 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
       sessionId: known.id,
       canFork: known.canFork,
       canSteer: known.canSteer ?? false,
+      canAttachImages: known.canAttachImages ?? false,
       // Entries recorded before adapterId existed fall back to the live
       // session's own, and to '' only if the agent advertises no modes at all —
       // in which case there is nothing to classify anyway.
@@ -372,10 +418,15 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
       // implies "has history" — a session created and then orphaned before its
       // first prompt must still receive its opening context, or the agent
       // wakes up in a conversation with no idea what it is for.
+      // Asked only now: the capability is the HARNESS's answer at initialize,
+      // so it cannot be resolved from the selection before the connection is
+      // up — unlike canSteer above, which the adapter table decides.
+      const canAttachImages = supportsImagePrompt(selection)
       tabSessions.set(data.tabKey, {
         id: resumed.id,
         canFork,
         canSteer,
+        canAttachImages,
         everPrompted: persisted.prompted,
         adapterId,
       })
@@ -406,6 +457,7 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
         sessionId: resumed.id,
         canFork,
         canSteer,
+        canAttachImages,
         adapterId,
         created: !persisted.prompted,
         contextUsage: await currentContextUsage(resumed.id, data.tabKey, data.agentNodeId),
@@ -423,7 +475,17 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
   // message store, and an external ACP agent that advertised `session/fork`
   // forks its transcript through the engine (see agent-client's forkSession).
   const canFork = meta.canFork ?? false
-  tabSessions.set(data.tabKey, { id: meta.id, canFork, canSteer, everPrompted: false, adapterId })
+  // After createSession, not before: the harness has handshaken by now, which
+  // is the only moment its promptCapabilities are knowable.
+  const canAttachImages = supportsImagePrompt(selection)
+  tabSessions.set(data.tabKey, {
+    id: meta.id,
+    canFork,
+    canSteer,
+    canAttachImages,
+    everPrompted: false,
+    adapterId,
+  })
   // Durable before the caller can prompt it, so a restart mid-first-turn finds
   // this session instead of creating a rival for the same key.
   await writePersistedSession(data.tabKey, meta.id, false)
@@ -432,6 +494,7 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
     sessionId: meta.id,
     canFork,
     canSteer,
+    canAttachImages,
     adapterId,
     created: true,
     contextUsage: await currentContextUsage(meta.id, data.tabKey, data.agentNodeId),
@@ -670,6 +733,10 @@ export async function adoptFork(tabKey: string, sessionId: string): Promise<void
     id: sessionId,
     canFork: true,
     canSteer: tabSessions.get(tabKey)?.canSteer ?? false,
+    // A fork runs the same harness on the same selection, so it inherits the
+    // capability rather than re-deriving it — and re-deriving it here would
+    // need a selection this function is not handed.
+    canAttachImages: tabSessions.get(tabKey)?.canAttachImages ?? false,
     everPrompted: true,
   })
   await writePersistedSession(tabKey, sessionId, true)

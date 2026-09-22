@@ -97,10 +97,18 @@ export interface AgentClientOptions {
   // in the text is an id in the HOST's store — this engine keeps none, and a
   // message can be delivered long after it was written.
   //
+  // The session key travels with the ids so the host can scope the lookup. An
+  // id is not a capability: message text is editable, and a message naming
+  // another conversation's row must resolve to nothing rather than to its
+  // bytes. Undefined for a session created without a key.
+  //
   // Absent means a host with no attachment store: a tag then travels as the
   // text it is, naming a file nobody fetches, which is what every host did
   // before attachments existed.
-  loadAttachments?: (ids: readonly string[]) => Promise<readonly PromptAttachment[]>
+  loadAttachments?: (request: {
+    sessionKey?: string
+    ids: readonly string[]
+  }) => Promise<readonly PromptAttachment[]>
   tools?: ToolsInput
   skills?: SkillsInput
   skillHandler?: SkillHandler
@@ -1686,6 +1694,29 @@ function forkCutoffMeta(session: { events: ChatEvent[] }, boundary: number | nul
   return undefined
 }
 
+// Whether a prompt to this agent may carry an image block, which is ACP's
+// `agentCapabilities.promptCapabilities.image` and nothing looser: the spec
+// says a client MUST NOT send the block to an agent that did not advertise it.
+//
+// The native harness answers from its own declaration, read straight off the
+// module: it is never handshaken — a native selection is not spawned, so there
+// is no connection entry to read an initialize answer from.
+//
+// A session whose connection is not up yet answers false, which is the
+// conservative side: a host reading this to place an attach control shows it
+// disabled with a reason until the harness has spoken, rather than offering
+// something that would be refused.
+//
+// Exported so a host's composer offers attaching exactly where the engine would
+// actually send it. The engine reads this same function when it builds a
+// prompt's blocks, so the control and the delivery cannot disagree.
+export function supportsImagePrompt(selection: AgentSelection): boolean {
+  if (isNativeSelection(selection)) {
+    return NATIVE_PROMPT_CAPABILITIES.image
+  }
+  return store.connections.get(spawnKey(buildSpawnConfig(selection)))?.imagePrompt === true
+}
+
 // Whether this agent accepts a prompt while a turn is running, feeding it into
 // the live turn ("steering"). True on either of two words, and only those:
 //
@@ -2270,20 +2301,6 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     return true
   }
 
-  // Whether a prompt to this selection's harness may carry an image block.
-  //
-  // The native harness is never handshaken — a native selection is not spawned,
-  // so the engine holds no connection entry to read an initialize answer off.
-  // Its declaration is read straight from the module instead, which is why that
-  // constant is exported: one fact, two readers, rather than the same claim
-  // written down here and there.
-  function acceptsImagePrompt(selection: AgentSelection): boolean {
-    if (isNativeSelection(selection)) {
-      return NATIVE_PROMPT_CAPABILITIES.image
-    }
-    return connEntryFor(selection)?.imagePrompt === true
-  }
-
   /**
    * The blocks one delivery hands over: the message, and an image block for
    * every attachment the message names.
@@ -2305,7 +2322,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return blocks
     }
     const harness = findAdapter(session.selection.adapterId)?.label ?? 'This harness'
-    if (!acceptsImagePrompt(session.selection)) {
+    if (!supportsImagePrompt(session.selection)) {
       emit(sessionId, {
         kind: 'error',
         message: `${harness} did not advertise image prompts, so ${plural(refs.length, 'attachment')} did not travel — only the message text went out.`,
@@ -2314,7 +2331,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     }
     let loaded: readonly PromptAttachment[]
     try {
-      loaded = await options.loadAttachments(refs.map((ref) => ref.id))
+      loaded = await options.loadAttachments({
+        sessionKey: session.selection.sessionKey,
+        ids: refs.map((ref) => ref.id),
+      })
     } catch (error) {
       emit(sessionId, {
         kind: 'error',

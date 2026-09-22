@@ -2,6 +2,7 @@ import type { Block } from 'agent-chat/components/chat-conversation'
 import type { ChatUserMessagePart, DetailItem, MessageAttachment, UserText } from 'agent-chat/components/chat-turn'
 import type { ChatUnreadMessage } from 'agent-chat/components/chat-unread'
 import { toUserParts } from 'agent-chat/user-parts'
+import { attachmentRefsIn } from 'agent-client'
 import type { QueuedPrompt } from 'agent-client/types'
 
 import type { AuthoredChatEvent, ResolvedAuthor } from '@/app/_authed/(agent)/_lib/acp-stream'
@@ -117,6 +118,15 @@ function attachmentsOf(raw: string): MessageAttachment[] {
       continue
     }
     attachments.push({ label: attachmentLabel(detail), detail })
+  }
+  // The pictures the message carried, read from the same text the harness got
+  // -- the tag IS the record, which is why it is not stripped on the way out.
+  // A chip rather than the thumbnail itself: the picture lives in a store this
+  // function cannot reach, and a delivered message is drawn from its text
+  // alone. What the reader gets back is the name they attached, which is the
+  // part that says WHICH picture went with WHICH message.
+  for (const ref of attachmentRefsIn(raw)) {
+    attachments.push({ label: attachmentLabel(ref.name), detail: ref.name })
   }
   return attachments
 }

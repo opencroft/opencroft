@@ -1,7 +1,7 @@
 // Server entry: API routes import the engine from here.
 
 export type { AgentClientOptions, ClientInfo } from './agent-client'
-export { agentClient, createAgentClient, supportsMidTurnInput } from './agent-client'
+export { agentClient, createAgentClient, supportsImagePrompt, supportsMidTurnInput } from './agent-client'
 // How a message names an image it carries. The composer writes the tag, the
 // engine turns it back into an ACP image block at delivery — one definition,
 // so a host cannot invent a second spelling of the same reference.

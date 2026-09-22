@@ -10,6 +10,7 @@ import type { ElicitationContentValue, Presence, QueueMode } from 'agent-client/
 import type { AuthoredRecordsWindow } from '@/app/_authed/(agent)/_lib/acp-stream'
 import type { WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import {
+  attachImageImpl,
   cancelLocalImpl,
   deliverQueueLocalImpl,
   editTurnLocalImpl,
@@ -19,6 +20,7 @@ import {
   hasActiveTurnImpl,
   type OpenedSession,
   promptLocalImpl,
+  readChatAttachmentImpl,
   sessionHistoryPageImpl,
   setPresenceLocalImpl,
   stopLocalImpl,
@@ -27,11 +29,30 @@ import {
 } from '@/app/_authed/(agent)/_server/acp-impl'
 import { writePersistedConfigOption } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import type { StoredAttachment } from '@/app/_authed/(agent)/_server/attachment-store'
 import { modeLockedByYolo } from '@/app/_authed/(agent)/_server/yolo-mode-enforcement'
 
 export const ensureLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { agentNodeId: string; tabKey: string }) => data)
   .handler(async ({ data }): Promise<OpenedSession> => ensureLocalSessionImpl(data))
+
+// An image the reader attached, on its way to the store. `data` is base64 with
+// no `data:` prefix — what ACP's image block carries, so the payload is never
+// re-encoded between here and the harness. What may be attached at all, and how
+// large, is the store's to refuse: a limit enforced in the browser is a
+// suggestion.
+export const attachImage = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { tabKey: string; name: string; mimeType: string; data: string }) => data)
+  .handler(async ({ data }): Promise<StoredAttachment> => attachImageImpl(data))
+
+// One stored image, for drawing a message that names it. Null when the id
+// names nothing this tab stored — which is the answer for another
+// conversation's row as much as for a deleted one.
+export const readChatAttachment = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { tabKey: string; id: string }) => data)
+  .handler(
+    async ({ data }): Promise<{ name: string; mimeType: string; data: string } | null> => readChatAttachmentImpl(data),
+  )
 
 // `queue` says how this message relates to anything already held: `wait` to be
 // delivered on its own when the turn ends, `push` to interrupt and deliver the
@@ -74,9 +95,11 @@ export const removeQueuedLocal = createServerFn({ method: 'POST', strict: { outp
 // own state change via the async_task event on the stream.
 export const stopBackgroundTaskLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { sessionId: string; asyncTaskId: string }) => data)
-  .handler(async ({ data }): Promise<{ stopped: boolean }> => ({
-    stopped: await agentClient.stopAsyncTask(data.sessionId, data.asyncTaskId),
-  }))
+  .handler(
+    async ({ data }): Promise<{ stopped: boolean }> => ({
+      stopped: await agentClient.stopAsyncTask(data.sessionId, data.asyncTaskId),
+    }),
+  )
 
 // While YOLO is on, every session is pinned to bypass and mode changes are
 // refused here rather than applied and then quietly undone by the enforcement

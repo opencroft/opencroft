@@ -108,6 +108,7 @@ export interface OpenedSessionResult {
   sessionId: string
   canFork: boolean
   canSteer: boolean
+  canAttachImages: boolean
   adapterId: string
   created: boolean
   contextUsage: {
@@ -196,6 +197,11 @@ export interface AcpSession {
   // capability, resolved server-side). The presence selector reads it to
   // offer Realtime only where steering can make it mean something.
   canSteer: boolean
+  // Whether a message to this session may carry an attached image (the
+  // harness's own promptCapabilities.image, resolved server-side). The
+  // composer's attach control reads it: false leaves the control standing but
+  // disabled, with the reason, rather than removing it.
+  canAttachImages: boolean
   // Context usage meter (tokens used / window) from the latest 'usage' event.
   usage?: AgentUsage
   // Live background tasks the harness reported (running or paused) — the
@@ -764,6 +770,10 @@ export function useAcpSession(
   // flow below; plain sends need no gating — the server already delivers
   // instead of queueing for such agents.
   const [canSteer, setCanSteer] = useState(false)
+  // Whether the tab's agent advertised image prompts. False until the session
+  // resolves, which is the conservative side: the attach control is disabled
+  // while the harness has not spoken yet.
+  const [canAttachImages, setCanAttachImages] = useState(false)
   // The adapter this session runs, resolved server-side. Only used to classify
   // the session's permission modes for display — a mode id means nothing
   // without knowing who advertised it. Empty until the session resolves.
@@ -881,6 +891,7 @@ export function useAcpSession(
           setSessionId(result.sessionId)
           setCanFork(result.canFork)
           setCanSteer(result.canSteer)
+          setCanAttachImages(result.canAttachImages)
           setAdapterId(result.adapterId)
           setSeedUsage(
             result.contextUsage
@@ -1438,6 +1449,7 @@ export function useAcpSession(
       commands: folded.commands,
       presence: folded.presence,
       canSteer,
+      canAttachImages,
       usage,
       // Only the LIVE ones reach the UI: a finished task is transcript
       // history the strip would keep pinned. The strip and the stop-session
@@ -1462,6 +1474,7 @@ export function useAcpSession(
       folded.commands,
       folded.presence,
       canSteer,
+      canAttachImages,
       usage,
       folded.asyncTasks,
       resolvePermission,

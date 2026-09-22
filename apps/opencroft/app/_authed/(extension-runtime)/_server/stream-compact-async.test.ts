@@ -108,7 +108,13 @@ async function setupCompactableSession(keyPrefix = CLAIMED_PREFIX): Promise<{
   })
 
   const meta = await agentClient.createSession(selection)
-  tabSessions.set(sessionKey, { id: meta.id, canFork: false, canSteer: false, everPrompted: true })
+  tabSessions.set(sessionKey, {
+    id: meta.id,
+    canFork: false,
+    canSteer: false,
+    canAttachImages: false,
+    everPrompted: true,
+  })
 
   return {
     sessionKey,
