@@ -178,6 +178,20 @@ export interface AgentCommandBarProps {
   // `undefined`, rather than a component that will decide for itself that it
   // has nothing to show.
   attachments?: ReactNode
+  /** Files the reader brought in through the composer itself, rather than
+   *  through a picker in the control row: pasted over the input, or dropped on
+   *  the bar. Both routes exist because they are what readers actually do with
+   *  a screenshot -- the picker is the fallback, not the main road.
+   *
+   *  The bar recognises the gesture and hands over the files. It still does not
+   *  know what an attachment IS, which is the same boundary `attachments` draws
+   *  one row up: what a file becomes, and whether it is allowed, stay the
+   *  host's.
+   *
+   *  A host that passes nothing keeps the default behaviour exactly: the
+   *  handlers are not attached at all, so a paste types itself into the box and
+   *  a drop does whatever the browser does. */
+  onFiles?: (files: File[]) => void
   // What pressing send MEANS right now. `commit` swaps the icon to a check and
   // says so -- an edit is committed by sending it, so it is the same control
   // and the same handler, not a second button that appears beside it.
@@ -424,6 +438,7 @@ export function AgentCommandBar({
   onDismissSendError,
   editBar,
   attachments,
+  onFiles,
   submitMode = 'send',
   emptySendLabel,
   approval,
@@ -469,6 +484,10 @@ export function AgentCommandBar({
   // draft restore or a buffer resync. Only the keyboard cursor and an explicit
   // dismiss are state of their own.
   const [commandCursor, setCommandCursor] = useState(0)
+  // Whether a file is being dragged over the bar. Only ever true while
+  // `onFiles` is wired -- a bar with nowhere to put a file must not offer to
+  // take one.
+  const [dragging, setDragging] = useState(false)
   const [dismissedToken, setDismissedToken] = useState<string | null>(null)
   const typedToken = commandToken(buffered)
   const commandMatches =
@@ -572,8 +591,72 @@ export function AgentCommandBar({
 
   const approvalTitle = yoloMode ? approvalTitles.yolo : autoApprove ? approvalTitles.on : approvalTitles.off
 
+  // What a paste or a drop actually brought, as files. Only entries the
+  // platform reports as a file: an image copied out of a page carries BOTH an
+  // image/* file and an HTML fragment naming it, so reading the item list
+  // without this filter turns one screenshot into a picture plus a line of
+  // markup typed into the message.
+  const filesFrom = (transfer: DataTransfer | null): File[] =>
+    transfer
+      ? Array.from(transfer.items)
+          .flatMap((item) => (item.kind === 'file' ? [item.getAsFile()] : []))
+          .filter((file): file is File => file !== null)
+      : []
+
   return (
-    <div className={cn('flex min-w-0 flex-1 flex-col gap-1', className)}>
+    <div
+      className={cn(
+        'flex min-w-0 flex-1 flex-col gap-1',
+        // A ring rather than a colour wash. The bar is already the brightest
+        // thing on the panel, so the question a drag raises is not "is
+        // something happening" but "where will this land" -- and an outline is
+        // the answer to that one.
+        dragging && 'rounded-md ring-2 ring-primary ring-offset-2 ring-offset-background',
+        className,
+      )}
+      // Attached only where the host can take a file, so a bar without
+      // `onFiles` behaves exactly as it did before this prop existed.
+      onDragOver={
+        onFiles
+          ? (event) => {
+              // preventDefault on dragover is what makes a drop land here at
+              // all. Without it the browser navigates to the file and the
+              // reader loses the message they were part-way through writing --
+              // which is why the check below reads `types` and not the items:
+              // during a drag the item DATA is withheld, and only the kinds are
+              // readable.
+              if (Array.from(event.dataTransfer.types).includes('Files')) {
+                event.preventDefault()
+                setDragging(true)
+              }
+            }
+          : undefined
+      }
+      // Moving onto a CHILD fires dragleave on the way, so the flag is cleared
+      // only once the pointer has left the bar's own box. Without the check the
+      // outline flickers off over every control it passes.
+      onDragLeave={
+        onFiles
+          ? (event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                setDragging(false)
+              }
+            }
+          : undefined
+      }
+      onDrop={
+        onFiles
+          ? (event) => {
+              const files = filesFrom(event.dataTransfer)
+              setDragging(false)
+              if (files.length > 0) {
+                event.preventDefault()
+                onFiles(files)
+              }
+            }
+          : undefined
+      }
+    >
       {/* A failed send, directly above the composer with the text that failed
           already back in it. `role='alert'` so it is announced rather than
           only seen -- the text reappearing under the cursor is not something a
@@ -669,6 +752,21 @@ export function AgentCommandBar({
           value={buffered}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
+          // A pasted picture is how a screenshot usually arrives. Text pastes
+          // are left entirely alone: the event is claimed only when the
+          // clipboard actually carried a file, so copying a paragraph still
+          // types it into the box.
+          onPaste={
+            onFiles
+              ? (event) => {
+                  const files = filesFrom(event.clipboardData)
+                  if (files.length > 0) {
+                    event.preventDefault()
+                    onFiles(files)
+                  }
+                }
+              : undefined
+          }
           onFocus={onFocus}
           onBlur={onBlur}
           placeholder={placeholder}
