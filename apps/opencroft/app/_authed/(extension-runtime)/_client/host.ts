@@ -195,7 +195,7 @@ export interface ExtensionDeclaration {
   nodes?: NodeDefinition[]
   commandModes?: CommandModeDefinition[]
   settings?: SettingsPageDefinition[]
-  /** Generic, feature-defined provider points (e.g. `dashboards`). The runtime
+  /** Generic, feature-defined provider points (e.g. `apps`). The runtime
    *  forwards these to the provider registry untouched. */
   provides?: Record<string, unknown[]>
 }

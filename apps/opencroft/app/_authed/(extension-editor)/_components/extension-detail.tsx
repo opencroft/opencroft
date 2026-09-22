@@ -85,13 +85,6 @@ interface ProvidedAppHandle {
   dynamic?: boolean
 }
 
-/** `provides.dashboards` — the other provider point anything here uses. */
-interface ProvidedDashboard {
-  slug?: string
-  title?: string
-  description?: string
-}
-
 function provided<T>(manifest: ExtensionManifest, key: string): T[] {
   const list = manifest.provides?.[key]
   return Array.isArray(list) ? (list.filter((entry) => typeof entry === 'object' && entry !== null) as T[]) : []
@@ -432,7 +425,6 @@ export function ExtensionDetail({
   // person reads them.
   const handleTypes = manifest.contexts ?? []
   const apps = provided<ProvidedApp>(manifest, 'apps')
-  const dashboards = provided<ProvidedDashboard>(manifest, 'dashboards')
   const dependencies = manifest.extensionDependencies ?? []
   const readme = readmeOf(record.files)
   const hasUpdate = updateCheck?.hasUpdate ?? false
@@ -442,9 +434,7 @@ export function ExtensionDetail({
 
   const tabs = [
     { id: 'description', label: 'Description', icon: FileText },
-    ...(apps.length + dashboards.length > 0
-      ? [{ id: 'apps', label: 'Apps', icon: LayoutGrid, count: apps.length + dashboards.length }]
-      : []),
+    ...(apps.length > 0 ? [{ id: 'apps', label: 'Apps', icon: LayoutGrid, count: apps.length }] : []),
     ...(nodes.length > 0 ? [{ id: 'nodes', label: 'Nodes', icon: NodeIcon, count: nodes.length }] : []),
     ...(handleTypes.length > 0
       ? [{ id: 'handles', label: 'Handle Types', icon: Cable, count: handleTypes.length }]
@@ -550,39 +540,13 @@ export function ExtensionDetail({
           ) : null}
 
           {tab === 'apps' ? (
-            <>
-              {apps.length > 0 ? (
-                <Section title={`Apps (${apps.length})`}>
-                  <div className='flex flex-col gap-3'>
-                    {apps.map((app) => (
-                      <AppCard key={app.slug ?? app.title} app={app} />
-                    ))}
-                  </div>
-                </Section>
-              ) : null}
-              {/* A dashboard is the other thing an extension contributes to a
-                  space, and it has nowhere else to appear. Its own group
-                  rather than mixed in: the two are added in different places
-                  and a reader looking for one should not have to tell them
-                  apart by their description. */}
-              {dashboards.length > 0 ? (
-                <Section title={`Dashboards (${dashboards.length})`}>
-                  <ItemGroup className='divide-y rounded-md border'>
-                    {dashboards.map((dashboard) => (
-                      <Item key={dashboard.slug ?? dashboard.title} size='sm'>
-                        <ItemContent>
-                          <ItemTitle>{dashboard.title ?? dashboard.slug}</ItemTitle>
-                          {dashboard.slug ? (
-                            <ItemDescription className='font-mono'>{dashboard.slug}</ItemDescription>
-                          ) : null}
-                          {dashboard.description ? <ItemDescription>{dashboard.description}</ItemDescription> : null}
-                        </ItemContent>
-                      </Item>
-                    ))}
-                  </ItemGroup>
-                </Section>
-              ) : null}
-            </>
+            <Section title={`Apps (${apps.length})`}>
+              <div className='flex flex-col gap-3'>
+                {apps.map((app) => (
+                  <AppCard key={app.slug ?? app.title} app={app} />
+                ))}
+              </div>
+            </Section>
           ) : null}
 
           {tab === 'nodes' ? <NodeCardList nodes={nodes} /> : null}

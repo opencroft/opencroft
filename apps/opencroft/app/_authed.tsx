@@ -1,7 +1,5 @@
-import { listPinnedDashboards } from '@opencroft/dashboards/server'
 import { createFileRoute, Outlet, redirect } from '@tanstack/react-router'
 
-import { listDashboards } from '@/app/_authed/(dashboards)/_server/actions'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 import { SSEProvider } from '@/app/_authed/(sse)/_components/sse-provider'
 import { AppShell } from '@/app/_shell/app-shell'
@@ -55,22 +53,15 @@ export const Route = createFileRoute('/_authed')({
     // truth, both consumers.
     return { isAdmin }
   },
-  loader: async () => {
-    const [spaces, dashboards, pinnedDashboardSlugs] = await Promise.all([
-      listSpaces(),
-      listDashboards(),
-      listPinnedDashboards(),
-    ])
-    return { spaces, dashboards, pinnedDashboardSlugs }
-  },
+  loader: async () => ({ spaces: await listSpaces() }),
   component: AuthedLayout,
 })
 
 function AuthedLayout() {
-  const { spaces, dashboards, pinnedDashboardSlugs } = Route.useLoaderData()
+  const { spaces } = Route.useLoaderData()
   return (
     <SSEProvider>
-      <AppShell spaces={spaces} dashboards={dashboards} pinnedDashboardSlugs={pinnedDashboardSlugs}>
+      <AppShell spaces={spaces}>
         <Outlet />
       </AppShell>
     </SSEProvider>

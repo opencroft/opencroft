@@ -2,9 +2,9 @@ import type { AppEntry } from '@opencroft/core'
 
 /**
  * Server-known App metadata, read from the extension manifest's
- * `provides.apps` before any client bundle loads — same split as
- * DashboardMeta vs DashboardDefinition. The React `component` is not part of
- * it; that lives in the client bundle.
+ * `provides.apps` before any client bundle loads, so a list of Apps renders
+ * server-side. The React `component` is not part of it; that lives in the
+ * client bundle (`AppDefinition` in @opencroft/client).
  */
 export interface AppMeta extends AppEntry {
   extensionId: string

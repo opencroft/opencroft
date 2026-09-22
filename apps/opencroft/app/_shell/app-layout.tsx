@@ -1,22 +1,10 @@
-import { listPinnedDashboards } from '@opencroft/dashboards/server'
-
-import { AppShell } from '@/app/_shell/app-shell'
-import { listDashboards } from '@/app/_authed/(dashboards)/_server/actions'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
+import { AppShell } from '@/app/_shell/app-shell'
 
 export async function AppLayout({
   children,
 }: Readonly<{
   children: React.ReactNode
 }>) {
-  const [spaces, dashboards, pinnedDashboardSlugs] = await Promise.all([
-    listSpaces(),
-    listDashboards(),
-    listPinnedDashboards(),
-  ])
-  return (
-    <AppShell spaces={spaces} dashboards={dashboards} pinnedDashboardSlugs={pinnedDashboardSlugs}>
-      {children}
-    </AppShell>
-  )
+  return <AppShell spaces={await listSpaces()}>{children}</AppShell>
 }

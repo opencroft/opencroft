@@ -77,10 +77,10 @@ export default defineConfig(async ({ mode }) => {
         '@tailwindcss/oxide',
         'lightningcss',
       ],
-      // agent-client, @opencroft/terminal, and @opencroft/dashboards ship TS source
-      // and must be transpiled for SSR; their native deps (ssh2, node-pty,
+      // agent-client and @opencroft/terminal ship TS source and must be
+      // transpiled for SSR; their native deps (ssh2, node-pty,
       // @electric-sql/pglite, pg) stay external via the list above.
-      noExternal: ['agent-client', '@opencroft/terminal', '@opencroft/dashboards', '@opencroft/db-backups'],
+      noExternal: ['agent-client', '@opencroft/terminal', '@opencroft/db-backups'],
     },
     // Defense-in-depth: the same native/server-only modules
     // external for the SSR build above are external here for the CLIENT build too, in

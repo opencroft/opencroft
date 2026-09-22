@@ -10,8 +10,10 @@ import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loa
 import { useProvided } from '@/app/_authed/(extension-runtime)/_client/provides'
 
 // The App's React component lives in the extension's client bundle, so it is
-// resolved from the `apps` provider once extensions have loaded — the same
-// split (and the same Suspense reasoning) as the dashboard page. The
+// resolved from the `apps` provider once extensions have loaded. Suspense
+// lives here rather than inside every extension: an App's component can be
+// React.lazy(() => import(...)) wrapping a code-split extension chunk, and
+// rendering one with no Suspense ancestor throws on its first render. The
 // component owns the whole pane; title/description are navigation labels.
 export function AppPage({ spaceSlug, instance }: { spaceSlug: string; instance: SpaceAppInstance }) {
   const { items, loaded } = useProvided<AppDefinition>('apps', loadAllExtensions)

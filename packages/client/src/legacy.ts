@@ -146,7 +146,7 @@ export interface ExtensionDeclaration {
   nodes?: NodeDefinition[]
   commandModes?: CommandModeDefinition[]
   settings?: SettingsPageDefinition[]
-  /** Generic, feature-defined provider points (e.g. `dashboards`). */
+  /** Generic, feature-defined provider points (e.g. `apps`). */
   provides?: Record<string, unknown[]>
 }
 

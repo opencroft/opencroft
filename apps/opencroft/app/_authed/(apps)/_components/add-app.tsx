@@ -34,7 +34,7 @@ export function AddApp({ spaceSlug, app }: Props) {
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)
   // The extensions' client halves, for Apps that ship a custom parameter
-  // form. Matched by slug, like dashboards match their components.
+  // form. Matched by slug, as the App's component is.
   const { items: definitions } = useProvided<AppDefinition>('apps', loadAllExtensions)
   const CustomForm = definitions.find((d) => d.slug === app.slug)?.form
   const Icon = resolveIcon(app.icon)

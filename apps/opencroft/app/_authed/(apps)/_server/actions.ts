@@ -17,10 +17,10 @@ import type { AppMeta, SpaceAppInstance } from '@/app/_authed/(apps)/_server/typ
 import { getProvided } from '@/app/_authed/(extension-runtime)/_server/provides'
 import { registry } from '@/app/_authed/(space)/_server/actions-impl'
 
-// Same reasoning as (dashboards)/_server/actions.ts's requireSession: the
-// page gate guards navigation, not these RPC endpoints. Checked inline
-// because every live caller is a browser route loader or component
-// downstream of the _authed beforeLoad gate; nothing calls these in-process.
+// The page gate guards navigation, not these RPC endpoints, which are
+// callable in their own right. Checked inline because every live caller is a
+// browser route loader or component downstream of the _authed beforeLoad
+// gate; nothing calls these in-process.
 async function requireSession(): Promise<void> {
   const user = await getSessionUser(getRequest())
   if (!user) {

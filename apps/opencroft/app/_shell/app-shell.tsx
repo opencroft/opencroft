@@ -1,7 +1,5 @@
 'use client'
 
-import type { DashboardMeta } from '@opencroft/dashboards'
-import { DashboardsSidebarSection } from '@opencroft/dashboards/client'
 import { Link, useLocation } from '@tanstack/react-router'
 import { MessagesSquare, Puzzle, SettingsIcon } from 'lucide-react'
 import { Suspense } from 'react'
@@ -29,20 +27,11 @@ import { SignOutItem } from '@/app/(auth)/_components/sign-out-item'
 
 interface Props {
   spaces: SpaceSummary[]
-  dashboards: DashboardMeta[]
-  pinnedDashboardSlugs: string[]
   children: React.ReactNode
 }
 
-interface SidebarProps {
-  spaces: SpaceSummary[]
-  dashboards: DashboardMeta[]
-  pinnedDashboardSlugs: string[]
-}
-
-function AppSidebar({ spaces, dashboards, pinnedDashboardSlugs }: SidebarProps) {
+function AppSidebar({ spaces }: { spaces: SpaceSummary[] }) {
   const pathname = useLocation({ select: (l) => l.pathname })
-  const pinnedDashboards = dashboards.filter((d) => pinnedDashboardSlugs.includes(d.slug))
 
   return (
     <Sidebar collapsible='icon'>
@@ -60,7 +49,6 @@ function AppSidebar({ spaces, dashboards, pinnedDashboardSlugs }: SidebarProps) 
       </SidebarHeader>
       <SidebarContent>
         <SpaceSidebarSection spaces={spaces} />
-        <DashboardsSidebarSection dashboards={pinnedDashboards} />
         {/*
           A group chat belongs to its members, not to a space, so this section
           is not space-scoped. Routed rather than tab-based: a group chat is a
@@ -108,12 +96,12 @@ function AppSidebar({ spaces, dashboards, pinnedDashboardSlugs }: SidebarProps) 
   )
 }
 
-export function AppShell({ spaces, dashboards, pinnedDashboardSlugs, children }: Props) {
+export function AppShell({ spaces, children }: Props) {
   return (
     <TitlebarProvider>
       <SidebarProvider style={{ '--sidebar-width': '24rem' } as React.CSSProperties}>
         <Suspense fallback={null}>
-          <AppSidebar spaces={spaces} dashboards={dashboards} pinnedDashboardSlugs={pinnedDashboardSlugs} />
+          <AppSidebar spaces={spaces} />
         </Suspense>
         <main className='flex flex-col w-full h-dvh'>{children}</main>
         <RightSidebar />

@@ -92,7 +92,7 @@ export interface ExtensionManifest {
   extensionDependencies?: string[]
   nodes?: NodeMetadata[]
   contexts?: ExtensionContextType[]
-  /** Generic, feature-defined provider points (e.g. `dashboards`). The runtime
+  /** Generic, feature-defined provider points (e.g. `apps`). The runtime
    *  stores these opaquely; features read them via getProvided. */
   provides?: Record<string, unknown[]>
   main?: string

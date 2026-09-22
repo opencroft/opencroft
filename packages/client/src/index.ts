@@ -244,7 +244,7 @@ export interface AppFormProps {
 /**
  * The client half of an App: the manifest's `provides.apps` entry plus the
  * React component. Declared under the same `apps` point in the client
- * `provides` of `defineExtension`, mirroring how dashboards register theirs.
+ * `provides` of `defineExtension`, so the two halves are matched by slug.
  */
 export interface AppDefinition extends AppEntry {
   component: ComponentType<AppComponentProps>

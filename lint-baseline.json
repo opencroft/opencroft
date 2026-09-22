@@ -612,9 +612,6 @@
     "packages/auth/src/server.test.ts": {
       "format": 1
     },
-    "packages/dashboards/src/client/dashboard-view.tsx": {
-      "assist/source/organizeImports": 1
-    },
     "packages/db/src/index.ts": {
       "lint/suspicious/noAssignInExpressions": 2
     },

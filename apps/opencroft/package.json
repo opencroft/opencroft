@@ -30,7 +30,6 @@
     "@opencroft/auth": "*",
     "@opencroft/client": "*",
     "@opencroft/core": "*",
-    "@opencroft/dashboards": "*",
     "@opencroft/db": "*",
     "@opencroft/db-backups": "*",
     "@opencroft/server": "*",

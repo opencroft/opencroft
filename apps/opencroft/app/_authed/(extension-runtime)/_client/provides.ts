@@ -4,7 +4,7 @@ import { useEffect, useSyncExternalStore } from 'react'
 
 /**
  * Generic extension provider points — the runtime's abstraction for features
- * (dashboards, panels, …) to collect declarations from extensions without the
+ * (apps, panels, …) to collect declarations from extensions without the
  * runtime knowing what they mean. Extensions declare `provides: { <point>: [...] }`;
  * a feature reads `useProvided(point)`.
  */
