@@ -4,6 +4,7 @@ import { withApprovalRequired } from '@/app/_authed/(approvals)/_server/with-app
 import { appAddressOf, resolveAppAddress } from '@/app/_authed/(apps)/_server/app-address'
 import {
   addSpaceAppImpl,
+  appActionDeclaration,
   appDetail,
   callAppAction,
   listAppActions,
@@ -12,6 +13,8 @@ import {
   removeSpaceAppImpl,
   transferSpaceAppImpl,
 } from '@/app/_authed/(apps)/_server/runtime'
+import { presentAction } from '@/app/_authed/(mcp)/_server/execution-mode'
+import { callAction } from '@/app/_authed/(mcp)/_server/task-tools'
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { fail, resolveSpace, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
 import { resolveSpaceSlugImpl } from '@/app/_authed/(space)/_server/actions-impl'
@@ -161,7 +164,8 @@ export const handlers: Record<string, ToolHandler> = {
       fail(-32602, 'Missing required param: app')
     }
     const ids = args.actions as string[] | undefined
-    return textResult(JSON.stringify(await listAppActions(app, ids), null, 2))
+    const actions = await listAppActions(app, ids)
+    return textResult(JSON.stringify(actions.map(presentAction), null, 2))
   },
 
   // ── app_call ─────────────────────────────────────────────────────
@@ -173,8 +177,25 @@ export const handlers: Record<string, ToolHandler> = {
         fail(-32602, 'Missing required params: app, action')
       }
       const params = (args.params as Record<string, unknown> | undefined) ?? {}
-      // Caller handed over, never required — same reasoning as `call` above.
-      const result = await callAppAction(app, action, params, caller.agent ?? undefined)
+      const declared = await appActionDeclaration(app, action)
+      const target = declared?.address ?? app
+      const outcome = await callAction({
+        execution: declared?.action?.execution,
+        params,
+        caller,
+        task: {
+          kind: 'app-action',
+          name: action,
+          target,
+          summary: `${declared?.action?.label ?? action} on ${target}`,
+        },
+        // Caller handed over, never required — same reasoning as `call` above.
+        run: (actionParams, signal) => callAppAction(app, action, actionParams, caller.agent ?? undefined, signal),
+      })
+      if ('started' in outcome) {
+        return textResult(outcome.started)
+      }
+      const { result } = outcome
       const text =
         result === undefined
           ? `Action ${action} completed.`

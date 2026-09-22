@@ -16,9 +16,19 @@
  * NULL IS "UNKNOWN", NOT "TRUSTED". A tool that acts on behalf of a specific
  * agent refuses a null caller rather than falling back to a default — there is
  * no safe default for "which agent is this".
+ *
+ * `sessionId` is the calling session's id, asserted the same way: the
+ * in-process bridge has it from the session's own bookkeeping, and the HTTP
+ * surface never has one. It is what a tool that must reach back INTO the
+ * calling conversation keys on — a background task delivers its result there.
+ *
+ * ABSENT IS "NO SESSION", NOT "SOME SESSION". Same contract as `agent`: a tool
+ * that needs one says there is none rather than picking one, and a value taken
+ * from tool arguments would let any caller post into any conversation.
  */
 export interface ToolCallerContext {
   agent: string | null
+  sessionId?: string
 }
 
 /** Every tool handler's shape: the call's arguments, and who is making it. */

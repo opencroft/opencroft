@@ -8,6 +8,7 @@ import { jsonSchemaToZodShape } from 'agent-client/json-schema'
 import type { LocalTool, ToolsCaller } from 'agent-client/mcp-server'
 
 import { getExtensionToolDefinitions } from '@/app/_authed/(mcp)/_server/extension-tools'
+import type { ToolCallerContext } from '@/app/_authed/(mcp)/_server/tool-caller'
 import {
   getAgentToolDefinitions,
   handleToolCall,
@@ -32,10 +33,14 @@ import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 async function callTool(
   name: string,
   args: Record<string, unknown>,
-  callerAgent: string | null,
+  caller: ToolCallerContext,
 ): Promise<Record<string, unknown>> {
   try {
-    return await handleToolCall(name, args, { internal: true, callerAgent })
+    return await handleToolCall(name, args, {
+      internal: true,
+      callerAgent: caller.agent,
+      callerSessionId: caller.sessionId,
+    })
   } catch (e) {
     const err = e as { message?: string }
     return { content: [{ type: 'text' as const, text: err.message ?? String(e) }], isError: true }
@@ -85,12 +90,12 @@ function convert(def: ToolDef): ConvertedTool {
   return { name: def.name, description: def.description, inputSchema: jsonSchemaToZodShape(def.inputSchema) }
 }
 
-function toLocalTool(tool: ConvertedTool, callerAgent: string | null): LocalTool {
+function toLocalTool(tool: ConvertedTool, caller: ToolCallerContext): LocalTool {
   return {
     name: tool.name,
     description: tool.description,
     inputSchema: tool.inputSchema,
-    handler: (args) => callTool(tool.name, args, callerAgent),
+    handler: (args) => callTool(tool.name, args, caller),
     // Declared here because this is the bridge: it is where opencroft's own
     // tools become something an agent can see, and the classification is
     // opencroft's to make.
@@ -133,6 +138,10 @@ export async function opencroftLocalTools(caller: ToolsCaller): Promise<LocalToo
   const extensionDefs = await getExtensionToolDefinitions(staticNames)
   const dynamicDefs = await getAgentToolDefinitions(new Set(extensionDefs.map((t) => t.name)))
   const sessionId = caller.sessionId
+  // The session rides along with the agent, from the same bookkeeping: it is
+  // how a tool reaches back into the conversation that called it — a
+  // background task delivers its result there. Absent stays absent.
+  const toolCaller: ToolCallerContext = sessionId ? { agent: callerAgent, sessionId } : { agent: callerAgent }
   // A harness verified to ask natively (ACP elicitation) does not get the
   // fallback question tool at all: both would render identically in the chat,
   // but the tool path dies at the MCP request timeout and the native one
@@ -140,7 +149,7 @@ export async function opencroftLocalTools(caller: ToolsCaller): Promise<LocalToo
   const harnessAsks = adapterSupportsElicitation(caller.adapterId)
   return [...getStaticTools(), ...extensionDefs.map(convert), ...dynamicDefs.map(convert)]
     .filter((tool) => !(tool.name === 'ask_user' && harnessAsks))
-    .map((tool) => toLocalTool(tool, callerAgent))
+    .map((tool) => toLocalTool(tool, toolCaller))
     .map((tool) => (tool.name === 'ask_user' && sessionId ? sessionAskUserTool(tool, sessionId) : tool))
 }
 

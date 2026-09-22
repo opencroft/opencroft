@@ -186,6 +186,17 @@ export interface NodeActionCtx {
    * identifier is minted, so nothing here has to know what that costs.
    */
   callerAgent?: string
+  /**
+   * Aborted when whoever is waiting on this run gives up on it: a background
+   * task cancelled by its caller, or out of time. Absent when nothing can
+   * cancel the run — a button press, a graph-driven dispatch.
+   *
+   * Advisory. An action that never looks at it runs to its end regardless,
+   * which is why a cancel of one is reported as requested, not done; one
+   * that can stop part-way (a long pull, a loop over hosts) checks it
+   * between steps and gives up there.
+   */
+  signal?: AbortSignal
 }
 
 export interface NodeActionDescriptor {

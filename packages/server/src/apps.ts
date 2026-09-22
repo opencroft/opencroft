@@ -32,6 +32,14 @@ export interface AppInstanceContext {
 /** The context an App action runs in: the instance, plus the agent that asked, when the surface could name one. */
 export interface AppActionContext extends AppInstanceContext {
   callerAgent?: string
+  /**
+   * Present when the action runs as a background task, and aborted when that
+   * task is cancelled or times out. The host cannot stop a handler itself: one
+   * that watches this ends early, one that ignores it runs to completion
+   * regardless — which is why a cancel reports that it asked, not that it
+   * stopped.
+   */
+  signal?: AbortSignal
 }
 
 /**

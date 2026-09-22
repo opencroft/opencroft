@@ -3,8 +3,11 @@
 import { withApprovalRequired } from '@/app/_authed/(approvals)/_server/with-approval'
 import {
   dispatchNodeActionImpl,
+  getNodeActionDeclaration,
   listNodeActionsImpl,
 } from '@/app/_authed/(extension-runtime)/_server/node-actions-impl'
+import { presentAction } from '@/app/_authed/(mcp)/_server/execution-mode'
+import { callAction } from '@/app/_authed/(mcp)/_server/task-tools'
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { fail, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
 
@@ -49,7 +52,7 @@ export const handlers: Record<string, ToolHandler> = {
       fail(-32602, 'Missing required param: nodeId')
     }
     const actions = await listNodeActionsImpl(nodeId)
-    return textResult(JSON.stringify(actions, null, 2))
+    return textResult(JSON.stringify(actions.map(presentAction), null, 2))
   },
 
   // ── call ─────────────────────────────────────────────────────────
@@ -61,13 +64,33 @@ export const handlers: Record<string, ToolHandler> = {
         fail(-32602, 'Missing required params: nodeId, action')
       }
       const params = (args.params as Record<string, unknown> | undefined) ?? {}
-      // Handed over, never required. Most actions deploy a container or
-      // rotate a key and have no use for it, so `requireCallingAgent` here
-      // would close every one of them to a surface that cannot name its
-      // caller. An action that acts AS the caller refuses for itself, where
-      // the consequence of not knowing is known.
-      const result = await dispatchNodeActionImpl({ nodeId, actionId: action, params }, caller.agent ?? undefined)
-      const text = result === undefined ? `Action ${action} completed.` : JSON.stringify(result, null, 2)
+      const declared = await getNodeActionDeclaration(nodeId, action)
+      const outcome = await callAction({
+        execution: declared?.execution,
+        params,
+        caller,
+        task: {
+          kind: 'node-action',
+          name: action,
+          target: nodeId,
+          summary: `${declared?.label ?? action} on ${nodeId}`,
+        },
+        // Handed over, never required. Most actions deploy a container or
+        // rotate a key and have no use for it, so `requireCallingAgent` here
+        // would close every one of them to a surface that cannot name its
+        // caller. An action that acts AS the caller refuses for itself, where
+        // the consequence of not knowing is known.
+        //
+        // A background run's abort signal reaches the action as `ctx.signal`,
+        // so one that checks it can stop when its task is cancelled.
+        run: (actionParams, signal) =>
+          dispatchNodeActionImpl({ nodeId, actionId: action, params: actionParams }, caller.agent ?? undefined, signal),
+      })
+      if ('started' in outcome) {
+        return textResult(outcome.started)
+      }
+      const text =
+        outcome.result === undefined ? `Action ${action} completed.` : JSON.stringify(outcome.result, null, 2)
       return textResult(text)
     },
     { view: 'call' },

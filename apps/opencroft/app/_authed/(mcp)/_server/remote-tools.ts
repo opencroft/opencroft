@@ -12,6 +12,7 @@ import { resolveAppHandleContext } from '@/app/_authed/(apps)/_server/runtime'
 import { listLocalExtensionsImpl } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions-impl'
 import { getExtensionModule, loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { localExtRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
+import { startCommandTask, taskSummary, timeoutMsFrom } from '@/app/_authed/(mcp)/_server/task-tools'
 import type { ToolCallerContext, ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 import {
   claimSlugForWrite,
@@ -203,6 +204,9 @@ export const definitions = [
   },
   {
     name: 'remote_exec',
+    // Awaitable, like remote_script: a build, a test suite or an image pull
+    // outlasts the ~2 minutes a call can wait, so the caller may detach it.
+    execution: 'awaitable' as const,
     description:
       'Execute a shell command on a remote node. The target is a terminal-context output handle, "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>". Optionally inject secret values from any Secrets Store as env vars (reference them in the command via "$NAME"). Very large output is cut, with a "(truncated …)" note as the last line — treat the result as incomplete rather than as the command\'s full output.',
     inputSchema: {
@@ -236,6 +240,7 @@ export const definitions = [
   },
   {
     name: 'remote_script',
+    execution: 'awaitable' as const,
     description:
       'Execute a multiline bash script on a remote node. Unlike remote_exec, the script body is written to a temp file first, so it avoids quoting/escaping issues with heredocs, loops, and nested quotes. The target is a terminal-context output handle, "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>". Optionally inject secret values from any Secrets Store as env vars (reference them in the script via "$NAME"). Very large output is cut, with a "(truncated …)" note as the last line — treat the result as incomplete rather than as the script\'s full output.',
     inputSchema: {
@@ -1071,6 +1076,10 @@ export const handlers: Record<string, ToolHandler> = {
       if (!command) {
         fail(-32602, 'Missing required param: command')
       }
+      const background = args.background === true
+      // Read before the lease below is taken: a malformed timeout is a bad
+      // argument, and fails as one before anything is claimed for the caller.
+      const timeoutMs = background ? timeoutMsFrom(args.timeoutMinutes) : null
       const cwd = args.cwd as string | undefined
       // A command is opaque, so it counts as a write: there is no way to tell
       // an inspection from an edit without interpreting a shell.
@@ -1079,6 +1088,21 @@ export const handlers: Record<string, ToolHandler> = {
       const effectiveCwd = cwd
         ? resolveRemoteFilePath(cwd, ctx.cwd as string | undefined)
         : (ctx.cwd as string | undefined)
+      if (background) {
+        // Here, inside the approval wrapper and past the same checks as a call
+        // run in place: a detached command is still one somebody approved.
+        // Secrets go as names; the service puts their values in the process's
+        // environment when it starts it.
+        return startCommandTask(caller, {
+          name: 'remote_exec',
+          target: args.target as string,
+          command,
+          cwd: effectiveCwd,
+          secrets: args.secrets as string[] | undefined,
+          timeoutMs,
+          summary: taskSummary(args.description, command),
+        })
+      }
       const env = await resolveSecretsEnv(args.secrets as string[] | undefined)
       const { stdout, truncated } = await remoteExecDetailed(ctx, command, { cwd: effectiveCwd, env })
       return textResult(withTruncationNote(stdout, truncated, "narrow the command's output to see the rest"))
@@ -1093,6 +1117,8 @@ export const handlers: Record<string, ToolHandler> = {
       if (!script) {
         fail(-32602, 'Missing required param: script')
       }
+      const background = args.background === true
+      const timeoutMs = background ? timeoutMsFrom(args.timeoutMinutes) : null
       const scriptArgs = (args.args as string[] | undefined) ?? []
       const cwd = args.cwd as string | undefined
       await claimForWrite(args, caller)
@@ -1100,6 +1126,21 @@ export const handlers: Record<string, ToolHandler> = {
       const effectiveCwd = cwd
         ? resolveRemoteFilePath(cwd, ctx.cwd as string | undefined)
         : (ctx.cwd as string | undefined)
+      if (background) {
+        // The body and its positional arguments go separately, as the in-place
+        // path passes them: the node runs `bash script.sh <args>`, so $1… and
+        // bash's own line numbers are what a synchronous run would have seen.
+        return startCommandTask(caller, {
+          name: 'remote_script',
+          target: args.target as string,
+          command: script,
+          ...(scriptArgs.length > 0 ? { args: scriptArgs } : {}),
+          cwd: effectiveCwd,
+          secrets: args.secrets as string[] | undefined,
+          timeoutMs,
+          summary: taskSummary(args.description, script),
+        })
+      }
       const env = await resolveSecretsEnv(args.secrets as string[] | undefined)
       const tmpPath = `/tmp/opencroft-script-${crypto.randomUUID()}.sh`
       try {

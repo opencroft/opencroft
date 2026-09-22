@@ -760,14 +760,40 @@ export async function resolveAppHandleContext(
 }
 
 /**
+ * What `app_call` has to know before it runs an action: the app's address, and
+ * the manifest's declaration of the action — which says how a caller waits for
+ * it. The address rather than the caller's reference, because a task started
+ * from this is listed under it, and a uuid echoed back is the one thing an
+ * emitter must not hand out. Undefined when the reference names no app; the
+ * call then fails the way it always has.
+ */
+export async function appActionDeclaration(
+  ref: string,
+  actionId: string,
+): Promise<{ address: string; action?: AppActionMeta } | undefined> {
+  const row = await resolveAppAddress(ref)
+  if (!row) {
+    return undefined
+  }
+  const entry = appEntryFor(await getProvided<AppEntry>('apps'), row)
+  return {
+    address: (await appAddressOf(row)) ?? ref,
+    action: entry?.actions?.find((action) => action.id === actionId),
+  }
+}
+
+/**
  * Dispatch one App action against one instance — the `app_call` MCP tool's code
  * path. Takes either spelling of an app reference; see `resolveAppAddress`.
+ * `signal` is handed to the action when it runs as a background task, so one
+ * that is cancelled or times out can stop.
  */
 export async function callAppAction(
   ref: string,
   actionId: string,
   params: Record<string, unknown>,
   callerAgent?: string,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   const row = await resolveAppAddress(ref)
   if (!row) {
@@ -778,7 +804,7 @@ export async function callAppAction(
   if (!handler) {
     throw new Error(`App ${row.extensionId}/${row.appSlug} has no action "${actionId}"`)
   }
-  const ctx = { ...(await instanceContext(row)), callerAgent }
+  const ctx = { ...(await instanceContext(row)), callerAgent, signal }
   return handler(ctx, params)
 }
 

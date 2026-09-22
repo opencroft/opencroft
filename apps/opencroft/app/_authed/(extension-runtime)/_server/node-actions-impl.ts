@@ -8,6 +8,7 @@ import {
 import { getStream } from '@/app/_authed/(extension-runtime)/_server/stream'
 import type {
   ConnectedSource,
+  NodeAction,
   NodeActionCtx,
   NodeActionCtxNode,
   NodeActionDescriptor,
@@ -111,6 +112,23 @@ export async function getNodeActionAccess(nodeId: string, actionId: string): Pro
   return mod.nodeActionAccess?.[typeId]?.[actionId] ?? 'signed-in'
 }
 
+/**
+ * The manifest's declaration of one node action — what `call` reads to learn
+ * how a caller waits for it. Resolved node -> typeId -> owning extension, the
+ * way dispatchNodeActionImpl resolves the handler, so the declaration read here
+ * belongs to the handler that will run. Undefined when nothing declares it: the
+ * dispatch then fails, or runs, exactly as it would have.
+ */
+export async function getNodeActionDeclaration(nodeId: string, actionId: string): Promise<NodeAction | undefined> {
+  const typeId = await findNodeTypeId(nodeId)
+  if (!typeId) {
+    return undefined
+  }
+  const manifests = await loadAllManifests()
+  const owning = manifests.find((m) => m.nodes?.some((n) => n.typeId === typeId))
+  return owning?.nodes?.find((n) => n.typeId === typeId)?.actions?.find((a) => a.id === actionId)
+}
+
 function nodesAsLike(graph: GraphData): GraphNodeLike[] {
   return graph.nodes as unknown as GraphNodeLike[]
 }
@@ -119,13 +137,16 @@ function edgesAsLike(graph: GraphData): GraphEdgeLike[] {
   return graph.edges as unknown as GraphEdgeLike[]
 }
 
-function buildCtx(
+// Exported for its test: dispatch itself runs a compiled extension bundle,
+// which the plain test runner cannot load (see tools-integration.test.ts).
+export function buildCtx(
   graph: GraphData,
   node: GraphNodeLike,
   params: Record<string, unknown>,
   spaceId: string,
   pending: Record<string, unknown>,
   callerAgent: string | undefined,
+  signal?: AbortSignal,
 ): NodeActionCtx {
   const data = node.data ?? {}
   const resolved = (data['__resolvedContexts'] as Record<string, ResolvedHandle> | undefined) ?? {}
@@ -215,6 +236,9 @@ function buildCtx(
     output,
     updateData,
     callerAgent,
+    // Spread rather than assigned, so a run nothing can cancel carries no
+    // field at all — what every action saw before cancelling existed.
+    ...(signal ? { signal } : {}),
   }
 }
 
@@ -267,12 +291,19 @@ async function persistData(found: FoundNode, patch: Record<string, unknown>): Pr
   }
 }
 
+/**
+ * A listed node action, with how callers wait for it when its manifest says.
+ * `execution` is for the listing surfaces to present — `list_actions` turns it
+ * into schema and description and never prints the field itself.
+ */
+export type NodeActionListing = NodeActionDescriptor & Pick<NodeAction, 'execution'>
+
 // Plain (non-server-fn) implementation — see extension-action-impl.ts's
 // invokeExtensionActionImpl for why this exists alongside the createServerFn-wrapped
 // version in node-actions.ts: a caller with no Start request context (an MCP call,
 // the scheduler) gets nothing back from the server-fn wrapper — the handler runs but
 // its return value is dropped — while this plain function returns it normally.
-export async function listNodeActionsImpl(nodeId: string): Promise<NodeActionDescriptor[]> {
+export async function listNodeActionsImpl(nodeId: string): Promise<NodeActionListing[]> {
   const found = await findNodeWithGraph(nodeId)
   if (!found || !found.node.type) {
     return []
@@ -291,6 +322,7 @@ export async function listNodeActionsImpl(nodeId: string): Promise<NodeActionDes
       label: a.label,
       description: a.description,
       inputSchema: a.inputSchema,
+      ...(a.execution ? { execution: a.execution } : {}),
     }))
   }
   return []
@@ -323,6 +355,11 @@ export async function dispatchNodeActionImpl(
    * that resolved it themselves.
    */
   callerAgent?: string,
+  /**
+   * Aborted when whoever waits on this run gives up on it — a background task
+   * cancelled or out of time. Handed to the action as `ctx.signal`; see there.
+   */
+  signal?: AbortSignal,
 ): Promise<unknown> {
   const { nodeId, actionId } = data
   const params = data.params ?? {}
@@ -345,7 +382,7 @@ export async function dispatchNodeActionImpl(
     throw new Error(`Extension ${owning.id} has no nodeAction "${typeId}.${actionId}"`)
   }
   const pending: Record<string, unknown> = {}
-  const ctx = buildCtx(found.graph, found.node, params, found.slug, pending, callerAgent)
+  const ctx = buildCtx(found.graph, found.node, params, found.slug, pending, callerAgent, signal)
   await persistErrors(found, [])
   try {
     const result = await handler(ctx)

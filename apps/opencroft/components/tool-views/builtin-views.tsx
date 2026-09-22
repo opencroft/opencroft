@@ -9,6 +9,7 @@ import { readRemoteFile } from '@/app/_authed/(approvals)/_server/actions'
 import { useCanvasNodes } from '@/app/_authed/(dashboard)/_canvas/canvas-nodes-context'
 import { NodeCard } from '@/app/_authed/(dashboard)/_canvas/node-card'
 import { useOptionalOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
+import { backgroundRunLabel } from '@/app/_authed/(mcp)/_server/execution-mode'
 import { CodeEditor, type CodeEditorProps, languageFromPath } from '@/components/code-editor'
 import { cn } from '@/lib/utils'
 import { exceedsClamp, OpBlock, OpRow } from './op-block'
@@ -554,6 +555,8 @@ function RemoteExecView({ args, mode, result }: ToolViewProps) {
   const command = args.command as string | undefined
   const secrets = args.secrets as string[] | undefined
   const description = args.description as string | undefined
+  // Said before approval, not after: a detached command outlives this call.
+  const runs = backgroundRunLabel(args)
 
   if (mode === 'approval') {
     return (
@@ -561,6 +564,7 @@ function RemoteExecView({ args, mode, result }: ToolViewProps) {
         {target && <TargetRow target={target} />}
         {description && <FieldRow label='Description' value={description} />}
         {command && <FieldRow label='Command' value={command} />}
+        {runs && <FieldRow label='Runs' value={runs} />}
         {secrets && secrets.length > 0 && <FieldRow label='Secrets' value={secrets.join(', ')} />}
       </div>
     )
@@ -586,6 +590,7 @@ function RemoteScriptView({ args, mode, result }: ToolViewProps) {
   const scriptArgs = args.args as string[] | undefined
   const secrets = args.secrets as string[] | undefined
   const description = args.description as string | undefined
+  const runs = backgroundRunLabel(args)
 
   if (mode === 'approval') {
     return (
@@ -594,6 +599,7 @@ function RemoteScriptView({ args, mode, result }: ToolViewProps) {
         {description && <FieldRow label='Description' value={description} />}
         {script && <FieldRow label='Script' value={script} />}
         {scriptArgs && scriptArgs.length > 0 && <FieldRow label='Args' value={scriptArgs.join(' ')} />}
+        {runs && <FieldRow label='Runs' value={runs} />}
         {secrets && secrets.length > 0 && <FieldRow label='Secrets' value={secrets.join(', ')} />}
       </div>
     )

@@ -17,6 +17,7 @@ import { definitions as appDefinitions, handlers as appHandlers } from '@/app/_a
 import { recordAudit } from '@/app/_authed/(mcp)/_server/audit'
 import { definitions as chatDefinitions, handlers as chatHandlers } from '@/app/_authed/(mcp)/_server/chat-tools'
 import { DbReadRefused, runBoundedRead } from '@/app/_authed/(mcp)/_server/db-read'
+import { type ListedTool, presentTool } from '@/app/_authed/(mcp)/_server/execution-mode'
 import {
   definitions as extensionManagementDefinitions,
   handlers as extensionManagementHandlers,
@@ -30,7 +31,8 @@ import { definitions as nodeDefinitions, handlers as nodeHandlers } from '@/app/
 import { definitions as remoteDefinitions, handlers as remoteHandlers } from '@/app/_authed/(mcp)/_server/remote-tools'
 import { skillToolDefinitions, skillToolHandlers } from '@/app/_authed/(mcp)/_server/skill-tools'
 import { definitions as spaceDefinitions, handlers as spaceHandlers } from '@/app/_authed/(mcp)/_server/space-tools'
-import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
+import { definitions as taskDefinitions, handlers as taskHandlers } from '@/app/_authed/(mcp)/_server/task-tools'
+import type { ToolCallerContext, ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { fail, type GraphNode, resolveSpace, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
 import {
   askUserDefinitions,
@@ -153,9 +155,18 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'remote_read',
   'remote_glob',
   'remote_grep',
+  // Background-task read: a task's record — its state, timing and an output
+  // tail the service bounds. Its risk is the remote reads' one, disclosure of
+  // what a command printed; stopping a task is task_cancel, which is gated.
+  'task_status',
 ])
 
-export const toolDefinitions = [
+/**
+ * Every static tool, as both surfaces list it: the HTTP route's `tools/list`
+ * and the in-process bridge read this one array, so presenting a tool's
+ * execution mode here is what keeps the two from describing it differently.
+ */
+export const toolDefinitions: ListedTool[] = [
   ...sendToastDefinitions,
   ...chatDefinitions,
 
@@ -183,13 +194,14 @@ export const toolDefinitions = [
   ...remoteDefinitions,
   ...actionDefinitions,
   ...appDefinitions,
+  ...taskDefinitions,
   ...mcpServerDefinitions,
 
   // ── Skills ───────────────────────────────────────────────────────────────
   ...skillToolDefinitions,
 
   ...askUserDefinitions,
-]
+].map(presentTool)
 
 // ── Agent Tool: dynamic graph-defined tools ───────────────────────────
 
@@ -283,6 +295,12 @@ export interface ToolCallOptions {
    * `ToolCallerContext`.
    */
   callerAgent?: string | null
+  /**
+   * The calling session's id. Only the in-process bridge can assert one, from
+   * the session's own bookkeeping; the HTTP surface has no session and passes
+   * none. See `ToolCallerContext`.
+   */
+  callerSessionId?: string
 }
 
 export async function executeAgentTool(
@@ -399,6 +417,7 @@ const handlers: Record<string, ToolHandler> = {
   ...remoteHandlers,
   ...actionHandlers,
   ...appHandlers,
+  ...taskHandlers,
   ...mcpServerHandlers,
 
   // ── Skills ──────────────────────────────────────────────────────────────
@@ -493,7 +512,11 @@ export async function handleToolCall(
       const spaceId = typeof args.space === 'string' ? await resolveSpace(args) : undefined
       await awaitApproval({ tool: name, args, view: meta?.view, signal: opts.signal, spaceId })
     }
-    const result = await handler(args, { agent: opts.callerAgent ?? null })
+    const caller: ToolCallerContext = { agent: opts.callerAgent ?? null }
+    if (opts.callerSessionId) {
+      caller.sessionId = opts.callerSessionId
+    }
+    const result = await handler(args, caller)
     await recordAudit({
       tool: name,
       args,

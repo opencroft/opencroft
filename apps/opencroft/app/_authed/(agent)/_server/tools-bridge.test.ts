@@ -10,8 +10,13 @@ import '@opencroft/db/test-env'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import type { BackgroundTaskOwner, BackgroundTaskService } from '@/app/_authed/(background-tasks)/_server/types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import { opencroftLocalTools } from './tools-bridge'
+
+// After the bridge, which loads the tools barrel first; see task-tools.test.ts
+// for why a tool family module is never the first way into that cycle.
+const { substituteBackgroundTaskService } = await import('@/app/_authed/(mcp)/_server/task-tools')
 
 // The tool stands in for the whole agent-acting family: it is gated by
 // `requireCallingAgent`, so its refusal is that gate speaking.
@@ -100,4 +105,62 @@ test('the caller cannot be supplied as a tool argument', async () => {
 
   assert.equal(result.isError, true)
   assert.match(JSON.stringify(result.content), /did not identify one/)
+})
+
+// The session, like the agent, comes from the session's own bookkeeping and
+// reaches the tool handler with the call: it is where a background task's result
+// is delivered. task_status stands in for the tools that key on it — listing
+// "your own tasks" asks the service for exactly the caller it was handed.
+async function ownerSeenByTaskStatus(
+  caller: Parameters<typeof opencroftLocalTools>[0],
+  args: Record<string, unknown> = {},
+) {
+  const owners: BackgroundTaskOwner[] = []
+  const unexpected = async (): Promise<never> => {
+    throw new Error('not expected in this test')
+  }
+  const service: BackgroundTaskService = {
+    startNodeTask: unexpected,
+    startInProcessTask: unexpected,
+    get: unexpected,
+    listForOwner: async (owner) => {
+      owners.push(owner)
+      return []
+    },
+    listRunning: unexpected,
+    cancel: unexpected,
+    runningSessionKeys: () => new Set(),
+  }
+  substituteBackgroundTaskService(service)
+  try {
+    const tool = (await opencroftLocalTools(caller)).find((t) => t.name === 'task_status')
+    assert.ok(tool, 'task_status must be in the bridged toolset')
+    const result = (await tool.handler(args)) as Record<string, unknown>
+    assert.notEqual(result.isError, true, `task_status refused: ${JSON.stringify(result)}`)
+  } finally {
+    substituteBackgroundTaskService(undefined)
+  }
+  return owners
+}
+
+test('a bridged call carries the id of the session it came from', async () => {
+  const owners = await ownerSeenByTaskStatus({ sessionId: 'bridge-session-7' })
+  assert.deepEqual(owners, [{ agent: null, sessionId: 'bridge-session-7' }])
+})
+
+test('a bridged call from no session carries none, rather than a made-up one', async () => {
+  await spaceWithAgents(['Bridge Sessionless Agent'])
+  const owners = await ownerSeenByTaskStatus({ mcpIdentity: 'bridge-sessionless-agent' })
+  assert.deepEqual(owners, [{ agent: 'Bridge Sessionless Agent' }], 'no session key at all, not an undefined one')
+})
+
+test('the session cannot be supplied as a tool argument', async () => {
+  // Same rule as the agent: an argument naming a session must not become one,
+  // or any caller could have its task's result delivered into any conversation.
+  await spaceWithAgents(['Bridge Session Argument Agent'])
+  const owners = await ownerSeenByTaskStatus(
+    { mcpIdentity: 'bridge-session-argument-agent' },
+    { sessionId: 'someone-elses-session', callerSessionId: 'someone-elses-session' },
+  )
+  assert.deepEqual(owners, [{ agent: 'Bridge Session Argument Agent' }])
 })
