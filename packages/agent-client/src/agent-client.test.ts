@@ -10,6 +10,7 @@ import {
   interceptDraftSessionUpdates,
   type QueueStore,
 } from './agent-client'
+import { attachmentTag } from './attachments'
 import type { AgentConnection } from './connection'
 import { COMPACTION_TITLE, foldEvents, isTerminalToolStatus } from './fold'
 import { decodeBatch } from './queue-tags'
@@ -66,6 +67,10 @@ interface TurnDeferred {
 
 let counter = 0
 
+// One block of a prompt as the harness receives it — text, or an image with
+// its base64 payload.
+type PromptBlock = { type: string; text?: string; data?: string; mimeType?: string }
+
 async function setup(
   adapterId: 'openclaw' | 'claude' = 'openclaw',
   options: {
@@ -94,6 +99,10 @@ async function setup(
     // The default no-op cancel hides every ordering question that depends on
     // the settle landing while the caller is still mid-call.
     cancelEndsTurn?: boolean
+    // Model a harness that advertised `promptCapabilities.image` — what
+    // decides whether an attachment the message names may travel at all.
+    imagePrompt?: boolean
+    loadAttachments?: AgentClientOptions['loadAttachments']
   } = {},
 ) {
   counter += 1
@@ -118,6 +127,7 @@ async function setup(
   const configOptionCalls: Array<{ sessionId: string; configId: string; value: unknown }> = []
   const closeSessionCalls: string[] = []
   const resumeCalls: string[] = []
+  const promptBlockCalls: PromptBlock[][] = []
   const extMethodCalls: Array<{ method: string; params: Record<string, unknown> }> = []
   const forkCalls: Array<Record<string, unknown>> = []
   const turns: TurnDeferred[] = []
@@ -133,6 +143,10 @@ async function setup(
     },
     prompt: (params: { prompt: Array<{ text: string }> }) => {
       promptCalls.push(params.prompt[0].text)
+      // The whole block array as well as its first text: an attachment travels
+      // as a SECOND block, so a capture that only ever read [0] could not tell
+      // a picture that was sent from one that was dropped.
+      promptBlockCalls.push(params.prompt as unknown as PromptBlock[])
       return new Promise((resolve, reject) => {
         turns.push({ resolve, reject })
       })
@@ -171,6 +185,7 @@ async function setup(
     loadSession: false,
     steeringSupported: options.steeringSupported === true,
     forkSupported: options.forkSupported === true,
+    imagePrompt: options.imagePrompt === true,
     initialized: Promise.resolve(),
   })
   const client = createAgentClient({
@@ -195,6 +210,9 @@ async function setup(
     ...(options.onCompaction
       ? ({ onCompaction: options.onCompaction } satisfies Pick<AgentClientOptions, 'onCompaction'>)
       : {}),
+    ...(options.loadAttachments
+      ? ({ loadAttachments: options.loadAttachments } satisfies Pick<AgentClientOptions, 'loadAttachments'>)
+      : {}),
   })
   const meta = await client.createSession(selection)
   const events: ChatEvent[] = []
@@ -206,6 +224,7 @@ async function setup(
     connectionKey: key,
     events,
     promptCalls,
+    promptBlockCalls,
     configOptionCalls,
     closeSessionCalls,
     resumeCalls,
@@ -242,6 +261,87 @@ function sessionEvents(sessionId: string): ChatEvent[] {
   assert.ok(session, 'session must exist in the store')
   return session.events
 }
+
+// ── attachments ────────────────────────────────────────────────────────────
+
+// An attachment is named by a tag inside the message text (it has to be: a
+// queued message is one text column) and turns into an image block at
+// delivery. These exercise that conversion and every way it can fall short --
+// each of which must SAY so, because a picture that silently did not travel
+// looks like an agent ignoring it.
+const PNG = attachmentTag({ id: 'att-1', name: 'shot.png', mimeType: 'image/png' })
+const loadOne = async () => [{ id: 'att-1', name: 'shot.png', mimeType: 'image/png', data: 'AAAA' }]
+
+test('an attachment the message names travels as an image block beside the text', async () => {
+  const h = await setup('claude', { imagePrompt: true, loadAttachments: loadOne })
+  await h.client.prompt(h.sessionId, `look at this ${PNG}`, { queue: 'push', origin: { kind: 'system' } })
+  await settle()
+  assert.deepEqual(h.promptBlockCalls, [
+    [
+      { type: 'text', text: `look at this ${PNG}` },
+      { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+    ],
+  ])
+  // The tag stays in the text on purpose: it is what names the file to a
+  // harness that takes no images, and what the transcript reads back.
+  assert.equal(kinds(h.events).includes('error'), false)
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a harness that advertised no image capability gets the text and an error saying so', async () => {
+  const h = await setup('claude', { imagePrompt: false, loadAttachments: loadOne })
+  await h.client.prompt(h.sessionId, `look at this ${PNG}`, { queue: 'push', origin: { kind: 'system' } })
+  await settle()
+  assert.deepEqual(h.promptBlockCalls, [[{ type: 'text', text: `look at this ${PNG}` }]])
+  const errors = h.events.filter((event) => event.kind === 'error')
+  assert.equal(errors.length, 1, 'a dropped attachment must be visible, not silent')
+  assert.match(
+    (errors[0] as Extract<ChatEvent, { kind: 'error' }>).message,
+    /did not advertise image prompts.*1 attachment did not travel/s,
+  )
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('an attachment that is not an image is reported rather than sent as one', async () => {
+  const h = await setup('claude', {
+    imagePrompt: true,
+    loadAttachments: async () => [{ id: 'att-1', name: 'notes.pdf', mimeType: 'application/pdf', data: 'AAAA' }],
+  })
+  await h.client.prompt(h.sessionId, `read this ${PNG}`, { queue: 'push', origin: { kind: 'system' } })
+  await settle()
+  assert.deepEqual(h.promptBlockCalls, [[{ type: 'text', text: `read this ${PNG}` }]])
+  const errors = h.events.filter((event) => event.kind === 'error')
+  assert.match(
+    (errors[0] as Extract<ChatEvent, { kind: 'error' }>).message,
+    /1 attachment could not be sent as an image/,
+  )
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a message with no attachment is one text block, as it always was', async () => {
+  const h = await setup('claude', { imagePrompt: true, loadAttachments: loadOne })
+  await h.client.prompt(h.sessionId, 'just words', { queue: 'push', origin: { kind: 'system' } })
+  await settle()
+  assert.deepEqual(h.promptBlockCalls, [[{ type: 'text', text: 'just words' }]])
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a host with no attachment store leaves the tag as the text it is', async () => {
+  // No loadAttachments: nothing to resolve an id against, so the message goes
+  // exactly as every message did before attachments existed — and the tag still
+  // names the file.
+  const h = await setup('claude', { imagePrompt: true })
+  await h.client.prompt(h.sessionId, `look at this ${PNG}`, { queue: 'push', origin: { kind: 'system' } })
+  await settle()
+  assert.deepEqual(h.promptBlockCalls, [[{ type: 'text', text: `look at this ${PNG}` }]])
+  assert.equal(kinds(h.events).includes('error'), false)
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
 
 // ── reasoning effort defaults ──────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import type { McpServer as AcpMcpServer, Client, SessionConfigOption } from '@agentclientprotocol/sdk'
+import type { McpServer as AcpMcpServer, Client, ContentBlock, SessionConfigOption } from '@agentclientprotocol/sdk'
 import { PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import {
@@ -452,6 +452,60 @@ const AVAILABLE_MODES = [
 
 const DEFAULT_MODE = 'manual-edits'
 
+/**
+ * What this harness accepts in a prompt, as ACP's `promptCapabilities`.
+ *
+ * Images: yes. The loop reaches a model through the provider's
+ * OpenAI-compatible endpoint, and an image block becomes an AI SDK image part
+ * (see toModelContent) — so a vision model behind that endpoint gets the
+ * picture, and a text-only one refuses it at the endpoint, where the reason is
+ * the provider's to give.
+ *
+ * `audio` and `embeddedContext` are not claimed: the prompt conversion has
+ * nothing to turn them into, and a claim this side cannot honour is worse than
+ * a client that never offers the block.
+ *
+ * Exported because the ENGINE is the one that decides what a prompt may carry,
+ * and it never handshakes this harness — a native selection is not spawned, so
+ * it holds no connection entry to read an initialize answer off. One
+ * declaration, read by initialize() below and by the engine directly, rather
+ * than the same fact written down in two places that can drift apart.
+ */
+export const NATIVE_PROMPT_CAPABILITIES = { image: true } as const
+
+type UserContent = Extract<ModelMessage, { role: 'user' }>['content']
+
+/**
+ * One prompt's blocks as the model's own content.
+ *
+ * A plain string when the prompt is only words, which is every turn that
+ * attaches nothing: the parts form exists for the mixed case, and paying for it
+ * always would change what every stored message looks like.
+ *
+ * Text blocks join into one part — they are one message, split only by however
+ * the client chose to send it. An image block becomes an image part carrying
+ * its media type, which is what tells an OpenAI-compatible endpoint to route
+ * the turn to a vision model rather than reject a wall of base64.
+ *
+ * A block this harness advertises no capability for is dropped. That used to be
+ * the behaviour for EVERY non-text block, silently, by joining the empty string
+ * it mapped to — which is how an attachment could vanish between the composer
+ * and the model with nothing anywhere saying so. Now the only blocks that can
+ * reach here are the ones NATIVE_PROMPT_CAPABILITIES claims, and a client that
+ * respects the protocol never sends another.
+ */
+export function toModelContent(prompt: readonly ContentBlock[]): UserContent {
+  const text = prompt.map((block) => (block.type === 'text' ? block.text : '')).join('')
+  const images = prompt.filter((block) => block.type === 'image')
+  if (images.length === 0) {
+    return text
+  }
+  return [
+    { type: 'text', text },
+    ...images.map((block) => ({ type: 'image' as const, image: block.data, mediaType: block.mimeType })),
+  ]
+}
+
 export type ToolPermissionDecision = 'allow' | 'deny' | 'ask'
 
 // What a session mode means for one tool call, given the grant the session's
@@ -497,7 +551,10 @@ export function createNativeHarness(
 
   return {
     async initialize() {
-      return { protocolVersion: PROTOCOL_VERSION }
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        agentCapabilities: { promptCapabilities: NATIVE_PROMPT_CAPABILITIES },
+      }
     },
 
     async newSession() {
@@ -603,8 +660,7 @@ export function createNativeHarness(
       }
       const abort = new AbortController()
       session.abort = abort
-      const text = prompt.map((block) => (block.type === 'text' ? block.text : '')).join('')
-      session.messages.push({ role: 'user', content: text })
+      session.messages.push({ role: 'user', content: toModelContent(prompt) })
 
       const gate: ToolGate = { sessionId, client, getMode: () => session.mode }
       const { toolset, close, readOnlyTools } = await buildToolset(config, gate, session.permissions, selection)

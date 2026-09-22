@@ -25,6 +25,7 @@ import type {
 } from '@agentclientprotocol/sdk'
 import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION, type Stream } from '@agentclientprotocol/sdk'
 
+import { attachmentRefsIn, isImageMime, type PromptAttachment } from './attachments'
 import type { AgentConnection } from './connection'
 import { normalizeUsage } from './context-window'
 import { errorMessage } from './errors'
@@ -34,7 +35,12 @@ import { readMcpConfig, resolveMcpServers } from './mcp-config'
 import { createMcpServer, type SkillHandler, type SkillsInput, type ToolsInput } from './mcp-server'
 import type { McpServerConfig } from './mcp-types'
 import { containerReachableMcpUrl } from './mcp-url'
-import { createNativeHarness, type NativeHarnessConfig, type NativeSession } from './native-harness'
+import {
+  createNativeHarness,
+  NATIVE_PROMPT_CAPABILITIES,
+  type NativeHarnessConfig,
+  type NativeSession,
+} from './native-harness'
 import {
   type EventsWindow,
   pageBeforeByRecords,
@@ -86,6 +92,15 @@ export type { PermissionContext, PermissionHandler, PermissionOutcome } from './
 
 export interface AgentClientOptions {
   mcpServerName?: string
+  // Resolve the attachments a delivered message names (see attachments.ts) into
+  // the bytes an ACP image block carries. Host-provided, because the reference
+  // in the text is an id in the HOST's store — this engine keeps none, and a
+  // message can be delivered long after it was written.
+  //
+  // Absent means a host with no attachment store: a tag then travels as the
+  // text it is, naming a file nobody fetches, which is what every host did
+  // before attachments existed.
+  loadAttachments?: (ids: readonly string[]) => Promise<readonly PromptAttachment[]>
   tools?: ToolsInput
   skills?: SkillsInput
   skillHandler?: SkillHandler
@@ -429,6 +444,12 @@ interface ConnEntry {
   // same spelling as elicitation). Only meaningful once `initialized` has
   // resolved.
   forkSupported: boolean
+  // Whether the agent advertised `agentCapabilities.promptCapabilities.image`
+  // at initialize. A real boolean in the spec, not a marker object like the
+  // session capabilities above. Without it the client MUST NOT put an image
+  // block in a prompt, so this is what decides whether an attachment travels.
+  // Only meaningful once `initialized` has resolved.
+  imagePrompt: boolean
   // Resolves when initialize() has completed and the capability flags above
   // are set. Every caller (spawner and concurrent reusers) awaits this before
   // using the connection, so capability checks never race a half-open
@@ -1607,6 +1628,12 @@ function isNativeSelection(selection: AgentSelection): boolean {
   return findAdapter(selection.adapterId)?.kind === 'native'
 }
 
+// "1 attachment" / "2 attachments" — the count is the point of these messages,
+// so it is never dropped in favour of a bare plural.
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`
+}
+
 // The Claude Code bridge ships with extended thinking off unless a session
 // explicitly requests it via the thought_level config option. Sensible-default
 // these adapters to 'medium' so thought chunks flow without every profile
@@ -1986,6 +2013,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       resumeSession: false,
       steeringSupported: false,
       forkSupported: false,
+      imagePrompt: false,
       initialized: Promise.resolve(),
     }
     store.connections.set(key, entry)
@@ -2071,6 +2099,15 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         entry.forkSupported = Boolean(
           (initResult as { agentCapabilities?: { sessionCapabilities?: { fork?: unknown } } }).agentCapabilities
             ?.sessionCapabilities?.fork,
+        )
+        // Prompt capabilities, unlike the session ones, are declared as real
+        // booleans — so this one is read as a boolean and not for presence.
+        // Measured 2026-09-22: claude-agent-acp 0.79.0 and opencode 1.18.32
+        // both answer `image: true` (and `embeddedContext: true`); neither
+        // claims `audio`.
+        entry.imagePrompt = Boolean(
+          (initResult as { agentCapabilities?: { promptCapabilities?: { image?: boolean } } }).agentCapabilities
+            ?.promptCapabilities?.image,
         )
       } catch (error) {
         // The handshake fails the moment the process's stdout closes, which can
@@ -2211,7 +2248,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     try {
       const result = await entry.connection.extMethod('_session/steering', {
         sessionId,
-        prompt: [{ type: 'text', text: deliveredText }],
+        prompt: await promptBlocks(sessionId, session, deliveredText),
         _meta: { steering: { idleBehavior: 'promptRequired' } },
       })
       if ((result as { outcome?: string }).outcome !== 'injected') {
@@ -2231,6 +2268,73 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     entry.lastSessionId = sessionId
     emit(sessionId, { kind: 'user', text: deliveredText })
     return true
+  }
+
+  // Whether a prompt to this selection's harness may carry an image block.
+  //
+  // The native harness is never handshaken — a native selection is not spawned,
+  // so the engine holds no connection entry to read an initialize answer off.
+  // Its declaration is read straight from the module instead, which is why that
+  // constant is exported: one fact, two readers, rather than the same claim
+  // written down here and there.
+  function acceptsImagePrompt(selection: AgentSelection): boolean {
+    if (isNativeSelection(selection)) {
+      return NATIVE_PROMPT_CAPABILITIES.image
+    }
+    return connEntryFor(selection)?.imagePrompt === true
+  }
+
+  /**
+   * The blocks one delivery hands over: the message, and an image block for
+   * every attachment the message names.
+   *
+   * Text first. ACP puts no ordering rule on the array, and the words before
+   * the picture is the order the reader wrote them in.
+   *
+   * Every way this can fall short says so in the transcript. An attachment that
+   * quietly did not travel is the whole failure mode worth engineering against
+   * here: the reader sees their picture in their own message, the agent answers
+   * as though there were none, and nothing connects the two.
+   */
+  async function promptBlocks(sessionId: string, session: SessionState, text: string): Promise<ContentBlock[]> {
+    const blocks: ContentBlock[] = [{ type: 'text', text }]
+    const refs = attachmentRefsIn(text)
+    // Nothing attached, or a host that keeps no attachment store at all: the
+    // text stands alone, and the tag in it still names the file.
+    if (refs.length === 0 || !options.loadAttachments) {
+      return blocks
+    }
+    const harness = findAdapter(session.selection.adapterId)?.label ?? 'This harness'
+    if (!acceptsImagePrompt(session.selection)) {
+      emit(sessionId, {
+        kind: 'error',
+        message: `${harness} did not advertise image prompts, so ${plural(refs.length, 'attachment')} did not travel — only the message text went out.`,
+      })
+      return blocks
+    }
+    let loaded: readonly PromptAttachment[]
+    try {
+      loaded = await options.loadAttachments(refs.map((ref) => ref.id))
+    } catch (error) {
+      emit(sessionId, {
+        kind: 'error',
+        message: `Attachments could not be read, so the message went without them: ${errorMessage(error)}`,
+      })
+      return blocks
+    }
+    for (const attachment of loaded) {
+      if (attachment.data && isImageMime(attachment.mimeType)) {
+        blocks.push({ type: 'image', data: attachment.data, mimeType: attachment.mimeType })
+      }
+    }
+    const sent = blocks.length - 1
+    if (sent < refs.length) {
+      emit(sessionId, {
+        kind: 'error',
+        message: `${plural(refs.length - sent, 'attachment')} could not be sent as an image and did not travel.`,
+      })
+    }
+    return blocks
   }
 
   async function deliverPrompt(sessionId: string, text: string, steerable = false): Promise<void> {
@@ -2284,7 +2388,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // place the prompt promise settles, so a host reads them off the turn_end
     // event instead of re-parsing `_meta` — none of it is spec-guaranteed
     // shape, and the parse rules live in one module (usage-meta).
-    void connection.prompt({ sessionId, prompt: [{ type: 'text', text: deliveredText }] }).then(
+    void connection.prompt({ sessionId, prompt: await promptBlocks(sessionId, session, deliveredText) }).then(
       (response) =>
         settleTurn(sessionId, {
           stopReason: response.stopReason,

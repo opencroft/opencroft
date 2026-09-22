@@ -5,8 +5,10 @@ import {
   buildConfigOptions,
   CANCELLED,
   createNativeHarness,
+  NATIVE_PROMPT_CAPABILITIES,
   type NativeSession,
   raceAbort,
+  toModelContent,
   toolPermissionDecision,
 } from './native-harness'
 import type { AgentSelection } from './types'
@@ -110,6 +112,35 @@ test('the permission mode is always advertised, at the id the composer reads', (
     mode.options?.map((o) => o.value),
     ['manual-edits', 'accept-edits', 'reject-edits', 'bypass'],
   )
+})
+
+test('a prompt of words alone stays a plain string', () => {
+  // The parts form exists for the mixed case. Paying for it always would change
+  // what every stored message looks like, for every turn that attaches nothing.
+  assert.equal(toModelContent([{ type: 'text', text: 'hello' }]), 'hello')
+})
+
+test('an image block becomes an image part carrying its media type', () => {
+  // mediaType is what tells an OpenAI-compatible endpoint to route the turn to
+  // a vision model rather than reject a wall of base64.
+  assert.deepEqual(
+    toModelContent([
+      { type: 'text', text: 'look' },
+      { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+    ]),
+    [
+      { type: 'text', text: 'look' },
+      { type: 'image', image: 'AAAA', mediaType: 'image/png' },
+    ],
+  )
+})
+
+test('this harness claims images and nothing it cannot convert', () => {
+  // The engine reads this same constant to decide whether an attachment may
+  // travel — a native selection is never handshaken, so there is no initialize
+  // answer to read instead. Claiming audio or embedded context here would
+  // invite a block the conversion above would drop on the floor.
+  assert.deepEqual(NATIVE_PROMPT_CAPABILITIES, { image: true })
 })
 
 test('every option names the ACP category for its meaning, not only its id', () => {

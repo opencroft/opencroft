@@ -2,6 +2,11 @@
 
 export type { AgentClientOptions, ClientInfo } from './agent-client'
 export { agentClient, createAgentClient, supportsMidTurnInput } from './agent-client'
+// How a message names an image it carries. The composer writes the tag, the
+// engine turns it back into an ACP image block at delivery — one definition,
+// so a host cannot invent a second spelling of the same reference.
+export type { AttachmentRef, PromptAttachment } from './attachments'
+export { attachmentRefsIn, attachmentTag, isImageMime } from './attachments'
 export type { ChatBlock, ChatMessage } from './fold'
 export { buildBlocks, foldEvents, isTerminalToolStatus } from './fold'
 // Tool / skill registration surface.
