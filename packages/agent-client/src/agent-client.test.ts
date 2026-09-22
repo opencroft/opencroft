@@ -15,7 +15,7 @@ import type { AgentConnection } from './connection'
 import { COMPACTION_TITLE, foldEvents, isTerminalToolStatus } from './fold'
 import { decodeBatch } from './queue-tags'
 import { buildSpawnConfig, findAdapter } from './resolve'
-import type { AgentSelection, ChatEvent, CompactionState, Presence, QueuedPrompt } from './types'
+import type { AgentSelection, AsyncTaskInfo, ChatEvent, CompactionState, Presence, QueuedPrompt } from './types'
 
 // ── prompt queue / turn guard / mid-turn input ─────────────────────────────
 //
@@ -87,9 +87,10 @@ async function setup(
     onCompaction?: (sessionId: string, compaction: CompactionState) => void
     // Model a harness that advertised the steering extension: the seeded
     // connection reports it, and its extMethod records calls and answers
-    // `injected` unless steerOutcome overrides it.
+    // `injected` unless steerOutcome overrides it. A promise holds the answer
+    // back until the test settles it: a steer still in flight.
     steeringSupported?: boolean
-    steerOutcome?: string
+    steerOutcome?: string | Promise<string>
     // Model a harness that advertised the SDK's session/fork capability: the
     // seeded connection reports it, and its unstable_forkSession records its
     // params and answers with a forked session id.
@@ -103,6 +104,7 @@ async function setup(
     // decides whether an attachment the message names may travel at all.
     imagePrompt?: boolean
     loadAttachments?: AgentClientOptions['loadAttachments']
+    stopHostTask?: AgentClientOptions['stopHostTask']
   } = {},
 ) {
   counter += 1
@@ -130,6 +132,9 @@ async function setup(
   const promptBlockCalls: PromptBlock[][] = []
   const extMethodCalls: Array<{ method: string; params: Record<string, unknown> }> = []
   const forkCalls: Array<Record<string, unknown>> = []
+  // Prompts and resumes in the order the connection received them: the one
+  // question the separate call lists above cannot answer.
+  const wire: Array<'prompt' | 'resume'> = []
   const turns: TurnDeferred[] = []
   const takeTurn = (index?: number) => (index === undefined ? turns.shift() : turns.splice(index, 1)[0])
   const connection = {
@@ -142,6 +147,7 @@ async function setup(
       return { sessionId: `forked-session-${counter}` }
     },
     prompt: (params: { prompt: Array<{ text: string }> }) => {
+      wire.push('prompt')
       promptCalls.push(params.prompt[0].text)
       // The whole block array as well as its first text: an attachment travels
       // as a SECOND block, so a capture that only ever read [0] could not tell
@@ -152,6 +158,7 @@ async function setup(
       })
     },
     resumeSession: async (params: { sessionId: string }) => {
+      wire.push('resume')
       resumeCalls.push(params.sessionId)
       return {}
     },
@@ -171,7 +178,7 @@ async function setup(
     extMethod: async (method: string, params: Record<string, unknown>) => {
       extMethodCalls.push({ method, params })
       if (method === '_session/steering') {
-        return { outcome: options.steerOutcome ?? 'injected' }
+        return { outcome: (await options.steerOutcome) ?? 'injected' }
       }
       return {}
     },
@@ -213,6 +220,9 @@ async function setup(
     ...(options.loadAttachments
       ? ({ loadAttachments: options.loadAttachments } satisfies Pick<AgentClientOptions, 'loadAttachments'>)
       : {}),
+    ...(options.stopHostTask
+      ? ({ stopHostTask: options.stopHostTask } satisfies Pick<AgentClientOptions, 'stopHostTask'>)
+      : {}),
   })
   const meta = await client.createSession(selection)
   const events: ChatEvent[] = []
@@ -230,6 +240,7 @@ async function setup(
     resumeCalls,
     extMethodCalls,
     forkCalls,
+    wire,
     endTurn: (index?: number) => takeTurn(index)?.resolve({ stopReason: 'end_turn' }),
     // Resolve a turn with the FULL prompt response the harness would send —
     // the experimental usage/quota/failure decorations included. The engine
@@ -5350,6 +5361,92 @@ test('a background task is reported, snapshot-prefixed while live, and stoppable
   await h.client.deleteSession(h.sessionId)
 })
 
+// ── background tasks the host runs (upsertAsyncTask / stopHostTask) ────────
+//
+// The application reports work it runs for a session in the same record a
+// harness's tasks use, so session status, the idle guard, the transcript and
+// restore all follow from one emit. What differs is who stops it: the harness
+// has never heard of a host task, so a stop for one has to go back to the host.
+
+const HOST_TASK: AsyncTaskInfo = {
+  asyncTaskId: 'host-build',
+  name: 'build',
+  taskType: 'build',
+  description: 'npm run build',
+  state: 'running',
+  canStop: true,
+  showInTranscript: true,
+}
+
+test('a host task is reported as the host’s own and holds the session working only while it runs', async () => {
+  const h = await setup('openclaw', { sessionKey: 'agent:host-task' })
+  assert.equal(h.client.upsertAsyncTask(h.sessionId, HOST_TASK), true)
+  assert.deepEqual(
+    h.events.filter((event) => event.kind === 'async_task'),
+    [{ kind: 'async_task', task: { ...HOST_TASK, origin: 'host' } }],
+    'the ordinary async_task event, marked as the host’s although the caller did not say so',
+  )
+  assert.ok(h.client.hasBackgroundWork(h.sessionId), 'a running host task is background work')
+  assert.ok(h.client.backgroundWorkSessionKeys().includes('agent:host-task'))
+
+  assert.equal(h.client.upsertAsyncTask(h.sessionId, { ...HOST_TASK, state: 'completed', summary: 'exit 0' }), true)
+  assert.deepEqual(h.events.filter((event) => event.kind === 'async_task').at(-1), {
+    kind: 'async_task',
+    task: { ...HOST_TASK, state: 'completed', summary: 'exit 0', origin: 'host' },
+  })
+  assert.equal(h.client.hasBackgroundWork(h.sessionId), false, 'a finished host task no longer holds the session')
+  assert.equal(h.client.backgroundWorkSessionKeys().includes('agent:host-task'), false)
+
+  assert.equal(h.client.upsertAsyncTask('no-such-session', HOST_TASK), false, 'nothing in memory to hold it')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('stopping a host task goes to the host, and a harness task still goes to the harness', async () => {
+  const hostStops: Array<{ sessionId: string; sessionKey?: string; asyncTaskId: string }> = []
+  const h = await setup('openclaw', {
+    sessionKey: 'agent:host-stop',
+    stopHostTask: async (request) => {
+      hostStops.push(request)
+      if (request.asyncTaskId === 'host-unreachable') {
+        throw new Error('runner unreachable')
+      }
+      return true
+    },
+  })
+  const harnessStops = () =>
+    h.extMethodCalls.filter((call) => call.method === '_session/async_task/stop').map((call) => call.params)
+  h.client.upsertAsyncTask(h.sessionId, HOST_TASK)
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'async_task_spawned',
+    asyncTaskId: 'harness-loop',
+    name: 'loop',
+    taskType: 'loop',
+    description: 'polls',
+    canStop: true,
+  })
+
+  assert.equal(await h.client.stopAsyncTask(h.sessionId, 'host-build'), true, 'the host’s answer is the answer')
+  assert.deepEqual(hostStops, [{ sessionId: h.sessionId, sessionKey: 'agent:host-stop', asyncTaskId: 'host-build' }])
+  assert.deepEqual(harnessStops(), [], 'the harness is never asked about a task it does not own')
+
+  assert.equal(await h.client.stopAsyncTask(h.sessionId, 'harness-loop'), true)
+  assert.deepEqual(harnessStops(), [{ sessionId: h.sessionId, asyncTaskId: 'harness-loop' }], 'today’s path, as it was')
+  assert.equal(hostStops.length, 1, 'and the host is not asked about the harness’s task')
+
+  // A stop the host could not carry out is said out loud, not folded into a
+  // quiet false.
+  h.client.upsertAsyncTask(h.sessionId, { ...HOST_TASK, asyncTaskId: 'host-unreachable' })
+  assert.equal(await h.client.stopAsyncTask(h.sessionId, 'host-unreachable'), false)
+  assert.ok(h.events.some((event) => event.kind === 'error' && event.message.includes('runner unreachable')))
+
+  // A host that runs no work of its own has nothing to stop one with — and the
+  // harness is still not the fallback.
+  const bare = createAgentClient()
+  assert.equal(await bare.stopAsyncTask(h.sessionId, 'host-build'), false)
+  assert.equal(harnessStops().length, 1)
+  await h.client.deleteSession(h.sessionId)
+})
+
 // ── the stream seam the draft kinds must cross ──────────────────────────────
 
 test('a draft-kind update is taken out of the wire stream and still lands in the session', async () => {
@@ -5404,5 +5501,276 @@ test('a draft-kind update is taken out of the wire stream and still lands in the
     h.events.some((event) => event.kind === 'subagent' && event.subagent.subagentSessionId === 'wire-child'),
     'the intercepted update reached the session anyway',
   )
+  await h.client.deleteSession(h.sessionId)
+})
+
+// ── notifications from the host (notify) ────────────────────────────────────
+//
+// The application telling the agent that work the agent started has ended. Not
+// a message: it never enters the queue, no cadence holds it, and it goes in
+// verbatim. A running turn takes it by steering where the harness can and
+// holds it for its settlement where it cannot; an idle session gets it as a
+// turn of its own. Each test below pins one of those rules.
+
+// A promise's outcome once the engine's own follow-up work has run, or
+// 'pending' -- so a notification that never settles fails the assertion that
+// expected it to, instead of hanging the file.
+function outcomeOf<T>(promise: Promise<T>): Promise<T | 'pending'> {
+  return Promise.race([promise, settle().then(() => 'pending' as const)])
+}
+
+const NOTE = '<background-task id="b-1" state="completed">npm run build: exit 0</background-task>'
+
+test('a notification to an idle session is a turn of exactly its text, answered once handed over', async () => {
+  const h = await setup('openclaw')
+  assert.equal(await outcomeOf(h.client.notify(h.sessionId, NOTE)), true)
+  assert.deepEqual(h.promptCalls, [NOTE], 'verbatim: no queue tag, no delivery note')
+  assert.deepEqual(
+    h.events.filter((event) => event.kind === 'user'),
+    [{ kind: 'user', text: NOTE }],
+    'the ordinary user event: the turn boundary a transcript folds on',
+  )
+  assert.ok(h.client.hasActiveTurn(h.sessionId), 'answered at the hand-over, not at the end of the turn it started')
+  h.endTurn()
+  await settle()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a notification held behind a turn that cannot take it goes first when that turn ends, the queue after it', async () => {
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  const notified = h.client.notify(h.sessionId, NOTE)
+  assert.equal(await outcomeOf(notified), 'pending', 'no steering here, so it waits for the turn')
+  assert.deepEqual(deliveries(h), [['first']])
+
+  h.endTurn()
+  await settle()
+  assert.equal(h.promptCalls[1], NOTE, 'the settlement hands over the notification ahead of the queued message')
+  assert.equal(h.promptCalls.length, 2, 'as a turn of its own: nothing queued rode along')
+  assert.equal(await outcomeOf(notified), true)
+  assert.deepEqual(queueSnapshots(h.events).at(-1), ['second'], 'the message is still waiting')
+
+  h.endTurn()
+  await settle()
+  assert.deepEqual(partsOf(h.promptCalls[2]), ['second'], 'the queue drains once the notification turn settles')
+  h.endTurn()
+  await settle()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('several notifications held behind one turn go out as one prompt', async () => {
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'working', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  const build = h.client.notify(h.sessionId, 'build finished')
+  const deploy = h.client.notify(h.sessionId, 'deploy finished')
+  h.endTurn()
+  await settle()
+  assert.deepEqual(h.promptCalls.slice(1), ['build finished\n\ndeploy finished'], 'one turn, oldest first')
+  assert.deepEqual([await outcomeOf(build), await outcomeOf(deploy)], [true, true])
+  h.endTurn()
+  await settle()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a notification steers into a running turn whatever the cadence, and never stops it', async () => {
+  // `online` keeps a MESSAGE for the turn boundary even on a harness that can
+  // steer (pinned in the steering section); a notification is not a message.
+  // cancelEndsTurn makes a `session/cancel` visible: it would end the turn.
+  const h = await setup('openclaw', { steeringSupported: true, cancelEndsTurn: true })
+  h.client.setPresence(h.sessionId, { kind: 'online' })
+  await h.client.prompt(h.sessionId, 'working', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  assert.equal(await outcomeOf(h.client.notify(h.sessionId, NOTE)), true, 'handed over by the accepted steer')
+  const steers = h.extMethodCalls.filter((call) => call.method === '_session/steering')
+  assert.equal(steers.length, 1)
+  assert.equal((steers[0].params.prompt as Array<{ text: string }>)[0].text, NOTE, 'verbatim on this path too')
+  assert.equal(h.promptCalls.length, 1, 'no turn of its own')
+  assert.equal(kinds(h.events).includes('turn_end'), false, 'the running turn was steered, not stopped')
+  assert.equal(h.events.filter((event) => event.kind === 'user' && event.text === NOTE).length, 1)
+  h.endTurn()
+  await settle()
+  assert.equal(h.promptCalls.length, 1, 'nothing left for the settlement to deliver')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a notification whose steer is declined is held for the end of the turn, not lost and not forced in', async () => {
+  const h = await setup('openclaw', { steeringSupported: true, steerOutcome: 'promptRequired' })
+  await h.client.prompt(h.sessionId, 'working', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  const notified = h.client.notify(h.sessionId, NOTE)
+  assert.equal(await outcomeOf(notified), 'pending', 'a declined steer handed nothing over')
+  assert.equal(h.extMethodCalls.filter((call) => call.method === '_session/steering').length, 1, 'it was tried')
+  assert.equal(h.promptCalls.length, 1, 'and not replaced by a prompt overlapping the turn')
+  h.endTurn()
+  await settle()
+  assert.deepEqual(h.promptCalls.slice(1), [NOTE], 'the settlement delivers it')
+  assert.equal(await outcomeOf(notified), true)
+  h.endTurn()
+  await settle()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a turn that ends while a notification steer is still unanswered delivers it before the queue', async () => {
+  // The race window: the harness answers the prompt ahead of the steer, and a
+  // turn that has ended refuses the injection. Waiting for that refusal before
+  // touching the queue would let the queue go first.
+  let answer: (outcome: string) => void = () => {}
+  const h = await setup('openclaw', {
+    steeringSupported: true,
+    steerOutcome: new Promise<string>((resolve) => {
+      answer = resolve
+    }),
+  })
+  h.client.setPresence(h.sessionId, { kind: 'online' })
+  await h.client.prompt(h.sessionId, 'working', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await h.client.prompt(h.sessionId, 'queued', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  const notified = h.client.notify(h.sessionId, NOTE)
+  await settle()
+  h.endTurn()
+  await settle()
+  assert.equal(h.promptCalls[1], NOTE, 'the settlement took the notification back and delivered it first')
+  assert.equal(await outcomeOf(notified), true)
+  answer('promptRequired')
+  await settle()
+  assert.equal(h.promptCalls.length, 2, 'the late refusal changes nothing')
+  assert.equal(h.events.filter((event) => event.kind === 'user' && event.text === NOTE).length, 1)
+  h.endTurn()
+  await settle()
+  assert.deepEqual(partsOf(h.promptCalls[2]), ['queued'])
+  h.endTurn()
+  await settle()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a closed delivery gate holds a notification, and resumeDelivery delivers it ahead of the queue', async () => {
+  let held = true
+  const h = await setup('openclaw', { shouldHoldDelivery: () => held })
+  await h.client.prompt(h.sessionId, 'waiting', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  const notified = h.client.notify(h.sessionId, NOTE)
+  assert.equal(await outcomeOf(notified), 'pending', 'nothing starts a turn while the host holds delivery')
+  assert.deepEqual(h.promptCalls, [])
+  held = false
+  h.client.resumeDelivery()
+  await settle()
+  assert.deepEqual(h.promptCalls, [NOTE], 'the wake delivers the notification first, as its own turn')
+  assert.equal(await outcomeOf(notified), true)
+  h.endTurn()
+  await settle()
+  assert.deepEqual(partsOf(h.promptCalls[1]), ['waiting'], 'and the queue once that turn settles')
+  h.endTurn()
+  await settle()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a closed delivery gate holds a notification even from a turn that could take it', async () => {
+  let held = false
+  const h = await setup('openclaw', { steeringSupported: true, shouldHoldDelivery: () => held })
+  await h.client.prompt(h.sessionId, 'working', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  held = true
+  const notified = h.client.notify(h.sessionId, NOTE)
+  assert.equal(await outcomeOf(notified), 'pending')
+  assert.deepEqual(h.extMethodCalls, [], 'an injection is a hand-over too')
+  h.endTurn()
+  await settle()
+  assert.equal(h.promptCalls.length, 1, 'and the settlement starts no turn under the gate')
+  held = false
+  h.client.resumeDelivery()
+  await settle()
+  assert.deepEqual(h.promptCalls.slice(1), [NOTE])
+  assert.equal(await outcomeOf(notified), true)
+  h.endTurn()
+  await settle()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a notification is never part of the queue: no snapshot, no durable row, not counted', async () => {
+  const appended: string[] = []
+  const durable: QueueStore = {
+    append: (_key, entry) => {
+      appended.push(entry.text)
+    },
+    remove: () => {},
+    clear: () => {},
+    load: () => [],
+  }
+  const h = await setup('openclaw', { sessionKey: `notify-unqueued-${counter}`, queueStore: durable })
+  await h.client.prompt(h.sessionId, 'working', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await h.client.prompt(h.sessionId, 'waiting', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  const notified = h.client.notify(h.sessionId, NOTE)
+  assert.equal(h.client.listSessions().find((meta) => meta.id === h.sessionId)?.queuedMessages, 1, 'only the message')
+  h.endTurn()
+  await settle()
+  assert.equal(await outcomeOf(notified), true)
+  h.endTurn()
+  await settle()
+  assert.ok(
+    queueSnapshots(h.events).every((items) => !items.includes(NOTE)),
+    'no queue snapshot -- and so no unread list -- ever carried it',
+  )
+  assert.deepEqual(appended, ['working', 'waiting'], 'nothing durable was written for it')
+  h.endTurn()
+  await settle()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a notification still held when its session is dropped is answered false, as is one for no session', async () => {
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'working', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  const notified = h.client.notify(h.sessionId, NOTE)
+  assert.equal(await outcomeOf(notified), 'pending')
+  await h.client.deleteSession(h.sessionId)
+  assert.equal(await outcomeOf(notified), false, 'answered, not stranded: the host tries again later')
+  assert.equal(await h.client.notify(h.sessionId, NOTE), false, 'a session that is gone')
+  assert.equal(await h.client.notify('no-such-session', NOTE), false, 'or was never here')
+})
+
+test('reset answers false for a notification held and for one out for a steer', async () => {
+  let answer: (outcome: string) => void = () => {}
+  const h = await setup('openclaw', {
+    steeringSupported: true,
+    steerOutcome: new Promise<string>((resolve) => {
+      answer = resolve
+    }),
+  })
+  await h.client.prompt(h.sessionId, 'working', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  const steering = h.client.notify(h.sessionId, 'out for a steer')
+  const waiting = h.client.notify(h.sessionId, 'held behind it')
+  await h.client.reset()
+  assert.deepEqual([await outcomeOf(steering), await outcomeOf(waiting)], [false, false])
+  // The harness's late answer lands on a session that no longer exists.
+  answer('injected')
+  await settle()
+  assert.deepEqual([await steering, await waiting], [false, false], 'an answer once given stands')
+})
+
+test('an empty notification starts no turn and is not reported as delivered', async () => {
+  const h = await setup('openclaw')
+  assert.equal(await h.client.notify(h.sessionId, ' \n '), false)
+  assert.deepEqual(h.promptCalls, [])
+  await h.client.deleteSession(h.sessionId)
+})
+
+// Last in the file, after the reset above: refreshMcpServers resumes EVERY
+// session in the process-wide store, and this keeps that set to the one below.
+test('a deferred MCP resume still runs first, then the held notification, then the queue', async () => {
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'working', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await h.client.prompt(h.sessionId, 'waiting', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await h.client.refreshMcpServers()
+  const notified = h.client.notify(h.sessionId, NOTE)
+  h.endTurn()
+  await settle()
+  assert.deepEqual(h.wire, ['prompt', 'resume', 'prompt'], 'the resume first, and only then a turn over its connection')
+  assert.equal(h.promptCalls[1], NOTE)
+  assert.equal(await outcomeOf(notified), true)
+  h.endTurn()
+  await settle()
+  assert.deepEqual(partsOf(h.promptCalls[2]), ['waiting'])
+  h.endTurn()
+  await settle()
   await h.client.deleteSession(h.sessionId)
 })

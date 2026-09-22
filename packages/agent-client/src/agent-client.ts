@@ -190,6 +190,11 @@ export interface AgentClientOptions {
   // if a turn were running. When the gate reopens the host calls
   // resumeDelivery() to drain every idle session; a session with a turn
   // running drains at its own settlement, as always. Absent means never held.
+  //
+  // Host notifications (see `notify`) are held by it too, and here the hold
+  // includes steering: an injection starts no turn, but it is still a
+  // hand-over, and "nothing is handed to any agent" is what the gate means.
+  // resumeDelivery() delivers them alongside the queue, ahead of it.
   shouldHoldDelivery?: () => boolean
   /**
    * Open the session for a key that has a queue waiting but nothing in memory.
@@ -209,6 +214,26 @@ export interface AgentClientOptions {
    * from before this existed.
    */
   openSessionForKey?: (sessionKey: string) => void | Promise<void>
+  /**
+   * Stop a background task the HOST runs on a session's behalf — one it
+   * reported through `upsertAsyncTask`, which records it with `origin: 'host'`.
+   *
+   * `stopAsyncTask` routes on that origin. A task the harness reported is
+   * stopped over `_session/async_task/stop`, as it always was; a host task
+   * never is, because the harness has never heard of it — the request would
+   * go out, be answered, and stop nothing. So the stop goes back to whoever
+   * started the work.
+   *
+   * Resolves whether the task was stopped. The task's new state is not
+   * inferred from that answer: the host reports it through `upsertAsyncTask`
+   * like every other transition, so what the reader sees is always what the
+   * host says happened. `sessionKey` rides along because a host files its
+   * work under the name that survives a restart, which a session id does not.
+   *
+   * Absent means a host that runs no background work of its own: stopping a
+   * host task then resolves false.
+   */
+  stopHostTask?: (request: { sessionId: string; sessionKey?: string; asyncTaskId: string }) => Promise<boolean>
 }
 
 /**
@@ -294,6 +319,17 @@ type Subscriber = (event: ChatEvent) => void
 interface SessionModes {
   available: SessionMode[]
   current: string
+}
+
+/**
+ * One notification the host issued through `notify`, waiting to be handed to
+ * the harness, with the settle of the promise its caller holds. The caller has
+ * to learn whether the text arrived — it tries again on false — so the entry
+ * carries that answer's only way out.
+ */
+interface HeldNotification {
+  text: string
+  settle: (handedOver: boolean) => void
 }
 
 interface SessionState {
@@ -386,6 +422,28 @@ interface SessionState {
    * without the first, because it interrupted nothing.
    */
   bypassPresenceOnce?: boolean
+  /**
+   * Notifications the host issued (see `notify`) that could not be handed over
+   * yet: a turn was running that could not take them, or the host's delivery
+   * gate was closed. Oldest first.
+   *
+   * Not the queue, and deliberately so. Everything in the queue is a message
+   * to be read at the reader's pace — shown as unread, persisted, held by
+   * Presence. A notification is none of those, and a queue entry that had to
+   * opt out of every one of them would be a queue entry in name only, waiting
+   * for the next queue feature to forget the exception.
+   */
+  notifications?: HeldNotification[]
+  /**
+   * The batch out for a steer right now, awaiting the harness's answer.
+   *
+   * On the session rather than in the steering call's own scope, so that the
+   * two things that can overtake that answer can still reach the batch: the
+   * turn settling first (startNotificationTurn takes it back and delivers it
+   * as a turn of its own) and the session going away (releaseNotifications
+   * owes every caller an answer, this batch's included).
+   */
+  notificationSteer?: HeldNotification[]
   // True only while session/load is replaying this session's history. The
   // replay carries no turn boundaries of its own, so handleUpdate reconstructs
   // them while this is set — see the `user_message_chunk` case.
@@ -769,6 +827,39 @@ function dropSessionTokens(sessionId: string): void {
       store.acpTokenPermissions.delete(token)
     }
   }
+}
+
+// Held notifications go out as ONE prompt, a blank line between them. Each is
+// a self-contained block in the host's own wording, and the engine adds
+// nothing of its own around them — no tag, no note, nothing a reader or a
+// parser would have to tell apart from what the host wrote.
+const NOTIFICATION_SEPARATOR = '\n\n'
+
+function settleNotifications(batch: readonly HeldNotification[], handedOver: boolean): void {
+  for (const notification of batch) {
+    notification.settle(handedOver)
+  }
+}
+
+/**
+ * Answer every notification still held for a session that is going away: not
+ * handed over.
+ *
+ * Called wherever a record leaves the session map. A held notification's
+ * promise is settled by its delivery and by nothing else, so a record dropped
+ * with one inside would leave its caller waiting on a session that no longer
+ * exists — and a host delivering at-least-once keeps its work marked
+ * undelivered until it hears back. False is that host's cue to try again
+ * against whatever session the conversation has next.
+ */
+function releaseNotifications(session: SessionState | undefined): void {
+  if (!session) {
+    return
+  }
+  const held = [...(session.notificationSteer ?? []), ...(session.notifications ?? [])]
+  session.notificationSteer = undefined
+  session.notifications = []
+  settleNotifications(held, false)
 }
 
 // The harness's own message boundary, when the chunk carries one — spread
@@ -1748,8 +1839,9 @@ export function supportsMidTurnInput(selection: AgentSelection): boolean {
 // high-attention, each in its own way) for a turn boundary — high-attention
 // forces one, online waits for the agent's own.
 /**
- * Live background work the harness reported: a subagent it has not given a
- * terminal state for, or a task still running or paused.
+ * Live background work: a subagent the harness has not given a terminal state
+ * for, or a task still running or paused — the harness's own, or one the host
+ * runs for the session (upsertAsyncTask), which is the same record.
  *
  * Module-level so the steering rule below and the public `hasBackgroundWork`
  * read the same predicate — they answer the same question for two callers, and
@@ -2429,7 +2521,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // prompts can overlap on one session, and only the LAST settlement ends the
   // turn: it emits turn_end (with its own stopReason — intermediate
   // stopReasons are dropped, they describe a turn that kept running) and
-  // drains the next queued prompt. A failed settlement has already emitted its
+  // hands over what is next: held host notifications, then the next queued
+  // prompt (see deliverAfterTurn). A failed settlement has already emitted its
   // error, so `stopReason` is absent and a failed final settlement just
   // releases and drains — exactly the single-prompt error path of old. Queue
   // depth is small (hand-typed messages), so the drain's self-call chain stays
@@ -2951,12 +3044,151 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     }
     if (session.pendingMcpRefresh) {
       session.pendingMcpRefresh = false
+      // Everything the turn hands over waits for the resume, held
+      // notifications included: a prompt started while it is in flight would
+      // ride the very connection it is re-establishing.
       void performResumeSession(sessionId)
         .catch((error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }))
-        .then(() => drainQueue(sessionId))
+        .then(() => deliverAfterTurn(sessionId))
       return
     }
-    drainQueue(sessionId)
+    deliverAfterTurn(sessionId)
+  }
+
+  /**
+   * What a settled turn hands over next: held notifications first, as a turn
+   * of their own, and the queue only once THAT turn has settled.
+   *
+   * In that order because a notification is the application telling the agent
+   * how work it started came out, and the messages waiting behind it are read
+   * against that — a reader's "did the deploy go through?" is answered from
+   * the notification, not guessed at ahead of it. Not in the same turn,
+   * because the two are delivered differently: messages are tagged, batched
+   * and noted, a notification goes verbatim, and one prompt cannot be both.
+   */
+  function deliverAfterTurn(sessionId: string): void {
+    if (startNotificationTurn(sessionId)) {
+      return
+    }
+    void drainQueue(sessionId)
+  }
+
+  /**
+   * Deliver everything held for an IDLE session as one turn of its own. True
+   * when a turn was started: the caller must then leave the queue alone,
+   * because it drains when this turn settles.
+   *
+   * The turn is counted before this returns — deliverPrompt increments the
+   * counter ahead of its first await — so nothing arriving in the same tick
+   * can read the session as idle and start a second turn beside it.
+   */
+  function startNotificationTurn(sessionId: string): boolean {
+    const session = store.sessions.get(sessionId)
+    if (!session || session.activeTurns > 0) {
+      return false
+    }
+    // A batch still out for a steer on an idle session is one whose turn
+    // settled before the harness answered, and a turn that has ended cannot
+    // take an injection (`idleBehavior: promptRequired`), so the answer on its
+    // way is a refusal. Taken back here, ahead of anything held since, it
+    // reaches the agent before the queue rather than behind whatever the
+    // queue starts next. Should a harness inject anyway, the notification
+    // arrives twice — the side at-least-once delivery is allowed to err on.
+    if (session.notificationSteer) {
+      session.notifications = [...session.notificationSteer, ...(session.notifications ?? [])]
+      session.notificationSteer = undefined
+    }
+    if (!session.notifications?.length || options.shouldHoldDelivery?.() === true) {
+      return false
+    }
+    const batch = session.notifications.splice(0)
+    deliverPrompt(sessionId, batch.map((notification) => notification.text).join(NOTIFICATION_SEPARATOR)).then(
+      // Issued — though if the session went away while its connection was
+      // being found, the prompt went to a conversation nobody holds any more,
+      // and the caller is better told it did not arrive.
+      () => settleNotifications(batch, store.sessions.get(sessionId) === session),
+      (error: unknown) => {
+        emit(sessionId, { kind: 'error', message: errorMessage(error) })
+        settleNotifications(batch, false)
+      },
+    )
+    return true
+  }
+
+  /**
+   * Put what is held into the RUNNING turn through the harness's steering
+   * extension — whatever the session's cadence.
+   *
+   * Cadence is the reader's word about MESSAGES: how often they want to be
+   * read. A notification is not written to the reader. It tells the agent that
+   * work the agent itself started has ended, and holding that for a window, or
+   * even for the end of the turn, leaves the agent working from a picture the
+   * application already knows is out of date. So the only question is the one
+   * steering always asks — can this harness take input mid-turn — and the
+   * answer is always a steer, never `session/cancel`, which would finish the
+   * turn's subagents as `cancelled` to deliver news about something else.
+   *
+   * Declined (the extension absent, the turn ending in the race window, the
+   * request failing): the batch goes back to the front of what is held, and
+   * the turn's own settlement delivers it. Not retried here: a harness that
+   * just declined would decline again for the same reason, and the settlement
+   * is coming either way.
+   */
+  async function steerNotifications(sessionId: string, session: SessionState): Promise<void> {
+    const batch = (session.notifications ?? []).splice(0)
+    session.notificationSteer = batch
+    const text = batch.map((notification) => notification.text).join(NOTIFICATION_SEPARATOR)
+    // The host's delivery-time transform, as deliverPrompt applies it on the
+    // turn path: a notification must not read differently depending on which
+    // of the two carried it.
+    const deliveredText = options.transformDeliveredPrompt ? options.transformDeliveredPrompt(text) : text
+    const injected = await steerIntoRunningTurn(sessionId, session, deliveredText)
+    if (session.notificationSteer !== batch) {
+      // Overtaken while the harness was answering: the turn settled first and
+      // its settlement took the batch back to deliver as a turn, or the
+      // session went away and answered for it. This answer decides nothing.
+      return
+    }
+    session.notificationSteer = undefined
+    if (!injected) {
+      session.notifications = [...batch, ...(session.notifications ?? [])]
+      return
+    }
+    settleNotifications(batch, true)
+    // Anything that arrived while this one was out waited only because one
+    // steer goes at a time; the turn that just took this one takes those too.
+    offerNotifications(sessionId)
+  }
+
+  /**
+   * Hand over what is held for a session by the only means its state allows
+   * right now: a turn of its own when it is idle, a steer when a turn is
+   * running on a harness that can take one, and otherwise nothing — the
+   * running turn's settlement delivers it (deliverAfterTurn). Never through
+   * the queue and never gated by the cadence; only the host's delivery gate
+   * holds it.
+   */
+  function offerNotifications(sessionId: string): void {
+    const session = store.sessions.get(sessionId)
+    if (!session?.notifications?.length) {
+      return
+    }
+    if (session.activeTurns === 0) {
+      startNotificationTurn(sessionId)
+      return
+    }
+    // One batch out at a time: a second steer racing the first could land the
+    // two in the wrong order, and could not be taken back as one.
+    if (
+      options.shouldHoldDelivery?.() === true ||
+      session.notificationSteer ||
+      !supportsMidTurnInput(session.selection)
+    ) {
+      return
+    }
+    void steerNotifications(sessionId, session).catch((error: unknown) =>
+      emit(sessionId, { kind: 'error', message: errorMessage(error) }),
+    )
   }
 
   /**
@@ -3033,10 +3265,17 @@ export function createAgentClient(options: AgentClientOptions = {}) {
      * with a turn in flight are left to their own settlement drain, the same
      * boundary every delivery already respects; each drain still consults the
      * gate, so calling this while the gate is closed delivers nothing.
+     *
+     * Held host notifications go first, in the order a turn's settlement
+     * keeps (see deliverAfterTurn): an idle session that has any gets them as
+     * a turn of their own, and its queue drains when that turn settles.
      */
     resumeDelivery(): void {
       for (const [sessionId, session] of store.sessions) {
-        if ((session.activeTurns ?? 0) === 0 && (session.queue?.length ?? 0) > 0) {
+        if ((session.activeTurns ?? 0) > 0 || startNotificationTurn(sessionId)) {
+          continue
+        }
+        if ((session.queue?.length ?? 0) > 0) {
           void drainQueue(sessionId)
         }
       }
@@ -3137,8 +3376,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return [...keys]
     },
 
-    // Session keys of every session with LIVE background work the harness
-    // reported — a subagent or async task still going with no turn active.
+    // Session keys of every session with LIVE background work — a subagent or
+    // async task still going with no turn active, the host's own tasks
+    // (upsertAsyncTask) included.
     // hasActiveTurn/activeSessionKeys miss this by construction (no turn is
     // running), so a host reads it separately to hold the idle reaper off a
     // session that only looks idle, and to warn before stopping one.
@@ -3165,22 +3405,80 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // subagent still running or a background task still running/paused. This
     // is work that keeps going with no turn active, so `hasActiveTurn` misses
     // it entirely: it is what lets a host warn before stopping a session and
-    // hold the idle reaper off one that only LOOKS idle. Only reporting
-    // harnesses populate these, so a harness that says nothing reads as no
-    // background work — the same honest blank as before the feature.
+    // hold the idle reaper off one that only LOOKS idle. Only what was
+    // reported populates these — by a reporting harness, or by the host for
+    // work it runs (upsertAsyncTask) — so a harness that says nothing reads as
+    // no background work: the same honest blank as before the feature.
     hasBackgroundWork(sessionId: string): boolean {
       const session = store.sessions.get(sessionId)
       return session ? hasLiveBackgroundWork(session) : false
     },
 
-    // Stop ONE background task without cancelling the prompt turn, via the
-    // harness's `_session/async_task/stop` extension. A no-op (resolving
-    // false) when the session, its connection, or the extension channel is
-    // absent — the same degrade-quietly contract steering follows.
+    /**
+     * Report a background task the HOST runs on a session's behalf — a build,
+     * a deploy — in the same record the harness's own tasks live in.
+     *
+     * Everything downstream reads that record and nothing else, so emitting it
+     * is the whole integration: the session reads as working while the task
+     * runs (hasBackgroundWork and backgroundWorkSessionKeys, and with them a
+     * host's idle guard), a transcript or a background-task view draws it, a
+     * host recording events through onEvent records it, and a restored session
+     * folds it back. A second path for host work would be a second copy of
+     * each of those, and the first new consumer would read only one of them.
+     *
+     * `origin` is forced to `'host'`: it is what sends stopAsyncTask to
+     * stopHostTask rather than to a harness that has never heard of the task.
+     *
+     * The record REPLACES whatever was there, where the harness path merges.
+     * The protocol sends partial updates, so that path has to patch; the host
+     * owns the whole record and reports it whole, so a field it leaves out is
+     * a field it cleared.
+     *
+     * False when the session is not in memory: nothing would hold the record,
+     * and a host reporting into a session that is gone has to know it did not
+     * land.
+     */
+    upsertAsyncTask(sessionId: string, task: AsyncTaskInfo): boolean {
+      const session = store.sessions.get(sessionId)
+      if (!session) {
+        return false
+      }
+      // A copy, nested usage included: the stored record and the logged event
+      // must not alias an object the host goes on mutating.
+      const record: AsyncTaskInfo = {
+        ...task,
+        ...(task.usage ? { usage: { ...task.usage } } : {}),
+        origin: 'host',
+      }
+      session.asyncTasks ??= new Map()
+      session.asyncTasks.set(record.asyncTaskId, record)
+      emit(sessionId, { kind: 'async_task', task: { ...record } })
+      return true
+    },
+
+    // Stop ONE background task without cancelling the prompt turn. A task the
+    // host runs (`origin: 'host'`, see upsertAsyncTask) goes to the host's
+    // stopHostTask and never to the harness, which has never heard of it.
+    // Every other task — including an id this session holds no record of —
+    // goes over the harness's `_session/async_task/stop` extension, as it
+    // always has. A no-op (resolving false) when the session or the owner's
+    // channel is absent (no stopHostTask, no connection, no extension) — the
+    // same degrade-quietly contract steering follows.
     async stopAsyncTask(sessionId: string, asyncTaskId: string): Promise<boolean> {
       const session = store.sessions.get(sessionId)
       if (!session) {
         return false
+      }
+      if (session.asyncTasks?.get(asyncTaskId)?.origin === 'host') {
+        if (!options.stopHostTask) {
+          return false
+        }
+        try {
+          return await options.stopHostTask({ sessionId, sessionKey: session.selection.sessionKey, asyncTaskId })
+        } catch (error) {
+          emit(sessionId, { kind: 'error', message: errorMessage(error) })
+          return false
+        }
       }
       const entry = connEntryFor(session.selection)
       if (typeof entry?.connection.extMethod !== 'function') {
@@ -3490,7 +3788,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         }
       } catch (error) {
         // Transcript gone or agent refused — unwind the half-registered session
-        // so the caller can cleanly create a fresh one.
+        // so the caller can cleanly create a fresh one. A notification the host
+        // issued into it while the gate held it is answered, not stranded.
+        releaseNotifications(store.sessions.get(sessionId))
         store.sessions.delete(sessionId)
         if (token) {
           store.acpTokenSession.delete(token)
@@ -3637,7 +3937,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       } catch (error) {
         // The agent could not take the session back — unwind the half-registered
         // record so the caller can cleanly fall back to a replay or a fresh
-        // session, exactly as loadSession does.
+        // session, exactly as loadSession does, held notifications included.
+        releaseNotifications(store.sessions.get(sessionId))
         store.sessions.delete(sessionId)
         for (const subagentSessionId of state.subagents.keys()) {
           store.subagentParents.delete(subagentSessionId)
@@ -3795,6 +4096,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
           }
         }
       }
+      // Read again rather than taken from the top: the close above is awaited,
+      // and a notification the host issued meanwhile is held on the record
+      // being dropped now.
+      releaseNotifications(store.sessions.get(sessionId))
       store.sessions.delete(sessionId)
       store.nativeSessions.delete(sessionId)
       dropSessionTokens(sessionId)
@@ -4156,6 +4461,60 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     },
 
     /**
+     * Tell the agent something the APPLICATION knows about work the agent
+     * itself started — "your background build finished" — as opposed to
+     * something somebody wrote to it.
+     *
+     * That difference decides every rule here. A message is written to be
+     * read at the reader's pace, so it waits in the queue, shows as unread and
+     * is held by Presence. A notification is none of those: nobody wrote it,
+     * nobody is waiting to see it read, and holding it leaves the agent
+     * working from a picture the application already knows is stale. So it
+     * never enters the queue — not the in-memory one, not the durable store,
+     * not a `queue` snapshot, not the unread list — and no cadence holds it:
+     *
+     *  - a turn is running on a harness that takes mid-turn input: it goes
+     *    into that turn now, by steering, and never by `session/cancel`, which
+     *    would finish the turn's subagents as `cancelled`;
+     *  - a turn is running that cannot take it (no steering, or the steer was
+     *    declined): it is held, and delivered the moment that turn settles,
+     *    as a turn of its own and ahead of the queue — which drains when the
+     *    notification's turn settles in turn. Several held notifications go
+     *    as one prompt;
+     *  - nothing is running: it goes now, as a new turn.
+     *
+     * Only the host's delivery gate holds it, as it holds everything
+     * (shouldHoldDelivery), and resumeDelivery() lets it go.
+     *
+     * Verbatim, like a system entry: no queue tag, no delivery note. It still
+     * arrives as an ordinary `user` event, because that event is the turn
+     * boundary a transcript folds on; keeping the text out of a reader's way
+     * is the host's job, through markup of its own.
+     *
+     * Resolves true once the text is handed to the harness — the steer
+     * accepted, or its session/prompt issued; the turn itself is never waited
+     * for — and false when the session goes away first: dropped, reset, or
+     * never known here. That answer is built for at-least-once delivery: a
+     * caller marks its work delivered on true and tries again later on false,
+     * which is why a held notification is answered, never stranded, when its
+     * session disappears.
+     */
+    notify(sessionId: string, text: string): Promise<boolean> {
+      const session = store.sessions.get(sessionId)
+      // Nothing to say is not a notification: the prompt would start a turn
+      // saying nothing. False rather than true, because true tells the caller
+      // something reached the agent.
+      if (!session || text.trim().length === 0) {
+        return Promise.resolve(false)
+      }
+      return new Promise<boolean>((settle) => {
+        session.notifications ??= []
+        session.notifications.push({ text, settle })
+        offerNotifications(sessionId)
+      })
+    },
+
+    /**
      * Set how often this session's agent reads its queue.
      *
      * Applied to what is ALREADY waiting, not only to what arrives next: a
@@ -4438,6 +4797,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         entry.process?.kill()
       }
       store.connections.clear()
+      for (const session of store.sessions.values()) {
+        releaseNotifications(session)
+      }
       store.sessions.clear()
       store.nativeSessions.clear()
       store.pendingPermissions.clear()

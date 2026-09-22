@@ -270,12 +270,14 @@ export interface SubagentInfo {
 }
 
 /**
- * A background task the harness reported (ACP AIR draft `async_task_spawned`
- * / `async_task_progress` / `async_task_state_update`): a background bash
- * job, a loop, anything Claude runs detached from the prompt turn. `canStop`
- * marks tasks the client may stop via the engine's stopAsyncTask;
- * `showInTranscript` is the harness's own advice on whether to draw it in the
- * conversation (a task that is pure plumbing arrives with it false).
+ * A background task: a background bash job, a loop, a build — anything that
+ * runs detached from the prompt turn. Usually one the harness reported (ACP
+ * AIR draft `async_task_spawned` / `async_task_progress` /
+ * `async_task_state_update`); the application can report its own through the
+ * engine's `upsertAsyncTask` (see `origin`). `canStop` marks tasks the client
+ * may stop via the engine's stopAsyncTask; `showInTranscript` is the
+ * reporter's own advice on whether to draw it in the conversation (a task
+ * that is pure plumbing arrives with it false).
  */
 export interface AsyncTaskInfo {
   asyncTaskId: string
@@ -290,6 +292,15 @@ export interface AsyncTaskInfo {
   usage?: { totalTokens: number; toolUses: number; durationMs: number }
   outputFilePath?: string
   toolCallId?: string
+  // Who runs the task, which is also who can stop it. Absent: the harness
+  // reported it, and a stop goes to the harness. `'host'`: the application
+  // runs it on the session's behalf, and a stop goes back to the application
+  // (AgentClientOptions.stopHostTask) — the harness has never heard of it.
+  //
+  // On the record itself rather than kept beside it, because the record is
+  // what travels: through the event log, a restore and every fold. A stop
+  // issued for a task that came back that way still has to find its owner.
+  origin?: 'host'
 }
 
 export type ChatEvent =
