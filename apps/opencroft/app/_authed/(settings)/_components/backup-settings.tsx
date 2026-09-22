@@ -1,18 +1,19 @@
 'use client'
 
 import {
+  type BackupContents,
   type BackupFileInfo,
   type BackupScheduleConfig,
   type BackupStorageStats,
   createBackupNow,
   deleteBackup,
+  getBackupContents,
   getBackupSchedule,
   getBackupStats,
   listBackups,
   resetDatabase,
   restoreBackupNow,
   setBackupSchedule,
-  uploadBackup,
 } from '@opencroft/db-backups/server'
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { toast } from 'sonner'
@@ -21,6 +22,40 @@ import { BackupRestore } from 'ui/settings/backup-restore'
 // The page is the kit's BackupRestore; what stays here is everything that
 // touches the world: the backup server, the file picker, the confirmations
 // and the toasts.
+
+/**
+ * What the confirmation says, read out of the file rather than written here.
+ *
+ * The literal this replaces named "settings, secrets, spaces, and the MCP
+ * audit log" — the four tables a backup carried in 2026-07 — and went on
+ * saying exactly that after backups started carrying twenty-five tables and
+ * the app data directory. A sentence about what is at stake has to come from
+ * the thing at stake.
+ */
+function describeRestore(filename: string, contents: BackupContents): string {
+  const tableNames = Object.keys(contents.tables)
+  const lines = [
+    `Restore "${filename}"?`,
+    '',
+    `Database: ${contents.totalRows.toLocaleString()} rows across ${tableNames.length} tables, replacing what is there now.`,
+  ]
+  if (contents.fileRoots.length > 0) {
+    lines.push(`Files: ${contents.fileRoots.join(', ')} — each replaced in full, not merged.`)
+  } else {
+    lines.push('Files: none. This backup carries no app storage.')
+  }
+  // The one consequence that is not visible in the lists above: rows pointing
+  // at a table this file replaces go with it, whether or not the file carries
+  // them.
+  if (tableNames.includes('Space') && !tableNames.includes('SpaceGraph')) {
+    lines.push('', 'This backup predates graphs being rows: restoring it DELETES every graph and App instance.')
+  }
+  if (contents.format === 'json') {
+    lines.push('', `Old format (version ${contents.formatVersion}).`)
+  }
+  lines.push('', 'This cannot be undone. Continue?')
+  return lines.join('\n')
+}
 
 export default function BackupSettings() {
   const [backups, setBackups] = useState<BackupFileInfo[]>([])
@@ -85,8 +120,17 @@ export default function BackupSettings() {
     }
     startTransition(async () => {
       try {
-        const backup = JSON.parse(await file.text())
-        await uploadBackup({ data: { filename: file.name, backup } })
+        // The bytes go up untouched: an archive is not something the browser
+        // can parse into an object first, and a .json need not be either.
+        const response = await fetch('/api/backup-upload', {
+          method: 'POST',
+          headers: { 'x-filename': encodeURIComponent(file.name), 'content-type': 'application/octet-stream' },
+          body: file,
+        })
+        if (!response.ok) {
+          const body = (await response.json().catch(() => null)) as { error?: string } | null
+          throw new Error(body?.error || `Upload failed (${response.status})`)
+        }
         toast.success('Backup uploaded')
         refresh()
       } catch (err) {
@@ -100,18 +144,19 @@ export default function BackupSettings() {
   }
 
   function handleRestore(filename: string) {
-    if (
-      !confirm(
-        `Restoring "${filename}" replaces ALL existing data (settings, secrets, spaces, and the MCP audit log). This cannot be undone. Continue?`,
-      )
-    ) {
-      return
-    }
     setBusyFile(filename)
     startTransition(async () => {
       try {
-        await restoreBackupNow({ data: filename })
-        toast.success('Backup restored — reloading…')
+        // Reading the file is also the first check that it IS one: a damaged
+        // archive fails here, before anything has been replaced.
+        const contents = await getBackupContents({ data: filename })
+        if (!confirm(describeRestore(filename, contents))) {
+          setBusyFile(null)
+          return
+        }
+        const result = await restoreBackupNow({ data: filename })
+        const restoredRows = Object.values(result.restored).reduce((sum, count) => sum + count, 0)
+        toast.success(`Restored ${restoredRows.toLocaleString()} rows and ${result.filesWritten} files — reloading…`)
         window.location.reload()
       } catch (err) {
         toast.error(err instanceof Error ? err.message : String(err))
@@ -141,7 +186,7 @@ export default function BackupSettings() {
   function handleReset() {
     if (
       !confirm(
-        'This permanently deletes ALL data — settings, secrets, spaces, and the MCP audit log — from every table. This cannot be undone. Consider creating a backup first. Continue?',
+        'This permanently deletes every row of every table — settings, secrets, spaces and their graphs, App instances, group chats, accounts, the MCP audit log. App storage on disk is NOT touched. This cannot be undone. Consider creating a backup first. Continue?',
       )
     ) {
       return
@@ -175,7 +220,13 @@ export default function BackupSettings() {
         onDelete={handleDelete}
         onReset={handleReset}
       />
-      <input ref={fileInput} type='file' accept='application/json' className='hidden' onChange={handleUploadFile} />
+      <input
+        ref={fileInput}
+        type='file'
+        accept='.zip,.json,application/zip,application/json'
+        className='hidden'
+        onChange={handleUploadFile}
+      />
     </>
   )
 }

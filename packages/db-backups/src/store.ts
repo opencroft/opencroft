@@ -2,15 +2,35 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { db, setting } from '@opencroft/db'
-import { type Backup, createBackup, resetDatabase as resetAllTables, restoreBackup } from '@opencroft/db/backup'
+import {
+  type Backup,
+  createBackup,
+  type RestoreSummary,
+  resetDatabase as resetAllTables,
+  restoreBackup,
+} from '@opencroft/db/backup'
 import { eq } from 'drizzle-orm'
 
-export type { Backup }
+import {
+  type ArchiveManifest,
+  type ArchiveTrailer,
+  extractBackupFiles,
+  readArchiveManifest,
+  readBackupArchive,
+  writeBackupArchive,
+} from './archive'
+import { BACKUP_FILE_ROOTS } from './file-tree'
+
+export type { ArchiveManifest, ArchiveTrailer, Backup }
+
+/** `.zip` since format 2; `.json` is every backup taken before it. */
+export type BackupFormat = 'zip' | 'json'
 
 export interface BackupFileInfo {
   filename: string
   sizeBytes: number
   createdAt: string
+  format: BackupFormat
 }
 
 function dataDir(...segments: string[]): string {
@@ -20,10 +40,10 @@ function dataDir(...segments: string[]): string {
 
 const BACKUPS_DIR = dataDir('backups')
 
-const SAFE_FILENAME = /^[\w.-]+\.json$/
+const SAFE_FILENAME = /^[\w.-]+\.(zip|json)$/
 
 function isSafeFilename(filename: string): boolean {
-  return SAFE_FILENAME.test(filename)
+  return SAFE_FILENAME.test(filename) && !filename.includes('..')
 }
 
 function backupFilePath(filename: string): string {
@@ -31,6 +51,10 @@ function backupFilePath(filename: string): string {
     throw new Error('Invalid backup filename')
   }
   return path.join(BACKUPS_DIR, filename)
+}
+
+function formatOf(filename: string): BackupFormat {
+  return filename.endsWith('.zip') ? 'zip' : 'json'
 }
 
 function timestampForFilename(iso: string): string {
@@ -41,7 +65,7 @@ function timestampForFilename(iso: string): string {
 
 async function statInfo(filename: string): Promise<BackupFileInfo> {
   const stat = await fs.stat(path.join(BACKUPS_DIR, filename))
-  return { filename, sizeBytes: stat.size, createdAt: stat.mtime.toISOString() }
+  return { filename, sizeBytes: stat.size, createdAt: stat.mtime.toISOString(), format: formatOf(filename) }
 }
 
 export async function listBackupFiles(): Promise<BackupFileInfo[]> {
@@ -54,19 +78,30 @@ export async function listBackupFiles(): Promise<BackupFileInfo[]> {
     }
     throw err
   }
-  const files = await Promise.all(entries.filter((name) => name.endsWith('.json')).map(statInfo))
+  const files = await Promise.all(
+    entries.filter((name) => name.endsWith('.zip') || name.endsWith('.json')).map(statInfo),
+  )
   return files.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
 export async function createBackupFile(): Promise<BackupFileInfo> {
   await fs.mkdir(BACKUPS_DIR, { recursive: true })
   const backup = await createBackup(db)
-  const filename = `backup-${timestampForFilename(backup.createdAt)}.json`
-  await fs.writeFile(path.join(BACKUPS_DIR, filename), JSON.stringify(backup, null, 2))
+  const filename = `backup-${timestampForFilename(backup.createdAt)}.zip`
+  // Written beside its final name and moved into place, so a crash or a full
+  // disk mid-write leaves no half-archive for the list to offer as a restore.
+  const partial = path.join(BACKUPS_DIR, `.${filename}.partial`)
+  try {
+    await writeBackupArchive(partial, { backup, dataDirectory: dataDir(), roots: BACKUP_FILE_ROOTS })
+    await fs.rename(partial, path.join(BACKUPS_DIR, filename))
+  } catch (err) {
+    await fs.rm(partial, { force: true })
+    throw err
+  }
   return statInfo(filename)
 }
 
-function isBackup(value: unknown): value is Backup {
+function isLegacyBackup(value: unknown): value is Backup {
   return (
     !!value &&
     typeof value === 'object' &&
@@ -75,14 +110,76 @@ function isBackup(value: unknown): value is Backup {
   )
 }
 
-export async function saveUploadedBackup(backup: unknown, sourceName: string): Promise<BackupFileInfo> {
-  if (!isBackup(backup)) {
+/**
+ * What a backup file says it holds, without applying any of it.
+ *
+ * A `.zip` answers from its manifest — the first member, so this does not
+ * inflate the archive. A `.json` has no manifest, so the answer is derived
+ * from the dump itself, which does mean reading it.
+ */
+export interface BackupContents {
+  format: BackupFormat
+  formatVersion: number
+  createdAt: string
+  tables: Record<string, number>
+  totalRows: number
+  /** Data-directory roots the file carries. Always empty for a `.json`. */
+  fileRoots: string[]
+}
+
+export async function describeBackupFile(filename: string): Promise<BackupContents> {
+  const file = backupFilePath(filename)
+  if (formatOf(filename) === 'zip') {
+    const manifest = await readArchiveManifest(file)
+    return {
+      format: 'zip',
+      formatVersion: manifest.formatVersion,
+      createdAt: manifest.createdAt,
+      tables: manifest.database.tables,
+      totalRows: manifest.database.totalRows,
+      fileRoots: manifest.fileRoots,
+    }
+  }
+  const backup = JSON.parse(await fs.readFile(file, 'utf8')) as Backup
+  if (!isLegacyBackup(backup)) {
     throw new Error('Not a valid backup file')
   }
+  const tables: Record<string, number> = {}
+  let totalRows = 0
+  for (const [name, rows] of Object.entries(backup.tables)) {
+    tables[name] = rows.length
+    totalRows += rows.length
+  }
+  return {
+    format: 'json',
+    formatVersion: backup.formatVersion,
+    createdAt: backup.createdAt,
+    tables,
+    totalRows,
+    fileRoots: [],
+  }
+}
+
+export async function saveUploadedBackup(bytes: Buffer, sourceName: string): Promise<BackupFileInfo> {
   await fs.mkdir(BACKUPS_DIR, { recursive: true })
-  const base = sourceName.replace(/\.json$/i, '').replace(/[^\w.-]/g, '_') || 'upload'
-  const filename = `${base}-${Date.now()}.json`
-  await fs.writeFile(path.join(BACKUPS_DIR, filename), JSON.stringify(backup, null, 2))
+  const isZip = /\.zip$/i.test(sourceName)
+  const base = sourceName.replace(/\.(zip|json)$/i, '').replace(/[^\w.-]/g, '_') || 'upload'
+  const filename = `${base}-${Date.now()}.${isZip ? 'zip' : 'json'}`
+  const target = path.join(BACKUPS_DIR, filename)
+  const partial = `${target}.partial`
+  await fs.writeFile(partial, bytes)
+  try {
+    // Validated before it is allowed to sit in the list looking restorable.
+    if (isZip) {
+      await readArchiveManifest(partial)
+    } else if (!isLegacyBackup(JSON.parse(bytes.toString('utf8')))) {
+      throw new Error('Not a valid backup file')
+    }
+  } catch (err) {
+    await fs.rm(partial, { force: true })
+    throw err instanceof Error ? err : new Error(String(err))
+  }
+  await fs.rename(partial, target)
   return statInfo(filename)
 }
 
@@ -90,17 +187,43 @@ export async function readBackupFileBuffer(filename: string): Promise<Buffer> {
   return fs.readFile(backupFilePath(filename))
 }
 
-export async function restoreBackupFile(filename: string): Promise<void> {
-  const text = await fs.readFile(backupFilePath(filename), 'utf8')
-  const backup = JSON.parse(text) as Backup
-  await restoreBackup(db, backup)
+export interface RestoreResult extends RestoreSummary {
+  /** Data-directory roots replaced from the archive. Empty for a `.json`. */
+  restoredRoots: string[]
+  filesWritten: number
+}
+
+/**
+ * Apply a backup file: the database first, then the file roots.
+ *
+ * A `.zip` is READ AND VERIFIED IN FULL before any of it is applied, so a
+ * damaged archive costs nothing. The database half then lands in one
+ * transaction, and the file half replaces each root the archive declares.
+ *
+ * The two halves are not one transaction, and cannot be: the second is a
+ * filesystem. The order is the one that fails better — a database restored
+ * without its files is a running installation missing some App contents,
+ * whereas files restored under a database that then refused them would be
+ * contents belonging to instances that do not exist.
+ */
+export async function restoreBackupFile(filename: string): Promise<RestoreResult> {
+  const file = backupFilePath(filename)
+  if (formatOf(filename) === 'json') {
+    const backup = JSON.parse(await fs.readFile(file, 'utf8')) as Backup
+    const summary = await restoreBackup(db, backup)
+    return { ...summary, restoredRoots: [], filesWritten: 0 }
+  }
+  const { backup, manifest, trailer } = await readBackupArchive(file)
+  const summary = await restoreBackup(db, backup)
+  const extracted = await extractBackupFiles(file, dataDir(), manifest, trailer)
+  return { ...summary, restoredRoots: extracted.roots, filesWritten: extracted.files }
 }
 
 export async function deleteBackupFile(filename: string): Promise<void> {
   await fs.unlink(backupFilePath(filename))
 }
 
-/** Wipes every row from every table. Does not touch backup files on disk. */
+/** Wipes every row from every table. Does not touch backup files or the data directory. */
 export async function resetDatabase(): Promise<void> {
   await resetAllTables(db)
 }

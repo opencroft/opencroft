@@ -18,7 +18,7 @@ export const Route = createFileRoute('/_authed/(settings)/api/backup/$filename')
         }
         return new Response(new Uint8Array(body), {
           headers: {
-            'Content-Type': 'application/json',
+            'Content-Type': filename.endsWith('.zip') ? 'application/zip' : 'application/json',
             'Content-Disposition': `attachment; filename="${filename}"`,
           },
         })

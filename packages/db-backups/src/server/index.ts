@@ -2,22 +2,24 @@ import { createServerFn } from '@tanstack/react-start'
 
 import {
   type Backup,
+  type BackupContents,
   type BackupFileInfo,
   type BackupScheduleConfig,
   type BackupStorageStats,
   createBackupFile,
   deleteBackupFile,
+  describeBackupFile,
   getBackupScheduleConfig,
   getBackupStorageStats,
   listBackupFiles,
   pruneOldBackups,
+  type RestoreResult,
   resetDatabase as resetDatabaseTables,
   restoreBackupFile,
-  saveUploadedBackup,
   setBackupScheduleConfig,
 } from '../store'
 
-export type { Backup, BackupFileInfo, BackupScheduleConfig, BackupStorageStats }
+export type { Backup, BackupContents, BackupFileInfo, BackupScheduleConfig, BackupStorageStats, RestoreResult }
 
 export const listBackups = createServerFn().handler(async (): Promise<BackupFileInfo[]> => {
   return listBackupFiles()
@@ -34,10 +36,23 @@ export const createBackupNow = createServerFn({ method: 'POST' }).handler(async 
   return info
 })
 
+/**
+ * What a backup holds, read before the user is asked to confirm a restore.
+ *
+ * The confirmation used to name four tables from a string literal, and went on
+ * naming them after the backup started carrying twenty-five and the app data
+ * directory. What it says now comes out of the file being restored.
+ */
+export const getBackupContents = createServerFn()
+  .inputValidator((filename: string) => filename)
+  .handler(async ({ data: filename }): Promise<BackupContents> => {
+    return describeBackupFile(filename)
+  })
+
 export const restoreBackupNow = createServerFn({ method: 'POST' })
   .inputValidator((filename: string) => filename)
-  .handler(async ({ data: filename }): Promise<void> => {
-    await restoreBackupFile(filename)
+  .handler(async ({ data: filename }): Promise<RestoreResult> => {
+    return restoreBackupFile(filename)
   })
 
 export const deleteBackup = createServerFn({ method: 'POST' })
@@ -49,12 +64,6 @@ export const deleteBackup = createServerFn({ method: 'POST' })
 export const resetDatabase = createServerFn({ method: 'POST' }).handler(async (): Promise<void> => {
   await resetDatabaseTables()
 })
-
-export const uploadBackup = createServerFn({ method: 'POST' })
-  .inputValidator((data: { filename: string; backup: unknown }) => data)
-  .handler(async ({ data }): Promise<BackupFileInfo> => {
-    return saveUploadedBackup(data.backup, data.filename)
-  })
 
 export const getBackupSchedule = createServerFn().handler(async (): Promise<BackupScheduleConfig> => {
   return getBackupScheduleConfig()
