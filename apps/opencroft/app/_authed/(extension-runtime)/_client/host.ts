@@ -32,6 +32,7 @@ import { ChatDock } from '@/app/_authed/(extension-runtime)/_client/chat-dock'
 import { ChatSelector } from '@/app/_authed/(extension-runtime)/_client/chat-selector'
 import { EmbeddedAgentChat } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
 import { GraphCanvasLoading } from '@/app/_authed/(extension-runtime)/_client/graph-canvas-loading'
+import { NodeRef } from '@/app/_authed/(extension-runtime)/_client/node-ref'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { createSafeIcons } from '@/app/_authed/(extension-runtime)/_client/safe-icons'
 import { SelectionProvider, useSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
@@ -42,6 +43,7 @@ import {
   subscribe,
   type TextChunk,
 } from '@/app/_authed/(extension-runtime)/_client/stream'
+import { TerminalRef } from '@/app/_authed/(extension-runtime)/_client/terminal-ref'
 import { TerminalSelector } from '@/app/_authed/(extension-runtime)/_client/terminal-selector'
 import { invokeExtensionAction } from '@/app/_authed/(extension-runtime)/_server/actions'
 import { dispatchNodeAction } from '@/app/_authed/(extension-runtime)/_server/node-actions'
@@ -397,8 +399,12 @@ export const extensionUiApi = {
   // because mermaid is a megabyte-class dependency fetched on first use, and
   // because the host's copy is pinned to `securityLevel: 'strict'`.
   MermaidDiagram,
+  // Ids shown by name: a node / App instance, and a "node-id/handle-id"
+  // terminal target. Host components because they read the graph.
+  NodeRef,
   SecretSelector,
   Terminal,
+  TerminalRef,
   TerminalSelector,
   // Pre-@opencroft/terminal name for already-compiled extensions.
   InspectorTerminalBody: Terminal,

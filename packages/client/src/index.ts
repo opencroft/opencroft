@@ -34,20 +34,10 @@ export interface SecretSelectorProps {
  */
 export declare const SecretSelector: FC<SecretSelectorProps>
 
-/** One choice a TerminalSelector offers. */
-export interface TerminalTargetOption {
-  /** "node-id/handle-id" -- the form every terminal-taking host API accepts. */
-  target: string
-  /** Display name: the node, qualified by what distinguishes this handle on it. */
-  title: string
-  spaceSlug: string
-}
-
 export interface TerminalSelectorProps {
   /** "node-id/handle-id" of the selected terminal source, or '' for none. */
   value?: string
-  /** `option` is the picked choice as offered (its display title), absent for "None". */
-  onChange: (value: string, option?: TerminalTargetOption) => void
+  onChange: (value: string) => void
   /** Limit the choices to one space's nodes; omit to offer every space. */
   spaceSlug?: string
   /** Offer an explicit "None" choice (reported as ''). */
@@ -63,6 +53,29 @@ export interface TerminalSelectorProps {
  * are not offered: they only re-expose terminals the list already has.
  */
 export declare const TerminalSelector: FC<TerminalSelectorProps>
+
+export interface NodeRefProps {
+  /** A graph node id, or an App instance's id / `<space>.<app-slug>` address. */
+  nodeId: string
+  /** Text after the name, e.g. which of the node's handles is meant. */
+  detail?: string
+  className?: string
+}
+
+/**
+ * A node (or App instance) shown by its icon and name instead of its id,
+ * resolved across every space; the raw id stays on hover.
+ */
+export declare const NodeRef: FC<NodeRefProps>
+
+export interface TerminalRefProps {
+  /** "node-id/handle-id" -- the form the TerminalSelector hands out. */
+  target: string
+  className?: string
+}
+
+/** A terminal target shown as its node's name plus which of its terminals it is. */
+export declare const TerminalRef: FC<TerminalRefProps>
 
 export interface CodeBlockProps {
   /** The code to render, exactly as it was written. */

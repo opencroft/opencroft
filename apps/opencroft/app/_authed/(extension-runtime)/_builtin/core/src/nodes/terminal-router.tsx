@@ -1,4 +1,4 @@
-import { legacy, TerminalSelector } from '@opencroft/client'
+import { legacy, TerminalRef, TerminalSelector } from '@opencroft/client'
 
 const {
   Badge,
@@ -13,7 +13,6 @@ const {
   Item,
   ItemActions,
   ItemContent,
-  ItemDescription,
   ItemGroup,
   ItemMedia,
   ItemTitle,
@@ -66,12 +65,10 @@ export function TerminalRouterNode({
         <div className='flex flex-col gap-0.5'>
           {routes.map((route) => (
             <OutputHandle key={route.id} type='terminal-context' id={routeHandleId(route)}>
-              <span
-                className={`text-[10px] truncate max-w-[180px] ${route.context ? '' : 'text-muted-foreground italic'}`}
-                title={route.context ? route.target : `${route.target} (unavailable)`}
-              >
-                {route.title}
-              </span>
+              <TerminalRef
+                target={route.target}
+                className={`text-[10px] max-w-[180px] ${route.context ? '' : 'text-muted-foreground italic'}`}
+              />
             </OutputHandle>
           ))}
         </div>
@@ -91,7 +88,7 @@ export function TerminalRouterInspector({
   const routes = data.routes ?? []
   const [adding, setAdding] = useState(false)
 
-  const addRoute = async (target: string, option?: { title: string }) => {
+  const addRoute = async (target: string) => {
     if (!target || routes.some((route) => route.target === target)) {
       return
     }
@@ -105,12 +102,7 @@ export function TerminalRouterInspector({
     } catch (err) {
       toast.error(`Terminal ${target} does not resolve: ${err instanceof Error ? err.message : String(err)}`)
     }
-    const route: TerminalRoute = {
-      id: crypto.randomUUID().slice(0, 8),
-      target,
-      title: option?.title ?? target,
-      context,
-    }
+    const route: TerminalRoute = { id: crypto.randomUUID().slice(0, 8), target, context }
     updateData({ routes: [...routes, route] })
     setAdding(false)
   }
@@ -140,8 +132,9 @@ export function TerminalRouterInspector({
                   <icons.TerminalSquare />
                 </ItemMedia>
                 <ItemContent className='min-w-0'>
-                  <ItemTitle className='truncate'>{route.title}</ItemTitle>
-                  <ItemDescription className='truncate font-mono text-[10px]'>{route.target}</ItemDescription>
+                  <ItemTitle className='w-full min-w-0'>
+                    <TerminalRef target={route.target} />
+                  </ItemTitle>
                 </ItemContent>
                 <ItemActions>
                   {route.context ? null : <Badge variant='outline'>unavailable</Badge>}

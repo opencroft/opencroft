@@ -151,21 +151,21 @@ function routerGraph(routes: TerminalRouterData['routes']): GraphSnapshot {
 test("a router route carries its target's current context, not the one stored with it", async () => {
   const stored = { type: 'ssh', host: 'stale.example' }
   const resolved = await resolveContexts(
-    routerGraph([{ id: 'r1', target: 'server-9/terminal', title: 'Server', context: stored }]),
+    routerGraph([{ id: 'r1', target: 'server-9/terminal', context: stored }]),
     deps,
   )
   const fresh = { type: 'ssh', host: 'fresh.example' }
   assert.deepEqual(contextOf(resolved, 'script-1', 'ctx-in'), fresh)
   const routes = nodeIn(resolved, 'router-1').data.routes as NonNullable<TerminalRouterData['routes']>
-  assert.deepEqual(routes[0], { id: 'r1', target: 'server-9/terminal', title: 'Server', context: fresh })
+  assert.deepEqual(routes[0], { id: 'r1', target: 'server-9/terminal', context: fresh })
 })
 
 test('a route whose target no longer resolves drops its context and feeds nothing', async () => {
   const resolved = await resolveContexts(
-    routerGraph([{ id: 'r1', target: 'gone-1/terminal', title: 'Gone', context: { type: 'ssh', host: 'old' } }]),
+    routerGraph([{ id: 'r1', target: 'gone-1/terminal', context: { type: 'ssh', host: 'old' } }]),
     deps,
   )
   assert.equal(contextOf(resolved, 'script-1', 'ctx-in'), undefined)
   const routes = nodeIn(resolved, 'router-1').data.routes as NonNullable<TerminalRouterData['routes']>
-  assert.deepEqual(routes[0], { id: 'r1', target: 'gone-1/terminal', title: 'Gone' })
+  assert.deepEqual(routes[0], { id: 'r1', target: 'gone-1/terminal' })
 })

@@ -12,6 +12,7 @@ import {
   invokeExtensionActionImpl,
   listExtensionManifestsImpl,
 } from '@/app/_authed/(extension-runtime)/_server/extension-action-impl'
+import { describeGraphRefsImpl, type GraphRefInfo } from '@/app/_authed/(extension-runtime)/_server/graph-refs'
 import { listGraphHandles } from '@/app/_authed/(extension-runtime)/_server/host'
 import { ensureExtensionBuilt } from '@/app/_authed/(extension-runtime)/_server/loader'
 import type { ExtensionManifestInfo } from '@/app/_authed/(extension-runtime)/_types'
@@ -81,4 +82,12 @@ export const listTerminalTargets = createServerFn({ strict: { output: false } })
           }
         })
     )
+  })
+
+/** Names for node / App instance ids, for NodeRef and TerminalRef. */
+export const describeGraphRefs = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { ids: string[] }) => data)
+  .handler(async ({ data }): Promise<Record<string, GraphRefInfo | null>> => {
+    await requireSessionServerFn()
+    return describeGraphRefsImpl(Array.isArray(data.ids) ? data.ids.map(String) : [])
   })

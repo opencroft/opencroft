@@ -12,8 +12,6 @@ export interface TerminalRoute {
   id: string
   /** "node-id/handle-id" of the routed terminal source. */
   target: string
-  /** Display name as the TerminalSelector offered it. */
-  title: string
   /**
    * The target's terminal context as last resolved. exposeOutput is synchronous
    * and sees only this node's data, so the value is carried here: set by the
