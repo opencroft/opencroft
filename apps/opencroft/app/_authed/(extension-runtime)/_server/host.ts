@@ -24,6 +24,7 @@ import { asc, eq } from 'drizzle-orm'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import { appInstanceDataDir } from '@/app/_authed/(apps)/_server/instance-paths'
+import { backgroundWorkSessionKeys } from '@/app/_authed/(background-tasks)/_server/background-work'
 import {
   dispatchExecutionContext,
   type ExecDispatchSummary,
@@ -406,7 +407,7 @@ export function turnsPageForSessionKey(
   const sessionStatus = deriveSessionStatus(sessionKey, {
     pending: new Set(agentClient.awaitingUserSessionKeys()),
     active: new Set(agentClient.activeSessionKeys()),
-    background: new Set(agentClient.backgroundWorkSessionKeys()),
+    background: backgroundWorkSessionKeys(),
     alive: new Set(agentClient.aliveSessionKeys()),
   })
   const meta = agentClient.listSessions().find((m) => m.sessionKey === sessionKey)

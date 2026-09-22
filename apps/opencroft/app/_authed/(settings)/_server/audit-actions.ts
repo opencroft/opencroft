@@ -4,6 +4,8 @@ import { and, asc, desc, eq, type SQL } from 'drizzle-orm'
 
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
+import { backgroundWorkSessionKeys } from '@/app/_authed/(background-tasks)/_server/background-work'
+import { type BackgroundTaskList, backgroundTaskList } from '@/app/_authed/(background-tasks)/_server/task-list'
 import type { AuditStatus } from '@/app/_authed/(mcp)/_server/audit'
 import { getSleepModeInfo, setSleepMode as setSleep } from '@/app/_authed/(mcp)/_server/sleep-mode'
 import { getYoloModeInfo, setYoloMode as setYolo } from '@/app/_authed/(mcp)/_server/yolo'
@@ -141,7 +143,7 @@ export const listLiveSessions = createServerFn({ method: 'GET', strict: { output
     const keys = {
       pending: new Set(agentClient.awaitingUserSessionKeys()),
       active: new Set(agentClient.activeSessionKeys()),
-      background: new Set(agentClient.backgroundWorkSessionKeys()),
+      background: backgroundWorkSessionKeys(),
       alive: new Set(agentClient.aliveSessionKeys()),
     }
     const rows: LiveSessionRow[] = []
@@ -167,3 +169,13 @@ export const listLiveSessions = createServerFn({ method: 'GET', strict: { output
     rows.sort((a, b) => b.lastActivityAt - a.lastActivityAt)
     return rows
   })
+
+// ── Background tasks ───────────────────────────────────────────────────────
+
+export type { BackgroundTaskList, BackgroundTaskRow } from '@/app/_authed/(background-tasks)/_server/task-list'
+
+// The work sessions leave behind, for the question the sessions above answer.
+// A background task's target and session are the same instance map — admin-only.
+export const listBackgroundTasks = createServerFn({ method: 'GET', strict: { output: false } })
+  .middleware([adminOnly])
+  .handler(async (): Promise<BackgroundTaskList> => backgroundTaskList())

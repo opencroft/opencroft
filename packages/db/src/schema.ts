@@ -975,6 +975,58 @@ export const chatAttachment = pgTable(
   (t) => [index('ChatAttachment_sessionKey_idx').on(t.sessionKey)],
 )
 
+// Work a tool or an action started for a caller and did not wait for: a
+// command left running on a node, or an action handler nobody awaits. What is
+// running, and the handles that can stop it, live in the process and die with
+// it; this is the part that outlives a restart — what was started, where and
+// for whom, how it ended, and whether the caller has been told.
+//
+// ADDRESSED BY SESSION KEY, like the queue and the transcript: a restart mints
+// a new session id, and a task that finishes afterwards must still find the
+// conversation it owes its result to. The id the caller had at the start is
+// kept beside it as a record, never as the address.
+//
+// SCOPED BY `instanceId` to the process registry that started it. Several instances
+// can share one database, and a row is acted on by whichever process finds
+// it — probed, timed out, swept as a restart's leftover, delivered. Unscoped,
+// each instance would fail the other's in-process tasks as orphans of a
+// restart, and wake the other's sessions to hand them results.
+export const backgroundTask = pgTable(
+  'BackgroundTask',
+  {
+    // A UUID, and also the task's `asyncTaskId` in the chat.
+    taskId: text().primaryKey().notNull(),
+    instanceId: text().notNull(),
+    agent: text(),
+    // Null when the caller had no session: nobody is told when it ends.
+    sessionKey: text(),
+    sessionId: text(),
+    kind: text().notNull(),
+    name: text().notNull(),
+    target: text().notNull(),
+    summary: text().notNull(),
+    state: text().notNull(),
+    reason: text(),
+    startedAt: timestamp({ withTimezone: true, mode: 'date' }).notNull(),
+    finishedAt: timestamp({ withTimezone: true, mode: 'date' }),
+    // Null: no limit. bigint because the limit is the caller's to choose, and
+    // int32 milliseconds stop at 24.8 days.
+    timeoutMs: bigint({ mode: 'number' }),
+    exitCode: integer(),
+    outputTail: text(),
+    logPath: text(),
+    // A node task's own directory on the node, absolute as the NODE resolved
+    // it: its TMPDIR is not ours, and after a restart this is the only way back
+    // to the task. Null until the directory exists, and again once
+    // housekeeping has removed it.
+    nodeDir: text(),
+    pid: integer(),
+    // When the result reached the calling session. Null: still owed.
+    deliveredAt: timestamp({ withTimezone: true, mode: 'date' }),
+  },
+  (t) => [index('BackgroundTask_state_idx').on(t.state), index('BackgroundTask_sessionKey_idx').on(t.sessionKey)],
+)
+
 export const schema = {
   setting,
   secret,
@@ -998,10 +1050,12 @@ export const schema = {
   agentQueueEntry,
   agentSessionEvent,
   chatAttachment,
+  backgroundTask,
   ...authSchema,
 }
 
 export type AgentQueueEntry = typeof agentQueueEntry.$inferSelect
+export type BackgroundTask = typeof backgroundTask.$inferSelect
 export type AgentSessionEvent = typeof agentSessionEvent.$inferSelect
 export type ChatAttachment = typeof chatAttachment.$inferSelect
 export type Setting = typeof setting.$inferSelect

@@ -239,6 +239,13 @@
       "when": 1790115560561,
       "tag": "0033_add_queue_entry_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1790118721094,
+      "tag": "0034_add_background_task",
+      "breakpoints": true
     }
   ]
 }

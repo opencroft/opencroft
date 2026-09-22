@@ -31,6 +31,8 @@ import { writePersistedConfigOption } from '@/app/_authed/(agent)/_server/acp-se
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import type { StoredAttachment } from '@/app/_authed/(agent)/_server/attachment-store'
 import { modeLockedByYolo } from '@/app/_authed/(agent)/_server/yolo-mode-enforcement'
+import { backgroundWorkSessionKeys } from '@/app/_authed/(background-tasks)/_server/background-work'
+import { backgroundTasks } from '@/app/_authed/(background-tasks)/_server/service'
 
 export const ensureLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { agentNodeId: string; tabKey: string }) => data)
@@ -101,16 +103,22 @@ export const removeQueuedLocal = createServerFn({ method: 'POST', strict: { outp
     agentClient.removeQueued(data.sessionId, data.id)
   })
 
-// Stop one background task the harness reported, without cancelling the turn.
-// Returns whether the harness accepted the stop; clients observe the task's
-// own state change via the async_task event on the stream.
+// Stop one background task, without cancelling the turn. Returns whether the
+// stop was taken; clients observe the task's own state change via the
+// async_task event on the stream.
+//
+// The engine stops a task its harness runs, and hands one this host runs back
+// to the host's registry. It can do neither for a session it no longer holds,
+// so a stop pressed on a host task after its session was unloaded goes to the
+// registry directly — the task outlived its session, and so must its stop.
 export const stopBackgroundTaskLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { sessionId: string; asyncTaskId: string }) => data)
-  .handler(
-    async ({ data }): Promise<{ stopped: boolean }> => ({
-      stopped: await agentClient.stopAsyncTask(data.sessionId, data.asyncTaskId),
-    }),
-  )
+  .handler(async ({ data }): Promise<{ stopped: boolean }> => {
+    if (await agentClient.stopAsyncTask(data.sessionId, data.asyncTaskId)) {
+      return { stopped: true }
+    }
+    return { stopped: await backgroundTasks.requestStop(data.asyncTaskId) }
+  })
 
 // While YOLO is on, every session is pinned to bypass and mode changes are
 // refused here rather than applied and then quietly undone by the enforcement
@@ -210,8 +218,8 @@ export const editTurnLocal = createServerFn({ method: 'POST', strict: { output: 
 
 // Tab keys of chat sessions currently blocked on someone (an unresolved
 // permission request or an unanswered question), tab keys with a turn actively
-// running, tab keys with live background work (a subagent or task the harness
-// reported still running — Working even with no turn open), and tab keys with a live agent process at
+// running, tab keys with live background work (a subagent or task still
+// running — Working even with no turn open), and tab keys with a live agent process at
 // all (alive is a superset of the others — see aliveSessionKeys) — polled
 // once, from a shared module every chat list surface reads
 // (use-session-activity.ts), to set each chat's process-visibility indicator:
@@ -221,7 +229,7 @@ export const listSessionActivity = createServerFn({ method: 'GET', strict: { out
   async (): Promise<{ pending: string[]; active: string[]; background: string[]; alive: string[] }> => ({
     pending: agentClient.awaitingUserSessionKeys(),
     active: agentClient.activeSessionKeys(),
-    background: agentClient.backgroundWorkSessionKeys(),
+    background: [...backgroundWorkSessionKeys()],
     alive: agentClient.aliveSessionKeys(),
   }),
 )

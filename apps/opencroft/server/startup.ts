@@ -13,6 +13,7 @@ import {
   groupChatStandingContext,
   groupChatWakeSession,
 } from '@/app/_authed/(group-chats)/_server/model'
+import { startBackgroundTaskPoller } from '@/server/scheduler/background-task-poller'
 import { startDockerPsPoller } from '@/server/scheduler/docker-ps-poller'
 import { startEventScheduler } from '@/server/scheduler/event-scheduler'
 import { startIdleSessionReaper } from '@/server/scheduler/idle-session-reaper'
@@ -39,6 +40,7 @@ export function ensureServerStarted(): void {
   startDockerPsPoller()
   startDbBackupScheduler()
   startIdleSessionReaper()
+  startBackgroundTaskPoller()
   startUsageRollupScheduler()
   // The session layer (extension-runtime/_server/stream.ts) knows nothing of
   // group chats — this is the one place that names both, so compaction's

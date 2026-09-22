@@ -73,6 +73,8 @@ export interface StartNodeTaskInput {
   target: string
   /** remote_exec: the shell command. remote_script: the script body. */
   command: string
+  /** remote_script only: its positional arguments, `$1`, `$2`, … inside it. */
+  args?: string[]
   cwd?: string
   /**
    * Secret NAMES. Their values reach the process through its environment and

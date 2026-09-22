@@ -871,7 +871,7 @@ export function parseCountedRead(output: string, filePath: string): string {
 // string, however it's encoded, ends up in that process's argv for its whole lifetime, readable
 // by `ps`/`pgrep` to anyone else on the same host; a value handed to the backend as `env` never
 // touches argv at all (see buildEnvInjection in packages/terminal/src/server/exec-util.ts).
-async function resolveSecretsEnv(names: string[] | undefined): Promise<Record<string, string> | undefined> {
+export async function resolveSecretsEnv(names: string[] | undefined): Promise<Record<string, string> | undefined> {
   if (!names || names.length === 0) {
     return undefined
   }

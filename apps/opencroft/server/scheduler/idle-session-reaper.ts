@@ -14,6 +14,7 @@ import {
   isAgentNode,
 } from '@/app/_authed/(agent)/_shared/agent-node-shape'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
+import { backgroundWorkSessionKeys } from '@/app/_authed/(background-tasks)/_server/background-work'
 import { partsOfSessionKey } from '@/app/_authed/(group-chats)/_shared/session-key'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
@@ -74,7 +75,7 @@ function currentStatuses(sessionKeys: string[]): Map<string, SessionStatus> {
   const keys = {
     pending: new Set(agentClient.awaitingUserSessionKeys()),
     active: new Set(agentClient.activeSessionKeys()),
-    background: new Set(agentClient.backgroundWorkSessionKeys()),
+    background: backgroundWorkSessionKeys(),
     alive: new Set(agentClient.aliveSessionKeys()),
   }
   return new Map(sessionKeys.map((key) => [key, deriveSessionStatus(key, keys)]))
@@ -140,7 +141,7 @@ async function reapOne(sessionKey: string): Promise<void> {
     const fresh = deriveSessionStatus(sessionKey, {
       pending: new Set(agentClient.awaitingUserSessionKeys()),
       active: new Set(agentClient.activeSessionKeys()),
-      background: new Set(agentClient.backgroundWorkSessionKeys()),
+      background: backgroundWorkSessionKeys(),
       alive: new Set(agentClient.aliveSessionKeys()),
     })
     if (fresh !== 'idle') {

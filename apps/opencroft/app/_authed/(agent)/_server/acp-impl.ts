@@ -68,6 +68,7 @@ import {
   modeLockedByYolo,
 } from '@/app/_authed/(agent)/_server/yolo-mode-enforcement'
 import { splitEnvelope, stripDeliveryStamp } from '@/app/_authed/(agent)/_shared/message-envelope'
+import { backgroundTasks } from '@/app/_authed/(background-tasks)/_server/service'
 import { type ContextUsage, toContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
@@ -330,6 +331,15 @@ export async function readChatAttachmentImpl(data: {
   return readAttachment(data.tabKey, data.id)
 }
 
+// A session this module puts behind a key — resumed, replayed, new, or a fork
+// taking over — shows the background tasks the host runs for that key only as
+// its recording last saw them: a task that ended meanwhile still reads running,
+// and a replayed or new session has none at all. The registry restates the
+// current record of each one. Not awaited: the open does not depend on it.
+function restateBackgroundTasks(tabKey: string, sessionId: string): void {
+  void backgroundTasks.syncSession(tabKey, sessionId)
+}
+
 async function openLocalSession(data: { agentNodeId: string; tabKey: string }): Promise<OpenedSession> {
   const known = tabSessions.get(data.tabKey)
   if (known && agentClient.listSessions().some((s) => s.id === known.id)) {
@@ -432,6 +442,7 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
         everPrompted: persisted.prompted,
         adapterId,
       })
+      restateBackgroundTasks(data.tabKey, resumed.id)
       // Re-apply any per-session config overrides (e.g. reasoning effort) the
       // user set before this tab's in-memory session was lost — loadSession
       // only reflects the agent's own resumed state, which has no way to know
@@ -488,6 +499,7 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
     everPrompted: false,
     adapterId,
   })
+  restateBackgroundTasks(data.tabKey, meta.id)
   // Durable before the caller can prompt it, so a restart mid-first-turn finds
   // this session instead of creating a rival for the same key.
   await writePersistedSession(data.tabKey, meta.id, false)
@@ -806,6 +818,7 @@ export async function adoptFork(tabKey: string, sessionId: string): Promise<void
     canAttachImages: tabSessions.get(tabKey)?.canAttachImages ?? false,
     everPrompted: true,
   })
+  restateBackgroundTasks(tabKey, sessionId)
   await writePersistedSession(tabKey, sessionId, true)
 }
 

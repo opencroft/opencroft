@@ -12,6 +12,8 @@ import { appendSessionEvent } from '@/app/_authed/(agent)/_server/session-event-
 import { loadSkillDefs, skillBodyHandler } from '@/app/_authed/(agent)/_server/skill-store'
 import { toolPermissionOutcome } from '@/app/_authed/(agent)/_server/tool-permission'
 import { opencroftLocalTools } from '@/app/_authed/(agent)/_server/tools-bridge'
+import { stopHostTaskOption } from '@/app/_authed/(background-tasks)/_server/engine'
+import { backgroundTasks } from '@/app/_authed/(background-tasks)/_server/service'
 import { isSleepMode, subscribeSleepMode } from '@/app/_authed/(mcp)/_server/sleep-mode'
 import { isYoloMode } from '@/app/_authed/(mcp)/_server/yolo'
 import { approvalStore } from '@/lib/approval-store'
@@ -232,6 +234,10 @@ export const agentClient = createAgentClient({
       console.error('Compaction handler failed for session', sessionId, error)
     })
   },
+  // A task this host runs (see (background-tasks)) is stopped by the registry
+  // that runs it. The engine hands a stop pressed on one here instead of to the
+  // harness, which never heard of the task.
+  ...stopHostTaskOption(({ asyncTaskId }) => backgroundTasks.requestStop(asyncTaskId)),
 })
 
 // Waking is the flag's only transition with work attached: every idle
