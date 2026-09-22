@@ -1,6 +1,30 @@
 import { legacy, TerminalSelector } from '@opencroft/client'
 
-const { Button, Input, Label, NodeFrame, OutputHandle, React, icons, invoke, toast, useUpdateNodeInternals } = legacy
+const {
+  Badge,
+  Button,
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  Field,
+  FieldGroup,
+  FieldLabel,
+  Input,
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+  NodeFrame,
+  OutputHandle,
+  React,
+  icons,
+  invoke,
+  toast,
+  useUpdateNodeInternals,
+} = legacy
 
 import { routeHandleId, routeOutput, type TerminalRoute, type TerminalRouterData } from './terminal-router-shared'
 
@@ -96,43 +120,47 @@ export function TerminalRouterInspector({
   }
 
   return (
-    <div className='flex flex-col gap-3'>
-      <div className='flex flex-col gap-1'>
-        <Label>Name</Label>
+    <FieldGroup>
+      <Field>
+        <FieldLabel htmlFor='terminal-router-name'>Name</FieldLabel>
         <Input
+          id='terminal-router-name'
           value={data.name ?? ''}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ name: e.target.value })}
           placeholder='Terminal Router'
         />
-      </div>
-      <div className='flex flex-col gap-1'>
-        <Label>Terminals</Label>
+      </Field>
+      <Field>
+        <FieldLabel>Terminals</FieldLabel>
         {routes.length > 0 ? (
-          <div className='flex flex-col gap-1'>
+          <ItemGroup className='gap-1'>
             {routes.map((route) => (
-              <div key={route.id} className='flex items-center gap-1.5 rounded border px-2 py-1'>
-                <icons.TerminalSquare className='h-3 w-3 shrink-0 text-muted-foreground' />
-                <span className='text-xs flex-1 truncate' title={route.target}>
-                  {route.title}
-                </span>
-                {route.context ? null : <span className='text-[10px] text-muted-foreground italic'>unavailable</span>}
-                <Button
-                  variant='ghost'
-                  size='sm'
-                  className='h-5 px-1 text-destructive'
-                  onClick={() => removeRoute(route.id)}
-                  title='Remove'
-                >
-                  <icons.Trash2 className='h-3 w-3' />
-                </Button>
-              </div>
+              <Item key={route.id} variant='outline' size='sm'>
+                <ItemMedia variant='icon'>
+                  <icons.TerminalSquare />
+                </ItemMedia>
+                <ItemContent className='min-w-0'>
+                  <ItemTitle className='truncate'>{route.title}</ItemTitle>
+                  <ItemDescription className='truncate font-mono text-[10px]'>{route.target}</ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  {route.context ? null : <Badge variant='outline'>unavailable</Badge>}
+                  <Button variant='ghost' size='icon-xs' onClick={() => removeRoute(route.id)} title='Remove'>
+                    <icons.Trash2 />
+                  </Button>
+                </ItemActions>
+              </Item>
             ))}
-          </div>
+          </ItemGroup>
         ) : (
-          <p className='text-[10px] text-muted-foreground italic'>No terminals routed yet.</p>
+          <Empty className='border border-dashed p-4'>
+            <EmptyHeader>
+              <EmptyDescription>No terminals routed yet.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         )}
         <TerminalSelector value='' onChange={addRoute} placeholder='Add terminal…' disabled={adding} />
-      </div>
-    </div>
+      </Field>
+    </FieldGroup>
   )
 }
