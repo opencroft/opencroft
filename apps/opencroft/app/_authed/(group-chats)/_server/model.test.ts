@@ -4685,3 +4685,159 @@ test('awake, the status still tracks the running turn — delivered when idle, q
   await waitForPrompts(prompts, 2)
   assert.match(prompts[1] ?? '', /second/, 'and what queued behind the turn is delivered once it ends')
 })
+
+// ---------------------------------------------------------------------------
+// AGENT-FACING THREAD DELETION. Two ways to own a thread -- you started it, or
+// it is addressed to you -- and they are tested SEPARATELY on purpose. A test
+// that deletes a thread an agent both started and was addressed to would pass
+// under either rule alone, so it could not tell a working OR from a missing
+// half of one.
+// ---------------------------------------------------------------------------
+
+async function chatWithBothAgents(email: string, name: string): Promise<{ owner: TestUser; chatId: string }> {
+  const owner = await makeUser(email)
+  const chat = await model.createGroupChat(reqAs(owner), name)
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session-2' })
+  return { owner, chatId: chat.id }
+}
+
+async function threadRowsFor(chatId: string): Promise<string[]> {
+  const rows = await db
+    .select({ id: groupChatThread.id })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.groupChatId, chatId))
+  return rows.map((r) => r.id)
+}
+
+test('an agent deletes a thread it STARTED, even though the thread is addressed to someone else', async () => {
+  const prompts: string[] = []
+  seedMockConnection(prompts, 'Agent Session Two')
+  const { chatId } = await chatWithBothAgents('delete-started-owner@example.test', 'delete what I started')
+
+  const { thread } = await model.startThreadAsAgent('Agent Session', chatId, 'Agent Session Two', 'do this')
+  const ref = model.threadRefFromSessionKey(thread.sessionKey)
+
+  // THE DISCRIMINATOR. Addressed to the OTHER agent, so the delete below
+  // cannot be passing through the addressed-to rule -- only through "I started
+  // it". Without this assertion the test proves nothing about that rule.
+  assert.equal(thread.agentNodeId, 'agent-session-2', 'precondition: the thread is addressed to the other agent')
+  assert.deepEqual(await threadRowsFor(chatId), [thread.id], 'precondition: the thread exists')
+
+  const result = await model.deleteThreadAsAgent('Agent Session', ref)
+
+  assert.deepEqual(result, { deleted: true })
+  assert.deepEqual(await threadRowsFor(chatId), [], 'the row is gone')
+  // Read back through the tool surface's own listing, not just the table: the
+  // acceptance case is "gone from group_chat_list", and that is a different
+  // query from the one the delete ran against.
+  const listed = await model.listGroupChatsForAgentView('Agent Session')
+  const chat = listed.find((c) => c.name === 'delete what I started')
+  assert.ok(chat, 'the chat is still listed — only the thread went')
+  assert.deepEqual(chat.threads, [], 'and it is gone from the listing the caller reads')
+})
+
+test('an agent deletes a thread ADDRESSED to it that a person started', async () => {
+  const prompts: string[] = []
+  seedMockConnection(prompts, 'Agent Session')
+  const { owner, chatId } = await chatWithBothAgents('delete-addressed-owner@example.test', 'delete what is mine')
+
+  // Started by a person, so `createdByAgentNodeId` is NULL -- which is also the
+  // state of every thread that predates that column. This is the arm those
+  // threads depend on, so it is worth its own test rather than riding on the
+  // one above.
+  const { thread } = await model.startThread(reqAs(owner), chatId, 'agent-session', 'over to you')
+  const ref = model.threadRefFromSessionKey(thread.sessionKey)
+
+  const result = await model.deleteThreadAsAgent('Agent Session', ref)
+
+  assert.deepEqual(result, { deleted: true })
+  assert.deepEqual(await threadRowsFor(chatId), [], 'the row is gone')
+})
+
+test('an agent cannot delete a thread that is neither its own nor addressed to it', async () => {
+  const prompts: string[] = []
+  seedMockConnection(prompts, 'Agent Session Two')
+  const { owner, chatId } = await chatWithBothAgents('delete-foreign-owner@example.test', 'not yours to delete')
+  // A third member, so the refusal below is about OWNERSHIP and not about
+  // membership -- this caller can see the thread perfectly well.
+  await model.addMember(reqAs(owner), chatId, { kind: 'agent', agentNodeId: 'agent-a' })
+
+  const { thread } = await model.startThreadAsAgent('Agent Session', chatId, 'Agent Session Two', 'do this')
+  const ref = model.threadRefFromSessionKey(thread.sessionKey)
+
+  const result = await model.deleteThreadAsAgent('Agent A', ref)
+
+  assert.deepEqual(result, { deleted: false, refused: 'not-owned' })
+  assert.deepEqual(await threadRowsFor(chatId), [thread.id], 'and NOTHING was deleted')
+  // The gate is ownership, not existence: the same thread deletes fine for an
+  // agent that owns it. So the refusal above is the rule, not a dead path.
+  assert.deepEqual(await model.deleteThreadAsAgent('Agent Session', ref), { deleted: true })
+})
+
+test('a thread whose agent is mid-turn is refused, and is deletable once the turn ends', async () => {
+  const { chatId } = await chatWithBothAgents('delete-midturn-owner@example.test', 'not while it is working')
+
+  const prompts: string[] = []
+  let releaseTurn: (() => void) | undefined
+  const heldTurn = new Promise<void>((resolve) => {
+    releaseTurn = resolve
+  })
+  let promptCalls = 0
+  const connection = {
+    newSession: async () => ({ sessionId: `midturn-${crypto.randomUUID()}` }),
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      // Recorded BEFORE the wait, so waitForPrompts returns while this turn is
+      // still in flight -- which is the state the delete has to meet. Recording
+      // it after would make the test race the turn it is trying to catch.
+      prompts.push(params.prompt.map((b) => b.text ?? '').join(''))
+      promptCalls += 1
+      if (promptCalls === 1) {
+        await heldTurn
+      }
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', slug('Agent Session')),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store)
+  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+
+  // Addressed to the caller, so ownership passes and the running turn is the
+  // ONLY thing that can produce a refusal here.
+  const { thread } = await model.startThreadAsAgent('Agent Session Two', chatId, 'Agent Session', 'start working')
+  const ref = model.threadRefFromSessionKey(thread.sessionKey)
+  await waitForPrompts(prompts, 1)
+
+  try {
+    const refused = await model.deleteThreadAsAgent('Agent Session', ref)
+    assert.deepEqual(refused, { deleted: false, refused: 'turn-in-progress' })
+    assert.deepEqual(await threadRowsFor(chatId), [thread.id], 'and the thread survives the refusal')
+  } finally {
+    releaseTurn?.()
+  }
+
+  // THE CONTROL, and the test is worth little without it: same thread, same
+  // caller, turn finished. If this also refused, the refusal above would have
+  // been about something permanent rather than about the turn.
+  await waitForPrompts(prompts, 1)
+  const after = await model.deleteThreadAsAgent('Agent Session', ref)
+  assert.deepEqual(after, { deleted: true }, 'once the turn has ended the same delete goes through')
+  assert.deepEqual(await threadRowsFor(chatId), [])
+})

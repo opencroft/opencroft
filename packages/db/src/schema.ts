@@ -683,6 +683,24 @@ export const groupChatThread = pgTable(
     // above. Deleting the user who started a thread must not delete the
     // binding row while the ACP session it points at keeps existing.
     createdByUserId: text().references(() => user.id, { onDelete: 'set null' }),
+    // The agent node that started this thread, when an agent did. Exactly one
+    // of this and createdByUserId is set for a thread created after this
+    // column existed: a person starts a thread through the composer, an agent
+    // through its own tool surface, and there is no path where both apply.
+    //
+    // Unlike createdByUserId this one is provenance AND a permission input:
+    // thread deletion from the tool surface admits the agent that started the
+    // thread as well as the agent it is addressed to. So it is a plain text
+    // column with no reference — an agent lives in the graph, not in this
+    // database, so there is no row to point at and nothing to cascade from.
+    //
+    // NULL means "not known to have been created by an agent", which covers
+    // every row that predates this column as well as every person-created
+    // thread. Those two are not distinguished and do not need to be: neither
+    // grants anyone deletion rights, and the addressed agent can still delete
+    // its own thread. A backfill is impossible rather than skipped — nothing
+    // anywhere recorded which agent started a thread before this.
+    createdByAgentNodeId: text(),
     createdAt: createdAt(),
   },
   (t) => [

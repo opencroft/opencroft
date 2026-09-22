@@ -1,0 +1,1 @@
+ALTER TABLE "GroupChatThread" ADD COLUMN "createdByAgentNodeId" text;

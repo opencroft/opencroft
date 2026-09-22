@@ -34,6 +34,7 @@ import {
   ensureLocalSessionImpl,
   forgetLocalSessionImpl,
   forkTurnLocalImpl,
+  hasActiveTurnForKeyImpl,
   hasActiveTurnImpl,
   promptLocalImpl,
   stopLocalSessionProcessImpl,
@@ -1795,6 +1796,8 @@ export async function startThread(
   return createThread(groupChatId, agentNodeId, firstMessage, {
     title: opts?.title,
     createdByUserId: userId,
+    // A person, not an agent. The composer is the only way here.
+    createdByAgentNodeId: null,
     // The reader's own handle, resolved from the session already required
     // above — the same stamp `sendMessageInThread` makes for every message
     // after this one, from the same source. Resolved BEFORE anything is
@@ -1824,7 +1827,16 @@ async function createThread(
   groupChatId: string,
   agentNodeId: string,
   firstMessage: string,
-  opts: { title?: string; createdByUserId: string | null; sender: string },
+  // Who started it, recorded as EXACTLY ONE of the two. Both are required
+  // rather than optional so a new call site has to say which it is: the agent
+  // one is a permission input for thread deletion, and a caller that forgot to
+  // pass it would silently create a thread its own creator cannot delete.
+  opts: {
+    title?: string
+    createdByUserId: string | null
+    createdByAgentNodeId: string | null
+    sender: string
+  },
 ): Promise<StartThreadResult> {
   // A GATE, not the copy that gets delivered. This refuses a thread for a chat
   // that is not there before anything is minted; what the first message
@@ -1869,7 +1881,15 @@ async function createThread(
     // once-on-change path without needing a second mechanism.
     return tx
       .insert(groupChatThread)
-      .values({ groupChatId, agentNodeId, sessionKey, slug: threadSlug, title, createdByUserId: opts.createdByUserId })
+      .values({
+        groupChatId,
+        agentNodeId,
+        sessionKey,
+        slug: threadSlug,
+        title,
+        createdByUserId: opts.createdByUserId,
+        createdByAgentNodeId: opts.createdByAgentNodeId,
+      })
       .returning(threadSummaryColumns)
   })
   if (!thread) {
@@ -1925,6 +1945,9 @@ async function createThread(
       sessionKey,
       // Just inserted, deliberately NULL — see the transaction above.
       deliveredContextSignature: null,
+      // Carried through as it went in, so this literal stays a faithful copy of
+      // the row rather than a partial one that happens to satisfy delivery.
+      createdByAgentNodeId: opts.createdByAgentNodeId,
     },
     firstMessage,
     { queue: 'wait', sender: opts.sender },
@@ -2099,6 +2122,7 @@ export interface ThreadDeliveryTarget {
   agentNodeId: string
   sessionKey: string
   deliveredContextSignature: string | null
+  createdByAgentNodeId: string | null
 }
 
 const threadDeliveryColumns = {
@@ -2107,6 +2131,7 @@ const threadDeliveryColumns = {
   agentNodeId: groupChatThread.agentNodeId,
   sessionKey: groupChatThread.sessionKey,
   deliveredContextSignature: groupChatThread.deliveredContextSignature,
+  createdByAgentNodeId: groupChatThread.createdByAgentNodeId,
 }
 
 /**
@@ -2308,15 +2333,84 @@ export async function deleteThread(request: Request, threadId: string): Promise<
   if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
-  // Tear down the session + its process via the shared path the sidebar uses,
-  // and do it BEFORE dropping the row. The row is the only handle anything has
-  // on this sessionKey, so deleting it first turns a failed teardown into a
-  // live session and agent subprocess that no screen lists and no retry can
-  // reach. This way round, a failed teardown leaves the thread intact and the
-  // delete retryable, and a failed row delete leaves only a torn-down thread
-  // that reopens onto a fresh session via `ensureLocalSessionImpl`.
-  await forgetLocalSessionImpl(row.sessionKey)
+  await tearDownAndDeleteThread(threadId, row.sessionKey)
+}
+
+/**
+ * THE deletion, shared by every gate above it.
+ *
+ * Extracted so the agent-facing `deleteThreadAsAgent` performs the same one
+ * rather than a second copy of it: the ORDER below is a correctness rule, and a
+ * rule that exists twice is a rule that will exist in two versions. The gates
+ * differ — a signed-in member, or an agent that owns the thread — and nothing
+ * else may.
+ *
+ * Tear down the session + its process via the shared path the sidebar uses,
+ * and do it BEFORE dropping the row. The row is the only handle anything has
+ * on this sessionKey, so deleting it first turns a failed teardown into a
+ * live session and agent subprocess that no screen lists and no retry can
+ * reach. This way round, a failed teardown leaves the thread intact and the
+ * delete retryable, and a failed row delete leaves only a torn-down thread
+ * that reopens onto a fresh session via `ensureLocalSessionImpl`.
+ */
+async function tearDownAndDeleteThread(threadId: string, sessionKey: string): Promise<void> {
+  await forgetLocalSessionImpl(sessionKey)
   await db.delete(groupChatThread).where(eq(groupChatThread.id, threadId))
+}
+
+/** Why a thread this agent can see was not deleted. */
+export type DeleteThreadRefusal = 'not-owned' | 'turn-in-progress'
+
+export type DeleteThreadAsAgentResult = { deleted: true } | { deleted: false; refused: DeleteThreadRefusal }
+
+/**
+ * Delete a thread as an agent — the tool-surface counterpart to `deleteThread`.
+ * Same deletion (literally, see `tearDownAndDeleteThread`), two extra gates.
+ *
+ * **Membership first, and it refuses exactly as its siblings do.** A thread in
+ * a chat this agent is not in, and a reference that resolves to nothing, both
+ * come back as the same `not-found` — so the tool cannot be used to discover
+ * that a thread exists somewhere the caller cannot see.
+ *
+ * **Then ownership, which is where this differs from every other thread tool.**
+ * The others act on any thread of a chat the agent is in, because sending,
+ * compacting and reading are recoverable. Deletion is not: it ends a session
+ * and kills a process, and the transcript goes with it. So being a member of
+ * the chat is not enough — the caller must be the agent the thread is
+ * ADDRESSED TO, or the agent that STARTED it. That is the worktree rule ("you
+ * remove your own"), and it is what keeps a mistyped reference from taking a
+ * colleague's live work instead of failing.
+ *
+ * A refusal here is deliberately DISTINGUISHABLE from the not-found above, and
+ * that is not a leak: the caller has already been shown this thread by
+ * `group_chat_list`, so naming it back tells them nothing they did not have.
+ *
+ * **Then a running turn, which is refused rather than killed.** Deleting
+ * mid-turn would destroy work an agent is in the middle of, and the caller
+ * cannot see that from a listing. Refusing is recoverable — wait and retry —
+ * where deleting is not.
+ *
+ * Returns rather than throws for those two, because they are ordinary answers
+ * the caller can act on, and because a result the tests can assert on beats a
+ * thrown message they would have to match by string.
+ */
+export async function deleteThreadAsAgent(agentName: string, threadRef: string): Promise<DeleteThreadAsAgentResult> {
+  const agentNodeId = await requireAgentNode(agentName)
+  const row = await resolveThreadForAgent(agentNodeId, threadRef)
+  const addressedToCaller = row.agentNodeId === agentNodeId
+  const startedByCaller = row.createdByAgentNodeId === agentNodeId
+  if (!addressedToCaller && !startedByCaller) {
+    return { deleted: false, refused: 'not-owned' }
+  }
+  // Asked of the key, because the key is what a thread has; a session id is an
+  // internal handle the caller never sees. A key with no live session answers
+  // false, which is the right answer and not a missing one — a turn runs
+  // inside a session, so no session is no turn.
+  if (hasActiveTurnForKeyImpl(row.sessionKey)) {
+    return { deleted: false, refused: 'turn-in-progress' }
+  }
+  await tearDownAndDeleteThread(row.id, row.sessionKey)
+  return { deleted: true }
 }
 
 /**
@@ -2945,6 +3039,11 @@ export async function startThreadAsAgent(
   return createThread(groupChatId, target.nodeId, trimmed, {
     title: opts?.title,
     createdByUserId: null,
+    // THE CALLER, NOT THE TARGET, for the same reason `sender` below is: the
+    // thread is addressed TO the named agent and was started BY this one. It
+    // is what lets the starter delete the thread it made for a colleague —
+    // without it, a dispatcher could create threads and never clean them up.
+    createdByAgentNodeId: callerNodeId,
     // THE CALLER, NOT THE TARGET. The thread is addressed TO the named agent;
     // the opening message is FROM the one that started it, exactly as a later
     // message through `sendMessageInThreadAsAgent` is. Its handle, never the

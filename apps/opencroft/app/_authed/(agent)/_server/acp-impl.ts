@@ -816,6 +816,24 @@ export function hasActiveTurnImpl(sessionId: string): boolean {
   return agentClient.hasActiveTurn(sessionId)
 }
 
+// The same question asked of a TAB KEY, for callers that hold one and have no
+// session id — a group-chat thread is the case: it is identified by its key
+// everywhere, and the id is an internal handle it never sees.
+//
+// A key with no resident session answers `false`, and that is the correct
+// answer rather than a missing one: a turn runs inside a session, so no session
+// means no turn. It is also the right answer after a restart, where the process
+// that held the turn is gone.
+//
+// Do NOT "check properly" by resolving the session first. resolveOrCreateSession
+// would MATERIALISE a session, and an agent subprocess with it, in order to ask
+// whether one was busy — creating the thing you are asking about is not a
+// reading of it.
+export function hasActiveTurnForKeyImpl(tabKey: string): boolean {
+  const entry = tabSessions.get(tabKey)
+  return entry ? agentClient.hasActiveTurn(entry.id) : false
+}
+
 // Stop a tab's agent process WITHOUT forgetting the tab: ends the live ACP
 // session (gracefully, or kills the subprocess if nothing else shares it) and
 // drops the in-memory pointer, but deliberately keeps the durable

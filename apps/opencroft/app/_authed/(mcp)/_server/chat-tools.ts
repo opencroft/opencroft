@@ -8,6 +8,7 @@ import {
 } from '@/app/_authed/(group-chats)/_server/artifacts'
 import {
   compactThreadAsAgent,
+  deleteThreadAsAgent,
   listGroupChatsForAgentView,
   listThreadTurnsAsAgent,
   sendMessageInThreadAsAgent,
@@ -186,6 +187,28 @@ export const definitions = [
         },
       },
       required: ['chat', 'agent', 'message'],
+    },
+  },
+  {
+    name: 'group_chat_delete_thread',
+    description:
+      'Delete a thread and the session underneath it: its history, its queue and its agent process ' +
+      'all go. There is no undo and nothing is archived. Use it to retire a thread whose work is ' +
+      'finished — a per-ticket thread when the ticket closes, a scratch thread when you are done ' +
+      'with it — so a chat lists live work rather than everything that ever happened in it. ' +
+      'You may delete a thread you STARTED with group_chat_start_thread, or a thread addressed to ' +
+      'YOU; any other thread of a chat you are in is refused by name, because deleting a ' +
+      "colleague's thread is not recoverable. A thread whose agent is mid-turn is also refused — " +
+      'wait for the turn to end and call again, rather than destroying work in progress.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        thread: {
+          type: 'string',
+          description: 'A thread reference from group_chat_list. Opaque — pass it back unchanged.',
+        },
+      },
+      required: ['thread'],
     },
   },
   {
@@ -420,6 +443,44 @@ export const handlers: Record<string, ToolHandler> = {
         2,
       ),
     )
+  },
+
+  // ── group_chat_delete_thread ────────────────────────────────────
+  //
+  // No approval wrapper, like the rest of this family — but the reasoning is
+  // NOT the family's, because the family's is "the membership gate is the
+  // control" and for a delete it is not enough. Membership admits every thread
+  // of the chat, and this is the one operation nothing can undo: the session,
+  // the process and the transcript go together.
+  //
+  // What stands in its place is a narrower gate one level down
+  // (`deleteThreadAsAgent`): the caller must own the thread, by having started
+  // it or by being the agent it is addressed to. An approval prompt would ask
+  // a person to confirm an agent tidying up after its own work, which is the
+  // kind of prompt that trains people to click through prompts. If the product
+  // owner later wants human confirmation on this, it is a wrapper here and
+  // nothing else changes.
+  group_chat_delete_thread: async (args, caller) => {
+    const agent = requireCallingAgent(caller)
+    const thread = args.thread as string | undefined
+    if (!thread) {
+      fail(-32602, 'Missing required param: thread')
+    }
+    const result = await deleteThreadAsAgent(agent, thread)
+    if (!result.deleted) {
+      // Named, with the reason, because both of these are states the caller can
+      // do something about — ask the owner, or wait — and a bare failure would
+      // send them to look for a broken tool instead.
+      fail(
+        -32602,
+        result.refused === 'turn-in-progress'
+          ? `"${thread}" has a turn in progress and was NOT deleted. Wait for it to finish and call again — ` +
+              'deleting mid-turn would destroy work the agent is doing right now.'
+          : `"${thread}" is not yours to delete and was NOT deleted. You may delete a thread you started, ` +
+              'or a thread addressed to you; this is neither. Ask the agent it belongs to.',
+      )
+    }
+    return textResult(`Thread "${thread}" deleted: its session, history and queue are gone.`)
   },
 
   // ── group_chat_compact / group_chat_compact_status ──────────────
