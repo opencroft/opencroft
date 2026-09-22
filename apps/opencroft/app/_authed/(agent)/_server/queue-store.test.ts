@@ -214,3 +214,15 @@ test('a rename carries a mark too, so a delivered entry stays delivered across i
 
   assert.deepEqual(await texts(to), ['still-waiting'])
 })
+
+test('a queued entry keeps what it carries beside its text', async () => {
+  // A picture must survive the wait exactly as the words do: a restart while a
+  // cadence holds the message is the case this table exists for.
+  const key = nextKey()
+  const picture = { id: 'att-1', name: 'shot.png', mimeType: 'image/png', message: 0 }
+  await queueStore.append(key, { ...message(key, 'a', '', '2026-01-01T00:00:00.000Z'), attachments: [picture] }, 'end')
+  await queueStore.append(key, message(key, 'b', 'plain', '2026-01-01T00:01:00.000Z'), 'end')
+  const [withPicture, plain] = await queueStore.load(key)
+  assert.deepEqual(withPicture.attachments, [picture])
+  assert.equal('attachments' in plain, false, 'an entry that carried nothing comes back carrying nothing')
+})

@@ -1,3 +1,4 @@
+import type { DeliveredAttachment } from 'agent-client/attachments'
 import type { PlanItem } from 'agent-client/types'
 
 import type { ResolvedAuthor } from '@/app/_authed/(agent)/_lib/acp-stream'
@@ -85,4 +86,7 @@ export interface ChatMessage {
   // Absent on an assistant message, and on a user turn whose senders resolve
   // to nothing — which is every turn stamped before accounts had handles.
   authors?: Record<string, ResolvedAuthor>
+  // The pictures a user turn's delivery carried, straight from its event, for
+  // the same reason: they are part of the message, not something looked up.
+  attachments?: DeliveredAttachment[]
 }

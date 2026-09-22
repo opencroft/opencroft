@@ -1,12 +1,12 @@
 // Server entry: API routes import the engine from here.
 
-export type { AgentClientOptions, ClientInfo } from './agent-client'
+export type { AgentClientOptions, ClientInfo, PromptAttachmentInput } from './agent-client'
 export { agentClient, createAgentClient, supportsImagePrompt, supportsMidTurnInput } from './agent-client'
-// How a message names an image it carries. The composer writes the tag, the
-// engine turns it back into an ACP image block at delivery — one definition,
-// so a host cannot invent a second spelling of the same reference.
-export type { AttachmentRef, PromptAttachment } from './attachments'
-export { attachmentRefsIn, attachmentTag, isImageMime } from './attachments'
+// What a message carries beside its words. The host hands attachments to
+// prompt() and resolves their bytes through loadAttachments; the engine turns
+// them into ACP image blocks at delivery.
+export type { AttachmentRef, DeliveredAttachment, PromptAttachment } from './attachments'
+export { isImageMime } from './attachments'
 // Independent chat completions -- one request/response against a profile's
 // endpoint, with no session and no tools (also importable via the subpath).
 export type {

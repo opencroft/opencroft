@@ -8,11 +8,9 @@
 // to watch — but it is also not something a send may outrun, so a send awaits
 // whatever is still in flight (see `collect`).
 //
-// What the message carries is the stored id, in a tag appended at send. The tag
-// is the whole mechanism — see attachments.ts in agent-client for why it has to
-// live in the text rather than beside it.
+// What the message carries is the stored id, handed over beside the words at
+// send -- never written into them. See attachments.ts in agent-client.
 
-import { attachmentTag } from 'agent-client/attachments'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { readAttachableImage } from '@/app/_authed/(agent)/_lib/attachment-file'
@@ -38,13 +36,13 @@ export interface MessageAttachments {
   onFiles: (files: File[]) => void
   remove: (localId: string) => void
   /**
-   * The tags for everything that made it, with the pending uploads awaited
-   * first, and the row emptied.
+   * The stored ids of everything that made it, with the pending uploads
+   * awaited first, and the row emptied.
    *
    * One call per send, and it clears: the pictures belong to the message that
    * just went, and a second send must not carry them again.
    */
-  collect: () => Promise<string>
+  collect: () => Promise<string[]>
   /** Whether anything is attached — what decides if the row is drawn at all. */
   any: boolean
 }
@@ -144,15 +142,12 @@ export function useMessageAttachments(tabKey: string): MessageAttachments {
     // in its own chip.
     await Promise.allSettled([...pending.current.values()])
     const sending = itemsRef.current
-    const tags = sending
-      .filter((item) => item.id && item.mimeType)
-      .map((item) => attachmentTag({ id: item.id as string, name: item.name, mimeType: item.mimeType as string }))
-      .join('')
+    const ids = sending.flatMap((item) => (item.id ? [item.id] : []))
     for (const item of sending) {
       release(item.previewUrl)
     }
     setItems([])
-    return tags
+    return ids
   }, [release])
 
   return { items, onFiles, remove, collect, any: items.length > 0 }

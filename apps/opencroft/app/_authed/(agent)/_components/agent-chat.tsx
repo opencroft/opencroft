@@ -94,7 +94,9 @@ export interface AgentSession {
   // Stop. See the package contract's note (agent-chat/src/session.ts).
   thinking?: boolean
   botName: string
-  send: (text: string) => void
+  // `attachments` are stored picture ids, carried beside the words (see
+  // attachments.ts in agent-client); the server resolves them.
+  send: (text: string, options?: { attachments?: readonly string[] }) => void
   // Turn control and message editing, provided by the ACP (local) backend; the
   // dashboard placeholder session leaves these unset.
   stop?: () => void

@@ -62,9 +62,20 @@ export const readChatAttachment = createServerFn({ method: 'POST', strict: { out
 // `origin` is `WirePromptOrigin`, whose only variant names nobody: this is the
 // browser's door, so a name stated here would be a name anyone could state.
 // promptLocalImpl resolves it against the signed-in session.
+//
+// `attachments` are stored picture ids and nothing more: what they are called
+// and whether they belong to this conversation is read server-side, from the
+// store.
 export const promptLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator(
-    (data: { sessionId: string; text: string; front?: boolean; queue: QueueMode; origin: WirePromptOrigin }) => data,
+    (data: {
+      sessionId: string
+      text: string
+      front?: boolean
+      queue: QueueMode
+      origin: WirePromptOrigin
+      attachments?: string[]
+    }) => data,
   )
   .handler(async ({ data }): Promise<{ interrupted: boolean }> => promptLocalImpl(data))
 

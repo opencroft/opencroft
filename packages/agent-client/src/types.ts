@@ -5,6 +5,8 @@ import type {
   SessionConfigOption,
 } from '@agentclientprotocol/sdk'
 
+import type { DeliveredAttachment } from './attachments'
+
 // Re-exported so consumers (agent-chat, hosts) can type the advertised command
 // list and elicitation forms without depending on the protocol SDK directly.
 export type { AvailableCommand, ElicitationContentValue, ElicitationSchema }
@@ -151,11 +153,17 @@ export interface PermissionOpt {
  *   the harness recognises a command by its first characters, so a tag or note
  *   in front of it stops it being a command at all. Never batched — a batch
  *   would put other text around it.
+ *
+ * `attachments` rides on every kind, beside the text rather than in it, and is
+ * held and made durable with the entry -- a picture must not travel when a
+ * message goes straight through and vanish when the same message waits. See
+ * attachments.ts.
  */
-export type QueuedPrompt =
+export type QueuedPrompt = (
   | { id: string; kind: 'message'; sender: string; sentAt: string; text: string }
   | { id: string; kind: 'system'; text: string }
   | { id: string; kind: 'command'; sender: string; sentAt: string; text: string }
+) & { attachments?: DeliveredAttachment[] }
 
 /**
  * Who a prompt is from, which decides whether it is a message at all.
@@ -309,7 +317,11 @@ export type ChatEvent =
   // defined ids belong to different messages and must not merge into one
   // block — the signal that keeps steered turns readable. Absent means the
   // harness said nothing, which folds exactly as before.
-  | { kind: 'user'; text: string; messageId?: string }
+  //
+  // `attachments` on a user event is what the delivery carried beside its
+  // text, each marked with the message it came with. Only a delivery made here
+  // has it: a harness replay says nothing about them.
+  | { kind: 'user'; text: string; messageId?: string; attachments?: DeliveredAttachment[] }
   | { kind: 'agent_message'; text: string; messageId?: string }
   | { kind: 'agent_thought'; text: string; messageId?: string }
   | {

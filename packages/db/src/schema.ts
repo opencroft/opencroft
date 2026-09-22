@@ -888,6 +888,11 @@ export const agentQueueEntry = pgTable(
     // on load and erased by a sweep once they are old enough that no late
     // write could still name them.
     removedAt: timestamp({ withTimezone: true, mode: 'date' }),
+    // What the entry carries beside its text -- references to pictures in
+    // ChatAttachment, as the engine's DeliveredAttachment list. Held with the
+    // entry because a message that waits must keep its pictures exactly as one
+    // that goes straight through does. NULL for an entry carrying none.
+    attachments: jsonb(),
   },
   (t) => [index('AgentQueueEntry_sessionKey_position_idx').on(t.sessionKey, t.position)],
 )

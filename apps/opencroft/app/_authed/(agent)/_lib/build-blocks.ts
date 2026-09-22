@@ -2,7 +2,7 @@ import type { Block } from 'agent-chat/components/chat-conversation'
 import type { ChatUserMessagePart, DetailItem, MessageAttachment, UserText } from 'agent-chat/components/chat-turn'
 import type { ChatUnreadMessage } from 'agent-chat/components/chat-unread'
 import { toUserParts } from 'agent-chat/user-parts'
-import { attachmentRefsIn } from 'agent-client/attachments'
+import type { DeliveredAttachment } from 'agent-client/attachments'
 import type { QueuedPrompt } from 'agent-client/types'
 
 import type { AuthoredChatEvent, ResolvedAuthor } from '@/app/_authed/(agent)/_lib/acp-stream'
@@ -110,25 +110,31 @@ function attachmentLabel(detail: string): string {
   return trimmed.length > MAX_LABEL ? `${trimmed.slice(0, MAX_LABEL - 1)}…` : trimmed
 }
 
-function attachmentsOf(raw: string): MessageAttachment[] {
-  const attachments: MessageAttachment[] = []
-  for (const [, content] of raw.matchAll(USER_SELECTION_TAG)) {
-    const detail = content.trim()
-    if (!detail) {
-      continue
+// What one message carried, given the pictures its delivery recorded: the
+// reader's selection, read from the message's own text where this app put it,
+// and the pictures, read from the record beside the text and matched to the
+// message by position (see DeliveredAttachment).
+//
+// A chip rather than the thumbnail itself: the picture lives in a store this
+// function cannot reach. What the reader gets back is the name they attached,
+// which is the part that says WHICH picture went with WHICH message.
+function attachmentsReader(pictures: readonly DeliveredAttachment[] = []) {
+  return (raw: string, index: number): MessageAttachment[] => {
+    const attachments: MessageAttachment[] = []
+    for (const [, content] of raw.matchAll(USER_SELECTION_TAG)) {
+      const detail = content.trim()
+      if (!detail) {
+        continue
+      }
+      attachments.push({ label: attachmentLabel(detail), detail })
     }
-    attachments.push({ label: attachmentLabel(detail), detail })
+    for (const picture of pictures) {
+      if (picture.message === index) {
+        attachments.push({ label: attachmentLabel(picture.name), detail: picture.name })
+      }
+    }
+    return attachments
   }
-  // The pictures the message carried, read from the same text the harness got
-  // -- the tag IS the record, which is why it is not stripped on the way out.
-  // A chip rather than the thumbnail itself: the picture lives in a store this
-  // function cannot reach, and a delivered message is drawn from its text
-  // alone. What the reader gets back is the name they attached, which is the
-  // part that says WHICH picture went with WHICH message.
-  for (const ref of attachmentRefsIn(raw)) {
-    attachments.push({ label: attachmentLabel(ref.name), detail: ref.name })
-  }
-  return attachments
 }
 
 // A user turn as the transcript renders it: the whole turn as it was delivered,
@@ -149,8 +155,10 @@ function userTurn(
   // them. Passed straight through: this function decides what a turn is, not
   // who anybody is.
   authors?: Record<string, ResolvedAuthor>,
+  // The pictures the delivery carried, as its user event recorded them.
+  pictures?: readonly DeliveredAttachment[],
 ): { text: UserText; parts: ChatUserMessagePart[] } | null {
-  const parts = toUserParts(raw, userText, authors, attachmentsOf)
+  const parts = toUserParts(raw, userText, authors, attachmentsReader(pictures))
   const text = userText(raw)
   return parts.length > 0 && text !== null ? { text, parts } : null
 }
@@ -197,7 +205,7 @@ export function buildUnread(
     // not a second one that agrees with it. A message waiting to be read and the
     // same message once it has been handed over are one message, and one of them
     // showing what it carries while the other does not would be two.
-    const attachments = attachmentsOf(entry.text)
+    const attachments = attachmentsReader(entry.attachments)(entry.text, 0)
     return {
       id: entry.id,
       text: userText(entry.text) ?? EMPTY_USER_TEXT,
@@ -252,7 +260,10 @@ export function headerFromWindow(header?: { index: number; event: AuthoredChatEv
   // The header's own resolved accounts, for the same reason the reading itself
   // is shared: a header and the block that replaces it are one message, so if
   // only one of them could show a face they would be two behaviours again.
-  return { index: header.index, parts: userTurn(header.event.text, header.event.authors)?.parts ?? [] }
+  return {
+    index: header.index,
+    parts: userTurn(header.event.text, header.event.authors, header.event.attachments)?.parts ?? [],
+  }
 }
 
 // `enclosingTurnId` names the turn the FIRST run of replies belongs to, for a
@@ -302,7 +313,7 @@ export function buildBlocks(
         if (p.type !== 'text') {
           continue
         }
-        const turn = userTurn(p.text || '', m.authors)
+        const turn = userTurn(p.text || '', m.authors, m.attachments)
         if (turn === null) {
           continue
         }

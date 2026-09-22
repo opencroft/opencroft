@@ -1,8 +1,8 @@
 // The bytes behind an image a reader attached to a message.
 //
-// A message carries only an ID (see attachments.ts in agent-client): the tag in
-// its text names a row here, and delivery turns that row into the ACP image
-// block. So this is the one place the picture exists, which makes its lifetime
+// A message carries only a reference (see attachments.ts in agent-client), beside
+// its text: the reference names a row here, and delivery turns that row into the
+// ACP image block. So this is the one place the picture exists, which makes its lifetime
 // the whole design problem — a row nobody can reach is not a missing chip, it
 // is bytes that never go away.
 //
@@ -14,7 +14,7 @@
 // where the conversation lives on and its pictures must live with it.
 
 import { chatAttachment, db } from '@opencroft/db'
-import type { PromptAttachment } from 'agent-client/attachments'
+import type { AttachmentRef, PromptAttachment } from 'agent-client/attachments'
 import { eq, inArray } from 'drizzle-orm'
 
 /**
@@ -87,7 +87,39 @@ export async function saveAttachment(input: {
 }
 
 /**
- * The attachments a delivery names, as the engine's `loadAttachments` hook.
+ * The references a send may carry, resolved from what the composer handed in.
+ *
+ * Ids only cross the wire; the name and type a message records are read here,
+ * from the row, so a caller cannot label a picture as something it is not. And
+ * every id must be a row of THIS conversation -- one that is not is refused
+ * outright rather than dropped, since a send that quietly lost a picture is the
+ * failure the whole feature is built against.
+ */
+export async function resolveAttachmentRefs(sessionKey: string, ids: readonly string[]): Promise<AttachmentRef[]> {
+  if (ids.length === 0) {
+    return []
+  }
+  const rows = await db
+    .select({
+      id: chatAttachment.id,
+      name: chatAttachment.name,
+      mimeType: chatAttachment.mimeType,
+      sessionKey: chatAttachment.sessionKey,
+    })
+    .from(chatAttachment)
+    .where(inArray(chatAttachment.id, [...ids]))
+  const byId = new Map(rows.filter((row) => row.sessionKey === sessionKey).map((row) => [row.id, row]))
+  return ids.map((id) => {
+    const row = byId.get(id)
+    if (!row) {
+      throw new AttachmentRejected('an attached picture is not part of this conversation')
+    }
+    return { id: row.id, name: row.name, mimeType: row.mimeType }
+  })
+}
+
+/**
+ * The attachments a delivery carries, as the engine's `loadAttachments` hook.
  *
  * Scoped to the session key: an id is not a capability, and a message naming
  * another conversation's row must resolve to nothing rather than to its bytes.

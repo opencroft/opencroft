@@ -17,6 +17,7 @@
 
 import { agentQueueEntry, db } from '@opencroft/db'
 import type { QueueStore } from 'agent-client/agent-client'
+import type { DeliveredAttachment } from 'agent-client/attachments'
 import type { QueuedPrompt } from 'agent-client/types'
 import { and, asc, eq, isNotNull, isNull, lt, sql } from 'drizzle-orm'
 
@@ -59,8 +60,11 @@ function nextPosition(sessionKey: string, placement: 'front' | 'end') {
  * one message is the smaller and more visible failure of the three.
  */
 function toEntry(row: typeof agentQueueEntry.$inferSelect): QueuedPrompt | null {
+  // Written by `append` below from the engine's own list and read back only
+  // here, so the column holds exactly that shape.
+  const attachments = row.attachments ? { attachments: row.attachments as DeliveredAttachment[] } : {}
   if (row.kind === 'system') {
-    return { id: row.id, kind: 'system', text: row.text }
+    return { id: row.id, kind: 'system', text: row.text, ...attachments }
   }
   if (row.kind === 'message' || row.kind === 'command') {
     return {
@@ -70,6 +74,7 @@ function toEntry(row: typeof agentQueueEntry.$inferSelect): QueuedPrompt | null 
       // Null only for rows written as system entries, which never reach here.
       sentAt: (row.sentAt ?? new Date(0)).toISOString(),
       text: row.text,
+      ...attachments,
     }
   }
   console.error('[queue-store] ignoring queue row of unknown kind', row.kind, row.id)
@@ -127,6 +132,7 @@ export const queueStore: QueueStore = {
         sentAt: entry.kind === 'system' ? null : new Date(entry.sentAt),
         position: nextPosition(sessionKey, placement),
         createdAt: new Date(),
+        attachments: entry.attachments?.length ? entry.attachments : null,
       })
       // Idempotent per id, which is what makes the append/remove pair safe in
       // either order: if the id is already here — including as a row `remove`

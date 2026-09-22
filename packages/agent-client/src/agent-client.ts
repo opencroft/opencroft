@@ -25,7 +25,7 @@ import type {
 } from '@agentclientprotocol/sdk'
 import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION, type Stream } from '@agentclientprotocol/sdk'
 
-import { attachmentRefsIn, isImageMime, type PromptAttachment } from './attachments'
+import { type AttachmentRef, type DeliveredAttachment, isImageMime, type PromptAttachment } from './attachments'
 import { type ChatMessageRecord, toChatMessages } from './chat-completion'
 import type { AgentConnection } from './connection'
 import { normalizeUsage } from './context-window'
@@ -91,21 +91,23 @@ export interface ClientInfo {
 // reading a request into it is testable without an agent on the other end.
 export type { PermissionContext, PermissionHandler, PermissionOutcome } from './permission-context'
 
+/** An attachment as a prompt is handed one: positioned or not (see prompt()). */
+export type PromptAttachmentInput = AttachmentRef & { message?: number }
+
 export interface AgentClientOptions {
   mcpServerName?: string
-  // Resolve the attachments a delivered message names (see attachments.ts) into
-  // the bytes an ACP image block carries. Host-provided, because the reference
-  // in the text is an id in the HOST's store — this engine keeps none, and a
-  // message can be delivered long after it was written.
+  // Resolve the attachments a delivery carries (see attachments.ts) into the
+  // bytes an ACP image block holds. Host-provided, because an attachment is an
+  // id in the HOST's store — this engine keeps none, and a message can be
+  // delivered long after it was written.
   //
-  // The session key travels with the ids so the host can scope the lookup. An
-  // id is not a capability: message text is editable, and a message naming
-  // another conversation's row must resolve to nothing rather than to its
-  // bytes. Undefined for a session created without a key.
+  // The session key travels with the ids so the host can scope the lookup: an
+  // id from another conversation must resolve to nothing rather than to its
+  // bytes, whoever put it on the prompt. Undefined for a session created
+  // without a key.
   //
-  // Absent means a host with no attachment store: a tag then travels as the
-  // text it is, naming a file nobody fetches, which is what every host did
-  // before attachments existed.
+  // Absent means a host with no attachment store: a prompt's attachments are
+  // then reported as not having travelled, and the text goes alone.
   loadAttachments?: (request: {
     sessionKey?: string
     ids: readonly string[]
@@ -2357,6 +2359,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     sessionId: string,
     session: SessionState,
     deliveredText: string,
+    prompt: ContentBlock[],
+    attachments: DeliveredAttachment[],
+    problems: string[],
   ): Promise<boolean> {
     if (!supportsMidTurnInput(session.selection)) {
       return false
@@ -2368,7 +2373,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     try {
       const result = await entry.connection.extMethod('_session/steering', {
         sessionId,
-        prompt: await promptBlocks(sessionId, session, deliveredText),
+        prompt,
         _meta: { steering: { idleBehavior: 'promptRequired' } },
       })
       if ((result as { outcome?: string }).outcome !== 'injected') {
@@ -2386,13 +2391,29 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     }
     store.lastSessionId = sessionId
     entry.lastSessionId = sessionId
-    emit(sessionId, { kind: 'user', text: deliveredText })
+    emitDelivery(sessionId, deliveredText, attachments, problems)
     return true
   }
 
   /**
+   * The transcript's record of a delivery: its text, what it carried, and then
+   * whatever of that did not make it.
+   */
+  function emitDelivery(
+    sessionId: string,
+    text: string,
+    attachments: DeliveredAttachment[],
+    problems: readonly string[],
+  ): void {
+    emit(sessionId, attachments.length > 0 ? { kind: 'user', text, attachments } : { kind: 'user', text })
+    for (const message of problems) {
+      emit(sessionId, { kind: 'error', message })
+    }
+  }
+
+  /**
    * The blocks one delivery hands over: the message, and an image block for
-   * every attachment the message names.
+   * every attachment it carries.
    *
    * Text first. ACP puts no ordering rule on the array, and the words before
    * the picture is the order the reader wrote them in.
@@ -2400,36 +2421,47 @@ export function createAgentClient(options: AgentClientOptions = {}) {
    * Every way this can fall short says so in the transcript. An attachment that
    * quietly did not travel is the whole failure mode worth engineering against
    * here: the reader sees their picture in their own message, the agent answers
-   * as though there were none, and nothing connects the two.
+   * as though there were none, and nothing connects the two. Nothing here is a
+   * guess about whether something WAS an attachment -- they arrive as a field,
+   * never read out of the words -- so every one of these reports is true.
    */
-  async function promptBlocks(sessionId: string, session: SessionState, text: string): Promise<ContentBlock[]> {
+  async function promptBlocks(
+    session: SessionState,
+    text: string,
+    attachments: readonly AttachmentRef[],
+  ): Promise<{ blocks: ContentBlock[]; problems: string[] }> {
     const blocks: ContentBlock[] = [{ type: 'text', text }]
-    const refs = attachmentRefsIn(text)
-    // Nothing attached, or a host that keeps no attachment store at all: the
-    // text stands alone, and the tag in it still names the file.
-    if (refs.length === 0 || !options.loadAttachments) {
-      return blocks
+    if (attachments.length === 0) {
+      return { blocks, problems: [] }
     }
     const harness = findAdapter(session.selection.adapterId)?.label ?? 'This harness'
+    if (!options.loadAttachments) {
+      return {
+        blocks,
+        problems: [
+          `There is nowhere to read attachments from, so ${plural(attachments.length, 'attachment')} did not travel — only the message text went out.`,
+        ],
+      }
+    }
     if (!supportsImagePrompt(session.selection)) {
-      emit(sessionId, {
-        kind: 'error',
-        message: `${harness} did not advertise image prompts, so ${plural(refs.length, 'attachment')} did not travel — only the message text went out.`,
-      })
-      return blocks
+      return {
+        blocks,
+        problems: [
+          `${harness} did not advertise image prompts, so ${plural(attachments.length, 'attachment')} did not travel — only the message text went out.`,
+        ],
+      }
     }
     let loaded: readonly PromptAttachment[]
     try {
       loaded = await options.loadAttachments({
         sessionKey: session.selection.sessionKey,
-        ids: refs.map((ref) => ref.id),
+        ids: attachments.map((attachment) => attachment.id),
       })
     } catch (error) {
-      emit(sessionId, {
-        kind: 'error',
-        message: `Attachments could not be read, so the message went without them: ${errorMessage(error)}`,
-      })
-      return blocks
+      return {
+        blocks,
+        problems: [`Attachments could not be read, so the message went without them: ${errorMessage(error)}`],
+      }
     }
     for (const attachment of loaded) {
       if (attachment.data && isImageMime(attachment.mimeType)) {
@@ -2437,16 +2469,21 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       }
     }
     const sent = blocks.length - 1
-    if (sent < refs.length) {
-      emit(sessionId, {
-        kind: 'error',
-        message: `${plural(refs.length - sent, 'attachment')} could not be sent as an image and did not travel.`,
-      })
+    return {
+      blocks,
+      problems:
+        sent < attachments.length
+          ? [`${plural(attachments.length - sent, 'attachment')} could not be sent as an image and did not travel.`]
+          : [],
     }
-    return blocks
   }
 
-  async function deliverPrompt(sessionId: string, text: string, steerable = false): Promise<void> {
+  async function deliverPrompt(
+    sessionId: string,
+    text: string,
+    steerable = false,
+    attachments: DeliveredAttachment[] = [],
+  ): Promise<void> {
     const session = store.sessions.get(sessionId)
     if (!session) {
       return
@@ -2470,12 +2507,28 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // than become conversational input, and an `injected: false` answer means
     // the turn ended in the race window, where a normal prompt is simply
     // correct.
+    //
+    // The blocks are built once, whichever way the delivery goes: a steer that
+    // falls back to a prompt hands over the same ones, and reading the
+    // attachments twice would report each failure twice.
+    let built: { blocks: ContentBlock[]; problems: string[] } | undefined
     if (steerable && session.activeTurns > 0 && supportsMidTurnInput(session.selection)) {
-      const injected = await steerIntoRunningTurn(sessionId, session, deliveredText)
+      built = await promptBlocks(session, deliveredText, attachments)
+      const injected = await steerIntoRunningTurn(
+        sessionId,
+        session,
+        deliveredText,
+        built.blocks,
+        attachments,
+        built.problems,
+      )
       if (injected) {
         return
       }
     }
+    // Counted BEFORE anything below awaits. Until this line the session reads
+    // as idle, and a send landing in an await here would dispatch a second
+    // prompt over this one.
     session.activeTurns += 1
     let connection: AgentConnection
     try {
@@ -2492,12 +2545,14 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (entry) {
       entry.lastSessionId = sessionId
     }
-    emit(sessionId, { kind: 'user', text: deliveredText })
+    built ??= await promptBlocks(session, deliveredText, attachments)
+    const prompt = built.blocks
+    emitDelivery(sessionId, deliveredText, attachments, built.problems)
     // The response's usage/quota/failure decorations are read here, at the one
     // place the prompt promise settles, so a host reads them off the turn_end
     // event instead of re-parsing `_meta` — none of it is spec-guaranteed
     // shape, and the parse rules live in one module (usage-meta).
-    void connection.prompt({ sessionId, prompt: await promptBlocks(sessionId, session, deliveredText) }).then(
+    void connection.prompt({ sessionId, prompt }).then(
       (response) =>
         settleTurn(sessionId, {
           stopReason: response.stopReason,
@@ -2637,6 +2692,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       session.nextDeliveryNote = undefined
     }
     const text = buildRunDelivery(run, note)
+    const attachments = runAttachments(run)
     // Returned rather than fired and forgotten, so a send into an IDLE session
     // can await its own dispatch. Every message goes through the queue now, and
     // without this a send that nothing was holding up would resolve before the
@@ -2646,7 +2702,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // Only a MESSAGE run may steer into a running turn: a system or command
     // entry (`/compact` above all) is harness machinery that must start its
     // own turn, never become conversational input to somebody else's.
-    return deliverPrompt(sessionId, text, first.kind === 'message').then(
+    return deliverPrompt(sessionId, text, first.kind === 'message', attachments).then(
       () => {
         // Only now: the durable copy is what makes a message survive a process
         // that dies, so it must outlive every step that could still fail to
@@ -2902,12 +2958,22 @@ export function createAgentClient(options: AgentClientOptions = {}) {
    * message was actually sent — a batch formed hours later must still report
    * when each part was written, not when it was handed over.
    */
-  function toEntry(text: string, origin: PromptOrigin): QueuedPrompt | null {
-    if (text.trim().length === 0) {
+  function toEntry(
+    text: string,
+    origin: PromptOrigin,
+    attached: readonly PromptAttachmentInput[] = [],
+  ): QueuedPrompt | null {
+    // A picture with no words is still something sent; only an entry with
+    // neither has nothing to say.
+    if (text.trim().length === 0 && attached.length === 0) {
       return null
     }
+    // Copied rather than kept, so a caller's array changing later cannot
+    // change what an entry already holds.
+    const carried = attached.map(({ id, name, mimeType, message }) => ({ id, name, mimeType, message: message ?? 0 }))
+    const attachments = carried.length > 0 ? { attachments: carried } : {}
     if (origin.kind === 'system') {
-      return { id: randomUUID(), kind: 'system', text }
+      return { id: randomUUID(), kind: 'system', text, ...attachments }
     }
     // A leading slash marks a harness command, never a conversational message.
     // The harness recognises it by the prompt's FIRST characters — no trimming
@@ -2916,9 +2982,23 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // The entry keeps its author for the queue UI.
     const lead = text.trimStart()
     if (lead.startsWith('/')) {
-      return { id: randomUUID(), kind: 'command', sender: origin.sender, sentAt: new Date().toISOString(), text: lead }
+      return {
+        id: randomUUID(),
+        kind: 'command',
+        sender: origin.sender,
+        sentAt: new Date().toISOString(),
+        text: lead,
+        ...attachments,
+      }
     }
-    return { id: randomUUID(), kind: 'message', sender: origin.sender, sentAt: new Date().toISOString(), text }
+    return {
+      id: randomUUID(),
+      kind: 'message',
+      sender: origin.sender,
+      sentAt: new Date().toISOString(),
+      text,
+      ...attachments,
+    }
   }
 
   /** The leading run: consecutive messages, or exactly one system/command entry. */
@@ -2932,6 +3012,21 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     }
     const end = queue.findIndex((entry) => entry.kind !== 'message')
     return end === -1 ? [...queue] : queue.slice(0, end)
+  }
+
+  /**
+   * What a run carries beside its text, each attachment marked with the message
+   * of the delivery it came with. A message run's delivery is one message per
+   * entry, in order, so an entry's position is its message; a system or command
+   * run is its one entry, already positioned within its own body.
+   */
+  function runAttachments(run: QueuedPrompt[]): DeliveredAttachment[] {
+    if (run[0].kind !== 'message') {
+      return run[0].attachments ?? []
+    }
+    return run.flatMap((entry, index) =>
+      (entry.attachments ?? []).map((attachment) => ({ ...attachment, message: index })),
+    )
   }
 
   /** Turn a run into the one prompt it delivers. */
@@ -4145,7 +4240,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
      * so a transform that prepends (a timestamp, an envelope) needs its own
      * inverse applied first — see this app's `stripDeliveryStamp`.
      */
-    userTurnAt(sessionId: string, eventIndex: number): { text: string; turnIndex: number } | null {
+    userTurnAt(
+      sessionId: string,
+      eventIndex: number,
+    ): { text: string; attachments: DeliveredAttachment[]; turnIndex: number } | null {
       const session = store.sessions.get(sessionId)
       const event = session?.events[eventIndex]
       if (!session || !event || event.kind !== 'user') {
@@ -4159,7 +4257,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
           turnIndex += 1
         }
       }
-      return { text: event.text, turnIndex }
+      return { text: event.text, attachments: event.attachments ?? [], turnIndex }
     },
 
     // Branch a session into a new one, rewound to a turn (dropFromTurn, 0-based;
@@ -4297,7 +4395,16 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     async prompt(
       sessionId: string,
       text: string,
-      opts: { front?: boolean; queue: QueueMode; origin: PromptOrigin },
+      opts: {
+        front?: boolean
+        queue: QueueMode
+        origin: PromptOrigin
+        // What the prompt carries beside its text -- see attachments.ts. A
+        // position is only meaningful for a system prompt that is already a
+        // finished delivery body (an edit's re-send); anything else is one
+        // message, and its attachments are that message's.
+        attachments?: readonly PromptAttachmentInput[]
+      },
     ): Promise<{ interrupted: boolean }> {
       const session = store.sessions.get(sessionId)
       if (!session) {
@@ -4331,7 +4438,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // push.
       const noteKind: DeliveryNote = session.presence.kind === 'high-attention' ? 'interrupt' : 'queue-jump'
 
-      const entry = toEntry(text, opts.origin)
+      const entry = toEntry(text, opts.origin, opts.attachments)
       if (!entry) {
         // Nothing of its own to send. For `wait` that is simply nothing: an
         // empty prompt would start a turn saying nothing.

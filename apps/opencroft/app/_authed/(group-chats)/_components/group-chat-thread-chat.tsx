@@ -166,11 +166,19 @@ export function GroupChatThreadChat({
   // fault still throws out of the call and is reported as a failure.
   const sendTransport = useMemo<SendTransport>(
     () =>
-      async ({ text, front }) => {
+      async ({ text, front, attachments }) => {
         const scope = selectionRef.current
         const outgoing = scope?.selection && scope.passEnabled ? wrapUserSelection(text, scope.selection.content) : text
         const refusal = threadSendRefusal(
-          await sendGroupChatThreadMessage({ data: { threadId: thread.id, text: outgoing, front, queue: 'wait' } }),
+          await sendGroupChatThreadMessage({
+            data: {
+              threadId: thread.id,
+              text: outgoing,
+              front,
+              queue: 'wait',
+              ...(attachments?.length ? { attachments: [...attachments] } : {}),
+            },
+          }),
         )
         if (refusal) {
           throw refusal

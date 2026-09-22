@@ -46,8 +46,11 @@ export function toUserParts(
   // Optional because a host with no notion of accounts has nothing to pass and
   // should not have to say so.
   accounts?: Record<string, { name: string; avatarUrl?: string | null }>,
-  // What travelled with each message besides its words, read back out of the
-  // raw text by the host that put it there.
+  // What travelled with each message besides its words, as the host recorded
+  // it. Asked with the message's raw text AND its position in the delivery --
+  // `index` counts every message the delivery holds, drawn or not -- because a
+  // host may keep what travelled beside the text rather than in it, and then
+  // the position is the only thing that says which message it came with.
   //
   // A SECOND SEAM rather than a wider `render`, because the two answer different
   // questions: `render` decides what the words are and may decide there are
@@ -58,15 +61,18 @@ export function toUserParts(
   // Optional, because a host that attaches nothing has nothing to say here --
   // and because every message written before anything did is in exactly that
   // state.
-  attachmentsOf?: (raw: string) => readonly MessageAttachment[],
+  attachmentsOf?: (raw: string, index: number) => readonly MessageAttachment[],
 ): ChatUserMessagePart[] {
   const parts: ChatUserMessagePart[] = []
-  for (const message of decodeBatch(prompt)) {
-    const text = render(message.text)
-    if (text === null) {
+  for (const [index, message] of decodeBatch(prompt).entries()) {
+    const attachments = attachmentsOf?.(message.text, index)
+    const rendered = render(message.text)
+    // A message with no words is dropped -- unless something travelled with
+    // it: a picture sent on its own is a message, and its chip is all of it.
+    if (rendered === null && !attachments?.length) {
       continue
     }
-    const attachments = attachmentsOf?.(message.text)
+    const text = rendered ?? ('' as UserText)
     // The wire is unchanged: the tag attribute and the decoded message field
     // are both still `sender`. Only the rendered part renames, because what it
     // holds is the durable identifier rather than a display name.

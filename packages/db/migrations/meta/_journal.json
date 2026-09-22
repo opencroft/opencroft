@@ -232,6 +232,13 @@
       "when": 1790046112400,
       "tag": "0032_add_chat_attachment",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1790115560561,
+      "tag": "0033_add_queue_entry_attachments",
+      "breakpoints": true
     }
   ]
 }

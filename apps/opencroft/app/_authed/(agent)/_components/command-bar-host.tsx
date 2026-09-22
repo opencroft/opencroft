@@ -211,8 +211,8 @@ export function AgentCommandBarHost({
     ),
     [pictures.onFiles, unavailableReason, attachmentControls],
   )
-  // The send, with the attachments' tags appended and the row emptied. Wrapped
-  // here because the tags have to be decided at the MOMENT of the send: a
+  // The send, with the attachments beside it and the row emptied. Wrapped here
+  // because what goes has to be decided at the MOMENT of the send: a
   // picture picked a second earlier may still be uploading, and `collect`
   // awaits what is in flight rather than racing it.
   //
@@ -223,8 +223,8 @@ export function AgentCommandBarHost({
   sessionRef.current = session
   const sendWithAttachments = useCallback(
     async (text: string) => {
-      const tags = await pictures.collect()
-      sessionRef.current.send(tags ? `${text}${tags}` : text)
+      const ids = await pictures.collect()
+      sessionRef.current.send(text, ids.length > 0 ? { attachments: ids } : undefined)
     },
     [pictures.collect],
   )

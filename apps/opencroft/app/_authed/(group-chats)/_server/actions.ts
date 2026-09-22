@@ -324,11 +324,17 @@ export const openGroupChatThreadSession = createServerFn({ method: 'POST', stric
   .handler(async ({ data: threadId }) => openThreadSession(getRequest(), threadId))
 
 export const sendGroupChatThreadMessage = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { threadId: string; text: string; front?: boolean; queue: QueueMode }) => data)
+  .inputValidator(
+    (data: { threadId: string; text: string; front?: boolean; queue: QueueMode; attachments?: string[] }) => data,
+  )
   .handler(
     async ({ data }): Promise<SendThreadMessageResult> =>
       asWriteResult(() =>
-        sendMessageInThread(getRequest(), data.threadId, data.text, { front: data.front, queue: data.queue }),
+        sendMessageInThread(getRequest(), data.threadId, data.text, {
+          front: data.front,
+          queue: data.queue,
+          attachments: data.attachments,
+        }),
       ),
   )
 

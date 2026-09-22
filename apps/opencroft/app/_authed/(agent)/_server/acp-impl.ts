@@ -48,8 +48,10 @@ import {
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { withAuthors } from '@/app/_authed/(agent)/_server/attach-authors'
 import {
+  AttachmentRejected,
   clearAttachments,
   readAttachment,
+  resolveAttachmentRefs,
   type StoredAttachment,
   saveAttachment,
 } from '@/app/_authed/(agent)/_server/attachment-store'
@@ -533,6 +535,11 @@ async function pinModeIfYolo(sessionId: string): Promise<void> {
 // their own truth. See WirePromptOrigin for why the browser is not trusted with
 // a name.
 //
+// `attachments` are stored picture ids. They are resolved HERE, against the
+// conversation this session belongs to, into the references the prompt carries:
+// the caller names a row, the store says what it is, and a row from any other
+// conversation refuses the send (see resolveAttachmentRefs).
+//
 // Returns whether a turn was actually interrupted, so callers can report it
 // without probing the session themselves — that answer is only correct at the
 // instant the message arrives.
@@ -542,6 +549,7 @@ export async function promptLocalImpl(data: {
   front?: boolean
   queue: QueueMode
   origin: PromptOriginInput
+  attachments?: readonly string[]
 }): Promise<{ interrupted: boolean }> {
   // Claimed before the prompt is even sent (matching the client's own
   // deliveredOnceRef, set at deliver() call time) — a concurrent
@@ -560,6 +568,14 @@ export async function promptLocalImpl(data: {
   // the durable record saying "never prompted" for exactly as long as the agent
   // was working — and a resume in that window would have re-stated a task the
   // agent was already doing.
+  const ids = data.attachments ?? []
+  // Before anything is recorded: a refused picture refuses the whole send, and
+  // a session marked as spoken to by a message that never went would skip its
+  // opening context on the next one.
+  if (ids.length > 0 && !tabKey) {
+    throw new AttachmentRejected('pictures can only be sent into an open chat')
+  }
+  const attachments = tabKey ? await resolveAttachmentRefs(tabKey, ids) : []
   if (tabKey) {
     await writePersistedSession(tabKey, data.sessionId, true)
   }
@@ -567,6 +583,7 @@ export async function promptLocalImpl(data: {
     front: data.front,
     queue: data.queue,
     origin: await resolvePromptOrigin(data.origin),
+    ...(attachments.length > 0 ? { attachments } : {}),
   })
 }
 
@@ -719,7 +736,16 @@ export async function editTurnLocalImpl(data: {
   // starts idle with an empty queue. It does not wait either — a system entry
   // is never gated by Presence (see QueuedPrompt), so the cadence a reader set
   // for incoming messages does not hold back their own edit.
-  await agentClient.prompt(meta.id, text, { queue: 'wait', origin: { kind: 'system' } })
+  //
+  // The pictures go again with the messages they came with: an edit changes
+  // words, and the editor never offered to take one away. Their positions hold
+  // because an edit replaces messages in place and never changes how many
+  // there are.
+  await agentClient.prompt(meta.id, text, {
+    queue: 'wait',
+    origin: { kind: 'system' },
+    ...(turn.attachments.length > 0 ? { attachments: turn.attachments } : {}),
+  })
   return { sessionId: meta.id }
 }
 

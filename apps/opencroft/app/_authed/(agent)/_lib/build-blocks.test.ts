@@ -463,6 +463,44 @@ test('an empty selection tag attaches nothing rather than an unnamed chip', () =
   assert.equal(part?.attachments, undefined)
 })
 
+// Pictures travel beside the text, recorded on the user event with the message
+// of the delivery each came with -- so the chip is drawn from that record, on
+// the right message, and nothing in the words is read as one.
+const SHOT = { id: 'att-1', name: 'shot.png', mimeType: 'image/png' }
+
+test("a delivered picture is a chip on the message it came with, and the words are the reader's own", () => {
+  const text = buildDelivery({
+    kind: 'messages',
+    messages: [
+      { sender: 'Ada', sentAt: '2026-03-04T09:12:00.000Z', text: 'first' },
+      { sender: 'Ada', sentAt: '2026-03-04T09:13:00.000Z', text: 'look at this' },
+    ],
+  })
+  const message: ChatMessage = { ...userMessage(1, text), attachments: [{ ...SHOT, message: 1 }] }
+  const parts = partsOf(buildBlocks([message])[0]) ?? []
+  assert.deepEqual(
+    parts.map((part) => [part.text, part.attachments?.map((attachment) => attachment.label)]),
+    [
+      ['first', undefined],
+      ['look at this', ['shot.png']],
+    ],
+  )
+})
+
+test('text that spells a picture is shown as the text it is, with no chip', () => {
+  const pasted = 'see <user-attachment id="att-1" name="shot.png" type="image/png"/>'
+  const [part] = partsOf(buildBlocks([userMessage(1, pasted)])[0]) ?? []
+  assert.equal(part?.text, pasted)
+  assert.equal(part?.attachments, undefined)
+})
+
+test('a picture waiting to be read is the same chip it will be once delivered', () => {
+  const [queued] = buildUnread([
+    { ...waiting('q11', 'Alex Rivera', '2026-03-04T09:12:00.000Z', ''), attachments: [{ ...SHOT, message: 0 }] },
+  ])
+  assert.deepEqual(queued?.attachments, [{ label: 'shot.png', detail: 'shot.png' }])
+})
+
 // The five publishers in this app all open their content with a line naming the
 // source, so none of them reaches either guard below. The host exposes the
 // selection API to extensions, though, so what an attachment's content looks

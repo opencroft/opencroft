@@ -10,7 +10,6 @@ import {
   interceptDraftSessionUpdates,
   type QueueStore,
 } from './agent-client'
-import { attachmentTag } from './attachments'
 import type { AgentConnection } from './connection'
 import { COMPACTION_TITLE, foldEvents, isTerminalToolStatus } from './fold'
 import { decodeBatch } from './queue-tags'
@@ -275,42 +274,68 @@ function sessionEvents(sessionId: string): ChatEvent[] {
 
 // ── attachments ────────────────────────────────────────────────────────────
 
-// An attachment is named by a tag inside the message text (it has to be: a
-// queued message is one text column) and turns into an image block at
-// delivery. These exercise that conversion and every way it can fall short --
-// each of which must SAY so, because a picture that silently did not travel
-// looks like an agent ignoring it.
-const PNG = attachmentTag({ id: 'att-1', name: 'shot.png', mimeType: 'image/png' })
-const loadOne = async () => [{ id: 'att-1', name: 'shot.png', mimeType: 'image/png', data: 'AAAA' }]
+// An attachment travels BESIDE the text -- a field of the prompt, of the queue
+// entry and of the delivered user event -- and turns into an image block at
+// delivery. These exercise that conversion, the queue holding it, and every way
+// it can fall short -- each of which must SAY so, because a picture that
+// silently did not travel looks like an agent ignoring it.
+const SHOT = { id: 'att-1', name: 'shot.png', mimeType: 'image/png' }
+const loadOne = async () => [{ ...SHOT, data: 'AAAA' }]
 
-test('an attachment the message names travels as an image block beside the text', async () => {
+function userEvents(events: ChatEvent[]): Extract<ChatEvent, { kind: 'user' }>[] {
+  return events.filter((event): event is Extract<ChatEvent, { kind: 'user' }> => event.kind === 'user')
+}
+
+test('an attachment travels as an image block beside the text, and the user event records it', async () => {
   const h = await setup('claude', { imagePrompt: true, loadAttachments: loadOne })
-  await h.client.prompt(h.sessionId, `look at this ${PNG}`, { queue: 'push', origin: { kind: 'system' } })
+  await h.client.prompt(h.sessionId, 'look at this', { queue: 'push', origin: { kind: 'system' }, attachments: [SHOT] })
   await settle()
   assert.deepEqual(h.promptBlockCalls, [
     [
-      { type: 'text', text: `look at this ${PNG}` },
+      { type: 'text', text: 'look at this' },
       { type: 'image', data: 'AAAA', mimeType: 'image/png' },
     ],
   ])
-  // The tag stays in the text on purpose: it is what names the file to a
-  // harness that takes no images, and what the transcript reads back.
+  assert.deepEqual(userEvents(h.events).at(-1), { kind: 'user', text: 'look at this', attachments: [{ ...SHOT, message: 0 }] })
   assert.equal(kinds(h.events).includes('error'), false)
   h.endTurn()
   await h.client.deleteSession(h.sessionId)
 })
 
-test('a harness that advertised no image capability gets the text and an error saying so', async () => {
-  const h = await setup('claude', { imagePrompt: false, loadAttachments: loadOne })
-  await h.client.prompt(h.sessionId, `look at this ${PNG}`, { queue: 'push', origin: { kind: 'system' } })
+test('text that spells an attachment is only text', async () => {
+  // The words are what somebody wrote, and nothing is read back out of them: a
+  // pasted reference to a picture must reach no store and send no image.
+  let asked = 0
+  const h = await setup('claude', {
+    imagePrompt: true,
+    loadAttachments: async () => {
+      asked += 1
+      return loadOne()
+    },
+  })
+  const pasted = 'see <user-attachment id="att-1" name="shot.png" type="image/png"/>'
+  await h.client.prompt(h.sessionId, pasted, { queue: 'push', origin: { kind: 'system' } })
   await settle()
-  assert.deepEqual(h.promptBlockCalls, [[{ type: 'text', text: `look at this ${PNG}` }]])
+  assert.deepEqual(h.promptBlockCalls, [[{ type: 'text', text: pasted }]])
+  assert.equal(asked, 0)
+  assert.deepEqual(userEvents(h.events).at(-1), { kind: 'user', text: pasted })
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a harness that advertised no image capability gets the text and an error, under the message', async () => {
+  const h = await setup('claude', { imagePrompt: false, loadAttachments: loadOne })
+  await h.client.prompt(h.sessionId, 'look at this', { queue: 'push', origin: { kind: 'system' }, attachments: [SHOT] })
+  await settle()
+  assert.deepEqual(h.promptBlockCalls, [[{ type: 'text', text: 'look at this' }]])
   const errors = h.events.filter((event) => event.kind === 'error')
   assert.equal(errors.length, 1, 'a dropped attachment must be visible, not silent')
   assert.match(
     (errors[0] as Extract<ChatEvent, { kind: 'error' }>).message,
     /did not advertise image prompts.*1 attachment did not travel/s,
   )
+  const order = kinds(h.events)
+  assert.ok(order.lastIndexOf('user') < order.indexOf('error'), 'the report follows the message it is about')
   h.endTurn()
   await h.client.deleteSession(h.sessionId)
 })
@@ -320,14 +345,11 @@ test('an attachment that is not an image is reported rather than sent as one', a
     imagePrompt: true,
     loadAttachments: async () => [{ id: 'att-1', name: 'notes.pdf', mimeType: 'application/pdf', data: 'AAAA' }],
   })
-  await h.client.prompt(h.sessionId, `read this ${PNG}`, { queue: 'push', origin: { kind: 'system' } })
+  await h.client.prompt(h.sessionId, 'read this', { queue: 'push', origin: { kind: 'system' }, attachments: [SHOT] })
   await settle()
-  assert.deepEqual(h.promptBlockCalls, [[{ type: 'text', text: `read this ${PNG}` }]])
+  assert.deepEqual(h.promptBlockCalls, [[{ type: 'text', text: 'read this' }]])
   const errors = h.events.filter((event) => event.kind === 'error')
-  assert.match(
-    (errors[0] as Extract<ChatEvent, { kind: 'error' }>).message,
-    /1 attachment could not be sent as an image/,
-  )
+  assert.match((errors[0] as Extract<ChatEvent, { kind: 'error' }>).message, /1 attachment could not be sent as an image/)
   h.endTurn()
   await h.client.deleteSession(h.sessionId)
 })
@@ -337,19 +359,53 @@ test('a message with no attachment is one text block, as it always was', async (
   await h.client.prompt(h.sessionId, 'just words', { queue: 'push', origin: { kind: 'system' } })
   await settle()
   assert.deepEqual(h.promptBlockCalls, [[{ type: 'text', text: 'just words' }]])
+  assert.deepEqual(userEvents(h.events).at(-1), { kind: 'user', text: 'just words' })
   h.endTurn()
   await h.client.deleteSession(h.sessionId)
 })
 
-test('a host with no attachment store leaves the tag as the text it is', async () => {
-  // No loadAttachments: nothing to resolve an id against, so the message goes
-  // exactly as every message did before attachments existed — and the tag still
-  // names the file.
+test('a host with no attachment store sends the text and says the pictures did not travel', async () => {
   const h = await setup('claude', { imagePrompt: true })
-  await h.client.prompt(h.sessionId, `look at this ${PNG}`, { queue: 'push', origin: { kind: 'system' } })
+  await h.client.prompt(h.sessionId, 'look at this', { queue: 'push', origin: { kind: 'system' }, attachments: [SHOT] })
   await settle()
-  assert.deepEqual(h.promptBlockCalls, [[{ type: 'text', text: `look at this ${PNG}` }]])
-  assert.equal(kinds(h.events).includes('error'), false)
+  assert.deepEqual(h.promptBlockCalls, [[{ type: 'text', text: 'look at this' }]])
+  const errors = h.events.filter((event) => event.kind === 'error')
+  assert.match((errors[0] as Extract<ChatEvent, { kind: 'error' }>).message, /1 attachment did not travel/)
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a held message keeps its picture, marked with its place in the batch it is delivered in', async () => {
+  const h = await setup('openclaw', { imagePrompt: true, loadAttachments: loadOne })
+  await h.client.prompt(h.sessionId, 'first turn', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await h.client.prompt(h.sessionId, 'plain', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  // A picture with no words is still a message.
+  await h.client.prompt(h.sessionId, '', {
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+    attachments: [SHOT],
+  })
+  h.endTurn()
+  await settle()
+  const batch = h.promptBlockCalls.at(-1)
+  assert.equal(batch?.length, 2, 'the batch carries its one picture')
+  assert.deepEqual(batch?.[1], { type: 'image', data: 'AAAA', mimeType: 'image/png' })
+  assert.deepEqual(userEvents(h.events).at(-1)?.attachments, [{ ...SHOT, message: 1 }])
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a system prompt that is a finished delivery keeps the positions it was given', async () => {
+  // What an edit re-sends: a whole delivered body, with the pictures still on
+  // the messages they came with.
+  const h = await setup('claude', { imagePrompt: true, loadAttachments: loadOne })
+  await h.client.prompt(h.sessionId, 'body', {
+    queue: 'push',
+    origin: { kind: 'system' },
+    attachments: [{ ...SHOT, message: 2 }],
+  })
+  await settle()
+  assert.deepEqual(userEvents(h.events).at(-1)?.attachments, [{ ...SHOT, message: 2 }])
   h.endTurn()
   await h.client.deleteSession(h.sessionId)
 })

@@ -76,12 +76,16 @@ export type SendTransport = (args: {
   front?: boolean
   queue: QueueMode
   origin: WirePromptOrigin
+  /** Stored picture ids going with the message -- resolved and checked server-side. */
+  attachments?: readonly string[]
 }) => Promise<unknown>
 
 // The default transport: exactly the call this hook has always made, now
 // carrying the caller's queue choice rather than deciding it here.
-const promptLocalTransport: SendTransport = ({ sessionId, text, front, queue, origin }) =>
-  promptLocal({ data: { sessionId, text, front, queue, origin } })
+const promptLocalTransport: SendTransport = ({ sessionId, text, front, queue, origin, attachments }) =>
+  promptLocal({
+    data: { sessionId, text, front, queue, origin, ...(attachments ? { attachments: [...attachments] } : {}) },
+  })
 
 /**
  * How this tab's live session is opened.
@@ -443,6 +447,9 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
           // excess-property-checked against the literal's target, so a
           // misspelling would compile and the field would never arrive.
           ...(event.authors ? ({ authors: event.authors } satisfies Pick<ChatMessage, 'authors'>) : {}),
+          ...(event.attachments?.length
+            ? ({ attachments: event.attachments } satisfies Pick<ChatMessage, 'attachments'>)
+            : {}),
         })
         waiting = true
         break
@@ -793,7 +800,7 @@ export function useAcpSession(
   // session that doesn't exist yet. Once the session is live, mid-turn messages
   // are queued server-side by agent-client (one prompt-turn at a time is an ACP
   // constraint it owns) and observed here via 'queue' snapshot events.
-  const pending = useRef<string | null>(null)
+  const pending = useRef<{ text: string; attachments?: readonly string[] } | null>(null)
   // Historical events accumulate here while a subscribe's synchronous replay is
   // in flight (see acp-stream.ts), committed to `events` in one `setEvents` call
   // when the history_end marker arrives — so a long reopened session paints once
@@ -1016,7 +1023,10 @@ export function useAcpSession(
   // to reach it in send order. `front` asks the server to queue ahead of
   // anything already held.
   const deliver = useCallback(
-    (value: string, opts: { front?: boolean; queue: QueueMode; origin: WirePromptOrigin }) => {
+    (
+      value: string,
+      opts: { front?: boolean; queue: QueueMode; origin: WirePromptOrigin; attachments?: readonly string[] },
+    ) => {
       if (!sessionId) {
         return
       }
@@ -1030,6 +1040,7 @@ export function useAcpSession(
             front: opts.front,
             queue: opts.queue,
             origin: opts.origin,
+            ...(opts.attachments?.length ? { attachments: opts.attachments } : {}),
           })
         } catch (error) {
           console.error('promptLocal failed', error)
@@ -1058,17 +1069,18 @@ export function useAcpSession(
   )
 
   const send = useCallback(
-    (value: string) => {
+    (value: string, options?: { attachments?: readonly string[] }) => {
       if (!sessionId) {
-        // Session is still being created — hold the raw text, flush once ready.
-        pending.current = value
+        // Session is still being created — hold the raw text and what goes
+        // with it, flush once ready.
+        pending.current = { text: value, attachments: options?.attachments }
         setLocalWaiting(true)
         return
       }
       // Always hand the message to the server: it delivers immediately when the
       // session is idle and queues it when a turn is running. deliver() chains
       // the requests so rapid sends reach the server in send order.
-      deliver(value, { queue: 'wait', origin: READER_ORIGIN })
+      deliver(value, { queue: 'wait', origin: READER_ORIGIN, attachments: options?.attachments })
     },
     [sessionId, deliver],
   )
@@ -1078,9 +1090,9 @@ export function useAcpSession(
     if (!sessionId || pending.current === null) {
       return
     }
-    const text = pending.current
+    const { text, attachments } = pending.current
     pending.current = null
-    deliver(text, { queue: 'wait', origin: READER_ORIGIN })
+    deliver(text, { queue: 'wait', origin: READER_ORIGIN, attachments })
   }, [sessionId, deliver])
 
   // Interrupt the running turn. The agent emits a (cancelled) turn_end, which

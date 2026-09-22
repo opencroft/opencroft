@@ -45,6 +45,7 @@ import {
   tabSessions,
 } from './acp-impl'
 import { readPersistedSession, writePersistedUsage } from './acp-session-store'
+import { AttachmentRejected, saveAttachment } from './attachment-store'
 import { flushSessionEvents, readSessionEvents } from './session-event-store'
 
 // The browser must not be able to say who a message is from — the name is
@@ -389,6 +390,71 @@ test('committing an edit recreates the session and deletes the pre-edit one, lea
   const liveIds = agentClient.listSessions().map((meta) => meta.id)
   assert.equal(liveIds.includes(opened.sessionId), false, 'the pre-edit session was deleted, not left orphaned')
   assert.equal(liveIds.includes(result.sessionId), true, 'the recreated session is the live one')
+})
+
+// A picture goes as a stored id, resolved here against the tab's own
+// conversation: the name the transcript shows comes from the store, an id from
+// anywhere else refuses the send, and an edit re-sends the pictures with the
+// messages they came with.
+test('a sent picture is recorded from the store, and an edit carries it into the new session', async () => {
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection, { forkable: true })
+  const tabKey = `picture-test-tab-${crypto.randomUUID()}`
+  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  const stored = await saveAttachment({ sessionKey: tabKey, name: 'shot.png', mimeType: 'image/png', data: 'AAAA' })
+
+  await promptLocalImpl({
+    sessionId: opened.sessionId,
+    text: 'look at this',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+    attachments: [stored.id],
+  })
+  const sent = (agentClient.getSessionEvents(opened.sessionId) ?? []).findIndex((event) => event.kind === 'user')
+  const delivered = agentClient.getSessionEvents(opened.sessionId)?.[sent]
+  assert.ok(delivered?.kind === 'user')
+  assert.deepEqual(delivered.attachments, [{ id: stored.id, name: 'shot.png', mimeType: 'image/png', message: 0 }])
+  assert.equal(delivered.text.includes(stored.id), false, 'the reference is beside the words, never in them')
+
+  const result = await editTurnLocalImpl({
+    tabKey,
+    sessionId: opened.sessionId,
+    eventIndex: sent,
+    edits: [{ index: 0, text: 'look at this instead' }],
+  })
+  assert.ok(result)
+  const resent = (agentClient.getSessionEvents(result.sessionId) ?? []).filter((event) => event.kind === 'user').at(-1)
+  assert.ok(resent?.kind === 'user')
+  assert.deepEqual(resent.attachments, delivered.attachments)
+})
+
+test("a send naming another conversation's picture is refused before anything is delivered", async () => {
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection)
+  const tabKey = `picture-test-tab-${crypto.randomUUID()}`
+  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  const foreign = await saveAttachment({
+    sessionKey: `someone-else-${crypto.randomUUID()}`,
+    name: 'theirs.png',
+    mimeType: 'image/png',
+    data: 'AAAA',
+  })
+  await assert.rejects(
+    promptLocalImpl({
+      sessionId: opened.sessionId,
+      text: 'look',
+      queue: 'wait',
+      origin: { kind: 'message', sender: 'Reader' },
+      attachments: [foreign.id],
+    }),
+    AttachmentRejected,
+  )
+  assert.equal(
+    (agentClient.getSessionEvents(opened.sessionId) ?? []).some((event) => event.kind === 'user'),
+    false,
+    'nothing went out',
+  )
+  assert.equal((await readPersistedSession(tabKey))?.prompted, false, 'and the session is not marked as spoken to')
 })
 
 test('a thread keeps persisting its transcript after an edit is committed', async () => {

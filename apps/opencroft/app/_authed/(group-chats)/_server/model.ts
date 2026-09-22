@@ -2093,7 +2093,7 @@ export async function sendMessageInThread(
   request: Request,
   threadId: string,
   text: string,
-  opts: { front?: boolean; queue: QueueMode },
+  opts: { front?: boolean; queue: QueueMode; attachments?: readonly string[] },
 ): Promise<void> {
   const sessionUser = await requireSignedInUser(request)
   const [row] = await db
@@ -2168,7 +2168,7 @@ const threadDeliveryColumns = {
 async function deliverIntoThread(
   row: ThreadDeliveryTarget,
   text: string,
-  opts: { front?: boolean; queue: QueueMode; sender: string },
+  opts: { front?: boolean; queue: QueueMode; sender: string; attachments?: readonly string[] },
 ): Promise<{ queued: boolean; sessionId: string }> {
   // The agent has to still be a member, whoever is sending. Without this,
   // removing an agent is decoration: its threads survive by design, they carry
@@ -2237,6 +2237,7 @@ async function deliverIntoThread(
     front: opts.front,
     queue: opts.queue,
     origin: { kind: 'message', sender: opts.sender },
+    ...(opts.attachments?.length ? { attachments: opts.attachments } : {}),
   })
   // Recorded only after the message carrying it has been accepted: a send that
   // threw would otherwise mark context delivered that never went anywhere, and

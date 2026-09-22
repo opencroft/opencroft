@@ -1,0 +1,1 @@
+ALTER TABLE "AgentQueueEntry" ADD COLUMN "attachments" jsonb;

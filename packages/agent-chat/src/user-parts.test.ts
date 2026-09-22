@@ -161,3 +161,41 @@ test('the host renders each message on its own, never the delivery as a whole', 
     { index: 1, text: 'second' },
   ])
 })
+
+// ---------------------------------------------------------------------------
+// What travelled beside the words
+// ---------------------------------------------------------------------------
+
+test("what travelled is asked for by the message's place in the delivery, skipped messages counted", () => {
+  // A host that keeps pictures beside the text matches them to messages by
+  // position, so the position has to be the delivery's own -- the context-only
+  // message in the middle still holds its place.
+  const turn = buildDelivery({
+    kind: 'messages',
+    messages: [msg('ada', T1, 'first'), msg('ada', T2, '<ctx>selection: node-1</ctx>'), msg('bo', T3, 'third')],
+  })
+  const asked: number[] = []
+  const parts = toUserParts(turn, show, undefined, (_raw, index) => {
+    asked.push(index)
+    return index === 2 ? [{ label: 'shot.png' }] : []
+  })
+  assert.deepEqual(asked, [0, 1, 2])
+  assert.deepEqual(
+    parts.map((part) => part.attachments?.map((attachment) => attachment.label)),
+    [undefined, ['shot.png']],
+  )
+})
+
+test('a message with no words is kept when something travelled with it', () => {
+  // A picture sent on its own is a message; dropping it for having no words
+  // would lose the one thing it said.
+  const turn = buildDelivery({ kind: 'messages', messages: [msg('ada', T1, ''), msg('ada', T2, 'and words')] })
+  const parts = toUserParts(turn, show, undefined, (_raw, index) => (index === 0 ? [{ label: 'shot.png' }] : []))
+  assert.deepEqual(
+    parts.map((part) => [part.text, part.attachments?.length ?? 0]),
+    [
+      ['', 1],
+      ['and words', 0],
+    ],
+  )
+})

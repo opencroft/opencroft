@@ -17,6 +17,7 @@ import {
   MAX_ATTACHMENT_BYTES,
   moveAttachments,
   readAttachment,
+  resolveAttachmentRefs,
   saveAttachment,
 } from './attachment-store'
 
@@ -121,4 +122,26 @@ test('a rename carries the pictures onto the new key', async () => {
   await moveAttachments([{ from, to }])
   assert.deepEqual(await loadAttachments(from, [stored.id]), [])
   assert.equal((await loadAttachments(to, [stored.id])).length, 1)
+})
+
+test("a send's ids resolve to what the store says they are, in the order they were given", async () => {
+  // The name and type a message records come from the row, never from the
+  // caller -- the wire carries ids and nothing a sender could relabel.
+  const key = nextKey()
+  const first = await png(key, 'first.png')
+  const second = await png(key, 'second.png')
+  assert.deepEqual(await resolveAttachmentRefs(key, [second.id, first.id]), [
+    { id: second.id, name: 'second.png', mimeType: 'image/png' },
+    { id: first.id, name: 'first.png', mimeType: 'image/png' },
+  ])
+  assert.deepEqual(await resolveAttachmentRefs(key, []), [])
+})
+
+test("a send naming another conversation's picture is refused, not quietly thinned", async () => {
+  const mine = nextKey()
+  const theirs = nextKey()
+  const ours = await png(mine, 'mine.png')
+  const other = await png(theirs, 'theirs.png')
+  await assert.rejects(resolveAttachmentRefs(mine, [ours.id, other.id]), AttachmentRejected)
+  await assert.rejects(resolveAttachmentRefs(mine, ['00000000-0000-0000-0000-000000000000']), AttachmentRejected)
 })
