@@ -1,5 +1,13 @@
 // How a message names an image it carries.
 //
+// NODE-FREE, AND THAT IS PART OF THE CONTRACT: the composer that writes a tag
+// runs in the browser, so this module imports nothing and must keep importing
+// nothing. Client code reaches it by this path and not through the package
+// index, which is the server entry and pulls the whole engine (node:fs
+// included) in behind it — the same rule mcp-types.ts carries for the same
+// reason. Importing it from the index is not a type error and not a test
+// failure; it is a blank chat and a browser console.
+//
 // THE REFERENCE LIVES IN THE TEXT, and that is structural rather than a
 // shortcut. A message can be held by a cadence, and a held message is one text
 // column (AgentQueueEntry.text); the transcript a reader sees is rebuilt from

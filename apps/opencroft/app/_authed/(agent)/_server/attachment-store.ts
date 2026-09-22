@@ -14,7 +14,7 @@
 // where the conversation lives on and its pictures must live with it.
 
 import { chatAttachment, db } from '@opencroft/db'
-import type { PromptAttachment } from 'agent-client'
+import type { PromptAttachment } from 'agent-client/attachments'
 import { eq, inArray } from 'drizzle-orm'
 
 /**

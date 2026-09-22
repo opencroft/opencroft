@@ -12,7 +12,7 @@
 // is the whole mechanism — see attachments.ts in agent-client for why it has to
 // live in the text rather than beside it.
 
-import { attachmentTag } from 'agent-client'
+import { attachmentTag } from 'agent-client/attachments'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { readAttachableImage } from '@/app/_authed/(agent)/_lib/attachment-file'

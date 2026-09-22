@@ -2,7 +2,7 @@ import type { Block } from 'agent-chat/components/chat-conversation'
 import type { ChatUserMessagePart, DetailItem, MessageAttachment, UserText } from 'agent-chat/components/chat-turn'
 import type { ChatUnreadMessage } from 'agent-chat/components/chat-unread'
 import { toUserParts } from 'agent-chat/user-parts'
-import { attachmentRefsIn } from 'agent-client'
+import { attachmentRefsIn } from 'agent-client/attachments'
 import type { QueuedPrompt } from 'agent-client/types'
 
 import type { AuthoredChatEvent, ResolvedAuthor } from '@/app/_authed/(agent)/_lib/acp-stream'
