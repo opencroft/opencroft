@@ -696,50 +696,65 @@ export function createNativeHarness(
               break
           }
         }
+        // Persist this turn's assistant/tool messages BEFORE the in-flight
+        // marker is released. Releasing it earlier would let a concurrently
+        // dispatched prompt pass the guard and push its user message between
+        // this turn's user message and its assistant reply, corrupting the
+        // message store. The `finally` below runs after this, which is what
+        // keeps that ordering while still releasing on every path.
+        const response = await result.response
+        session.messages.push(...response.messages)
+
+        // Report context usage like an ACP agent would. The last step's input
+        // tokens are the full conversation sent this turn; add its output for the
+        // tokens now in context. size=0 → engine reports an unknown max.
+        const steps = await result.steps
+        const last = steps.at(-1)
+        const used = (last?.usage.inputTokens ?? 0) + (last?.usage.outputTokens ?? 0)
+        if (used > 0) {
+          await client.sessionUpdate({
+            sessionId,
+            update: {
+              sessionUpdate: 'usage_update',
+              used,
+              // The endpoint's own answer for this model, or a configured
+              // override. 0 still means "not known" — the AI SDK reports no
+              // window, and an endpoint that carries none leaves it unknown
+              // rather than inventing a ratio, which every surface renders as
+              // used-tokens-alone.
+              size: await resolveContextWindow(session, selection),
+            },
+          })
+        }
+
+        return { stopReason: mapStopReason(await result.finishReason) }
       } catch (error) {
+        // AN ABORT ENDS THIS TURN FROM WHEREVER IT IS NOTICED, and nothing here
+        // may depend on which await noticed it.
+        //
+        // Cancelling does not reliably make `fullStream` throw: the stream can
+        // simply STOP, leaving the rejection to surface later from
+        // `result.response`. That await used to sit outside this block, so an
+        // aborted turn left the function without releasing the marker below --
+        // and since the marker is also the guard, the session answered "A turn
+        // is already in progress." to every later message for the rest of its
+        // life, with the header still reading Idle and a reload changing
+        // nothing.
         if (abort.signal.aborted) {
-          session.abort = undefined
           return { stopReason: 'cancelled' }
         }
-        session.abort = undefined
         throw error
       } finally {
         await close()
+        // THE ONE RELEASE. Not a path-by-path clear: a turn ends here however it
+        // ends, so there is no exit left to forget. Guarded on identity so this
+        // turn's exit can never release a LATER turn's marker -- the guard above
+        // makes that unreachable today, and this keeps it unreachable if the
+        // guard is ever relaxed to allow interleaving.
+        if (session.abort === abort) {
+          session.abort = undefined
+        }
       }
-
-      // Persist this turn's assistant/tool messages BEFORE clearing the in-flight
-      // marker. Clearing it earlier would let a concurrently-dispatched prompt pass
-      // the guard and push its user message between this turn's user message and
-      // its assistant reply, corrupting the message store.
-      const response = await result.response
-      session.messages.push(...response.messages)
-      // The turn is fully recorded; a late cancel() is now a clean no-op and the
-      // next prompt is accepted.
-      session.abort = undefined
-
-      // Report context usage like an ACP agent would. The last step's input
-      // tokens are the full conversation sent this turn; add its output for the
-      // tokens now in context. size=0 → engine reports an unknown max.
-      const steps = await result.steps
-      const last = steps.at(-1)
-      const used = (last?.usage.inputTokens ?? 0) + (last?.usage.outputTokens ?? 0)
-      if (used > 0) {
-        await client.sessionUpdate({
-          sessionId,
-          update: {
-            sessionUpdate: 'usage_update',
-            used,
-            // The endpoint's own answer for this model, or a configured
-            // override. 0 still means "not known" — the AI SDK reports no
-            // window, and an endpoint that carries none leaves it unknown
-            // rather than inventing a ratio, which every surface renders as
-            // used-tokens-alone.
-            size: await resolveContextWindow(session, selection),
-          },
-        })
-      }
-
-      return { stopReason: mapStopReason(await result.finishReason) }
     },
   }
 }
