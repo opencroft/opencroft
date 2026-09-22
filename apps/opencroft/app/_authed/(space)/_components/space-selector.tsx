@@ -2,7 +2,7 @@
 
 import { Link, useLocation, useRouter } from '@tanstack/react-router'
 import { Check, ChevronDown, Ellipsis, Pin, PinOff, Settings } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { type MouseEvent, useEffect, useState } from 'react'
 import { Button } from 'ui/button'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from 'ui/command'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from 'ui/dropdown-menu'
@@ -17,6 +17,16 @@ import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
 function slugFromPath(pathname: string): string | null {
   const match = pathname.match(/^\/space\/([^/]+)/)
   return match ? decodeURIComponent(match[1]) : null
+}
+
+/**
+ * The modifiers a browser reads as "open this link somewhere other than here".
+ * The router's Link declines to handle exactly these, leaving the navigation to
+ * the browser. A middle click is not among them because it raises `auxclick`
+ * rather than `click`, so no click handler runs for it at all.
+ */
+function isOpenInNewTab(event: MouseEvent<HTMLAnchorElement>): boolean {
+  return event.ctrlKey || event.metaKey || event.shiftKey || event.altKey
 }
 
 /**
@@ -48,9 +58,14 @@ export function SpaceSidebarSection({ spaces }: { spaces: SpaceSummary[] }) {
   const pinned = spaces.filter((space) => space.pinned)
   const shown = query ? spaces : pinned.length > 0 ? pinned : spaces
 
-  function select(space: SpaceSummary) {
+  function close() {
     setOpen(false)
     setQuery('')
+  }
+
+  // Keyboard selection only: a pointer lands on the row's anchor instead.
+  function select(space: SpaceSummary) {
+    close()
     router.navigate({ to: '/space/$slug', params: { slug: space.slug } })
   }
 
@@ -90,14 +105,36 @@ export function SpaceSidebarSection({ spaces }: { spaces: SpaceSummary[] }) {
                     <CommandEmpty>No spaces found.</CommandEmpty>
                     <CommandGroup>
                       {shown.map((space) => (
+                        // The row is a real link so the browser's own
+                        // open-in-a-new-tab gestures work on it: middle click,
+                        // ctrl/cmd-click, and the context menu. cmdk selects on
+                        // the item's click, which is why the anchor stops that
+                        // event -- otherwise a ctrl-click would open the new tab
+                        // AND move the current one. Keyboard Enter never reaches
+                        // the anchor, so onSelect still carries that case.
                         <CommandItem
                           key={space.id}
                           value={`${space.name} ${space.slug}`}
+                          className='p-0'
                           onSelect={() => select(space)}
                         >
-                          <SpaceIcon icon={space.icon} className='size-5' />
-                          {space.name}
-                          <Check className={`ml-auto ${space.slug === slug ? 'opacity-100' : 'opacity-0'}`} />
+                          <Link
+                            to='/space/$slug'
+                            params={{ slug: space.slug }}
+                            className='flex w-full items-center gap-2 px-2 py-1.5'
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              // A modified click leaves this tab where it is,
+                              // so the list stays open for the next one.
+                              if (!isOpenInNewTab(event)) {
+                                close()
+                              }
+                            }}
+                          >
+                            <SpaceIcon icon={space.icon} className='size-5' />
+                            {space.name}
+                            <Check className={`ml-auto ${space.slug === slug ? 'opacity-100' : 'opacity-0'}`} />
+                          </Link>
                         </CommandItem>
                       ))}
                     </CommandGroup>
