@@ -3237,7 +3237,16 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // turn path: a notification must not read differently depending on which
     // of the two carried it.
     const deliveredText = options.transformDeliveredPrompt ? options.transformDeliveredPrompt(text) : text
-    const injected = await steerIntoRunningTurn(sessionId, session, deliveredText)
+    // A notification carries nothing beside its text, so its one block is
+    // built here rather than through promptBlocks: there is nothing to read.
+    const injected = await steerIntoRunningTurn(
+      sessionId,
+      session,
+      deliveredText,
+      [{ type: 'text', text: deliveredText }],
+      [],
+      [],
+    )
     if (session.notificationSteer !== batch) {
       // Overtaken while the harness was answering: the turn settled first and
       // its settlement took the batch back to deliver as a turn, or the
