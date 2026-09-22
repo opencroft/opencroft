@@ -23,6 +23,7 @@ import {
 import { findSpaceByNodeImpl, loadSpaceGraphImpl } from '@/app/_authed/(space)/_server/actions-impl'
 import { withGraphConflictRetry } from '@/app/_authed/(space)/_server/graph-conflict-retry'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
+import { newGraphId } from '@/lib/graph-id'
 import { toastStore } from '@/lib/toast-store'
 
 const POSITION_SCHEMA = {
@@ -583,7 +584,7 @@ export const handlers: Record<string, ToolHandler> = {
         const position = userPos ?? { x: 100, y: maxY }
         const data = (it.data as Record<string, unknown>) ?? {}
         const node: GraphNode = {
-          id: crypto.randomUUID(),
+          id: newGraphId(),
           type: it.type as string,
           position,
           data,
@@ -788,7 +789,7 @@ export const handlers: Record<string, ToolHandler> = {
       const createdEdges: Record<string, unknown>[] = []
       for (const p of parsed) {
         const edge: StoredEdge = {
-          id: crypto.randomUUID(),
+          id: newGraphId(),
           source: p.source.nodeId,
           target: p.target.nodeId,
         }

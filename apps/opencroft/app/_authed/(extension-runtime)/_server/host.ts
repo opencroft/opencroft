@@ -40,6 +40,7 @@ import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
 import { senderForSend } from '@/app/_server/message-author'
+import { newGraphId } from '@/lib/graph-id'
 import { toastStore } from '@/lib/toast-store'
 import { cacheDir } from '@/server/cache'
 import { decrypt, encrypt } from '@/server/crypto'
@@ -306,7 +307,7 @@ const graphApi: HostGraphApi = {
     if (!ref) {
       throw new Error('No space available')
     }
-    const id = crypto.randomUUID()
+    const id = newGraphId()
     const node: GraphNodeRecord = { id, type: typeId, data, position }
     ref.graph.graph.nodes.push(node as unknown as Record<string, unknown>)
     await r.saveGraph(r.addressOf(ref), ref.graph.graph)

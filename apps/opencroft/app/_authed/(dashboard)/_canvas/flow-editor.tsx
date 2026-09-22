@@ -58,6 +58,7 @@ import { useOptionalSelection } from '@/app/_authed/(extension-runtime)/_client/
 import { findExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
 import { fetchSpaceGraph, saveSpaceGraph } from '@/app/_authed/(space)/_components/space-client'
 import { useSSEEvents, useSSEEventsDispatch } from '@/app/_authed/(sse)/_lib/sse-events-store'
+import { newGraphId } from '@/lib/graph-id'
 import { cn } from '@/lib/utils'
 
 installExtensionApi()
@@ -73,10 +74,6 @@ interface MenuState {
   screen: { x: number; y: number }
   flow: { x: number; y: number }
   pending?: PendingConnection
-}
-
-function newId(prefix: string): string {
-  return `${prefix}_${Math.random().toString(36).slice(2, 10)}`
 }
 
 function snap(v: number): number {
@@ -618,7 +615,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const onConnect = useCallback(
     (conn: Connection) => {
       setEdges((eds) => {
-        const next = addEdge(conn, eds)
+        const next = addEdge({ ...conn, id: newGraphId() }, eds)
         scheduleSave(nodes, next)
         return next
       })
@@ -651,7 +648,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
         return
       }
       const node: Node = {
-        id: newId(typeId),
+        id: newGraphId(),
         type: typeId,
         position: { x: snap(flow.x), y: snap(flow.y) },
         data: { ...resolved.defaultData },
@@ -680,7 +677,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
         addNodeAt(typeId, flow)
         return
       }
-      const nodeId = newId(typeId)
+      const nodeId = newGraphId()
       const node: Node = {
         id: nodeId,
         type: typeId,
@@ -691,14 +688,14 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       const newEdge: Edge =
         pending.fromHandleType === 'source'
           ? {
-              id: newId('edge'),
+              id: newGraphId(),
               source: pending.fromNodeId,
               sourceHandle: pending.fromHandleId,
               target: nodeId,
               targetHandle: matchingHandle.id,
             }
           : {
-              id: newId('edge'),
+              id: newGraphId(),
               source: nodeId,
               sourceHandle: matchingHandle.id,
               target: pending.fromNodeId,

@@ -4,6 +4,8 @@ import type { Edge, Node } from '@xyflow/react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
+import { newGraphId } from '@/lib/graph-id'
+
 const FORMAT = 'opencroft/nodes'
 const PASTE_OFFSET = 20
 
@@ -19,10 +21,6 @@ interface Options {
   setNodes: (updater: (nodes: Node[]) => Node[]) => void
   setEdges: (updater: (edges: Edge[]) => Edge[]) => void
   onChange: (nodes: Node[], edges: Edge[]) => void
-}
-
-function newId(prefix: string): string {
-  return `${prefix}_${Math.random().toString(36).slice(2, 10)}`
 }
 
 function isEditing(): boolean {
@@ -98,7 +96,7 @@ function remap(payload: Payload, target?: { x: number; y: number }): { nodes: No
     : { x: PASTE_OFFSET, y: PASTE_OFFSET }
   const idMap = new Map<string, string>()
   const nodes = payload.nodes.map((n) => {
-    const id = newId(n.type ?? 'node')
+    const id = newGraphId()
     idMap.set(n.id, id)
     return {
       ...n,
@@ -112,7 +110,7 @@ function remap(payload: Payload, target?: { x: number; y: number }): { nodes: No
     .filter((e) => idMap.has(e.source) && idMap.has(e.target))
     .map((e) => ({
       ...e,
-      id: newId('edge'),
+      id: newGraphId(),
       source: idMap.get(e.source)!,
       target: idMap.get(e.target)!,
       selected: false,
