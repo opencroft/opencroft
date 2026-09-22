@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
+import { Spinner } from 'ui/spinner'
 
 import { TerminalRef } from '@/app/_authed/(extension-runtime)/_client/terminal-ref'
 import { listTerminalTargets, type TerminalTargetOption } from '@/app/_authed/(extension-runtime)/_server/actions'
@@ -34,16 +35,27 @@ export function TerminalSelector({
   disabled,
 }: TerminalSelectorProps) {
   const [options, setOptions] = useState<TerminalTargetOption[]>([])
+  // The list takes a while to fill: it asks every application node's docker
+  // host what is running. Until it arrives the control says so rather than
+  // looking like a picker with nothing in it.
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    let current = true
+    setLoading(true)
     listTerminalTargets({ data: { spaceSlug } })
-      .then(setOptions)
-      .catch(() => setOptions([]))
+      .then((next) => current && setOptions(next))
+      .catch(() => current && setOptions([]))
+      .finally(() => current && setLoading(false))
+    return () => {
+      current = false
+    }
   }, [spaceSlug])
 
   // A previously saved target whose handle is gone (a stopped container, a
   // removed worktree) still has to render as the selection rather than as an
-  // empty control that silently discards it on the next change.
+  // empty control that silently discards it on the next change. While the
+  // list is loading it is simply not known yet -- not "unavailable".
   const known = options.some((option) => option.target === value)
 
   return (
@@ -52,14 +64,26 @@ export function TerminalSelector({
       onValueChange={(next) => onChange(next === NONE ? '' : next)}
       disabled={disabled}
     >
-      <SelectTrigger>
-        <SelectValue placeholder={placeholder ?? 'Select a terminal'} />
+      <SelectTrigger aria-busy={loading}>
+        <SelectValue
+          placeholder={
+            loading ? (
+              <>
+                <Spinner />
+                Loading terminals…
+              </>
+            ) : (
+              (placeholder ?? 'Select a terminal')
+            )
+          }
+        />
       </SelectTrigger>
       <SelectContent>
         {allowNone && <SelectItem value={NONE}>None</SelectItem>}
         {!known && value && (
           <SelectItem value={value}>
-            <TerminalRef target={value} /> (unavailable)
+            <TerminalRef target={value} />
+            {loading ? null : ' (unavailable)'}
           </SelectItem>
         )}
         {options.map((option) => (
@@ -67,6 +91,14 @@ export function TerminalSelector({
             {spaceSlug ? option.title : `${option.title} · ${option.spaceSlug}`}
           </SelectItem>
         ))}
+        {loading ? (
+          <div className='flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground'>
+            <Spinner />
+            Loading terminals…
+          </div>
+        ) : options.length === 0 ? (
+          <div className='px-2 py-1.5 text-sm text-muted-foreground'>No terminals found</div>
+        ) : null}
       </SelectContent>
     </Select>
   )
