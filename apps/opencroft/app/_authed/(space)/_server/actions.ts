@@ -8,6 +8,7 @@ import {
   deleteSpaceImpl,
   exportSpaceImpl,
   findSpaceByNodeImpl,
+  findTakenGraphIdsImpl,
   getActiveSpaceSlugImpl,
   getGraphViewForInstanceImpl,
   importSpaceImpl,
@@ -59,6 +60,16 @@ export const loadSpaceGraph = createServerFn({ strict: { output: false } })
   .handler(async ({ data: slug }): Promise<{ graph: GraphData; updatedAt: string } | null> => {
     await requireSession()
     return loadSpaceGraphImpl(slug)
+  })
+
+export const findTakenGraphIds = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { ids: string[]; exceptAddress?: string }) => data)
+  .handler(async ({ data }): Promise<string[]> => {
+    await requireSession()
+    return findTakenGraphIdsImpl({
+      ids: Array.isArray(data.ids) ? data.ids.map(String) : [],
+      exceptAddress: data.exceptAddress,
+    })
   })
 
 export const saveSpaceGraph = createServerFn({ method: 'POST', strict: { output: false } })

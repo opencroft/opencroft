@@ -4,6 +4,7 @@ import type { Edge, Node } from '@xyflow/react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
+import { assignPasteIds } from '@/app/_authed/(dashboard)/_canvas/paste-ids'
 import { newGraphId } from '@/lib/graph-id'
 
 const FORMAT = 'opencroft/nodes'
@@ -16,6 +17,11 @@ interface Payload {
 }
 
 interface Options {
+  /**
+   * Which of these ids any OTHER graph already uses. The graph being edited is
+   * the caller's to leave out: the canvas holds it newer than the server does.
+   */
+  findTakenIds: (ids: string[]) => Promise<string[]>
   nodes: Node[]
   edges: Edge[]
   setNodes: (updater: (nodes: Node[]) => Node[]) => void
@@ -82,40 +88,50 @@ async function readPayload(): Promise<Payload | null> {
   return { format: FORMAT, nodes: data.nodes, edges: data.edges }
 }
 
+// A failed lookup treats every id as taken: fresh ids can never collide,
+// kept ones only can.
+async function takenElsewhere(ids: string[], findTakenIds: Options['findTakenIds']): Promise<Set<string>> {
+  try {
+    return new Set(await findTakenIds(ids))
+  } catch (err) {
+    console.error('[use-clipboard] id check failed, pasting with fresh ids:', err)
+    return new Set(ids)
+  }
+}
+
 // `target`, when given, is a flow-space point (e.g. where a context menu was
 // invoked) that the pasted group's own top-left corner lands on, keeping the
 // copied nodes' positions relative to each other. Without one (the keyboard
 // shortcut, which has no invocation point to speak of) the group is offset
 // by a small fixed amount from where it was copied, as before.
-function remap(payload: Payload, target?: { x: number; y: number }): { nodes: Node[]; edges: Edge[] } {
+//
+// Ids are kept unless taken (see assignPasteIds): a cut-and-paste moves the
+// very same nodes, so anything referring to them still does.
+function remap(
+  payload: Payload,
+  taken: ReadonlySet<string>,
+  target?: { x: number; y: number },
+): { nodes: Node[]; edges: Edge[] } {
   const offset = target
     ? {
         x: target.x - Math.min(...payload.nodes.map((n) => n.position.x)),
         y: target.y - Math.min(...payload.nodes.map((n) => n.position.y)),
       }
     : { x: PASTE_OFFSET, y: PASTE_OFFSET }
-  const idMap = new Map<string, string>()
-  const nodes = payload.nodes.map((n) => {
-    const id = newGraphId()
-    idMap.set(n.id, id)
-    return {
+  const assigned = assignPasteIds(
+    payload.nodes as Array<Node & { data: Record<string, unknown> }>,
+    payload.edges,
+    taken,
+    newGraphId,
+  )
+  return {
+    nodes: assigned.nodes.map((n) => ({
       ...n,
-      id,
       position: { x: n.position.x + offset.x, y: n.position.y + offset.y },
       selected: true,
-      ...(n.parentId ? ({ parentId: idMap.get(n.parentId) ?? n.parentId } satisfies Pick<Node, 'parentId'>) : {}),
-    }
-  })
-  const edges = payload.edges
-    .filter((e) => idMap.has(e.source) && idMap.has(e.target))
-    .map((e) => ({
-      ...e,
-      id: newGraphId(),
-      source: idMap.get(e.source)!,
-      target: idMap.get(e.target)!,
-      selected: false,
-    }))
-  return { nodes, edges }
+    })),
+    edges: assigned.edges.map((e) => ({ ...e, selected: false })),
+  }
 }
 
 export interface ClipboardControls {
@@ -125,7 +141,7 @@ export interface ClipboardControls {
   hasCopiedNodes: boolean
 }
 
-export function useClipboard({ nodes, edges, setNodes, setEdges, onChange }: Options): ClipboardControls {
+export function useClipboard({ findTakenIds, nodes, edges, setNodes, setEdges, onChange }: Options): ClipboardControls {
   // Tracked directly off a successful copy/cut rather than re-reading the
   // system clipboard on every render: navigator.clipboard has no change
   // event, and re-probing readText() to decide whether to enable a menu
@@ -171,7 +187,12 @@ export function useClipboard({ nodes, edges, setNodes, setEdges, onChange }: Opt
       if (!payload) {
         return
       }
-      const { nodes: pastedNodes, edges: pastedEdges } = remap(payload, target)
+      const ids = [...payload.nodes.map((n) => n.id), ...payload.edges.map((e) => e.id)]
+      const taken = await takenElsewhere(ids, findTakenIds)
+      for (const item of [...nodes, ...edges]) {
+        taken.add(item.id)
+      }
+      const { nodes: pastedNodes, edges: pastedEdges } = remap(payload, taken, target)
       if (pastedNodes.length === 0) {
         return
       }
@@ -181,7 +202,7 @@ export function useClipboard({ nodes, edges, setNodes, setEdges, onChange }: Opt
       setEdges(() => nextEdges)
       onChange(nextNodes, nextEdges)
     },
-    [nodes, edges, setNodes, setEdges, onChange],
+    [findTakenIds, nodes, edges, setNodes, setEdges, onChange],
   )
 
   // Copy has no hotkey — it hijacked every Ctrl+C on the page (the isEditing()

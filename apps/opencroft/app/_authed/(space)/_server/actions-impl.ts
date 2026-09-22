@@ -106,6 +106,32 @@ export async function saveSpaceGraphImpl(data: {
   return { updatedAt: ref.graph.updatedAt.toISOString() }
 }
 
+/**
+ * Which of `ids` another graph -- any graph but `exceptAddress` -- already
+ * uses as a node or edge id. A paste keeps its ids unless they are taken; the
+ * graph being pasted into is left out because the canvas holds it newer than
+ * the server does (a cut there may not be saved yet), so it checks that one
+ * itself.
+ */
+export async function findTakenGraphIdsImpl(data: { ids: string[]; exceptAddress?: string }): Promise<string[]> {
+  const r = await registry()
+  const except = data.exceptAddress ? r.resolveGraph(data.exceptAddress)?.graph.id : undefined
+  const wanted = new Set(data.ids)
+  const taken = new Set<string>()
+  for (const ref of r.listGraphs()) {
+    if (ref.graph.id === except) {
+      continue
+    }
+    for (const item of [...ref.graph.graph.nodes, ...ref.graph.graph.edges]) {
+      const id = (item as { id?: unknown }).id
+      if (typeof id === 'string' && wanted.has(id)) {
+        taken.add(id)
+      }
+    }
+  }
+  return [...taken]
+}
+
 export async function createSpaceImpl(name: string): Promise<SpaceSummary> {
   const r = await registry()
   const trimmed = name.trim() || 'Space'

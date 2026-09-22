@@ -63,7 +63,10 @@ function installFakeClipboard(): { setReadFailure: (fail: boolean) => void; setW
   }
 }
 
-async function mountHarness(initialNodes: ReturnType<typeof makeNode>[]) {
+async function mountHarness(
+  initialNodes: ReturnType<typeof makeNode>[],
+  findTakenIds: (ids: string[]) => Promise<string[]> = async () => [],
+) {
   const handleRef = { current: null as ClipboardHandle | null }
 
   function Harness() {
@@ -72,6 +75,7 @@ async function mountHarness(initialNodes: ReturnType<typeof makeNode>[]) {
     nodesRef.current = nodes
     const [edges, setEdgesState] = useState<unknown[]>([])
     const controls = useClipboard({
+      findTakenIds,
       nodes,
       edges: edges as never,
       setNodes: (updater) => setNodesState((nds) => updater(nds)),
@@ -220,4 +224,80 @@ test('a different physical key does not paste just because it happens to type "v
     dispatchEvent.call(globalThis.window, new Ctor('keydown', { code: 'KeyN', key: 'v', ctrlKey: true }))
   })
   assert.equal(h.nodes().length, before, 'the wrong physical key must not paste')
+})
+
+function pressCtrl(code: string, key: string) {
+  const { KeyboardEvent: Ctor, dispatchEvent } = globalThis.window
+  dispatchEvent.call(globalThis.window, new Ctor('keydown', { code, key, ctrlKey: true }))
+}
+
+// Ids survive a move: whatever refers to a cut node (a router route, an edge
+// from elsewhere) must still find it once it is pasted back.
+test("cut then paste keeps the nodes' ids", async () => {
+  installFakeClipboard()
+  const h = await mountHarness([makeNode('a', 0, 0, true), makeNode('keep', 50, 50, false)])
+  await act(async () => {
+    pressCtrl('KeyX', 'x')
+  })
+  assert.deepEqual(
+    h.nodes().map((n) => n.id),
+    ['keep'],
+  )
+  await act(async () => {
+    await h.paste({ x: 10, y: 10 })
+  })
+  assert.deepEqual(
+    h.nodes().map((n) => n.id),
+    ['keep', 'a'],
+  )
+})
+
+test('copy then paste into the same graph gives the copies new ids, the originals stay', async () => {
+  installFakeClipboard()
+  const h = await mountHarness([makeNode('a', 0, 0, true)])
+  await act(async () => {
+    await h.copy()
+  })
+  await act(async () => {
+    await h.paste()
+  })
+  const ids = h.nodes().map((n) => n.id)
+  assert.equal(ids.length, 2)
+  assert.equal(ids[0], 'a')
+  assert.notEqual(ids[1], 'a')
+})
+
+test('an id another graph already holds is replaced on paste', async () => {
+  installFakeClipboard()
+  const asked: string[][] = []
+  const h = await mountHarness([makeNode('a', 0, 0, true)], async (ids) => {
+    asked.push(ids)
+    return ['a']
+  })
+  await act(async () => {
+    pressCtrl('KeyX', 'x')
+  })
+  await act(async () => {
+    await h.paste()
+  })
+  assert.deepEqual(asked, [['a']])
+  const [pasted] = h.nodes()
+  assert.ok(pasted)
+  assert.notEqual(pasted.id, 'a')
+})
+
+test('when the id check fails the paste still happens, with fresh ids', async () => {
+  installFakeClipboard()
+  const h = await mountHarness([makeNode('a', 0, 0, true)], async () => {
+    throw new Error('offline')
+  })
+  await act(async () => {
+    pressCtrl('KeyX', 'x')
+  })
+  await act(async () => {
+    await h.paste()
+  })
+  const [pasted] = h.nodes()
+  assert.ok(pasted)
+  assert.notEqual(pasted.id, 'a')
 })

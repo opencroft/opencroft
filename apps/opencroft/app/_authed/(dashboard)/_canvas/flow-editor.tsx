@@ -57,6 +57,7 @@ import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/reg
 import { useOptionalSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
 import { findExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
 import { fetchSpaceGraph, saveSpaceGraph } from '@/app/_authed/(space)/_components/space-client'
+import { findTakenGraphIds } from '@/app/_authed/(space)/_server/actions'
 import { useSSEEvents, useSSEEventsDispatch } from '@/app/_authed/(sse)/_lib/sse-events-store'
 import { newGraphId } from '@/lib/graph-id'
 import { cn } from '@/lib/utils'
@@ -439,11 +440,14 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     })
   }, [setNodes])
 
+  // Ids another graph already holds, for paste to keep ids only where they are free.
+  const findTakenIds = useCallback((ids: string[]) => findTakenGraphIds({ data: { ids, exceptAddress: slug } }), [slug])
+
   const {
     copy: copySelectedNodes,
     paste: pasteNodes,
     hasCopiedNodes,
-  } = useClipboard({ nodes, edges, setNodes, setEdges, onChange: scheduleSave })
+  } = useClipboard({ findTakenIds, nodes, edges, setNodes, setEdges, onChange: scheduleSave })
 
   const sectionDrag = useRef<{
     sectionId: string
