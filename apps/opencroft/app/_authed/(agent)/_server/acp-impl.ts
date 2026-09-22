@@ -649,7 +649,32 @@ export async function editTurnLocalImpl(data: {
     texts[edit.index] = splitEnvelope(current).context + edit.text
   }
   const text = rebuildDelivery(original, texts)
-  const meta = await agentClient.forkSession(data.sessionId, turn.turnIndex)
+  // NAMED WITH THE TAB'S OWN KEY, the way the fork-to-new-thread flow below
+  // already names one. `opts.sessionKey` exists so a caller can say what the
+  // fork answers to; what the engine refuses to do is INHERIT a key silently.
+  //
+  // Leaving it unnamed here is what made the transcript stop. The events writer
+  // skips a keyless session by design ("nothing could address the rows later"),
+  // so after a commit nothing the tab emitted reached AgentSessionEvent again --
+  // not the re-sent turn, and not any ordinary turn after it, because the tab
+  // points at this session from here on. On screen it looked right, since the
+  // process still held the events; a restart would have replayed a conversation
+  // that ended before the edit.
+  //
+  // TWO SESSIONS HOLD THIS KEY until the delete below, and that is worth stating
+  // rather than reassuring away, because three live lookups resolve a key to ONE
+  // session with `.find`: currentContextUsage here, and the stream and host
+  // surfaces in (extension-runtime)/_server. All three are read-only, and
+  // `store.sessions` is a Map whose iteration is insertion order with the source
+  // inserted first -- so for that span they return the source, which is exactly
+  // what they returned before this change, when the source was the only keyed
+  // session. Nothing observes a difference; the delete then restores uniqueness
+  // and the key resolves to the fork instead of to nothing.
+  //
+  // So anyone relaxing that delete is not making a tidy-up: they are making the
+  // window unbounded, and these lookups would start answering with a session the
+  // tab no longer points at.
+  const meta = await agentClient.forkSession(data.sessionId, turn.turnIndex, { sessionKey: data.tabKey })
   if (!meta) {
     return null
   }
@@ -667,6 +692,22 @@ export async function editTurnLocalImpl(data: {
   await agentClient.deleteSession(data.sessionId).catch((error: unknown) => {
     console.error(`edit: failed to delete the pre-edit session ${data.sessionId}`, error)
   })
+  // REPLACE the persisted transcript rather than append to it. The fork is
+  // trimmed at the edited turn, so the rows under this key still describe turns
+  // that no longer exist -- appending after them would replay the edited-away
+  // tail and then the edit, which is the edit round trip failing in a
+  // quieter way. `clearSessionEvents` drains the buffer, waits out the in-flight
+  // writes and resets the position; the seed then comes from the fork's own
+  // event copy, so it does not depend on the source session still existing.
+  //
+  // AFTER the delete, deliberately. The source is keyed too until then, so it is
+  // the one thing that could emit into a key this is in the middle of clearing;
+  // with it gone, and the fork idle until the prompt below, nothing is emitting
+  // into the window being replaced.
+  await clearSessionEvents(data.tabKey)
+  for (const event of agentClient.getSessionEvents(meta.id) ?? []) {
+    appendSessionEvent(data.tabKey, event)
+  }
   // Handed over verbatim, which is what `system` means here: `text` is already
   // a finished delivery body — tags, and the interrupt note if the turn opened
   // with one. A `message` send would tag it AGAIN, wrapping one new tag naming

@@ -3861,12 +3861,21 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // fork-point dialect (see forkCutoffMeta).
     //
     // `opts.sessionKey` binds the fork to a key of the caller's choosing — the
-    // host's address for the NEW conversation a fork becomes (a group-chat
-    // thread created for it). With it, the fork's events record under that key
-    // and a reopen rebuilds it; without it the fork stays keyless, reachable
-    // only through the id this returns, which is what the adopt-in-place
-    // edit flow wants (see the meta note below on why the SOURCE key never
-    // carries over).
+    // host's address for the conversation the fork is about to be. With it, the
+    // fork's events record under that key and a reopen rebuilds it; without it
+    // the fork stays keyless, reachable only through the id this returns.
+    //
+    // NAMING ONE IS THE NORMAL CASE, for both flows that fork: a fork that
+    // becomes its own conversation is named with the key minted for it, and an
+    // adopt-in-place edit is named with the key of the tab that is about to
+    // adopt it. An unnamed fork records nothing anywhere, which is only ever
+    // right for a fork nothing will reopen.
+    //
+    // What is deliberately absent is INHERITANCE, not naming — see the meta
+    // note below on why the source's key never carries over on its own. (This
+    // used to say an unnamed fork "is what the adopt-in-place edit flow wants".
+    // It was: that flow had no persistence stake, until it turned out the tab
+    // it hands the fork to goes on recording under its key.)
     async forkSession(
       sessionId: string,
       dropFromTurn?: number,

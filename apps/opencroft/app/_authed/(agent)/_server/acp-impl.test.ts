@@ -45,6 +45,7 @@ import {
   tabSessions,
 } from './acp-impl'
 import { readPersistedSession, writePersistedUsage } from './acp-session-store'
+import { flushSessionEvents, readSessionEvents } from './session-event-store'
 
 // The browser must not be able to say who a message is from — the name is
 // resolved server-side, from the session, in promptLocalImpl.
@@ -388,6 +389,68 @@ test('committing an edit recreates the session and deletes the pre-edit one, lea
   const liveIds = agentClient.listSessions().map((meta) => meta.id)
   assert.equal(liveIds.includes(opened.sessionId), false, 'the pre-edit session was deleted, not left orphaned')
   assert.equal(liveIds.includes(result.sessionId), true, 'the recreated session is the live one')
+})
+
+test('a thread keeps persisting its transcript after an edit is committed', async () => {
+  // The round-trip constraint: what is re-sent has to survive a
+  // restart, and AgentSessionEvent is the only source a rebuild has. So the
+  // question is not whether the edit looks right on screen -- the process holds
+  // that either way -- but whether anything reaches the table afterwards.
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection, { forkable: true })
+  const tabKey = `edit-persist-tab-${crypto.randomUUID()}`
+
+  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  await promptLocalImpl({
+    sessionId: opened.sessionId,
+    text: 'first message',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  await flushSessionEvents()
+
+  // THE PRECONDITION. Persistence has to be working before the commit, or
+  // "nothing afterwards" says nothing about the commit.
+  const before = await readSessionEvents(tabKey)
+  assert.ok(before.length > 0, 'precondition: this thread persists its transcript before any edit')
+
+  const events = agentClient.getSessionEvents(opened.sessionId) ?? []
+  const eventIndex = events.findIndex((event) => event.kind === 'user')
+  assert.ok(eventIndex >= 0)
+  const result = await editTurnLocalImpl({
+    tabKey,
+    sessionId: opened.sessionId,
+    eventIndex,
+    edits: [{ index: 0, text: 'edited message' }],
+  })
+  assert.ok(result)
+
+  // An ORDINARY turn after the commit, because that is the half that showed the
+  // regression is not confined to the edited turn: the tab is pointed at the
+  // recreated session from here on, so everything it emits goes wherever that
+  // session's events go.
+  await promptLocalImpl({
+    sessionId: result.sessionId,
+    text: 'an ordinary message after the commit',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  await flushSessionEvents()
+
+  const after = await readSessionEvents(tabKey)
+  assert.ok(
+    after.length > before.length,
+    `the transcript kept growing after the commit (had ${before.length}, now ${after.length})`,
+  )
+
+  // AND IT HAS TO BE THE RIGHT TRANSCRIPT, not merely a growing one. The fork
+  // is trimmed at the edited turn, so the rows that described the pre-edit turn
+  // are no longer part of this conversation -- a replay carrying both would
+  // show the reader a turn they edited away, followed by the edit.
+  const text = JSON.stringify(after)
+  assert.ok(text.includes('edited message'), 'the re-sent turn is in the persisted transcript')
+  assert.ok(text.includes('an ordinary message after the commit'), 'and so is the turn after it')
+  assert.ok(!text.includes('first message'), 'while the turn the edit replaced is gone from it')
 })
 
 // ── contextUsage ────────────────────────────────────────────────────────
