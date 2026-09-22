@@ -17,9 +17,18 @@ if (!file) {
 
 const backup = JSON.parse(fs.readFileSync(file, 'utf8')) as Backup
 const { db, close } = await openDb()
-await restoreBackup(db, backup)
+const summary = await restoreBackup(db, backup)
 await close()
 
-const total = Object.values(backup.tables).reduce((a, rows) => a + rows.length, 0)
-console.error(`Restored ${total} rows from ${file}.`)
+// From the restore itself, not from the file: rows the current schema cannot
+// take are dropped on the way in, and a count read off the file would report
+// them as restored.
+const total = Object.values(summary.restored).reduce((a, rows) => a + rows, 0)
+console.error(`Restored ${total} rows across ${Object.keys(summary.restored).length} tables from ${file}.`)
+if (summary.uncovered.length > 0) {
+  console.error(`Left untouched (not in this backup): ${summary.uncovered.join(', ')}`)
+}
+if (summary.unknown.length > 0) {
+  console.error(`Ignored (no such table): ${summary.unknown.join(', ')}`)
+}
 process.exit(0)
