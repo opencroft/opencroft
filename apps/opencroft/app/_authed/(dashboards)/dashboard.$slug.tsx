@@ -2,6 +2,7 @@ import { createFileRoute, notFound } from '@tanstack/react-router'
 
 import { DashboardPage } from '@/app/_authed/(dashboards)/_components/dashboard-page'
 import { listDashboards } from '@/app/_authed/(dashboards)/_server/actions'
+import { pageTitle } from '@/app/_lib/page-title'
 
 export const Route = createFileRoute('/_authed/(dashboards)/dashboard/$slug')({
   loader: async ({ params }) => {
@@ -12,6 +13,9 @@ export const Route = createFileRoute('/_authed/(dashboards)/dashboard/$slug')({
     }
     return { meta }
   },
+  head: ({ loaderData, params }) => ({
+    meta: [{ title: pageTitle(loaderData?.meta.title ?? params.slug, 'Dashboards') }],
+  }),
   component: Page,
 })
 

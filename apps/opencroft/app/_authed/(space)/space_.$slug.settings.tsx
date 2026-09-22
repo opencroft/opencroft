@@ -11,6 +11,7 @@ import { SpaceGeneralSettings } from '@/app/_authed/(space)/_components/space-ge
 import { SpaceUsageSettings } from '@/app/_authed/(space)/_components/space-usage-settings'
 import { settleSpaceRoute } from '@/app/_authed/(space)/_lib/space-route'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
+import { pageTitle } from '@/app/_lib/page-title'
 
 export const Route = createFileRoute('/_authed/(space)/space_/$slug/settings')({
   // The page's whole UI state rides in the URL: which section is open, and —
@@ -32,6 +33,9 @@ export const Route = createFileRoute('/_authed/(space)/space_/$slug/settings')({
     const [apps, instances] = data
     return { space, apps, instances, spaces }
   },
+  head: ({ loaderData, params }) => ({
+    meta: [{ title: pageTitle('Settings', loaderData?.space.name ?? params.slug) }],
+  }),
   component: SpaceSettingsPage,
 })
 

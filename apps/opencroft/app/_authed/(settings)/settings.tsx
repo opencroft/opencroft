@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import SettingsPage from '@/app/_authed/(settings)/_components/settings-page'
+import { pageTitle } from '@/app/_lib/page-title'
 
 export const Route = createFileRoute('/_authed/(settings)/settings')({
   // Which section is open rides in the URL, so every section is linkable.
@@ -10,5 +11,6 @@ export const Route = createFileRoute('/_authed/(settings)/settings')({
   validateSearch: (search: Record<string, unknown>): { section?: string } => ({
     section: typeof search.section === 'string' && search.section ? search.section : undefined,
   }),
+  head: () => ({ meta: [{ title: pageTitle('Settings') }] }),
   component: SettingsPage,
 })

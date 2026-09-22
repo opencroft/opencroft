@@ -13,6 +13,7 @@ import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
 import { useSafeBack } from '@/app/_authed/(group-chats)/_lib/use-safe-back'
 import { deleteMyGroupChat, listMyGroupChatsView } from '@/app/_authed/(group-chats)/_server/actions'
+import { pageTitle } from '@/app/_lib/page-title'
 
 // The group-chat section index. Rendering only — the
 // list component comes from the design kit and is not reshaped here; the
@@ -20,6 +21,7 @@ import { deleteMyGroupChat, listMyGroupChatsView } from '@/app/_authed/(group-ch
 export const Route = createFileRoute('/_authed/(group-chats)/group-chats')({
   // A refusal comes back as data, not as a throw — see _lib/load-or-refusal.ts.
   loader: async () => loadOrRefusal(async () => ({ chats: await listMyGroupChatsView() })),
+  head: () => ({ meta: [{ title: pageTitle('Chats') }] }),
   component: GroupChatsPage,
   errorComponent: GroupChatErrorState,
 })

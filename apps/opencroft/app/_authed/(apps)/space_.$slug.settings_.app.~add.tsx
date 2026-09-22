@@ -9,6 +9,7 @@ import { findAppByRef } from '@/app/_authed/(apps)/_lib/app-ref'
 import { listApps } from '@/app/_authed/(apps)/_server/actions'
 import { settleSpaceRoute } from '@/app/_authed/(space)/_lib/space-route'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
+import { pageTitle } from '@/app/_lib/page-title'
 
 // The add-app form — where a row of the settings' Add tab lands. Which App is
 // being added rides in the `app` search param as `<extension-slug>.<app-slug>`
@@ -39,9 +40,12 @@ export const Route = createFileRoute('/_authed/(apps)/space_/$slug/settings_/app
   // form for any slug at all. The space list is fetched to make the address mean
   // something.
   loader: async ({ params }) => {
-    const { data: apps } = await settleSpaceRoute(params.slug, listSpaces(), listApps())
-    return { apps }
+    const { space, data: apps } = await settleSpaceRoute(params.slug, listSpaces(), listApps())
+    return { space, apps }
   },
+  head: ({ loaderData, params }) => ({
+    meta: [{ title: pageTitle('Add app', loaderData?.space.name ?? params.slug) }],
+  }),
   component: Page,
 })
 

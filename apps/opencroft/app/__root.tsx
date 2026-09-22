@@ -2,6 +2,7 @@ import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-r
 import { Toaster } from 'ui/sonner'
 import { ThemeProvider } from 'ui/theme-provider'
 
+import { PRODUCT_NAME } from '@/app/_lib/page-title'
 import appCss from '@/app/globals.css?url'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -117,7 +118,10 @@ export const Route = createRootRoute({
     meta: [
       { charSet: 'utf-8' },
       { name: 'viewport', content: 'width=device-width, initial-scale=1, interactive-widget=resizes-content' },
-      { title: 'OpenCroft' },
+      // The fallback title, for a route that names nothing more specific. Any
+      // route's own `head` overrides it: the tag builder walks the matches from
+      // the deepest one up and keeps the first title it finds.
+      { title: PRODUCT_NAME },
       { name: 'description', content: 'Platform for your home lab' },
     ],
     links: [

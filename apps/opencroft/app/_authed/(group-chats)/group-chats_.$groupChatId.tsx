@@ -14,6 +14,7 @@ import {
   listMyGroupChatPins,
 } from '@/app/_authed/(group-chats)/_server/actions'
 import { listAgentNodes } from '@/app/_authed/(space)/_server/agents'
+import { pageTitle } from '@/app/_lib/page-title'
 
 // Inside one group chat: its topic, who is taking part, and its threads.
 //
@@ -46,6 +47,9 @@ export const Route = createFileRoute('/_authed/(group-chats)/group-chats_/$group
       ])
       return { chat, threads, directory, agents, pins, layout }
     }),
+  head: ({ loaderData }) => ({
+    meta: [{ title: pageTitle(loaderData?.refused === false ? loaderData.chat.name : undefined, 'Chats') }],
+  }),
   component: GroupChatDetailPage,
   errorComponent: GroupChatErrorState,
 })

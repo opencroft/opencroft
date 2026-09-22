@@ -9,6 +9,7 @@ import { instanceBySlug } from '@/app/_authed/(apps)/_lib/instance-by-slug'
 import { listApps, listSpaceApps } from '@/app/_authed/(apps)/_server/actions'
 import { settleSpaceRoute } from '@/app/_authed/(space)/_lib/space-route'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
+import { pageTitle } from '@/app/_lib/page-title'
 
 // One App instance's settings — where the Apps list's Edit button lands.
 // Standalone under /space/$slug/settings/app/$app rather than nested in
@@ -18,7 +19,7 @@ export const Route = createFileRoute('/_authed/(apps)/space_/$slug/settings_/app
   loader: async ({ params }) => {
     // An unknown SPACE is settled first (settleSpaceRoute); an unknown INSTANCE
     // in a space that exists is this loader's own notFound, below. Both 404.
-    const { spaces, data } = await settleSpaceRoute(
+    const { space, spaces, data } = await settleSpaceRoute(
       params.slug,
       listSpaces(),
       Promise.all([listApps(), listSpaceApps({ data: params.slug })]),
@@ -29,8 +30,15 @@ export const Route = createFileRoute('/_authed/(apps)/space_/$slug/settings_/app
       throw notFound()
     }
     const meta = apps.find((app) => app.extensionId === instance.extensionId && app.slug === instance.appSlug)
-    return { instance, meta, spaces }
+    return { space, instance, meta, spaces }
   },
+  head: ({ loaderData, params }) => ({
+    meta: [
+      {
+        title: pageTitle('Settings', loaderData?.instance.name ?? params.app, loaderData?.space.name ?? params.slug),
+      },
+    ],
+  }),
   component: Page,
 })
 

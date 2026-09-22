@@ -16,6 +16,7 @@ import {
   listThreadArtifacts,
 } from '@/app/_authed/(group-chats)/_server/actions'
 import type { ThreadArtifact } from '@/app/_authed/(group-chats)/_server/artifacts'
+import { pageTitle } from '@/app/_lib/page-title'
 
 // Reading one thread inside a group chat.
 //
@@ -39,6 +40,12 @@ export const Route = createFileRoute('/_authed/(group-chats)/group-chats_/$group
       const artifacts = await listThreadArtifacts({ data: params.threadId })
       return { thread, chat, artifacts }
     }),
+  // An untitled thread is named by its chat alone rather than by a
+  // placeholder, and a refusal by neither -- pageTitle drops both.
+  head: ({ loaderData }) => {
+    const loaded = loaderData?.refused === false ? loaderData : undefined
+    return { meta: [{ title: pageTitle(loaded?.thread.title, loaded?.chat.name ?? 'Chats') }] }
+  },
   component: GroupChatThreadPage,
   errorComponent: GroupChatErrorState,
 })
