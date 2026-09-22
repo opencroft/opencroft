@@ -952,5 +952,14 @@ export async function forgetLocalSessionImpl(tabKey: string): Promise<void> {
   // And the pictures its messages named. Here rather than inside
   // clearSessionEvents, which is also called on a failed replay — there the
   // conversation lives on and its attachments must live with it.
-  await clearAttachments(tabKey)
+  //
+  // Reported rather than thrown, unlike the two above it. This is the least
+  // important of the three things being retired and the only one whose failure
+  // can be lived with: an orphaned row is bytes to sweep up later, while a
+  // throw here leaves the thread unclearable — which is what happened when the
+  // table existed in the code before it existed in the database (a dev server runs
+  // under vite, so a hot reload brings new code and never new migrations).
+  await clearAttachments(tabKey).catch((error: unknown) => {
+    console.error('Failed to clear the attachments for tab', tabKey, error)
+  })
 }
