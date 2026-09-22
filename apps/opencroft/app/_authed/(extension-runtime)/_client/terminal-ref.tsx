@@ -11,19 +11,29 @@ export interface TerminalRefProps {
   className?: string
 }
 
-// What tells this terminal apart from its node's other outputs -- the same
-// rule the TerminalSelector titles its choices by: a dynamic handle's
-// expanded remainder (a container, a worktree), else the handle's label.
+// What tells this terminal apart from its node's other outputs: a dynamic
+// handle's expanded remainder (a container, a worktree). A node's one plain
+// terminal output needs nothing -- its label would only repeat "Terminal" --
+// so a static label is shown only when the node has several to choose from.
 function handleDetail(ref: GraphRefState, handleId: string): string {
-  if (ref.status !== 'known' || ref.info.kind !== 'node') {
-    return handleId
+  if (ref.status !== 'known') {
+    return ''
+  }
+  if (ref.info.kind !== 'node') {
+    return handleId === 'terminal' ? '' : handleId
   }
   const handles = extensionRegistry.resolveNode(ref.info.typeId)?.handles ?? []
   const handle = findExtensionHandle(handles, handleId, 'source')
   if (!handle) {
     return handleId
   }
-  return handle.dynamic ? handleId.slice(handle.id.length) : (handle.label ?? '')
+  if (handle.dynamic) {
+    return handleId.slice(handle.id.length)
+  }
+  const plainTerminals = handles.filter(
+    (h) => h.role === 'source' && h.contextType === handle.contextType && !h.dynamic,
+  )
+  return plainTerminals.length > 1 ? (handle.label ?? handleId) : ''
 }
 
 /**
