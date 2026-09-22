@@ -145,7 +145,7 @@ export function TerminalRouterInspector({
                 </ItemContent>
                 <ItemActions>
                   {route.context ? null : <Badge variant='outline'>unavailable</Badge>}
-                  <Button variant='ghost' size='icon-xs' onClick={() => removeRoute(route.id)} title='Remove'>
+                  <Button variant='ghost' size='icon' onClick={() => removeRoute(route.id)} title='Remove'>
                     <icons.Trash2 />
                   </Button>
                 </ItemActions>

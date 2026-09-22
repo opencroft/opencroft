@@ -185,24 +185,23 @@ export function NodeInspector({
           <Button
             variant='ghost'
             size='icon'
-            className='size-6'
             title='Edit extension source'
             onClick={() => onEditExtension(resolved.extension.manifest.id)}
           >
-            <Pencil className='size-3.5' />
+            <Pencil />
           </Button>
         )}
+        {/* Same size as the embedded chat header's buttons (ChatDock). */}
         <Button
           variant='ghost'
           size='icon'
-          className='size-6'
           onClick={() => onExpandedChange(!expanded)}
           title={expanded ? 'Collapse' : 'Expand'}
         >
-          <ExpandIcon className='size-3.5' />
+          <ExpandIcon />
         </Button>
-        <Button variant='ghost' size='icon' className='size-6' onClick={onDeselect} title='Close'>
-          <X className='size-3.5' />
+        <Button variant='ghost' size='icon' onClick={onDeselect} title='Close'>
+          <X />
         </Button>
       </Flex>
       <Separator />
