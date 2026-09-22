@@ -85,10 +85,10 @@ function getSnapshot(): SessionActivityKeys {
   return snapshot
 }
 
-// Each chat list's process-visibility indicator: blocked on a permission
-// request (pending), a turn actively running (active), or a live agent
-// process at all (alive — a superset of the other two, since both imply a
-// process exists). `enabled` is per-consumer — pass `false` when that
+// Each chat list's process-visibility indicator: blocked on someone — a
+// permission request or a question (pending), a turn actively running
+// (active), or a live agent process at all (alive — a superset of the other
+// two, since both imply a process exists). `enabled` is per-consumer — pass `false` when that
 // surface has nothing to show a status for (e.g. no sessions yet) — but the
 // underlying poll is shared: it runs once no matter how many consumers
 // currently want it, and stops the moment none do.

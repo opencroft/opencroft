@@ -26,7 +26,8 @@ export interface GroupChatThreadListItem {
   // and the same type as an ordinary chat row -- a thread IS a session, so it
   // gets the session vocabulary rather than one of its own:
   //
-  //   waiting  blocked on an unresolved permission request -- needs a person
+  //   waiting  blocked on a person -- a permission to grant or a question to
+  //            answer
   //   working  a turn is actively running
   //   idle     the agent process is alive but not busy
   //   offline  no process

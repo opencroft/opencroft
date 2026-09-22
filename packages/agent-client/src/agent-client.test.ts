@@ -1692,6 +1692,58 @@ test('a plain-message elicitation still takes a free-text answer, and no answer 
   await h.client.deleteSession(h.sessionId)
 })
 
+// A question blocks a turn exactly as a permission request does, so the
+// session reads as awaiting someone until it is answered — whoever asked it.
+// Membership rather than equality: the store is shared across this file.
+test('an unanswered agent elicitation holds the session in awaitingUserSessionKeys, over its still-running turn', async () => {
+  const h = await setup('openclaw', { sessionKey: 'agent:asks:form' })
+  await h.client.prompt(h.sessionId, 'go', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  const { createElicitation } = buildClient(() => h.sessionId, 'local')
+  assert.ok(createElicitation)
+  const response = createElicitation({
+    mode: 'form',
+    sessionId: h.sessionId,
+    message: 'Pick one',
+    requestedSchema: { type: 'object', properties: {} },
+  })
+  const ask = h.events.filter((event) => event.kind === 'ask_user').at(-1)
+  assert.ok(ask && ask.kind === 'ask_user')
+  assert.ok(h.client.awaitingUserSessionKeys().includes('agent:asks:form'))
+  assert.ok(h.client.activeSessionKeys().includes('agent:asks:form'), 'the turn is still in flight underneath')
+  h.client.resolveElicitation(ask.requestId, {})
+  await response
+  assert.ok(!h.client.awaitingUserSessionKeys().includes('agent:asks:form'), 'answered, no longer awaiting')
+  h.endTurn()
+  await settle()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a host-raised askUser and a url elicitation both await the user until they end', async () => {
+  const h = await setup('openclaw', { sessionKey: 'agent:asks:host' })
+  const hostAsk = h.client.askUser(h.sessionId, { message: 'Which way?' })
+  const raised = h.events.filter((event) => event.kind === 'ask_user').at(-1)
+  assert.ok(raised && raised.kind === 'ask_user')
+  assert.ok(h.client.awaitingUserSessionKeys().includes('agent:asks:host'))
+  h.client.resolveElicitation(raised.requestId)
+  assert.equal(await hostAsk, null)
+  assert.ok(!h.client.awaitingUserSessionKeys().includes('agent:asks:host'), 'dismissed, no longer awaiting')
+
+  const { createElicitation, completeElicitation } = buildClient(() => h.sessionId, 'local')
+  assert.ok(createElicitation && completeElicitation)
+  const login = createElicitation({
+    mode: 'url',
+    sessionId: h.sessionId,
+    message: 'Authenticate',
+    url: 'https://example.invalid/login',
+    elicitationId: 'elic-awaiting',
+  })
+  assert.ok(h.client.awaitingUserSessionKeys().includes('agent:asks:host'))
+  await completeElicitation({ elicitationId: 'elic-awaiting' })
+  await login
+  assert.ok(!h.client.awaitingUserSessionKeys().includes('agent:asks:host'), 'completed by the agent, no longer awaiting')
+  await h.client.deleteSession(h.sessionId)
+})
+
 test('a command prompt is delivered verbatim — no tag, no author, no note', async () => {
   const h = await setup()
   await h.client.prompt(h.sessionId, '/review src', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
@@ -1975,7 +2027,7 @@ test('deleteSession does not kill the subprocess while a sibling session still s
 
 // ── activeSessionKeys ────────────────────────────────────────────────────
 //
-// Mirrors pendingPermissionSessionKeys: the session key only appears while a
+// Mirrors awaitingUserSessionKeys: the session key only appears while a
 // turn is actually in flight (activeTurns > 0), and only when the selection
 // carried a sessionKey at all — a session without one (e.g. an internal/ad
 // hoc harness use) must never surface as a bare falsy entry.
@@ -2002,8 +2054,8 @@ test('a session created without a sessionKey never appears, even mid-turn', asyn
 
 // ── aliveSessionKeys ─────────────────────────────────────────────────────
 //
-// Unlike activeSessionKeys (needs a turn in flight) or pendingPermissionSessionKeys
-// (needs a blocked permission), this is "does a live agent process exist for
+// Unlike activeSessionKeys (needs a turn in flight) or awaitingUserSessionKeys
+// (needs a permission or a question left unanswered), this is "does a live agent process exist for
 // this key at all" — true the moment the session is created, false once it's
 // deleted. The process-visibility indicator's base signal.
 //
@@ -5253,7 +5305,7 @@ test("a subagent's permission request is asked in the parent chat and answered f
   const asked = h.events.find((event) => event.kind === 'permission_request')
   assert.ok(asked && asked.kind === 'permission_request', 'the request reached the parent session')
   assert.equal(asked.title, 'Run a command')
-  assert.deepEqual(h.client.pendingPermissionSessionKeys(), ['agent:perm-parent'], 'the PARENT is the blocked one')
+  assert.deepEqual(h.client.awaitingUserSessionKeys(), ['agent:perm-parent'], 'the PARENT is the blocked one')
   h.client.resolvePermission(asked.requestId, 'yes')
   assert.deepEqual(await response, { outcome: { outcome: 'selected', optionId: 'yes' } })
   assert.ok(

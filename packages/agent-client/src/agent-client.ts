@@ -3105,10 +3105,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     },
 
     // Session keys (selection.sessionKey) of every session currently blocked on
-    // an unresolved permission request — lets a host badge those sessions.
-    pendingPermissionSessionKeys(): string[] {
+    // the person: an unresolved permission request, or an unanswered question —
+    // an elicitation the agent sent or one the host raised through askUser. The
+    // two block a turn the same way, so a host badging "needs someone" reads
+    // them as one state.
+    awaitingUserSessionKeys(): string[] {
       const keys = new Set<string>()
-      for (const { sessionId } of store.pendingPermissions.values()) {
+      for (const { sessionId } of [...store.pendingPermissions.values(), ...store.pendingElicitations.values()]) {
         const key = store.sessions.get(sessionId)?.selection.sessionKey
         if (key) {
           keys.add(key)
@@ -3120,9 +3123,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // Session keys of every session with a turn currently in flight (one or
     // more prompt promises unsettled — see `activeTurns`) — lets a host badge
     // sessions that are actively thinking/streaming/running tools, independent
-    // of the pending-permission state above (a session can only be one or the
-    // other in practice: a turn blocked on a permission request has already
-    // paused, but both reads are separate so a host can tell them apart).
+    // of the awaiting-user state above (a turn blocked on a permission request
+    // or a question is still in flight, so a session awaiting someone is in
+    // both sets — the reads are separate so a host can tell them apart).
     activeSessionKeys(): string[] {
       const keys = new Set<string>()
       for (const session of store.sessions.values()) {
@@ -3194,11 +3197,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
 
     // Session keys of every session with a *live agent process* right now —
     // i.e. present in `store.sessions` at all, whether idle, working, or
-    // pending permission. A restarted server (or a session ended via
+    // awaiting someone. A restarted server (or a session ended via
     // deleteSession without a matching close) has none until the tab's
     // session is next opened — see openLocalSession's cold-start resume.
     // Lets a host show "process alive" independent of activeSessionKeys
-    // (working) and pendingPermissionSessionKeys (blocked).
+    // (working) and awaitingUserSessionKeys (blocked).
     aliveSessionKeys(): string[] {
       const keys = new Set<string>()
       for (const session of store.sessions.values()) {

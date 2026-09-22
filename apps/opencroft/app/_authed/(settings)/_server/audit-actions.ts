@@ -139,7 +139,7 @@ export const listLiveSessions = createServerFn({ method: 'GET', strict: { output
   .middleware([adminOnly])
   .handler(async (): Promise<LiveSessionRow[]> => {
     const keys = {
-      pending: new Set(agentClient.pendingPermissionSessionKeys()),
+      pending: new Set(agentClient.awaitingUserSessionKeys()),
       active: new Set(agentClient.activeSessionKeys()),
       background: new Set(agentClient.backgroundWorkSessionKeys()),
       alive: new Set(agentClient.aliveSessionKeys()),

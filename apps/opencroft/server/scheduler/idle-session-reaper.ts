@@ -72,7 +72,7 @@ export function selectDueSessions(
 
 function currentStatuses(sessionKeys: string[]): Map<string, SessionStatus> {
   const keys = {
-    pending: new Set(agentClient.pendingPermissionSessionKeys()),
+    pending: new Set(agentClient.awaitingUserSessionKeys()),
     active: new Set(agentClient.activeSessionKeys()),
     background: new Set(agentClient.backgroundWorkSessionKeys()),
     alive: new Set(agentClient.aliveSessionKeys()),
@@ -138,7 +138,7 @@ async function reapOne(sessionKey: string): Promise<void> {
     // `working` — see deriveSessionStatus), so a session mid-delegation can
     // never classify as idle here: unloading it would kill that work silently.
     const fresh = deriveSessionStatus(sessionKey, {
-      pending: new Set(agentClient.pendingPermissionSessionKeys()),
+      pending: new Set(agentClient.awaitingUserSessionKeys()),
       active: new Set(agentClient.activeSessionKeys()),
       background: new Set(agentClient.backgroundWorkSessionKeys()),
       alive: new Set(agentClient.aliveSessionKeys()),

@@ -404,7 +404,7 @@ export function turnsPageForSessionKey(
 ): TurnsPage {
   const turns = params.turns && params.turns > 0 ? Math.min(Math.floor(params.turns), MAX_TURNS) : DEFAULT_TURNS
   const sessionStatus = deriveSessionStatus(sessionKey, {
-    pending: new Set(agentClient.pendingPermissionSessionKeys()),
+    pending: new Set(agentClient.awaitingUserSessionKeys()),
     active: new Set(agentClient.activeSessionKeys()),
     background: new Set(agentClient.backgroundWorkSessionKeys()),
     alive: new Set(agentClient.aliveSessionKeys()),

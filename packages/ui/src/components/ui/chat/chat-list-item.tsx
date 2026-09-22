@@ -66,7 +66,8 @@ interface ChatListItemProps {
 //   offline  -> no process          -> "Offline",  no dot
 //   idle     -> process alive/idle  -> "Idle",     no dot
 //   working  -> active turn         -> "Working",  green (success) dot
-//   waiting  -> pending approval    -> "Waiting",  blue (primary) dot
+//   waiting  -> needs someone       -> "Waiting",  blue (primary) dot
+//               (a permission to grant or a question to answer)
 // The concrete dot colours live in the shared status-indicator primitive.
 //
 // Exported because this row's status line is THE vocabulary for a session's
