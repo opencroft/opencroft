@@ -67,18 +67,25 @@ export function AttachmentChip({ name, src, uploading, error, onRemove, classNam
       title={title}
     >
       {error ? (
-        <span className='flex size-full items-center justify-center' aria-label={title}>
+        <span className='flex size-full items-center justify-center' aria-hidden='true'>
           <AlertCircle className='size-4 text-destructive' />
         </span>
       ) : src ? (
         // A plain img: the host hands over an object URL or a stored one, and a
         // framework's image component would want dimensions this component has
-        // no way to know.
-        // biome-ignore lint/performance/noImgElement: a host-provided blob/object URL, not a static asset
+        // no way to know. It also carries its own accessible name in `alt`,
+        // which is why the sibling below is only for the other two states.
         <img src={src} alt={name} className={cn('size-full object-cover', uploading && 'opacity-40')} />
       ) : (
-        <span className='size-full' aria-label={title} />
+        <span className='size-full' aria-hidden='true' />
       )}
+      {/* The name -- and the reason, when there is one -- as a SIBLING rather
+          than an `aria-label` on the mark above it: a generic span has no role
+          to carry one, so the label is dropped and the announcement never
+          happens. This was shipped wrong in v1: the mark carried a label
+          nothing read, so a chip whose upload had failed was an unlabelled box
+          to everything that does not render pictures. */}
+      {error || !src ? <span className='sr-only'>{title}</span> : null}
       {uploading && !error ? (
         <span className='absolute inset-0 flex items-center justify-center'>
           <Loader2 className='size-4 animate-spin text-muted-foreground' />

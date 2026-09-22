@@ -604,6 +604,7 @@ export function AgentCommandBar({
       : []
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: a drop target has no interactive ARIA role to take -- dropping is a pointer-only gesture with no keyboard equivalent to expose, and the same capability is reachable from the attach control in the action row, which is a real button
     <div
       className={cn(
         'flex min-w-0 flex-1 flex-col gap-1',
