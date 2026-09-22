@@ -20,3 +20,11 @@ export function reasoningEfforts(model: string): string[] {
   }
   return []
 }
+
+// The closest an OpenAI-compatible endpoint comes to "do not think" for this
+// model: `minimal` where the scale has it, and nothing at all where it does
+// not — a model that only thinks when asked is already off while nothing is
+// sent.
+export function leastEffort(model: string): string | undefined {
+  return reasoningEfforts(model).includes('minimal') ? 'minimal' : undefined
+}

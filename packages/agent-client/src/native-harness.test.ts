@@ -166,13 +166,16 @@ test('a model with no known reasoning levels advertises no effort option at all'
   assert.equal(byId(buildConfigOptions(sessionFor(), selectionFor('some-plain-model')), 'effort'), undefined)
 })
 
-test('a reasoning model offers the grades it takes, and does not claim an off it cannot send', () => {
-  // 'off' would mean an instruction not to think, which an OpenAI-compatible
-  // endpoint has no way to express. The client adds 'default' itself.
+test('a reasoning model offers the grades it takes, then off as the floor', () => {
+  // `off` asks to think as little as the endpoint allows: the weakest grade
+  // the scale has, or nothing for a model that only thinks when asked. The
+  // client adds 'default' itself.
   const effort = byId(buildConfigOptions(sessionFor(), selectionFor('gpt-5')), 'effort')
   assert.ok(effort)
-  assert.ok((effort.options?.length ?? 0) > 0)
-  assert.ok(!effort.options?.some((o) => o.value === 'off'))
+  assert.deepEqual(
+    effort.options?.map((o) => o.value),
+    ['minimal', 'low', 'medium', 'high', 'off'],
+  )
 })
 
 test('a session choice outranks the profile for both model and effort', () => {

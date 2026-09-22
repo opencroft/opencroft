@@ -2,20 +2,11 @@ import { randomUUID } from 'node:crypto'
 
 import type { McpServer as AcpMcpServer, Client, ContentBlock, SessionConfigOption } from '@agentclientprotocol/sdk'
 import { PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
-import {
-  type JSONSchema7,
-  jsonSchema,
-  type LanguageModel,
-  type ModelMessage,
-  stepCountIs,
-  streamText,
-  type ToolSet,
-  tool,
-} from 'ai'
+import { type JSONSchema7, jsonSchema, type ModelMessage, stepCountIs, streamText, type ToolSet, tool } from 'ai'
 import { type ZodRawShape, z } from 'zod'
 
 import type { AgentConnection } from './connection'
+import { reasoningProviderOptions, resolveBaseUrl, resolveModel } from './endpoint'
 import { errorMessage } from './errors'
 import { connectMcpToolset } from './mcp-client'
 import {
@@ -47,43 +38,6 @@ export interface NativeHarnessConfig {
   // Excludes the built-in local server: its tools/skills already run here.
   // Re-evaluated per turn so refreshes apply without a session restart.
   loadMcpServers?: (selection: AgentSelection) => Promise<AcpMcpServer[]>
-}
-
-// The harness reaches every provider through its OpenAI-compatible endpoint.
-// A per-selection baseUrl override wins; otherwise the provider table endpoint;
-// otherwise the public OpenAI default. Providers with no OpenAI endpoint
-// (native-only Anthropic / Gemini) are unreachable here by design.
-function resolveBaseUrl(selection: AgentSelection): string {
-  if (selection.baseUrl) {
-    return selection.baseUrl
-  }
-  const provider = findProvider(selection.providerId)
-  const endpoint = provider?.endpoints.openai
-  if (endpoint) {
-    return endpoint
-  }
-  if (provider && 'openai' in provider.endpoints) {
-    return 'https://api.openai.com/v1'
-  }
-  throw new Error(
-    `Provider "${selection.providerId}" has no OpenAI-compatible endpoint; the native harness only reaches OpenAI-compatible models.`,
-  )
-}
-
-// `model` overrides the profile's choice for one session, which is what the
-// session's own model config option sets.
-function resolveModel(selection: AgentSelection, model = selection.model): LanguageModel {
-  const provider = createOpenAICompatible({
-    name: selection.providerId,
-    baseURL: resolveBaseUrl(selection),
-    apiKey: selection.apiKey,
-    // A streaming OpenAI-compatible response carries no token usage unless it
-    // is asked for: this turns on `stream_options: { include_usage: true }`.
-    // Every turn here streams, so without it the harness reports no usage at
-    // all and the context ring has nothing to render.
-    includeUsage: true,
-  })
-  return provider(model)
 }
 
 // FinishReason (AI SDK) -> StopReason (ACP).
@@ -384,12 +338,13 @@ export function buildConfigOptions(
       category: 'thought_level',
       name: 'Reasoning effort',
       type: 'select',
-      // Only the grades this model takes. `off` would mean an instruction not
-      // to think, and an OpenAI-compatible endpoint has no way to say that —
-      // advertising it would name a state this harness cannot reach. The client
-      // adds `default` itself, which is the "leave it alone" this can honour.
       currentValue: sessionEffort(session, selection) ?? 'default',
-      options: efforts.map((value) => ({ value, name: labelFor(value) })),
+      // `off` closes the scale. No OpenAI-compatible endpoint takes a literal
+      // "do not think" value, so selecting it sends the weakest grade the model
+      // accepts — or nothing, for a model that only thinks when asked. The
+      // client adds `default` itself, which is the "leave it alone" this can
+      // also honour.
+      options: [...efforts.map((value) => ({ value, name: labelFor(value) })), { value: 'off', name: 'Off' }],
     })
   }
   return options
@@ -664,18 +619,11 @@ export function createNativeHarness(
 
       const gate: ToolGate = { sessionId, client, getMode: () => session.mode }
       const { toolset, close, readOnlyTools } = await buildToolset(config, gate, session.permissions, selection)
-      // Reasoning effort goes to the OpenAI-compatible provider, keyed by the
-      // provider name used in resolveModel (selection.providerId). 'off' is an
-      // explicit "no preference" choice from the UI, not a literal effort value.
-      const effort = sessionEffort(session, selection)
-      const providerOptions =
-        effort && effort !== 'default' && effort !== 'off'
-          ? {
-              [selection.providerId]: {
-                reasoningEffort: effort,
-              },
-            }
-          : undefined
+      const providerOptions = reasoningProviderOptions(
+        selection,
+        sessionEffort(session, selection),
+        sessionModel(session, selection),
+      )
       const result = streamText({
         model: resolveModel(selection, sessionModel(session, selection)),
         system: systemPrompt || undefined,

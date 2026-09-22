@@ -15,6 +15,15 @@ export function findAdapter(id: string): HarnessAdapter | undefined {
   return HARNESS_ADAPTERS.find((adapter) => adapter.id === id)
 }
 
+// Whether a selection runs in-process rather than as an ACP subprocess.
+// Stated once here because several callers branch on it -- the engine when it
+// picks a connection, the fork path, and the independent chat completions --
+// and an adapter table that grew a second native harness would otherwise leave
+// them disagreeing about what "native" means.
+export function isNativeSelection(selection: AgentSelection): boolean {
+  return findAdapter(selection.adapterId)?.kind === 'native'
+}
+
 export function adaptersForProvider(providerId: string): HarnessAdapter[] {
   const provider = findProvider(providerId)
   if (!provider) {

@@ -7,6 +7,17 @@ export { agentClient, createAgentClient, supportsImagePrompt, supportsMidTurnInp
 // so a host cannot invent a second spelling of the same reference.
 export type { AttachmentRef, PromptAttachment } from './attachments'
 export { attachmentRefsIn, attachmentTag, isImageMime } from './attachments'
+// Independent chat completions -- one request/response against a profile's
+// endpoint, with no session and no tools (also importable via the subpath).
+export type {
+  ChatCompletionRequest,
+  ChatCompletionResult,
+  ChatCompletionStream,
+  ChatCompletionUsage,
+  ChatMessageRecord,
+} from './chat-completion'
+export { completeChat, streamChat, toChatMessages } from './chat-completion'
+export { resolveSelectionContextWindow, selectionModels } from './endpoint'
 export type { ChatBlock, ChatMessage } from './fold'
 export { buildBlocks, foldEvents, isTerminalToolStatus } from './fold'
 // Tool / skill registration surface.
@@ -16,6 +27,9 @@ export type { EventsWindow } from './pagination'
 // Permission model (also importable via the subpath).
 export type { AgentRole, DefaultAccess, PermissionValue, ResolvedPermissions } from './permissions'
 export { accessFor, resolveSessionPermissions, skillKey, toolKey } from './permissions'
+// Which reasoning-effort levels a model name suggests, and the weakest of them
+// — client-safe heuristics, keyed off model-name families.
+export { leastEffort, reasoningEfforts } from './reasoning'
 // Canonical reasoning-effort vocabulary (also importable via the subpath).
 export type { CanonicalEffortId, CanonicalEffortInfo } from './session-effort'
 export { CANONICAL_EFFORTS, canonicalEffortId } from './session-effort'

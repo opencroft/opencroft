@@ -26,6 +26,7 @@ import type {
 import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION, type Stream } from '@agentclientprotocol/sdk'
 
 import { attachmentRefsIn, isImageMime, type PromptAttachment } from './attachments'
+import { type ChatMessageRecord, toChatMessages } from './chat-completion'
 import type { AgentConnection } from './connection'
 import { normalizeUsage } from './context-window'
 import { errorMessage } from './errors'
@@ -53,7 +54,7 @@ import { type PermissionHandler, permissionContext } from './permission-context'
 import { type ResolvedPermissions, toolKey } from './permissions'
 import { DEFAULT_PRESENCE, msUntilDue, presenceWindowMs } from './presence'
 import { buildDelivery, type DeliveryNote } from './queue-tags'
-import { buildSpawnConfig, findAdapter } from './resolve'
+import { buildSpawnConfig, findAdapter, isNativeSelection } from './resolve'
 import { foldRestoredState, restorableEvents } from './session-restore'
 import { fileSkillHandler, fileSkills } from './skills'
 import { findTurnBoundary } from './turns'
@@ -1630,10 +1631,6 @@ function largestQuotaModel(quota: TurnQuota | undefined): string | undefined {
     }
   }
   return best.model
-}
-
-function isNativeSelection(selection: AgentSelection): boolean {
-  return findAdapter(selection.adapterId)?.kind === 'native'
 }
 
 // "1 attachment" / "2 attachments" — the count is the point of these messages,
@@ -4411,6 +4408,17 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         return null
       }
       return [...session.events]
+    },
+
+    // A native session's conversation, in the package's own record type.
+    //
+    // The event log is the transcript a reader sees; this is what the model was
+    // actually sent, and it is what another completion has to be given to carry
+    // the same conversation on. Null for an unknown session and for an ACP one:
+    // a subprocess owns its history and never hands it over.
+    chatHistory(sessionId: string): ChatMessageRecord[] | null {
+      const native = store.nativeSessions.get(sessionId)
+      return native ? toChatMessages(native.messages) : null
     },
 
     async reset(): Promise<void> {
