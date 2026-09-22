@@ -9,12 +9,12 @@
 // failure; it is a blank chat and a browser console.
 //
 // THE REFERENCE LIVES IN THE TEXT, and that is structural rather than a
-// shortcut. A message can be held by a cadence, and a held message is one text
-// column (AgentQueueEntry.text); the transcript a reader sees is rebuilt from
-// the delivered text too. A reference passed BESIDE the text would survive
-// neither -- it would reach the harness when a message went straight through
-// and vanish the moment the same message waited for a boundary, which is the
-// worst kind of bug to own: it works while you are watching.
+// shortcut. A message can be held by a cadence, and a held message is stored as
+// its text and nothing else; the transcript a reader sees is rebuilt from the
+// delivered text too. A reference passed BESIDE the text would survive neither
+// -- it would reach the harness when a message went straight through and vanish
+// the moment the same message waited for a boundary, which is the worst kind of
+// bug to own: it works while you are watching.
 //
 // So the composer writes a tag, the same way the host already marks a passed
 // selection, and delivery turns each tag back into the ACP image block it
