@@ -37,6 +37,7 @@ import {
   TERMINAL_ROUTER_HANDLES,
   TerminalRouterInspector,
   TerminalRouterNode,
+  TerminalRouterTerminalTab,
   terminalRouterExposeOutput,
 } from './nodes/terminal-router'
 import {
@@ -225,6 +226,15 @@ export default defineExtension({
       defaultData: { routes: [] },
       component: TerminalRouterNode as unknown as never,
       inspector: TerminalRouterInspector as unknown as never,
+      inspectorTabs: [
+        {
+          id: 'terminal',
+          label: 'Terminal',
+          icon: 'TerminalSquare',
+          fullHeight: true,
+          component: TerminalRouterTerminalTab as unknown as never,
+        },
+      ],
       exposeOutput: terminalRouterExposeOutput as unknown as never,
     },
     {

@@ -1,4 +1,5 @@
 import { legacy } from '@opencroft/client'
+
 const { InputHandle, React, Terminal, icons, useNodeContext } = legacy
 
 import { WindowShell } from '../shared'
@@ -60,7 +61,8 @@ function flattenDockerExec(value: Record<string, unknown>): TerminalConnection {
   return { type: 'local', config: { command: 'docker', args: execArgs } }
 }
 
-function connectionFromContext(value: Record<string, unknown> | undefined): TerminalConnection | null {
+/** A terminal-context value as the Terminal component's connection; also used by the Terminal Router's tab. */
+export function connectionFromContext(value: Record<string, unknown> | undefined): TerminalConnection | null {
   if (!value) {
     return null
   }

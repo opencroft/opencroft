@@ -10,6 +10,7 @@ const {
   FieldGroup,
   FieldLabel,
   Input,
+  inspectorIntent,
   Item,
   ItemActions,
   ItemContent,
@@ -18,15 +19,24 @@ const {
   NodeFrame,
   OutputHandle,
   React,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Terminal,
   icons,
   invoke,
   toast,
+  useInspectorIntent,
+  useReactFlow,
   useUpdateNodeInternals,
 } = legacy
 
+import { connectionFromContext } from './terminal'
 import { routeHandleId, routeOutput, type TerminalRoute, type TerminalRouterData } from './terminal-router-shared'
 
-const { useEffect, useState } = React
+const { useCallback, useEffect, useState } = React
 
 export const TERMINAL_ROUTER_HANDLES = [
   { id: 'route-', contextType: 'terminal-context', role: 'source', label: 'Terminal', dynamic: true },
@@ -44,7 +54,18 @@ export function TerminalRouterNode({
   selected?: boolean
 }) {
   const routes = data.routes ?? []
+  const rf = useReactFlow()
   const updateNodeInternals = useUpdateNodeInternals()
+
+  // The same gesture as a Server node's Terminal pin: select the node and open
+  // its inspector's Terminal tab, here on the route that was clicked.
+  const openTerminal = useCallback(
+    (routeId: string) => {
+      rf.setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === id })))
+      inspectorIntent.open(id, 'terminal', routeId)
+    },
+    [id, rf],
+  )
   const handleKey = routes.map((route) => route.id).join(',')
 
   // Outputs come and go with the route list; React Flow has to re-measure the
@@ -64,10 +85,16 @@ export function TerminalRouterNode({
         <div className='flex flex-col gap-0.5'>
           {routes.map((route) => (
             <OutputHandle key={route.id} type='terminal-context' id={routeHandleId(route)}>
-              <TerminalRef
-                target={route.target}
-                className={`text-[10px] max-w-[180px] ${route.context ? '' : 'text-muted-foreground italic'}`}
-              />
+              <Button
+                variant='ghost'
+                size='sm'
+                className='nodrag nopan h-5 text-[10px] px-1.5 max-w-[200px]'
+                disabled={!route.context}
+                title={route.context ? undefined : 'Terminal unavailable'}
+                onClick={() => openTerminal(route.id)}
+              >
+                <TerminalRef target={route.target} />
+              </Button>
             </OutputHandle>
           ))}
         </div>
@@ -151,5 +178,42 @@ export function TerminalRouterInspector({
         <TerminalSelector value='' onChange={addRoute} placeholder='Add terminal…' disabled={adding} />
       </Field>
     </FieldGroup>
+  )
+}
+
+export function TerminalRouterTerminalTab({ nodeId, data }: { nodeId: string; data: TerminalRouterData }) {
+  const routes = (data.routes ?? []).filter((route) => route.context)
+  const intent = useInspectorIntent(nodeId)
+  const route = routes.find((r) => r.id === intent.instanceId) ?? routes[0]
+  if (!route) {
+    return <div className='p-3 text-xs text-muted-foreground italic'>No available terminals to open.</div>
+  }
+  const connection = connectionFromContext(route.context as Record<string, unknown>)
+  return (
+    <div className='flex h-full min-h-0 flex-col gap-2'>
+      {routes.length > 1 ? (
+        <Select value={route.id} onValueChange={(next: string) => inspectorIntent.setInstance(nodeId, next)}>
+          <SelectTrigger size='sm' className='w-full'>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {routes.map((r) => (
+              <SelectItem key={r.id} value={r.id}>
+                <TerminalRef target={r.target} />
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : null}
+      <div className='min-h-0 flex-1'>
+        {connection ? (
+          <Terminal
+            key={route.id}
+            connection={connection as unknown as import('@opencroft/terminal/client').TerminalConfig}
+            sessionKey={`${nodeId}:${route.id}`}
+          />
+        ) : null}
+      </div>
+    </div>
   )
 }
