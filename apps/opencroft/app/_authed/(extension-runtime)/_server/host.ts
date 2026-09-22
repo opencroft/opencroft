@@ -5,12 +5,13 @@ import nodeOs from 'node:os'
 import nodePath from 'node:path'
 
 import { db, spaceApp } from '@opencroft/db'
-import type { HostSecretsApi } from '@opencroft/server'
+import type { ExtensionServerHost, HostSecretsApi } from '@opencroft/server'
 import type { ExecOptions, ExecResult, ServerConfig, TerminalContext } from '@opencroft/terminal'
 import {
   exec,
   resolveKeyContent,
   sshExec,
+  startJobSession,
   terminalExec,
   terminalExecResult,
   terminalRun,
@@ -741,13 +742,18 @@ export interface ExtensionHost {
    * client code via getStream(extensionId, 'events').
    */
   events: { broadcast: (name: string, payload?: Record<string, unknown>) => void }
-  terminal: {
-    exec(ctx: TerminalContext, command: string): Promise<string>
-    run(ctx: TerminalContext, args: string[], env?: Record<string, string>): Promise<string>
-    execResult(ctx: TerminalContext, command: string, opts?: ExecOptions): Promise<ExecResult>
-    runResult(ctx: TerminalContext, args: string[], opts?: ExecOptions): Promise<ExecResult>
-    getContext(nodeId: string, handleId: string): Promise<TerminalContext>
-  }
+  /**
+   * Referenced, not copied. `ExtensionServerHost` is the declaration extensions
+   * compile against; `createHost` below is checked against this one. Spelling the
+   * members out twice made a member added to one and not the other fail only at the
+   * far end — an extension's own typecheck, or a call that is undefined at runtime.
+   * Pointing at the package's declaration makes that a compile error here instead.
+   *
+   * Only `terminal` is shared this way. The two host interfaces are deliberately
+   * different elsewhere, so do not widen this to the whole object without
+   * establishing that they agree.
+   */
+  terminal: ExtensionServerHost['terminal']
   ssh: {
     exec(config: ServerConfig, command: string): Promise<string>
     resolveKey(keyPath?: string): Promise<string | undefined>
@@ -854,6 +860,7 @@ export function createHost(extensionId: string): ExtensionHost {
       execResult: terminalExecResult,
       runResult: terminalRunResult,
       getContext: getTerminalContext,
+      startJob: startJobSession,
     },
     ssh: { exec: sshExec, resolveKey: resolveKeyContent },
     execContext: { dispatch: dispatchExecutionContextForHost },

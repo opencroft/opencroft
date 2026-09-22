@@ -8,8 +8,11 @@ import type * as nodeOs from 'node:os'
 import type * as nodePath from 'node:path'
 
 import type { ExecOptions, ExecResult, ServerConfig, TerminalContext } from '@opencroft/terminal'
+// Type-only: the job shapes live with the implementation, on the server entry. Nothing runtime
+// crosses this import, and duplicating them here would be a second definition to drift.
+import type { JobSession, JobSessionOptions } from '@opencroft/terminal/server'
 
-export type { ExecOptions, ExecResult, ServerConfig, TerminalContext }
+export type { ExecOptions, ExecResult, JobSession, JobSessionOptions, ServerConfig, TerminalContext }
 
 export interface GraphNodeRecord {
   id: string
@@ -152,6 +155,25 @@ export interface ExtensionServerHost {
     runResult(ctx: TerminalContext, args: string[], opts?: ExecOptions): Promise<ExecResult>
     /** Resolve a terminal context from a node's output handle ("node-id" + "handle-id"). */
     getContext(nodeId: string, handleId: string): Promise<TerminalContext>
+    /**
+     * Start a command as a watchable session and get back the key a client attaches to. Use this
+     * when the output has to appear WHILE the command runs; `execResult` is the right call when
+     * only the outcome matters.
+     *
+     * **It adds no reach that `exec` and `run` do not already have.** The command is chosen by your
+     * server code either way. What differs is delivery: instead of one result at the end, output
+     * goes to a terminal session as it arrives, and the returned `sessionKey` is what authorises
+     * attaching to that session.
+     *
+     * **So treat the key as the secret it is.** It is the entire authorisation to watch the job —
+     * return it in the action's response to the client that asked, and do not write it into node
+     * data or anywhere else a browser can read without having asked.
+     *
+     * A context with no non-pty streaming channel — anything but `local` and `ssh` today — is
+     * refused by rejection, before a key exists. So a rejection means nothing started and there is
+     * nothing for you to clean up.
+     */
+    startJob(ctx: TerminalContext, opts: JobSessionOptions): Promise<JobSession>
   }
   ssh: {
     exec(config: ServerConfig, command: string): Promise<string>
