@@ -62,6 +62,12 @@ const NON_CHECKOUT_EXCLUDES: ReadonlySet<string> = new Set(['node_modules', 'dis
  * Carried even when the checkout gitignores it, which `audio-pipelines` does:
  * an extension's `.gitignore` is about that extension's repository and has no
  * standing to decide whether the HOST keeps its own install record.
+ *
+ * SECOND DEFINITION of a literal the extension runtime already owns, as
+ * `SIDECAR_FILE` in apps/opencroft/app/_authed/(extension-runtime)/_server/
+ * paths.ts. Not imported because the arrow runs the other way — the app
+ * depends on this package. If the runtime renames the sidecar, this is the
+ * line that has to follow it, and nothing will fail until a restore does.
  */
 const HOST_SIDECAR = 'installed.json'
 
@@ -70,7 +76,6 @@ export interface WalkedEntry {
   relativePath: string
   absolutePath: string
   isDirectory: boolean
-  sizeBytes: number
   mtime: Date
   /** Unix mode bits, carried so an executable file restores as one. */
   mode: number
@@ -82,10 +87,10 @@ export interface SkippedEntry {
   reason: string
 }
 
-async function statMaybe(absolutePath: string): Promise<{ size: number; mtime: Date; mode: number } | null> {
+async function statMaybe(absolutePath: string): Promise<{ mtime: Date; mode: number } | null> {
   try {
     const stat = await fs.stat(absolutePath)
-    return { size: stat.size, mtime: stat.mtime, mode: stat.mode & 0o7777 }
+    return { mtime: stat.mtime, mode: stat.mode & 0o7777 }
   } catch {
     return null
   }
@@ -96,6 +101,42 @@ async function isDirectory(absolutePath: string): Promise<boolean> {
     return (await fs.stat(absolutePath)).isDirectory()
   } catch {
     return false
+  }
+}
+
+/**
+ * The two entry shapes, in one place each.
+ *
+ * `readdir` says what an entry IS, but carries neither the mtime the archive
+ * records nor the mode an executable is restored from, so both forms need the
+ * stat — and both had the same `stat?.x ?? default` fallback written out at
+ * three call sites apiece.
+ */
+async function directoryEntry(absolutePath: string, relativePath: string): Promise<WalkedEntry> {
+  const stat = await statMaybe(absolutePath)
+  return {
+    relativePath: `${relativePath}/`,
+    absolutePath,
+    isDirectory: true,
+    mtime: stat?.mtime ?? new Date(),
+    mode: stat?.mode ?? 0o755,
+  }
+}
+
+/** Null when the path is gone — a staged delete, or a file that vanished mid-walk. */
+async function fileEntry(absolutePath: string, relativePath: string): Promise<WalkedEntry | null> {
+  const stat = await statMaybe(absolutePath)
+  return stat && { relativePath, absolutePath, isDirectory: false, mtime: stat.mtime, mode: stat.mode }
+}
+
+/** Readdir in a fixed order, so two runs over an unchanged tree produce the same archive. */
+async function readSorted(absoluteDir: string, relativePrefix: string, skipped: SkippedEntry[]): Promise<Dirent[]> {
+  try {
+    const entries = await fs.readdir(absoluteDir, { withFileTypes: true })
+    return entries.sort((a, b) => a.name.localeCompare(b.name))
+  } catch (err) {
+    skipped.push({ path: relativePrefix || '.', reason: `unreadable: ${(err as Error).message}` })
+    return []
   }
 }
 
@@ -113,14 +154,7 @@ async function* walkAll(
   skipped: SkippedEntry[],
   excludeNames: ReadonlySet<string> = new Set(),
 ): AsyncGenerator<WalkedEntry> {
-  let entries: Dirent[]
-  try {
-    entries = await fs.readdir(absoluteDir, { withFileTypes: true })
-  } catch (err) {
-    skipped.push({ path: relativePrefix || '.', reason: `unreadable: ${(err as Error).message}` })
-    return
-  }
-  for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
+  for (const entry of await readSorted(absoluteDir, relativePrefix, skipped)) {
     const relativePath = relativePrefix ? `${relativePrefix}/${entry.name}` : entry.name
     const absolutePath = path.join(absoluteDir, entry.name)
     if (excludeNames.has(entry.name)) {
@@ -131,15 +165,7 @@ async function* walkAll(
       continue
     }
     if (entry.isDirectory()) {
-      const stat = await statMaybe(absolutePath)
-      yield {
-        relativePath: `${relativePath}/`,
-        absolutePath,
-        isDirectory: true,
-        sizeBytes: 0,
-        mtime: stat?.mtime ?? new Date(),
-        mode: stat?.mode ?? 0o755,
-      }
+      yield await directoryEntry(absolutePath, relativePath)
       yield* walkAll(absolutePath, relativePath, skipped, excludeNames)
       continue
     }
@@ -149,12 +175,12 @@ async function* walkAll(
       skipped.push({ path: relativePath, reason: 'not a regular file' })
       continue
     }
-    const stat = await statMaybe(absolutePath)
-    if (!stat) {
+    const file = await fileEntry(absolutePath, relativePath)
+    if (!file) {
       skipped.push({ path: relativePath, reason: 'vanished while reading' })
       continue
     }
-    yield { relativePath, absolutePath, isDirectory: false, sizeBytes: stat.size, mtime: stat.mtime, mode: stat.mode }
+    yield file
   }
 }
 
@@ -192,72 +218,34 @@ async function* walkCheckout(
     names.add(HOST_SIDECAR)
   }
   for (const name of [...names].sort()) {
-    const absolutePath = path.join(checkoutDir, name)
-    const stat = await statMaybe(absolutePath)
-    if (!stat) {
-      // In the index but not in the worktree — a staged delete. Nothing to store.
-      continue
-    }
-    yield {
-      relativePath: `${relativePrefix}/${name}`,
-      absolutePath,
-      isDirectory: false,
-      sizeBytes: stat.size,
-      mtime: stat.mtime,
-      mode: stat.mode,
+    // Null means the index lists it but the worktree does not — a staged
+    // delete, with nothing to store.
+    const file = await fileEntry(path.join(checkoutDir, name), `${relativePrefix}/${name}`)
+    if (file) {
+      yield file
     }
   }
   // The history itself, so an unpushed commit or a local branch survives.
   const gitDir = path.join(checkoutDir, '.git')
-  const gitStat = await statMaybe(gitDir)
-  yield {
-    relativePath: `${relativePrefix}/.git/`,
-    absolutePath: gitDir,
-    isDirectory: true,
-    sizeBytes: 0,
-    mtime: gitStat?.mtime ?? new Date(),
-    mode: gitStat?.mode ?? 0o755,
-  }
+  yield await directoryEntry(gitDir, `${relativePrefix}/.git`)
   yield* walkAll(gitDir, `${relativePrefix}/.git`, skipped)
 }
 
 async function* walkGitAware(absoluteRoot: string, skipped: SkippedEntry[]): AsyncGenerator<WalkedEntry> {
-  let entries: Dirent[]
-  try {
-    entries = await fs.readdir(absoluteRoot, { withFileTypes: true })
-  } catch (err) {
-    skipped.push({ path: '.', reason: `unreadable: ${(err as Error).message}` })
-    return
-  }
-  for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
+  for (const entry of await readSorted(absoluteRoot, '', skipped)) {
     const absolutePath = path.join(absoluteRoot, entry.name)
     if (entry.isSymbolicLink()) {
       skipped.push({ path: entry.name, reason: 'symlink' })
       continue
     }
     if (!entry.isDirectory()) {
-      const stat = await statMaybe(absolutePath)
-      if (stat) {
-        yield {
-          relativePath: entry.name,
-          absolutePath,
-          isDirectory: false,
-          sizeBytes: stat.size,
-          mtime: stat.mtime,
-          mode: stat.mode,
-        }
+      const file = await fileEntry(absolutePath, entry.name)
+      if (file) {
+        yield file
       }
       continue
     }
-    const stat = await statMaybe(absolutePath)
-    yield {
-      relativePath: `${entry.name}/`,
-      absolutePath,
-      isDirectory: true,
-      sizeBytes: 0,
-      mtime: stat?.mtime ?? new Date(),
-      mode: stat?.mode ?? 0o755,
-    }
+    yield await directoryEntry(absolutePath, entry.name)
     const listed = await gitListedFiles(absolutePath)
     if (listed) {
       yield* walkCheckout(absolutePath, entry.name, listed, skipped)

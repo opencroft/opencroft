@@ -17,6 +17,7 @@ import {
   extractBackupFiles,
   readArchiveManifest,
   readBackupArchive,
+  summariseTables,
   writeBackupArchive,
 } from './archive'
 import { BACKUP_FILE_ROOTS } from './file-tree'
@@ -39,6 +40,20 @@ function dataDir(...segments: string[]): string {
 }
 
 const BACKUPS_DIR = dataDir('backups')
+
+/**
+ * Where a backup is assembled before it is a backup.
+ *
+ * A separate directory rather than a naming convention in the listing's own
+ * directory: `listBackupFiles` is what the UI offers as restorable, and
+ * "invisible because of how it is spelled" held for exactly as long as it took
+ * to write the second caller, which spelled it differently. Being elsewhere
+ * also makes a write killed mid-flight reclaimable — by name, nothing can tell
+ * a crashed partial from one a live write is still filling.
+ *
+ * Same filesystem as BACKUPS_DIR, so the rename into place stays atomic.
+ */
+const STAGING_DIR = path.join(BACKUPS_DIR, '.staging')
 
 const SAFE_FILENAME = /^[\w.-]+\.(zip|json)$/
 
@@ -84,21 +99,32 @@ export async function listBackupFiles(): Promise<BackupFileInfo[]> {
   return files.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
-export async function createBackupFile(): Promise<BackupFileInfo> {
-  await fs.mkdir(BACKUPS_DIR, { recursive: true })
-  const backup = await createBackup(db)
-  const filename = `backup-${timestampForFilename(backup.createdAt)}.zip`
-  // Written beside its final name and moved into place, so a crash or a full
-  // disk mid-write leaves no half-archive for the list to offer as a restore.
-  const partial = path.join(BACKUPS_DIR, `.${filename}.partial`)
+/**
+ * Build `filename` off to one side and move it into the listing only once
+ * `write` has returned. A failure leaves nothing behind for the UI to offer as
+ * a restore.
+ */
+async function writeStaged(filename: string, write: (stagedPath: string) => Promise<void>): Promise<BackupFileInfo> {
+  // Whatever a killed process left here is unreachable and unreferenced: this
+  // is the only writer, and a finished file has already been renamed away.
+  await fs.rm(STAGING_DIR, { recursive: true, force: true })
+  await fs.mkdir(STAGING_DIR, { recursive: true })
+  const staged = path.join(STAGING_DIR, filename)
   try {
-    await writeBackupArchive(partial, { backup, dataDirectory: dataDir(), roots: BACKUP_FILE_ROOTS })
-    await fs.rename(partial, path.join(BACKUPS_DIR, filename))
-  } catch (err) {
-    await fs.rm(partial, { force: true })
-    throw err
+    await write(staged)
+    await fs.rename(staged, path.join(BACKUPS_DIR, filename))
+  } finally {
+    await fs.rm(STAGING_DIR, { recursive: true, force: true })
   }
   return statInfo(filename)
+}
+
+export async function createBackupFile(): Promise<BackupFileInfo> {
+  const backup = await createBackup(db)
+  const filename = `backup-${timestampForFilename(backup.createdAt)}.zip`
+  return writeStaged(filename, (staged) =>
+    writeBackupArchive(staged, { backup, dataDirectory: dataDir(), roots: BACKUP_FILE_ROOTS }).then(() => undefined),
+  )
 }
 
 function isLegacyBackup(value: unknown): value is Backup {
@@ -144,43 +170,29 @@ export async function describeBackupFile(filename: string): Promise<BackupConten
   if (!isLegacyBackup(backup)) {
     throw new Error('Not a valid backup file')
   }
-  const tables: Record<string, number> = {}
-  let totalRows = 0
-  for (const [name, rows] of Object.entries(backup.tables)) {
-    tables[name] = rows.length
-    totalRows += rows.length
-  }
   return {
     format: 'json',
     formatVersion: backup.formatVersion,
     createdAt: backup.createdAt,
-    tables,
-    totalRows,
+    ...summariseTables(backup),
     fileRoots: [],
   }
 }
 
 export async function saveUploadedBackup(bytes: Buffer, sourceName: string): Promise<BackupFileInfo> {
-  await fs.mkdir(BACKUPS_DIR, { recursive: true })
-  const isZip = /\.zip$/i.test(sourceName)
+  // The uploaded BYTES decide the format, not the name the browser sent.
+  const isZip = bytes.subarray(0, 2).toString('latin1') === 'PK'
   const base = sourceName.replace(/\.(zip|json)$/i, '').replace(/[^\w.-]/g, '_') || 'upload'
   const filename = `${base}-${Date.now()}.${isZip ? 'zip' : 'json'}`
-  const target = path.join(BACKUPS_DIR, filename)
-  const partial = `${target}.partial`
-  await fs.writeFile(partial, bytes)
-  try {
+  return writeStaged(filename, async (staged) => {
+    await fs.writeFile(staged, bytes)
     // Validated before it is allowed to sit in the list looking restorable.
     if (isZip) {
-      await readArchiveManifest(partial)
+      await readArchiveManifest(staged)
     } else if (!isLegacyBackup(JSON.parse(bytes.toString('utf8')))) {
       throw new Error('Not a valid backup file')
     }
-  } catch (err) {
-    await fs.rm(partial, { force: true })
-    throw err instanceof Error ? err : new Error(String(err))
-  }
-  await fs.rename(partial, target)
-  return statInfo(filename)
+  })
 }
 
 export async function readBackupFileBuffer(filename: string): Promise<Buffer> {
@@ -215,7 +227,7 @@ export async function restoreBackupFile(filename: string): Promise<RestoreResult
   }
   const { backup, manifest, trailer } = await readBackupArchive(file)
   const summary = await restoreBackup(db, backup)
-  const extracted = await extractBackupFiles(file, dataDir(), manifest, trailer)
+  const extracted = await extractBackupFiles(file, dataDir(), { manifest, trailer })
   return { ...summary, restoredRoots: extracted.roots, filesWritten: extracted.files }
 }
 

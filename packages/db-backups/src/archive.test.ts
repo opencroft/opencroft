@@ -34,7 +34,18 @@ import {
   writeBackupArchive,
 } from './archive'
 import type { FileRoot } from './file-tree'
-import { readZip, writeZip } from './zip'
+import { readZip, writeZip, type ZipMember } from './zip'
+
+/** Every member of an archive, in order. Six call sites wrote this inline. */
+async function collect(archive: string): Promise<ZipMember[]> {
+  const members: ZipMember[] = []
+  await readZip(archive, (member) => {
+    members.push(member)
+  })
+  return members
+}
+
+const pathsIn = async (archive: string) => (await collect(archive)).map((member) => member.path)
 
 const workdir = mkdtempSync(join(tmpdir(), 'opencroft-archive-test-'))
 const dataDirectory = join(workdir, 'data')
@@ -154,10 +165,7 @@ test('a git checkout carries its source and skips what a clone rebuilds', {
   const archive = join(workdir, 'checkout.zip')
   await writeBackupArchive(archive, { backup: sampleBackup(), dataDirectory, roots: ROOTS })
 
-  const paths = new Set<string>()
-  await readZip(archive, (member) => {
-    paths.add(member.path)
-  })
+  const paths = new Set(await pathsIn(archive))
 
   const base = 'files/extensions/local/sample-ext/'
   assert.ok(paths.has(`${base}src/index.ts`), 'a tracked file was dropped')
@@ -178,10 +186,7 @@ test('a checkout that is not a git repository falls back to a static exclude lis
   const archive = join(workdir, 'no-git.zip')
   await writeBackupArchive(archive, { backup: sampleBackup(), dataDirectory, roots: ROOTS })
 
-  const paths = new Set<string>()
-  await readZip(archive, (member) => {
-    paths.add(member.path)
-  })
+  const paths = new Set(await pathsIn(archive))
 
   const base = 'files/extensions/local/sample-ext/'
   assert.ok(paths.has(`${base}src/index.ts`))
@@ -203,10 +208,7 @@ test('a symlink is recorded as skipped rather than followed', async () => {
     trailer.skipped.filter((entry) => entry.reason === 'symlink').map((entry) => entry.path),
     ['escape'],
   )
-  const paths: string[] = []
-  await readZip(archive, (member) => {
-    paths.push(member.path)
-  })
+  const paths = await pathsIn(archive)
   assert.ok(!paths.some((p) => p.includes('escape')), 'a symlink was followed out of the data directory')
 })
 
@@ -217,10 +219,7 @@ test('a damaged member is refused before anything is applied', async () => {
   // Rebuild the archive with one member's contents swapped for something of
   // the same length: the container is intact, every CRC and length agrees,
   // and only the SHA-256 in the trailer can tell.
-  const members: { path: string; data: Buffer }[] = []
-  await readZip(archive, (member) => {
-    members.push({ path: member.path, data: member.data })
-  })
+  const members = await collect(archive)
   const target = members.find((member) => member.path.endsWith('registry.json'))
   assert.ok(target, 'fixture changed: no registry.json in the archive')
   target.data = Buffer.alloc(target.data.length, 0x20)
@@ -233,10 +232,7 @@ test('a damaged member is refused before anything is applied', async () => {
 test('an archive without its trailer is refused as truncated', async () => {
   const archive = join(workdir, 'no-trailer.zip')
   await writeBackupArchive(archive, { backup: sampleBackup(), dataDirectory, roots: ROOTS })
-  const members: { path: string; data: Buffer }[] = []
-  await readZip(archive, (member) => {
-    members.push({ path: member.path, data: member.data })
-  })
+  const members = await collect(archive)
   const withoutTrailer = join(workdir, 'without-trailer.zip')
   await writeZip(
     withoutTrailer,
@@ -257,7 +253,11 @@ test('a member that escapes its root is refused', async () => {
   ])
 
   await assert.rejects(
-    () => extractBackupFiles(hostile, dataDirectory, { fileRoots: ['app-data'] } as never),
+    () =>
+      extractBackupFiles(hostile, dataDirectory, {
+        manifest: { fileRoots: ['app-data'] },
+        trailer: { executables: [] },
+      } as never),
     /escapes its root/,
   )
   assert.ok(!existsSync(join(workdir, 'escaped.txt')))
@@ -265,14 +265,18 @@ test('a member that escapes its root is refused', async () => {
 
 test('restoring replaces a root rather than merging into it', async () => {
   const archive = join(workdir, 'replace.zip')
-  const { manifest } = await writeBackupArchive(archive, { backup: sampleBackup(), dataDirectory, roots: ROOTS })
+  const { manifest, trailer } = await writeBackupArchive(archive, {
+    backup: sampleBackup(),
+    dataDirectory,
+    roots: ROOTS,
+  })
 
   // The disk moves on after the backup: a file is added, another is changed.
   const instance = join(dataDirectory, 'app-data', 'local', 'design-kit', 'inst-1')
   writeFileSync(join(instance, 'components', 'added-later.tsx'), 'later\n')
   writeFileSync(join(instance, 'registry.json'), 'CHANGED\n')
 
-  const result = await extractBackupFiles(archive, dataDirectory, manifest)
+  const result = await extractBackupFiles(archive, dataDirectory, { manifest, trailer })
 
   assert.ok(result.files > 0)
   assert.equal(readFileSync(join(instance, 'registry.json'), 'utf8'), '{"components":["button"]}\n')
@@ -288,7 +292,7 @@ test('restoring replaces a root rather than merging into it', async () => {
 
 test('restoring touches only the roots the archive declares', async () => {
   const archive = join(workdir, 'scoped.zip')
-  const { manifest } = await writeBackupArchive(archive, {
+  const { manifest, trailer } = await writeBackupArchive(archive, {
     backup: sampleBackup(),
     dataDirectory,
     roots: [{ name: 'app-data', policy: 'all' }],
@@ -297,7 +301,7 @@ test('restoring touches only the roots the archive declares', async () => {
   mkdirSync(join(dataDirectory, 'pglite'), { recursive: true })
   writeFileSync(join(dataDirectory, 'pglite', 'PG_VERSION'), '15\n')
 
-  await extractBackupFiles(archive, dataDirectory, manifest)
+  await extractBackupFiles(archive, dataDirectory, { manifest, trailer })
 
   assert.ok(existsSync(join(dataDirectory, 'pglite', 'PG_VERSION')), 'the restore reached outside its roots')
   assert.ok(
@@ -322,7 +326,7 @@ test('an executable file comes back executable', async () => {
   })
   assert.ok(trailer.executables.includes('files/app-data/local/design-kit/inst-1/run.sh'))
 
-  await extractBackupFiles(archive, dataDirectory, manifest, trailer)
+  await extractBackupFiles(archive, dataDirectory, { manifest, trailer })
 
   assert.equal(statSync(script).mode & 0o111, 0o111, 'the executable bit was lost in the restore')
   const plain = join(dataDirectory, 'app-data', 'local', 'design-kit', 'inst-1', 'registry.json')
@@ -359,10 +363,14 @@ test('a root that does not exist is carried as nothing rather than failing', asy
 test('restoring an archive whose root is empty clears that root', async () => {
   rmSync(join(dataDirectory, 'extensions'), { recursive: true, force: true })
   const archive = join(workdir, 'empty-root.zip')
-  const { manifest } = await writeBackupArchive(archive, { backup: sampleBackup(), dataDirectory, roots: ROOTS })
+  const { manifest, trailer } = await writeBackupArchive(archive, {
+    backup: sampleBackup(),
+    dataDirectory,
+    roots: ROOTS,
+  })
   buildDataDirectory()
 
-  await extractBackupFiles(archive, dataDirectory, manifest)
+  await extractBackupFiles(archive, dataDirectory, { manifest, trailer })
 
   assert.deepEqual(readdirSync(join(dataDirectory, 'extensions', 'local')), [])
 })

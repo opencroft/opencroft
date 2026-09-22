@@ -163,6 +163,30 @@ test('a v1 .json backup still restores, and says what it does not carry', async 
   assert.equal((await db.select().from(spaceGraph)).length, 1)
 })
 
+test('an upload is filed by its bytes, not by the name the browser sent', async () => {
+  const info = await store.createBackupFile()
+  const bytes = await store.readBackupFileBuffer(info.filename)
+
+  const uploaded = await store.saveUploadedBackup(bytes, 'someone-renamed-this.json')
+
+  assert.equal(uploaded.format, 'zip', 'an archive was filed as a legacy dump because of its name')
+  assert.match(uploaded.filename, /\.zip$/)
+  assert.equal((await store.describeBackupFile(uploaded.filename)).format, 'zip')
+})
+
+test('a failed write leaves nothing in the listing', async () => {
+  const before = (await store.listBackupFiles()).length
+
+  await assert.rejects(() => store.saveUploadedBackup(Buffer.from('PK not really'), 'broken.zip'))
+
+  const after = await store.listBackupFiles()
+  assert.equal(after.length, before)
+  assert.ok(
+    !after.some((file) => file.filename.startsWith('broken')),
+    'a rejected upload is visible as a restorable backup',
+  )
+})
+
 test('a filename that is not a plain name is refused', async () => {
   for (const name of ['../../etc/passwd', '/etc/passwd', 'a/b.zip', 'backup.zip/../x', 'backup.txt']) {
     await assert.rejects(() => store.restoreBackupFile(name), /Invalid backup filename/, name)

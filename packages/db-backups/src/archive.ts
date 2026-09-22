@@ -94,29 +94,20 @@ function foldMember(hash: ReturnType<typeof createHash>, memberPath: string, dat
 }
 
 /**
- * Serialise a `Backup` without building one giant string first.
+ * Row counts per table, for a manifest or for a caller describing a file.
  *
- * `JSON.stringify` over the whole object holds the entire dump as a UTF-16
- * string AND as a buffer at once. Per table, each table's string is released
- * before the next is built, so the peak is the total plus the largest table
- * rather than twice the total. The rows themselves are already in memory —
- * that is `createBackup`'s bound, not this one's.
+ * Shared because the `.zip` path and the legacy `.json` path both report this
+ * same pair to the same dialog, and two copies of the fold could answer
+ * differently.
  */
-function serialiseBackup(backup: Backup): Buffer {
-  const chunks: Buffer[] = [
-    Buffer.from(
-      `{"formatVersion":${JSON.stringify(backup.formatVersion)},"createdAt":${JSON.stringify(backup.createdAt)},"tables":{`,
-      'utf8',
-    ),
-  ]
-  const names = Object.keys(backup.tables)
-  names.forEach((name, index) => {
-    chunks.push(
-      Buffer.from(`${index > 0 ? ',' : ''}${JSON.stringify(name)}:${JSON.stringify(backup.tables[name])}`, 'utf8'),
-    )
-  })
-  chunks.push(Buffer.from('}}', 'utf8'))
-  return Buffer.concat(chunks)
+export function summariseTables(backup: Backup): { tables: Record<string, number>; totalRows: number } {
+  const tables: Record<string, number> = {}
+  let totalRows = 0
+  for (const [name, rows] of Object.entries(backup.tables)) {
+    tables[name] = rows.length
+    totalRows += rows.length
+  }
+  return { tables, totalRows }
 }
 
 export interface WriteArchiveOptions {
@@ -131,16 +122,10 @@ export async function writeBackupArchive(
   destPath: string,
   { backup, dataDirectory, roots = BACKUP_FILE_ROOTS }: WriteArchiveOptions,
 ): Promise<{ manifest: ArchiveManifest; trailer: ArchiveTrailer }> {
-  const tables: Record<string, number> = {}
-  let totalRows = 0
-  for (const [name, rows] of Object.entries(backup.tables)) {
-    tables[name] = rows.length
-    totalRows += rows.length
-  }
   const manifest: ArchiveManifest = {
     formatVersion: ARCHIVE_FORMAT_VERSION,
     createdAt: backup.createdAt,
-    database: { tables, totalRows, excludedTables: excludedTableNames() },
+    database: { ...summariseTables(backup), excludedTables: excludedTableNames() },
     fileRoots: roots.map((root) => root.name),
   }
 
@@ -149,6 +134,7 @@ export async function writeBackupArchive(
   const skipped: (SkippedEntry & { root: string })[] = []
   const executables: string[] = []
   let members = 0
+  let trailer: ArchiveTrailer | undefined
 
   async function* entries(): AsyncGenerator<ZipEntryInput> {
     const manifestData = Buffer.from(JSON.stringify(manifest, null, 2), 'utf8')
@@ -156,15 +142,21 @@ export async function writeBackupArchive(
     members++
     yield { path: MANIFEST_MEMBER, data: manifestData, mtime: new Date(backup.createdAt) }
 
-    const databaseData = serialiseBackup(backup)
+    // Cleared after the yield rather than left to scope: a suspended async
+    // generator keeps its whole frame alive, so without this the serialised
+    // dump — the largest member by far on a busy installation — stays
+    // resident for the entire file walk that follows.
+    let databaseData: Buffer | undefined = Buffer.from(JSON.stringify(backup), 'utf8')
     foldMember(hash, DATABASE_MEMBER, databaseData)
     members++
     yield { path: DATABASE_MEMBER, data: databaseData, mtime: new Date(backup.createdAt) }
+    databaseData = undefined
 
     for (const root of roots) {
       const rootStats: ArchiveFileStats = { files: 0, directories: 0, bytes: 0 }
       stats[root.name] = rootStats
       const rootSkipped: SkippedEntry[] = []
+      const noteSkipped = (path: string, reason: string) => skipped.push({ root: root.name, path, reason })
       for await (const entry of walkRoot(dataDirectory, root, rootSkipped)) {
         const memberPath = `${FILES_PREFIX}${root.name}/${entry.relativePath}`
         if (entry.isDirectory) {
@@ -178,7 +170,7 @@ export async function writeBackupArchive(
         try {
           data = await fs.readFile(entry.absolutePath)
         } catch (err) {
-          rootSkipped.push({ path: entry.relativePath, reason: `unreadable: ${(err as Error).message}` })
+          noteSkipped(entry.relativePath, `unreadable: ${(err as Error).message}`)
           continue
         }
         rootStats.files++
@@ -190,10 +182,12 @@ export async function writeBackupArchive(
         members++
         yield { path: memberPath, data, mtime: entry.mtime, mode: entry.mode }
       }
-      skipped.push(...rootSkipped.map((entry) => ({ ...entry, root: root.name })))
+      for (const entry of rootSkipped) {
+        noteSkipped(entry.path, entry.reason)
+      }
     }
 
-    const trailer: ArchiveTrailer = {
+    trailer = {
       algorithm: 'sha256',
       digest: hash.digest('hex'),
       members,
@@ -204,15 +198,15 @@ export async function writeBackupArchive(
     yield { path: TRAILER_MEMBER, data: Buffer.from(JSON.stringify(trailer, null, 2), 'utf8'), mtime: new Date() }
   }
 
+  // `writeZip` drains the generator to completion before it resolves, so the
+  // trailer it built is in hand. Reading it back out of the finished file
+  // would mean inflating every member to reach the last one — measured at a
+  // sixth of the whole backup, for a value that never left this scope.
   await writeZip(destPath, entries())
-  // Read back rather than reconstruct: the generator above finished after the
-  // caller's last look at these, and the file is the only place the final
-  // numbers exist.
-  const trailerData = await readZipMember(destPath, TRAILER_MEMBER)
-  if (!trailerData) {
+  if (!trailer) {
     throw new Error('Backup archive was written without its checksum trailer')
   }
-  return { manifest, trailer: JSON.parse(trailerData.toString('utf8')) as ArchiveTrailer }
+  return { manifest, trailer }
 }
 
 function parseJson<T>(data: Buffer, member: string): T {
@@ -322,33 +316,48 @@ export interface ExtractResult {
  * of them. Only the roots the manifest declares are touched; anything else in
  * the data directory — the database, the backups themselves — is left alone.
  *
+ * Takes the whole verified archive, manifest AND trailer, because the trailer
+ * is what says which members were executable. An optional trailer here meant a
+ * caller could restore every file at 0644 without anything saying so.
+ *
  * Call `readBackupArchive` first. This does not verify; it applies.
  */
 export async function extractBackupFiles(
   srcPath: string,
   dataDirectory: string,
-  manifest: ArchiveManifest,
-  trailer?: ArchiveTrailer,
+  { manifest, trailer }: Pick<BackupArchive, 'manifest' | 'trailer'>,
 ): Promise<ExtractResult> {
   const roots = manifest.fileRoots
+  const created = new Set<string>()
   for (const root of roots) {
     const rootDirectory = path.resolve(dataDirectory, ...root.split('/'))
     await fs.rm(rootDirectory, { recursive: true, force: true })
     await fs.mkdir(rootDirectory, { recursive: true })
+    created.add(rootDirectory)
   }
-  const executables = new Set(trailer?.executables ?? [])
+  const executables = new Set(trailer.executables)
   const result: ExtractResult = { roots: [...roots], files: 0, directories: 0 }
+  // A directory member always precedes what is inside it, so by the time a
+  // file lands its parent has usually been made already — measured at 92% of
+  // them. The rest are checkouts, where the walk lists `src/foo.ts` with no
+  // member for `src/`, so the fallback still has to exist.
+  const ensureDirectory = async (directory: string) => {
+    if (!created.has(directory)) {
+      await fs.mkdir(directory, { recursive: true })
+      created.add(directory)
+    }
+  }
   await readZip(srcPath, async (member) => {
     const target = resolveFileMember(member.path, dataDirectory, roots)
     if (!target) {
       return
     }
     if (member.isDirectory) {
-      await fs.mkdir(target, { recursive: true })
+      await ensureDirectory(target)
       result.directories++
       return
     }
-    await fs.mkdir(path.dirname(target), { recursive: true })
+    await ensureDirectory(path.dirname(target))
     await fs.writeFile(target, member.data)
     if (executables.has(member.path)) {
       await fs.chmod(target, 0o755)

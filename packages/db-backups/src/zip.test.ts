@@ -75,7 +75,7 @@ test('an archive round-trips files, directories and unicode names', async () => 
   const text = Buffer.from('одна строка\nвторая\n', 'utf8')
   const binary = pseudoRandom(4096)
 
-  const written = await writeZip(archive, [
+  await writeZip(archive, [
     { path: 'files/', mtime: new Date('2026-09-22T10:00:00Z') },
     { path: 'files/текст.md', data: text },
     { path: 'files/nested/', mtime: new Date('2026-09-22T10:00:00Z') },
@@ -83,10 +83,8 @@ test('an archive round-trips files, directories and unicode names', async () => 
     { path: 'empty.txt', data: Buffer.alloc(0) },
   ])
 
-  assert.equal(written.length, 5)
-  assert.equal(written.filter((entry) => entry.isDirectory).length, 2)
-
   const members = await collect(archive)
+  assert.equal(members.length, 5)
   assert.deepEqual(
     members.map((member) => member.path),
     ['files/', 'files/текст.md', 'files/nested/', 'files/nested/bin.dat', 'empty.txt'],
@@ -171,11 +169,12 @@ test('an incompressible member does not inflate the archive', async () => {
   )
 })
 
-test('a member cut short of its declared length is refused', async () => {
-  // fflate neither verifies a member's CRC nor exposes it, so the length the
-  // archive declares is the only integrity signal this layer has. What it
-  // cannot catch -- a member of the right length with the wrong bytes -- is
-  // caught a layer up, by the SHA-256 the archive format carries.
+test('an archive cut short of its central directory is refused', async () => {
+  // What this layer can catch on its own. A member of the right length with
+  // the WRONG BYTES is not: fflate neither verifies a member's CRC nor exposes
+  // it, and `UnzipFile.originalSize` is undefined for everything this writer
+  // produces, because fflate's streaming Zip puts the sizes in a trailing data
+  // descriptor. That case is caught a layer up, by the archive's SHA-256.
   const archive = join(workdir, 'truncated-member.zip')
   await writeZip(archive, [
     { path: 'payload.bin', data: pseudoRandom(64 * 1024) },
@@ -184,7 +183,7 @@ test('a member cut short of its declared length is refused', async () => {
   const bytes = readFileSync(archive)
   writeFileSync(archive, bytes.subarray(0, bytes.length - 2048))
 
-  await assert.rejects(() => collect(archive), /Corrupt ZIP archive|is \d+ bytes/)
+  await assert.rejects(() => collect(archive), /Corrupt ZIP archive/)
 })
 
 test('a file that is not an archive is refused', async () => {
@@ -222,9 +221,8 @@ test('past 65535 members the archive stays readable', { timeout: 180_000 }, asyn
     }
   }
 
-  const written = await writeZip(archive, members())
+  await writeZip(archive, members())
 
-  assert.equal(written.length, count)
   let seen = 0
   let last = ''
   await readZip(archive, (member) => {

@@ -22,12 +22,6 @@ export interface ZipEntryInput {
   mode?: number
 }
 
-export interface ZipEntryInfo {
-  path: string
-  isDirectory: boolean
-  sizeBytes: number
-}
-
 export interface ZipMember {
   path: string
   isDirectory: boolean
@@ -55,9 +49,8 @@ export type ZipMemberHandler = (member: ZipMember) => unknown
 export async function writeZip(
   destPath: string,
   entries: AsyncIterable<ZipEntryInput> | Iterable<ZipEntryInput>,
-): Promise<ZipEntryInfo[]> {
+): Promise<void> {
   const out = createWriteStream(destPath)
-  const written: ZipEntryInfo[] = []
   let failure: Error | undefined
 
   const zip = new Zip((err, chunk, final) => {
@@ -101,7 +94,6 @@ export async function writeZip(
       member.attrs = (((mode << 16) >>> 0) | (isDirectory ? 0x10 : 0)) >>> 0
       zip.add(member)
       member.push(data, true)
-      written.push({ path: entry.path, isDirectory, sizeBytes: data.length })
       await drain()
     }
     zip.end()
@@ -113,7 +105,6 @@ export async function writeZip(
   if (failure) {
     throw failure
   }
-  return written
 }
 
 /** The three signatures a ZIP file can legally start with: a member, an empty archive, a spanned one. */
@@ -172,10 +163,13 @@ async function assertWholeArchive(srcPath: string): Promise<void> {
  * rather than for the whole archive.
  *
  * The file is checked for being a whole archive before any of it is read (see
- * `assertWholeArchive`). What remains uncovered is a member of the right
- * length whose bytes are wrong: fflate neither verifies a member's CRC nor
- * exposes it, so that one is caught a layer up, by the SHA-256 `archive.ts`
- * carries over everything it wrote.
+ * `assertWholeArchive`). What remains uncovered is a member whose BYTES are
+ * wrong: fflate neither verifies a member's CRC nor exposes it. There is no
+ * cheap second signal to reach for either — `UnzipFile.originalSize` is
+ * `undefined` for every member this writer produces, because fflate's
+ * streaming `Zip` writes sizes in a trailing data descriptor rather than in
+ * the local header (measured 2026-09-22). So damaged bytes are caught a layer
+ * up, by the SHA-256 `archive.ts` folds over everything it wrote.
  */
 export async function readZip(srcPath: string, onMember: ZipMemberHandler): Promise<void> {
   await assertWholeArchive(srcPath)
@@ -199,45 +193,36 @@ export async function readZip(srcPath: string, onMember: ZipMemberHandler): Prom
         chunks.push(chunk)
       }
       if (final) {
-        const data = Buffer.concat(chunks)
-        // Absent for archives written in a streaming fashion, which is why
-        // this is a comparison and not an assertion of presence.
-        if (typeof file.originalSize === 'number' && data.length !== file.originalSize) {
-          failure ??= new Error(
-            `Corrupt ZIP archive: ${file.name} is ${data.length} bytes, the archive says ${file.originalSize}`,
-          )
-          return
-        }
-        completed.push({ path: file.name, isDirectory: file.name.endsWith('/'), data })
+        completed.push({ path: file.name, isDirectory: file.name.endsWith('/'), data: Buffer.concat(chunks) })
       }
     }
     file.start()
+  }
+
+  // Nothing can enqueue while this awaits: fflate only emits from inside a
+  // synchronous `unzip.push`, so draining the queue whole is safe.
+  const deliver = async (): Promise<boolean> => {
+    if (failure) {
+      throw failure
+    }
+    for (const member of completed.splice(0)) {
+      if ((await onMember(member)) === false) {
+        return false
+      }
+    }
+    return true
   }
 
   const stream = createReadStream(srcPath)
   try {
     for await (const chunk of stream) {
       unzip.push(new Uint8Array(chunk as Buffer), false)
-      if (failure) {
-        throw failure
-      }
-      while (completed.length > 0) {
-        const member = completed.shift() as ZipMember
-        if ((await onMember(member)) === false) {
-          return
-        }
-      }
-    }
-    unzip.push(new Uint8Array(0), true)
-    if (failure) {
-      throw failure
-    }
-    while (completed.length > 0) {
-      const member = completed.shift() as ZipMember
-      if ((await onMember(member)) === false) {
+      if (!(await deliver())) {
         return
       }
     }
+    unzip.push(new Uint8Array(0), true)
+    await deliver()
   } catch (err) {
     // fflate reports a file that is not an archive through its error callback
     // or by throwing out of push(); either way the caller gets one message.
@@ -259,9 +244,6 @@ export async function readZip(srcPath: string, onMember: ZipMemberHandler): Prom
  */
 function asArchiveError(err: unknown): Error {
   const message = err instanceof Error ? err.message : String(err)
-  if (/^Not a ZIP archive|^Corrupt ZIP archive/.test(message)) {
-    return err instanceof Error ? err : new Error(message)
-  }
   if (/invalid zip|unexpected EOF|invalid signature/i.test(message)) {
     return new Error(`Corrupt ZIP archive: ${message}`)
   }
