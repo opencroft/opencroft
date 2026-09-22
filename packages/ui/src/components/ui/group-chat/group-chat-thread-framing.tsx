@@ -43,7 +43,7 @@ export interface GroupChatThreadFramingProps {
    * press on it opens can never disagree about the same session. Omit to
    * show the name alone. */
   status?: ChatStatus
-  /** The session's delegated work -- subagents and background tasks -- for
+  /** The session's background tasks -- subagents and tasks alike -- for
    * the header's trailing side: a count of the live work, and a panel that
    * jumps to each entry's block. Omit, or pass one with no items, and no
    * control is drawn. */
@@ -76,7 +76,7 @@ export interface GroupChatThreadFramingProps {
 // session -- see agent-chat/chat-conversation); what is worth designing is the
 // context above it: who the thread is with and whether they are doing anything
 // about it (the agent cluster -- avatar, breadcrumb, name and status -- leads
-// the header), what the session has delegated (the trailing work control),
+// the header), the session's background tasks (the trailing work control),
 // and a back affordance that matters most on minimal widths where the
 // conversation is a leaf view. No locks -- this states where the reader is,
 // never who is allowed in.
@@ -210,9 +210,9 @@ export function GroupChatThreadFraming({
             <span className={LIST_ROW_TITLE_CLASS}>{threadTitle || 'Thread'}</span>
           </div>
         )}
-        {/* The trailing side belongs to what the session has delegated. The
+        {/* The trailing side belongs to the session's background tasks. The
             control draws nothing of its own until there is something to list,
-            so a thread that never delegated is framed exactly as before. */}
+            so a thread with no background tasks is framed exactly as before. */}
         {work ? <ThreadWorkControl work={work} /> : null}
       </header>
       {/* Artifacts get their own row rather than a place in the line above.

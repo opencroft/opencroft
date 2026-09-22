@@ -15,7 +15,7 @@ export interface ChatLauncherProps extends Omit<React.ComponentProps<'button'>, 
 
 // The closed chat as ONE round button: the primary fill and the chat mark, and
 // the count of threads waiting on someone overlaid on its corner -- the same
-// corner badge the delegated-work control wears, in red, because a thread
+// corner badge the background-task control wears, in red, because a thread
 // that waits is asking for a person rather than reporting progress. Scaled up
 // a step with the button, and centred on the circle's edge rather than the
 // box's corner, so it reads as attached to the round shape; the ring in the
