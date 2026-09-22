@@ -158,18 +158,31 @@ export async function unsettledTasksForKey(instanceId: string, sessionKey: strin
 }
 
 /** Everything running, and whatever ended since `endedAfter`: newest first. */
+/**
+ * Every task still running, then at most `limit` of those that ended since
+ * `endedAfter`, most recently ended first.
+ *
+ * Two reads, not one capped one. Under a single cap over both, ordered by
+ * start, enough tasks started later and already finished push a long-running
+ * one off the end — and the list says nothing is running while something is,
+ * which is the one answer it exists to get right. Only what has ended is
+ * bounded; what is running is the question.
+ */
 export async function recentTasks(instanceId: string, endedAfter: Date, limit: number): Promise<TaskRow[]> {
-  return db
+  const running = await runningTasks(instanceId)
+  const ended = await db
     .select()
     .from(backgroundTask)
     .where(
       and(
         eq(backgroundTask.instanceId, instanceId),
-        or(eq(backgroundTask.state, 'running'), gte(backgroundTask.finishedAt, endedAfter)),
+        ne(backgroundTask.state, 'running'),
+        gte(backgroundTask.finishedAt, endedAfter),
       ),
     )
-    .orderBy(desc(backgroundTask.startedAt))
+    .orderBy(desc(backgroundTask.finishedAt))
     .limit(limit)
+  return [...running, ...ended]
 }
 
 /**

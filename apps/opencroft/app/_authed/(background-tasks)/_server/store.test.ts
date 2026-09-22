@@ -15,6 +15,7 @@ import {
   markDelivered,
   type NewTaskRow,
   owedTasks,
+  recentTasks,
   removableDirs,
   runningTasks,
   toRecord,
@@ -131,4 +132,30 @@ test('owed, unsettled and removable select exactly what they name', async () => 
     ids(await removableDirs(instanceId, { deliveredBefore: minutes(12), endedBefore: minutes(-7 * 24 * 60) })),
     ids([told, tooOld]),
   )
+})
+
+// The audit page asks this "is anything still running?". A long-running task
+// must be on the list however many tasks started after it and already ended:
+// under one cap over both, ordered by start, fifty of those pushed it off and
+// the page read "0 running" while it ran (measured on a scratch database).
+test('recent lists every running task, however many newer ones have already ended', async () => {
+  const instanceId = randomUUID()
+  const longRunning = row(instanceId, { summary: 'Train overnight', startedAt: minutes(-300) })
+  await insertTask(longRunning)
+  for (let i = 0; i < 51; i++) {
+    const done = row(instanceId, { startedAt: minutes(i) })
+    await insertTask(done)
+    await finishTask(done.taskId, { state: 'completed', exitCode: 0 }, minutes(i + 1))
+  }
+  const listed = await recentTasks(instanceId, minutes(-600), 50)
+  assert.equal(listed.length, 51, 'the running one, plus the fifty most recently ended')
+  assert.equal(listed[0]?.taskId, longRunning.taskId, 'running first')
+  assert.equal(listed.filter((task) => task.state === 'running').length, 1)
+  const ended = listed.slice(1).map((task) => task.finishedAt?.getTime() ?? 0)
+  assert.deepEqual(
+    ended,
+    [...ended].sort((a, b) => b - a),
+    'ended ones, most recently ended first',
+  )
+  assert.equal(ended[0], minutes(51).getTime(), 'the oldest ending is the one left out')
 })
