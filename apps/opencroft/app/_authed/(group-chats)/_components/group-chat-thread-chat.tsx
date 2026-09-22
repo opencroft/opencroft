@@ -436,6 +436,7 @@ export function GroupChatThreadChat({
       leadingBarContent={leadingBarContent}
       attachments={selectionScope?.selection && selectionScope.passEnabled ? SELECTION_BADGE : undefined}
       attachmentControls={selectionScope ? SELECTION_TOGGLE : undefined}
+      canAttachImages={acp.canAttachImages}
     />
   )
 

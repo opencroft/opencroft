@@ -183,6 +183,16 @@ export interface UseAgentCommandBarOptions {
    *  identity-stable when nothing meaningful changed; it feeds the memoized
    *  bar. */
   attachmentControls?: ReactNode
+  /** Files the reader brought in through the composer itself — pasted over the
+   *  input, or dropped on the bar. Forwarded to the kit bar's slot of the same
+   *  name, which recognises the gesture; what a file BECOMES stays here, in the
+   *  same boundary `attachments` draws one row up. */
+  onFiles?: (files: File[]) => void
+  /** What pressing send on an EMPTY composer means, when it means anything.
+   *  Present offers the press and is its tooltip; absent leaves send inert
+   *  without words, as it has always been. A picture attached and nothing typed
+   *  is the case this exists for. Forwarded unchanged to the kit bar. */
+  emptySendLabel?: string
   /** Discards the session and starts a fresh one, offered from the ring's
    *  popover. Omit to render the ring with no Clear button. */
   onClear?: () => void
@@ -240,6 +250,8 @@ export function useAgentCommandBar({
   onClear,
   attachments,
   attachmentControls,
+  onFiles,
+  emptySendLabel,
   presence,
 }: UseAgentCommandBarOptions): ReactElement {
   // Lazy init so a session opened with an existing draft paints with it
@@ -791,6 +803,8 @@ export function useAgentCommandBar({
         onDismissSendError={onDismissSendError}
         editBar={editBarNode}
         attachments={attachments}
+        onFiles={onFiles}
+        emptySendLabel={emptySendLabel}
         submitMode={edit ? 'commit' : 'send'}
         approval={approval}
         autoApprove={autoApprove}
@@ -827,6 +841,8 @@ export function useAgentCommandBar({
       onDismissSendError,
       editBarNode,
       attachments,
+      onFiles,
+      emptySendLabel,
       edit,
       approval,
       autoApprove,
