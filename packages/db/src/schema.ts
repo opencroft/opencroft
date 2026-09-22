@@ -930,6 +930,46 @@ export const agentSessionEvent = pgTable(
   (t) => [primaryKey({ columns: [t.sessionKey, t.position] })],
 )
 
+// One image a reader attached to a message.
+//
+// ADDRESSED BY SESSION KEY, like the queue and the transcript and for the same
+// reason: a reopened session can be a new id, so rows filed under one would
+// name nothing that could ever load them. For bytes the second half of that
+// matters more than the first — nothing that could ever DELETE them either,
+// and an orphaned picture is a leak rather than a missing chip.
+//
+// The reference a message carries is this row's id, in a tag inside the
+// message text (see attachments.ts in agent-client). It has to be in the text:
+// a message held by a cadence is one text column, and the transcript is
+// rebuilt from the text it delivered.
+//
+// BASE64 IN A TEXT COLUMN, NOT `bytea`, and deliberately the simple thing:
+// drizzle carries no bytea column type, so it would be this schema's first
+// hand-written customType, and the backup path serialises every row to JSON,
+// where bytes become base64 anyway — two representations of one payload, kept
+// in step by hand. This is expected to be replaced once images are large or
+// numerous; when it is, this column becomes a key into real storage and
+// nothing else in the design moves, because what a message carries is already
+// an id and not a payload.
+export const chatAttachment = pgTable(
+  'ChatAttachment',
+  {
+    id: text().primaryKey().notNull().$defaultFn(uuid),
+    sessionKey: text().notNull(),
+    // What the chip says, and what names the file to a harness that cannot
+    // take the image itself.
+    name: text().notNull(),
+    mimeType: text().notNull(),
+    /** Base64 with no `data:` prefix — what ACP's image block carries. */
+    data: text().notNull(),
+    // The decoded size, so a reader and a limit can both be told the truth
+    // about the picture without decoding the column to find out.
+    byteSize: integer().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index('ChatAttachment_sessionKey_idx').on(t.sessionKey)],
+)
+
 export const schema = {
   setting,
   secret,
@@ -952,11 +992,13 @@ export const schema = {
   chatUsageTurnModel,
   agentQueueEntry,
   agentSessionEvent,
+  chatAttachment,
   ...authSchema,
 }
 
 export type AgentQueueEntry = typeof agentQueueEntry.$inferSelect
 export type AgentSessionEvent = typeof agentSessionEvent.$inferSelect
+export type ChatAttachment = typeof chatAttachment.$inferSelect
 export type Setting = typeof setting.$inferSelect
 export type Secret = typeof secret.$inferSelect
 export type Space = typeof space.$inferSelect

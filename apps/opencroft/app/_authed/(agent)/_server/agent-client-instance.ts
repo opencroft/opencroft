@@ -4,6 +4,7 @@ import { createAgentClient, type PermissionContext, type PermissionOutcome } fro
 import type { ChatEvent, CompactionState } from 'agent-client/types'
 
 import { readPersistedPresence, writePersistedUsage } from '@/app/_authed/(agent)/_server/acp-session-store'
+import { loadAttachments } from '@/app/_authed/(agent)/_server/attachment-store'
 import { recordChatUsageTurn } from '@/app/_authed/(agent)/_server/chat-usage-store'
 import { readMcpServersForAgent } from '@/app/_authed/(agent)/_server/mcp-store'
 import { queueStore } from '@/app/_authed/(agent)/_server/queue-store'
@@ -199,6 +200,12 @@ export const agentClient = createAgentClient({
     await sessionOpener?.(sessionKey)
   },
   loadPresence,
+  // The bytes behind the images a delivered message names. Scoped to the
+  // session key the engine hands over: a message's text is editable, so an id
+  // from another conversation has to resolve to nothing rather than to a
+  // picture. A session with no key resolves nothing at all, which is the honest
+  // answer — there is no conversation to have stored one under.
+  loadAttachments: ({ sessionKey, ids }) => (sessionKey ? loadAttachments(sessionKey, ids) : Promise.resolve([])),
   // Global skill catalog from the settings DB, resolved per turn. For now every
   // configured skill is exposed to this agent client (not scoped per node).
   skills: loadSkillDefs,

@@ -47,6 +47,7 @@ import {
 } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { withAuthors } from '@/app/_authed/(agent)/_server/attach-authors'
+import { clearAttachments } from '@/app/_authed/(agent)/_server/attachment-store'
 import { queryChatUsageTokensBySession } from '@/app/_authed/(agent)/_server/chat-usage-store'
 import { queueStore } from '@/app/_authed/(agent)/_server/queue-store'
 import {
@@ -881,4 +882,8 @@ export async function forgetLocalSessionImpl(tabKey: string): Promise<void> {
   // The recorded transcript goes with it, for the same reason and with the same
   // distinction: stopping a process keeps it, retiring the tab does not.
   await clearSessionEvents(tabKey)
+  // And the pictures its messages named. Here rather than inside
+  // clearSessionEvents, which is also called on a failed replay — there the
+  // conversation lives on and its attachments must live with it.
+  await clearAttachments(tabKey)
 }

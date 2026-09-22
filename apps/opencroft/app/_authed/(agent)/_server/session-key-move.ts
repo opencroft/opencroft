@@ -43,6 +43,7 @@
 import { tabSessions } from '@/app/_authed/(agent)/_server/acp-impl'
 import { copyTabKeys, dropTabKeys, type TabKeyMove } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import { moveAttachments } from '@/app/_authed/(agent)/_server/attachment-store'
 import { moveQueueEntries } from '@/app/_authed/(agent)/_server/queue-store'
 import { moveSessionEvents } from '@/app/_authed/(agent)/_server/session-event-store'
 import { renameCompactJobKey } from '@/app/_authed/(extension-runtime)/_server/stream'
@@ -106,6 +107,13 @@ export async function settleSessionKeyMoves(moves: readonly TabKeyMove[]): Promi
   // as a rename having eaten the subagents out of a chat.
   await moveSessionEvents(real).catch((error) => {
     console.error('[session-key-move] failed to carry the recorded transcript onto the new keys', error)
+  })
+  // And the attachments the transcript's messages name. Left behind they are
+  // worse than unreachable: the chips stay in the messages, the pictures resolve
+  // to nothing under the new key, and the rows are bytes no retirement can ever
+  // find to delete.
+  await moveAttachments(real).catch((error) => {
+    console.error('[session-key-move] failed to carry the attachments onto the new keys', error)
   })
   for (const { from, to } of real) {
     // The in-process tab -> session pointer. Without this the reaper's unload

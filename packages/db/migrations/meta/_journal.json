@@ -225,6 +225,13 @@
       "when": 1790040902236,
       "tag": "0031_daffy_marauders",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1790046112400,
+      "tag": "0032_add_chat_attachment",
+      "breakpoints": true
     }
   ]
 }
