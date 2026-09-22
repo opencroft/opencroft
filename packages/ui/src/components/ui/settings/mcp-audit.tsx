@@ -37,6 +37,30 @@ export interface McpAuditSession {
   lastActivityAt: number
 }
 
+// Work a tool or an action started for a caller and did not wait for.
+export interface McpAuditBackgroundTask {
+  id: string
+  // One line saying what the task is, in the caller's own terms.
+  summary: string
+  // What started it, and which tool or action that was (remote_script,
+  // deploy). The kind also says where the work runs -- a tool's command on
+  // its node, an action inside the server -- and so whether a restart ends it.
+  kind: 'tool' | 'app-action' | 'node-action'
+  name: string
+  // What it runs against: a terminal target, a node id, an app address.
+  target: string
+  // The calling session's key; null for a caller with no session.
+  session: string | null
+  agent: string | null
+  state: 'running' | 'completed' | 'failed' | 'stopped'
+  // Why it ended the way it did. Shown only when that was not completion.
+  reason?: string | null
+  // Epoch milliseconds; formatted for display here. A running task's time so
+  // far is measured against the reader's clock.
+  startedAt: number
+  finishedAt?: number | null
+}
+
 export interface McpAuditProps {
   entries: McpAuditEntry[]
   // The tools known to have been invoked; feeds the tool filter.
@@ -67,6 +91,15 @@ export interface McpAuditProps {
   // The sessions that are not offline -- what makes this page answer
   // "can I restart now".
   sessions: McpAuditSession[]
+  // The same question asked of the work sessions leave behind: every
+  // background task still running, and what ended recently -- a sessionless
+  // caller's too, which no session above accounts for. Null until the host
+  // has read it once, and drawn as not read yet: an unread list must never
+  // pass for "nothing is running".
+  backgroundTasks: McpAuditBackgroundTask[] | null
+  // Why the list could not be read. Set, it replaces the list and its count,
+  // for the same reason.
+  backgroundTasksError?: string | null
   className?: string
 }
 
@@ -90,8 +123,51 @@ const STATUS_BADGE: Record<
   error: { label: 'error', variant: 'destructive' },
 }
 
+// The page's own badge vocabulary, so a tone means one thing on it: running
+// wears what a working session wears, failed what an errored call wears, and
+// the two quiet outcomes stay quiet -- completed filled, stopped outlined, so
+// they still tell apart.
+const TASK_BADGE: Record<McpAuditBackgroundTask['state'], 'default' | 'secondary' | 'destructive' | 'outline'> = {
+  running: 'default',
+  completed: 'secondary',
+  failed: 'destructive',
+  stopped: 'outline',
+}
+
+const TASK_KIND: Record<McpAuditBackgroundTask['kind'], string> = {
+  tool: 'tool',
+  'app-action': 'app action',
+  'node-action': 'node action',
+}
+
 function formatTime(iso: string) {
   return new Date(iso).toLocaleString()
+}
+
+// In the units the chat's own task card uses, so a task reads the same here
+// as in the session that started it.
+function formatDuration(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000))
+  if (seconds < 60) {
+    return `${seconds}s`
+  }
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) {
+    return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`
+  }
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`
+}
+
+// How long it ran, or has been running. An ended task with no end recorded
+// has nothing honest to measure, so it gets no line rather than a guess.
+function taskDuration(task: McpAuditBackgroundTask, now: number): string | null {
+  if (task.state === 'running') {
+    return `${formatDuration(now - task.startedAt)} so far`
+  }
+  if (typeof task.finishedAt !== 'number') {
+    return null
+  }
+  return `took ${formatDuration(task.finishedAt - task.startedAt)}`
 }
 
 function formatJson(body: string | null | undefined): string | null {
@@ -159,21 +235,133 @@ function AuditRow({
   )
 }
 
+function TaskRow({ task, now }: { task: McpAuditBackgroundTask; now: number }) {
+  const duration = taskDuration(task, now)
+  // Completion needs no explanation and running has not ended; any other
+  // ending is the one a reader asks "why" of.
+  const reason = task.state === 'failed' || task.state === 'stopped' ? task.reason : null
+  return (
+    <TableRow>
+      <TableCell className='whitespace-normal'>
+        <div className='text-sm'>{task.summary}</div>
+        <div className='text-xs text-muted-foreground'>
+          {TASK_KIND[task.kind] ?? task.kind} <span className='font-mono'>{task.name}</span>
+        </div>
+        {reason && (
+          <div className={cn('text-xs', task.state === 'failed' ? 'text-destructive' : 'text-muted-foreground')}>
+            {reason}
+          </div>
+        )}
+      </TableCell>
+      <TableCell>
+        <Badge variant={TASK_BADGE[task.state] ?? 'outline'}>{task.state}</Badge>
+      </TableCell>
+      <TableCell className='whitespace-normal break-all font-mono text-xs'>{task.target}</TableCell>
+      <TableCell className='whitespace-normal'>
+        <div className='text-sm'>{task.agent ?? 'no agent'}</div>
+        {task.session ? (
+          <div className='text-xs text-muted-foreground font-mono break-all'>{task.session}</div>
+        ) : (
+          <div className='text-xs text-muted-foreground'>no session</div>
+        )}
+      </TableCell>
+      <TableCell className='text-xs text-muted-foreground'>
+        <div>{formatTime(new Date(task.startedAt).toISOString())}</div>
+        {duration && <div>{duration}</div>}
+      </TableCell>
+    </TableRow>
+  )
+}
+
+// The background tasks, drawn like the session table above them and for the
+// same question. Running work leads -- it is what the count counts and what a
+// restart would meet -- and the rest keeps the order the host gave. The list
+// can hold nothing in three ways, and each is drawn differently, because only
+// one of them means nothing is running: not read yet, could not be read, and
+// read empty.
+function BackgroundTasksCard({ tasks, error }: { tasks: McpAuditBackgroundTask[] | null; error?: string | null }) {
+  // Read at render: a running task's time moves as often as the host redraws,
+  // which a polling host does on every poll.
+  const now = Date.now()
+  const running = tasks ? tasks.filter((task) => task.state === 'running') : []
+  const ended = tasks ? tasks.filter((task) => task.state !== 'running') : []
+  return (
+    <div className='rounded-lg border'>
+      <div className='flex items-center justify-between gap-4 px-4 py-3 border-b'>
+        <div>
+          <div className='text-sm font-medium'>Background tasks</div>
+          <div className='text-xs text-muted-foreground'>
+            Work tools and actions started and did not wait for: everything still running, and what ended
+            recently. A tool's command runs on its node, where a restart of the server leaves it running; an app
+            or node action runs inside the server, and a restart fails it.
+          </div>
+        </div>
+        {error ? (
+          <Badge variant='destructive'>unknown</Badge>
+        ) : tasks ? (
+          <Badge variant={running.length > 0 ? 'default' : 'secondary'}>{running.length} running</Badge>
+        ) : null}
+      </div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Task</TableHead>
+            <TableHead className='w-28'>State</TableHead>
+            <TableHead>Target</TableHead>
+            <TableHead>Caller</TableHead>
+            <TableHead className='w-44'>Started</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {error ? (
+            <TableRow>
+              <TableCell colSpan={5} className='whitespace-normal text-center py-6'>
+                <div className='text-sm text-destructive'>
+                  Background tasks could not be read — whether anything is running is unknown.
+                </div>
+                <div className='text-xs text-muted-foreground font-mono break-all'>{error}</div>
+              </TableCell>
+            </TableRow>
+          ) : !tasks ? (
+            <TableRow>
+              <TableCell colSpan={5} className='py-6'>
+                <div className='flex items-center justify-center gap-2 text-sm text-muted-foreground'>
+                  <Spinner /> Reading background tasks…
+                </div>
+              </TableCell>
+            </TableRow>
+          ) : tasks.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={5} className='text-center text-sm text-muted-foreground py-6'>
+                No background tasks — nothing detached is running.
+              </TableCell>
+            </TableRow>
+          ) : (
+            [...running, ...ended].map((task) => <TaskRow key={task.id} task={task} now={now} />)
+          )}
+        </TableBody>
+      </Table>
+    </div>
+  )
+}
+
 // The MCP audit page. Three answers on one page:
 //
 //   - What did the tools do -- the log itself, filterable by tool and status,
 //     each row expanding in place to the arguments, result and error it
 //     recorded.
-//   - Is it safe to restart -- the live session table. Its whole job is
-//     answering "can I restart now", which a snapshot cannot, so the host
-//     keeps it live and this only draws what arrives.
+//   - Is it safe to restart -- the live session table, and under it the
+//     background tasks: the work sessions leave behind, sessionless callers'
+//     included. Their whole job is answering "can I restart now", which a
+//     snapshot cannot, so the host keeps them live and this only draws what
+//     arrives.
 //   - Two instance-wide modes, drawn as different things because they are:
 //     sleep mode (amber) holds deliveries but keeps them, YOLO mode (red)
 //     skips approvals and cannot be taken back for what already ran.
 //
-// Presentation only: entries, sessions and mode flags arrive as props,
-// filters and toggles leave as callbacks, and the polling that keeps the
-// live parts live stays with the host. Which rows are expanded is this
+// Presentation only: entries, sessions, tasks and mode flags arrive as
+// props, filters and toggles leave as callbacks, and the polling that keeps
+// the live parts live stays with the host. Which rows are expanded is this
 // page's own state -- nobody elsewhere cares which row is open.
 export function McpAudit({
   entries,
@@ -192,6 +380,8 @@ export function McpAudit({
   yoloSource,
   onToggleYolo,
   sessions,
+  backgroundTasks,
+  backgroundTasksError,
   className,
 }: McpAuditProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -357,6 +547,8 @@ export function McpAudit({
           </TableBody>
         </Table>
       </div>
+
+      <BackgroundTasksCard tasks={backgroundTasks} error={backgroundTasksError} />
 
       <div className='rounded-lg border'>
         <Table>

@@ -3,13 +3,16 @@
 import { useEffect, useState, useTransition } from 'react'
 import { type AuditStatusFilter, McpAudit } from 'ui/settings/mcp-audit'
 
+import { readBackgroundTasks } from '@/app/_authed/(settings)/_lib/read-background-tasks'
 import {
   type AuditQuery,
+  type BackgroundTaskList,
   clearAuditLog,
   getSleepMode,
   getYoloMode,
   listAuditEntries,
   listAuditTools,
+  listBackgroundTasks,
   listLiveSessions,
   updateSleepMode,
   updateYoloMode,
@@ -30,6 +33,9 @@ export default function AuditSettings() {
   const [yoloSource, setYoloSource] = useState<'env' | 'runtime'>('env')
   const [sleepEnabled, setSleepEnabled] = useState(false)
   const [sessions, setSessions] = useState<Awaited<ReturnType<typeof listLiveSessions>>>([])
+  // Null until the first read comes back, which the page draws as not read
+  // yet rather than as an empty list.
+  const [backgroundTasks, setBackgroundTasks] = useState<BackgroundTaskList | null>(null)
 
   const reload = (next: AuditQuery) => {
     setLoading(true)
@@ -49,10 +55,10 @@ export default function AuditSettings() {
     })
   }, [])
 
-  // Sessions and the sleep flag re-poll together: the flag can change
-  // out-of-band (the marker file is touchable from outside the app), and the
-  // list is only useful live — its whole job is answering "can I restart
-  // now", which yesterday's snapshot cannot.
+  // Sessions, background tasks and the sleep flag re-poll together: the flag
+  // can change out-of-band (the marker file is touchable from outside the
+  // app), and the lists are only useful live — their whole job is answering
+  // "can I restart now", which yesterday's snapshot cannot.
   useEffect(() => {
     let cancelled = false
     const poll = () => {
@@ -63,6 +69,11 @@ export default function AuditSettings() {
           }
         })
         .catch(() => {})
+      readBackgroundTasks(() => listBackgroundTasks()).then((list) => {
+        if (!cancelled) {
+          setBackgroundTasks(list)
+        }
+      })
       getSleepMode()
         .then(({ enabled }) => {
           if (!cancelled) {
@@ -140,6 +151,8 @@ export default function AuditSettings() {
       yoloSource={yoloSource}
       onToggleYolo={onToggleYolo}
       sessions={sessions}
+      backgroundTasks={backgroundTasks?.tasks ?? null}
+      backgroundTasksError={backgroundTasks?.error}
     />
   )
 }
