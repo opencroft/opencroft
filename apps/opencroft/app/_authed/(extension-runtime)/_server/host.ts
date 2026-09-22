@@ -630,6 +630,16 @@ async function getTerminalContext(nodeId: string, handleId: string): Promise<Ter
   return value as TerminalContext
 }
 
+// The same resolution for a "node-id/handle-id" target string — the form the
+// TerminalSelector hands out and a Terminal Router stores per route.
+export function resolveTerminalTarget(target: string): Promise<TerminalContext> {
+  const slash = target.indexOf('/')
+  if (slash <= 0 || slash === target.length - 1) {
+    return Promise.reject(new Error(`Not a terminal target: "${target}" (expected "node-id/handle-id")`))
+  }
+  return getTerminalContext(target.slice(0, slash), target.slice(slash + 1))
+}
+
 function dispatchExecutionContextForHost(
   sourceNodeId: string,
   sourceHandleId: string,

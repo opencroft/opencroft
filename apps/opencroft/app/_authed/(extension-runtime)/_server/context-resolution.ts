@@ -1,5 +1,9 @@
 // The resolution itself, kept free of the extension runtime so its ORDER can
 // be tested with a fake exposeOutput. Loading the runtime opens the database.
+import {
+  TERMINAL_ROUTER_TYPE,
+  type TerminalRoute,
+} from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/terminal-router-shared'
 import type { GraphEdgeRecord, GraphNodeRecord, GraphSnapshot } from '@/app/_authed/(extension-runtime)/_server/host'
 import type { NodeTypeHandles } from '@/app/_authed/(extension-runtime)/_server/node-handles'
 import { findExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
@@ -23,6 +27,8 @@ export type ExposeOutput = (
 export interface ContextResolverDeps {
   nodeTypeToExtension: Map<string, NodeTypeHandles>
   exposeOutputOf(extensionId: string): Promise<ExposeOutput | undefined>
+  /** A "node-id/handle-id" terminal source's context, as terminal.getContext resolves it; throws when it does not resolve. */
+  resolveTerminalTarget(target: string): Promise<unknown>
 }
 
 /**
@@ -42,6 +48,11 @@ export async function resolveContexts(graph: GraphSnapshot, deps: ContextResolve
   for (const node of graph.nodes) {
     const { [CONTEXT_KEY]: _, ...data } = node.data
     nodesById.set(node.id, { ...node, data })
+  }
+  for (const node of nodesById.values()) {
+    if (node.type === TERMINAL_ROUTER_TYPE) {
+      nodesById.set(node.id, { ...node, data: await refreshRoutes(node.data, deps) })
+    }
   }
 
   let pending = graph.edges
@@ -74,6 +85,33 @@ export async function resolveContexts(graph: GraphSnapshot, deps: ContextResolve
   }
 
   return { ...graph, nodes: graph.nodes.map((node) => nodesById.get(node.id) ?? node) }
+}
+
+// A Terminal Router's outputs re-expose terminals that are not wired to it —
+// usually in another space — so the value each route carries is re-read from
+// its target here, before any edge from the router is resolved. A target that
+// no longer resolves loses its value rather than keeping the last one: the
+// output then reads as disconnected instead of reaching a host that is gone.
+async function refreshRoutes(
+  data: Record<string, unknown>,
+  deps: ContextResolverDeps,
+): Promise<Record<string, unknown>> {
+  const routes = data.routes as TerminalRoute[] | undefined
+  if (!Array.isArray(routes) || routes.length === 0) {
+    return data
+  }
+  const refreshed = await Promise.all(
+    routes.map(async (route) => {
+      const { context: _, ...rest } = route
+      try {
+        const context = await deps.resolveTerminalTarget(route.target)
+        return context == null ? rest : { ...rest, context }
+      } catch {
+        return rest
+      }
+    }),
+  )
+  return { ...data, routes: refreshed }
 }
 
 // 'skipped' is final: the edge cannot resolve in any order (a missing source

@@ -34,10 +34,20 @@ export interface SecretSelectorProps {
  */
 export declare const SecretSelector: FC<SecretSelectorProps>
 
+/** One choice a TerminalSelector offers. */
+export interface TerminalTargetOption {
+  /** "node-id/handle-id" -- the form every terminal-taking host API accepts. */
+  target: string
+  /** Display name: the node, qualified by what distinguishes this handle on it. */
+  title: string
+  spaceSlug: string
+}
+
 export interface TerminalSelectorProps {
   /** "node-id/handle-id" of the selected terminal source, or '' for none. */
   value?: string
-  onChange: (value: string) => void
+  /** `option` is the picked choice as offered (its display title), absent for "None". */
+  onChange: (value: string, option?: TerminalTargetOption) => void
   /** Limit the choices to one space's nodes; omit to offer every space. */
   spaceSlug?: string
   /** Offer an explicit "None" choice (reported as ''). */
@@ -49,7 +59,8 @@ export interface TerminalSelectorProps {
 /**
  * Pick one terminal-context SOURCE handle from the graph. The value is the
  * "node-id/handle-id" target string every terminal-taking host API accepts
- * (`host.terminal.getContext`, the remote file tools).
+ * (`host.terminal.getContext`, the remote file tools). Terminal Router outputs
+ * are not offered: they only re-expose terminals the list already has.
  */
 export declare const TerminalSelector: FC<TerminalSelectorProps>
 

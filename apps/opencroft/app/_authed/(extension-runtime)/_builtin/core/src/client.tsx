@@ -34,6 +34,12 @@ import { SEND_MESSAGE_HANDLES, SendMessageInspector, SendMessageNode } from './n
 import { type ServerData, ServerFilesTab, ServerInspector, ServerNode, ServerTerminalTab } from './nodes/server'
 import { TerminalWindowInspector, TerminalWindowNode } from './nodes/terminal'
 import {
+  TERMINAL_ROUTER_HANDLES,
+  TerminalRouterInspector,
+  TerminalRouterNode,
+  terminalRouterExposeOutput,
+} from './nodes/terminal-router'
+import {
   TEXT_GENERATION_HANDLES,
   TextGenerationInspector,
   TextGenerationNode,
@@ -208,6 +214,18 @@ export default defineExtension({
         }
         return undefined
       },
+    },
+    {
+      typeId: 'terminal-router',
+      name: 'Terminal Router',
+      category: 'Infrastructure',
+      icon: 'Split',
+      accent: 'oklch(0.7 0.18 300)',
+      handles: TERMINAL_ROUTER_HANDLES as unknown as never[],
+      defaultData: { routes: [] },
+      component: TerminalRouterNode as unknown as never,
+      inspector: TerminalRouterInspector as unknown as never,
+      exposeOutput: terminalRouterExposeOutput as unknown as never,
     },
     {
       typeId: 'core-key-store',

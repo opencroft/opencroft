@@ -1,10 +1,11 @@
-import host from '@opencroft/server'
 import type { ExecOptions, ServerConfig, TerminalContext } from '@opencroft/server'
+import host from '@opencroft/server'
 import { AGENT_PROVIDERS } from 'agent-client/agent-providers'
 import { HARNESS_ADAPTERS } from 'agent-client/harness-adapters'
 import { disconnectOauth, oauthLoginStatus, startOauthLogin, submitOauthCode } from 'agent-client/oauth-login'
 import { reasoningEfforts } from 'agent-client/reasoning'
 
+import { routeOutput, TERMINAL_ROUTER_TYPE, type TerminalRouterData } from '../src/nodes/terminal-router-shared'
 import {
   keyStoreCopyKeyToWsl,
   keyStoreCreateKey,
@@ -453,6 +454,15 @@ async function serverGetStats(config: ServerConfig): Promise<ServerStats> {
 // Action registry
 // ═══════════════════════════════════════════════════════════════════
 
+// "node-id/handle-id", split at the first slash like every other target consumer.
+async function resolveRouteTarget(target: string): Promise<TerminalContext> {
+  const slash = target.indexOf('/')
+  if (slash <= 0 || slash === target.length - 1) {
+    throw new Error(`Not a terminal target: "${target}" (expected "node-id/handle-id")`)
+  }
+  return host.terminal.getContext(target.slice(0, slash), target.slice(slash + 1))
+}
+
 export const actions = {
   'localhost.getStats': () => getLocalhostStats(),
   'wsl.getStats': (distro: string) => getWslStats(distro),
@@ -481,6 +491,8 @@ export const actions = {
   'server.installKey': async (config: ServerConfig, keyRef: string) =>
     installPublicKey(config, await resolvePublicKey(keyRef)),
   'terminal.run': (ctx: TerminalContext, args: string[]) => host.terminal.run(ctx, args),
+  // A Terminal Router route's context at the moment it is added (see the node's inspector).
+  'terminalRouter.resolve': (target: string) => resolveRouteTarget(String(target ?? '')),
   'terminal.exec': (ctx: TerminalContext, command: string, opts?: ExecOptions) =>
     terminalExecWithOpts(ctx, command, opts),
   'terminal.execDetailed': (ctx: TerminalContext, command: string, opts?: ExecOptions) =>
@@ -508,6 +520,10 @@ export const actions = {
 // ═══════════════════════════════════════════════════════════════════
 
 export const exposeOutput = (handleId: string, nodeData: Record<string, unknown>, typeId: string): unknown => {
+  if (typeId === TERMINAL_ROUTER_TYPE) {
+    return routeOutput(handleId, nodeData as TerminalRouterData)
+  }
+
   if (typeId === 'localhost') {
     if (handleId === 'terminal' || handleId === 'fs-out') {
       return { type: 'local' }

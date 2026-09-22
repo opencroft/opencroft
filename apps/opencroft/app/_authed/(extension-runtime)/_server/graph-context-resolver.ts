@@ -1,6 +1,6 @@
 import { resolveContexts } from '@/app/_authed/(extension-runtime)/_server/context-resolution'
 import { listExtensionManifestsImpl } from '@/app/_authed/(extension-runtime)/_server/extension-action-impl'
-import type { GraphSnapshot } from '@/app/_authed/(extension-runtime)/_server/host'
+import { type GraphSnapshot, resolveTerminalTarget } from '@/app/_authed/(extension-runtime)/_server/host'
 import { getExtensionModule } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { buildNodeTypeHandles } from '@/app/_authed/(extension-runtime)/_server/node-handles'
 
@@ -17,5 +17,6 @@ export async function resolveGraphContexts(graph: GraphSnapshot): Promise<GraphS
   return resolveContexts(graph, {
     nodeTypeToExtension,
     exposeOutputOf: async (extensionId) => (await getExtensionModule(extensionId)).exposeOutput,
+    resolveTerminalTarget,
   })
 }

@@ -10,7 +10,8 @@ const NONE = '__none__'
 export interface TerminalSelectorProps {
   /** "node-id/handle-id" of the selected terminal source, or '' for none. */
   value?: string
-  onChange: (value: string) => void
+  /** `option` is the picked choice as offered (its display title), absent for "None". */
+  onChange: (value: string, option?: TerminalTargetOption) => void
   /** Limit the choices to one space's nodes; omit to offer every space. */
   spaceSlug?: string
   /** Offer an explicit "None" choice (reported as ''). */
@@ -48,7 +49,14 @@ export function TerminalSelector({
   return (
     <Select
       value={value || (allowNone ? NONE : undefined)}
-      onValueChange={(next) => onChange(next === NONE ? '' : next)}
+      onValueChange={(next) =>
+        next === NONE
+          ? onChange('')
+          : onChange(
+              next,
+              options.find((option) => option.target === next),
+            )
+      }
       disabled={disabled}
     >
       <SelectTrigger>

@@ -6,6 +6,7 @@
 // in extension-action-impl.ts instead.
 import { createServerFn } from '@tanstack/react-start'
 
+import { TERMINAL_ROUTER_TYPE } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/terminal-router-shared'
 import {
   getActionAccess,
   invokeExtensionActionImpl,
@@ -62,16 +63,22 @@ export const listTerminalTargets = createServerFn({ strict: { output: false } })
   .handler(async ({ data }): Promise<TerminalTargetOption[]> => {
     await requireSessionServerFn()
     const handles = await listGraphHandles({ role: 'source', contextType: 'terminal-context' })
-    return handles
-      .filter((handle) => !data.spaceSlug || handle.spaceSlug === data.spaceSlug)
-      .map((handle) => {
-        // A dynamic handle's declared id is a prefix; the expanded remainder
-        // (a container name, a worktree) is what tells its siblings apart.
-        const detail = handle.dynamic ? handle.handleId.slice(handle.declaredId.length) : handle.label
-        return {
-          target: `${handle.nodeId}/${handle.handleId}`,
-          title: detail ? `${handle.nodeName} · ${detail}` : handle.nodeName,
-          spaceSlug: handle.spaceSlug,
-        }
-      })
+    return (
+      handles
+        .filter((handle) => !data.spaceSlug || handle.spaceSlug === data.spaceSlug)
+        // A router's outputs are terminals already on this list under their own
+        // name; offering them again would list each routed terminal once per
+        // router that carries it.
+        .filter((handle) => handle.typeId !== TERMINAL_ROUTER_TYPE)
+        .map((handle) => {
+          // A dynamic handle's declared id is a prefix; the expanded remainder
+          // (a container name, a worktree) is what tells its siblings apart.
+          const detail = handle.dynamic ? handle.handleId.slice(handle.declaredId.length) : handle.label
+          return {
+            target: `${handle.nodeId}/${handle.handleId}`,
+            title: detail ? `${handle.nodeName} · ${detail}` : handle.nodeName,
+            spaceSlug: handle.spaceSlug,
+          }
+        })
+    )
   })

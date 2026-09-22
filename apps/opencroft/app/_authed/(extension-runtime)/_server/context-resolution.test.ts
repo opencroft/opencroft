@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { routeOutput, type TerminalRouterData } from '../_builtin/core/src/nodes/terminal-router-shared'
 import { type ContextResolverDeps, type ExposeOutput, resolveContexts } from './context-resolution'
 import type { GraphEdgeRecord, GraphNodeRecord, GraphSnapshot } from './host'
 
@@ -15,6 +16,9 @@ const handle = (id: string, role: 'source' | 'target', contextType: string, dyna
 })
 
 const exposeOutput: ExposeOutput = (handleId, nodeData, typeId) => {
+  if (typeId === 'terminal-router') {
+    return routeOutput(handleId, nodeData as TerminalRouterData)
+  }
   if (typeId === 'docker') {
     return { type: 'local' }
   }
@@ -40,8 +44,17 @@ const deps: ContextResolverDeps = {
       },
     ],
     ['script', { extensionId: 'my-ext', handles: [handle('ctx-in', 'target', 'terminal-context')] }],
+    ['terminal-router', { extensionId: 'my-ext', handles: [handle('route-', 'source', 'terminal-context', true)] }],
   ]),
   exposeOutputOf: async () => exposeOutput,
+  // Terminals living outside the resolved graph, as terminal.getContext sees them.
+  resolveTerminalTarget: async (target) => {
+    const live: Record<string, unknown> = { 'server-9/terminal': { type: 'ssh', host: 'fresh.example' } }
+    if (!(target in live)) {
+      throw new Error(`No context value for ${target}`)
+    }
+    return live[target]
+  },
 }
 
 const node = (id: string, type: string, data: Record<string, unknown> = {}): GraphNodeRecord => ({
@@ -122,4 +135,37 @@ test('node order and the rest of each node are preserved', async () => {
     ['docker-1', 'app-1', 'script-1'],
   )
   assert.deepEqual(nodeIn(resolved, 'app-1').position, { x: 0, y: 0 })
+})
+
+// A router whose routes point at terminals in another space, feeding a script:
+//   (server-9/terminal, elsewhere) ~~route r1~~> router --route-r1--> script
+function routerGraph(routes: TerminalRouterData['routes']): GraphSnapshot {
+  return {
+    nodes: [node('router-1', 'terminal-router', { routes }), node('script-1', 'script')],
+    edges: [
+      { id: 'edge-route', source: 'router-1', sourceHandle: 'route-r1', target: 'script-1', targetHandle: 'ctx-in' },
+    ],
+  }
+}
+
+test("a router route carries its target's current context, not the one stored with it", async () => {
+  const stored = { type: 'ssh', host: 'stale.example' }
+  const resolved = await resolveContexts(
+    routerGraph([{ id: 'r1', target: 'server-9/terminal', title: 'Server', context: stored }]),
+    deps,
+  )
+  const fresh = { type: 'ssh', host: 'fresh.example' }
+  assert.deepEqual(contextOf(resolved, 'script-1', 'ctx-in'), fresh)
+  const routes = nodeIn(resolved, 'router-1').data.routes as NonNullable<TerminalRouterData['routes']>
+  assert.deepEqual(routes[0], { id: 'r1', target: 'server-9/terminal', title: 'Server', context: fresh })
+})
+
+test('a route whose target no longer resolves drops its context and feeds nothing', async () => {
+  const resolved = await resolveContexts(
+    routerGraph([{ id: 'r1', target: 'gone-1/terminal', title: 'Gone', context: { type: 'ssh', host: 'old' } }]),
+    deps,
+  )
+  assert.equal(contextOf(resolved, 'script-1', 'ctx-in'), undefined)
+  const routes = nodeIn(resolved, 'router-1').data.routes as NonNullable<TerminalRouterData['routes']>
+  assert.deepEqual(routes[0], { id: 'r1', target: 'gone-1/terminal', title: 'Gone' })
 })

@@ -71,6 +71,15 @@
       ]
     },
     {
+      "typeId": "terminal-router",
+      "name": "Terminal Router",
+      "category": "Infrastructure",
+      "icon": "Split",
+      "handles": [
+        { "id": "route-", "contextType": "terminal-context", "role": "source", "label": "Terminal", "dynamic": true }
+      ]
+    },
+    {
       "typeId": "core-key-store",
       "name": "Key Store",
       "category": "Storage",

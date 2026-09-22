@@ -1,3 +1,8 @@
+import {
+  routeHandleId,
+  TERMINAL_ROUTER_TYPE,
+  type TerminalRouterData,
+} from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/terminal-router-shared'
 import { assertUniqueNodeTypeIds, manifestOwners } from '@/app/_authed/(extension-runtime)/_node-type-guard'
 import { invokeExtensionActionImpl } from '@/app/_authed/(extension-runtime)/_server/extension-action-impl'
 import type { ExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
@@ -50,9 +55,10 @@ export function findDockerExtensionId(manifests: ManifestLike[]): string | null 
 // container). Returns [] for anything with no dynamic source handle, and on
 // failure, so a single unreachable node can't fail a whole enumeration.
 //
-// Application-node/docker specific today, which is why it lives in one place:
-// when another node type grows dynamic handles, this is the function that
-// learns about it rather than each caller.
+// Knows each node type with dynamic handles — the docker application node and
+// the Terminal Router — which is why it lives in one place: when another node
+// type grows dynamic handles, this is the function that learns about it rather
+// than each caller.
 //
 // Reaches the docker action through the plain impl, NOT the createServerFn in
 // _server/actions.ts. The server fn needs TanStack Start's request-scoped
@@ -66,6 +72,12 @@ export async function expandDynamicHandles(
   declared: ExtensionHandle[],
   dockerExtensionId: string | null,
 ): Promise<string[]> {
+  if (node.type === TERMINAL_ROUTER_TYPE) {
+    // One output per route whose target resolved — an unresolved route's
+    // handle has no context for terminal.getContext to hand back.
+    const routes = (node.data as TerminalRouterData | undefined)?.routes ?? []
+    return routes.filter((route) => route.context != null).map(routeHandleId)
+  }
   if (node.type !== 'application') {
     return []
   }
