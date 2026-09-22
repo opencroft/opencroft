@@ -125,9 +125,9 @@ export function TerminalRouterInspector({
       <Field>
         <FieldLabel>Terminals</FieldLabel>
         {routes.length > 0 ? (
-          <ItemGroup className='gap-1'>
+          <ItemGroup>
             {routes.map((route) => (
-              <Item key={route.id} variant='outline' size='sm'>
+              <Item key={route.id} size='sm' className='px-0 py-1.5'>
                 <ItemMedia variant='icon'>
                   <icons.TerminalSquare />
                 </ItemMedia>
@@ -146,7 +146,7 @@ export function TerminalRouterInspector({
             ))}
           </ItemGroup>
         ) : (
-          <Empty className='border border-dashed p-4'>
+          <Empty className='p-2'>
             <EmptyHeader>
               <EmptyDescription>No terminals routed yet.</EmptyDescription>
             </EmptyHeader>
