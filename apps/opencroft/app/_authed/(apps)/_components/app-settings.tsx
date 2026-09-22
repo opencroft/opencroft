@@ -169,8 +169,9 @@ export function AppSettings({ spaceSlug, instance, meta, spaces }: Props) {
         <Icon className='size-5 shrink-0 text-muted-foreground' />
         <Flex className='min-w-0 flex-1'>
           <span className='font-medium'>{meta?.title ?? instance.appSlug}</span>
-          {/* The instance's address, minted from its name once at creation.
-              A rename deliberately does not move it. */}
+          {/* The instance's public address, minted from its name. A rename moves
+              it, which is why the Name field below says so: the old address stops
+              resolving rather than redirecting. */}
           <span className='text-xs text-muted-foreground'>
             Address: {spaceSlug}.{instance.slug}
           </span>
@@ -186,7 +187,8 @@ export function AppSettings({ spaceSlug, instance, meta, spaces }: Props) {
           </Button>
         </Flex>
         <p className='text-xs text-muted-foreground'>
-          Only the display name changes — the app's address stays as it is.
+          Saving a new name moves the address above with it. Links and agent targets written against
+          the old address stop working — they are not redirected.
         </p>
         {renameError && <p className='text-sm text-destructive'>{renameError}</p>}
       </Flex>
