@@ -1,7 +1,7 @@
 'use client'
 
 import { useSession } from '@opencroft/auth/client'
-import { MessagesSquare, PanelBottom, PanelLeft, PanelRight, PictureInPicture2, X } from 'lucide-react'
+import { PanelBottom, PanelLeft, PanelRight, PictureInPicture2, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useState } from 'react'
 import { Button } from 'ui/button'
@@ -12,18 +12,21 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from 'ui/dropdown-menu'
+import { ChatLauncher } from 'ui/group-chat/chat-launcher'
 import { ThreadAgentCluster } from 'ui/group-chat/thread-agent-cluster'
 import { ThreadWorkControl } from 'ui/group-chat/thread-work-control'
 import { useIsMobile } from 'ui/hooks/use-mobile'
 import { DockPanel, type DockSide } from 'ui/layouts/dock-panel'
 import { BackButton } from 'ui/utils/back-button'
 
+import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
 import type {
   EmbeddedChatSelection,
   EmbeddedThreadContext,
 } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
 import { EmbeddedAgentChat } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
 import type { GroupChatDetailHeader } from '@/app/_authed/(group-chats)/_components/group-chat-detail-screen'
+import { countChatThreadKeys } from '@/app/_authed/(group-chats)/_shared/session-key'
 import { useHistoryBackClose } from '@/hooks/utils/use-history-back-close'
 import { useLocalStorage } from '@/hooks/utils/use-local-storage'
 
@@ -223,6 +226,13 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
 
   useHistoryBackClose(isMobile && open, () => setOpen(false))
 
+  // The chat's threads waiting on someone -- a permission to grant or a
+  // question to answer -- for the launcher's badge, off the same shared poll
+  // every chat list reads. Polled only while the launcher is what shows: an
+  // open panel carries each thread's own status.
+  const { pendingKeys } = useSessionActivityKeys(!open)
+  const waitingCount = countChatThreadKeys(pendingKeys, space)
+
   const beginFloatGesture = (
     event: React.PointerEvent,
     move: (dx: number, dy: number, start: FloatRect) => FloatRect,
@@ -386,15 +396,7 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
   // page around an extension's surface can scroll, and a corner anchored to a
   // container rides away with it -- these belong to the viewport.
   const overlay = !open ? (
-    <Button
-      size='icon'
-      aria-label='Open chat'
-      title='Open chat'
-      className='fixed right-4 bottom-4 z-40 size-14 rounded-full shadow-lg'
-      onClick={() => setOpen(true)}
-    >
-      <MessagesSquare className='size-6' />
-    </Button>
+    <ChatLauncher waitingCount={waitingCount} className='fixed right-4 bottom-4 z-40' onClick={() => setOpen(true)} />
   ) : isMobile ? (
     <div className='fixed inset-0 z-50 flex min-h-0 flex-col bg-background'>
       {/* Touch targets, not pointer targets, on the full-screen cover. */}

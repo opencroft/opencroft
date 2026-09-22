@@ -65,3 +65,18 @@ export function partsOfSessionKey(sessionKey: string): SessionKeyParts | null {
   }
   return { chatSlug: match[1], agentSlug: match[2], threadSlug: match[3] }
 }
+
+/**
+ * How many of `sessionKeys` are threads of the chat addressed by `chatSlug`,
+ * in either stored spelling -- how many of one chat's threads sit in an
+ * activity set, say. A key of any other shape counts for nothing.
+ */
+export function countChatThreadKeys(sessionKeys: Iterable<string>, chatSlug: string): number {
+  let count = 0
+  for (const key of sessionKeys) {
+    if (partsOfSessionKey(key)?.chatSlug === chatSlug) {
+      count += 1
+    }
+  }
+  return count
+}
