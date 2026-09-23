@@ -1759,6 +1759,41 @@ test('a plain-message elicitation still takes a free-text answer, and no answer 
   await h.client.deleteSession(h.sessionId)
 })
 
+// One harness process serves every session of its agent, so which session the
+// connection last prompted says nothing about which one is asking. The
+// question goes where the request says; the guess is only for a request that
+// names no session.
+test('an elicitation goes to the session it names, not the one last prompted on its connection', async () => {
+  const asking = await setup('openclaw')
+  const lastPrompted = await setup('openclaw')
+  const { createElicitation } = buildClient(() => lastPrompted.sessionId, 'local')
+  assert.ok(createElicitation)
+  const response = createElicitation({
+    mode: 'form',
+    sessionId: asking.sessionId,
+    message: 'Pick one',
+    requestedSchema: { type: 'object', properties: {} },
+  })
+  const ask = asking.events.find((event) => event.kind === 'ask_user')
+  assert.ok(ask && ask.kind === 'ask_user', 'drawn in the chat whose agent asked')
+  assert.ok(!lastPrompted.events.some((event) => event.kind === 'ask_user'), 'and nowhere else')
+  asking.client.resolveElicitation(ask.requestId, {})
+  assert.deepEqual(await response, { action: 'accept', content: {} })
+
+  const unscoped = createElicitation({
+    mode: 'form',
+    requestId: 7,
+    message: 'Before any session',
+    requestedSchema: { type: 'object', properties: {} },
+  })
+  const guessed = lastPrompted.events.find((event) => event.kind === 'ask_user')
+  assert.ok(guessed && guessed.kind === 'ask_user', 'a request-scoped one still reaches a chat')
+  lastPrompted.client.resolveElicitation(guessed.requestId)
+  assert.deepEqual(await unscoped, { action: 'cancel' })
+  await asking.client.deleteSession(asking.sessionId)
+  await lastPrompted.client.deleteSession(lastPrompted.sessionId)
+})
+
 // A question blocks a turn exactly as a permission request does, so the
 // session reads as awaiting someone until it is answered — whoever asked it.
 // Membership rather than equality: the store is shared across this file.

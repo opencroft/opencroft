@@ -1551,7 +1551,18 @@ export function buildClient(
     },
     createElicitation: (request: CreateElicitationRequest) =>
       new Promise<CreateElicitationResponse>((resolve) => {
-        const sessionId = getElicitationSession() ?? store.lastSessionId
+        // A session-scoped elicitation NAMES its session, and that is the one
+        // it goes to — through the subagent routes, as a permission request
+        // does. One harness process serves every session of its agent, so the
+        // connection's "last prompted" session is only a guess, and it guessed
+        // wrong whenever another of the agent's chats had been written to since:
+        // the question was drawn, and recorded, in a chat whose agent was not
+        // asking, while the one that was sat waiting on nothing visible.
+        //
+        // The guess is left for what has no session to name — a request-scoped
+        // elicitation, raised while a session is being set up.
+        const scoped = 'sessionId' in request && typeof request.sessionId === 'string' ? request.sessionId : undefined
+        const sessionId = scoped ? (store.subagentParents.get(scoped) ?? scoped) : getElicitationSession()
         if (!sessionId) {
           resolve({ action: 'cancel' })
           return
