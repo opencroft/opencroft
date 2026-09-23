@@ -18,6 +18,13 @@ export const INITIAL_HISTORY_RECORDS = 20
 // confusable with anything a real frame could be.
 const SKIP_FRAME = Symbol('skip-frame')
 
+// How often an otherwise quiet stream says it is still there. An idle chat
+// sends nothing for as long as its agent is idle, and a proxy between the
+// browser and the app is entitled to close a response that has been silent
+// long enough. A comment line is ignored by EventSource, so this changes
+// nothing a reader sees; it only keeps the connection from looking abandoned.
+const HEARTBEAT_MS = 20_000
+
 export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
   server: {
     handlers: {
@@ -31,6 +38,11 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
         const encoder = new TextEncoder()
         const goneFrame = encoder.encode(`data: ${JSON.stringify({ kind: SESSION_GONE_KIND })}\n\n`)
         let unsubscribe = () => {}
+        let heartbeat: ReturnType<typeof setInterval> | undefined
+        const stop = () => {
+          clearInterval(heartbeat)
+          unsubscribe()
+        }
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
             const window = agentClient.getRecordsWindow(sessionId, { records: INITIAL_HISTORY_RECORDS })
@@ -95,6 +107,7 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
             // first one, so it is known by the time the marker below is built;
             // the marker is what lets the client number the rest correctly.
             let snapshotPrefix = 0
+            let ended = false
             unsubscribe = agentClient.subscribe(sessionId, (event) => send(withAuthors(event)), {
               fromIndex: window.startIndex,
               onReplay: (info) => {
@@ -108,6 +121,8 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
               // works, and none of that ever arrives here. Say so the same way
               // as for an unknown id, behind whatever is still queued, and end.
               onEnd: () => {
+                ended = true
+                clearInterval(heartbeat)
                 inOrder = inOrder.then(() => {
                   try {
                     controller.enqueue(goneFrame)
@@ -118,6 +133,19 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
                 })
               },
             })
+            // Not for a stream that has already ended -- which it can have by
+            // now, if the session went while it was being subscribed to.
+            if (!ended) {
+              heartbeat = setInterval(() => {
+                inOrder = inOrder.then(() => {
+                  try {
+                    controller.enqueue(encoder.encode(': keepalive\n\n'))
+                  } catch {
+                    // The reader is gone; cancel() does the cleanup.
+                  }
+                })
+              }, HEARTBEAT_MS)
+            }
             // subscribe() replays only the bounded tail window synchronously before
             // it returns (or is a noop if the session doesn't exist), so every
             // replayed event is already queued above by this point. Ship one more
@@ -141,10 +169,10 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
             )
           },
           cancel() {
-            unsubscribe()
+            stop()
           },
         })
-        request.signal.addEventListener('abort', () => unsubscribe())
+        request.signal.addEventListener('abort', stop)
         return new Response(stream, {
           headers: {
             'Content-Type': 'text/event-stream',
