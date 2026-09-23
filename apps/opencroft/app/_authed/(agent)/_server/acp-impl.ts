@@ -276,6 +276,15 @@ export async function ensureLocalSessionImpl(data: { agentNodeId: string; tabKey
  * The recording is dropped before a replay so the replayed events become its
  * fresh contents. Keeping both would leave the session's own history written
  * down twice, one copy behind the other.
+ *
+ * Which is why a restore that FAILS does not fall through to the replay. Only
+ * a restore the agent cannot do (null: no resume capability) does. A failure
+ * -- the harness would not start, the resume was refused or timed out -- is
+ * usually the same failure the replay would meet a moment later, and falling
+ * through dropped the recording first: the replay failed too, a fresh session
+ * took the key, and the conversation opened empty from then on, its only
+ * record deleted by an attempt that could not have succeeded. It is thrown
+ * instead, with the recording intact, and the next open tries again.
  */
 async function reopenPersistedSession(
   tabKey: string,
@@ -289,7 +298,10 @@ async function reopenPersistedSession(
     return []
   })
   if (recorded.length > 0) {
-    const restored = await agentClient.restoreSession(sessionId, selection, recorded).catch(() => null)
+    const restored = await agentClient.restoreSession(sessionId, selection, recorded).catch((error: unknown) => {
+      console.error('Failed to restore the recorded session for tab; its transcript is kept', tabKey, error)
+      throw error
+    })
     if (restored) {
       return restored
     }

@@ -74,11 +74,19 @@ function acpStore(): AcpStoreShape {
 // Seeds a mock connection under the exact spawn-config key `openLocalSession`
 // will derive for this agent, so `agentClient.createSession` reuses it instead
 // of spawning a real process — same seam agent-client's own tests use.
-function seedMockConnection(selection: AgentSelection, options: { canLoad?: boolean; forkable?: boolean } = {}): void {
+function seedMockConnection(
+  selection: AgentSelection,
+  options: { canLoad?: boolean; forkable?: boolean; resumable?: boolean; resumeFails?: boolean } = {},
+): void {
   const connection = {
     newSession: async () => ({ sessionId: `acp-session-${crypto.randomUUID()}` }),
     prompt: async () => ({ stopReason: 'end_turn' }),
-    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    resumeSession: async (params: { sessionId: string }) => {
+      if (options.resumeFails) {
+        throw new Error('the harness would not start')
+      }
+      return { sessionId: params.sessionId }
+    },
     // Answered only when the store entry below advertises `forkSupported` — the
     // engine refuses before reaching a connection that did not. A fresh id, so
     // the fork is a distinct session, exactly as the real bridge returns.
@@ -101,6 +109,7 @@ function seedMockConnection(selection: AgentSelection, options: { canLoad?: bool
     connection,
     lastSessionId: null,
     loadSession: options.canLoad ?? false,
+    resumeSession: options.resumable ?? false,
     forkSupported: options.forkable ?? false,
     initialized: Promise.resolve(),
   })
@@ -346,6 +355,30 @@ test('an unload ends the streams reading the session, so a reader reconnects to 
 
   const reopened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
   assert.equal(reopened.sessionId, first.sessionId, 'the same id comes back -- which is why the old stream cannot tell')
+})
+
+// A restore that fails is not a restore the agent cannot do. Falling through
+// to the replay dropped the recording first, the replay met the same failure,
+// and a fresh session took the key: the chat opened empty from then on.
+test('a restore that fails keeps the recorded transcript and the pointer, and the open says so', async () => {
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection, { canLoad: true, resumable: true })
+  const tabKey = `resume-test-tab-${crypto.randomUUID()}`
+  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  await promptLocalImpl({ sessionId: first.sessionId, text: 'remember me', queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await flushSessionEvents()
+  const recorded = await readSessionEvents(tabKey)
+  assert.ok(recorded.some((event) => event.kind === 'user'))
+  await stopLocalSessionProcessImpl(tabKey)
+
+  seedMockConnection(selection, { canLoad: true, resumable: true, resumeFails: true })
+  await assert.rejects(ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey }), /would not start/)
+  assert.deepEqual(await readSessionEvents(tabKey), recorded, 'the transcript is exactly as it was')
+  assert.deepEqual(await readPersistedSession(tabKey), { id: first.sessionId, prompted: true }, 'and still names the session')
+
+  seedMockConnection(selection, { canLoad: true, resumable: true })
+  const reopened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  assert.equal(reopened.sessionId, first.sessionId, 'the next open brings the same conversation back')
 })
 
 // ── forget-session primitive ──────────────────────────────────────────────
