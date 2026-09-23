@@ -34,6 +34,7 @@ import {
 import { headerFromWindow, userText } from '@/app/_authed/(agent)/_lib/build-blocks'
 import type { ChatMessage, ChatPart } from '@/app/_authed/(agent)/_lib/messages'
 import { READER_ORIGIN, type WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
+import { useReconnect } from '@/app/_authed/(agent)/_lib/use-reconnect'
 import {
   cancelLocal,
   deliverQueueLocal,
@@ -794,13 +795,15 @@ export function useAcpSession(
   // again for the SAME tab -- agentNodeId/tabKey don't change on a
   // clear, so nothing else would re-trigger it.
   const [generation, setGeneration] = useState(0)
-  // A message typed before the ACP session finished being created, queued so
-  // the first message isn't dropped during the (slow first-spawn) handshake.
+  // Messages typed while there is no session to send them to -- before the
+  // first open finishes (the slow first-spawn handshake), or while a reconnect
+  // is reopening it -- held so none is dropped, and sent in order once there is.
+  // A list: a reconnect can take long enough for a reader to send twice.
   // This is the only client-held queue: the server can't hold a message for a
   // session that doesn't exist yet. Once the session is live, mid-turn messages
   // are queued server-side by agent-client (one prompt-turn at a time is an ACP
   // constraint it owns) and observed here via 'queue' snapshot events.
-  const pending = useRef<{ text: string; attachments?: readonly string[] } | null>(null)
+  const pending = useRef<{ text: string; attachments?: readonly string[] }[]>([])
   // Historical events accumulate here while a subscribe's synchronous replay is
   // in flight (see acp-stream.ts), committed to `events` in one `setEvents` call
   // when the history_end marker arrives — so a long reopened session paints once
@@ -812,14 +815,15 @@ export function useAcpSession(
   // as older pages are prepended by loadMoreHistory. Live-appended events don't
   // move events[0], so they never touch this.
   const baseIndexRef = useRef(0)
-  // Whether the stream's "no such session" answer has already sent this tab
-  // back through ensureLocalSession once without a transcript coming back.
-  // One reopen per gap: the session the server lost is restored from its
-  // recording and streamed again under the id that gives, which clears this
-  // the moment history_end arrives. A second gone in a row means the reopen
-  // itself hands out a session the engine will not stream, and going round
-  // again would only spin — so that one is shown as it is, empty.
-  const reopenedAfterGoneRef = useRef(false)
+  // Re-establishing this tab's connection: the session went (an unload, a
+  // restart), the stream failed for good, or opening failed. Each is answered
+  // the same way -- open the tab's session again and stream what that gives --
+  // and the hook decides when (see useReconnect: backoff, and not while hidden).
+  const reconnect = useReconnect()
+  // Which conversation the open effect last opened. A run for the same one is
+  // a reconnect, and what the reader is looking at stays on screen until the
+  // fresh history replaces it, rather than going blank for the round trip.
+  const openedRef = useRef<string | null>(null)
   // Outgoing prompts are serialized through this chain. The server assigns
   // queue/turn order by request arrival, so two concurrent promptLocal calls
   // could otherwise arrive reordered on the network and invert the messages.
@@ -880,22 +884,35 @@ export function useAcpSession(
   const [liveTokens, setLiveTokens] = useState<UsageTokens | undefined>(undefined)
 
   // Resolve (or lazily create) the live ACP session for this tab.
-  // biome-ignore lint/correctness/useExhaustiveDependencies(generation): not read in the body -- it exists purely to force this effect to re-run for the SAME tab after clearSession, which agentNodeId/tabKey alone would not trigger
+  // `generation` forces a run for the SAME tab after clearSession, which
+  // agentNodeId/tabKey alone would not trigger, and starts it over blank.
+  // biome-ignore lint/correctness/useExhaustiveDependencies(reconnect.attempt): not read in the body -- it exists to re-run this effect for the same tab when useReconnect decides it is time, keeping what is on screen
   useEffect(() => {
     let cancelled = false
+    const opening = `${agentNodeId}\n${tabKey}\n${generation}`
+    const reconnecting = openedRef.current === opening
+    openedRef.current = opening
     setSessionId(null)
-    setEvents([])
-    setLoading(true)
-    setLocalWaiting(false)
-    setCanFork(false)
-    setCanSteer(false)
-    setSeedUsage(undefined)
-    setLiveTokens(undefined)
+    if (!reconnecting) {
+      // Held for the conversation being left, so not for this one.
+      pending.current = []
+      setEvents([])
+      setLoading(true)
+      setLocalWaiting(false)
+      setCanFork(false)
+      setCanSteer(false)
+      setSeedUsage(undefined)
+      setLiveTokens(undefined)
+    }
     sendChainRef.current = Promise.resolve()
     open({ agentNodeId, tabKey })
       .then((result) => {
         if (!cancelled) {
           setSessionId(result.sessionId)
+          // The new seed is the database's account as of THIS open, which
+          // already holds every turn the live increments counted since the
+          // last one -- so they start again from nothing with it.
+          setLiveTokens(undefined)
           setCanFork(result.canFork)
           setCanSteer(result.canSteer)
           setCanAttachImages(result.canAttachImages)
@@ -916,14 +933,17 @@ export function useAcpSession(
       })
       .catch((error) => {
         console.error('opening the session failed', error)
+        // Tried again rather than left as an empty chat: a failed open is
+        // usually a server restarting or a harness slow to start, and an empty
+        // transcript here reads as a conversation with nothing in it.
         if (!cancelled) {
-          setLoading(false)
+          reconnect.schedule()
         }
       })
     return () => {
       cancelled = true
     }
-  }, [agentNodeId, tabKey, generation, open])
+  }, [agentNodeId, tabKey, generation, open, reconnect.attempt, reconnect.schedule])
 
   // Stream events once the session id is known.
   useEffect(() => {
@@ -946,27 +966,20 @@ export function useAcpSession(
     eventSource.onmessage = (e) => {
       const event = JSON.parse(e.data) as AcpStreamEvent
       if (event.kind === SESSION_GONE_KIND) {
-        // The engine no longer holds this id (server restart, stopped
-        // process, idle unload). Close before anything else: the server has
+        // The engine no longer holds this id, or has stopped holding it while
+        // this stream read it (server restart, stopped process, idle unload,
+        // an edit's teardown). Close before anything else: the server has
         // ended the stream and a native EventSource would reconnect to the
         // same dead id forever. Then reopen the tab's session, which brings
         // the recorded transcript back and re-runs this effect under the id
-        // it hands out. The open effect clears the screen for the moment the
-        // reopen takes and fills it from the recording — where the empty
-        // replay this frame replaced left it blank for good.
+        // it hands out; the transcript on screen stays until that arrives.
         eventSource.close()
-        if (reopenedAfterGoneRef.current) {
-          console.warn('The reopened session is not streamable either; leaving the chat as it is', sessionId)
-          setLoading(false)
-          return
-        }
-        reopenedAfterGoneRef.current = true
-        setGeneration((g) => g + 1)
+        reconnect.schedule()
         return
       }
       if (event.kind === HISTORY_END_KIND) {
         replayingHistoryRef.current = false
-        reopenedAfterGoneRef.current = false
+        reconnect.connected()
         // NUMBERING, not paging, and the two differ by the snapshot prefix.
         // The replay opens with however many live-state events the engine had
         // to prepend (see HistoryEndEvent.snapshotPrefix); they hold no
@@ -1010,9 +1023,19 @@ export function useAcpSession(
         setLocalWaiting(false)
       }
     }
-    eventSource.onerror = () => setLoading(false)
+    // While the browser is retrying on its own (CONNECTING) there is nothing
+    // to do. CLOSED is the browser giving up: it does that when a reconnect is
+    // answered with anything but a stream -- a 502 while the server restarts,
+    // a 401 once a sign-in has lapsed -- and never tries again. The chat would
+    // then sit on whatever it last showed, looking live, for as long as the tab
+    // stays open; so the tab reconnects itself.
+    eventSource.onerror = () => {
+      if (eventSource.readyState === EventSource.CLOSED) {
+        reconnect.schedule()
+      }
+    }
     return () => eventSource.close()
-  }, [sessionId, paginatedHistory.reset])
+  }, [sessionId, paginatedHistory.reset, reconnect.schedule, reconnect.connected])
 
   const folded = useMemo(() => fold(events, baseIndexRef.current), [events])
 
@@ -1071,9 +1094,9 @@ export function useAcpSession(
   const send = useCallback(
     (value: string, options?: { attachments?: readonly string[] }) => {
       if (!sessionId) {
-        // Session is still being created — hold the raw text and what goes
-        // with it, flush once ready.
-        pending.current = { text: value, attachments: options?.attachments }
+        // No session to send to yet -- hold the raw text and what goes with
+        // it, flush once there is one.
+        pending.current.push({ text: value, attachments: options?.attachments })
         setLocalWaiting(true)
         return
       }
@@ -1085,14 +1108,16 @@ export function useAcpSession(
     [sessionId, deliver],
   )
 
-  // Flush the message held while the session was being created.
+  // Flush the messages held while there was no session, in the order typed.
   useEffect(() => {
-    if (!sessionId || pending.current === null) {
+    if (!sessionId || pending.current.length === 0) {
       return
     }
-    const { text, attachments } = pending.current
-    pending.current = null
-    deliver(text, { queue: 'wait', origin: READER_ORIGIN, attachments })
+    const held = pending.current
+    pending.current = []
+    for (const { text, attachments } of held) {
+      deliver(text, { queue: 'wait', origin: READER_ORIGIN, attachments })
+    }
   }, [sessionId, deliver])
 
   // Interrupt the running turn. The agent emits a (cancelled) turn_end, which
