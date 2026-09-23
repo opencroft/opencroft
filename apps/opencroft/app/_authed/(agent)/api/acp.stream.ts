@@ -29,6 +29,7 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
           return new Response('missing sessionId', { status: 400 })
         }
         const encoder = new TextEncoder()
+        const goneFrame = encoder.encode(`data: ${JSON.stringify({ kind: SESSION_GONE_KIND })}\n\n`)
         let unsubscribe = () => {}
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
@@ -41,7 +42,7 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
             // so instead, and end the stream: the client reopens the tab's
             // session and connects again under the id that gives it.
             if (!window) {
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ kind: SESSION_GONE_KIND })}\n\n`))
+              controller.enqueue(goneFrame)
               controller.close()
               return
             }
@@ -98,6 +99,23 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
               fromIndex: window.startIndex,
               onReplay: (info) => {
                 snapshotPrefix = info.snapshotPrefix
+              },
+              // The session this stream reads has stopped being the session:
+              // it was unloaded, stopped, deleted, or replaced by a reopen
+              // under the same id. Nothing will be emitted into it again, so a
+              // stream left open would be a chat that looks live and never
+              // moves -- a message sent from it reaches the agent, which
+              // works, and none of that ever arrives here. Say so the same way
+              // as for an unknown id, behind whatever is still queued, and end.
+              onEnd: () => {
+                inOrder = inOrder.then(() => {
+                  try {
+                    controller.enqueue(goneFrame)
+                    controller.close()
+                  } catch {
+                    // Already closed by the reader.
+                  }
+                })
               },
             })
             // subscribe() replays only the bounded tail window synchronously before

@@ -329,6 +329,25 @@ test('a message after unload reattaches to the SAME session instead of starting 
   assert.equal(afterUnload.created, false, 'the reattached session already has its history -- it is not new')
 })
 
+// The idle reaper's unload, then the next message reopening the session under
+// the same id: a chat's stream opened before the unload must be told it ended,
+// or it stays attached to the dropped record and the reader sees nothing of
+// the work the reopened session goes on to do.
+test('an unload ends the streams reading the session, so a reader reconnects to the reopened one', async () => {
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection, { canLoad: true })
+  const tabKey = `resume-test-tab-${crypto.randomUUID()}`
+
+  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  let ended = 0
+  agentClient.subscribe(first.sessionId, () => {}, { onEnd: () => (ended += 1) })
+  await stopLocalSessionProcessImpl(tabKey)
+  assert.equal(ended, 1, 'the stream is told its session went')
+
+  const reopened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  assert.equal(reopened.sessionId, first.sessionId, 'the same id comes back -- which is why the old stream cannot tell')
+})
+
 // ── forget-session primitive ──────────────────────────────────────────────
 //
 // forgetLocalSessionImpl is the mechanism the new "delete" send-message action

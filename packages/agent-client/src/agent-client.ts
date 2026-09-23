@@ -341,6 +341,10 @@ interface SessionState {
   selection: AgentSelection
   events: ChatEvent[]
   subscribers: Set<Subscriber>
+  // What each subscriber asked to be told when this record stops being the
+  // session (see endSubscriptions). Optional because a record that survived a
+  // dev hot-reload predates it; such a record ends its subscribers silently.
+  subscriberEnds?: Map<Subscriber, () => void>
   // Per-session approval modes (replaces a single global slot).
   modes: SessionModes | null
   // Dynamic config options (mode/model/thought_level/etc.) the agent
@@ -725,6 +729,44 @@ let onEventHook: ((sessionId: string, event: ChatEvent, sessionKey?: string) => 
 // Same shape and reasoning for AgentClientOptions.onCompaction — handleUpdate,
 // its caller, is module-level too.
 let onCompactionHook: ((sessionId: string, compaction: CompactionState) => void) | undefined
+
+// A record leaving the store ends every subscription on it.
+//
+// A subscriber holds the RECORD, not the id, and emit only reaches the record
+// the store holds now. So a record that is dropped (an unload, a stop, a
+// delete) or replaced under the same id (a session reopened by restore or
+// load after one of those) left its subscribers attached to an object nothing
+// would ever emit into again. That is a chat that looks live and never moves:
+// a message sent from it reaches the agent through the reopened session, the
+// agent works, and not one event of it reaches the reader.
+function endSubscriptions(session: SessionState | undefined): void {
+  if (!session) {
+    return
+  }
+  const ends = [...(session.subscriberEnds?.values() ?? [])]
+  session.subscribers.clear()
+  session.subscriberEnds?.clear()
+  for (const end of ends) {
+    try {
+      end()
+    } catch {}
+  }
+}
+
+// Every write of a session record goes through here, so a record already held
+// under the id ends its subscriptions rather than being overwritten under them.
+function putSession(sessionId: string, session: SessionState): void {
+  const previous = store.sessions.get(sessionId)
+  if (previous !== session) {
+    endSubscriptions(previous)
+  }
+  store.sessions.set(sessionId, session)
+}
+
+function dropSession(sessionId: string): void {
+  endSubscriptions(store.sessions.get(sessionId))
+  store.sessions.delete(sessionId)
+}
 
 function emit(sessionId: string, event: ChatEvent): void {
   const session = store.sessions.get(sessionId)
@@ -3731,7 +3773,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         model: selection.model,
         sessionKey: selection.sessionKey,
       }
-      store.sessions.set(sessionId, {
+      putSession(sessionId, {
         meta,
         selection,
         events: [],
@@ -3863,7 +3905,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // Register the session record BEFORE the replay: the agent streams its
       // history as session/update notifications, and emit()/subscribe() drop
       // events for an unknown session id.
-      store.sessions.set(sessionId, {
+      putSession(sessionId, {
         meta,
         selection,
         events: [],
@@ -3906,7 +3948,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // so the caller can cleanly create a fresh one. A notification the host
         // issued into it while the gate held it is answered, not stranded.
         releaseNotifications(store.sessions.get(sessionId))
-        store.sessions.delete(sessionId)
+        dropSession(sessionId)
         if (token) {
           store.acpTokenSession.delete(token)
           store.acpTokenPermissions.delete(token)
@@ -4017,7 +4059,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         canFork: entry.forkSupported === true,
         sessionKey: selection.sessionKey,
       }
-      store.sessions.set(sessionId, {
+      putSession(sessionId, {
         meta,
         selection,
         events: restored,
@@ -4054,7 +4096,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // record so the caller can cleanly fall back to a replay or a fresh
         // session, exactly as loadSession does, held notifications included.
         releaseNotifications(store.sessions.get(sessionId))
-        store.sessions.delete(sessionId)
+        dropSession(sessionId)
         for (const subagentSessionId of state.subagents.keys()) {
           store.subagentParents.delete(subagentSessionId)
         }
@@ -4215,7 +4257,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // and a notification the host issued meanwhile is held on the record
       // being dropped now.
       releaseNotifications(store.sessions.get(sessionId))
-      store.sessions.delete(sessionId)
+      dropSession(sessionId)
       store.nativeSessions.delete(sessionId)
       dropSessionTokens(sessionId)
       // Drop the subagent→parent routes this session owned, so a later
@@ -4368,7 +4410,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // would make a sessionKey -> session lookup ambiguous between the two.
         sessionKey: opts?.sessionKey,
       }
-      store.sessions.set(response.sessionId, {
+      putSession(response.sessionId, {
         meta,
         // A keyed fork is a different conversation to the key-based reads, so
         // its selection carries ITS key; an unkeyed one shares the source's
@@ -4833,11 +4875,21 @@ export function createAgentClient(options: AgentClientOptions = {}) {
          * (an edit, a fork) and reaches a different one, or none.
          */
         onReplay?: (info: { snapshotPrefix: number }) => void
+        /**
+         * Called once when this subscription ends because its session did —
+         * dropped (deleted, stopped, unloaded) or replaced by a reopen under the
+         * same id. Nothing arrives after it; a reader that wants the session
+         * back opens it again and subscribes to what that gives. Called at once
+         * for an unknown session, which is the same situation. Not called for an
+         * unsubscribe the caller made itself.
+         */
+        onEnd?: () => void
       },
     ): () => void {
       const session = store.sessions.get(sessionId)
       if (!session) {
         opts?.onReplay?.({ snapshotPrefix: 0 })
+        opts?.onEnd?.()
         return () => {}
       }
       const from = opts?.fromIndex ?? 0
@@ -4850,8 +4902,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         subscriber(event)
       }
       session.subscribers.add(subscriber)
+      if (opts?.onEnd) {
+        session.subscriberEnds ??= new Map()
+        session.subscriberEnds.set(subscriber, opts.onEnd)
+      }
       return () => {
         session.subscribers.delete(subscriber)
+        session.subscriberEnds?.delete(subscriber)
       }
     },
 
@@ -4926,6 +4983,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       store.connections.clear()
       for (const session of store.sessions.values()) {
         releaseNotifications(session)
+        endSubscriptions(session)
       }
       store.sessions.clear()
       store.nativeSessions.clear()

@@ -2039,6 +2039,49 @@ test('a mid-turn prompt without the capability queues even on the claude adapter
 // no sibling — kill the subprocess), and the guard that must never fire the
 // fallback while a sibling session still shares the connection.
 
+// A subscriber holds the session's record. When the record goes -- or is
+// replaced by a reopen under the same id, which is what an unload followed by
+// the next message does -- a subscriber that is not told stays attached to an
+// object nothing emits into again: a chat that looks live and never moves.
+test('dropping a session ends its subscriptions, once', async () => {
+  const h = await setup()
+  let ended = 0
+  h.client.subscribe(h.sessionId, () => {}, { onEnd: () => (ended += 1) })
+  await h.client.deleteSession(h.sessionId)
+  assert.equal(ended, 1)
+})
+
+test('a session reopened under the same id ends the subscriptions of the record it replaces', async () => {
+  const harness = restoreSetup()
+  await harness.client.restoreSession(harness.sessionId, harness.selection, [{ kind: 'user', text: 'one' }])
+  let ended = 0
+  const stale: ChatEvent[] = []
+  harness.client.subscribe(harness.sessionId, (event) => stale.push(event), { onEnd: () => (ended += 1) })
+  const replayed = stale.length
+
+  await harness.client.restoreSession(harness.sessionId, harness.selection, [{ kind: 'user', text: 'one' }])
+  assert.equal(ended, 1, 'the reader is told its record is gone')
+
+  const fresh: ChatEvent[] = []
+  harness.client.subscribe(harness.sessionId, (event) => fresh.push(event))
+  harness.client.askUser(harness.sessionId, { message: 'still there?' })
+  assert.ok(fresh.some((event) => event.kind === 'ask_user'), 'a new subscription reads the new record')
+  assert.equal(stale.length, replayed, 'and the old one hears nothing of it')
+  await harness.client.deleteSession(harness.sessionId)
+})
+
+test('subscribing to an unknown session ends at once, and an unsubscribe is not an end', async () => {
+  const h = await setup()
+  let unknownEnded = 0
+  h.client.subscribe('no-such-session', () => {}, { onEnd: () => (unknownEnded += 1) })
+  assert.equal(unknownEnded, 1)
+  let ended = 0
+  const unsubscribe = h.client.subscribe(h.sessionId, () => {}, { onEnd: () => (ended += 1) })
+  unsubscribe()
+  await h.client.deleteSession(h.sessionId)
+  assert.equal(ended, 0)
+})
+
 test('deleteSession closes the session on the agent and leaves the shared connection alone', async () => {
   const h = await setup()
   await h.client.deleteSession(h.sessionId)
