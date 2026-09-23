@@ -598,6 +598,26 @@ test('an opencode selection without a key omits the key reference', () => {
   assert.ok(!('apiKey' in JSON.parse(content).provider.zai.options))
 })
 
+// The bridge's plan tools are opt-in. A flag set in the host's own environment
+// reached host-run bridges and never a containerised one, which gets only what
+// its spawn names -- so it has to be the spawn that names it.
+test('a claude bridge gets its plan tools wherever it runs, a container included', () => {
+  for (const adapterId of ['claude', 'claude-subscription']) {
+    const selection: AgentSelection = {
+      providerId: 'anthropic',
+      adapterId,
+      model: 'test-model',
+      apiKey: 'key',
+      cwd: '/agents/somebody',
+      containerName: 'agents-box',
+    }
+    const config = buildSpawnConfig(selection)
+    assert.equal(config.env.CLAUDE_CODE_ENABLE_TODO_TOOLS, '1', adapterId)
+    const forwarded = config.args.flatMap((arg, i) => (config.args[i - 1] === '-e' ? [arg] : []))
+    assert.ok(forwarded.includes('CLAUDE_CODE_ENABLE_TODO_TOOLS'), `${adapterId}: named to docker exec`)
+  }
+})
+
 test('a provider with no OpenAI-compatible endpoint gets no config document', () => {
   const config = buildSpawnConfig({ ...OPENCODE_SELECTION, providerId: 'anthropic' })
   assert.equal(config.env.OPENCODE_CONFIG_CONTENT, undefined)

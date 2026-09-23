@@ -102,6 +102,10 @@ function opencodeSelectionEnv(
   }
 }
 
+// Environment every spawn of the Claude Agent SDK bridge gets — see the note
+// on the 'claude' adapter below.
+const CLAUDE_AGENT_ENV: Record<string, string> = { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' }
+
 export const HARNESS_ADAPTERS: HarnessAdapter[] = [
   {
     id: 'native',
@@ -141,6 +145,14 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     // elicitation. Implementation-defined for the same @latest reason as the
     // note above.
     supportsElicitation: true,
+    // The Claude Agent SDK hands the model its plan tools (TodoWrite,
+    // TaskCreate/Update/List) only behind this opt-in flag, default off, and
+    // the bridge's TodoWrite -> `plan` translation is the only source of the
+    // plan a chat draws. Here, on the spawn, rather than in the host's own
+    // environment: a harness run in a container gets only the variables its
+    // spawn names (see wrapInDocker), so a flag inherited from the host's
+    // process reached host-run agents and silently never reached the rest.
+    staticEnv: CLAUDE_AGENT_ENV,
   },
   {
     id: 'claude-subscription',
@@ -155,6 +167,7 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     // Same bridge binary as 'claude' — see the notes there.
     supportsMidTurnInput: false,
     supportsElicitation: true,
+    staticEnv: CLAUDE_AGENT_ENV,
     note: 'Auth with a Claude Pro/Max subscription: run `claude setup-token`, then paste the OAuth token as the API key secret.',
   },
   {

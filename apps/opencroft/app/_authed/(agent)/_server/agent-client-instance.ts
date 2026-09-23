@@ -168,16 +168,12 @@ export function registerCompactionHandler(handler: CompactionHandler): void {
 // operator-set path is never overridden. Costs one small append-only file per
 // bridge process; without it a wire-level question ("did the harness announce
 // this subagent on replay?") has no answer after the fact.
+//
+// Host-run bridges only: one run in a container gets just the variables its
+// spawn names (agent-client's wrapInDocker), and a host path would mean nothing
+// there anyway. Anything a bridge needs wherever it runs belongs in the
+// adapter's spawn environment instead -- the plan-tools flag lives there.
 process.env.CLAUDE_AGENT_LOGS ??= join(process.cwd(), 'data', 'claude-acp-logs')
-
-// The Claude Agent SDK gates its todo/task tools (TodoWrite, TaskCreate/Update/
-// List) behind an opt-in env flag — default OFF — so without this the model is
-// never handed a tool to track a plan, and claude-agent-acp's TodoWrite→`plan`
-// translation has nothing to translate: the Chat Turn plan block stays empty
-// and the agent has no task tools at all. Spawned bridges inherit process.env,
-// and `??=` leaves an operator override in place. Harmless to non-Claude
-// adapters, which ignore an env var they don't read.
-process.env.CLAUDE_CODE_ENABLE_TODO_TOOLS ??= '1'
 
 export const agentClient = createAgentClient({
   // Sleep Mode's gate: while the instance is asleep no queue is drained to
