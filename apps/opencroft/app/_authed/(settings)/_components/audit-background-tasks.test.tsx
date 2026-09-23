@@ -39,6 +39,7 @@ function task(
     summary: `Task ${overrides.id}`,
     kind: 'tool',
     name: 'remote_script',
+    runner: 'background-task-runner',
     target: 'buildbox/terminal',
     session: 'ada/1c9d',
     agent: 'ada',
@@ -148,6 +149,24 @@ test('running tasks come first, in the order given, and are what the count count
     ['new', 'old', 'done', 'broke'],
   )
   assert.match(card.text, /2 running/)
+  await card.unmount()
+})
+
+// "Can I restart now" has a second half the state does not answer: a restart
+// fails what runs in the server and leaves what runs on a node running. So
+// every row says which, and a task that names nothing to run against shows a
+// dash rather than an empty cell.
+test('every row says where its task runs, and an empty target reads as a dash', async () => {
+  const card = await renderCard([
+    task({ id: 'on-node', state: 'running' }),
+    task({ id: 'in-server', state: 'running', name: 'web_fetch', runner: 'in-process', target: '' }),
+  ])
+  const [onNode, inServer] = card.rows
+  assert.match(onNode ?? '', /remote_script · on its node/)
+  assert.match(inServer ?? '', /web_fetch · in the server/)
+  assert.match(inServer ?? '', / — /, 'the empty target is drawn as a dash')
+  assert.match(card.text, /runs in the server, and a restart fails it/)
+  assert.doesNotMatch(card.text, /A tool's command runs on its node/)
   await card.unmount()
 })
 

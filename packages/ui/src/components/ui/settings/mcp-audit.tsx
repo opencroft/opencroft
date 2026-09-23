@@ -42,11 +42,14 @@ export interface McpAuditBackgroundTask {
   id: string
   // One line saying what the task is, in the caller's own terms.
   summary: string
-  // What started it, and which tool or action that was (remote_script,
-  // deploy). The kind also says where the work runs -- a tool's command on
-  // its node, an action inside the server -- and so whether a restart ends it.
+  // What started it -- a tool, or an action of an app or a node -- and which
+  // one (remote_script, deploy).
   kind: 'tool' | 'app-action' | 'node-action'
   name: string
+  // Where the work runs, which is what decides whether a restart of the
+  // server ends it: in the server (the default for everything), or detached on
+  // its node by the background task runner (experimental), which outlives one.
+  runner: 'in-process' | 'background-task-runner'
   // What it runs against: a terminal target, a node id, an app address.
   target: string
   // The calling session's key; null for a caller with no session.
@@ -138,6 +141,14 @@ const TASK_KIND: Record<McpAuditBackgroundTask['kind'], string> = {
   tool: 'tool',
   'app-action': 'app action',
   'node-action': 'node action',
+}
+
+// Said on every row, because it is the half of "can I restart now" the state
+// does not answer: a restart fails what runs in the server and leaves what
+// runs on a node running.
+const TASK_RUNNER: Record<McpAuditBackgroundTask['runner'], string> = {
+  'in-process': 'in the server',
+  'background-task-runner': 'on its node',
 }
 
 function formatTime(iso: string) {
@@ -245,7 +256,8 @@ function TaskRow({ task, now }: { task: McpAuditBackgroundTask; now: number }) {
       <TableCell className='whitespace-normal'>
         <div className='text-sm'>{task.summary}</div>
         <div className='text-xs text-muted-foreground'>
-          {TASK_KIND[task.kind] ?? task.kind} <span className='font-mono'>{task.name}</span>
+          {TASK_KIND[task.kind] ?? task.kind} <span className='font-mono'>{task.name}</span> ·{' '}
+          {TASK_RUNNER[task.runner] ?? task.runner}
         </div>
         {reason && (
           <div className={cn('text-xs', task.state === 'failed' ? 'text-destructive' : 'text-muted-foreground')}>
@@ -256,7 +268,7 @@ function TaskRow({ task, now }: { task: McpAuditBackgroundTask; now: number }) {
       <TableCell>
         <Badge variant={TASK_BADGE[task.state] ?? 'outline'}>{task.state}</Badge>
       </TableCell>
-      <TableCell className='whitespace-normal break-all font-mono text-xs'>{task.target}</TableCell>
+      <TableCell className='whitespace-normal break-all font-mono text-xs'>{task.target || '—'}</TableCell>
       <TableCell className='whitespace-normal'>
         <div className='text-sm'>{task.agent ?? 'no agent'}</div>
         {task.session ? (
@@ -292,8 +304,8 @@ function BackgroundTasksCard({ tasks, error }: { tasks: McpAuditBackgroundTask[]
           <div className='text-sm font-medium'>Background tasks</div>
           <div className='text-xs text-muted-foreground'>
             Work tools and actions started and did not wait for: everything still running, and what ended
-            recently. A tool's command runs on its node, where a restart of the server leaves it running; an app
-            or node action runs inside the server, and a restart fails it.
+            recently. Most of it runs in the server, and a restart fails it; a command on the background task
+            runner (experimental) runs on its node and outlives a restart.
           </div>
         </div>
         {error ? (
