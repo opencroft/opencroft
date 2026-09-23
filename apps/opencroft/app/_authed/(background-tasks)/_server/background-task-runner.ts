@@ -1,7 +1,13 @@
 /**
- * Commands left running on a node: detached ON THE NODE, so neither the one-shot
- * exec cap nor this process's lifetime bounds them, and watched afterwards
- * through the files each one leaves in a directory of its own there.
+ * THE BACKGROUND TASK RUNNER. EXPERIMENTAL.
+ *
+ * Not how a background task runs by default: that is the handler's own promise,
+ * run in this process and not awaited (in-process-runner.ts), and it ends with
+ * the process. This is the opt-in for a tool whose work has to survive a
+ * restart of the server and keep a live log on the node: the command is
+ * detached ON THE NODE, so neither the one-shot exec cap nor this process's
+ * lifetime bounds it, and it is watched afterwards through the files it leaves
+ * in a directory of its own there.
  *
  * Everything here is shell text built on this side and run through the
  * transport the remote tools provide (remote-transport.ts), against a target
@@ -9,12 +15,38 @@
  * exactly the user, that a synchronous `remote_exec` on the same target would
  * have. The command itself runs under the same shell too (see `buildProgram`).
  *
+ * WHAT IT NEEDS FROM THE NODE: a POSIX `sh`; the coreutils or busybox
+ * utilities it calls, `base64` among them (mkdir, chmod, mv, cat, sleep, tail,
+ * base64, tr, wc, sed, cut, grep, rm, nohup); `setsid`, preferred — without
+ * it the stop is weaker, see below; a writable `$TMPDIR`, or `/tmp`; `/proc`,
+ * optional — where it is missing, a live pid is taken at `kill -0`'s word; and
+ * `bash`, for a script.
+ *
+ * KNOWN LIMITATIONS:
+ * - Descendants that leave the process group (their own `setsid`, a double
+ *   fork, `docker run -d`) are neither stopped nor noticed — on a cancel, on a
+ *   timeout, or when the command exits normally and leaves them running.
+ * - Without `setsid`, under dash, a stop reaches the supervisor only.
+ * - An unreachable node leaves its tasks `running` until their deadline —
+ *   forever, with no time limit — and nothing surfaces "no contact for N
+ *   minutes".
+ * - The log file has no size cap.
+ * - A start that does not report its pid within ~5 s (100 s where `sleep`
+ *   takes whole seconds only) is recorded as not started, although the
+ *   supervisor may still start.
+ * - Exit codes above 128 are not decoded into signals.
+ * - A task directory on a node that stays unreachable until the task's row is
+ *   dropped (30 days after it ended) is never removed.
+ * - Delivery gives up silently 7 days after the task ended.
+ * - Exercised live only on a Linux container, through local exec; ssh,
+ *   docker-exec, WSL and macOS are untested.
+ *
  * THE TASK DIRECTORY, `${TMPDIR:-/tmp}/opencroft-tasks/<taskId>` on the node:
  *
  *   log        the command's stdout and stderr, as it writes them
  *   pid        the supervising shell's pid, which is also its process group
  *   exit       the command's exit status, once it has ended
- *   script.sh  a remote_script's body
+ *   script.sh  a script task's body
  *
  * `pid` and `exit` are written to a scratch name and renamed into place, so a
  * reader sees a whole value or none. Nothing in the directory carries a secret:
@@ -23,6 +55,7 @@
  */
 
 import type { Ending } from './store'
+import type { StartRunnerTaskInput } from './types'
 
 /** How much of the log a finished task keeps: its last lines, then capped in bytes. */
 export const TAIL_MAX_LINES = 200
@@ -33,7 +66,7 @@ const STOP_GRACE_STEPS = 10
 const STOP_GRACE_STEP_SECONDS = 0.5
 
 /** What the runner needs from the remote tools — the one seam a test replaces. */
-export interface NodeTransport {
+export interface RunnerTransport {
   /**
    * The target's terminal context, and the directory a command sent there with
    * `cwd` runs in — both resolved as the remote tools resolve them.
@@ -51,7 +84,7 @@ export interface NodeTransport {
   writeFile(ctx: Record<string, unknown>, filePath: string, content: string): Promise<void>
 }
 
-export interface NodeTaskRef {
+export interface RunnerTaskRef {
   taskId: string
   dir: string
 }
@@ -66,14 +99,10 @@ export type ProbeReport =
   /** Not running, and never recorded an ending: killed along with its supervisor. */
   | { status: 'vanished'; tail: string }
 
-export interface LaunchInput {
+/** A start as the contract states it, less what only the service reads. No tool name: the mode says what to run. */
+export interface LaunchInput
+  extends Pick<StartRunnerTaskInput, 'target' | 'mode' | 'command' | 'args' | 'cwd' | 'secrets'> {
   taskId: string
-  target: string
-  name: 'remote_exec' | 'remote_script'
-  command: string
-  args?: string[]
-  cwd?: string
-  secrets?: string[]
 }
 
 export interface Launched {
@@ -133,15 +162,15 @@ const SUPERVISOR = [
 /**
  * The program the supervisor runs, as shell words for the launch command.
  *
- * A `remote_exec` command runs under `"$0"` — the shell the exec itself runs
- * in, expanded by the launching shell before anything detaches. That is the
- * shell a synchronous `remote_exec` would have run it under (bash locally, the
- * login shell over ssh, `sh` in a container), so a command does not change
- * meaning by being sent to the background. A script runs under bash, as
- * `remote_script` runs it.
+ * A `command` runs under `"$0"` — the shell the exec itself runs in, expanded
+ * by the launching shell before anything detaches. That is the shell a
+ * synchronous `remote_exec` would have run it under (bash locally, the login
+ * shell over ssh, `sh` in a container), so a command does not change meaning
+ * by being sent to the background. A `script` runs under bash from the file
+ * the launch wrote, with its arguments, as `remote_script` runs one.
  */
-export function buildProgram(input: { name: LaunchInput['name']; command: string; args?: string[]; dir: string }) {
-  if (input.name === 'remote_script') {
+export function buildProgram(input: { mode: LaunchInput['mode']; command: string; args?: string[]; dir: string }) {
+  if (input.mode === 'script') {
     return ['bash', quote(`${input.dir}/script.sh`), ...(input.args ?? []).map(quote)].join(' ')
   }
   return `"$0" -c ${quote(input.command)}`
@@ -220,7 +249,7 @@ const REPORT_FUNCTIONS = [
 ].join('\n')
 
 /** One exec that reports on every listed task: one line each, see `parseProbe`. */
-export function buildProbeCommand(tasks: NodeTaskRef[]): string {
+export function buildProbeCommand(tasks: RunnerTaskRef[]): string {
   return [REPORT_FUNCTIONS, ...tasks.map((task) => `report ${quote(task.taskId)} ${quote(task.dir)}`)].join('\n')
 }
 
@@ -229,7 +258,7 @@ export function buildProbeCommand(tasks: NodeTaskRef[]): string {
  * on it — so a task that finished on its own just before the stop reads as the
  * outcome it actually had.
  */
-export function buildStopCommand(task: NodeTaskRef): string {
+export function buildStopCommand(task: RunnerTaskRef): string {
   const wait = (steps: number, seconds: number) =>
     `  i=0; while [ "$i" -lt ${steps} ] && alive "$d"; do sleep ${seconds} 2>/dev/null || sleep 1; i=$((i + 1)); done`
   return [
@@ -317,7 +346,7 @@ function toReport(
   return null
 }
 
-/** How a node task ended, from what its node reported. */
+/** How a runner task ended, from what its node reported. */
 export function endingOf(report: Exclude<ProbeReport, { status: 'running' }>): Ending {
   if (report.status === 'gone') {
     return {
@@ -356,8 +385,8 @@ function parsePid(output: string): number {
 // once its build finished must not leave that build unobservable.
 const ROOT = { cwd: '/' }
 
-export class NodeRunner {
-  constructor(private readonly transport: NodeTransport) {}
+export class BackgroundTaskRunner {
+  constructor(private readonly transport: RunnerTransport) {}
 
   /**
    * Make the task's directory, write the script when there is one, and start
@@ -369,21 +398,21 @@ export class NodeRunner {
     const { ctx, cwd } = await this.transport.resolve(input.target, input.cwd)
     const env = await this.transport.secretsEnv(input.secrets)
     const dir = parseDir(await this.transport.exec(ctx, buildPrepareCommand(input.taskId), ROOT), input.taskId)
-    if (input.name === 'remote_script') {
+    if (input.mode === 'script') {
       await this.transport.writeFile(ctx, `${dir}/script.sh`, input.command)
     }
-    const program = buildProgram({ name: input.name, command: input.command, args: input.args, dir })
+    const program = buildProgram({ mode: input.mode, command: input.command, args: input.args, dir })
     const pid = parsePid(await this.transport.exec(ctx, buildLaunchCommand(dir, program), { cwd, env }))
     return { dir, pid, logPath: `${dir}/log` }
   }
 
-  async probe(target: string, tasks: NodeTaskRef[]): Promise<Map<string, ProbeReport>> {
+  async probe(target: string, tasks: RunnerTaskRef[]): Promise<Map<string, ProbeReport>> {
     const { ctx } = await this.transport.resolve(target)
     return parseProbe(await this.transport.exec(ctx, buildProbeCommand(tasks), ROOT))
   }
 
   /** The task's report after the stop, or null when the node gave none. */
-  async stop(target: string, task: NodeTaskRef): Promise<ProbeReport | null> {
+  async stop(target: string, task: RunnerTaskRef): Promise<ProbeReport | null> {
     const { ctx } = await this.transport.resolve(target)
     return parseProbe(await this.transport.exec(ctx, buildStopCommand(task), ROOT)).get(task.taskId) ?? null
   }

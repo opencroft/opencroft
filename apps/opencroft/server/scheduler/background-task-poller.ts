@@ -1,13 +1,14 @@
 // Drives the background-task service: every tick it probes the nodes running
-// tasks, times out the ones past their deadline, tells sessions about tasks
-// that ended, and tidies up after old ones. Once, at startup, it fails the
-// in-process tasks a previous process left marked running.
+// runner tasks, times out the tasks past their deadline, tells sessions about
+// tasks that ended, and tidies up after old ones. Once, at startup, it fails
+// the in-process tasks a previous process left marked running.
 //
 // Ten seconds between ticks. What it buys is how soon an agent hears that its
-// build finished, and what it costs is one exec per target that has a task
-// running — six a minute to a node that is busy anyway, nothing to one that is
-// not. The idle reaper's minute would leave an agent waiting on a result that
-// is already there; much faster would be probing work measured in minutes.
+// build finished, and what it costs is one exec per target that has a runner
+// task running — six a minute to a node that is busy anyway, nothing to one
+// that is not. The idle reaper's minute would leave an agent waiting on a
+// result that is already there; much faster would be probing work measured in
+// minutes.
 //
 // The steps are not awaited in turn. A node can take the whole exec cap to
 // answer, and a delivery can stay pending as long as delivery is asleep; the
@@ -62,7 +63,7 @@ export function startBackgroundTaskPoller(): void {
   }
   void runStep('startup sweep', () => backgroundTasks.sweepOrphans())
   // Early, so the first activity poll after a restart already counts the
-  // sessions whose node tasks carried on through it.
+  // sessions whose runner tasks carried on through it.
   backgroundTasks.loadRunningKeys()
   const timer = setInterval(() => tick(), TICK_MS)
   globalForPoller.__BACKGROUND_TASK_POLLER__ = { timer }

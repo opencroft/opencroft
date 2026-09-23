@@ -5,8 +5,9 @@
 // The engine is a double that does what the real one does back: a notify that
 // answers yes, no, or not yet — the last is what sleep mode does, and it is
 // the case a second notification would slip through. Nodes are a transport
-// answering the way node-runner.test.ts shows a real node does. Every test runs
-// under its own registry id, so rows from one never reach another.
+// answering the way background-task-runner.test.ts shows a real node does.
+// Every test runs under its own registry id, so rows from one never reach
+// another.
 import '@opencroft/db/test-env'
 
 import assert from 'node:assert/strict'
@@ -14,8 +15,8 @@ import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 
 import { userText } from '@/app/_authed/(agent)/_lib/build-blocks'
+import { type RunnerTransport, TAIL_MAX_BYTES } from './background-task-runner'
 import type { HostAsyncTaskInfo, HostTaskEngine } from './engine'
-import type { NodeTransport } from './node-runner'
 import { BackgroundTasks, createState, deadlineOf, SERVER_RESTARTED, type ServiceDeps } from './service'
 import { insertTask } from './store'
 import type { BackgroundTaskRecord } from './types'
@@ -53,15 +54,18 @@ const REPORTED = /report '([0-9a-f-]{36})'/g
 /** A node: a directory and a pid for every launch, and the reports it is told to give. */
 function fakeNode() {
   const commands: string[] = []
+  const written: string[] = []
   const reports = new Map<string, string>()
   const controls: { stopReport: (taskId: string) => string; failLaunch: Error | null } = {
     stopReport: (taskId) => `opencroft-task ${taskId} vanished - 0 `,
     failLaunch: null,
   }
-  const transport: NodeTransport = {
+  const transport: RunnerTransport = {
     resolve: async (_target, cwd) => ({ ctx: { type: 'local' }, cwd }),
     secretsEnv: async () => undefined,
-    writeFile: async () => {},
+    writeFile: async (_ctx, filePath) => {
+      written.push(filePath)
+    },
     exec: async (_ctx, command) => {
       commands.push(command)
       if (command.includes('mkdir -p')) {
@@ -82,17 +86,19 @@ function fakeNode() {
   }
   return {
     commands,
+    written,
     reports,
     controls,
     transport,
     probes: () => commands.filter((command) => command.includes('alive() {') && !command.includes('kill -s')),
     stops: () => commands.filter((command) => command.includes('kill -s TERM')),
+    launches: () => commands.filter((command) => command.includes('opencroft-task "$d"')),
   }
 }
 
 function service(options: {
   engine: HostTaskEngine
-  node?: NodeTransport
+  node?: RunnerTransport
   now?: () => Date
   instanceId?: string
   openSession?: ServiceDeps['openSession']
@@ -121,14 +127,32 @@ function base64(text: string): string {
   return Buffer.from(text).toString('base64')
 }
 
-function nodeTask(svc: BackgroundTasks, overrides: { owner?: typeof OWNER | { agent: string }; target?: string } = {}) {
-  return svc.startNodeTask({
+function runnerTask(
+  svc: BackgroundTasks,
+  overrides: { owner?: typeof OWNER | { agent: string }; target?: string } = {},
+) {
+  return svc.startRunnerTask({
     owner: overrides.owner ?? OWNER,
     name: 'remote_exec',
+    mode: 'command',
     target: overrides.target ?? 'buildbox/terminal',
     command: 'make release',
     timeoutMs: 3_600_000,
     summary: 'Build the release',
+  })
+}
+
+/** A tool's own handler, run in-process: how a tool's task runs unless its tool opted into the runner. */
+function toolTask(svc: BackgroundTasks, run: (signal: AbortSignal) => Promise<unknown>, timeoutMs = 3_600_000) {
+  return svc.startInProcessTask({
+    owner: OWNER,
+    kind: 'tool',
+    name: 'web_fetch',
+    // The call named nothing to run against.
+    target: '',
+    summary: 'Fetch the release notes',
+    timeoutMs,
+    run,
   })
 }
 
@@ -254,6 +278,7 @@ test('the startup sweep fails what a previous process left running, and tells it
     sessionKey: KEY,
     sessionId: 'a-session-id-from-before-the-restart',
     kind: 'node-action',
+    runner: 'in-process',
     name: 'backup',
     target: 'node_backup',
     summary: 'Back up the volumes',
@@ -273,7 +298,123 @@ test('the startup sweep fails what a previous process left running, and tells it
   assert.equal((await svc.get(mine.taskId))?.state, 'running')
 })
 
-// ── node tasks ───────────────────────────────────────────────────────────
+// ── in-process tool tasks ────────────────────────────────────────────────
+//
+// A tool's task is in-process unless its tool opted into the runner, so a
+// `tool` kind no longer means a command on a node. Each of these is a place
+// the service once read the kind to decide that, and each asserts the
+// in-process answer: nothing asked of any node, a deadline that aborts, a
+// cancel that is a request, a restart that fails it.
+
+test('an in-process tool task is never probed nor failed as a stalled launch, and its deadline aborts it', async () => {
+  let now = new Date('2026-09-22T10:00:00.000Z')
+  const node = fakeNode()
+  const fake = fakeEngine()
+  const svc = service({ engine: fake.engine, node: node.transport, now: () => now })
+  let seen: AbortSignal | undefined
+  const started = await toolTask(
+    svc,
+    (signal) => {
+      seen = signal
+      return new Promise(() => {})
+    },
+    10 * 60_000,
+  )
+  assert.deepEqual([started.kind, started.runner], ['tool', 'in-process'])
+  assert.equal((await svc.get(started.taskId))?.runner, 'in-process')
+
+  // Past the launch grace, which a runner task still without a directory
+  // would not outlive — and short of the deadline.
+  now = new Date(now.getTime() + 6 * 60_000)
+  await svc.probe()
+  await svc.enforceDeadlines()
+  assert.equal((await svc.get(started.taskId))?.state, 'running')
+  assert.equal(seen?.aborted, false)
+
+  now = new Date(now.getTime() + 5 * 60_000)
+  await svc.enforceDeadlines()
+  assert.equal(seen?.aborted, true)
+  assert.equal((seen?.reason as Error).message, 'timed out after 10 min')
+  const done = await told(svc, started.taskId)
+  assert.deepEqual([done.state, done.reason], ['stopped', 'timed out after 10 min'])
+  // Nothing, at any point, went to a node.
+  assert.deepEqual(node.commands, [])
+})
+
+test('a cancel of an in-process tool task is a request to its handler, and reaches no node', async () => {
+  const node = fakeNode()
+  const svc = service({ engine: fakeEngine().engine, node: node.transport })
+  let seen: AbortSignal | undefined
+  const started = await toolTask(svc, (signal) => {
+    seen = signal
+    return new Promise(() => {})
+  })
+  assert.equal(await svc.cancel(started.taskId), 'requested')
+  assert.equal(seen?.aborted, true)
+  const done = await told(svc, started.taskId)
+  assert.deepEqual([done.state, done.reason], ['stopped', 'cancelled'])
+  assert.deepEqual(node.commands, [])
+})
+
+test('the startup sweep fails an in-process tool task a previous process left, and leaves a runner task be', async () => {
+  const instanceId = randomUUID()
+  const before = {
+    instanceId,
+    agent: 'builder',
+    sessionKey: KEY,
+    sessionId: 'a-session-id-from-before-the-restart',
+    kind: 'tool',
+    state: 'running',
+    startedAt: new Date(),
+    timeoutMs: null,
+  }
+  const inProcess = randomUUID()
+  const onNode = randomUUID()
+  await insertTask({
+    ...before,
+    taskId: inProcess,
+    runner: 'in-process',
+    name: 'web_fetch',
+    target: '',
+    summary: 'Fetch the release notes',
+  })
+  await insertTask({
+    ...before,
+    taskId: onNode,
+    runner: 'background-task-runner',
+    name: 'remote_exec',
+    target: 'buildbox/terminal',
+    summary: 'Train overnight',
+    nodeDir: `/tmp/opencroft-tasks/${onNode}`,
+  })
+  const svc = service({ engine: fakeEngine().engine, instanceId })
+  await svc.sweepOrphans()
+
+  const swept = await told(svc, inProcess)
+  assert.deepEqual([swept.state, swept.reason], ['failed', SERVER_RESTARTED])
+  // Its process is on its node, which a restart here did not touch.
+  assert.equal((await svc.get(onNode))?.state, 'running')
+})
+
+test('a string result is kept as written, anything else as JSON, and either is bounded', async () => {
+  const svc = service({ engine: fakeEngine().engine })
+  const text = 'Release 4.2\n- faster builds\n- "quoted", and a \\ kept\n'
+  const asText = await toolTask(svc, async () => text)
+  assert.equal((await told(svc, asText.taskId)).outputTail, text)
+
+  // The head is kept, as it is for any result.
+  const long = await toolTask(svc, async () => `${'x'.repeat(TAIL_MAX_BYTES)}${'q'.repeat(100)}`)
+  assert.equal(
+    (await told(svc, long.taskId)).outputTail,
+    `${'x'.repeat(TAIL_MAX_BYTES)}\n… (truncated — the whole result is ${TAIL_MAX_BYTES + 100} bytes)`,
+  )
+
+  // The same words in something that is not a string are its JSON.
+  const asJson = await toolTask(svc, async () => [text])
+  assert.equal((await told(svc, asJson.taskId)).outputTail, JSON.stringify([text], null, 2))
+})
+
+// ── runner tasks ─────────────────────────────────────────────────────────
 
 test('a deadline is counted from the stored start, so a restart neither resets nor forgets it', async () => {
   const instanceId = randomUUID()
@@ -282,7 +423,7 @@ test('a deadline is counted from the stored start, so a restart neither resets n
   const node = fakeNode()
   const fake = fakeEngine()
   const before = service({ engine: fake.engine, node: node.transport, instanceId, now: () => now })
-  const started = await nodeTask(before)
+  const started = await runnerTask(before)
   assert.equal(deadlineOf(started), t0.getTime() + 3_600_000)
 
   // The restart: a new process's memory, the same registry.
@@ -307,12 +448,12 @@ test('one probe per target, and each report ends its task the way it should', as
   const fake = fakeEngine()
   const svc = service({ engine: fake.engine, node: node.transport })
   const [ok, broken, killed, stillGoing] = [
-    await nodeTask(svc),
-    await nodeTask(svc),
-    await nodeTask(svc),
-    await nodeTask(svc),
+    await runnerTask(svc),
+    await runnerTask(svc),
+    await runnerTask(svc),
+    await runnerTask(svc),
   ]
-  const wiped = await nodeTask(svc, { target: 'other/terminal' })
+  const wiped = await runnerTask(svc, { target: 'other/terminal' })
   node.reports.set(ok.taskId, `exited 0 9 ${base64('built ok\n')}`)
   node.reports.set(broken.taskId, `exited 2 6 ${base64('error\n')}`)
   node.reports.set(killed.taskId, 'vanished - 0 ')
@@ -337,12 +478,39 @@ test('one probe per target, and each report ends its task the way it should', as
   assert.deepEqual([...svc.runningSessionKeys()], [KEY])
 })
 
-test('a node task that cannot start throws to its caller, and ends failed and already told', async () => {
+test('a runner task is recorded as one, and what runs is chosen by its mode, never by the tool’s name', async () => {
+  const node = fakeNode()
+  const svc = service({ engine: fakeEngine().engine, node: node.transport })
+  const start = (name: string, mode: 'command' | 'script') =>
+    svc.startRunnerTask({
+      owner: OWNER,
+      name,
+      mode,
+      target: 'buildbox/terminal',
+      command: 'make release',
+      args: ['--fast'],
+      timeoutMs: null,
+      summary: 'Build the release',
+    })
+  // Each named as the other mode's tool would be.
+  const script = await start('remote_exec', 'script')
+  const command = await start('remote_script', 'command')
+  assert.deepEqual([script.kind, script.runner], ['tool', 'background-task-runner'])
+  assert.equal((await svc.get(command.taskId))?.runner, 'background-task-runner')
+
+  const [scriptLaunch, commandLaunch] = node.launches()
+  assert.deepEqual(node.written, [`/tmp/opencroft-tasks/${script.taskId}/script.sh`])
+  assert.ok(scriptLaunch.includes(`bash '/tmp/opencroft-tasks/${script.taskId}/script.sh' '--fast'`))
+  assert.ok(commandLaunch.includes(`"$0" -c 'make release'`))
+  assert.equal(commandLaunch.includes('--fast'), false)
+})
+
+test('a runner task that cannot start throws to its caller, and ends failed and already told', async () => {
   const node = fakeNode()
   node.controls.failLaunch = new Error('the task did not start')
   const fake = fakeEngine()
   const svc = service({ engine: fake.engine, node: node.transport })
-  await assert.rejects(nodeTask(svc), /the task did not start/)
+  await assert.rejects(runnerTask(svc), /the task did not start/)
   const [record] = await svc.listForOwner(OWNER)
   assert.equal(record.state, 'failed')
   assert.equal(record.reason, 'it did not start: the task did not start')
@@ -355,13 +523,13 @@ test('a cancel stops the process group; a task that ended first keeps its own en
   const node = fakeNode()
   const fake = fakeEngine()
   const svc = service({ engine: fake.engine, node: node.transport })
-  const running = await nodeTask(svc)
+  const running = await runnerTask(svc)
   node.controls.stopReport = (taskId) => `opencroft-task ${taskId} vanished - 8 ${base64('partial\n')}`
   assert.equal(await svc.cancel(running.taskId), 'stopped')
   const stopped = await told(svc, running.taskId)
   assert.deepEqual([stopped.state, stopped.reason, stopped.outputTail], ['stopped', 'cancelled', 'partial\n'])
 
-  const finished = await nodeTask(svc)
+  const finished = await runnerTask(svc)
   node.controls.stopReport = (taskId) => `opencroft-task ${taskId} exited 0 0 `
   assert.equal(await svc.cancel(finished.taskId), 'not-running')
   assert.equal((await told(svc, finished.taskId)).state, 'completed')
@@ -457,7 +625,7 @@ test('a reopened session is restated the tasks it may show wrongly: the running 
   const svc = service({ engine: fake.engine, node: node.transport })
   const untold = await inProcessTask(svc, async () => 'done')
   await until(() => fake.notified.length === 1)
-  const running = await nodeTask(svc)
+  const running = await runnerTask(svc)
   const toldTask = await inProcessTask(svc, async () => 'done')
   await told(svc, toldTask.taskId)
 
@@ -482,6 +650,7 @@ test('the running keys include tasks a previous process started', async () => {
     sessionKey: 'agent:carried:over',
     sessionId: null,
     kind: 'tool',
+    runner: 'background-task-runner',
     name: 'remote_exec',
     target: 'buildbox/terminal',
     summary: 'Train overnight',

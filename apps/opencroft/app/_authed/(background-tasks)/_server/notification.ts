@@ -6,7 +6,7 @@
 import type { HostAsyncTaskInfo } from './engine'
 import type { BackgroundTaskRecord } from './types'
 
-/** How long a finished node task's directory — its full log — stays on the node once told. */
+/** How long a finished runner task's directory — its full log — stays on the node once told. */
 export const LOG_RETENTION_DAYS = 3
 
 const TAG = 'opencroft-background-task'
@@ -32,12 +32,19 @@ function tookMs(record: BackgroundTaskRecord): number {
   return (record.finishedAt ?? record.startedAt).getTime() - record.startedAt.getTime()
 }
 
+// " on buildbox/terminal", or nothing: a call that named nothing to run
+// against — a tool whose work is its own — has no target to print, and
+// "on " followed by nothing reads as something missing.
+function onTarget(record: BackgroundTaskRecord): string {
+  return record.target ? ` on ${record.target}` : ''
+}
+
 /** The card's second line: where the task stands, in a reader's words. */
 export function statusLine(record: BackgroundTaskRecord): string {
   const took = formatDuration(tookMs(record))
   if (record.state === 'running') {
     const limit = record.timeoutMs === null ? 'no time limit' : `stops after ${formatLimit(record.timeoutMs)}`
-    return `Running on ${record.target} · ${limit}`
+    return `Running${onTarget(record)} · ${limit}`
   }
   if (record.state === 'completed') {
     return `Completed in ${took}`
@@ -54,14 +61,15 @@ export function statusLine(record: BackgroundTaskRecord): string {
  * The task as the chat draws it. Always the whole record: the engine replaces
  * what it holds with what it is given, so a field left out here would be
  * cleared there. The title says what the task is, the second line where it
- * stands; the log path is where its full output lives.
+ * stands; the log path, which only a runner task has, is where its full output
+ * lives.
  */
 export function asyncTaskInfo(record: BackgroundTaskRecord): HostAsyncTaskInfo {
   return {
     asyncTaskId: record.taskId,
-    name: record.summary || `${record.name} on ${record.target}`,
+    name: record.summary || `${record.name}${onTarget(record)}`,
     taskType: record.name,
-    description: `${record.name} on ${record.target}`,
+    description: `${record.name}${onTarget(record)}`,
     state: record.state,
     canStop: record.state === 'running',
     showInTranscript: true,
@@ -89,7 +97,8 @@ function outcome(record: BackgroundTaskRecord): string {
 /**
  * What the calling session's agent is told when its task ends. Everything it
  * needs to act without asking: what ran and where, how it ended, how long it
- * took, the end of its output, and how to read the rest.
+ * took, its result — or, for a runner task, the end of its output and how to
+ * read the rest.
  *
  * Wrapped in a bare `<opencroft-background-task>` tag — no attributes. The chat
  * hides exactly that form (see `userText` in the agent route's build-blocks),
@@ -100,12 +109,16 @@ export function notificationText(record: BackgroundTaskRecord): string {
   const lines = [
     `Background task ${record.taskId} has ended: ${record.state}.`,
     `Task: ${record.summary}`,
-    `Ran: ${record.name} on ${record.target} (${record.kind})`,
+    `Ran: ${record.name}${onTarget(record)} (${record.kind})`,
     `Outcome: ${outcome(record)}`,
     `Took: ${formatDuration(tookMs(record))}, started ${record.startedAt.toISOString()}`,
   ]
-  const label = record.kind === 'tool' ? 'Output (the end of it)' : 'Result'
+  // A runner task's output is the end of a log that goes on further; an
+  // in-process task's is what its handler returned — a tool's included.
+  const label = record.runner === 'background-task-runner' ? 'Output (the end of it)' : 'Result'
   lines.push(record.outputTail ? `${label}:\n${record.outputTail.replace(/\n$/, '')}` : `${label}: (none)`)
+  // Only where there is a log to point at: a runner task whose launch got as
+  // far as making one.
   if (record.logPath) {
     lines.push(
       `The full log is ${record.logPath} on ${record.target}, kept there for ${LOG_RETENTION_DAYS} days: ` +

@@ -34,6 +34,7 @@ function row(instanceId: string, overrides: Partial<NewTaskRow> = {}): NewTaskRo
     sessionKey: 'group-chat.team.builder.main',
     sessionId: 'session-1',
     kind: 'tool',
+    runner: 'background-task-runner',
     name: 'remote_exec',
     target: 'buildbox/terminal',
     summary: 'Build the release',
@@ -67,6 +68,7 @@ test('a task comes back as the record it went in as, through every field', async
     agent: 'builder',
     sessionKey: 'group-chat.team.builder.main',
     kind: 'tool',
+    runner: 'background-task-runner',
     name: 'remote_exec',
     target: 'buildbox/terminal',
     summary: 'Build the release',
@@ -82,6 +84,32 @@ test('a task comes back as the record it went in as, through every field', async
     deliveredAt: minutes(4),
   })
   assert.equal(stored.pid, 4242)
+})
+
+// What ran and how it runs are two answers now: a tool's task is in-process
+// unless its tool opted into the runner, and everything that watches, stops or
+// sweeps a task reads the second. Each pairing must come back as it went in.
+test('how a task runs comes back apart from what ran', async () => {
+  const instanceId = randomUUID()
+  const pairs = [
+    ['tool', 'background-task-runner'],
+    ['tool', 'in-process'],
+    ['app-action', 'in-process'],
+    ['node-action', 'in-process'],
+  ] as const
+  const tasks = pairs.map(([kind, runner]) => row(instanceId, { kind, runner, target: '' }))
+  for (const task of tasks) {
+    await insertTask(task)
+  }
+  const back = await Promise.all(tasks.map(async (task) => getTask(instanceId, task.taskId)))
+  assert.deepEqual(
+    back.map((stored) => {
+      assert.ok(stored)
+      const record = toRecord(stored)
+      return [record.kind, record.runner, record.target]
+    }),
+    pairs.map(([kind, runner]) => [kind, runner, '']),
+  )
 })
 
 test('an ending is written once: the second finds nothing running and changes nothing', async () => {

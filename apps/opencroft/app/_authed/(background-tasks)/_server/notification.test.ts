@@ -17,6 +17,7 @@ function record(overrides: Partial<BackgroundTaskRecord> = {}): BackgroundTaskRe
     agent: 'builder',
     sessionKey: 'group-chat.team.builder.main',
     kind: 'tool',
+    runner: 'background-task-runner',
     name: 'remote_exec',
     target: 'buildbox/terminal',
     summary: 'Build the release bundle',
@@ -69,6 +70,7 @@ test('a closing opencroft tag inside the output cannot end the hidden block earl
 test('an in-process task reports its result, and says so when it had none', () => {
   const inProcess = record({
     kind: 'app-action',
+    runner: 'in-process',
     name: 'deploy',
     target: 'ops.deployer',
     state: 'completed',
@@ -82,6 +84,56 @@ test('an in-process task reports its result, and says so when it had none', () =
   assert.equal(text.includes('remote_read'), false)
   assert.ok(notificationText({ ...inProcess, outputTail: undefined }).includes('Result: (none)'))
   assert.equal(userText(text), null)
+})
+
+// A tool's task is in-process unless its tool opted into the runner, and a
+// call can name nothing to run against. Neither may leave a hole in the words:
+// no "on " before nothing, no talk of the end of a log there is none of.
+test('an in-process tool task with no target reads cleanly everywhere it is shown', () => {
+  const tool = record({
+    kind: 'tool',
+    runner: 'in-process',
+    name: 'web_fetch',
+    target: '',
+    summary: 'Fetch the release notes',
+    state: 'completed',
+    exitCode: undefined,
+    outputTail: 'Release 4.2\n- faster builds\n',
+    logPath: undefined,
+  })
+  const text = notificationText(tool)
+  assert.equal(
+    text,
+    [
+      '<opencroft-background-task>',
+      'Background task 6f1c3c9e-2b1d-4c55-9f53-2f6c0a1d7e11 has ended: completed.',
+      'Task: Fetch the release notes',
+      'Ran: web_fetch (tool)',
+      'Outcome: completed',
+      'Took: 3m 12s, started 2026-09-22T10:00:00.000Z',
+      'Result:',
+      'Release 4.2',
+      '- faster builds',
+      '</opencroft-background-task>',
+    ].join('\n'),
+  )
+  assert.equal(userText(text), null)
+
+  const running = { ...tool, state: 'running' as const, finishedAt: undefined, outputTail: undefined }
+  assert.deepEqual(asyncTaskInfo(running), {
+    asyncTaskId: '6f1c3c9e-2b1d-4c55-9f53-2f6c0a1d7e11',
+    name: 'Fetch the release notes',
+    taskType: 'web_fetch',
+    description: 'web_fetch',
+    state: 'running',
+    canStop: true,
+    showInTranscript: true,
+    summary: 'Running · stops after 60 min',
+    outputFilePath: undefined,
+    origin: 'host',
+  })
+  // Titled by the call itself when it came with no summary.
+  assert.equal(asyncTaskInfo({ ...running, summary: '' }).name, 'web_fetch')
 })
 
 test('the chat record is always the whole record, titled by what the task is and subtitled by where it stands', () => {

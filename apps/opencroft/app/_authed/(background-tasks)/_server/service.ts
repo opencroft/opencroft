@@ -1,9 +1,15 @@
 /**
  * The background-task service: everything after a start. It keeps the durable
- * record (store.ts), runs the work — detached on a node (node-runner.ts) or as
- * a handler nobody awaits (in-process-runner.ts) — watches it, times it out,
- * stops it, and tells the calling session how it ended (delivery.ts). types.ts
- * is the contract the tools that start tasks are written against.
+ * record (store.ts), runs the work — as a handler nobody awaits
+ * (in-process-runner.ts), or, for a tool that opted in, detached on a node by
+ * the background task runner (background-task-runner.ts, EXPERIMENTAL) —
+ * watches it, times it out, stops it, and tells the calling session how it
+ * ended (delivery.ts). types.ts is the contract the tools that start tasks are
+ * written against.
+ *
+ * What ran — a tool, an app action, a node action — decides nothing here. How
+ * it runs decides everything: only a runner task has a node to probe, a launch
+ * that can still be under way, and a process a restart does not end.
  *
  * The poller (server/scheduler/background-task-poller.ts) drives the watching:
  * `probe`, `enforceDeadlines`, `deliverOwed`, `housekeep`, and `sweepOrphans`
@@ -14,11 +20,18 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 
 import { dataDir } from '@/server/data-dir'
+import {
+  BackgroundTaskRunner,
+  endingOf,
+  isTaskDir,
+  type Launched,
+  type ProbeReport,
+  type RunnerTransport,
+} from './background-task-runner'
 import { createDeliveryState, Delivery, type DeliveryState } from './delivery'
 import { type HostTaskEngine, hostTaskEngine } from './engine'
 import { InFlight } from './in-flight'
 import { describeResult, InProcessRunner, type Settled } from './in-process-runner'
-import { endingOf, isTaskDir, type Launched, NodeRunner, type NodeTransport, type ProbeReport } from './node-runner'
 import { formatLimit, LOG_RETENTION_DAYS } from './notification'
 import { createRunningKeysState, RunningKeys, type RunningKeysState } from './running-keys'
 import {
@@ -46,7 +59,7 @@ import type {
   BackgroundTaskService,
   CancelOutcome,
   StartInProcessTaskInput,
-  StartNodeTaskInput,
+  StartRunnerTaskInput,
 } from './types'
 
 const MINUTE_MS = 60_000
@@ -60,7 +73,7 @@ const DAY_MS = 24 * 60 * MINUTE_MS
 const DELIVERY_HORIZON_MS = 7 * DAY_MS
 /** Rows of ended tasks are dropped this long after they ended. */
 const ROW_RETENTION_MS = 30 * DAY_MS
-/** A launch takes seconds; a node task this long without a directory died half-way through starting. */
+/** A launch takes seconds; a runner task this long without a directory died half-way through starting. */
 const LAUNCH_GRACE_MS = 5 * MINUTE_MS
 /** A node that refused a housekeeping removal is not asked again for this long. */
 const REMOVE_RETRY_MS = 60 * MINUTE_MS
@@ -74,7 +87,7 @@ export const SERVER_RESTARTED = 'server restarted'
 export interface ServiceDeps {
   /** Which process registry this is — see the schema's comment on `instanceId`. */
   instanceId: () => string
-  transport: () => Promise<NodeTransport>
+  transport: () => Promise<RunnerTransport>
   engine: () => Promise<HostTaskEngine>
   /** Resume or reuse the session a key belongs to — never create one. Null when nothing claims the key. */
   openSession: (sessionKey: string) => Promise<{ sessionId: string } | null>
@@ -135,10 +148,21 @@ function groupByTarget(rows: TaskRow[]): Map<string, TaskRow[]> {
   return groups
 }
 
+/**
+ * Whether the background task runner runs this task, on a node — the one
+ * question every probe, stop, deadline and sweep below turns on. Never read off
+ * the kind: a tool's task is in-process unless its tool opted in.
+ */
+function onRunner(row: TaskRow): boolean {
+  return row.runner === 'background-task-runner'
+}
+
 interface StartRecord {
   taskId: string
   owner: BackgroundTaskOwner
   kind: BackgroundTaskKind
+  // Named by its field, not by the type: the runner's class has the type's name.
+  runner: BackgroundTaskRecord['runner']
   name: string
   target: string
   summary: string
@@ -164,13 +188,23 @@ export class BackgroundTasks implements BackgroundTaskService {
 
   // ── starting ─────────────────────────────────────────────────────────
 
-  async startNodeTask(input: StartNodeTaskInput): Promise<BackgroundTaskRecord> {
+  /**
+   * EXPERIMENTAL: a tool's command, detached on its node by the background
+   * task runner — see background-task-runner.ts for what that asks of the node
+   * and what it does not do yet. Only a tool that opted in starts one.
+   */
+  async startRunnerTask(input: StartRunnerTaskInput): Promise<BackgroundTaskRecord> {
     // The row goes in before anything runs: a registry that cannot record a
     // task refuses it, rather than leaving a process running untracked.
-    const record = await this.recordStart({ ...input, taskId: randomUUID(), kind: 'tool' })
+    const record = await this.recordStart({
+      ...input,
+      taskId: randomUUID(),
+      kind: 'tool',
+      runner: 'background-task-runner',
+    })
     let launched: Launched
     try {
-      launched = await (await this.nodes()).launch({ ...input, taskId: record.taskId })
+      launched = await (await this.runner()).launch({ ...input, taskId: record.taskId })
     } catch (error) {
       // The caller hears this from the throw, so the task ends already told:
       // a notification would only repeat what the tool call has just said.
@@ -191,12 +225,13 @@ export class BackgroundTasks implements BackgroundTaskService {
     return started
   }
 
+  /** A tool's or an action's handler, run in this process and not awaited: the default way a task runs. */
   async startInProcessTask(input: StartInProcessTaskInput): Promise<BackgroundTaskRecord> {
     const taskId = randomUUID()
     this.inProcess.register(taskId)
     let record: BackgroundTaskRecord
     try {
-      record = await this.recordStart({ ...input, taskId })
+      record = await this.recordStart({ ...input, taskId, runner: 'in-process' })
     } catch (error) {
       this.inProcess.forget(taskId)
       throw error
@@ -219,6 +254,7 @@ export class BackgroundTasks implements BackgroundTaskService {
       sessionKey: sessionKey ?? null,
       sessionId: input.owner.sessionId ?? null,
       kind: input.kind,
+      runner: input.runner,
       name: input.name,
       target: input.target,
       summary: input.summary,
@@ -231,6 +267,7 @@ export class BackgroundTasks implements BackgroundTaskService {
       agent: input.owner.agent,
       sessionKey,
       kind: input.kind,
+      runner: input.runner,
       name: input.name,
       target: input.target,
       summary: input.summary,
@@ -301,8 +338,8 @@ export class BackgroundTasks implements BackgroundTaskService {
     if (row.state !== 'running') {
       return 'not-running'
     }
-    if (row.kind === 'tool') {
-      return this.stopNode(row, 'cancelled')
+    if (onRunner(row)) {
+      return this.stopOnNode(row, 'cancelled')
     }
     if (!this.inProcess.abort(taskId, 'cancelled')) {
       // Running by its row, but not in this process: a previous process's
@@ -319,7 +356,8 @@ export class BackgroundTasks implements BackgroundTaskService {
     return outcome === 'stopped' || outcome === 'requested'
   }
 
-  private async stopNode(row: TaskRow, reason: string): Promise<CancelOutcome> {
+  /** Stop a runner task's process group on its node. */
+  private async stopOnNode(row: TaskRow, reason: string): Promise<CancelOutcome> {
     const dir = row.nodeDir
     if (!dir) {
       // Stopped before its launch recorded a directory: nothing on the node to signal.
@@ -330,7 +368,7 @@ export class BackgroundTasks implements BackgroundTaskService {
     return this.guard.hold(`stop:${row.taskId}`, async () => {
       let report: ProbeReport | null
       try {
-        report = await (await this.nodes()).stop(row.target, { taskId: row.taskId, dir })
+        report = await (await this.runner()).stop(row.target, { taskId: row.taskId, dir })
       } catch (error) {
         // Let go of it anyway. A stop nobody can deliver must still end the
         // task for its session, or an unreachable node would keep that session
@@ -375,10 +413,13 @@ export class BackgroundTasks implements BackgroundTaskService {
 
   // ── what the poller drives ───────────────────────────────────────────
 
-  /** Ask each node how its running tasks are: one exec per target. */
+  /**
+   * Ask each node how its runner tasks are: one exec per target. An in-process
+   * task has no node to ask — whatever its kind — and is never probed.
+   */
   async probe(): Promise<void> {
     const now = this.now().getTime()
-    const rows = (await runningTasks(this.deps.instanceId())).filter((row) => row.kind === 'tool')
+    const rows = (await runningTasks(this.deps.instanceId())).filter(onRunner)
     const probed: TaskRow[] = []
     for (const row of rows) {
       if (row.nodeDir) {
@@ -397,7 +438,7 @@ export class BackgroundTasks implements BackgroundTaskService {
     let reports: Map<string, ProbeReport>
     try {
       const refs = rows.map((row) => ({ taskId: row.taskId, dir: row.nodeDir as string }))
-      reports = await (await this.nodes()).probe(target, refs)
+      reports = await (await this.runner()).probe(target, refs)
     } catch (error) {
       this.guard.logOnce(`probe:${target}`, `could not probe ${target}; its tasks stay running until it answers`, error)
       return
@@ -415,9 +456,11 @@ export class BackgroundTasks implements BackgroundTaskService {
     const now = this.now().getTime()
     const due = (await runningTasks(this.deps.instanceId())).filter((row) => {
       const deadline = deadlineOf(row)
-      // A node task still launching has no directory to stop yet, and stopping
-      // its record now would leave what the launch starts running untracked.
-      const launching = row.kind === 'tool' && !row.nodeDir
+      // A runner task still launching has no directory to stop yet, and
+      // stopping its record now would leave what the launch starts running
+      // untracked. An in-process task is never launching: it had no directory
+      // to wait for.
+      const launching = onRunner(row) && !row.nodeDir
       return deadline !== null && deadline <= now && !launching && !this.guard.has(`stop:${row.taskId}`)
     })
     await Promise.all(due.map((row) => this.timeOut(row)))
@@ -425,8 +468,8 @@ export class BackgroundTasks implements BackgroundTaskService {
 
   private async timeOut(row: TaskRow): Promise<void> {
     const reason = `timed out after ${formatLimit(row.timeoutMs as number)}`
-    if (row.kind === 'tool') {
-      await this.stopNode(row, reason)
+    if (onRunner(row)) {
+      await this.stopOnNode(row, reason)
       return
     }
     if (!this.inProcess.abort(row.taskId, reason)) {
@@ -444,14 +487,16 @@ export class BackgroundTasks implements BackgroundTaskService {
   }
 
   /**
-   * Fail every in-process task this process is not running. Run at startup,
-   * where each one is a previous process's handler that died with it: nothing
-   * is left to finish it, and waiting would keep its session working forever.
+   * Fail every in-process task this process is not running — a tool's as much
+   * as an action's. Run at startup, where each one is a previous process's
+   * handler that died with it: nothing is left to finish it, and waiting would
+   * keep its session working forever. A runner task is left to the probe: its
+   * process is on its node, and a restart here did not end it.
    */
   async sweepOrphans(): Promise<void> {
     const rows = await runningTasks(this.deps.instanceId())
     for (const row of rows) {
-      if (row.kind !== 'tool' && !this.inProcess.has(row.taskId)) {
+      if (!onRunner(row) && !this.inProcess.has(row.taskId)) {
         await this.end(row.taskId, { state: 'failed', reason: SERVER_RESTARTED })
       }
     }
@@ -486,7 +531,7 @@ export class BackgroundTasks implements BackgroundTaskService {
     const dirs = rows.filter((row) => isTaskDir(row.nodeDir as string, row.taskId)).map((row) => row.nodeDir as string)
     try {
       if (dirs.length > 0) {
-        await (await this.nodes()).remove(target, dirs)
+        await (await this.runner()).remove(target, dirs)
       }
     } catch (error) {
       this.state.removeRetryAt.set(target, now + REMOVE_RETRY_MS)
@@ -503,8 +548,8 @@ export class BackgroundTasks implements BackgroundTaskService {
     return this.deps.now?.() ?? new Date()
   }
 
-  private async nodes(): Promise<NodeRunner> {
-    return new NodeRunner(await this.deps.transport())
+  private async runner(): Promise<BackgroundTaskRunner> {
+    return new BackgroundTaskRunner(await this.deps.transport())
   }
 
   private async sessionKeyOf(owner: BackgroundTaskOwner): Promise<string | undefined> {

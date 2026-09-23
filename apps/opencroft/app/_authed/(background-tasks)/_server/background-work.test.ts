@@ -32,6 +32,7 @@ async function running(instanceId: string, sessionKey: string): Promise<void> {
     sessionKey,
     sessionId: null,
     kind: 'tool',
+    runner: 'background-task-runner',
     name: 'remote_exec',
     target: 'buildbox/terminal',
     summary: 'Train overnight',
@@ -63,14 +64,14 @@ test('the background set is the engine’s keys and the registry’s running key
   ])
 })
 
-test('the audit list shows the running tasks, with where they run and for whom', async () => {
+test('the audit list shows the running tasks, with where and how they run and for whom', async () => {
   const list = await backgroundTaskList()
   assert.equal(list.error, null)
   assert.deepEqual(
-    list.tasks.map((task) => [task.session, task.state, task.target, task.agent, task.finishedAt]).sort(),
+    list.tasks.map((task) => [task.session, task.state, task.runner, task.target, task.agent, task.finishedAt]).sort(),
     [
-      ['agent:b:both', 'running', 'buildbox/terminal', 'builder', null],
-      ['agent:c:unloaded-session', 'running', 'buildbox/terminal', 'builder', null],
+      ['agent:b:both', 'running', 'background-task-runner', 'buildbox/terminal', 'builder', null],
+      ['agent:c:unloaded-session', 'running', 'background-task-runner', 'buildbox/terminal', 'builder', null],
     ],
   )
 })

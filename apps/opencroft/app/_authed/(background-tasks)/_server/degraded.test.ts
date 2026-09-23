@@ -16,9 +16,9 @@ import { db } from '@opencroft/db'
 import { sql } from 'drizzle-orm'
 
 import { runStep } from '@/server/scheduler/background-task-poller'
+import type { RunnerTransport } from './background-task-runner'
 import { backgroundWorkSessionKeys } from './background-work'
 import type { HostTaskEngine } from './engine'
-import type { NodeTransport } from './node-runner'
 import { BackgroundTasks, backgroundTasks, createState } from './service'
 import { backgroundTaskList } from './task-list'
 
@@ -47,7 +47,7 @@ const engine: HostTaskEngine = {
   notify: async () => true,
 }
 
-function service(now: () => Date, transport?: NodeTransport) {
+function service(now: () => Date, transport?: RunnerTransport) {
   return new BackgroundTasks(createState(), {
     instanceId: () => 'degraded-instance',
     transport: async () => transport ?? (await import('./remote-transport')).remoteToolsTransport,
@@ -107,7 +107,7 @@ test('a failing poller step is caught and logged once, and works-again is said w
 
 test('a start is refused before anything runs, and a reopened session still opens', async () => {
   let launched = 0
-  const transport: NodeTransport = {
+  const transport: RunnerTransport = {
     resolve: async () => ({ ctx: { type: 'local' } }),
     secretsEnv: async () => undefined,
     writeFile: async () => {},
@@ -118,9 +118,10 @@ test('a start is refused before anything runs, and a reopened session still open
   }
   const svc = service(() => new Date(), transport)
   await assert.rejects(
-    svc.startNodeTask({
+    svc.startRunnerTask({
       owner: { agent: 'builder', sessionId: 'session-1' },
       name: 'remote_exec',
+      mode: 'command',
       target: 'buildbox/terminal',
       command: 'make',
       timeoutMs: 60_000,

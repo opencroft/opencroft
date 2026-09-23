@@ -9,7 +9,7 @@
 import { type BackgroundTask, backgroundTask, db } from '@opencroft/db'
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, or } from 'drizzle-orm'
 
-import type { BackgroundTaskKind, BackgroundTaskRecord, BackgroundTaskState } from './types'
+import type { BackgroundTaskKind, BackgroundTaskRecord, BackgroundTaskRunner, BackgroundTaskState } from './types'
 
 export type TaskRow = BackgroundTask
 export type NewTaskRow = typeof backgroundTask.$inferInsert
@@ -30,6 +30,7 @@ export function toRecord(row: TaskRow): BackgroundTaskRecord {
     agent: row.agent,
     sessionKey: row.sessionKey ?? undefined,
     kind: row.kind as BackgroundTaskKind,
+    runner: row.runner as BackgroundTaskRunner,
     name: row.name,
     target: row.target,
     summary: row.summary,
@@ -157,7 +158,6 @@ export async function unsettledTasksForKey(instanceId: string, sessionKey: strin
     .orderBy(backgroundTask.startedAt)
 }
 
-/** Everything running, and whatever ended since `endedAfter`: newest first. */
 /**
  * Every task still running, then at most `limit` of those that ended since
  * `endedAfter`, most recently ended first.

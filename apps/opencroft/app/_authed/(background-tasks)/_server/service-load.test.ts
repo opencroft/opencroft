@@ -27,7 +27,7 @@ after(() => {
 })
 
 test('the service loads first, in a process that has loaded nothing else', () => {
-  assert.equal(typeof backgroundTasks.startNodeTask, 'function')
+  assert.equal(typeof backgroundTasks.startRunnerTask, 'function')
   assert.deepEqual([...backgroundTasks.runningSessionKeys()], [])
 })
 
@@ -37,9 +37,10 @@ test('and its transport — the remote tools — comes up from that same fresh s
   // loaded and resolution ran. A load-order failure would surface here as a
   // ReferenceError instead.
   await assert.rejects(
-    backgroundTasks.startNodeTask({
+    backgroundTasks.startRunnerTask({
       owner: { agent: null },
       name: 'remote_exec',
+      mode: 'command',
       target: 'no-such-node/terminal',
       command: 'true',
       timeoutMs: 60_000,

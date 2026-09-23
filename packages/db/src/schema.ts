@@ -976,10 +976,11 @@ export const chatAttachment = pgTable(
 )
 
 // Work a tool or an action started for a caller and did not wait for: a
-// command left running on a node, or an action handler nobody awaits. What is
-// running, and the handles that can stop it, live in the process and die with
-// it; this is the part that outlives a restart — what was started, where and
-// for whom, how it ended, and whether the caller has been told.
+// handler nobody awaits, or — for a tool that opted into the background task
+// runner — a command left running on a node. What is running, and the handles
+// that can stop it, live in the process and die with it; this is the part that
+// outlives a restart — what was started, where and for whom, how it ended, and
+// whether the caller has been told.
 //
 // ADDRESSED BY SESSION KEY, like the queue and the transcript: a restart mints
 // a new session id, and a task that finishes afterwards must still find the
@@ -1001,7 +1002,15 @@ export const backgroundTask = pgTable(
     // Null when the caller had no session: nobody is told when it ends.
     sessionKey: text(),
     sessionId: text(),
+    // WHAT ran: a tool, an app action, a node action.
     kind: text().notNull(),
+    // HOW it runs, which the kind no longer says: `in-process`, the handler's
+    // own promise, which a restart ends; or `background-task-runner`, a command
+    // detached on its node, which a restart does not. Every start names it.
+    // The default is for a process still on the code from before the column,
+    // sharing this database: its starts are recorded rather than refused —
+    // right for its actions, wrong only for a node command it starts meanwhile.
+    runner: text().notNull().default('in-process'),
     name: text().notNull(),
     target: text().notNull(),
     summary: text().notNull(),
@@ -1015,7 +1024,7 @@ export const backgroundTask = pgTable(
     exitCode: integer(),
     outputTail: text(),
     logPath: text(),
-    // A node task's own directory on the node, absolute as the NODE resolved
+    // A runner task's own directory on the node, absolute as the NODE resolved
     // it: its TMPDIR is not ours, and after a restart this is the only way back
     // to the task. Null until the directory exists, and again once
     // housekeeping has removed it.

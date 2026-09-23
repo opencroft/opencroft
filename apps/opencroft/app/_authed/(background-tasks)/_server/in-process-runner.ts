@@ -1,14 +1,15 @@
-// Action handlers nobody awaits: the other way a background task runs. The
-// work is a promise in this process, so it has none of a node task's
-// durability — it lives and dies with the process, and after a restart there
-// is nothing left of it to watch (the service fails such a task rather than
-// pretending it might still end).
+// Handlers nobody awaits — a tool's or an action's: the way a background task
+// runs unless its tool opted into the background task runner. The work is a
+// promise in this process, so it has none of a runner task's durability — it
+// lives and dies with the process, and after a restart there is nothing left of
+// it to watch (the service fails such a task rather than pretending it might
+// still end).
 //
 // Each handler gets an AbortSignal, and aborting it is how a cancel and a
 // timeout both reach the work — and all they can do: a handler that ignores its
 // signal keeps running, which is why stopping one is only ever a request.
 
-import { TAIL_MAX_BYTES } from './node-runner'
+import { TAIL_MAX_BYTES } from './background-task-runner'
 
 export type Settled = { ok: true; value: unknown } | { ok: false; error: unknown }
 
@@ -69,15 +70,18 @@ export class InProcessRunner {
 }
 
 /**
- * What a finished handler returned, as the task's output: JSON, bounded. The
- * HEAD is kept, unlike a log's tail — a result reads from the top, where its
- * shape is, and its end is the part least worth the space.
+ * What a finished handler returned, as the task's output, bounded. A string is
+ * kept as written: it is a tool's own text output, already in the words its
+ * caller reads, and JSON would only wrap it in quotes and escape its line
+ * breaks. Anything else is JSON. The HEAD is kept, unlike a log's tail — a
+ * result reads from the top, where its shape is, and its end is the part least
+ * worth the space.
  */
 export function describeResult(value: unknown): string | undefined {
   if (value === undefined) {
     return undefined
   }
-  const text = jsonOf(value)
+  const text = typeof value === 'string' ? value : jsonOf(value)
   const bytes = Buffer.from(text, 'utf8')
   if (bytes.length <= TAIL_MAX_BYTES) {
     return text

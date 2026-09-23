@@ -2,8 +2,8 @@
  * The contract between what starts background work and what runs it.
  *
  * A background task is work a tool or an action started for a caller and did
- * not wait for: a command left running on a node, or an action handler whose
- * promise nobody awaits. The service owns everything after the start — the
+ * not wait for: by default the handler's own promise, which nobody awaits;
+ * for a tool that opts in, a command left running on a node. The service owns everything after the start — the
  * durable record, watching the work, timing it out, stopping it, and telling
  * the calling session how it ended. A tool only starts one and hands the id
  * back, which is what lets the call return long before the work does.
@@ -19,7 +19,20 @@
  */
 export type BackgroundTaskState = 'running' | 'completed' | 'failed' | 'stopped'
 
+/** WHAT ran: a tool call, or an action of an app or a node. */
 export type BackgroundTaskKind = 'tool' | 'app-action' | 'node-action'
+
+/**
+ * HOW a task runs, apart from what ran.
+ *
+ * - `in-process` — the default for every tool and every action: the handler's
+ *   own promise, run by this server and not awaited. It asks nothing of any
+ *   node, and it ends with this process — a restart fails it.
+ * - `background-task-runner` — EXPERIMENTAL. A command detached on the node
+ *   itself (background-task-runner.ts), which outlives this server and keeps a
+ *   log there. A tool opts into it; nothing runs this way by default.
+ */
+export type BackgroundTaskRunner = 'in-process' | 'background-task-runner'
 
 /**
  * Who started a task — which is also where its result goes.
@@ -44,9 +57,13 @@ export interface BackgroundTaskRecord {
    */
   sessionKey?: string
   kind: BackgroundTaskKind
+  runner: BackgroundTaskRunner
   /** Tool or action id: `remote_exec`, `deploy`. */
   name: string
-  /** What it runs against, for display: a terminal target, a node id, an app address. */
+  /**
+   * What it runs against, for display: a terminal target, a node id, an app
+   * address. Empty when the call named nothing to run against.
+   */
   target: string
   /** One line saying what the task is, in terms the caller would recognise. */
   summary: string
@@ -60,20 +77,27 @@ export interface BackgroundTaskRecord {
   exitCode?: number
   /** The end of the output, bounded — never the whole of it. */
   outputTail?: string
-  /** Where the full output lives on the node. Node tasks only. */
+  /** Where the full output lives on the node. Runner tasks only. */
   logPath?: string
   /** When the result reached the calling session. Unset: still owed. */
   deliveredAt?: Date
 }
 
-export interface StartNodeTaskInput {
+/** A command for the background task runner (EXPERIMENTAL) to run detached on a node. */
+export interface StartRunnerTaskInput {
   owner: BackgroundTaskOwner
-  name: 'remote_exec' | 'remote_script'
+  /** The tool that started it, for display: `remote_exec`. */
+  name: string
   /** The terminal-context target, exactly as the remote tools accept it. */
   target: string
-  /** remote_exec: the shell command. remote_script: the script body. */
+  /**
+   * `command`: `command` runs under the exec's own shell, as a synchronous
+   * remote_exec would. `script`: `command` is a script body, written to the
+   * node and run with bash, `args` as its positional parameters.
+   */
+  mode: 'command' | 'script'
   command: string
-  /** remote_script only: its positional arguments, `$1`, `$2`, … inside it. */
+  /** `script` only: `$1`, `$2`, … inside it. */
   args?: string[]
   cwd?: string
   /**
@@ -87,15 +111,18 @@ export interface StartNodeTaskInput {
 
 export interface StartInProcessTaskInput {
   owner: BackgroundTaskOwner
-  kind: 'app-action' | 'node-action'
+  kind: BackgroundTaskKind
   name: string
+  /** For display; empty when the call names nothing to run against. */
   target: string
   summary: string
   timeoutMs: number | null
   /**
-   * The work itself. The signal aborts on cancel or timeout; a handler that
-   * ignores it keeps running, which is why a cancel of one reports
-   * `requested` rather than `stopped`.
+   * The work itself. What it resolves to is the task's result: a string is
+   * kept as written, anything else as JSON — bounded either way. A throw fails
+   * the task with the error's message. The signal aborts on cancel or timeout;
+   * a handler that ignores it keeps running, which is why a cancel of one
+   * reports `requested` rather than `stopped`.
    */
   run: (signal: AbortSignal) => Promise<unknown>
 }
@@ -110,7 +137,8 @@ export type CancelOutcome =
   | 'unknown-task'
 
 export interface BackgroundTaskService {
-  startNodeTask(input: StartNodeTaskInput): Promise<BackgroundTaskRecord>
+  /** EXPERIMENTAL — see BackgroundTaskRunner. */
+  startRunnerTask(input: StartRunnerTaskInput): Promise<BackgroundTaskRecord>
   startInProcessTask(input: StartInProcessTaskInput): Promise<BackgroundTaskRecord>
   get(taskId: string): Promise<BackgroundTaskRecord | null>
   /**

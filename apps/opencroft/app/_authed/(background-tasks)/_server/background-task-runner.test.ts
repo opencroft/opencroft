@@ -1,4 +1,4 @@
-// The node runner, in two halves.
+// The background task runner, in two halves.
 //
 // The shell text first, where what matters is what is IN it: every stream
 // redirected so an ssh channel can close, the setsid and nohup branches, and no
@@ -32,19 +32,19 @@ import type { TerminalContext } from '@opencroft/terminal'
 import { terminalExecResult } from '@opencroft/terminal/server'
 
 import {
+  BackgroundTaskRunner,
   buildLaunchCommand,
   buildPrepareCommand,
   buildProgram,
   buildStopCommand,
   decodeTail,
   isTaskDir,
-  NodeRunner,
-  type NodeTaskRef,
-  type NodeTransport,
   type ProbeReport,
   parseProbe,
+  type RunnerTaskRef,
+  type RunnerTransport,
   TAIL_MAX_BYTES,
-} from './node-runner'
+} from './background-task-runner'
 
 const SECRET_NAME = 'BG_TASK_TEST_SECRET'
 const SECRET_VALUE = `not-on-the-node-${randomUUID()}`
@@ -53,7 +53,7 @@ const TARGET = 'local/terminal'
 // ── the text ─────────────────────────────────────────────────────────────
 
 test('the launch redirects all three streams of the detached process, in both branches', () => {
-  const program = buildProgram({ name: 'remote_exec', command: 'make', dir: '/tmp/x' })
+  const program = buildProgram({ mode: 'command', command: 'make', dir: '/tmp/x' })
   const command = buildLaunchCommand('/tmp/opencroft-tasks/x', program)
   const detached = command.split('\n').filter((line) => line.includes('opencroft-task "$d"'))
   assert.equal(detached.length, 2)
@@ -65,10 +65,10 @@ test('the launch redirects all three streams of the detached process, in both br
   assert.match(command, /if command -v setsid >\/dev\/null 2>&1; then/)
 })
 
-test('a remote_exec command runs under the exec’s own shell, a script under bash with its arguments', () => {
-  assert.equal(buildProgram({ name: 'remote_exec', command: "echo 'a b'", dir: '/d' }), `"$0" -c 'echo '\\''a b'\\'''`)
+test('a command runs under the exec’s own shell, a script under bash with its arguments', () => {
+  assert.equal(buildProgram({ mode: 'command', command: "echo 'a b'", dir: '/d' }), `"$0" -c 'echo '\\''a b'\\'''`)
   assert.equal(
-    buildProgram({ name: 'remote_script', command: 'ignored', args: ['one', 'two words'], dir: '/d' }),
+    buildProgram({ mode: 'script', command: 'ignored', args: ['one', 'two words'], dir: '/d' }),
     `bash '/d/script.sh' 'one' 'two words'`,
   )
 })
@@ -88,7 +88,7 @@ test('no secret value appears in any text the runner sends or writes, only its n
   const written: string[] = []
   const id = randomUUID()
   const script = `echo "$${SECRET_NAME}" | sha256sum\n`
-  const recording: NodeTransport = {
+  const recording: RunnerTransport = {
     resolve: async (_target, cwd) => ({ ctx: { type: 'local' }, cwd }),
     secretsEnv: async (names) => (names ? Object.fromEntries(names.map((name) => [name, SECRET_VALUE])) : undefined),
     writeFile: async (_ctx, filePath, content) => {
@@ -102,10 +102,10 @@ test('no secret value appears in any text the runner sends or writes, only its n
       return command.includes('opencroft-task "$d"') ? '4242\n' : ''
     },
   }
-  await new NodeRunner(recording).launch({
+  await new BackgroundTaskRunner(recording).launch({
     taskId: id,
     target: TARGET,
-    name: 'remote_script',
+    mode: 'script',
     command: script,
     secrets: [SECRET_NAME],
   })
@@ -169,7 +169,7 @@ let scratch = ''
 let previousTmpdir: string | undefined
 
 before(() => {
-  scratch = realpathSync(mkdtempSync(path.join(tmpdir(), 'bg-task-node-runner-')))
+  scratch = realpathSync(mkdtempSync(path.join(tmpdir(), 'bg-task-task-runner-')))
   previousTmpdir = process.env.TMPDIR
   process.env.TMPDIR = scratch
 })
@@ -184,7 +184,7 @@ after(() => {
 })
 
 /** A local terminal context, reached the way the core extension's `terminal.exec` reaches it. */
-function localTransport(overrides?: Record<string, string>): NodeTransport {
+function localTransport(overrides?: Record<string, string>): RunnerTransport {
   return {
     resolve: async (_target, cwd) => ({ ctx: { type: 'local' }, cwd }),
     secretsEnv: async (names) => (names ? Object.fromEntries(names.map((name) => [name, SECRET_VALUE])) : undefined),
@@ -212,11 +212,11 @@ async function until<T>(read: () => Promise<T>, done: (value: T) => boolean): Pr
   }
 }
 
-function probeOne(runner: NodeRunner, task: NodeTaskRef): Promise<ProbeReport | undefined> {
+function probeOne(runner: BackgroundTaskRunner, task: RunnerTaskRef): Promise<ProbeReport | undefined> {
   return runner.probe(TARGET, [task]).then((reports) => reports.get(task.taskId))
 }
 
-function finished(runner: NodeRunner, task: NodeTaskRef): Promise<ProbeReport | undefined> {
+function finished(runner: BackgroundTaskRunner, task: RunnerTaskRef): Promise<ProbeReport | undefined> {
   return until(
     () => probeOne(runner, task),
     (report) => report?.status !== 'running',
@@ -238,13 +238,13 @@ function ended(pid: number): boolean {
 }
 
 test('a detached command outlives the launch, and its exit status and output come back', async () => {
-  const runner = new NodeRunner(localTransport())
+  const runner = new BackgroundTaskRunner(localTransport())
   const taskId = randomUUID()
   const started = Date.now()
   const launched = await runner.launch({
     taskId,
     target: TARGET,
-    name: 'remote_exec',
+    mode: 'command',
     command: `sleep 2; echo hi; printf '%s' "$${SECRET_NAME}" | sha256sum; exit 3`,
     secrets: [SECRET_NAME],
   })
@@ -269,13 +269,13 @@ test('a detached command outlives the launch, and its exit status and output com
 })
 
 test('a script runs from the caller’s cwd with its arguments, and its directory holds no secret', async () => {
-  const runner = new NodeRunner(localTransport())
+  const runner = new BackgroundTaskRunner(localTransport())
   const taskId = randomUUID()
   const cwd = mkdtempSync(path.join(scratch, 'cwd-'))
   const launched = await runner.launch({
     taskId,
     target: TARGET,
-    name: 'remote_script',
+    mode: 'script',
     command: `echo "cwd=$(pwd)"\necho "args=$1|$2"\n[ -n "$${SECRET_NAME}" ] && echo secret-present\n`,
     args: ['one', 'two words'],
     cwd,
@@ -292,13 +292,13 @@ test('a script runs from the caller’s cwd with its arguments, and its director
 })
 
 test('a stop reaches the whole process group, and the task reads as vanished rather than exited', async () => {
-  const runner = new NodeRunner(localTransport())
+  const runner = new BackgroundTaskRunner(localTransport())
   const taskId = randomUUID()
   const childPidFile = path.join(scratch, `${taskId}.child`)
   const launched = await runner.launch({
     taskId,
     target: TARGET,
-    name: 'remote_exec',
+    mode: 'command',
     // A grandchild of the supervisor, which a signal to one pid would miss.
     command: `sleep 300 & echo $! > '${childPidFile}'; echo started; wait`,
   })
@@ -321,15 +321,15 @@ test('a stop reaches the whole process group, and the task reads as vanished rat
 })
 
 test('a task killed along with its supervisor reads as vanished', async () => {
-  const runner = new NodeRunner(localTransport())
+  const runner = new BackgroundTaskRunner(localTransport())
   const taskId = randomUUID()
-  const launched = await runner.launch({ taskId, target: TARGET, name: 'remote_exec', command: 'sleep 300' })
+  const launched = await runner.launch({ taskId, target: TARGET, mode: 'command', command: 'sleep 300' })
   process.kill(-launched.pid, 'SIGKILL')
   assert.deepEqual(await finished(runner, { taskId, dir: launched.dir }), { status: 'vanished', tail: '' })
 })
 
 test('a pid now held by another process is not the task, and a missing directory reads as gone', async () => {
-  const runner = new NodeRunner(localTransport())
+  const runner = new BackgroundTaskRunner(localTransport())
   const task = { taskId: randomUUID(), dir: '' }
   task.dir = path.join(scratch, 'opencroft-tasks', task.taskId)
   assert.deepEqual(await probeOne(runner, task), { status: 'gone' })
@@ -349,13 +349,13 @@ test('without setsid the nohup branch still detaches, and the command still repo
     symlinkSync(found, path.join(bin, tool))
   }
   const taskId = randomUUID()
-  const launched = await new NodeRunner(localTransport({ PATH: bin })).launch({
+  const launched = await new BackgroundTaskRunner(localTransport({ PATH: bin })).launch({
     taskId,
     target: TARGET,
-    name: 'remote_exec',
+    mode: 'command',
     command: 'command -v setsid || echo no-setsid; sleep 1; exit 7',
   })
-  const runner = new NodeRunner(localTransport())
+  const runner = new BackgroundTaskRunner(localTransport())
   const task = { taskId, dir: launched.dir }
   assert.deepEqual(await probeOne(runner, task), { status: 'running' })
   assert.deepEqual(await finished(runner, task), { status: 'exited', exitCode: 7, tail: 'no-setsid\n' })
@@ -364,18 +364,18 @@ test('without setsid the nohup branch still detaches, and the command still repo
 test('one probe exec covers several tasks, and removal takes their directories', async () => {
   let execs = 0
   const base = localTransport()
-  const counting: NodeTransport = {
+  const counting: RunnerTransport = {
     ...base,
     exec: (ctx, command, opts) => {
       execs += 1
       return base.exec(ctx, command, opts)
     },
   }
-  const runner = new NodeRunner(counting)
+  const runner = new BackgroundTaskRunner(counting)
   const tasks = await Promise.all(
     [0, 1, 2].map(async (code) => {
       const taskId = randomUUID()
-      const launched = await runner.launch({ taskId, target: TARGET, name: 'remote_exec', command: `exit ${code}` })
+      const launched = await runner.launch({ taskId, target: TARGET, mode: 'command', command: `exit ${code}` })
       return { taskId, dir: launched.dir }
     }),
   )
