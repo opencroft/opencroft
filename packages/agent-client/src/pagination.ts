@@ -106,6 +106,32 @@ function isChunkEvent(event: ChatEvent): boolean {
   return event.kind === 'agent_message' || event.kind === 'agent_thought'
 }
 
+// Events that say what the session IS -- its usage, options, commands, mode,
+// title, queue, cadence -- rather than adding anything the transcript draws.
+// They arrive constantly (a usage reading per step, a burst of snapshots every
+// time a session opens) and they are not records: counted, they spent the
+// budget on nothing visible, so a chat reopened after a restart could open on
+// its last few messages with everything before them "not loaded", and a page
+// of older history could be all snapshots and add nothing to the screen.
+// They are transparent here instead: no boundary of their own, no break in the
+// run of chunks around them, no cost. A reader cut above one loses nothing --
+// the live stream prepends the current value of each (see withSnapshotPrefix).
+function isStateEvent(event: ChatEvent): boolean {
+  switch (event.kind) {
+    case 'usage':
+    case 'config_options':
+    case 'available_commands':
+    case 'modes':
+    case 'mode_changed':
+    case 'session_info':
+    case 'queue':
+    case 'presence':
+      return true
+    default:
+      return false
+  }
+}
+
 // Legal record-start indices within `events[start, end)` — the in-turn
 // counterpart of `turnStarts`, one level finer. A record is a singleton
 // event, a maximal run of same-kind streaming chunks (agent_message /
@@ -126,6 +152,9 @@ function recordBoundaries(events: ChatEvent[], start: number, end: number): numb
 
   for (let i = start; i < end; i++) {
     const event = events[i]
+    if (isStateEvent(event)) {
+      continue
+    }
     const id = groupId(event)
 
     if (id !== null) {
@@ -209,8 +238,15 @@ export interface RecordsWindow {
 // Counting headers would let the budget expire ON one — loading a question
 // whose replies didn't fit, which renders as though the agent never answered.
 // A short view is fine; a wrong one isn't.
+//
+// A turn's end is free too unless it carries a failure: it is a boundary, and
+// only a failed one draws anything.
 function isAgentRecord(events: ChatEvent[], boundary: number): boolean {
-  return events[boundary]?.kind !== 'user'
+  const event = events[boundary]
+  if (event?.kind === 'turn_end') {
+    return event.failure !== undefined
+  }
+  return event?.kind !== 'user'
 }
 
 // The `user` event of the turn containing `index`, when it sits strictly above

@@ -234,6 +234,60 @@ test('the record a turn end closes still ends with it', () => {
   )
 })
 
+// The shape a reopened session's tail has: a restore writes a burst of
+// snapshots, and every step reports its usage. Counted, they spent a budget of
+// 3 on nothing visible and the answer before the restart was never reached.
+test('state events and plain turn ends are free, so the window still reaches the answers', () => {
+  const snapshots: ChatEvent[] = [
+    { kind: 'available_commands', commands: [] },
+    { kind: 'mode_changed', current: 'default' },
+    { kind: 'config_options', options: [] },
+    { kind: 'config_options', options: [] },
+    { kind: 'usage', used: 1 },
+  ]
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'before the restart' },
+    { kind: 'agent_message', text: 'the long answer' },
+    { kind: 'usage', used: 1 },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+    ...snapshots,
+    { kind: 'turn_end', stopReason: 'resumed' },
+    ...snapshots,
+    { kind: 'user', text: 'after' },
+    { kind: 'agent_message', text: 'short' },
+    { kind: 'usage', used: 2 },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ]
+  const window = tailByRecords(events, 2)
+  assert.ok(window.events.some((e) => e.kind === 'agent_message' && e.text === 'the long answer'))
+})
+
+test('a usage reading between two chunks does not split the answer into two records', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'q' },
+    { kind: 'agent_message', text: 'first' },
+    { kind: 'agent_message', text: 'half' },
+    { kind: 'usage', used: 1 },
+    { kind: 'agent_message', text: 'second half' },
+  ]
+  const window = tailByRecords(events, 1)
+  assert.equal(window.startIndex, 1, 'one record, from the first chunk')
+})
+
+test('a failed turn end still counts, because it draws the failure', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'q' },
+    { kind: 'agent_message', text: 'answer' },
+    {
+      kind: 'turn_end',
+      stopReason: 'end_turn',
+      failure: { id: 'f', kind: 'quota', category: 'limit', severity: 'error', title: 'Quota exhausted' },
+    },
+  ]
+  const window = tailByRecords(events, 1)
+  assert.ok(!window.events.some((e) => e.kind === 'agent_message'), 'the failure is the one record')
+})
+
 test('records <= 0 and an exhausted cursor both yield empty windows', () => {
   const events = turn('A', 3)
   assert.deepEqual(tailByRecords(events, 0).events, [])
